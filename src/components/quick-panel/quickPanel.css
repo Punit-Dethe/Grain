@@ -56,31 +56,31 @@
 }
 
 .qp-root[data-qp-theme="dark"] {
-  --qp-window-bg: #181716;
-  --qp-brand-badge-bg: #ece5da;
-  --qp-brand-badge-text: #141312;
+  --qp-window-bg: #0E0E0E;
+  --qp-brand-badge-bg: #F9FAFB;
+  --qp-brand-badge-text: #050505;
   --qp-ctrl-box-bg: rgba(255, 255, 255, 0.06);
 
-  --qp-card-outer: #ece5da;
+  --qp-card-outer: #F9FAFB;
   --qp-card-outer-border: rgba(0, 0, 0, 0.08);
-  --qp-card-outer-title: #141312;
+  --qp-card-outer-title: #050505;
 
-  --qp-card-inner: #0e0d0c;
+  --qp-card-inner: #000000;
   --qp-card-inner-border: rgba(255, 255, 255, 0.06);
-  --qp-card-inner-top-shade: rgba(0, 0, 0, 0.3);
+  --qp-card-inner-top-shade: rgba(0, 0, 0, 0.4);
 
-  --qp-input-bg: #201d1a;
-  --qp-input-text: #ece5da;
-  --qp-dial-knob: #4a443b;
-  --qp-toggle-track: #46413a;
+  --qp-input-bg: #1A1A1A;
+  --qp-input-text: #F9FAFB;
+  --qp-dial-knob: #4B5563;
+  --qp-toggle-track: #374151;
 
-  --qp-jack-top: #211e1a;
-  --qp-jack-bottom: #14110e;
+  --qp-jack-top: #1A1A1A;
+  --qp-jack-bottom: #050505;
 
-  --qp-history-fade: #0e0d0c;
+  --qp-history-fade: #000000;
 
-  --qp-ink-rgb: 236 229 218;
-  --qp-ink-on-outer-rgb: 20 19 18;
+  --qp-ink-rgb: 249 250 251;
+  --qp-ink-on-outer-rgb: 5 5 5;
   --qp-line-rgb: 255 255 255;
 }
 

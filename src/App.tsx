@@ -295,7 +295,7 @@ function AppInner() {
       {/* Chassis fill — no rounded corners. */}
       <div
         className="absolute inset-0 overflow-hidden"
-        style={{ backgroundColor: isDark ? "#0e0c0b" : "#0c0b0a" }}
+        style={{ backgroundColor: isDark ? "#000000" : "#0c0b0a" }}
       >
         <ScaledStage designWidth={1280} designHeight={760}>
           {/* Settings card — no rounded corners. data-theme drives CSS token overrides in App.css. */}
