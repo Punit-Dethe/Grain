@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GRAIN-01 — Open Voice Layer</title>
+  <meta name="description" content="GRAIN-01: an open-source voice layer for your desktop. Near real-time transcription, pluggable OpenAI-compatible backends at both layers, ~100 MB idle.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ════════ TOP RAIL ════════ -->
+<header class="rail" id="rail">
+  <div class="rail-in">
+    <a class="rail-id" href="#top">
+      <span class="led led-on"></span>
+      <span class="mono">GRAIN-01</span>
+      <span class="rail-sub mono">OPEN VOICE LAYER</span>
+    </a>
+    <nav class="rail-nav mono">
+      <a href="#path">01 SIGNAL PATH</a>
+      <a href="#speed">02 LATENCY</a>
+      <a href="#engine">03 ENGINE</a>
+      <a href="#routing">04 ROUTING</a>
+      <a href="#agent">05 AGENT</a>
+    </nav>
+    <div class="rail-right mono">
+      <span id="clock">00:00:00</span>
+      <a class="rail-dl" href="#download">GET&nbsp;↓</a>
+    </div>
+  </div>
+</header>
+
+<!-- ════════ HERO ════════ -->
+<section class="hero" id="top">
+  <canvas id="fieldCv" aria-hidden="true"></canvas>
+  <div class="hero-rules" aria-hidden="true"></div>
+  <div class="wrap hero-grid">
+
+    <div class="hero-copy">
+      <div class="hero-tag mono">
+        <span class="tag-box">OPEN SOURCE</span>
+        <span class="tag-box tag-orange">WINDOWS 11</span>
+        <span class="tag-box">BYOK</span>
+      </div>
+      <h1 class="hero-h">
+        <span>TALK.</span>
+        <span>IT</span>
+        <span><em>TYPES.</em></span>
+      </h1>
+      <p class="hero-p">
+        Hold a key, speak, release — your words are already text, pasted where your
+        cursor lives. Transcription happens <strong>while you talk</strong>, not after.
+        Every backend is yours to choose.
+      </p>
+      <div class="hero-cta">
+        <a href="#download" class="key key-orange" data-snd>
+          <span class="key-top">DOWNLOAD</span>
+          <span class="key-sub mono">FREE · MIT</span>
+        </a>
+        <a href="https://github.com/Punit-Dethe/Grain" class="key key-ghost" data-snd>
+          <span class="key-top">SOURCE</span>
+          <span class="key-sub mono">GITHUB ↗</span>
+        </a>
+      </div>
+    </div>
+
+    <div class="hero-hint mono" aria-hidden="true">// MOVE YOUR CURSOR — THAT'S YOUR VOICE</div>
+
+  </div>
+
+  <!-- spec ticker -->
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-row mono" id="tickerRow">
+      <span>NEAR REAL-TIME STT</span><i>●</i>
+      <span class="tk-o">OPENAI-COMPATIBLE × BOTH LAYERS</span><i>●</i>
+      <span>PARAKEET 0.6B ON-DEVICE</span><i>●</i>
+      <span>~100 MB IDLE</span><i>●</i>
+      <span>SMART PROVIDER ROTATION</span><i>●</i>
+      <span>NO ACCOUNT</span><i>●</i>
+      <span>MIT LICENSE</span><i>●</i>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ 01 SIGNAL PATH ════════ -->
+<section class="sec" id="path">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="sec-no mono">01</span>
+      <h2 class="sec-h">SIGNAL PATH</h2>
+      <p class="sec-p">Three modules. Voice goes in the left, text comes out the right.
+      Everything between is swappable.</p>
+    </div>
+
+    <div class="rack">
+
+      <article class="mod rv">
+        <div class="mod-band mono"><span>MODULE A</span><span class="mod-led"></span></div>
+        <h3 class="mod-h">CAPTURE</h3>
+        <div class="mod-body">
+          <div class="mod-row mono"><span>TRIGGER</span><span class="chipset"><i class="chip">HOTKEY</i><i class="chip">HOLD / TOGGLE</i></span></div>
+          <div class="mod-row mono"><span>GATE</span><span class="chipset"><i class="chip">VAD</i></span></div>
+          <p class="mod-p">Configurable hotkeys for dictation and voice-to-AI.
+          A small pill shows your live voice level — nothing else gets in the way.</p>
+        </div>
+        <div class="mod-foot mono"><span>TYPE: CONTROL</span><span class="port port-out">OUT ●</span></div>
+      </article>
+
+      <article class="mod rv rv-d1">
+        <div class="mod-band mono"><span>MODULE B</span><span class="mod-led"></span></div>
+        <h3 class="mod-h">TRANSCRIBE</h3>
+        <div class="mod-body">
+          <div class="stamp mono">OPENAI-COMPATIBLE</div>
+          <div class="mod-row mono"><span>CLOUD</span><span class="chipset"><i class="chip">DEEPGRAM</i><i class="chip">GROQ</i><i class="chip">+</i></span></div>
+          <div class="mod-row mono"><span>LOCAL</span><span class="chipset"><i class="chip chip-o">PARAKEET 0.6B</i></span></div>
+          <p class="mod-p">Speech becomes text through any backend — hosted API,
+          self-hosted server, or fully on-device. Same workflow either way.</p>
+        </div>
+        <div class="mod-foot mono"><span class="port port-in">● IN</span><span>TYPE: AUDIO-STT</span><span class="port port-out">OUT ●</span></div>
+      </article>
+
+      <article class="mod rv rv-d2">
+        <div class="mod-band mono"><span>MODULE C</span><span class="mod-led"></span></div>
+        <h3 class="mod-h">PROCESS</h3>
+        <div class="mod-body">
+          <div class="stamp mono">OPENAI-COMPATIBLE</div>
+          <div class="mod-row mono"><span>LLM</span><span class="chipset"><i class="chip">GEMINI</i><i class="chip">CEREBRAS</i><i class="chip">+</i></span></div>
+          <div class="mod-row mono"><span>TOOLS</span><span class="chipset"><i class="chip">PROMPTS</i><i class="chip">DICTIONARY</i></span></div>
+          <p class="mod-p">Your own directive prompts shape the output. A vocabulary
+          dictionary keeps names and jargon spelled the way you spell them.</p>
+        </div>
+        <div class="mod-foot mono"><span class="port port-in">● IN</span><span>TYPE: CHAT-LLM</span></div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ 02 LATENCY ════════ -->
+<section class="sec sec-dark" id="speed">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="sec-no mono">02</span>
+      <h2 class="sec-h">ZERO WAIT</h2>
+      <p class="sec-p">Most open-source tools record first and transcribe after — speak five
+      minutes, then watch a progress bar for two more. Grain transcribes <em>while</em> you
+      speak, using rolling windows, overlap and voice-activity detection. Release the key:
+      it pastes. Instantly.</p>
+    </div>
+
+    <div class="bench rv" id="bench">
+      <div class="bench-lane">
+        <div class="bench-cap mono"><span>RECORD-FIRST TOOLS</span><span class="bench-time mono" id="timeA">+0:00</span></div>
+        <div class="bench-track">
+          <div class="bench-bar bb-speak" id="aSpeak"><span class="mono">SPEAKING</span></div>
+          <div class="bench-bar bb-wait" id="aWait"><span class="mono">TRANSCRIBING…</span></div>
+        </div>
+      </div>
+      <div class="bench-lane">
+        <div class="bench-cap mono"><span class="bench-grain">GRAIN-01</span><span class="bench-time mono" id="timeB">+0:00</span></div>
+        <div class="bench-track">
+          <div class="bench-bar bb-live" id="bLive"><span class="mono">SPEAKING + TRANSCRIBING</span></div>
+          <div class="bench-paste mono" id="bPaste">PASTED ✓ INSTANT</div>
+        </div>
+      </div>
+      <p class="bench-note mono">SIMULATION — 5 MIN OF SPEECH ON AN ORDINARY MACHINE. RECORD-FIRST: ~2 MIN OF WAITING. GRAIN: PASTED ON RELEASE — REAL-WORLD DELAY IS RARELY EVEN HALF A SECOND. WINDOWS ARE SIZED SO ACCURACY DOESN'T DROP.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ 03 ENGINE ════════ -->
+<section class="sec" id="engine">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="sec-no mono">03</span>
+      <h2 class="sec-h">A HEAVY MODEL THAT WEIGHS NOTHING</h2>
+      <p class="sec-p">Idle, the entire application sits at about 100 MB. Press the hotkey and
+      Parakeet 0.6B wake-loads instantly — it lives in RAM only while you speak, then hands
+      the memory back on your schedule.</p>
+    </div>
+
+    <div class="engine-grid">
+      <div class="panel rv">
+        <div class="screw s-tl"></div><div class="screw s-tr"></div>
+        <div class="panel-cap mono">MEMORY FOOTPRINT</div>
+        <div class="ram">
+          <div class="ram-row">
+            <span class="ram-l mono">IDLE · UI CLOSED</span>
+            <div class="ram-bar"><i style="--w:10%"></i></div>
+            <span class="ram-v mono">~100 MB</span>
+          </div>
+          <div class="ram-row">
+            <span class="ram-l mono">FULL CONSOLE</span>
+            <div class="ram-bar"><i style="--w:15%"></i></div>
+            <span class="ram-v mono">~150 MB</span>
+          </div>
+          <div class="ram-row">
+            <span class="ram-l mono">MODEL LOADED</span>
+            <div class="ram-bar"><i class="ram-hot" style="--w:96%"></i></div>
+            <span class="ram-v mono">~1 GB</span>
+          </div>
+        </div>
+        <p class="panel-p">The ~1 GB exists only while you're actually speaking. The rest of
+        the time, Grain is a ~100 MB background process — the UI is fully decoupled from the
+        backend, so closing the console changes nothing.</p>
+      </div>
+
+      <div class="panel panel-dark rv rv-d1">
+        <div class="screw s-tl"></div><div class="screw s-tr"></div>
+        <div class="panel-cap mono">MODEL UNLOAD — USER CONFIGURED</div>
+        <div class="knob-stage">
+          <div class="knob" id="knob" role="button" tabindex="0" aria-label="cycle unload timing">
+            <div class="knob-ridge"></div>
+            <div class="knob-mark"></div>
+          </div>
+          <div class="knob-opts mono">
+            <span data-k="0">INSTANT</span>
+            <span data-k="1" class="on">5 MIN</span>
+            <span data-k="2">10 MIN</span>
+            <span data-k="3">NEVER</span>
+          </div>
+        </div>
+        <p class="panel-p panel-p-inv">Unload the model the moment you finish speaking, after
+        a timer, or never. Wake-loading means even “instant” feels instant. <span class="mono knob-hint">// CLICK THE KNOB</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ 04 ROUTING ════════ -->
+<section class="sec sec-dark" id="routing">
+  <div class="wrap">
+    <div class="sec-head rv">
+      <span class="sec-no mono">04</span>
+      <h2 class="sec-h">SMART ROTATION</h2>
+      <p class="sec-p">Add every key you have — even multiple keys from the same provider.
+      Grain rotates across them on daily quota, latency and context length, and falls
+      through when one is down. You just keep speaking.</p>
+    </div>
+
+    <div class="route-grid rv">
+      <div class="route-rack">
+        <div class="route-row mono" data-rt><span class="rled"></span><span class="rname">DEEPGRAM</span><span class="rinfo">STT · QUOTA OK</span></div>
+        <div class="route-row mono" data-rt><span class="rled"></span><span class="rname">GEMINI · KEY 1</span><span class="rinfo">LLM · LOW LATENCY</span></div>
+        <div class="route-row mono" data-rt><span class="rled"></span><span class="rname">GEMINI · KEY 2</span><span class="rinfo">LLM · STANDBY</span></div>
+        <div class="route-row mono" data-rt><span class="rled"></span><span class="rname">GROQ</span><span class="rinfo">STT+LLM · FAST</span></div>
+        <div class="route-row mono" data-rt><span class="rled"></span><span class="rname">PARAKEET LOCAL</span><span class="rinfo">STT · PRIVATE</span></div>
+        <div class="route-row mono" data-rt><span class="rled"></span><span class="rname">SELF-HOSTED</span><span class="rinfo">ANY OPENAI-COMPATIBLE URL</span></div>
+      </div>
+
+      <div class="brain">
+        <div class="screw s-tl"></div><div class="screw s-tr"></div>
+        <div class="panel-cap mono brain-cap">ROUTER · DECISION SURFACE</div>
+        <div class="gauges">
+          <div class="gauge">
+            <div class="gauge-cap mono"><span>DAILY QUOTA</span><span class="gauge-v mono" id="gQv">—</span></div>
+            <div class="gauge-bar"><i id="gQ"></i></div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-cap mono"><span>LATENCY</span><span class="gauge-v mono" id="gLv">—</span></div>
+            <div class="gauge-bar"><i id="gL"></i></div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-cap mono"><span>CONTEXT FIT</span><span class="gauge-v mono" id="gCv">—</span></div>
+            <div class="gauge-bar"><i id="gC"></i></div>
+          </div>
+        </div>
+        <div class="route-read mono">
+          <span class="route-read-l">DECISION</span>
+          <span id="routeState" class="route-read-v">SELECTING…</span>
+        </div>
+        <p class="brain-p">Every request is scored against your whole rack — keys you stacked,
+        limits you've hit, how long your text is — and routed to whichever backend wins.
+        When one fails, the next is already armed.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ 05 AGENT ════════ -->
+<section class="sec" id="agent">
+  <div class="wrap">
+    <div class="agent rv">
+      <div class="screw s-tl"></div><div class="screw s-tr"></div>
+      <div class="screw s-bl"></div><div class="screw s-br"></div>
+      <div class="agent-stamp mono">IN DEVELOPMENT</div>
+      <span class="sec-no mono">05</span>
+      <h2 class="sec-h">GRAIN AGENT</h2>
+      <p class="sec-p agent-p">Select text anywhere on your machine, hit a shortcut, and ask:
+      summarize it, restructure it, turn it into an email — or just ask a question about it.
+      It runs on your configured processing layer, and the router picks the smartest model
+      you've got.</p>
+      <div class="agent-demo mono">
+        <span class="agent-sel">any selected text</span>
+        <span class="agent-arrow">→</span>
+        <span class="agent-key">CTRL+SHIFT+G</span>
+        <span class="agent-arrow">→</span>
+        <span class="agent-out" id="agentOut">SUMMARIZE</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ════════ DOWNLOAD ════════ -->
+<section class="sec sec-dl" id="download">
+  <div class="hero-rules" aria-hidden="true"></div>
+  <div class="wrap dl-wrap">
+    <span class="sec-no mono rv">06</span>
+    <h2 class="dl-h rv">START<br><em>TALKING.</em></h2>
+    <a href="https://github.com/Punit-Dethe/Grain/releases/download/Grain-0.1/Grain_0.8.3_x64-setup.exe" class="key key-orange key-xl rv" data-snd>
+      <span class="key-top">DOWNLOAD FOR WINDOWS</span>
+      <span class="key-sub mono">64-BIT · FREE · OPEN SOURCE</span>
+    </a>
+    <p class="dl-fine mono rv">NO ACCOUNT · BRING YOUR OWN KEYS · MIT LICENSE</p>
+  </div>
+</section>
+
+<!-- ════════ FOOTER ════════ -->
+<footer class="foot">
+  <div class="wrap foot-in">
+    <div class="foot-l mono">
+      <span class="led led-on"></span>
+      <span>GRAIN-01 // OPEN VOICE LAYER</span>
+    </div>
+    <nav class="foot-nav mono">
+      <a href="https://github.com/Punit-Dethe/Grain">GITHUB</a>
+      <a href="#path">SIGNAL PATH</a>
+      <a href="#download">DOWNLOAD</a>
+    </nav>
+    <div class="foot-r mono">© 2026 · MIT · BUILT FOR PEOPLE WHO TALK FASTER THAN THEY TYPE</div>
+  </div>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>
