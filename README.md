@@ -5,8 +5,6 @@
 
 **A free, open source, and extensible speech-to-text application that works completely offline.**
 
-*Grain is a hard fork built upon the excellent foundation of [Handy](https://github.com/cjpais/handy).*
-
 Grain is a cross-platform desktop application that provides simple, privacy-focused speech transcription. Press a shortcut, speak, and have your words appear in any text field. This happens on your own computer without sending any information to the cloud (unless you opt into external API providers).
 
 ## Why Grain?
@@ -117,3 +115,6 @@ grain-core --help                    # Show all available flags
 
 - Limited support for Wayland display server
 - Requires `wtype` or `dotool` for text input to work correctly.
+
+---
+*Grain is a hard fork built upon the excellent foundation of [Handy](https://github.com/cjpais/handy).*
