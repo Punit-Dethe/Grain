@@ -1,0 +1,25 @@
+[package]
+name = "grain-transcribe"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Integration layer: drives transcribe-rs models through the pure rolling-window engine. Maps model output to the assembler's WordTiming and exposes the reusable RollingWindowSession used by both the daemon and the model-matrix harness."
+
+[features]
+# All ONNX engines (Parakeet, Moonshine, SenseVoice, GigaAM, Canary, Cohere)
+# build by default. Whisper (.bin / whisper.cpp) is opt-in because it needs the
+# heavier whisper-cpp build (cmake + GPU SDK).
+default = []
+whisper = ["transcribe-rs/whisper-cpp"]
+
+[dependencies]
+rolling-window = { path = "../rolling-window" }
+anyhow = { workspace = true }
+log = "0.4"
+hound = "3.5"
+transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+
+[[bin]]
+name = "asr-harness"
+path = "src/bin/harness.rs"

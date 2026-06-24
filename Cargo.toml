@@ -1,0 +1,25 @@
+# Grain workspace root.
+#
+# NOTE: `src-tauri` (the Handy-derived Tauri app, future `grain-settings`) is
+# intentionally EXCLUDED. It carries its own `[patch.crates-io]` (custom tauri
+# fork) and `[profile.*]`, which Cargo only honors in a workspace root. Folding
+# it in now would silently drop those and break the Tauri build. It will be
+# unified into this workspace deliberately during the decoupling phase, when its
+# patch/profile sections are migrated up here. Until then it builds standalone.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+exclude = ["src-tauri"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["Grain"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+[profile.dev]
+incremental = true

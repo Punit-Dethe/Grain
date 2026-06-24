@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "agent",
+  "description": "Capabilities for the summoned Agent surfaces (palette + panel). Window geometry and clipboard are driven from the backend, so the JS surface here is intentionally minimal: invoke the agent commands, drag the panel, and close (destroy) on Escape.",
+  "windows": ["agent", "agent-panel"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging"
+  ]
+}

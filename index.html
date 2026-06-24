@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Grain</title>
+    <!-- [GRAIN] Quick Panel console fonts (Syne display + JetBrains Mono). TODO:
+         bundle locally for full offline use; loaded from Google Fonts for now. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      html,
+      body {
+        /* [GRAIN] The main window is opaque + OS-rounded (DWM corner preference
+           in lib.rs). The page background fills any client area outside the
+           rounded React card; near-black so it reads as an intentional frame. */
+        background-color: #0c0b0a;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

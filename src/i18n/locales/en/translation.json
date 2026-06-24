@@ -1,0 +1,819 @@
+{
+  "agent": {
+    "brand": "GRAIN ASSIST",
+    "selectionChip": "SELECTION · {{count}} CHARS",
+    "noSelection": "NO SELECTION",
+    "placeholderListening": "Listening… speak then press ↵, or start typing",
+    "placeholderSelection": "What should I do with the selection? — summarize, make polite, convert to email…",
+    "placeholderAsk": "Ask anything…",
+    "speak": "SPEAK",
+    "sendCue": "↵ SEND",
+    "escCue": "ESC CLOSE",
+    "recordingHint": "Recording — speak or type",
+    "transcribing": "Transcribing…",
+    "thinking": "Thinking…",
+    "processing": "PROCESSING",
+    "you": "YOU",
+    "grain": "GRAIN",
+    "copyReply": "COPY REPLY",
+    "copied": "COPIED ✓",
+    "autoCopied": "AUTO-COPIED · READY TO PASTE",
+    "followupPlaceholder": "Follow up…",
+    "followupWaiting": "Waiting for reply…",
+    "error": "Something went wrong"
+  },
+  "tray": {
+    "settings": "Settings...",
+    "checkUpdates": "Check for Updates...",
+    "copyLastTranscript": "Copy Last Transcript",
+    "unloadModel": "Unload Model",
+    "model": "Model",
+    "quit": "Quit",
+    "cancel": "Cancel"
+  },
+  "sidebar": {
+    "general": "General",
+    "models": "Models",
+    "speechToText": "Transcription",
+    "advanced": "Advanced",
+    "postProcessing": "Processing",
+    "history": "History",
+    "debug": "Debug",
+    "about": "About"
+  },
+  "onboarding": {
+    "subtitle": "To get started, choose a transcription model",
+    "recommended": "Recommended",
+    "download": "Download",
+    "downloading": "Downloading...",
+    "customModelDescription": "Not officially supported",
+    "downloadFailed": "Download failed. Please try again.",
+    "modelCard": {
+      "accuracy": "accuracy",
+      "speed": "speed"
+    },
+    "models": {
+      "small": {
+        "name": "Whisper Small",
+        "description": "Fast and fairly accurate."
+      },
+      "medium": {
+        "name": "Whisper Medium",
+        "description": "Good accuracy, medium speed"
+      },
+      "turbo": {
+        "name": "Whisper Turbo",
+        "description": "Balanced accuracy and speed."
+      },
+      "large": {
+        "name": "Whisper Large",
+        "description": "Good accuracy, but slow."
+      },
+      "parakeet-tdt-0.6b-v2": {
+        "name": "Parakeet V2",
+        "description": "English only. The best model for English speakers."
+      },
+      "parakeet-tdt-0.6b-v3": {
+        "name": "Parakeet V3",
+        "description": "Fast and accurate"
+      },
+      "moonshine-base": {
+        "name": "Moonshine Base",
+        "description": "Very fast, English only. Handles accents well."
+      },
+      "moonshine-tiny-streaming-en": {
+        "name": "Moonshine V2 Tiny",
+        "description": "Ultra-fast, English only"
+      },
+      "moonshine-small-streaming-en": {
+        "name": "Moonshine V2 Small",
+        "description": "Fast, English only. Good balance of speed and accuracy."
+      },
+      "moonshine-medium-streaming-en": {
+        "name": "Moonshine V2 Medium",
+        "description": "English only. High quality."
+      },
+      "breeze-asr": {
+        "name": "Breeze ASR",
+        "description": "Optimized for Taiwanese Mandarin. Code-switching support."
+      },
+      "sense-voice-int8": {
+        "name": "SenseVoice",
+        "description": "Very fast. Chinese, English, Japanese, Korean, Cantonese."
+      },
+      "gigaam-v3-e2e-ctc": {
+        "name": "GigaAM v3",
+        "description": "Russian speech recognition. Fast and accurate."
+      },
+      "canary-180m-flash": {
+        "name": "Canary 180M Flash",
+        "description": "Very fast. English, German, Spanish, French. Supports translation."
+      },
+      "canary-1b-v2": {
+        "name": "Canary 1B v2",
+        "description": "Accurate multilingual. 25 European languages. Supports translation."
+      },
+      "cohere-int8": {
+        "name": "Cohere",
+        "description": "A large, slower, but very accurate multilingual model."
+      }
+    },
+    "errors": {
+      "loadModels": "Failed to load available models",
+      "downloadModel": "Failed to download model: {{error}}"
+    },
+    "permissions": {
+      "title": "Permissions Required",
+      "description": "Handy needs a couple of permissions to work properly.",
+      "microphone": {
+        "title": "Microphone Access",
+        "description": "Required to hear your voice for transcription."
+      },
+      "accessibility": {
+        "title": "Accessibility Access",
+        "description": "Required to type transcribed text into your applications."
+      },
+      "grant": "Grant Permission",
+      "granted": "Granted",
+      "waiting": "Waiting...",
+      "allGranted": "All set!",
+      "errors": {
+        "checkFailed": "Failed to check permissions. Please try again.",
+        "requestFailed": "Failed to request permission. Please try again."
+      }
+    }
+  },
+  "modelSelector": {
+    "custom": "Custom",
+    "active": "Active",
+    "switching": "Switching...",
+    "noModelsAvailable": "No models available",
+    "verifying": "Verifying {{modelName}}...",
+    "verifyingGeneric": "Verifying...",
+    "extracting": "Extracting {{modelName}}...",
+    "extractingMultiple": "Extracting {{count}} models...",
+    "extractingGeneric": "Extracting...",
+    "downloading": "Downloading {{percentage}}%",
+    "downloadingMultiple": "Downloading {{count}} models...",
+    "modelReady": "Model Ready",
+    "loading": "Loading {{modelName}}...",
+    "loadingGeneric": "Loading...",
+    "modelError": "Model Error",
+    "modelUnloaded": "Model Unloaded",
+    "noModelDownloadRequired": "No Model - Download Required",
+    "deleteModel": "Delete {{modelName}}",
+    "downloadSpeed": "{{speed}} MB/s",
+    "cancel": "Cancel",
+    "cancelDownload": "Cancel download",
+    "capabilities": {
+      "languageSelection": "Supports multiple input languages",
+      "singleLanguage": "Supports this language only",
+      "multiLanguage": "Multi-language",
+      "languageOnly": "{{language}} Only",
+      "translation": "Can translate to English",
+      "translate": "Translate to English"
+    }
+  },
+  "settings": {
+    "modelSettings": {
+      "title": "{{model}} Settings",
+      "noSettingsNeeded": "This model works automatically with no configuration needed."
+    },
+    "general": {
+      "title": "General",
+      "description": "Recording shortcuts, capture behaviour, and audio devices.",
+      "groups": {
+        "captureModes": "Capture Modes",
+        "captureModesDesc": "One shortcut per recording mode — pick the keys that start and stop each.",
+        "behaviour": "Recording Behaviour",
+        "behaviourDesc": "How a recording is held and cancelled.",
+        "postProcessing": "AI Post-Processing",
+        "postProcessingDesc": "Clean up and reformat transcripts with a language model.",
+        "input": "Microphone & Input",
+        "inputDesc": "Choose your mic and condition the incoming audio.",
+        "feedback": "Audio Feedback",
+        "feedbackDesc": "Sounds the app plays when recording starts and stops."
+      },
+      "shortcut": {
+        "title": "Handy Shortcuts",
+        "description": "Configure keyboard shortcuts to trigger speech-to-text recording",
+        "loading": "Loading shortcuts...",
+        "none": "No shortcuts configured",
+        "notFound": "Shortcut not found",
+        "pressKeys": "Press keys...",
+        "bindings": {
+          "transcribe": {
+            "name": "Dictation",
+            "description": "Record your voice and paste the plain transcript."
+          },
+          "transcribe_realtime": {
+            "name": "Real-time",
+            "description": "Stream words as you speak, using the rolling window."
+          },
+          "cancel": {
+            "name": "Cancel",
+            "description": "Stop and discard the current recording."
+          },
+          "transcribe_with_post_process": {
+            "name": "Voice → AI",
+            "description": "Record, transcribe, then clean it up with AI in one shot."
+          },
+          "prompt_prev": {
+            "name": "Previous Prompt",
+            "description": "Switch the active AI prompt to the previous one."
+          },
+          "prompt_next": {
+            "name": "Next Prompt",
+            "description": "Switch the active AI prompt to the next one."
+          },
+          "summon_agent": {
+            "name": "Summon Agent",
+            "description": "Open the AI agent on your selected text — dictate or type an instruction."
+          }
+        },
+        "errors": {
+          "restore": "Failed to restore original shortcut",
+          "set": "Failed to set shortcut: {{error}}",
+          "reset": "Failed to reset shortcut to original value"
+        }
+      },
+      "language": {
+        "title": "Language",
+        "description": "Select the language for speech recognition. Auto will automatically determine the language, while selecting a specific language can improve accuracy for that language.",
+        "descriptionUnsupported": "Parakeet model automatically detects the language. No manual selection is needed.",
+        "searchPlaceholder": "Search languages...",
+        "noResults": "No languages found",
+        "auto": "Auto"
+      },
+      "pushToTalk": {
+        "label": "Push To Talk",
+        "description": "Hold to record, release to stop"
+      }
+    },
+    "models": {
+      "title": "Transcription Models",
+      "description": "Select a transcription model or download additional models. Different models offer varying levels of accuracy and speed.",
+      "cloudActiveBanner": "Cloud transcription is on, so the local model is inactive. Manage cloud providers in the Speech to Text tab, or turn cloud transcription off to use a local model.",
+      "yourModels": "Downloaded Models",
+      "availableModels": "Available to Download",
+      "downloaded": "Downloaded",
+      "available": "Available to Download",
+      "deleteConfirm": "Are you sure you want to delete {{modelName}}? You will need to download it again to use it.",
+      "deleteActiveConfirm": "{{modelName}} is your active model. Deleting it will stop transcriptions until you select a new model. Are you sure?",
+      "deleteTitle": "Delete Model",
+      "filters": {
+        "all": "All",
+        "multiLanguage": "Multi-language",
+        "translation": "Translation",
+        "allLanguages": "All Languages"
+      },
+      "noModelsMatch": "No models match this filter."
+    },
+    "sound": {
+      "title": "Sound",
+      "microphone": {
+        "title": "Microphone",
+        "description": "Select your preferred microphone device",
+        "placeholder": "Select microphone...",
+        "loading": "Loading..."
+      },
+      "audioFeedback": {
+        "label": "Audio Feedback",
+        "description": "Play sound when recording starts and stops"
+      },
+      "outputDevice": {
+        "title": "Output Device",
+        "description": "Select your preferred audio output device for feedback sounds",
+        "placeholder": "Select output device...",
+        "loading": "Loading..."
+      },
+      "volume": {
+        "title": "Volume",
+        "description": "Adjust the volume of audio feedback sounds"
+      }
+    },
+    "advanced": {
+      "title": "Advanced",
+      "groups": {
+        "app": "App",
+        "output": "Output",
+        "transcription": "Transcription",
+        "history": "History",
+        "experimental": "Experimental"
+      },
+      "experimentalToggle": {
+        "label": "Experimental Features",
+        "description": "Enable experimental features that are still in development."
+      },
+      "defaultPanel": {
+        "title": "Default Panel on Open",
+        "description": "Choose which panel opens when the app window is shown.",
+        "options": {
+          "settings": "Settings",
+          "quick_panel": "Quick Panel"
+        }
+      },
+      "lazyStreamClose": {
+        "label": "Keep Mic Open Between Transcriptions",
+        "description": "Keeps the microphone stream open for 30 seconds after recording stops, reducing latency for back-to-back transcriptions. May degrade Bluetooth audio quality while active."
+      },
+      "acceleration": {
+        "whisper": {
+          "title": "Whisper Acceleration",
+          "description": "Hardware acceleration for Whisper models. Auto uses GPU if available (Metal on macOS, Vulkan on Windows/Linux)."
+        },
+        "ort": {
+          "title": "ONNX Acceleration",
+          "description": "Hardware acceleration for ONNX models (Parakeet, Canary, Moonshine, etc.). DirectML on Windows is experimental. Models may fail to transcribe."
+        },
+        "gpuDevice": {
+          "title": "GPU Device",
+          "description": "Select which GPU to use for Whisper inference. Auto picks the dedicated GPU.",
+          "auto": "Auto"
+        }
+      },
+      "startHidden": {
+        "label": "Start Hidden",
+        "description": "Launch to system tray without opening the window."
+      },
+      "autostart": {
+        "label": "Launch on Startup",
+        "description": "Automatically start Handy when you log in to your computer."
+      },
+      "showTrayIcon": {
+        "label": "Show Tray Icon",
+        "description": "Display the Handy icon in the system tray."
+      },
+      "overlay": {
+        "title": "Overlay Position",
+        "description": "Display visual feedback overlay during recording and transcription. On Linux 'None' is recommended.",
+        "options": {
+          "none": "None",
+          "bottom": "Bottom",
+          "top": "Top"
+        }
+      },
+      "pasteMethod": {
+        "title": "Paste Method",
+        "description": "Choose how text is inserted. Direct: simulates typing via system input. None: skips paste, only updates history/clipboard.",
+        "options": {
+          "clipboard": "Clipboard ({{modifier}}+V)",
+          "clipboardCtrlShiftV": "Clipboard (Ctrl+Shift+V)",
+          "clipboardShiftInsert": "Clipboard (Shift+Insert)",
+          "direct": "Direct",
+          "none": "None",
+          "externalScript": "External Script"
+        },
+        "externalScriptPlaceholder": "/path/to/your/script.sh"
+      },
+      "typingTool": {
+        "title": "Typing Tool",
+        "description": "Choose which Linux typing tool to use for Direct paste method. Auto will automatically detect and use the best available tool for your system.",
+        "options": {
+          "auto": "Auto (Recommended)"
+        }
+      },
+      "clipboardHandling": {
+        "title": "Clipboard Handling",
+        "description": "Don't Modify Clipboard preserves your current clipboard contents after transcription. Copy to Clipboard leaves the transcription result in your clipboard after pasting.",
+        "options": {
+          "dontModify": "Don't Modify Clipboard",
+          "copyToClipboard": "Copy to Clipboard"
+        }
+      },
+      "autoSubmit": {
+        "title": "Auto Submit",
+        "description": "Automatically send the selected key combination after text insertion. Cmd+Enter applies on macOS, while Windows/Linux use Super+Enter.",
+        "options": {
+          "off": "Off",
+          "enter": "Enter",
+          "cmdEnter": "Cmd+Enter",
+          "superEnter": "Super+Enter",
+          "ctrlEnter": "Ctrl+Enter"
+        }
+      },
+      "translateToEnglish": {
+        "label": "Translate to English",
+        "description": "Automatically translate speech from other languages to English during transcription.",
+        "descriptionUnsupported": "Translation is not supported by the {{model}} model."
+      },
+      "modelUnload": {
+        "title": "Unload Model",
+        "description": "Automatically free GPU/CPU memory when the model hasn't been used for the specified time",
+        "options": {
+          "never": "Never",
+          "immediately": "Immediately",
+          "min2": "After 2 minutes",
+          "min5": "After 5 minutes",
+          "min10": "After 10 minutes",
+          "min15": "After 15 minutes",
+          "hour1": "After 1 hour",
+          "sec15": "After 15 seconds (Debug)"
+        }
+      },
+      "customWords": {
+        "title": "Custom Words",
+        "description": "Add words that are often misheard or misspelled during transcription. The system will automatically correct similar-sounding words to match your list.",
+        "placeholder": "Add a word",
+        "add": "Add",
+        "remove": "Remove {{word}}",
+        "duplicate": "\"{{word}}\" already exists"
+      }
+    },
+    "speechToText": {
+      "title": "Transcription",
+      "description": "Choose how speech is transcribed: the local on-device model, or your own cloud providers with smart rotation.",
+      "groups": {
+        "engine": "Engine",
+        "routing": "Transcription routing",
+        "providers": "Cloud providers"
+      },
+      "rollingWindow": {
+        "label": "Rolling window",
+        "description": "How much trailing audio the real-time path keeps in its rolling buffer before flushing to the model.",
+        "options": {
+          "sec15": "15 seconds",
+          "sec20": "20 seconds",
+          "sec25": "25 seconds",
+          "sec30": "30 seconds",
+          "sec45": "45 seconds",
+          "sec60": "60 seconds"
+        }
+      },
+      "loadOnStartup": {
+        "label": "Load model on startup",
+        "description": "Load the local transcription model into memory when the app starts, so the first dictation has no warm-up delay."
+      },
+      "localModel": {
+        "none": "No model selected",
+        "activeHint": "Active · used for on-device transcription",
+        "disabledByCloud": "Disabled — cloud transcription is handling this",
+        "browse": "Browse models",
+        "showLess": "Show less"
+      },
+      "rotationNoProvider": "No provider is configured yet. Add a cloud provider before turning on smart rotation.",
+      "smartRotation": {
+        "label": "Cloud transcription (smart rotation)",
+        "short": "Smart rotation",
+        "description": "When on, speech is transcribed by your cloud providers below, rotating across them with per-provider daily quotas and automatic failover. The local on-device model is disabled while this is on. When off, the local model is used with no network."
+      },
+      "localActive": {
+        "title": "Local on-device model",
+        "descriptionActive": "Active. Speech is transcribed locally with no network. Choose the model in the Models tab.",
+        "descriptionDisabled": "Disabled while cloud transcription is on. The cloud providers below are used instead."
+      },
+      "emptyPoolWarning": "Cloud transcription is on, but no provider has an API key yet. Add a key below, or turn cloud transcription off to use the local model.",
+      "noProviders": "No cloud providers yet. Add one to transcribe in the cloud.",
+      "rotateLabel": "Rotate",
+      "rotateTooltip": "Include this provider in smart rotation.",
+      "keySet": "Key set",
+      "noKey": "No key",
+      "quotaUsed": "{{used}} / {{limit}} today",
+      "quotaUnlimited": "{{used}} used today",
+      "edit": "Edit",
+      "remove": "Remove",
+      "removeConfirm": "Remove provider \"{{name}}\"? Its API key will be deleted.",
+      "addProvider": "Add Provider",
+      "form": {
+        "addTitle": "Add cloud provider",
+        "editTitle": "Edit provider",
+        "name": "Name",
+        "namePlaceholder": "e.g. My OpenAI key",
+        "kind": "Type",
+        "kindOpenai": "OpenAI-compatible",
+        "kindDeepgram": "Deepgram",
+        "kindAssemblyai": "AssemblyAI",
+        "baseUrl": "Base URL",
+        "baseUrlPlaceholder": "https://api.openai.com/v1",
+        "model": "Model",
+        "modelPlaceholder": "e.g. whisper-1",
+        "apiKey": "API Key",
+        "apiKeyPlaceholder": "sk-...",
+        "apiKeyKeepPlaceholder": "Leave blank to keep current key",
+        "quotaLimit": "Daily request limit",
+        "quotaLimitPlaceholder": "Unlimited",
+        "save": "Save",
+        "cancel": "Cancel",
+        "nameRequired": "Name is required.",
+        "baseUrlRequired": "Base URL is required.",
+        "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
+      }
+    },
+    "postProcessing": {
+      "title": "Post Process",
+      "hotkey": {
+        "title": "Hotkey"
+      },
+      "api": {
+        "title": "API (OpenAI Compatible)",
+        "provider": {
+          "title": "Provider",
+          "description": "Select an OpenAI-compatible provider."
+        },
+        "appleIntelligence": {
+          "title": "Apple Intelligence",
+          "description": "Runs fully on-device. No API key or network access is required.",
+          "requirements": "Requires an Apple Silicon Mac running macOS Tahoe (26.0) or later. Apple Intelligence must be enabled in System Settings.",
+          "unavailable": "Apple Intelligence is not available on this device. Requires an Apple Silicon Mac running macOS Tahoe (26.0) or later with Apple Intelligence enabled in System Settings."
+        },
+        "baseUrl": {
+          "title": "Base URL",
+          "description": "API base URL for the selected provider. Only the custom provider can be edited.",
+          "placeholder": "https://api.openai.com/v1"
+        },
+        "apiKey": {
+          "title": "API Key",
+          "description": "API key for the selected provider.",
+          "placeholder": "sk-..."
+        },
+        "model": {
+          "title": "Model",
+          "descriptionApple": "Provide an optional numeric token limit or keep the default on-device preset.",
+          "descriptionCustom": "Provide the model identifier expected by your custom endpoint.",
+          "descriptionDefault": "Choose a model exposed by the selected provider.",
+          "placeholderApple": "Apple Intelligence",
+          "placeholderWithOptions": "Search or select a model",
+          "placeholderNoOptions": "Type a model name",
+          "refreshModels": "Refresh models"
+        }
+      },
+      "pool": {
+        "smartRotation": {
+          "label": "Smart rotation",
+          "description": "When on, post-processing rotates across the enabled providers below, each with its own daily quota and automatic failover. When off, the single selected provider (the filled dot) is used."
+        },
+        "routingTitle": "Routing",
+        "addTitle": "Add provider",
+        "yourProvidersTitle": "Your providers",
+        "selectHintSingle": "Select the provider to use.",
+        "selectHintRotation": "Select the providers to rotate across.",
+        "noConfigured": "No API keys added yet. Choose a provider above and add a key.",
+        "emptyPoolWarning": "Smart rotation is on, but none of your providers are selected. Tick at least one above, or turn smart rotation off.",
+        "rotateTooltip": "Include this provider in smart rotation.",
+        "setActive": "Use this provider.",
+        "quotaUsed": "{{used}} / {{limit}} today",
+        "quotaUnlimited": "{{used}} used today",
+        "edit": "Edit",
+        "remove": "Remove",
+        "removeConfirm": "Remove provider \"{{name}}\"? Its API key will be deleted.",
+        "add": {
+          "provider": "Provider",
+          "name": "Name (optional)",
+          "baseUrl": "Base URL",
+          "baseUrlPlaceholder": "https://api.example.com/v1",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "sk-...",
+          "model": "Model (optional)",
+          "modelPlaceholder": "e.g. gpt-4o-mini",
+          "button": "Add",
+          "keyRequired": "An API key is required.",
+          "baseUrlRequired": "Base URL is required for a custom provider.",
+          "cancel": "Cancel"
+        },
+        "form": {
+          "addTitle": "Add provider",
+          "editTitle": "Edit provider",
+          "label": "Name",
+          "labelPlaceholder": "e.g. My OpenAI key",
+          "labelRequired": "Name is required.",
+          "baseUrl": "Base URL",
+          "baseUrlPlaceholder": "https://api.openai.com/v1",
+          "baseUrlRequired": "Base URL is required.",
+          "model": "Model",
+          "modelPlaceholder": "e.g. gpt-4o-mini",
+          "fetchModels": "Fetch models",
+          "apiKey": "API Key",
+          "apiKeyPlaceholder": "sk-...",
+          "apiKeyKeepPlaceholder": "Leave blank to keep current key",
+          "quotaLimit": "Daily request limit",
+          "quotaLimitPlaceholder": "Unlimited",
+          "save": "Save",
+          "cancel": "Cancel",
+          "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
+        },
+        "addProvider": "Add provider",
+        "rotationNoProvider": "No provider is configured yet. Add a provider before turning on smart rotation.",
+        "providersTitle": "Providers"
+      },
+      "prompts": {
+        "title": "Prompt",
+        "selectedPrompt": {
+          "title": "Selected Prompt",
+          "description": "Select a template for refining transcriptions or create a new one. Use ${output} inside the prompt text to reference the captured transcript."
+        },
+        "noPrompts": "No prompts available",
+        "selectPrompt": "Select a prompt",
+        "createNew": "Create New Prompt",
+        "promptLabel": "Prompt Label",
+        "promptLabelPlaceholder": "Enter prompt name",
+        "promptInstructions": "Prompt Instructions",
+        "promptInstructionsPlaceholder": "Write the instructions to run after transcription. Example: Improve grammar and clarity for the following text: ${output}",
+        "promptTip": "Tip: Use <code>${output}</code> to insert the transcribed text in your prompt.",
+        "updatePrompt": "Update Prompt",
+        "deletePrompt": "Delete Prompt",
+        "createPrompt": "Create Prompt",
+        "cancel": "Cancel",
+        "selectToEdit": "Select a prompt above to view and edit its details.",
+        "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
+      }
+    },
+    "history": {
+      "title": "History",
+      "openFolder": "Open Recordings Folder",
+      "loading": "Loading history...",
+      "empty": "No transcriptions yet. Start recording to build your history!",
+      "copyToClipboard": "Copy transcription to clipboard",
+      "save": "Save transcription",
+      "unsave": "Remove from saved",
+      "delete": "Delete entry",
+      "deleteError": "Failed to delete entry. Please try again.",
+      "retranscribe": "Re-transcribe",
+      "retranscribeError": "Failed to re-transcribe. Please try again.",
+      "transcribing": "Transcribing...",
+      "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
+      "showProcessed": "PRO",
+      "showTranscription": "TRS",
+      "processedTooltip": "Show the AI-processed text",
+      "transcriptionTooltip": "Show the raw transcription"
+    },
+    "debug": {
+      "title": "Debug",
+      "logDirectory": {
+        "title": "Log Directory",
+        "description": "Location where log files are stored"
+      },
+      "logLevel": {
+        "title": "Log Level",
+        "description": "Set the verbosity of logging"
+      },
+      "updateChecks": {
+        "label": "Check for Updates",
+        "description": "Automatically check for new versions of Handy"
+      },
+      "soundTheme": {
+        "label": "Sound Theme",
+        "description": "Choose a sound theme for recording start and stop feedback"
+      },
+      "wordCorrectionThreshold": {
+        "title": "Word Correction Threshold",
+        "description": "Sensitivity for custom word corrections"
+      },
+      "historyLimit": {
+        "title": "History Limit",
+        "description": "Maximum number of history entries to keep",
+        "entries": "entries"
+      },
+      "recordingRetention": {
+        "title": "Auto-Delete Recordings",
+        "description": "Automatically delete old recordings to save space",
+        "never": "Never",
+        "preserveLimit": "Keep latest {{count}}",
+        "days3": "After 3 days",
+        "weeks2": "After 2 weeks",
+        "months3": "After 3 months",
+        "placeholder": "Select retention period..."
+      },
+      "alwaysOnMicrophone": {
+        "label": "Always-On Microphone",
+        "description": "Keep microphone active for faster response"
+      },
+      "clamshellMicrophone": {
+        "title": "Clamshell Microphone",
+        "description": "Microphone to use when laptop lid is closed"
+      },
+      "postProcessingToggle": {
+        "label": "Post Processing",
+        "description": "Enable AI-powered text refinement after transcription"
+      },
+      "muteWhileRecording": {
+        "label": "Mute While Recording",
+        "description": "Mute system audio during recording"
+      },
+      "voiceProcessing": {
+        "label": "Voice Processing",
+        "description": "Clean up quiet or low-clarity mics: high-pass filter + gentle volume boost for better accuracy"
+      },
+      "appendTrailingSpace": {
+        "label": "Append Trailing Space",
+        "description": "Add a space after pasted transcription"
+      },
+      "keyboardImplementation": {
+        "title": "Keyboard Implementation",
+        "description": "Choose the keyboard shortcut backend.",
+        "bindingsReset": "Keyboard shortcuts were incompatible and reset to defaults"
+      },
+      "paths": {
+        "appData": "App Data:",
+        "models": "Models:",
+        "settings": "Settings:"
+      },
+      "pasteDelay": {
+        "title": "Paste Delay",
+        "description": "Delay before sending paste keystroke (in milliseconds). Increase if wrong text is being pasted."
+      },
+      "recordingBuffer": {
+        "title": "Extra Recording Buffer",
+        "description": "Extra time (in milliseconds) to keep recording after you release the key, to capture trailing audio. 0 = no extra buffer."
+      }
+    },
+    "about": {
+      "title": "About",
+      "version": {
+        "title": "Version",
+        "description": "Current version of Handy"
+      },
+      "appDataDirectory": {
+        "title": "App Data Directory",
+        "description": "Location where Handy stores its data"
+      },
+      "sourceCode": {
+        "title": "Source Code",
+        "description": "View source code and contribute",
+        "button": "View on GitHub"
+      },
+      "supportDevelopment": {
+        "title": "Support Development",
+        "description": "Help us continue building Handy",
+        "button": "Donate"
+      },
+      "acknowledgments": {
+        "title": "Acknowledgments",
+        "whisper": {
+          "title": "Whisper.cpp",
+          "description": "High-performance inference of OpenAI's Whisper automatic speech recognition model",
+          "details": "Handy uses Whisper.cpp for fast, local speech-to-text processing. Thanks to the amazing work by Georgi Gerganov and contributors."
+        }
+      }
+    }
+  },
+  "footer": {
+    "downloadingModel": "Downloading {{model}}...",
+    "checkingUpdates": "Checking for updates...",
+    "updateAvailable": "Update available: {{version}}",
+    "updateAvailableShort": "Update available",
+    "upToDate": "Up to date",
+    "downloadUpdate": "Download Update",
+    "restart": "Restart",
+    "updateCheckingDisabled": "Update Checking Disabled",
+    "downloading": "Downloading... {{progress}}%",
+    "installing": "Installing...",
+    "preparing": "Preparing...",
+    "checkForUpdates": "Check for updates",
+    "portableUpdateTitle": "Manual update required",
+    "portableUpdateMessage": "Portable installs cannot be updated automatically. To update: download the latest NSIS installer from GitHub Releases, install it to the same folder, then copy your Data/ folder (settings, models, recordings) from the old version to the new one.",
+    "portableUpdateButton": "Open GitHub Releases"
+  },
+  "common": {
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "reset": "Reset",
+    "add": "Add",
+    "remove": "Remove",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "update": "Update",
+    "close": "Close",
+    "open": "Open",
+    "default": "Default",
+    "enabled": "Enabled",
+    "disabled": "Disabled",
+    "on": "On",
+    "off": "Off",
+    "yes": "Yes",
+    "no": "No",
+    "noOptionsFound": "No options found"
+  },
+  "accessibility": {
+    "permissionsRequired": "Accessibility Permissions Required",
+    "permissionsDescription": "Handy needs accessibility permissions to type transcribed text.",
+    "openSettings": "Open System Settings",
+    "dismiss": "Dismiss"
+  },
+  "errors": {
+    "loadDirectory": "Error loading directory: {{error}}",
+    "micPermissionDeniedTitle": "Microphone Access Denied",
+    "micPermissionDenied": {
+      "generic": "Microphone access was denied by the operating system. Please grant microphone permission in your system settings.",
+      "windows": "Enable microphone access in Settings → Privacy & security → Microphone (including desktop app access).",
+      "macos": "Grant microphone access in System Settings → Privacy & Security → Microphone.",
+      "linux": "Grant microphone access in your system's sound or privacy settings."
+    },
+    "noInputDeviceTitle": "No Microphone Found",
+    "noInputDevice": "No audio input device was detected. Please connect a microphone or headset and try again.",
+    "recordingFailed": "Failed to start recording: {{error}}",
+    "modelLoadFailed": "Failed to load model: {{model}}",
+    "modelLoadFailedUnknown": "unknown model",
+    "pasteFailedTitle": "Failed to Paste Text",
+    "pasteFailed": "Text could not be pasted into the active application."
+  },
+  "appLanguage": {
+    "title": "Application Language",
+    "description": "Change the language of the Handy interface"
+  },
+  "overlay": {
+    "transcribing": "Transcribing...",
+    "processing": "Processing..."
+  }
+}

@@ -1,0 +1,1 @@
+export { SpeechToTextSettings } from "./SpeechToTextSettings";
