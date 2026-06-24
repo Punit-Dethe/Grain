@@ -1,0 +1,362 @@
+@import "tailwindcss";
+
+/* ============================================================================
+   GRAIN — design tokens (theming engine)
+   ----------------------------------------------------------------------------
+   A theme is the variable set below. Every surface, line and accent resolves to
+   one of these semantic tokens — no hardcoded colors in components — so a new
+   theme means redefining these values and nothing else.
+
+   Aesthetic: "Apple calm, Teenage-Engineering instrument." Generous negative
+   space and crisp type (Apple) paired with confident monospace labels and index
+   numerals (TE). The identity is MATERIAL, not texture: warm beige paper is the
+   page; the surfaces that hold content are dark espresso trays recessed into it
+   (see .surface-well), the same material as the Quick Panel console. One warm
+   palette, a single confident orange accent that carries across both grounds.
+
+   Color utilities (bg-paper, text-ink, border-line, font-mono, …) are generated
+   from this @theme block, so the base palette is declared here with concrete
+   values. The legacy Tailwind names (background/text/mid-gray/logo-primary/
+   background-ui) are mapped to the same palette so existing components adopt it.
+   ============================================================================ */
+@theme {
+  /* Paper (warm travertine): canvas → raised surfaces → recessed insets.
+     [GRAIN] Aligned to the Advanced Calibration console reference: bgMain
+     #ECE5DA, card/sidebar #DDD5C8, input wash #F2ECE1. */
+  --color-paper: #ece5da;
+  --color-paper-raised: #f2ece1;
+  --color-paper-sunken: #ddd5c8;
+
+  /* Ink (charcoal): primary → secondary → faint. Secondary/faint are the
+     reference's ink(0.5) / ink(0.35) flattened over the paper. */
+  --color-ink: #141312;
+  --color-ink-soft: #807c76;
+  --color-ink-faint: #a09b94;
+
+  /* Accent (console orange) + hairline divider (the reference's fill(0.07)). */
+  --color-accent: #ff5d1e;
+  --color-line: rgba(20, 19, 18, 0.08);
+
+  /* Status palette — warm, desaturated tones that harmonize with the beige
+     paper instead of clashing with it (raw saturated green/yellow/red do not
+     belong on warm paper). Used by model-status dots, alerts and badges. */
+  --color-status-ready: #5b8a4e; /* sage green */
+  --color-status-load: #c98a1e; /* amber/ochre */
+  --color-status-warn: #d9701a; /* warm orange */
+  --color-status-error: #b23a2a; /* brick red */
+  --color-status-idle: var(--color-ink-faint); /* muted ink */
+  --color-status-info: #3f6f86; /* dusty teal */
+
+  /* Legacy name bridge → same palette */
+  --color-text: #141312;
+  --color-background: #ece5da;
+  --color-background-ui: #ff5d1e;
+  --color-logo-primary: #ff5d1e;
+  --color-logo-stroke: #382731;
+  --color-text-stroke: #f6f6f6;
+  --color-mid-gray: #6f6552;
+
+  --font-sans: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
+  --font-mono:
+    ui-monospace, "Cascadia Mono", "SFMono-Regular", "Segoe UI Mono", "Consolas",
+    monospace;
+}
+
+/* Hard lock on the document — nothing can ever scroll the page itself.
+   The Quick Panel drawer sits below the viewport at translateY(100%) and must
+   never be reachable by document scrolling, regardless of child content. */
+html,
+body {
+  overflow: hidden;
+  height: 100%;
+  width: 100%;
+}
+
+:root {
+  /* Interaction tokens consumed via arbitrary values (bg-[var(--…)] / ring-[…]) */
+  --accent-tint: rgba(255, 93, 30, 0.12);
+  --accent-press: #e54a12;
+  --on-accent: #fdf6ea;
+  --focus: rgba(255, 93, 30, 0.42);
+  --raise: #fbf7ee;
+  --line-strong: rgba(20, 19, 18, 0.18);
+
+  /* Status tints (backgrounds behind status dots/icons) — the same warm hues
+     above, at a low alpha so they tint the paper instead of overpowering it. */
+  --status-ready-tint: rgba(91, 138, 78, 0.14);
+  --status-load-tint: rgba(201, 138, 30, 0.16);
+  --status-warn-tint: rgba(217, 112, 26, 0.16);
+  --status-error-tint: rgba(178, 58, 42, 0.14);
+  --status-info-tint: rgba(63, 111, 134, 0.14);
+
+  /* Surface elevation — a paper "well" system. Inset cards sit slightly down
+     (sunken), raised elements lift off the page. Hairline borders stay warm. */
+  --shadow-hair: 0 1px 2px rgba(33, 29, 22, 0.04);
+  --shadow-raise: 0 1px 2px rgba(33, 29, 22, 0.05),
+    0 1px 3px rgba(33, 29, 22, 0.03);
+  --shadow-float: 0 8px 22px -10px rgba(33, 29, 22, 0.22),
+    0 2px 6px rgba(33, 29, 22, 0.06);
+  --shadow-inset: inset 0 1px 2px rgba(33, 29, 22, 0.07);
+
+  /* Typography. font-size is the scaling baseline (15px == scale 1.0); it is
+     overridden at runtime by uiScale.ts so the UI keeps a consistent apparent
+     size across displays. line-height is unitless so it scales with font-size. */
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 400;
+  font-family: var(--font-sans);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+
+  --scrollbar-thumb: color-mix(in srgb, var(--color-ink), transparent 82%);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-ink), transparent 66%);
+
+  color: var(--color-ink);
+  /* [GRAIN] The window is opaque + OS-rounded (DWM corner preference). This
+     page background fills client area outside the rounded React card. */
+  background-color: var(--color-paper);
+}
+
+/* ============================================================================
+   GRAIN — Dark mode token overrides
+   Applied when the root element has data-theme="dark" (set by ThemeContext).
+   Same warm palette, inverted: espresso background, cream ink, same accent.
+   ============================================================================ */
+[data-theme="dark"] {
+  /* Paper — exact values from design spec.
+     paper        = settings window bg    #181716
+     paper-raised = settings rows         #211E1B
+     paper-sunken = sidebar rail          #121110  */
+  --color-paper: #181716;
+  --color-paper-raised: #211E1B;
+  --color-paper-sunken: #121110;
+
+  /* Ink (cream): primary → secondary → faint. */
+  --color-ink: #ece5da;
+  --color-ink-soft: #9e9587;
+  --color-ink-faint: #6b6358;
+
+  /* Accent stays orange — it's mode-independent brand identity. */
+  /* --color-accent: unchanged */
+
+  /* Divider line — lighter alpha on dark. */
+  --color-line: rgba(236, 229, 218, 0.08);
+
+  /* Interaction tokens remapped for dark surfaces. */
+  --accent-tint: rgba(255, 93, 30, 0.15);
+  --on-accent: #fdf6ea;
+  --raise: #272320;
+  --line-strong: rgba(236, 229, 218, 0.16);
+
+  /* Status tints — same hues, slightly more opacity on dark. */
+  --status-ready-tint: rgba(91, 138, 78, 0.18);
+  --status-load-tint: rgba(201, 138, 30, 0.20);
+  --status-warn-tint: rgba(217, 112, 26, 0.20);
+  --status-error-tint: rgba(178, 58, 42, 0.18);
+  --status-info-tint: rgba(63, 111, 134, 0.18);
+
+  /* Shadows — softer on dark (less contrast needed). */
+  --shadow-hair: 0 1px 2px rgba(0, 0, 0, 0.18);
+  --shadow-raise: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.14);
+  --shadow-float: 0 8px 22px -10px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.22);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.24);
+
+  /* Scrollbar thumb on dark. */
+  --scrollbar-thumb: color-mix(in srgb, var(--color-ink), transparent 78%);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--color-ink), transparent 62%);
+
+  color: var(--color-ink);
+  /* [GRAIN] The window is opaque + OS-rounded (DWM corner preference). This
+     page background fills client area outside the rounded React card. */
+  background-color: var(--color-paper);
+}
+
+/* Smooth theme crossfade on all token-consuming surfaces. */
+[data-theme="dark"],
+[data-theme="dark"] * {
+  transition:
+    background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* Also crossfade on light theme for symmetry when toggling back. */
+[data-theme="light"],
+[data-theme="light"] * {
+  transition:
+    background-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 280ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 280ms cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* In dark mode, strip the surface-well's inset highlight/shadow that creates
+   the unwanted white/grey edges on grouped setting rows. */
+[data-theme="dark"] .surface-well {
+  box-shadow: none;
+  border-color: rgba(236, 229, 218, 0.06);
+}
+
+.container {
+  margin: 0;
+  padding-top: 10vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: center;
+}
+
+/* macOS - tint native overlay scrollbar thumb */
+:root[data-platform="macos"] {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* Custom Scrollbar - only on Windows/Linux; macOS uses native overlay scrollbars */
+:root:not([data-platform="macos"]) ::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+:root:not([data-platform="macos"]) ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+:root:not([data-platform="macos"]) ::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 20px;
+  border: 3px solid transparent;
+  border-right-width: 4px;
+  border-left-width: 3px;
+  background-clip: content-box;
+  min-height: 32px;
+}
+
+:root:not([data-platform="macos"]) ::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+@layer utilities {
+  .text-stroke {
+    -webkit-text-stroke: 2px var(--color-text-stroke);
+  }
+
+  /* =======================================================================
+     Material identity — paper, recessed wells, and the dither "address".
+     -----------------------------------------------------------------------
+     The page is warm beige paper. The surfaces that HOLD settings are wells
+     of DARKER beige, debossed into the page (inner top shadow + a crisp paper
+     highlight where they meet the surround). Only a step darker — carved
+     paper, never a black card. Dark ink stays dark; nothing is inverted.
+
+     Personality is delivered by INTERACTION, not wallpaper. A faint dot-grid
+     (the pill's dot-matrix — "dither") resolves under the cursor: nav items,
+     rows and controls light up as you address them, then fade. Tasteful, not
+     busy. The orange accent is the single signal color throughout.
+     ======================================================================= */
+
+  /* Dither — the dot-matrix texture. Used as an INTERACTION layer (faded in on
+     hover / lit on active by the components), never as static wallpaper. */
+  .dither {
+    background-image: radial-gradient(
+      var(--line-strong) 0.6px,
+      transparent 0.85px
+    );
+    background-size: 4px 4px;
+  }
+  .dither-fine {
+    background-image: radial-gradient(
+      var(--line-strong) 0.5px,
+      transparent 0.7px
+    );
+    background-size: 3px 3px;
+  }
+  .dither-accent {
+    background-image: radial-gradient(
+      color-mix(in srgb, var(--color-accent), transparent 42%) 0.8px,
+      transparent 1.05px
+    );
+    background-size: 4px 4px;
+  }
+
+  /* [GRAIN] A lifted card holding a settings group — matched to the console
+     reference's SectionCard: flat #DDD5C8 (paper-sunken), a hairline divider
+     border, 12px radius, and a faint top highlight (no heavy debossing). */
+  .surface-well {
+    background-color: var(--color-paper-sunken);
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.28),
+      0 1px 0 rgba(255, 255, 255, 0.4);
+  }
+
+  /* A deeper recess inside a well (previews, code blocks). */
+  .surface-inset {
+    background-color: var(--color-paper-sunken);
+    box-shadow: var(--shadow-inset);
+  }
+
+  /* The sidebar's selected nav item: a channel button pressed IN — a deeper
+     beige with an inner shadow, lit by the accent dither (set on the element).
+     Same paper material as the wells it opens. */
+  .surface-selected {
+    background-color: #d2c9b1;
+    box-shadow:
+      inset 0 1px 3px rgba(33, 29, 22, 0.12),
+      inset 0 -1px 0 rgba(255, 255, 255, 0.25);
+  }
+
+  /* [GRAIN] Settings rows are now flat — the on-hover dot-matrix ("dither")
+     reveal was removed per request; no hover state on setting rows at all. */
+  .setting-row {
+    position: relative;
+  }
+}
+
+.logo-primary {
+  fill: var(--color-logo-primary);
+}
+
+.logo-stroke {
+  fill: var(--color-logo-stroke);
+  stroke: var(--color-logo-stroke);
+  stroke-width: 1;
+}
+
+/* Sonner toasts — give them Grain's paper float shadow (the className prop on
+   Toaster is a string, so the shadow rides here as a global rule instead). */
+[data-sonner-toast] {
+  box-shadow: var(--shadow-float) !important;
+}
+
+/* Custom title bar drag affordance — make the cursor read as a move grip only
+   on the empty regions of the bar, never over the window-control buttons. */
+[data-tauri-drag-region] {
+  cursor: default;
+}
+[data-tauri-drag-region]:active {
+  cursor: grabbing;
+}
+
+/* [GRAIN] Settings section animation — fires on every sidebar tab switch
+   because the content div is keyed to currentSection (React remounts it).
+   Fast fade-in + 6 px upward slide: snappy and clearly intentional. */
+@keyframes grain-section-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.grain-section-enter {
+  animation: grain-section-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}

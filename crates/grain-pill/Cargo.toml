@@ -1,0 +1,32 @@
+[package]
+name = "grain-pill"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Grain's always-on dot-matrix pill: a lightweight winit + tiny-skia native surface rendering the volume-density Aura Core. Captures mic levels directly (low latency) and presents with true per-pixel transparency (Win32 layered window)."
+
+[[bin]]
+name = "grain-pill"
+path = "src/main.rs"
+
+[dependencies]
+winit = "0.30"
+tiny-skia = "0.11"
+cpal = "0.15"
+raw-window-handle = "0.6"
+fontdue = "0.9" # text rasterization for the prompt riser
+# [GRAIN] receive DaemonEvents from the core over the local WebSocket.
+grain-core = { path = "../grain-core" }
+tokio = { version = "1", features = ["rt", "net", "time", "io-util"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Shell",
+] }
