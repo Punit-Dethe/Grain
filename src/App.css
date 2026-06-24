@@ -127,30 +127,30 @@ body {
    Same warm palette, inverted: espresso background, cream ink, same accent.
    ============================================================================ */
 [data-theme="dark"] {
-  /* Paper — exact values from design spec.
-     paper        = settings window bg    #181716
-     paper-raised = settings rows         #211E1B
-     paper-sunken = sidebar rail          #121110  */
-  --color-paper: #181716;
-  --color-paper-raised: #211E1B;
-  --color-paper-sunken: #121110;
+  /* Paper — sleek, neutral darks for a modern, premium feel.
+     paper        = settings window bg    #0E0E0E
+     paper-raised = settings rows         #1A1A1A
+     paper-sunken = sidebar rail          #050505  */
+  --color-paper: #0E0E0E;
+  --color-paper-raised: #1A1A1A;
+  --color-paper-sunken: #050505;
 
-  /* Ink (cream): primary → secondary → faint. */
-  --color-ink: #ece5da;
-  --color-ink-soft: #9e9587;
-  --color-ink-faint: #6b6358;
+  /* Ink (clean white/grays): primary → secondary → faint. */
+  --color-ink: #F9FAFB;
+  --color-ink-soft: #9CA3AF;
+  --color-ink-faint: #4B5563;
 
   /* Accent stays orange — it's mode-independent brand identity. */
   /* --color-accent: unchanged */
 
-  /* Divider line — lighter alpha on dark. */
-  --color-line: rgba(236, 229, 218, 0.08);
+  /* Divider line — very crisp, subtle line for separation. */
+  --color-line: rgba(255, 255, 255, 0.06);
 
   /* Interaction tokens remapped for dark surfaces. */
-  --accent-tint: rgba(255, 93, 30, 0.15);
-  --on-accent: #fdf6ea;
-  --raise: #272320;
-  --line-strong: rgba(236, 229, 218, 0.16);
+  --accent-tint: rgba(255, 93, 30, 0.12);
+  --on-accent: #ffffff;
+  --raise: #262626;
+  --line-strong: rgba(255, 255, 255, 0.12);
 
   /* Status tints — same hues, slightly more opacity on dark. */
   --status-ready-tint: rgba(91, 138, 78, 0.18);

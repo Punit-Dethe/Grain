@@ -85,13 +85,13 @@ const ThemeToggle: React.FC<{
     type="button"
     onClick={onToggle}
     className="relative w-[90px] h-[26px] rounded-[8px] cursor-pointer shrink-0"
-    style={{ backgroundColor: isDark ? "#272422" : "#DDD5C8" }}
+    style={{ backgroundColor: isDark ? "#1A1A1A" : "#DDD5C8" }}
   >
     <span
       className="absolute top-[3px] h-[20px] w-[38px] rounded-[8px] transition-all duration-300"
       style={{
         left: isDark ? 49 : 3,
-        backgroundColor: isDark ? "#ECE5DA" : "#111010",
+        backgroundColor: isDark ? "#F9FAFB" : "#111010",
       }}
     />
     <span
@@ -100,7 +100,7 @@ const ThemeToggle: React.FC<{
         fontFamily: "var(--qp-font-mono)",
         fontSize: 8,
         fontWeight: 700,
-        color: isDark ? "rgba(236,229,218,0.32)" : "#DDD5C8",
+        color: isDark ? "rgba(255,255,255,0.4)" : "#DDD5C8",
       }}
     >
       LIGHT
@@ -111,7 +111,7 @@ const ThemeToggle: React.FC<{
         fontFamily: "var(--qp-font-mono)",
         fontSize: 8,
         fontWeight: 700,
-        color: isDark ? "#1a1816" : "rgba(20,18,16,0.38)",
+        color: isDark ? "#050505" : "rgba(20,18,16,0.38)",
       }}
     >
       DARK
@@ -130,7 +130,7 @@ export const QuickPanel: React.FC<QuickPanelProps> = ({ onOpenAdvanced }) => {
       // The console floats on a near-black chassis surround; the card sits on
       // top with its 36px rounded corners visible. The window is opaque +
       // OS-rounded (DWM), so this fills the frame outside the rounded card.
-      style={{ backgroundColor: "#0c0b0a" }}
+      style={{ backgroundColor: "#000000" }}
     >
       <ScaledStage designWidth={DESIGN_W} designHeight={DESIGN_H}>
         <div
