@@ -209,6 +209,7 @@ impl Aura {
             PillState::Idle => self.roll_idle(),
             PillState::Processing => {
                 self.roll_processing();
+                self.roll_button();
             }
             PillState::Recording => {
                 self.roll_recording(amp);
@@ -290,7 +291,7 @@ impl Aura {
             eligible.swap(i, j.min(i));
         }
 
-        self.clear_to([40, 40, 40, 255]); // Unlit dots are drawn as a very dark grey background
+        self.clear_to(NONE); // only lit pixels appear; unlit stay fully dark
         for (k, &idx) in eligible.iter().enumerate() {
             if k >= active_count {
                 break;
