@@ -833,7 +833,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 
     // [GRAIN] Seed the prompt-switcher + agent bindings for installs that predate them.
     let defaults = get_default_settings();
-    for id in ["prompt_next", "prompt_prev", "summon_agent"] {
+    for id in ["prompt_next", "prompt_prev", "summon_agent", "transcribe_send_to_ai"] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
                 settings.bindings.insert(id.to_string(), binding.clone());
@@ -964,6 +964,22 @@ pub fn get_default_settings() -> AppSettings {
                 .to_string(),
             default_binding: default_agent_shortcut.to_string(),
             current_binding: default_agent_shortcut.to_string(),
+        },
+    );
+
+    #[cfg(target_os = "macos")]
+    let default_send_to_ai_shortcut = "option+shift+enter";
+    #[cfg(not(target_os = "macos"))]
+    let default_send_to_ai_shortcut = "ctrl+shift+enter";
+    bindings.insert(
+        "transcribe_send_to_ai".to_string(),
+        ShortcutBinding {
+            id: "transcribe_send_to_ai".to_string(),
+            name: "Send to AI (End)".to_string(),
+            description: "End an in-progress dictation or real-time session and send the transcript to AI. Only used when push-to-talk is off."
+                .to_string(),
+            default_binding: default_send_to_ai_shortcut.to_string(),
+            current_binding: default_send_to_ai_shortcut.to_string(),
         },
     );
 

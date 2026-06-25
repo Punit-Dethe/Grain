@@ -39,6 +39,7 @@ pub struct TranscriptionCoordinator {
 
 pub fn is_transcribe_binding(id: &str) -> bool {
     id == "transcribe" || id == "transcribe_with_post_process" || id == "transcribe_realtime"
+    || id == "transcribe_send_to_ai"
     // ^ [GRAIN] real-time binding shares the serialized record/transcribe lifecycle
 }
 
@@ -81,10 +82,20 @@ impl TranscriptionCoordinator {
                             } else if is_pressed {
                                 match &stage {
                                     Stage::Idle => {
-                                        start(&app, &mut stage, &binding_id, &hotkey_string);
+                                        if binding_id != "transcribe_send_to_ai" {
+                                            start(&app, &mut stage, &binding_id, &hotkey_string);
+                                        }
                                     }
-                                    Stage::Recording(id) if id == &binding_id => {
-                                        stop(&app, &mut stage, &binding_id, &hotkey_string);
+                                    Stage::Recording(id) => {
+                                        let start_id = id.clone();
+                                        if &binding_id == id {
+                                            stop(&app, &mut stage, &start_id, &hotkey_string);
+                                        } else if binding_id == "transcribe_send_to_ai" {
+                                            let send_to_ai = crate::settings::get_settings(&app).post_process_enabled;
+                                            stop_with_intent(&app, &mut stage, &start_id, &hotkey_string, send_to_ai);
+                                        } else {
+                                            debug!("Ignoring press for '{binding_id}': pipeline busy")
+                                        }
                                     }
                                     _ => {
                                         debug!("Ignoring press for '{binding_id}': pipeline busy")
@@ -181,5 +192,26 @@ fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &st
         return;
     };
     action.stop(app, binding_id, hotkey_string);
+    *stage = Stage::Processing;
+}
+
+fn stop_with_intent(
+    app: &AppHandle,
+    stage: &mut Stage,
+    start_id: &str,
+    hotkey_string: &str,
+    send_to_ai: bool,
+) {
+    let Some(action) = ACTION_MAP.get(start_id) else {
+        warn!("No action in ACTION_MAP for '{start_id}'");
+        return;
+    };
+    if send_to_ai {
+        action.set_post_process_override(true);
+    }
+    action.stop(app, start_id, hotkey_string);
+    if send_to_ai {
+        action.set_post_process_override(false);
+    }
     *stage = Stage::Processing;
 }

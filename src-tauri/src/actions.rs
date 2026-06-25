@@ -18,7 +18,7 @@ use grain_core::{DaemonEvent, SessionMode}; // [GRAIN] pill lifecycle events
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -48,11 +48,13 @@ impl Drop for FinishGuard {
 pub trait ShortcutAction: Send + Sync {
     fn start(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
     fn stop(&self, app: &AppHandle, binding_id: &str, shortcut_str: &str);
+    fn set_post_process_override(&self, _override: bool) {}
 }
 
 // Transcribe Action
 struct TranscribeAction {
     post_process: bool,
+    post_process_override: AtomicBool,
 }
 
 /// Field name for structured output JSON schema
@@ -635,6 +637,9 @@ impl ShortcutAction for TranscribeAction {
             );
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
+            if !get_settings(app).push_to_talk {
+                shortcut::register_send_to_ai_shortcut(app);
+            }
         } else {
             // Starting failed (e.g. blocked mic permissions). The pill was never
             // shown (we only emit on success), so nothing to tear down here.
@@ -663,9 +668,14 @@ impl ShortcutAction for TranscribeAction {
         );
     }
 
+    fn set_post_process_override(&self, override_val: bool) {
+        self.post_process_override.store(override_val, Ordering::Relaxed);
+    }
+
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
+        shortcut::unregister_send_to_ai_shortcut(app);
 
         let stop_time = Instant::now();
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
@@ -688,7 +698,7 @@ impl ShortcutAction for TranscribeAction {
         play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
-        let post_process = self.post_process;
+        let post_process = self.post_process || self.post_process_override.load(Ordering::Relaxed);
 
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
@@ -997,7 +1007,9 @@ impl ShortcutAction for TestAction {
 // [GRAIN] Real-time rolling-window transcribe action. Streams audio through the
 // rolling engine in the background (no partial display); pastes the assembled
 // transcript on stop, with a batch fallback if rolling yields nothing.
-struct RealtimeTranscribeAction;
+struct RealtimeTranscribeAction {
+    post_process_override: AtomicBool,
+}
 
 impl ShortcutAction for RealtimeTranscribeAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
@@ -1073,6 +1085,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 },
             );
             shortcut::register_cancel_shortcut(app);
+            if !get_settings(app).push_to_talk {
+                shortcut::register_send_to_ai_shortcut(app);
+            }
         } else {
             rt.cancel_session();
             change_tray_icon(app, TrayIconState::Idle);
@@ -1095,8 +1110,13 @@ impl ShortcutAction for RealtimeTranscribeAction {
         }
     }
 
+    fn set_post_process_override(&self, override_val: bool) {
+        self.post_process_override.store(override_val, Ordering::Relaxed);
+    }
+
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         shortcut::unregister_cancel_shortcut(app);
+        shortcut::unregister_send_to_ai_shortcut(app);
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
@@ -1114,6 +1134,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         play_feedback_sound(app, SoundType::Stop);
 
         let binding_id = binding_id.to_string();
+        let post_process = self.post_process_override.load(Ordering::Relaxed);
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
 
@@ -1122,7 +1143,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // Drain the rolling worker → final assembled transcript.
             let rolling_text = rt.finish_session().unwrap_or_default();
 
-            // [GRAIN] A4 safety fallback: rolling yielded nothing → batch the audio.
             let final_text = if !rolling_text.trim().is_empty() {
                 rolling_text
             } else if !samples.is_empty() {
@@ -1132,6 +1152,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 String::new()
             };
 
+            let processed = process_transcription_output(&ah, &final_text, post_process).await;
+            let final_text = processed.final_text;
+
             if !samples.is_empty() {
                 let file_name = format!("grain-{}.wav", chrono::Utc::now().timestamp());
                 let wav_path = hm.recordings_dir().join(&file_name);
@@ -1140,7 +1163,13 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
                 })
                 .await;
-                if let Err(e) = hm.save_entry(file_name, final_text.clone(), false, None, None) {
+                if let Err(e) = hm.save_entry(
+                    file_name,
+                    final_text.clone(),
+                    post_process,
+                    processed.post_processed_text.clone(),
+                    processed.post_process_prompt.clone(),
+                ) {
                     error!("Failed to save history entry: {e}");
                 }
             }
@@ -1180,16 +1209,22 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "transcribe".to_string(),
         Arc::new(TranscribeAction {
             post_process: false,
+            post_process_override: AtomicBool::new(false),
         }) as Arc<dyn ShortcutAction>,
     );
     // [GRAIN] real-time rolling-window transcription.
     map.insert(
         "transcribe_realtime".to_string(),
-        Arc::new(RealtimeTranscribeAction) as Arc<dyn ShortcutAction>,
+        Arc::new(RealtimeTranscribeAction {
+            post_process_override: AtomicBool::new(false),
+        }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "transcribe_with_post_process".to_string(),
-        Arc::new(TranscribeAction { post_process: true }) as Arc<dyn ShortcutAction>,
+        Arc::new(TranscribeAction {
+            post_process: true,
+            post_process_override: AtomicBool::new(false),
+        }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),

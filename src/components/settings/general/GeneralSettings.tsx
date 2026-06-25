@@ -49,6 +49,11 @@ export const GeneralSettings: React.FC = () => {
         {!isLinux && !pushToTalk && (
           <ShortcutInput shortcutId="cancel" grouped={true} />
         )}
+        {/* NEW: end a dictation/real-time session by sending the transcript to AI.
+            Shown whenever push-to-talk is off, on every platform. */}
+        {!pushToTalk && (
+          <ShortcutInput shortcutId="transcribe_send_to_ai" grouped={true} />
+        )}
       </SettingsGroup>
 
       {/* AI post-processing — the on/off toggle, plus the prompt-cycling
