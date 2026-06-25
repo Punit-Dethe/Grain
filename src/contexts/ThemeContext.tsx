@@ -1,52 +1,90 @@
 /**
- * [GRAIN] ThemeContext — single source of truth for the light/dark mode toggle.
+ * [GRAIN] ThemeContext — Independent toggles for Settings and Quick Panel.
  *
- * Both the Quick Panel and the Settings panel read and write through this
- * context so they always agree. The value is persisted to localStorage under
- * the key "grain-theme" so the preference survives app restarts.
- *
- * Usage:
- *   const { isDark, toggle } = useTheme();
+ * Exposes two independent states so users can have a dark Quick Panel and a light
+ * Settings window, or vice versa.
  */
 import React, { createContext, useCallback, useContext, useState } from "react";
 
-const STORAGE_KEY = "grain-theme";
+const SETTINGS_KEY = "grain-theme-settings";
+const QP_KEY = "grain-theme-quick-panel";
+const LEGACY_KEY = "grain-theme";
 
 interface ThemeContextValue {
-  isDark: boolean;
-  toggle: () => void;
+  isSettingsDark: boolean;
+  toggleSettings: () => void;
+  isQuickPanelDark: boolean;
+  toggleQuickPanel: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
-  isDark: false,
-  toggle: () => {},
+  isSettingsDark: false,
+  toggleSettings: () => {},
+  isQuickPanelDark: false,
+  toggleQuickPanel: () => {},
 });
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
-  const [isDark, setIsDark] = useState<boolean>(() => {
+  // Migration logic: If the old single-theme key exists, read it, then delete it.
+  // We use this value to seed both new keys so the user's preference isn't lost.
+  const [isSettingsDark, setIsSettingsDark] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) === "dark";
+      const legacy = localStorage.getItem(LEGACY_KEY);
+      if (legacy !== null) {
+        localStorage.setItem(SETTINGS_KEY, legacy);
+        localStorage.setItem(QP_KEY, legacy);
+        localStorage.removeItem(LEGACY_KEY);
+        return legacy === "dark";
+      }
+      return localStorage.getItem(SETTINGS_KEY) === "dark";
     } catch {
       return false;
     }
   });
 
-  const toggle = useCallback(() => {
-    setIsDark((prev) => {
+  const [isQuickPanelDark, setIsQuickPanelDark] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(QP_KEY) === "dark";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSettings = useCallback(() => {
+    setIsSettingsDark((prev) => {
       const next = !prev;
       try {
-        localStorage.setItem(STORAGE_KEY, next ? "dark" : "light");
+        localStorage.setItem(SETTINGS_KEY, next ? "dark" : "light");
       } catch {
-        // storage unavailable — in-memory only
+        // storage unavailable
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleQuickPanel = useCallback(() => {
+    setIsQuickPanelDark((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(QP_KEY, next ? "dark" : "light");
+      } catch {
+        // storage unavailable
       }
       return next;
     });
   }, []);
 
   return (
-    <ThemeContext.Provider value={{ isDark, toggle }}>
+    <ThemeContext.Provider
+      value={{
+        isSettingsDark,
+        toggleSettings,
+        isQuickPanelDark,
+        toggleQuickPanel,
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

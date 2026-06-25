@@ -32,7 +32,7 @@ const renderSettingsContent = (section: SidebarSection) => {
 
 // Inner component reads the theme context (must be inside ThemeProvider).
 function AppInner() {
-  const { isDark } = useTheme();
+  const { isSettingsDark } = useTheme();
   const { t, i18n } = useTranslation();
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
@@ -295,14 +295,14 @@ function AppInner() {
       {/* Chassis fill — no rounded corners. */}
       <div
         className="absolute inset-0 overflow-hidden"
-        style={{ backgroundColor: isDark ? "#0e0c0b" : "#0c0b0a" }}
+        style={{ backgroundColor: isSettingsDark ? "#0e0c0b" : "#0c0b0a" }}
       >
         <ScaledStage designWidth={1280} designHeight={760}>
           {/* Settings card — no rounded corners. data-theme drives CSS token overrides in App.css. */}
           <div
             className="relative w-full h-full overflow-hidden flex"
             style={{ backgroundColor: "var(--color-paper)" }}
-            data-theme={isDark ? "dark" : "light"}
+            data-theme={isSettingsDark ? "dark" : "light"}
           >
             {/* TitleBar: absolutely positioned behind the sidebar (z-10).
                 The sidebar covers the left portion; the right strip (window
