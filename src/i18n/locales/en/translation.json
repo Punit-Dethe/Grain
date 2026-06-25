@@ -229,6 +229,10 @@
           "summon_agent": {
             "name": "Summon Agent",
             "description": "Open the AI agent on your selected text — dictate or type an instruction."
+          },
+          "transcribe_send_to_ai": {
+            "name": "Send to AI (End)",
+            "description": "End an in-progress dictation or real-time session and send the transcript to AI."
           }
         },
         "errors": {

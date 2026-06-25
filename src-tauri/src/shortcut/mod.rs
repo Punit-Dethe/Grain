@@ -67,10 +67,26 @@ pub fn register_cancel_shortcut(app: &AppHandle) {
 
 /// Unregister the cancel shortcut (called when recording stops)
 pub fn unregister_cancel_shortcut(app: &AppHandle) {
-    let settings = get_settings(app);
+    let settings = settings::get_settings(app);
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::unregister_cancel_shortcut(app),
         KeyboardImplementation::HandyKeys => handy_keys::unregister_cancel_shortcut(app),
+    }
+}
+
+pub fn register_send_to_ai_shortcut(app: &AppHandle) {
+    let settings = settings::get_settings(app);
+    match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => tauri_impl::register_send_to_ai_shortcut(app),
+        KeyboardImplementation::HandyKeys => handy_keys::register_send_to_ai_shortcut(app),
+    }
+}
+
+pub fn unregister_send_to_ai_shortcut(app: &AppHandle) {
+    let settings = settings::get_settings(app);
+    match settings.keyboard_implementation {
+        KeyboardImplementation::Tauri => tauri_impl::unregister_send_to_ai_shortcut(app),
+        KeyboardImplementation::HandyKeys => handy_keys::unregister_send_to_ai_shortcut(app),
     }
 }
 
@@ -144,9 +160,9 @@ pub fn change_binding(
         }
     };
 
-    // If this is the cancel binding, just update the settings and return
+    // If this is a dynamic binding, just update the settings and return
     // It's managed dynamically, so we don't register/unregister here
-    if id == "cancel" {
+    if id == "cancel" || id == "transcribe_send_to_ai" {
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());
@@ -361,7 +377,8 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
 
     for (id, binding) in bindings {
         // Skip cancel shortcut as it's dynamically registered
-        if id == "cancel" {
+        // Skip dynamically registered shortcuts
+        if id == "cancel" || id == "transcribe_send_to_ai" {
             continue;
         }
 
@@ -389,8 +406,8 @@ fn register_all_shortcuts_for_implementation(
     let mut current_settings = settings::get_settings(app);
 
     for (id, default_binding) in &default_bindings {
-        // Skip cancel shortcut as it's dynamically registered
-        if id == "cancel" {
+        // Skip dynamically registered shortcuts
+        if id == "cancel" || id == "transcribe_send_to_ai" {
             continue;
         }
 

@@ -428,9 +428,9 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
     let default_bindings = settings::get_default_settings().bindings;
     let user_settings = settings::load_or_create_app_settings(app);
 
-    // Register all bindings except cancel (which is dynamic)
+    // Register all bindings except dynamic ones
     for (id, default_binding) in default_bindings {
-        if id == "cancel" {
+        if id == "cancel" || id == "transcribe_send_to_ai" {
             continue;
         }
         // Skip post-processing shortcut when the feature is disabled
@@ -495,11 +495,49 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
         tauri::async_runtime::spawn(async move {
             if let Some(cancel_binding) = get_settings(&app_clone).bindings.get("cancel").cloned() {
                 if let Some(state) = app_clone.try_state::<HandyKeysState>() {
-                    let _ = state.unregister(&cancel_binding);
+                    if let Err(e) = state.unregister(&cancel_binding) {
+                        error!("Failed to unregister cancel shortcut: {}", e);
+                    }
                 }
             }
         });
     }
+}
+
+/// Register the send_to_ai shortcut (called when recording starts)
+pub fn register_send_to_ai_shortcut(app: &AppHandle) {
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(binding) = get_settings(&app_clone)
+            .bindings
+            .get("transcribe_send_to_ai")
+            .cloned()
+        {
+            if let Some(state) = app_clone.try_state::<HandyKeysState>() {
+                if let Err(e) = state.register(&binding) {
+                    error!("Failed to register send_to_ai shortcut: {}", e);
+                }
+            }
+        }
+    });
+}
+
+/// Unregister the send_to_ai shortcut (called when recording stops)
+pub fn unregister_send_to_ai_shortcut(app: &AppHandle) {
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(binding) = get_settings(&app_clone)
+            .bindings
+            .get("transcribe_send_to_ai")
+            .cloned()
+        {
+            if let Some(state) = app_clone.try_state::<HandyKeysState>() {
+                if let Err(e) = state.unregister(&binding) {
+                    error!("Failed to unregister send_to_ai shortcut: {}", e);
+                }
+            }
+        }
+    });
 }
 
 /// Register a shortcut
