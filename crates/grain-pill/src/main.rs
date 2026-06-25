@@ -290,7 +290,7 @@ impl Aura {
             eligible.swap(i, j.min(i));
         }
 
-        self.clear_to([40, 40, 40, 255]); // only lit pixels appear; unlit stay dark grey
+        self.clear_to([12, 12, 12, 255]); // only lit pixels appear; unlit stay near-black dark grey
         for (k, &idx) in eligible.iter().enumerate() {
             if k >= active_count {
                 break;
