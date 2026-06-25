@@ -716,39 +716,54 @@ fn spawn_event_client(remote: Arc<Mutex<Remote>>, proxy: EventLoopProxy<UserEven
         rt.block_on(async move {
             use futures_util::StreamExt;
             use tokio_tungstenite::tungstenite::Message;
-            loop {
+            // Try to connect initially for a few seconds
+            let mut attempts = 0;
+            let mut ws_stream = loop {
                 match tokio_tungstenite::connect_async("ws://127.0.0.1:7124").await {
                     Ok((ws, _)) => {
                         eprintln!("ws: connected to ws://127.0.0.1:7124");
-                        let (_w, mut read) = ws.split();
-                        while let Some(Ok(msg)) = read.next().await {
-                            if let Message::Text(txt) = msg {
-                                if let Ok(ev) = serde_json::from_str::<DaemonEvent>(txt.as_str()) {
-                                    // Wake the event loop for session-relevant events so the
-                                    // pill surfaces immediately, not after HIDDEN_TICK ms.
-                                    let is_session_event = matches!(
-                                        ev,
-                                        DaemonEvent::RecordingStarted { .. }
-                                            | DaemonEvent::RecordingStopped { .. }
-                                            | DaemonEvent::ProcessingComplete { .. }
-                                            | DaemonEvent::SessionCancelled { .. }
-                                            | DaemonEvent::ModelError { .. }
-                                            | DaemonEvent::PasteError { .. }
-                                            | DaemonEvent::OverlayConfig { .. }
-                                    );
-                                    apply_event(&remote, ev);
-                                    if is_session_event {
-                                        let _ = proxy.send_event(UserEvent::Wake);
-                                    }
-                                }
+                        break Some(ws);
+                    }
+                    Err(e) => {
+                        eprintln!("ws: connect failed ({e}) — retrying");
+                        attempts += 1;
+                        if attempts > 50 {
+                            break None;
+                        }
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            };
+
+            if let Some(ws) = ws_stream {
+                let (_w, mut read) = ws.split();
+                while let Some(Ok(msg)) = read.next().await {
+                    if let Message::Text(txt) = msg {
+                        if let Ok(ev) = serde_json::from_str::<DaemonEvent>(txt.as_str()) {
+                            // Wake the event loop for session-relevant events so the
+                            // pill surfaces immediately, not after HIDDEN_TICK ms.
+                            let is_session_event = matches!(
+                                ev,
+                                DaemonEvent::RecordingStarted { .. }
+                                    | DaemonEvent::RecordingStopped { .. }
+                                    | DaemonEvent::ProcessingComplete { .. }
+                                    | DaemonEvent::SessionCancelled { .. }
+                                    | DaemonEvent::ModelError { .. }
+                                    | DaemonEvent::PasteError { .. }
+                                    | DaemonEvent::OverlayConfig { .. }
+                            );
+                            apply_event(&remote, ev);
+                            if is_session_event {
+                                let _ = proxy.send_event(UserEvent::Wake);
                             }
                         }
-                        eprintln!("ws: disconnected — reconnecting");
                     }
-                    Err(e) => eprintln!("ws: connect failed ({e}) — retrying"),
                 }
-                tokio::time::sleep(Duration::from_secs(1)).await; // reconnect
+                eprintln!("ws: disconnected — core app died, exiting.");
+            } else {
+                eprintln!("ws: failed to connect to core app after retries, exiting.");
             }
+            std::process::exit(0);
         });
     });
 }

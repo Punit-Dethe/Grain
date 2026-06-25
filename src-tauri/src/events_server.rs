@@ -90,6 +90,23 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>) {
     }
 }
 
+use std::sync::atomic::AtomicU32;
+
+pub static PILL_PID: AtomicU32 = AtomicU32::new(0);
+
+#[tauri::command]
+#[specta::specta]
+pub fn restart_pill() {
+    let pid = PILL_PID.load(Ordering::Acquire);
+    if pid != 0 {
+        log::info!("[GRAIN] UI requested pill restart (killing PID {})", pid);
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output();
+        #[cfg(not(target_os = "windows"))]
+        let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
+    }
+}
+
 /// [GRAIN] B2: launch the pill process and keep it alive (the "always-armed"
 /// surface). In a bundled build the pill sits next to the core exe; in dev, run
 /// `cargo run -p grain-pill` manually (it connects to the same WS).
@@ -102,11 +119,7 @@ pub fn spawn_pill_supervisor() {
             return;
         };
         log::info!("[GRAIN] pill supervisor: launching {}", exe.display());
-        // [GRAIN] Kill any stray pill left by a previous (crashed / force-quit)
-        // session BEFORE spawning ours, so multiple overlapping layered windows
-        // can never stack up (the cause of the "pill not visible" bug). Only one
-        // pill should ever run.
-        kill_stray_pills();
+
         for _ in 0..50 {
             if EVENTS_READY.load(Ordering::Acquire) {
                 break;
@@ -132,6 +145,7 @@ pub fn spawn_pill_supervisor() {
             match cmd.spawn()
             {
                 Ok(mut child) => {
+                    PILL_PID.store(child.id(), Ordering::Release);
                     // Drain the pill's stdout/stderr into our log so its
                     // diagnostics are visible (it has no console of its own).
                     for pipe in [
@@ -154,6 +168,7 @@ pub fn spawn_pill_supervisor() {
                         });
                     }
                     let status = child.wait();
+                    PILL_PID.store(0, Ordering::Release);
                     log::warn!("[GRAIN] pill exited ({status:?}) — restarting in 1s");
                 }
                 Err(e) => {
@@ -164,24 +179,6 @@ pub fn spawn_pill_supervisor() {
             std::thread::sleep(Duration::from_secs(1));
         }
     });
-}
-
-/// [GRAIN] Kill any `grain-pill` process left over from a previous crashed /
-/// force-quit session so multiple layered windows can never stack up.
-fn kill_stray_pills() {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/IM", "grain-pill.exe"])
-            .output();
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = std::process::Command::new("pkill")
-            .arg("-f")
-            .arg("grain-pill")
-            .output();
-    }
 }
 
 fn find_pill() -> Option<PathBuf> {
