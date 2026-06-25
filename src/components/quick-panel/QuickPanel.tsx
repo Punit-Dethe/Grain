@@ -120,13 +120,13 @@ const ThemeToggle: React.FC<{
 );
 
 export const QuickPanel: React.FC<QuickPanelProps> = ({ onOpenAdvanced }) => {
-  // [GRAIN] Use shared theme context so QP and Settings always agree.
-  const { isDark, toggle: handleThemeToggle } = useTheme();
+  // [GRAIN] Use independent quick panel theme state
+  const { isQuickPanelDark, toggleQuickPanel } = useTheme();
 
   return (
     <div
       className="qp-root w-full h-full"
-      data-qp-theme={isDark ? "dark" : "light"}
+      data-qp-theme={isQuickPanelDark ? "dark" : "light"}
       // The console floats on a near-black chassis surround; the card sits on
       // top with its 36px rounded corners visible. The window is opaque +
       // OS-rounded (DWM), so this fills the frame outside the rounded card.
@@ -193,7 +193,7 @@ export const QuickPanel: React.FC<QuickPanelProps> = ({ onOpenAdvanced }) => {
             </div>
 
             <div className="flex items-center gap-[12px]" data-no-drag>
-              <ThemeToggle isDark={isDark} onToggle={handleThemeToggle} />
+              <ThemeToggle isDark={isQuickPanelDark} onToggle={toggleQuickPanel} />
               <WindowControls />
             </div>
           </div>

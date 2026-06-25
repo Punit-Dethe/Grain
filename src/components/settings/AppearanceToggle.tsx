@@ -9,12 +9,12 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { SettingContainer } from "../ui/SettingContainer";
 
 export const AppearanceToggle: React.FC = () => {
-  const { isDark, toggle } = useTheme();
+  const { isSettingsDark, toggleSettings } = useTheme();
 
   return (
     <SettingContainer
       title="Appearance"
-      description="Switch between light and dark mode. This setting is synced with the Quick Panel toggle."
+      description="Switch the Settings window between light and dark mode. The Quick Panel appearance can be toggled independently."
       descriptionMode="tooltip"
       grouped={true}
     >
@@ -22,8 +22,8 @@ export const AppearanceToggle: React.FC = () => {
         <input
           type="checkbox"
           className="sr-only peer"
-          checked={isDark}
-          onChange={toggle}
+          checked={isSettingsDark}
+          onChange={toggleSettings}
         />
         {/* Same hardware-toggle style as ToggleSwitch */}
         <div

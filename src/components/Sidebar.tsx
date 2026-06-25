@@ -97,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { t } = useTranslation();
   const { settings } = useSettings();
-  const { isDark } = useTheme();
+  const { isSettingsDark } = useTheme();
 
   const availableSections = Object.entries(SECTIONS_CONFIG)
     .filter(([_, config]) => config.enabled(settings))
@@ -112,13 +112,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-5 pt-7">
         <div
           className="h-[30px] rounded-md flex items-center justify-center"
-          style={{ backgroundColor: isDark ? "var(--color-accent)" : "var(--color-ink)" }}
+          style={{ backgroundColor: isSettingsDark ? "var(--color-accent)" : "var(--color-ink)" }}
         >
           <span
             className="text-[0.7rem] tracking-[0.18em]"
             style={{
               fontFamily: "Syne, Inter, system-ui, sans-serif",
-              color: isDark ? "#fff" : "var(--on-accent)",
+              color: isSettingsDark ? "#fff" : "var(--on-accent)",
             }}
           >
             {BRAND_BADGE}
