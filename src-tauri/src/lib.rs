@@ -496,6 +496,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::handy_keys::stop_handy_keys_recording,
             trigger_update_check,
             show_main_window_command,
+            events_server::restart_pill,
             agent::agent_get_context,
             agent::agent_set_instruction,
             agent::agent_take_instruction,
