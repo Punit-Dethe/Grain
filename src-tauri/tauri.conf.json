@@ -4,7 +4,7 @@
   "version": "0.8.3",
   "identifier": "com.pais.handy",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "cargo build -p grain-pill && bun run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "bun run build && cargo build -p grain-pill --release && node -e \"const fs=require('fs');fs.mkdirSync('src-tauri/binaries',{recursive:true});fs.copyFileSync('C:/gt/release/grain-pill.exe','src-tauri/binaries/grain-pill-x86_64-pc-windows-msvc.exe');\"",
     "frontendDist": "../dist"
