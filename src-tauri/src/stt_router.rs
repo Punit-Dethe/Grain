@@ -84,7 +84,13 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
             .get(&provider.id)
             .cloned()
             .unwrap_or_default();
-        match crate::stt_client::transcribe(provider, &samples, &key).await {
+        
+        let client = app
+            .try_state::<reqwest::Client>()
+            .ok_or("STT routing: HTTP client not available")?
+            .inner();
+
+        match crate::stt_client::transcribe(client, provider, &samples, &key).await {
             Ok(res) => {
                 record_outcome(
                     &trackers.stt,
