@@ -99,16 +99,12 @@ pub struct SessionCursor {
     early_min_frames: usize,
     early_guard_frames: usize,
 
-    // The ENTIRE session's audio, in capture order.
-    all_blocks: Vec<Vec<i16>>,
-    total_frames: usize,
+    // The ENTIRE session's audio.
+    all_samples: Vec<i16>,
     /// Absolute cursor: number of leading frames already dispatched.
     sent_frames: usize,
     /// Frames of contiguous trailing silence (raw RMS based).
     silence_frames: usize,
-    // Slice scan cursor (block index, absolute frame at that block's start).
-    scan_idx: usize,
-    scan_frame: usize,
 }
 
 impl SessionCursor {
@@ -126,12 +122,9 @@ impl SessionCursor {
             silence_min_frames,
             early_min_frames,
             early_guard_frames,
-            all_blocks: Vec::new(),
-            total_frames: 0,
+            all_samples: Vec::new(),
             sent_frames: 0,
             silence_frames: 0,
-            scan_idx: 0,
-            scan_frame: 0,
         }
     }
 
@@ -145,24 +138,20 @@ impl SessionCursor {
 
     /// Clear all state so a new session starts completely fresh.
     pub fn reset(&mut self) {
-        self.all_blocks.clear();
-        self.total_frames = 0;
+        self.all_samples.clear();
         self.sent_frames = 0;
         self.silence_frames = 0;
-        self.scan_idx = 0;
-        self.scan_frame = 0;
     }
 
     /// The assembled transcript text region cursor — current end of session, sec.
     pub fn total_sec(&self) -> f64 {
-        self.frame_to_sec(self.total_frames)
+        self.frame_to_sec(self.all_samples.len())
     }
 
     /// Push one captured block with its raw RMS. Returns a finalized chunk if an
     /// auto-finalize boundary (hard cut or silence-gap early finalize) is crossed.
     pub fn push_block(&mut self, block: &[i16], raw_rms: f64) -> Option<AudioChunk> {
-        self.all_blocks.push(block.to_vec());
-        self.total_frames += block.len();
+        self.all_samples.extend_from_slice(block);
 
         // Silence tracking uses RAW rms so quiet end-of-sentence speech is not
         // mistaken for silence.
@@ -172,7 +161,7 @@ impl SessionCursor {
             self.silence_frames = 0;
         }
 
-        let unsent = self.total_frames - self.sent_frames;
+        let unsent = self.all_samples.len() - self.sent_frames;
         let should_finalize = unsent >= self.max_frames
             || (unsent >= self.early_min_frames
                 && self.silence_frames >= self.silence_min_frames
@@ -190,7 +179,7 @@ impl SessionCursor {
     /// Port of `_emit_chunk_locked`. The overlap before the cursor protects
     /// boundary words; the assembler removes the duplicated region.
     pub fn emit_chunk(&mut self) -> Option<AudioChunk> {
-        let end = self.total_frames;
+        let end = self.all_samples.len();
         if end <= self.sent_frames {
             return None;
         }
@@ -218,10 +207,10 @@ impl SessionCursor {
     pub fn stop(&mut self) -> Option<AudioChunk> {
         let start_frame = self.sent_frames.saturating_sub(self.overlap_frames);
         let fresh_start_frame = self.sent_frames;
-        let end_frame = self.total_frames;
+        let end_frame = self.all_samples.len();
         let samples = self.slice_frames(start_frame, end_frame);
         // Cursor now covers the whole session — nothing left unsent.
-        self.sent_frames = self.total_frames;
+        self.sent_frames = self.all_samples.len();
         if samples.is_empty() {
             return None;
         }
@@ -238,55 +227,12 @@ impl SessionCursor {
         frame as f64 / self.cfg.sample_rate as f64
     }
 
-    /// Return the samples covering absolute frame range `[start_frame, end_frame)`,
-    /// sliced exactly at the boundaries. Port of `_slice_frames_locked`.
-    ///
-    /// Resumes the scan from the cached cursor when the range begins at or after
-    /// it (the production pattern — the send cursor only advances). Falls back to
-    /// a full scan from 0 for any earlier range so correctness never relies on
-    /// the monotonicity assumption.
-    fn slice_frames(&mut self, start_frame: usize, end_frame: usize) -> Vec<i16> {
-        if end_frame <= start_frame {
+    fn slice_frames(&self, start_frame: usize, end_frame: usize) -> Vec<i16> {
+        if end_frame <= start_frame || start_frame >= self.all_samples.len() {
             return Vec::new();
         }
-        let n = self.all_blocks.len();
-
-        let (mut idx, mut pos) = if self.scan_idx <= n && self.scan_frame <= start_frame {
-            (self.scan_idx, self.scan_frame)
-        } else {
-            (0, 0)
-        };
-
-        // Skip blocks entirely before the range, persisting how far we got.
-        while idx < n {
-            let blk_len = self.all_blocks[idx].len();
-            if pos + blk_len <= start_frame {
-                pos += blk_len;
-                idx += 1;
-            } else {
-                break;
-            }
-        }
-        self.scan_idx = idx;
-        self.scan_frame = pos;
-
-        // Collect blocks overlapping [start_frame, end_frame), sliced exactly.
-        let mut out: Vec<i16> = Vec::new();
-        let mut scan_pos = pos;
-        for blk in &self.all_blocks[idx..n] {
-            let blk_len = blk.len();
-            let blk_start = scan_pos;
-            scan_pos += blk_len;
-            if blk_start >= end_frame {
-                break; // entirely after the range
-            }
-            let lo = start_frame.saturating_sub(blk_start);
-            let hi = (end_frame - blk_start).min(blk_len);
-            if hi > lo {
-                out.extend_from_slice(&blk[lo..hi]);
-            }
-        }
-        out
+        let end = end_frame.min(self.all_samples.len());
+        self.all_samples[start_frame..end].to_vec()
     }
 }
 
@@ -325,8 +271,7 @@ mod tests {
     #[test]
     fn slice_is_frame_exact() {
         let mut s = cur();
-        s.all_blocks = vec![block(100, 1000), block(100, 1000), block(100, 1000)];
-        s.total_frames = 300;
+        s.all_samples = vec![block(100, 1000), block(100, 1000), block(100, 1000)].concat();
         let frames = s.slice_frames(50, 250);
         assert_eq!(frames.len(), 200); // exactly [50, 250)
     }
@@ -334,8 +279,7 @@ mod tests {
     #[test]
     fn slice_within_single_block() {
         let mut s = cur();
-        s.all_blocks = vec![block(100, 1000)];
-        s.total_frames = 100;
+        s.all_samples = block(100, 1000);
         let frames = s.slice_frames(20, 60);
         assert_eq!(frames.len(), 40);
     }
@@ -344,8 +288,7 @@ mod tests {
     fn emit_chunk_advances_cursor() {
         let mut s = cur();
         let f = fps(&s);
-        s.all_blocks = vec![block(f, 1000); 12]; // 12s of audio
-        s.total_frames = 12 * f;
+        s.all_samples = vec![block(f, 1000); 12].concat(); // 12s of audio
         let chunk = s.emit_chunk();
         assert!(chunk.is_some());
         assert_eq!(s.sent_frames, 12 * f); // cursor advanced to the end
@@ -356,21 +299,19 @@ mod tests {
         let mut s = cur();
         let f = fps(&s);
         // 12s already sent, then 3 more seconds captured but never chunked.
-        s.all_blocks = (0..15).map(|_| block(f, 1000)).collect();
-        s.total_frames = 15 * f;
+        s.all_samples = vec![block(f, 1000); 15].concat();
         s.sent_frames = 12 * f; // 3s unsent tail
         let chunk = s.stop().expect("tail flushed");
         // Tail = unsent 3s + 2s overlap context = 5s.
         assert_eq!(chunk.frame_count(), (3 + 2) * f);
-        assert_eq!(s.sent_frames, s.total_frames);
+        assert_eq!(s.sent_frames, s.all_samples.len());
     }
 
     #[test]
     fn stop_with_no_unsent_audio_still_safe() {
         let mut s = cur();
         let f = fps(&s);
-        s.all_blocks = (0..10).map(|_| block(f, 1000)).collect();
-        s.total_frames = 10 * f;
+        s.all_samples = vec![block(f, 1000); 10].concat();
         s.sent_frames = 10 * f; // nothing unsent
         let chunk = s.stop().expect("overlap window emitted");
         assert_eq!(chunk.frame_count(), s.overlap_frames);
@@ -380,15 +321,13 @@ mod tests {
     fn no_frames_dropped_across_chunk_and_stop() {
         let mut s = cur();
         let f = fps(&s);
-        let saved: Vec<Vec<i16>> = (0..25).map(|_| block(f, 1000)).collect();
+        let saved = vec![block(f, 1000); 25].concat();
         // Emit one chunk at the 12s mark.
-        s.all_blocks = saved[..12].to_vec();
-        s.total_frames = 12 * f;
+        s.all_samples = saved[..12 * f].to_vec();
         let first = s.emit_chunk();
         assert!(first.is_some());
         // Restore the full 25s (remaining 13s are the unsent tail).
-        s.all_blocks = saved;
-        s.total_frames = 25 * f;
+        s.all_samples = saved;
         let tail = s.stop().expect("tail flushed");
         // Tail covers cursor(12s) - overlap(2s) to 25s = 15s.
         assert_eq!(tail.frame_count(), (25 - 12 + 2) * f);
@@ -398,12 +337,10 @@ mod tests {
     fn chunks_carry_exact_timeline_metadata() {
         let mut s = cur();
         let f = fps(&s);
-        let saved: Vec<Vec<i16>> = (0..25).map(|_| block(f, 1000)).collect();
-        s.all_blocks = saved[..12].to_vec();
-        s.total_frames = 12 * f;
+        let saved = vec![block(f, 1000); 25].concat();
+        s.all_samples = saved[..12 * f].to_vec();
         let first = s.emit_chunk().unwrap();
-        s.all_blocks = saved;
-        s.total_frames = 25 * f;
+        s.all_samples = saved;
         let tail = s.stop().unwrap();
 
         // First chunk: no overlap context exists yet — starts at 0.
@@ -475,11 +412,12 @@ mod tests {
                 block(n, v)
             })
             .collect();
-        let total: usize = blocks.iter().map(|b| b.len()).sum();
+        
+        let all_samples = blocks.concat();
+        let total = all_samples.len();
 
         let mut s = cur();
-        s.all_blocks = blocks.clone();
-        s.total_frames = total;
+        s.all_samples = all_samples;
 
         // Walk forward in overlapping windows, exactly like emit/stop do.
         let step = 800 * 20; // ~20s of unsent audio per chunk
