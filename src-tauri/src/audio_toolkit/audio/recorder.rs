@@ -307,8 +307,13 @@ impl AudioRecorder {
                 }
             }
 
+            let chunk_to_send = std::mem::replace(
+                &mut output_buffer,
+                Vec::with_capacity(data.len() / channels),
+            );
+
             if sample_tx
-                .send(AudioChunk::Samples(output_buffer.clone()))
+                .send(AudioChunk::Samples(chunk_to_send))
                 .is_err()
             {
                 log::error!("Failed to send samples");
