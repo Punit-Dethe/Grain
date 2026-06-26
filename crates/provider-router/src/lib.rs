@@ -17,7 +17,7 @@ pub mod router;
 
 pub use model::{AppSettings, ProviderConfig, ProviderError};
 pub use rotation::{
-    caps_for, estimate_tokens, parse_rate_limit_headers, parse_retry_after, RotationTracker,
-    TierCaps, COMPLETION_RESERVE_TOKENS,
+    estimate_tokens, parse_rate_limit_headers, parse_retry_after, RotationTracker,
+    COMPLETION_RESERVE_TOKENS,
 };
 pub use router::{ProviderPool, Router, SettingsStore};
