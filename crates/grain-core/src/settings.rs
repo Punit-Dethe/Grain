@@ -202,7 +202,7 @@ pub fn default_stt_providers() -> Vec<SttProvider> {
             name: "Deepgram".to_string(),
             kind: SttProviderKind::Deepgram,
             base_url: "https://api.deepgram.com".to_string(),
-            model: "nova-3".to_string(),
+            model: "nova-2".to_string(),
             enabled: false,
             quota_limit: None,
             quota_used_today: 0,
