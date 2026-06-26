@@ -624,7 +624,12 @@ pub async fn agent_run(
         .cloned()
         .unwrap_or_default();
 
-    match run_agent_once(&provider, model, api_key, &full).await {
+    let http_client = app
+        .try_state::<reqwest::Client>()
+        .map(|s| s.inner().clone())
+        .ok_or("Agent: shared HTTP client unavailable")?;
+
+    match run_agent_once(&http_client, &provider, model, api_key, &full).await {
         CallOutcome::Ok { text, .. } => Ok(text),
         CallOutcome::RateLimited { .. } => Err(format!(
             "{} is rate-limited right now — try again shortly.",
@@ -699,6 +704,11 @@ async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result
         .collect();
     let order = select_order(&trackers.llm, &candidates, est_tokens, now_secs());
 
+    let Some(http_client) = app.try_state::<reqwest::Client>() else {
+        return Err("Agent: shared HTTP client unavailable".into());
+    };
+    let http_client = http_client.inner().clone();
+
     let mut last_err = "All AI providers failed.".to_string();
     for id in &order {
         let Some(provider) = eligible.iter().find(|p| &p.id == id) else {
@@ -715,7 +725,7 @@ async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result
             .cloned()
             .unwrap_or_default();
 
-        let outcome = run_agent_once(provider, model, api_key, full).await;
+        let outcome = run_agent_once(&http_client, provider, model, api_key, full).await;
         record_outcome(&trackers.llm, &provider.id, &outcome, now_secs());
         match outcome {
             CallOutcome::Ok { text, .. } => {
@@ -735,6 +745,7 @@ async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result
 /// single system+user prompt. Returns a [`CallOutcome`] so the rotation tracker
 /// learns from it.
 async fn run_agent_once(
+    client: &reqwest::Client,
     provider: &PostProcessProvider,
     model: String,
     api_key: String,
@@ -785,6 +796,7 @@ async fn run_agent_once(
     let response = tokio::time::timeout(
         AGENT_LLM_TIMEOUT,
         crate::llm_client::send_chat(
+            client,
             provider,
             api_key,
             &model,

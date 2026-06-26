@@ -54,12 +54,14 @@ pub fn rotation_pool(settings: &AppSettings) -> Vec<PostProcessProvider> {
 
 /// If the local date rolled over since the last reset, zero every provider's
 /// `quota_used_today` and stamp today's date. Idempotent within a day.
-pub fn reset_quota_if_new_day(app: &AppHandle) {
-    let Some(ctx) = ctx(app) else { return };
+/// Returns `true` if quotas were actually reset (so the caller can re-read
+/// settings to pick up zeroed counters).
+pub fn reset_quota_if_new_day(app: &AppHandle) -> bool {
+    let Some(ctx) = ctx(app) else { return false };
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let needs_reset = ctx.with_settings(|s| s.post_process_quota_reset_date != today);
     if !needs_reset {
-        return;
+        return false;
     }
     if let Err(e) = ctx.update_settings(|s| {
         for p in s.post_process_providers.iter_mut() {
@@ -71,6 +73,7 @@ pub fn reset_quota_if_new_day(app: &AppHandle) {
     } else {
         log::info!("[GRAIN] post-process daily quotas reset for {today}");
     }
+    true
 }
 
 /// Increment the provider's daily quota counter and persist it.

@@ -282,6 +282,16 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] smart-rotation health trackers (one per domain), shared by the STT
     // and post-process routers for cooldown-aware provider ordering.
     app_handle.manage(Arc::new(rotation_state::RotationTrackers::default()));
+    // [GRAIN] One shared reqwest::Client for ALL outbound HTTP calls (LLM + STT).
+    // reqwest::Client is designed to be cloned/shared — it manages a connection pool,
+    // TLS sessions, and keep-alive internally. Building one per request throws all of
+    // that away. Centralising here means every provider call reuses connections.
+    let shared_http_client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .expect("failed to build shared HTTP client");
+    app_handle.manage(shared_http_client);
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());

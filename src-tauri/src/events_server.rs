@@ -5,7 +5,6 @@
 //! This is the seed of the future local server (the OpenAI-compatible endpoints
 //! grow on the same listener later).
 
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -117,11 +116,14 @@ pub fn spawn_pill_supervisor() {
     use std::process::Stdio;
     use std::sync::atomic::Ordering;
     std::thread::spawn(|| {
-        let Some(exe) = find_pill() else {
-            log::warn!("[GRAIN] grain-pill not found next to the exe — run it manually in dev");
-            return;
+        let exe = match std::env::current_exe() {
+            Ok(exe) => exe,
+            Err(e) => {
+                log::error!("[GRAIN] failed to get current executable path: {}", e);
+                return;
+            }
         };
-        log::info!("[GRAIN] pill supervisor: launching {}", exe.display());
+        log::info!("[GRAIN] pill supervisor: launching {} --pill", exe.display());
 
         // [GRAIN] Kill any stray pill left by a previous (crashed / force-quit)
         // session BEFORE spawning ours, so multiple overlapping layered windows
@@ -153,9 +155,21 @@ pub fn spawn_pill_supervisor() {
 
         loop {
             let mut cmd = std::process::Command::new(&exe);
+            cmd.arg("--pill");
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             #[cfg(windows)]
             cmd.creation_flags(CREATE_NO_WINDOW);
+
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::process::CommandExt;
+                unsafe {
+                    cmd.pre_exec(|| {
+                        libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+                        Ok(())
+                    });
+                }
+            }
 
             match cmd.spawn()
             {
@@ -355,8 +369,19 @@ fn assign_child_to_job(job: &JobHandle, child: &std::process::Child) {
 fn kill_stray_pills() {
     #[cfg(target_os = "windows")]
     {
+        // Kill legacy standalone pill
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/IM", "grain-pill.exe"])
+            .output();
+        
+        // Kill any multicall pills (processes with --pill in command line)
+        let exe_name = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "grain.exe".to_string());
+            
+        let _ = std::process::Command::new("wmic")
+            .args(["process", "where", &format!("name='{}' and commandline like '%--pill%'", exe_name), "call", "terminate"])
             .output();
     }
     #[cfg(not(target_os = "windows"))]
@@ -365,62 +390,10 @@ fn kill_stray_pills() {
             .arg("-f")
             .arg("grain-pill")
             .output();
+            
+        let _ = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg("--pill")
+            .output();
     }
 }
-
-fn find_pill() -> Option<PathBuf> {
-    let name = if cfg!(windows) {
-        "grain-pill.exe"
-    } else {
-        "grain-pill"
-    };
-
-    // [GRAIN] Tauri `externalBin` places the pill next to the core exe but
-    // appends the Rust target triple, e.g.:
-    //   grain-pill-x86_64-pc-windows-msvc.exe
-    // We probe that name first in release so the bundled copy is always preferred.
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|e| e.parent().map(|p| p.to_path_buf()));
-
-    // Next to the core exe — plain name (dev layout / future non-triple builds).
-    let next_to_exe = exe_dir.as_ref().map(|d| d.join(name));
-
-    // Next to the core exe — Tauri externalBin triple-suffixed name (release layout).
-    let triple_name = if cfg!(windows) {
-        format!("grain-pill-{}.exe", std::env::consts::ARCH.replace("x86_64", "x86_64-pc-windows-msvc"))
-    } else {
-        format!("grain-pill-{}", std::env::consts::ARCH)
-    };
-    // Use the real target triple compiled into the binary for reliability.
-    let triple_suffixed = exe_dir.as_ref().map(|d| {
-        // Try the exact triple that cargo uses on Windows.
-        #[cfg(target_os = "windows")]
-        { d.join("grain-pill-x86_64-pc-windows-msvc.exe") }
-        #[cfg(target_os = "macos")]
-        { d.join(format!("grain-pill-{}-apple-darwin", std::env::consts::ARCH)) }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-        { d.join(format!("grain-pill-{}-unknown-linux-gnu", std::env::consts::ARCH)) }
-    });
-
-    // Workspace target — where `cargo build -p grain-pill` lands in dev. src-tauri
-    // uses a SEPARATE target dir (e.g. C:\gt), so resolve the pill from the
-    // build-time manifest dir (…/grain/src-tauri → …/grain/target/{debug,release}).
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let workspace = manifest.parent().map(|w| w.join("target"));
-    let workspace_debug = workspace.as_ref().map(|t| t.join("debug").join(name));
-    let workspace_release = workspace.as_ref().map(|t| t.join("release").join(name));
-
-    // [GRAIN] In DEV (debug) prefer the freshly-built workspace binary — a stale
-    // copy can linger next to the core exe in the src-tauri target dir and would
-    // otherwise shadow every rebuild. In RELEASE prefer the bundled exe.
-    let order: Vec<Option<PathBuf>> = if cfg!(debug_assertions) {
-        vec![workspace_debug, workspace_release, next_to_exe, triple_suffixed]
-    } else {
-        vec![triple_suffixed, next_to_exe, workspace_release, workspace_debug]
-    };
-    // Suppress unused variable warning from the triple_name variable on some platforms.
-    let _ = triple_name;
-    order.into_iter().flatten().find(|c| c.exists())
-}
-
