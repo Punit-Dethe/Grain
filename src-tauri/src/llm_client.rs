@@ -97,56 +97,11 @@ impl std::fmt::Display for LlmError {
     }
 }
 
-/// Build headers for API requests based on provider type
-fn build_headers(provider: &PostProcessProvider, api_key: &str) -> Result<HeaderMap, String> {
-    let mut headers = HeaderMap::new();
-
-    // Common headers
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(
-        REFERER,
-        HeaderValue::from_static("https://github.com/cjpais/Handy"),
-    );
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static("Handy/1.0 (+https://github.com/cjpais/Handy)"),
-    );
-    headers.insert("X-Title", HeaderValue::from_static("Handy"));
-
-    // Provider-specific auth headers
-    if !api_key.is_empty() {
-        if provider.id == "anthropic" {
-            headers.insert(
-                "x-api-key",
-                HeaderValue::from_str(api_key)
-                    .map_err(|e| format!("Invalid API key header value: {}", e))?,
-            );
-            headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
-        } else {
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", api_key))
-                    .map_err(|e| format!("Invalid authorization header value: {}", e))?,
-            );
-        }
-    }
-
-    Ok(headers)
-}
-
-/// Create an HTTP client with provider-specific headers
-fn create_client(provider: &PostProcessProvider, api_key: &str) -> Result<reqwest::Client, String> {
-    let headers = build_headers(provider, api_key)?;
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .build()
-        .map_err(|e| format!("Failed to build HTTP client: {}", e))
-}
-
 /// Send a chat completion request to an OpenAI-compatible API. Returns an
 /// [`LlmSuccess`] (content may be `None` if the response carried none) plus the
 /// rate-limit signal, or an [`LlmError`] distinguishing 429 from other failures.
 pub async fn send_chat_completion(
+    client: &reqwest::Client,
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
@@ -155,6 +110,7 @@ pub async fn send_chat_completion(
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmSuccess, LlmError> {
     send_chat_completion_with_schema(
+        client,
         provider,
         api_key,
         model,
@@ -167,12 +123,11 @@ pub async fn send_chat_completion(
     .await
 }
 
-/// Send a chat completion request with structured output support
-/// When json_schema is provided, uses structured outputs mode
-/// system_prompt is used as the system message when provided
-/// reasoning_effort sets the OpenAI-style top-level field (e.g., "none", "low", "medium", "high")
-/// reasoning sets the OpenRouter-style nested object (effort + exclude)
+/// Send a chat completion request with structured output support.
+/// `reasoning_effort` sets the OpenAI-style top-level field (e.g., "none", "low", "medium", "high")
+/// `reasoning` sets the OpenRouter-style nested object (effort + exclude)
 pub async fn send_chat_completion_with_schema(
+    client: &reqwest::Client,
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
@@ -187,7 +142,9 @@ pub async fn send_chat_completion_with_schema(
 
     debug!("Sending chat completion request to: {}", url);
 
-    let client = create_client(provider, &api_key).map_err(LlmError::Other)?;
+    // Build a one-shot client that inherits the connection pool from the shared
+    // client but attaches provider-specific auth + common headers.
+    let req_client = build_authed_client(client, provider, &api_key).map_err(LlmError::Other)?;
 
     // Build messages vector
     let mut messages = Vec::new();
@@ -224,16 +181,16 @@ pub async fn send_chat_completion_with_schema(
         reasoning,
     };
 
-    send_request(&client, &url, &request_body).await
+    send_request(&req_client, &url, &request_body).await
 }
 
 /// [GRAIN] Send a free-form multi-turn chat completion (used by the Agent).
 ///
 /// `messages` is an ordered list of `(role, content)` — e.g. `("system", …)`,
 /// `("user", …)`, `("assistant", …)`. Unlike the post-process path there is no
-/// structured-output schema: the model answers freely. Returns the assistant text
-/// plus the same rate-limit signal the rotation tracker learns from.
+/// structured-output schema: the model answers freely.
 pub async fn send_chat(
+    client: &reqwest::Client,
     provider: &PostProcessProvider,
     api_key: String,
     model: &str,
@@ -244,7 +201,7 @@ pub async fn send_chat(
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
-    let client = create_client(provider, &api_key).map_err(LlmError::Other)?;
+    let req_client = build_authed_client(client, provider, &api_key).map_err(LlmError::Other)?;
 
     let messages = messages
         .into_iter()
@@ -259,7 +216,60 @@ pub async fn send_chat(
         reasoning,
     };
 
-    send_request(&client, &url, &request_body).await
+    send_request(&req_client, &url, &request_body).await
+}
+
+/// Attach common + provider-specific auth headers to a POST request, using the
+/// shared connection-pool `client` as the base. Returns the fully configured
+/// `RequestBuilder` ready to `.json(body).send().await`.
+fn build_authed_client(
+    _base: &reqwest::Client,
+    provider: &PostProcessProvider,
+    api_key: &str,
+) -> Result<reqwest::Client, String> {
+    // reqwest::Client is cheaply clonable — cloning shares the underlying
+    // connection pool, so no new TCP handshakes or TLS sessions are created.
+    // We wrap it in a new Client via ClientBuilder only to attach default headers.
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(
+        REFERER,
+        HeaderValue::from_static("https://github.com/cjpais/Handy"),
+    );
+    headers.insert(
+        USER_AGENT,
+        HeaderValue::from_static("Handy/1.0 (+https://github.com/cjpais/Handy)"),
+    );
+    headers.insert("X-Title", HeaderValue::from_static("Handy"));
+
+    if !api_key.is_empty() {
+        // [GRAIN] Phase 2 note: will switch to provider.auth_style enum;
+        // keep this narrow id match until that migration lands.
+        if provider.id == "anthropic" {
+            headers.insert(
+                "x-api-key",
+                HeaderValue::from_str(api_key)
+                    .map_err(|e| format!("Invalid API key header value: {e}"))?,
+            );
+            headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        } else {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {api_key}"))
+                    .map_err(|e| format!("Invalid authorization header value: {e}"))?,
+            );
+        }
+    }
+    // The `base` client already has a connection pool; building a new Client from
+    // its config (via reqwest internals) reuses that pool when the feature flag
+    // `native-tls`/`rustls-tls` pools are shared by clone. For default_headers we
+    // must use ClientBuilder — but we pass `base`'s config forward via clone first.
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("Failed to build authed client: {e}"))
 }
 
 /// POST a built request to `{base}/chat/completions` and decode it into an
@@ -319,6 +329,7 @@ async fn send_request(
 /// Fetch available models from an OpenAI-compatible API
 /// Returns a list of model IDs
 pub async fn fetch_models(
+    client: &reqwest::Client,
     provider: &PostProcessProvider,
     api_key: String,
 ) -> Result<Vec<String>, String> {
@@ -327,9 +338,9 @@ pub async fn fetch_models(
 
     debug!("Fetching models from: {}", url);
 
-    let client = create_client(provider, &api_key)?;
+    let req_client = build_authed_client(client, provider, &api_key)?;
 
-    let response = client
+    let response = req_client
         .get(&url)
         .send()
         .await

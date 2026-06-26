@@ -152,8 +152,15 @@ async fn post_process_transcription(
         provider.id, model
     );
 
+    // Fetch the shared HTTP client from Tauri managed state.
+    let Some(http_client) = app.try_state::<reqwest::Client>() else {
+        warn!("post-process: shared HTTP client unavailable");
+        return None;
+    };
+    let http_client = http_client.inner().clone();
+
     // Single-provider path: no rotation, so the tracker isn't consulted/updated.
-    match run_one_provider(&provider, model, api_key, &prompt, transcription).await {
+    match run_one_provider(&http_client, &provider, model, api_key, &prompt, transcription).await {
         CallOutcome::Ok { text, .. } => Some(text),
         _ => None,
     }
@@ -167,8 +174,9 @@ async fn post_process_rotated(
     prompt: &str,
     transcription: &str,
 ) -> Option<String> {
+    // [GRAIN] Roll daily quotas first; then read settings ONCE so the pool
+    // reflects any newly-zeroed counters.
     crate::post_process_router::reset_quota_if_new_day(app);
-    // Re-read so quota counters reflect any reset that just happened.
     let settings = get_settings(app);
     // Eligible = enabled + under daily quota (the hard gate) AND has a model
     // configured (no point routing to a provider that can't run). The quota gate
@@ -194,6 +202,12 @@ async fn post_process_rotated(
         warn!("Post-process rotation: RotationTrackers unavailable");
         return None;
     };
+
+    let Some(http_client) = app.try_state::<reqwest::Client>() else {
+        warn!("Post-process rotation: shared HTTP client unavailable");
+        return None;
+    };
+    let http_client = http_client.inner().clone();
 
     // Order best-first by live health (recent 429s cool down, headroom leads).
     let est_tokens = provider_router::estimate_tokens(transcription);
@@ -226,7 +240,7 @@ async fn post_process_rotated(
             "Rotation: trying provider '{}' (model: {})",
             provider.id, model
         );
-        let outcome = run_one_provider(provider, model, api_key, prompt, transcription).await;
+        let outcome = run_one_provider(&http_client, provider, model, api_key, prompt, transcription).await;
         crate::rotation_state::record_outcome(
             &trackers.llm,
             &provider.id,
@@ -250,6 +264,7 @@ async fn post_process_rotated(
 /// the processed text, or None on any failure/empty result (so callers can fail
 /// over to the next provider or fall back to the raw transcript).
 async fn run_one_provider(
+    client: &reqwest::Client,
     provider: &PostProcessProvider,
     model: String,
     api_key: String,
@@ -343,6 +358,7 @@ async fn run_one_provider(
         });
 
         match crate::llm_client::send_chat_completion_with_schema(
+            client,
             provider,
             api_key.clone(),
             &model,
@@ -412,6 +428,7 @@ async fn run_one_provider(
     debug!("Processed prompt length: {} chars", processed_prompt.len());
 
     match crate::llm_client::send_chat_completion(
+        client,
         provider,
         api_key,
         &model,

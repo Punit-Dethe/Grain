@@ -1065,7 +1065,15 @@ pub async fn fetch_post_process_models(
         ));
     }
 
-    crate::llm_client::fetch_models(provider, api_key).await
+    let http_client = app
+        .try_state::<reqwest::Client>()
+        .map(|s| s.inner().clone())
+        .unwrap_or_else(|| {
+            // Fallback: create a one-off client (shouldn't happen in practice)
+            reqwest::Client::new()
+        });
+
+    crate::llm_client::fetch_models(&http_client, provider, api_key).await
 }
 
 #[tauri::command]

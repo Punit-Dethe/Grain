@@ -6,9 +6,9 @@ license.workspace = true
 authors.workspace = true
 description = "Grain's always-on dot-matrix pill: a lightweight winit + tiny-skia native surface rendering the volume-density Aura Core. Captures mic levels directly (low latency) and presents with true per-pixel transparency (Win32 layered window)."
 
-[[bin]]
-name = "grain-pill"
-path = "src/main.rs"
+[lib]
+name = "grain_pill"
+path = "src/lib.rs"
 
 [dependencies]
 winit = "0.30"
@@ -29,4 +29,5 @@ windows = { version = "0.58", features = [
   "Win32_Graphics_Gdi",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Shell",
+  "Win32_System_Threading",
 ] }

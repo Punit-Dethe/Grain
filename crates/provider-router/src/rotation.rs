@@ -38,7 +38,10 @@ const fn caps(tpm: Option<i64>, rpm: Option<i64>, rpd: Option<i64>) -> TierCaps 
 /// figures (mid-2026); being wrong only reorders candidates, never blocks them.
 const FREE_TIER_DEFAULTS: &[(&str, TierCaps)] = &[
     ("api.groq.com", caps(Some(6_000), Some(30), Some(14_400))),
-    ("generativelanguage.googleapis.com", caps(Some(250_000), Some(10), Some(250))),
+    // Google AI Studio free tier: 1 500 RPD, 15 RPM, 1M TPM (Gemini Flash)
+    ("generativelanguage.googleapis.com", caps(Some(1_000_000), Some(15), Some(1_500))),
+    // openai.com compatibility endpoint for Gemini
+    ("aiplatform.googleapis.com", caps(Some(1_000_000), Some(15), Some(1_500))),
     ("api.cerebras.ai", caps(Some(60_000), Some(30), Some(14_400))),
     ("openrouter.ai", caps(None, Some(20), Some(50))),
     ("api.mistral.ai", caps(Some(500_000), Some(30), None)),
@@ -364,7 +367,8 @@ mod tests {
     #[test]
     fn caps_lookup_by_host() {
         assert_eq!(caps_for(GROQ).tokens_per_minute, Some(6_000));
-        assert_eq!(caps_for(GEMINI).tokens_per_minute, Some(250_000));
+        // Updated to Gemini 2.0 Flash free tier: 1M TPM, 15 RPM, 1500 RPD
+        assert_eq!(caps_for(GEMINI).tokens_per_minute, Some(1_000_000));
         assert_eq!(caps_for("https://unknown.example.com").tokens_per_minute, None);
     }
 

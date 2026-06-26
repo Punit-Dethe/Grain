@@ -60,9 +60,6 @@ const RISER_HOLD: Duration = Duration::from_millis(1600);
 // field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
 // instead of turning into 60 fps static.
 const TICK: Duration = Duration::from_millis(16);
-// When the pill is HIDDEN there is nothing to draw and no mic open — poll slowly
-// just to notice when the core asks it to show again (keeps idle CPU/wakeups low).
-const HIDDEN_TICK: Duration = Duration::from_millis(80);
 const ROLL_INTERVAL: Duration = Duration::from_millis(80);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -359,25 +356,35 @@ fn truncate_to_width(font: &fontdue::Font, text: &str, px: f32, max_w: f32) -> S
     out
 }
 
-/// Rasterize `text` centered at `(cx, cy_center)` and src-over blend it into the
-/// premultiplied pixmap. `alpha` fades the whole label (for the slide-in).
-fn draw_text_centered(
+struct CachedText {
+    total_width: f32,
+    glyphs: Vec<(fontdue::Metrics, Vec<u8>)>,
+}
+
+impl CachedText {
+    fn new(font: &fontdue::Font, text: &str, px: f32) -> Self {
+        let glyphs: Vec<_> = text.chars().map(|ch| font.rasterize(ch, px)).collect();
+        let total_width = glyphs.iter().map(|(m, _)| m.advance_width).sum();
+        CachedText { total_width, glyphs }
+    }
+}
+
+/// Blend a pre-rasterized CachedText centered at `(cx, cy_center)` into the pixmap.
+/// `alpha` fades the whole label (for the slide-in).
+fn draw_cached_text_centered(
     pixmap: &mut Pixmap,
-    font: &fontdue::Font,
-    text: &str,
+    cached: &CachedText,
     center: (f32, f32),
     px: f32,
     color: [u8; 3],
     alpha: f32,
 ) {
     let (cx, cy_center) = center;
-    let glyphs: Vec<_> = text.chars().map(|ch| font.rasterize(ch, px)).collect();
-    let total: f32 = glyphs.iter().map(|(m, _)| m.advance_width).sum();
     let baseline = cy_center + px * 0.34;
-    let mut pen = cx - total / 2.0;
+    let mut pen = cx - cached.total_width / 2.0;
     let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
     let data = pixmap.data_mut();
-    for (m, bmp) in &glyphs {
+    for (m, bmp) in &cached.glyphs {
         let gx = pen + m.xmin as f32;
         let gy = baseline - (m.height as f32 + m.ymin as f32);
         for yy in 0..m.height {
@@ -783,6 +790,7 @@ struct App {
     prompt_idx: usize,
     // [GRAIN] WS-driven riser label + change detection + transient idle reveal.
     prompt_label: String,
+    cached_label: Option<CachedText>,
     last_prompt_seq: u64,
     prompt_preview_until: Option<Instant>,
     riser_progress: f32,
@@ -820,6 +828,7 @@ impl App {
                 .collect(),
             prompt_idx: 0,
             prompt_label: String::new(),
+            cached_label: None,
             last_prompt_seq: 0,
             prompt_preview_until: None,
             riser_progress: 0.0,
@@ -868,6 +877,23 @@ impl App {
             }
         };
         window.set_outer_position(PhysicalPosition::new(x, y));
+    }
+
+    fn update_cached_label(&mut self) {
+        if let Some(font) = &self.font {
+            let cell_px = Self::cell_px();
+            let peek = RISER_PEEK * cell_px;
+            let font_px = peek * 0.6;
+            let pad = peek * 0.4;
+            let (w, _) = Self::win_size();
+            let arrow_inset = peek * 0.85;
+            let (px0, px1) = (cell_px, w as f32 - cell_px);
+            
+            let (lx, rx) = (px0 + arrow_inset, px1 - arrow_inset);
+            let label_max = ((rx - lx) - 2.0 * pad).max(0.0);
+            let truncated = truncate_to_width(font, &self.prompt_label, font_px, label_max);
+            self.cached_label = Some(CachedText::new(font, &truncated, font_px));
+        }
     }
 
     fn cell_px() -> f32 {
@@ -973,19 +999,25 @@ impl App {
         let pill_h = ROWS as f32 * cell_px;
         let peek = RISER_PEEK * cell_px;
         let bar_top = y_off - peek * self.riser_progress;
-        let alpha = self.riser_progress.clamp(0.0, 1.0);
+        
+        // [GRAIN] Keep it fully opaque. By matching the corner radii perfectly, 
+        // it slides flawlessly behind the pill without any artifacts.
+        let alpha = 1.0; 
+        
         let mut p = Paint {
             anti_alias: true,
             ..Default::default()
         };
         p.set_color(Color::from_rgba8(11, 11, 10, (235.0 * alpha) as u8));
 
-        // Match the pill body's exact horizontal extent (its outer edges are at
-        // x = cell_px and x = w - cell_px).
         let (px0, px1) = (cell_px, w - cell_px);
+        
         // Drop the bar bottom to 50% of the pill height (the body hides the rest).
         let bar_bottom = y_off + pill_h * 0.5;
-        let rr = (peek * 0.5).min((px1 - px0) / 2.0);
+        // [GRAIN] Match the pill's corner radius exactly! This ensures that when the
+        // riser slides all the way down, its corners perfectly align with the pill's
+        // corners, completely eliminating the "peeking" artifact without needing to fade!
+        let rr = pill_h / 2.0;
         // Rounded-top bar = vertical rect + horizontal rect + two top circles.
         if let Some(rect) = Rect::from_ltrb(px0, bar_top + rr, px1, bar_bottom) {
             pixmap.fill_path(&PathBuilder::from_rect(rect), &p, FillRule::Winding, Transform::identity(), None);
@@ -1000,25 +1032,26 @@ impl App {
         }
 
         if let Some(font) = &self.font {
-            // [GRAIN] prefer the WS-driven title; fall back to the dev preview list.
-            let name: &str = if self.prompt_label.is_empty() {
-                &self.prompts[self.prompt_idx]
-            } else {
-                &self.prompt_label
-            };
             let font_px = peek * 0.6;
-            let cy = (bar_top + y_off) / 2.0; // vertical center of the visible crescent
+            // [GRAIN] Anchor the text rigidly to the top of the bar so it slides WITH the bar
+            // exactly, instead of squishing/lagging as the visible crescent shrinks.
+            let cy = bar_top + peek / 2.0;
+            
             // Fixed arrow positions, anchored a constant inset from the bar edges.
             let arrow_inset = peek * 0.85;
             let lx = px0 + arrow_inset;
             let rx = px1 - arrow_inset;
-            draw_text_centered(pixmap, font, "\u{2039}", (lx, cy), font_px, [236, 229, 218], alpha);
-            draw_text_centered(pixmap, font, "\u{203a}", (rx, cy), font_px, [236, 229, 218], alpha);
-            // Label lives strictly between the arrows; truncate to that width.
-            let pad = peek * 0.4;
-            let label_max = ((rx - lx) - 2.0 * pad).max(0.0);
-            let label = truncate_to_width(font, name, font_px, label_max);
-            draw_text_centered(pixmap, font, &label, (w / 2.0, cy), font_px, [236, 229, 218], alpha);
+            
+            // Cache arrows and label on the fly if needed
+            let cached_left = CachedText::new(font, "\u{2039}", font_px);
+            let cached_right = CachedText::new(font, "\u{203a}", font_px);
+            
+            draw_cached_text_centered(pixmap, &cached_left, (lx, cy), font_px, [236, 229, 218], alpha);
+            draw_cached_text_centered(pixmap, &cached_right, (rx, cy), font_px, [236, 229, 218], alpha);
+            
+            if let Some(cached_label) = &self.cached_label {
+                draw_cached_text_centered(pixmap, cached_label, (w / 2.0, cy), font_px, [236, 229, 218], alpha);
+            }
         }
     }
 }
@@ -1095,12 +1128,14 @@ impl ApplicationHandler<UserEvent> for App {
                     self.prompt_label = self.prompts[self.prompt_idx].clone();
                     self.riser_hide_at = Some(Instant::now() + RISER_HOLD);
                     self.prompt_preview_until = Some(Instant::now() + RISER_HOLD);
+                    self.update_cached_label();
                 }
                 Key::Named(NamedKey::ArrowLeft) => {
                     self.prompt_idx = (self.prompt_idx + self.prompts.len() - 1) % self.prompts.len();
                     self.prompt_label = self.prompts[self.prompt_idx].clone();
                     self.riser_hide_at = Some(Instant::now() + RISER_HOLD);
                     self.prompt_preview_until = Some(Instant::now() + RISER_HOLD);
+                    self.update_cached_label();
                 }
                 _ => {}
             },
@@ -1122,6 +1157,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.prompt_label = r.prompt_name.clone();
                 self.riser_hide_at = Some(now + RISER_HOLD);
                 self.prompt_preview_until = Some(now + RISER_HOLD);
+                self.update_cached_label();
             }
 
             // Visible if the core says so OR we're inside a transient prompt preview.
@@ -1187,19 +1223,28 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            // 60 fps only while visible; poll slowly when hidden (nothing to draw).
-            self.next_tick = now + if self.visible { TICK } else { HIDDEN_TICK };
+            // 60 fps only while visible; sleep forever when hidden (woken by UserEvent::Wake).
+            if self.visible {
+                self.next_tick = now + TICK;
+                event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
+            } else {
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
+        } else {
+            // Wait until next tick if we haven't reached it yet
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
         }
-        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
     }
 }
 
-fn main() {
+pub fn run_pill() {
     #[cfg(windows)]
     {
+        use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, HIGH_PRIORITY_CLASS};
         use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
         unsafe {
-            let _ = SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.pais.handy"));
+            let _ = SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.punitdethe.grain"));
+            let _ = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
         }
     }
     eprintln!("pill: starting (pid {})", std::process::id());

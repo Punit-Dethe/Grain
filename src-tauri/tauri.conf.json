@@ -4,9 +4,9 @@
   "version": "0.8.3",
   "identifier": "com.pais.handy",
   "build": {
-    "beforeDevCommand": "cargo build -p grain-pill && bun run dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build && cargo build -p grain-pill --release && node copy_pill.cjs",
+    "beforeBuildCommand": "bun run build && node copy_pill.cjs",
     "frontendDist": "../dist"
   },
   "app": {
@@ -28,7 +28,6 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "resources": ["resources/**/*"],
-    "externalBin": ["binaries/grain-pill"],
     "license": "MIT",
     "icon": [
       "icons/32x32.png",

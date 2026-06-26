@@ -5,6 +5,13 @@ use clap::Parser;
 use handy_app_lib::CliArgs;
 
 fn main() {
+    // [GRAIN] Multicall architecture: if launched with --pill, run the overlay
+    // logic and exit immediately. This avoids Tauri/winit event loop conflicts
+    // while keeping the process visually unified in Task Manager.
+    if std::env::args().any(|arg| arg == "--pill") {
+        return grain_pill::run_pill();
+    }
+
     let cli_args = CliArgs::parse();
 
     #[cfg(target_os = "linux")]
