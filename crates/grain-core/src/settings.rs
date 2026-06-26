@@ -712,6 +712,7 @@ pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
         p("anthropic", "Anthropic", "https://api.anthropic.com/v1", false, Some("/models"), false),
         p("groq", "Groq", "https://api.groq.com/openai/v1", false, Some("/models"), false),
         p("cerebras", "Cerebras", "https://api.cerebras.ai/v1", false, Some("/models"), true),
+        p("gemini", "Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", false, Some("/models"), true),
     ];
 
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
