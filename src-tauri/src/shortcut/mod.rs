@@ -585,6 +585,8 @@ pub fn change_debug_mode_setting(app: AppHandle, enabled: bool) -> Result<(), St
     settings.debug_mode = enabled;
     settings::write_settings(&app, settings);
 
+    crate::WEBVIEW_LOG_STREAMING.store(enabled, std::sync::atomic::Ordering::Relaxed);
+
     // Emit event to notify frontend of debug mode change
     let _ = app.emit(
         "settings-changed",
