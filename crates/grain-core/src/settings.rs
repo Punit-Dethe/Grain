@@ -166,16 +166,58 @@ pub const STT_LOCAL_PROVIDER_ID: &str = "local";
 /// Default STT pool: just the in-process local model. Remote entries are added
 /// by the user. Local is always first so single-provider behavior == today.
 pub fn default_stt_providers() -> Vec<SttProvider> {
-    vec![SttProvider {
-        id: STT_LOCAL_PROVIDER_ID.to_string(),
-        name: "Local (on-device)".to_string(),
-        kind: SttProviderKind::Local,
-        base_url: String::new(),
-        model: String::new(),
-        enabled: true,
-        quota_limit: None,
-        quota_used_today: 0,
-    }]
+    vec![
+        SttProvider {
+            id: STT_LOCAL_PROVIDER_ID.to_string(),
+            name: "Local (on-device)".to_string(),
+            kind: SttProviderKind::Local,
+            base_url: String::new(),
+            model: String::new(),
+            enabled: true,
+            quota_limit: None,
+            quota_used_today: 0,
+        },
+        SttProvider {
+            id: "groq".to_string(),
+            name: "Groq STT".to_string(),
+            kind: SttProviderKind::Openai,
+            base_url: "https://api.groq.com/openai/v1".to_string(),
+            model: "whisper-large-v3".to_string(),
+            enabled: false,
+            quota_limit: None,
+            quota_used_today: 0,
+        },
+        SttProvider {
+            id: "openai".to_string(),
+            name: "OpenAI Whisper".to_string(),
+            kind: SttProviderKind::Openai,
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: "whisper-1".to_string(),
+            enabled: false,
+            quota_limit: None,
+            quota_used_today: 0,
+        },
+        SttProvider {
+            id: "deepgram".to_string(),
+            name: "Deepgram".to_string(),
+            kind: SttProviderKind::Deepgram,
+            base_url: "https://api.deepgram.com".to_string(),
+            model: "nova-3".to_string(),
+            enabled: false,
+            quota_limit: None,
+            quota_used_today: 0,
+        },
+        SttProvider {
+            id: "assemblyai".to_string(),
+            name: "AssemblyAI".to_string(),
+            kind: SttProviderKind::Assemblyai,
+            base_url: "https://api.assemblyai.com".to_string(),
+            model: String::new(),
+            enabled: false,
+            quota_limit: None,
+            quota_used_today: 0,
+        },
+    ]
 }
 
 fn default_stt_api_keys() -> SecretMap {

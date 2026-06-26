@@ -12,8 +12,6 @@ use serde_json::Value;
 
 /// transcribe-rs / our pipeline standard: 16 kHz mono.
 const SAMPLE_RATE: u32 = 16_000;
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// AssemblyAI async polling budget.
 const POLL_DEADLINE: Duration = Duration::from_secs(60);
 
@@ -72,17 +70,10 @@ fn encode_wav(samples: &[f32]) -> Result<Vec<u8>, String> {
     Ok(cursor.into_inner())
 }
 
-fn http_client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(READ_TIMEOUT)
-        .build()
-        .map_err(|e| format!("http client: {e}"))
-}
-
 /// Transcribe `samples` via `provider` using `api_key`. The caller must NOT pass
 /// a `Local` provider — that is handled in-process by the dispatcher.
 pub async fn transcribe(
+    client: &reqwest::Client,
     provider: &SttProvider,
     samples: &[f32],
     api_key: &str,
@@ -96,9 +87,9 @@ pub async fn transcribe(
     }
     let wav = encode_wav(samples).map_err(SttError::Other)?;
     match provider.kind {
-        SttProviderKind::Deepgram => deepgram(provider, wav, api_key).await,
-        SttProviderKind::Assemblyai => assemblyai(provider, wav, api_key).await,
-        SttProviderKind::Openai => openai(provider, wav, api_key).await,
+        SttProviderKind::Deepgram => deepgram(client, provider, wav, api_key).await,
+        SttProviderKind::Assemblyai => assemblyai(client, provider, wav, api_key).await,
+        SttProviderKind::Openai => openai(client, provider, wav, api_key).await,
         SttProviderKind::Local => Err(SttError::Other(
             "local provider is handled in-process".into(),
         )),
@@ -117,6 +108,7 @@ fn openai_url(base_url: &str) -> String {
 }
 
 async fn openai(
+    client: &reqwest::Client,
     provider: &SttProvider,
     wav: Vec<u8>,
     api_key: &str,
@@ -130,8 +122,7 @@ async fn openai(
     if !provider.model.is_empty() {
         form = form.text("model", provider.model.clone());
     }
-    let mut req = http_client()
-        .map_err(SttError::Other)?
+    let mut req = client
         .post(&url)
         .multipart(form);
     if !api_key.is_empty() {
@@ -155,6 +146,7 @@ async fn openai(
 }
 
 async fn deepgram(
+    client: &reqwest::Client,
     provider: &SttProvider,
     wav: Vec<u8>,
     api_key: &str,
@@ -169,9 +161,8 @@ async fn deepgram(
     } else {
         &provider.model
     };
-    let url = format!("{base}/v1/listen?model={model}&punctuate=true");
-    let resp = http_client()
-        .map_err(SttError::Other)?
+    let url = format!("{base}/v1/listen?model={model}&smart_format=true");
+    let resp = client
         .post(&url)
         .header("Authorization", format!("Token {api_key}"))
         .header("Content-Type", "audio/wav")
@@ -193,6 +184,7 @@ async fn deepgram(
 }
 
 async fn assemblyai(
+    client: &reqwest::Client,
     provider: &SttProvider,
     wav: Vec<u8>,
     api_key: &str,
@@ -202,7 +194,6 @@ async fn assemblyai(
     } else {
         provider.base_url.trim_end_matches('/')
     };
-    let client = http_client().map_err(SttError::Other)?;
 
     // 1) upload (read_signal surfaces 429 → cooldown and other non-2xx → failover)
     let (upload, _, _) = read_signal(
