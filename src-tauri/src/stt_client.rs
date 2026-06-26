@@ -97,13 +97,39 @@ pub async fn transcribe(
 }
 
 /// Build the OpenAI transcriptions URL, tolerating a base_url with or without a
-/// trailing `/v1`.
+/// Build the OpenAI transcriptions URL, tolerating a base_url with or without a
+/// trailing `/v1` or the full `/audio/transcriptions` path.
 fn openai_url(base_url: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    if base.ends_with("/v1") {
+    if base.ends_with("/audio/transcriptions") {
+        base.to_string()
+    } else if base.ends_with("/v1") {
         format!("{base}/audio/transcriptions")
     } else {
         format!("{base}/v1/audio/transcriptions")
+    }
+}
+
+fn deepgram_url(base_url: &str, model: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let base = if base.is_empty() { "https://api.deepgram.com" } else { base };
+    let path = if base.ends_with("/listen") {
+        ""
+    } else if base.ends_with("/v1") {
+        "/listen"
+    } else {
+        "/v1/listen"
+    };
+    format!("{base}{path}?model={model}&smart_format=true")
+}
+
+fn assemblyai_base(base_url: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    let base = if base.is_empty() { "https://api.assemblyai.com" } else { base };
+    if base.ends_with("/v2") {
+        base.to_string()
+    } else {
+        format!("{base}/v2")
     }
 }
 
@@ -151,17 +177,12 @@ async fn deepgram(
     wav: Vec<u8>,
     api_key: &str,
 ) -> Result<SttResult, SttError> {
-    let base = if provider.base_url.is_empty() {
-        "https://api.deepgram.com"
-    } else {
-        provider.base_url.trim_end_matches('/')
-    };
     let model = if provider.model.is_empty() {
-        "nova-3"
+        "nova-2"
     } else {
         &provider.model
     };
-    let url = format!("{base}/v1/listen?model={model}&smart_format=true");
+    let url = deepgram_url(&provider.base_url, model);
     let resp = client
         .post(&url)
         .header("Authorization", format!("Token {api_key}"))
@@ -189,16 +210,12 @@ async fn assemblyai(
     wav: Vec<u8>,
     api_key: &str,
 ) -> Result<SttResult, SttError> {
-    let base = if provider.base_url.is_empty() {
-        "https://api.assemblyai.com"
-    } else {
-        provider.base_url.trim_end_matches('/')
-    };
+    let base = assemblyai_base(&provider.base_url);
 
     // 1) upload (read_signal surfaces 429 → cooldown and other non-2xx → failover)
     let (upload, _, _) = read_signal(
         client
-            .post(format!("{base}/v2/upload"))
+            .post(format!("{base}/upload"))
             .header("Authorization", api_key)
             .header("Content-Type", "application/octet-stream")
             .body(wav)
@@ -215,7 +232,7 @@ async fn assemblyai(
     // 2) request transcription
     let (created, _, _) = read_signal(
         client
-            .post(format!("{base}/v2/transcript"))
+            .post(format!("{base}/transcript"))
             .header("Authorization", api_key)
             .json(&serde_json::json!({ "audio_url": upload_url }))
             .send()
@@ -229,7 +246,7 @@ async fn assemblyai(
         .ok_or_else(|| SttError::Other("assemblyai: no id".into()))?;
 
     // 3) poll until completed / error / deadline
-    let poll_url = format!("{base}/v2/transcript/{id}");
+    let poll_url = format!("{base}/transcript/{id}");
     let deadline = std::time::Instant::now() + POLL_DEADLINE;
     loop {
         let (body, rr, rt) = read_signal(
