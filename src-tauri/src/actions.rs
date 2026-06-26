@@ -76,6 +76,11 @@ async fn post_process_transcription(
     settings: &AppSettings,
     transcription: &str,
 ) -> Option<String> {
+    if transcription.trim().is_empty() {
+        debug!("Post-processing skipped because transcription is empty");
+        return None;
+    }
+
     // Resolve the selected prompt body once — shared by both the single-provider
     // and the rotation paths.
     let selected_prompt_id = match &settings.post_process_selected_prompt_id {

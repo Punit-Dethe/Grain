@@ -7,14 +7,12 @@
 //! (WebviewWindowBuilder / macOS NSPanel / Linux GTK layer-shell) and its
 //! show/hide/position helpers are gone. Only the audio-level fan-out lives here.
 
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 /// Forward per-bucket mic levels to (1) the main settings window's visualizer
 /// (the `"mic-level"` webview event) and (2) the headless event bus, where the
 /// pill picks them up over the WS to drive its Aura animation.
 pub fn emit_levels(app_handle: &AppHandle, levels: &Vec<f32>) {
-    let _ = app_handle.emit("mic-level", levels);
-
     crate::bridge::emit(
         app_handle,
         grain_core::DaemonEvent::AudioLevel {
