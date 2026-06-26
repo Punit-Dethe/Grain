@@ -22,32 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::ProviderConfig;
 
-/// Static free-tier caps (ordering hints only — see THE SAFETY RULE).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct TierCaps {
-    pub tokens_per_minute: Option<i64>,
-    pub requests_per_minute: Option<i64>,
-    pub requests_per_day: Option<i64>,
-}
-
-const fn caps(tpm: Option<i64>, rpm: Option<i64>, rpd: Option<i64>) -> TierCaps {
-    TierCaps { tokens_per_minute: tpm, requests_per_minute: rpm, requests_per_day: rpd }
-}
-
-/// Keyed by a substring of the provider's base_url host. Conservative free-tier
-/// figures (mid-2026); being wrong only reorders candidates, never blocks them.
-const FREE_TIER_DEFAULTS: &[(&str, TierCaps)] = &[
-    ("api.groq.com", caps(Some(6_000), Some(30), Some(14_400))),
-    // Google AI Studio free tier: 1 500 RPD, 15 RPM, 1M TPM (Gemini Flash)
-    ("generativelanguage.googleapis.com", caps(Some(1_000_000), Some(15), Some(1_500))),
-    // openai.com compatibility endpoint for Gemini
-    ("aiplatform.googleapis.com", caps(Some(1_000_000), Some(15), Some(1_500))),
-    ("api.cerebras.ai", caps(Some(60_000), Some(30), Some(14_400))),
-    ("openrouter.ai", caps(None, Some(20), Some(50))),
-    ("api.mistral.ai", caps(Some(500_000), Some(30), None)),
-];
-
-/// Headers considered fresh for this long; afterward fall back to local estimates.
+/// Headers considered fresh for this long; afterward fall back to unknown (1.0).
 const HEADER_TTL_S: f64 = 300.0;
 const WINDOW_S: f64 = 60.0;
 const DEFAULT_COOLDOWN_S: f64 = 60.0;
@@ -58,17 +33,6 @@ pub const COMPLETION_RESERVE_TOKENS: i64 = 800;
 pub fn estimate_tokens(text: &str) -> i64 {
     let chars = text.chars().count() as i64;
     (chars / 4).max(1) + COMPLETION_RESERVE_TOKENS
-}
-
-/// Look up free-tier caps by base-url host fragment.
-pub fn caps_for(base_url: &str) -> TierCaps {
-    let base = base_url.to_lowercase();
-    for (fragment, c) in FREE_TIER_DEFAULTS {
-        if base.contains(fragment) {
-            return *c;
-        }
-    }
-    TierCaps::default()
 }
 
 /// Extract `(remaining_requests, remaining_tokens)` from response headers.
@@ -231,56 +195,38 @@ impl RotationTracker {
 
     // -- selection ---------------------------------------------------------
 
-    /// Headroom of the provider's bottleneck resource, in `[0, 1]`. Providers
-    /// that cannot fit `est_tokens` in their remaining per-minute token budget
-    /// score 0 — the "effective context" rule.
-    pub fn headroom_score(&mut self, provider: &ProviderConfig, est_tokens: i64, now: f64) -> f64 {
-        let caps = caps_for(&provider.base_url);
+    /// Headroom score for this provider in `[0, 1]`. Driven purely by live
+    /// rate-limit headers when fresh (within HEADER_TTL_S); falls back to
+    /// full score (1.0) when no signal is available — "unknown = assume plenty".
+    /// We make NO assumptions about subscription tier or provider limits;
+    /// the user's per-provider `quota_limit` is enforced by the caller, not here.
+    pub fn headroom_score(&mut self, provider: &ProviderConfig, _est_tokens: i64, now: f64) -> f64 {
         let h = self.health.entry(provider.id.clone()).or_default();
         Self::roll_day(h);
         let headers_fresh = (now - h.header_time) <= HEADER_TTL_S && h.header_time > 0.0;
 
-        // --- token headroom ---
-        let (tokens_left, tokens_cap): (Option<i64>, Option<i64>) =
-            if headers_fresh && h.remaining_tokens.is_some() {
-                let rt = h.remaining_tokens.unwrap();
-                (Some(rt), Some((rt + h.tokens_in_window(now)).max(1)))
-            } else if let Some(tpm) = caps.tokens_per_minute {
-                (Some(tpm - h.tokens_in_window(now)), Some(tpm))
-            } else {
-                (None, None)
-            };
+        if !headers_fresh {
+            // No live signal yet — treat as fully healthy so all providers
+            // start equal and the tiebreak round-robin distributes load.
+            return 1.0;
+        }
 
-        let token_frac = if let Some(tl) = tokens_left {
-            if tl < est_tokens {
-                return 0.0; // request does not fit the remaining minute budget
+        // --- token headroom from live headers ---
+        let token_frac = match h.remaining_tokens {
+            Some(rt) => {
+                let cap = (rt + h.tokens_in_window(now)).max(1);
+                (rt as f64 / cap as f64).clamp(0.0, 1.0)
             }
-            let cap = tokens_cap.unwrap().max(1);
-            (tl as f64 / cap as f64).clamp(0.0, 1.0)
-        } else {
-            1.0 // unknown = assume plenty (ordering only)
+            None => 1.0,
         };
 
-        // --- request headroom ---
-        let mut req_fracs: Vec<f64> = Vec::new();
-        if headers_fresh && h.remaining_requests.is_some() {
-            let rr = h.remaining_requests.unwrap();
-            let denom = (rr + h.requests_in_window(now)).max(1);
-            req_fracs.push((rr as f64 / denom as f64).clamp(0.0, 1.0));
-        } else {
-            if let Some(rpm) = caps.requests_per_minute {
-                let left = rpm - h.requests_in_window(now);
-                req_fracs.push((left as f64 / rpm as f64).max(0.0));
+        // --- request headroom from live headers ---
+        let req_frac = match h.remaining_requests {
+            Some(rr) => {
+                let denom = (rr + h.requests_in_window(now)).max(1);
+                (rr as f64 / denom as f64).clamp(0.0, 1.0)
             }
-            if let Some(rpd) = caps.requests_per_day {
-                let left = rpd - h.requests_today;
-                req_fracs.push((left as f64 / rpd as f64).max(0.0));
-            }
-        }
-        let req_frac = if req_fracs.is_empty() {
-            1.0
-        } else {
-            req_fracs.into_iter().fold(f64::INFINITY, f64::min)
+            None => 1.0,
         };
 
         token_frac.min(req_frac)
@@ -342,9 +288,6 @@ impl RotationTracker {
 mod tests {
     use super::*;
 
-    const GROQ: &str = "https://api.groq.com/openai/v1";
-    const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
-
     fn p(pid: &str) -> ProviderConfig {
         ProviderConfig::new(pid, "https://api.example.com/v1")
     }
@@ -362,14 +305,6 @@ mod tests {
     fn estimate_tokens_includes_reserve() {
         assert!(estimate_tokens("") > 0); // completion reserve even for empty input
         assert!(estimate_tokens(&"a".repeat(400)) > estimate_tokens(&"a".repeat(4)));
-    }
-
-    #[test]
-    fn caps_lookup_by_host() {
-        assert_eq!(caps_for(GROQ).tokens_per_minute, Some(6_000));
-        // Updated to Gemini 2.0 Flash free tier: 1M TPM, 15 RPM, 1500 RPD
-        assert_eq!(caps_for(GEMINI).tokens_per_minute, Some(1_000_000));
-        assert_eq!(caps_for("https://unknown.example.com").tokens_per_minute, None);
     }
 
     #[test]
@@ -440,32 +375,13 @@ mod tests {
     #[test]
     fn live_headers_drive_ordering() {
         let mut t = RotationTracker::new();
-        let (a, b) = (p_host("a", GROQ), p_host("b", GROQ));
+        let (a, b) = (p_host("a", "https://a.com"), p_host("b", "https://b.com"));
         t.record_success("a", Some(10), Some(29), Some(5900), 100.0);
         t.record_success("b", Some(10), Some(2), Some(200), 100.0);
         let order = t.select(&[b, a], 100, 100.0);
         assert_eq!(order[0].id, "a"); // more headroom per the headers
     }
 
-    #[test]
-    fn long_request_routes_away_from_low_tpm_tier() {
-        let mut t = RotationTracker::new();
-        let (groq, gem) = (p_host("groq", GROQ), p_host("gem", GEMINI));
-        let big = 20_000; // >> Groq free 6k TPM, well within Gemini's 250k
-        let order = t.select(&[groq, gem], big, 0.0);
-        assert_eq!(order[0].id, "gem");
-    }
-
-    #[test]
-    fn wrong_estimate_never_excludes_only_reorders() {
-        let mut t = RotationTracker::new();
-        let (groq, gem) = (p_host("groq", GROQ), p_host("gem", GEMINI));
-        let order = t.select(&[groq, gem], 10_000_000, 0.0);
-        assert_eq!(
-            ids(&order).into_iter().collect::<std::collections::HashSet<_>>(),
-            ["groq".to_string(), "gem".to_string()].into_iter().collect()
-        );
-    }
 
     #[test]
     fn unknown_provider_assumed_healthy() {
@@ -486,16 +402,6 @@ mod tests {
         assert!(firsts.iter().collect::<std::collections::HashSet<_>>().len() > 1);
     }
 
-    #[test]
-    fn sliding_window_usage_lowers_headroom() {
-        let mut t = RotationTracker::new();
-        let groq = p_host("groq", GROQ);
-        let base = t.headroom_score(&groq, 100, 0.0);
-        // Burn most of Groq's per-minute token budget.
-        t.record_success("groq", Some(5500), None, None, 0.0);
-        let after = t.headroom_score(&groq, 100, 1.0);
-        assert!(after < base);
-    }
 
     #[test]
     fn tracker_leaves_user_quota_to_the_caller() {
