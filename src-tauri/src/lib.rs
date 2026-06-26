@@ -42,9 +42,12 @@ use managers::transcription::TranscriptionManager;
 use signal_hook::consts::{SIGUSR1, SIGUSR2};
 #[cfg(unix)]
 use signal_hook::iterator::Signals;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering, AtomicBool};
 use std::sync::Arc;
 use tauri::image::Image;
+
+// Global static to allow tray "Quit" to bypass prevent_exit
+pub static INTENTIONAL_QUIT: AtomicBool = AtomicBool::new(false);
 pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
@@ -352,6 +355,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                 cancel_current_operation(app);
             }
             "quit" => {
+                INTENTIONAL_QUIT.store(true, Ordering::Relaxed);
                 app.exit(0);
             }
             id if id.starts_with("model_select:") => {
@@ -648,9 +652,8 @@ pub fn run(cli_args: CliArgs) {
 
             // Create main window programmatically so we can set data_directory
             // for portable mode (redirects WebView2 cache to portable Data dir).
-            // [GRAIN] Shared with show_main_window so the window can be destroyed
-            // on close (free RAM) and recreated on reopen.
-            build_main_window(&app.handle())?;
+            // [GRAIN] This is now fully lazy (invoked by show_main_window) to save
+            // RAM if the app is started hidden.
 
             // [GRAIN] Build the headless core context and own it as managed state
             // BEFORE any get_settings() call routes through it. AppContext loads +
@@ -712,6 +715,12 @@ pub fn run(cli_args: CliArgs) {
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
             if should_force_show || !should_hide || !tray_available {
                 show_main_window(&app_handle);
+            } else {
+                // [GRAIN] If we skip the frontend on startup, we must manually
+                // initialize global systems (shortcuts, enigo) here because the
+                // frontend won't mount and call the initialization IPC commands.
+                let _ = commands::initialize_shortcuts(app_handle.clone());
+                let _ = commands::initialize_enigo(app_handle.clone());
             }
 
             Ok(())
@@ -832,9 +841,9 @@ pub fn run(cli_args: CliArgs) {
             // [GRAIN] Closing the settings window destroys it to free RAM. Keep the
             // process alive in the tray so dictation/rolling/pill keep working —
             // unless launched with --no-tray, where closing is meant to quit. The
-            // tray "Quit" uses app.exit(0), which bypasses this prevention.
+            // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                if !app.state::<CliArgs>().no_tray {
+                if !app.state::<CliArgs>().no_tray && !INTENTIONAL_QUIT.load(Ordering::Relaxed) {
                     api.prevent_exit();
                 }
             }

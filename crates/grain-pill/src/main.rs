@@ -718,7 +718,7 @@ fn spawn_event_client(remote: Arc<Mutex<Remote>>, proxy: EventLoopProxy<UserEven
             use tokio_tungstenite::tungstenite::Message;
             // Try to connect initially for a few seconds
             let mut attempts = 0;
-            let mut ws_stream = loop {
+            let ws_stream = loop {
                 match tokio_tungstenite::connect_async("ws://127.0.0.1:7124").await {
                     Ok((ws, _)) => {
                         eprintln!("ws: connected to ws://127.0.0.1:7124");
