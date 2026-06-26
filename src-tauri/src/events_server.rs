@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use grain_core::AppContext;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -36,10 +36,24 @@ pub fn start(ctx: Arc<AppContext>) {
 
         rt.block_on(async move {
             let addr = format!("127.0.0.1:{EVENTS_PORT}");
-            let listener = match TcpListener::bind(&addr).await {
-                Ok(l) => l,
+            let listener = match addr.parse::<std::net::SocketAddr>() {
+                Ok(socket_addr) => {
+                    let socket = tokio::net::TcpSocket::new_v4().expect("Failed to create socket");
+                    let _ = socket.set_reuseaddr(true);
+                    if let Err(e) = socket.bind(socket_addr) {
+                        log::error!("[GRAIN] events WS bind {addr} failed: {e}");
+                        return;
+                    }
+                    match socket.listen(1024) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            log::error!("[GRAIN] events WS listen failed: {e}");
+                            return;
+                        }
+                    }
+                }
                 Err(e) => {
-                    log::error!("[GRAIN] events WS bind {addr} failed: {e}");
+                    log::error!("[GRAIN] events WS invalid address: {e}");
                     return;
                 }
             };
@@ -93,6 +107,11 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>) {
 /// [GRAIN] B2: launch the pill process and keep it alive (the "always-armed"
 /// surface). In a bundled build the pill sits next to the core exe; in dev, run
 /// `cargo run -p grain-pill` manually (it connects to the same WS).
+///
+/// On Windows, the pill is assigned to a **Job Object** with
+/// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. This is a kernel-level guarantee that
+/// the pill is terminated when the main process exits — regardless of whether
+/// exit is clean (tray Quit), forced (Ctrl+C), or a crash.
 pub fn spawn_pill_supervisor() {
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
@@ -107,7 +126,8 @@ pub fn spawn_pill_supervisor() {
         // [GRAIN] Kill any stray pill left by a previous (crashed / force-quit)
         // session BEFORE spawning ours, so multiple overlapping layered windows
         // can never stack up (the cause of the "pill not visible" bug). Only one
-        // pill should ever run.
+        // pill should ever run. This is a safety net for upgrades from versions
+        // that didn't use Job Objects.
         kill_stray_pills();
 
         for _ in 0..50 {
@@ -126,6 +146,11 @@ pub fn spawn_pill_supervisor() {
         #[cfg(windows)]
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+        // [GRAIN] Create a Job Object so the OS kernel guarantees the pill is
+        // killed when the main process exits (for ANY reason).
+        #[cfg(windows)]
+        let job = create_job_object();
+
         loop {
             let mut cmd = std::process::Command::new(&exe);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -135,6 +160,15 @@ pub fn spawn_pill_supervisor() {
             match cmd.spawn()
             {
                 Ok(mut child) => {
+                    // [GRAIN] Assign pill to the Job Object immediately after
+                    // spawn, before anything else. If this fails the pill still
+                    // works — it just won't be auto-killed on parent exit
+                    // (the WS-disconnect fallback handles that case).
+                    #[cfg(windows)]
+                    if let Some(ref job_handle) = job {
+                        assign_child_to_job(job_handle, &child);
+                    }
+
                     // Drain the pill's stdout/stderr into our log so its
                     // diagnostics are visible (it has no console of its own).
                     for pipe in [
@@ -167,6 +201,73 @@ pub fn spawn_pill_supervisor() {
             std::thread::sleep(Duration::from_secs(1));
         }
     });
+}
+
+// ── Windows Job Object ──────────────────────────────────────────────────────
+
+/// Create an anonymous Job Object configured with `KILL_ON_JOB_CLOSE`.
+///
+/// When the last handle to this Job Object is closed (which happens
+/// automatically when the owning process exits), the OS kernel terminates
+/// every process still assigned to the job. This is the production-grade
+/// mechanism used by Chrome, VS Code, etc.
+#[cfg(windows)]
+fn create_job_object() -> Option<windows::Win32::Foundation::HANDLE> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::JobObjects::{
+        CreateJobObjectW, SetInformationJobObject, JobObjectExtendedLimitInformation,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    unsafe {
+        let job = match CreateJobObjectW(None, None) {
+            Ok(h) => h,
+            Err(e) => {
+                log::error!("[GRAIN] failed to create Job Object: {e}");
+                return None;
+            }
+        };
+
+        let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        let ok = SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        );
+
+        if let Err(e) = ok {
+            log::error!("[GRAIN] failed to configure Job Object: {e}");
+            let _ = CloseHandle(job);
+            return None;
+        }
+
+        log::info!("[GRAIN] pill Job Object created (KILL_ON_JOB_CLOSE)");
+        Some(job)
+    }
+}
+
+/// Assign a child process to the Job Object so it is automatically killed
+/// when the main process exits.
+#[cfg(windows)]
+fn assign_child_to_job(
+    job: &windows::Win32::Foundation::HANDLE,
+    child: &std::process::Child,
+) {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::AssignProcessToJobObject;
+
+    unsafe {
+        let child_handle = HANDLE(child.as_raw_handle());
+        if let Err(e) = AssignProcessToJobObject(*job, child_handle) {
+            log::warn!("[GRAIN] failed to assign pill to Job Object: {e}");
+        } else {
+            log::info!("[GRAIN] pill assigned to Job Object (pid {})", child.id());
+        }
+    }
 }
 
 /// [GRAIN] Kill any `grain-pill` process left over from a previous crashed /
