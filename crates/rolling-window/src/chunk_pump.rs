@@ -38,10 +38,13 @@ pub struct ChunkPump<T> {
     busy: bool,
     model_ready: bool,
     recording_done: bool,
-    in_flight: Option<T>,
+    pub in_flight: Option<T>,
 
+    #[cfg(test)]
     pub dispatched: Vec<T>,
+    #[cfg(test)]
     pub succeeded: Vec<(T, String)>,
+    #[cfg(test)]
     pub failed: Vec<(T, String)>,
 }
 
@@ -54,8 +57,11 @@ impl<T> Default for ChunkPump<T> {
             model_ready: false,
             recording_done: false,
             in_flight: None,
+            #[cfg(test)]
             dispatched: Vec::new(),
+            #[cfg(test)]
             succeeded: Vec::new(),
+            #[cfg(test)]
             failed: Vec::new(),
         }
     }
@@ -147,25 +153,30 @@ impl<T: Clone> ChunkPump<T> {
         let Some(chunk) = self.queue.pop_front() else {
             return false;
         };
-        self.in_flight = Some(chunk.clone());
+        #[cfg(test)]
+        self.dispatched.push(chunk.clone());
+
+        self.in_flight = Some(chunk);
         self.busy = true;
-        self.dispatched.push(chunk);
         true
     }
 
     /// Complete the in-flight request successfully, then pump the next chunk.
     /// Results carrying a stale generation token are ignored. Returns `true` if
     /// the result was applied.
-    pub fn complete(&mut self, generation: u64, transcript: &str) -> bool {
+    pub fn complete(&mut self, generation: u64, _transcript: &str) -> bool {
         if generation != self.generation {
             return false; // stale result from a previous/discarded session
         }
         if !self.busy {
             return false; // nothing in flight
         }
-        let finished = self.in_flight.take().expect("busy implies in_flight");
+        let _finished = self.in_flight.take().expect("busy implies in_flight");
         self.busy = false;
-        self.succeeded.push((finished, transcript.to_string()));
+
+        #[cfg(test)]
+        self.succeeded.push((_finished, _transcript.to_string()));
+
         self.dispatch();
         true
     }
@@ -173,16 +184,19 @@ impl<T: Clone> ChunkPump<T> {
     /// Fail the in-flight request, then continue draining the queue. A single
     /// failed chunk must never abort the session. Stale-generation results are
     /// ignored. Returns `true` if the failure was applied.
-    pub fn fail(&mut self, generation: u64, error: &str) -> bool {
+    pub fn fail(&mut self, generation: u64, _error: &str) -> bool {
         if generation != self.generation {
             return false; // stale result
         }
         if !self.busy {
             return false; // nothing in flight
         }
-        let finished = self.in_flight.take().expect("busy implies in_flight");
+        let _finished = self.in_flight.take().expect("busy implies in_flight");
         self.busy = false;
-        self.failed.push((finished, error.to_string()));
+
+        #[cfg(test)]
+        self.failed.push((_finished, _error.to_string()));
+
         self.dispatch();
         true
     }
