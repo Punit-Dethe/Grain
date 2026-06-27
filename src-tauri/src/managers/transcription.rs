@@ -1,4 +1,4 @@
-use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
+use crate::audio_toolkit::finalize_transcript;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
@@ -724,29 +724,24 @@ impl TranscriptionManager {
             }
         };
 
-        // Apply word correction if custom words are configured.
-        // Skip for Whisper models since custom words are already passed as initial_prompt.
+        // Apply the shared final-text stage (custom-word correction + filler /
+        // stutter filtering). Skip the fuzzy custom-word pass for Whisper: it was
+        // already biased via `initial_prompt`, so re-correcting would be redundant.
+        // Every other transcription path (rolling, cloud, Agent) runs the SAME
+        // finalize step on its completed transcript via `finalize_transcript`.
         let is_whisper = self
             .model_manager
             .get_model_info(&settings.selected_model)
             .map(|info| matches!(info.engine_type, EngineType::Whisper))
             .unwrap_or(false);
 
-        let corrected_result = if !settings.custom_words.is_empty() && !is_whisper {
-            apply_custom_words(
-                &result.text,
-                &settings.custom_words,
-                settings.word_correction_threshold,
-            )
-        } else {
-            result.text
-        };
-
-        // Filter out filler words and hallucinations
-        let filtered_result = filter_transcription_output(
-            &corrected_result,
+        let filtered_result = finalize_transcript(
+            &result.text,
+            &settings.custom_words,
+            settings.word_correction_threshold,
             &settings.app_language,
             &settings.custom_filler_words,
+            is_whisper, // skip fuzzy correction for Whisper (already prompt-biased)
         );
 
         let et = std::time::Instant::now();

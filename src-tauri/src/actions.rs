@@ -1236,9 +1236,24 @@ impl ShortcutAction for RealtimeTranscribeAction {
             let rolling_text = rt.finish_session().unwrap_or_default();
 
             let final_text = if !rolling_text.trim().is_empty() {
-                rolling_text
+                // [GRAIN] Apply the shared final-text stage (custom-word dictionary
+                // + filler/stutter filtering) ONCE on the assembled transcript.
+                // The rolling engine never biases via Whisper `initial_prompt`, so
+                // the fuzzy custom-word pass must run here. Done once per dictation,
+                // NOT per 15-20s chunk.
+                let settings = get_settings(&ah);
+                crate::audio_toolkit::finalize_transcript(
+                    &rolling_text,
+                    &settings.custom_words,
+                    settings.word_correction_threshold,
+                    &settings.app_language,
+                    &settings.custom_filler_words,
+                    false,
+                )
             } else if !samples.is_empty() {
                 warn!("[GRAIN] rolling produced no text — falling back to batch");
+                // `tm.transcribe` already runs finalize_transcript internally, so
+                // the fallback text is finalized; don't finalize it again.
                 tm.transcribe(samples.clone()).unwrap_or_default()
             } else {
                 String::new()
