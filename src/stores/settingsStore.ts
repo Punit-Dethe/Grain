@@ -158,6 +158,8 @@ const settingUpdaters: {
     commands.changeExtraRecordingBufferSetting(value as number),
   audio_conditioning: (value) =>
     commands.changeAudioConditioningSetting(value as boolean),
+  rolling_window_seconds: (value) =>
+    commands.changeRollingWindowSecondsSetting(value as number),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

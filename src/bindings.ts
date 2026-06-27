@@ -332,6 +332,21 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] Set the rolling-window hard-cut length (seconds) for the real-time
+ * transcription path. Clamped to the engine's supported `[15, 60]` range so an
+ * out-of-range UI value can never reach `RollingWindowConfig`. Persisted only;
+ * `RollingSession::start` reads it at the start of each rolling session, so the
+ * next session picks up the change with no restart and nothing to live-update.
+ */
+async changeRollingWindowSecondsSetting(seconds: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_rolling_window_seconds_setting", { seconds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_lazy_stream_close_setting", { enabled }) };
@@ -1084,7 +1099,15 @@ stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: 
  * + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
  * accuracy on low-volume input without touching already-loud audio.
  */
-audio_conditioning?: boolean }
+audio_conditioning?: boolean; 
+/**
+ * [GRAIN] Rolling-window hard-cut length in SECONDS for the real-time
+ * (rolling) transcription path. Drives `RollingWindowConfig::max_chunk_seconds`
+ * in `rolling.rs`. Default 15 mirrors `RollingWindowConfig::default()`; the
+ * engine clamps to [15, 60], so keep any setter in that range. The frontend
+ * reflects this value directly (no hardcoded UI default).
+ */
+rolling_window_seconds?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }

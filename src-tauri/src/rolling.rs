@@ -206,7 +206,7 @@ impl RollingTranscriber {
 
     /// Begin a live rolling session (on recording start). The model must already
     /// be loaded via [`ensure_loaded`].
-    pub fn start_session(self: &Arc<Self>) {
+    pub fn start_session(self: &Arc<Self>, max_chunk_seconds: f64) {
         // If a load is about to be (or is being) kicked off, advertise LOADING so
         // the worker waits for it rather than racing to IDLE and dropping audio.
         let _ = self.load_state.compare_exchange(
@@ -215,7 +215,7 @@ impl RollingTranscriber {
             Ordering::AcqRel,
             Ordering::Acquire,
         );
-        let session = Arc::new(RollingSession::start(self.clone()));
+        let session = Arc::new(RollingSession::start(self.clone(), max_chunk_seconds));
         *self.active.lock().unwrap() = Some(session);
         self.touch();
         log::info!("[GRAIN] rolling session started");
@@ -289,8 +289,12 @@ enum Job {
 }
 
 impl RollingSession {
-    fn start(transcriber: Arc<RollingTranscriber>) -> Self {
-        let cfg = RollingWindowConfig::default();
+    fn start(transcriber: Arc<RollingTranscriber>, max_chunk_seconds: f64) -> Self {
+        let mut cfg = RollingWindowConfig::default();
+        // [GRAIN] Honor the user's configured rolling-window length. The setting
+        // is already clamped to [15, 60] by its setter; clamp again here so a
+        // hand-edited settings file can never push the engine out of range.
+        cfg.max_chunk_seconds = (max_chunk_seconds).clamp(15.0, 60.0);
         let overlap = cfg.overlap_seconds;
         let cursor = SessionCursor::new(cfg);
         let (tx, rx) = mpsc::channel::<Job>();
