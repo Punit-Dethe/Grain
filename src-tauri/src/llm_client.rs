@@ -3,6 +3,13 @@ use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::Duration;
+
+/// Per-request read timeout. This previously lived on a throwaway per-call
+/// `reqwest::Client`; it is now applied to the request builder so the shared,
+/// pooled client is reused (no new connection pool / TLS per call). The connect
+/// timeout stays configured on the shared client.
+const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Serialize)]
 struct ChatMessage {
@@ -142,9 +149,9 @@ pub async fn send_chat_completion_with_schema(
 
     debug!("Sending chat completion request to: {}", url);
 
-    // Build a one-shot client that inherits the connection pool from the shared
-    // client but attaches provider-specific auth + common headers.
-    let req_client = build_authed_client(client, provider, &api_key).map_err(LlmError::Other)?;
+    // Build provider-specific auth + common headers; the shared pooled `client`
+    // is reused for the actual request (no per-call connection pool / TLS).
+    let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
     // Build messages vector
     let mut messages = Vec::new();
@@ -181,7 +188,7 @@ pub async fn send_chat_completion_with_schema(
         reasoning,
     };
 
-    send_request(&req_client, &url, &request_body).await
+    send_request(client, &url, headers, &request_body).await
 }
 
 /// [GRAIN] Send a free-form multi-turn chat completion (used by the Agent).
@@ -201,7 +208,7 @@ pub async fn send_chat(
     let base_url = provider.base_url.trim_end_matches('/');
     let url = format!("{}/chat/completions", base_url);
 
-    let req_client = build_authed_client(client, provider, &api_key).map_err(LlmError::Other)?;
+    let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
     let messages = messages
         .into_iter()
@@ -216,20 +223,21 @@ pub async fn send_chat(
         reasoning,
     };
 
-    send_request(&req_client, &url, &request_body).await
+    send_request(client, &url, headers, &request_body).await
 }
 
-/// Attach common + provider-specific auth headers to a POST request, using the
-/// shared connection-pool `client` as the base. Returns the fully configured
-/// `RequestBuilder` ready to `.json(body).send().await`.
-fn build_authed_client(
-    _base: &reqwest::Client,
+/// Build the common + provider-specific auth headers for one request.
+///
+/// [GRAIN] Previously this built a throwaway `reqwest::Client` per call, which
+/// created a fresh connection pool + TLS state every request (a TCP/TLS
+/// handshake on every post-process and Agent turn). reqwest's pool lives on the
+/// `Client`, not on per-request headers, so we now keep the SHARED pooled client
+/// and attach these headers (plus timeouts) to each request builder instead
+/// (see `send_request` / `fetch_models`). This reuses connections across calls.
+fn build_auth_headers(
     provider: &PostProcessProvider,
     api_key: &str,
-) -> Result<reqwest::Client, String> {
-    // reqwest::Client is cheaply clonable — cloning shares the underlying
-    // connection pool, so no new TCP handshakes or TLS sessions are created.
-    // We wrap it in a new Client via ClientBuilder only to attach default headers.
+) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(
@@ -260,16 +268,7 @@ fn build_authed_client(
             );
         }
     }
-    // The `base` client already has a connection pool; building a new Client from
-    // its config (via reqwest internals) reuses that pool when the feature flag
-    // `native-tls`/`rustls-tls` pools are shared by clone. For default_headers we
-    // must use ClientBuilder — but we pass `base`'s config forward via clone first.
-    reqwest::Client::builder()
-        .default_headers(headers)
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("Failed to build authed client: {e}"))
+    Ok(headers)
 }
 
 /// POST a built request to `{base}/chat/completions` and decode it into an
@@ -279,10 +278,13 @@ fn build_authed_client(
 async fn send_request(
     client: &reqwest::Client,
     url: &str,
+    headers: HeaderMap,
     request_body: &ChatCompletionRequest,
 ) -> Result<LlmSuccess, LlmError> {
     let response = client
         .post(url)
+        .headers(headers)
+        .timeout(LLM_REQUEST_TIMEOUT)
         .json(request_body)
         .send()
         .await
@@ -338,10 +340,12 @@ pub async fn fetch_models(
 
     debug!("Fetching models from: {}", url);
 
-    let req_client = build_authed_client(client, provider, &api_key)?;
+    let headers = build_auth_headers(provider, &api_key)?;
 
-    let response = req_client
+    let response = client
         .get(&url)
+        .headers(headers)
+        .timeout(LLM_REQUEST_TIMEOUT)
         .send()
         .await
         .map_err(|e| format!("Failed to fetch models: {}", e))?;
