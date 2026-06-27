@@ -151,12 +151,27 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
                 });
 
                 match call {
-                    Ok(res) => CallOutcome::Ok {
-                        text: res.text,
-                        remaining_requests: res.remaining_requests,
-                        remaining_tokens: res.remaining_tokens,
-                        total_tokens: None,
-                    },
+                    Ok(res) => {
+                        // [GRAIN] Cloud transcripts skip the local engine, so apply the
+                        // shared final-text stage (custom-word dictionary + filler/stutter
+                        // filtering) here. No Whisper `initial_prompt` biasing on the cloud
+                        // path, so the fuzzy custom-word pass runs (skip = false). The local
+                        // branch finalizes inside `tm.transcribe`, so it is NOT finalized
+                        // again here.
+                        CallOutcome::Ok {
+                            text: crate::audio_toolkit::finalize_transcript(
+                                &res.text,
+                                &settings.custom_words,
+                                settings.word_correction_threshold,
+                                &settings.app_language,
+                                &settings.custom_filler_words,
+                                false,
+                            ),
+                            remaining_requests: res.remaining_requests,
+                            remaining_tokens: res.remaining_tokens,
+                            total_tokens: None,
+                        }
+                    }
                     Err(SttError::RateLimited { retry_after_s }) => {
                         log::warn!(
                             "[GRAIN] STT '{}' rate-limited — cooling down, trying next",

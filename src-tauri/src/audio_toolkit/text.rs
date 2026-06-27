@@ -155,6 +155,44 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
     result.join(" ")
 }
 
+/// Apply the full final-text stage to a completed transcript: custom-word
+/// correction followed by filler-word / stutter filtering.
+///
+/// This is the single place every transcription path converges on so the
+/// behavior is identical regardless of backend (local batch, rolling window,
+/// or cloud STT). Run it ONCE on the finished transcript — never per rolling
+/// chunk, which would corrupt words across chunk seams and repeat the work.
+///
+/// # Arguments
+/// * `text` - the completed transcript.
+/// * `custom_words` - the user's dictionary (may be empty).
+/// * `word_correction_threshold` - fuzzy-match acceptance threshold.
+/// * `app_language` - language code selecting the default filler-word set.
+/// * `custom_filler_words` - optional filler-word override (see
+///   [`filter_transcription_output`]).
+/// * `skip_custom_words` - when `true`, skip the fuzzy custom-word correction.
+///   The local Whisper batch path sets this because it already biases the model
+///   via `initial_prompt`; paths with no such biasing (rolling, cloud, Agent)
+///   pass `false` so the dictionary is honored.
+///
+/// # Returns
+/// The finalized transcript.
+pub fn finalize_transcript(
+    text: &str,
+    custom_words: &[String],
+    word_correction_threshold: f64,
+    app_language: &str,
+    custom_filler_words: &Option<Vec<String>>,
+    skip_custom_words: bool,
+) -> String {
+    let corrected = if skip_custom_words || custom_words.is_empty() {
+        text.to_string()
+    } else {
+        apply_custom_words(text, custom_words, word_correction_threshold)
+    };
+    filter_transcription_output(&corrected, app_language, custom_filler_words)
+}
+
 /// Preserves the case pattern of the original word when applying a replacement
 fn preserve_case_pattern(original: &str, replacement: &str) -> String {
     if original.chars().all(|c| c.is_uppercase()) {
@@ -351,6 +389,43 @@ mod tests {
         assert_eq!(extract_punctuation("hello"), ("", ""));
         assert_eq!(extract_punctuation("!hello?"), ("!", "?"));
         assert_eq!(extract_punctuation("...hello..."), ("...", "..."));
+    }
+
+    #[test]
+    fn test_finalize_applies_custom_words_and_filters() {
+        // Non-whisper path: fuzzy correction runs, then fillers are removed.
+        let custom = vec!["ChargeBee".to_string()];
+        let result = finalize_transcript(
+            "um the Charge B um dashboard",
+            &custom,
+            0.5,
+            "en",
+            &None,
+            false,
+        );
+        assert!(result.contains("ChargeBee"), "got: {result}");
+        assert!(!result.contains("um"), "fillers not removed: {result}");
+    }
+
+    #[test]
+    fn test_finalize_skip_custom_words_still_filters() {
+        // Whisper path: fuzzy correction skipped (model already biased), but
+        // filler filtering still applies.
+        let custom = vec!["ChargeBee".to_string()];
+        let result =
+            finalize_transcript("um the Charge B dashboard", &custom, 0.5, "en", &None, true);
+        assert!(
+            !result.contains("ChargeBee"),
+            "should not fuzzy-correct: {result}"
+        );
+        assert!(result.contains("Charge B"), "original kept: {result}");
+        assert!(!result.contains("um"), "fillers not removed: {result}");
+    }
+
+    #[test]
+    fn test_finalize_empty_custom_words_is_just_filter() {
+        let result = finalize_transcript("um hello world", &[], 0.5, "en", &None, false);
+        assert_eq!(result, "hello world");
     }
 
     #[test]
