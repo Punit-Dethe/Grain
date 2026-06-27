@@ -451,11 +451,11 @@
         "browse": "Browse models",
         "showLess": "Show less"
       },
-      "rotationNoProvider": "No provider is configured yet. Add a cloud provider before turning on smart rotation.",
+      "rotationNoProvider": "No provider is configured yet. Add a cloud provider before enabling cloud transcription.",
       "smartRotation": {
-        "label": "Cloud transcription (smart rotation)",
-        "short": "Smart rotation",
-        "description": "When on, speech is transcribed by your cloud providers below, rotating across them with per-provider daily quotas and automatic failover. The local on-device model is disabled while this is on. When off, the local model is used with no network."
+        "label": "Cloud transcription",
+        "short": "Enable cloud providers",
+        "description": "When on, speech is transcribed by the cloud providers below. If multiple are enabled, it automatically rotates across them with per-provider daily quotas and failover. The local on-device model is disabled while this is on. When off, the local model is used with no network."
       },
       "localActive": {
         "title": "Local on-device model",
