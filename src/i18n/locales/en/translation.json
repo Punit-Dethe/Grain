@@ -349,7 +349,7 @@
         "description": "Display the Handy icon in the system tray."
       },
       "overlay": {
-        "title": "Overlay Position",
+        "title": "Pill Position",
         "description": "Display visual feedback overlay during recording and transcription. On Linux 'None' is recommended.",
         "options": {
           "none": "None",
