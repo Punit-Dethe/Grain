@@ -63,22 +63,14 @@ export const SttProviderRow: React.FC<SttProviderRowProps> = ({
           <span className="text-sm font-medium text-ink truncate">
             {provider.name}
           </span>
-          <span
-            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-medium ${
-              hasKey
-                ? "bg-status-ready/15 text-status-ready"
-                : "bg-status-error/15 text-status-error"
-            }`}
-          >
-            {hasKey ? (
-              <Check className="w-3 h-3" />
-            ) : (
+          {!hasKey && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-medium bg-status-error/15 text-status-error"
+            >
               <KeyRound className="w-3 h-3" />
-            )}
-            {hasKey
-              ? t("settings.speechToText.keySet")
-              : t("settings.speechToText.noKey")}
-          </span>
+              {t("settings.speechToText.noKey")}
+            </span>
+          )}
         </div>
         <div className="mt-0.5 flex items-center gap-2 text-xs text-ink-faint font-mono truncate">
           <span className="truncate">{provider.base_url}</span>
