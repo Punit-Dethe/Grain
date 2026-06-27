@@ -38,8 +38,10 @@ pub struct TranscriptionCoordinator {
 }
 
 pub fn is_transcribe_binding(id: &str) -> bool {
-    id == "transcribe" || id == "transcribe_with_post_process" || id == "transcribe_realtime"
-    || id == "transcribe_send_to_ai"
+    id == "transcribe"
+        || id == "transcribe_with_post_process"
+        || id == "transcribe_realtime"
+        || id == "transcribe_send_to_ai"
     // ^ [GRAIN] real-time binding shares the serialized record/transcribe lifecycle
 }
 
@@ -91,10 +93,19 @@ impl TranscriptionCoordinator {
                                         if &binding_id == id {
                                             stop(&app, &mut stage, &start_id, &hotkey_string);
                                         } else if binding_id == "transcribe_send_to_ai" {
-                                            let send_to_ai = crate::settings::get_settings(&app).post_process_enabled;
-                                            stop_with_intent(&app, &mut stage, &start_id, &hotkey_string, send_to_ai);
+                                            let send_to_ai = crate::settings::get_settings(&app)
+                                                .post_process_enabled;
+                                            stop_with_intent(
+                                                &app,
+                                                &mut stage,
+                                                &start_id,
+                                                &hotkey_string,
+                                                send_to_ai,
+                                            );
                                         } else {
-                                            debug!("Ignoring press for '{binding_id}': pipeline busy")
+                                            debug!(
+                                                "Ignoring press for '{binding_id}': pipeline busy"
+                                            )
                                         }
                                     }
                                     _ => {

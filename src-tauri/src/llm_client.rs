@@ -234,10 +234,7 @@ pub async fn send_chat(
 /// `Client`, not on per-request headers, so we now keep the SHARED pooled client
 /// and attach these headers (plus timeouts) to each request builder instead
 /// (see `send_request` / `fetch_models`). This reuses connections across calls.
-fn build_auth_headers(
-    provider: &PostProcessProvider,
-    api_key: &str,
-) -> Result<HeaderMap, String> {
+fn build_auth_headers(provider: &PostProcessProvider, api_key: &str) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     // [GRAIN] Identify as Grain (not upstream Handy) on outbound requests — the
