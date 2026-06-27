@@ -91,6 +91,53 @@ pub fn select_order(
         .collect()
 }
 
+/// Drive a smart-rotation failover walk over `candidates` (already quota-gated
+/// `(id, base_url)` pairs), shared by the STT, post-process, and Agent routers.
+///
+/// Orders the candidates best-first via [`select_order`], then for each provider
+/// in turn runs `run_one(id)` and feeds the resulting [`CallOutcome`] back into
+/// the tracker via [`record_outcome`]. On the first `Ok`, calls `on_success(id)`
+/// (where the caller records its per-provider daily quota usage) and returns the
+/// transcript/text. If every provider rate-limits or fails, returns `Err` with a
+/// summary of the last error.
+///
+/// The driver owns ONLY ordering + the walk + outcome bookkeeping. Pool building
+/// (the hard daily-quota gate), model/key resolution, the actual HTTP call, and
+/// quota persistence stay with the caller via the two closures — so each domain
+/// keeps its own mechanics while the failover logic lives in exactly one place.
+pub async fn run_with_rotation<RunOne, Fut, OnSuccess>(
+    tracker: &Mutex<RotationTracker>,
+    candidates: &[(String, String)],
+    est_tokens: i64,
+    run_one: RunOne,
+    on_success: OnSuccess,
+) -> Result<String, String>
+where
+    RunOne: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = CallOutcome>,
+    OnSuccess: Fn(&str),
+{
+    let order = select_order(tracker, candidates, est_tokens, now_secs());
+    let mut last_err = "all providers exhausted (quota, cooldown, or errors)".to_string();
+    for id in &order {
+        let outcome = run_one(id.clone()).await;
+        record_outcome(tracker, id, &outcome, now_secs());
+        match outcome {
+            CallOutcome::Ok { text, .. } => {
+                on_success(id);
+                return Ok(text);
+            }
+            CallOutcome::RateLimited { .. } => {
+                last_err = format!("{id} rate-limited");
+            }
+            CallOutcome::Failed => {
+                last_err = format!("{id} failed");
+            }
+        }
+    }
+    Err(last_err)
+}
+
 /// Teach the tracker from one call's outcome.
 pub fn record_outcome(tracker: &Mutex<RotationTracker>, id: &str, outcome: &CallOutcome, now: f64) {
     let mut t = tracker.lock().unwrap();

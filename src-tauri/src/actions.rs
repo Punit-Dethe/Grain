@@ -160,7 +160,16 @@ async fn post_process_transcription(
     let http_client = http_client.inner().clone();
 
     // Single-provider path: no rotation, so the tracker isn't consulted/updated.
-    match run_one_provider_with_timeout(&http_client, &provider, model, api_key, &prompt, transcription).await {
+    match run_one_provider_with_timeout(
+        &http_client,
+        &provider,
+        model,
+        api_key,
+        &prompt,
+        transcription,
+    )
+    .await
+    {
         CallOutcome::Ok { text, .. } => Some(text),
         _ => None,
     }
@@ -216,49 +225,60 @@ async fn post_process_rotated(
         .iter()
         .map(|p| (p.id.clone(), p.base_url.clone()))
         .collect();
-    let order = crate::rotation_state::select_order(
+
+    // Failover walk lives in the shared driver; we supply only how to run one
+    // provider and how to record quota on success.
+    let result = crate::rotation_state::run_with_rotation(
         &trackers.llm,
         &candidates,
         est_tokens,
-        crate::rotation_state::now_secs(),
-    );
+        |id| {
+            let http_client = http_client.clone();
+            let eligible = &eligible;
+            let settings = &settings;
+            async move {
+                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
+                    return CallOutcome::Failed;
+                };
+                let model = settings
+                    .post_process_models
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let api_key = settings
+                    .post_process_api_keys
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
+                debug!(
+                    "Rotation: trying provider '{}' (model: {})",
+                    provider.id, model
+                );
+                run_one_provider_with_timeout(
+                    &http_client,
+                    provider,
+                    model,
+                    api_key,
+                    prompt,
+                    transcription,
+                )
+                .await
+            }
+        },
+        |id| {
+            crate::post_process_router::record_usage(app, id);
+            log::info!("[GRAIN] post-process routed to '{id}'");
+        },
+    )
+    .await;
 
-    for id in &order {
-        let Some(provider) = eligible.iter().find(|p| &p.id == id) else {
-            continue;
-        };
-        let model = settings
-            .post_process_models
-            .get(&provider.id)
-            .cloned()
-            .unwrap_or_default();
-        let api_key = settings
-            .post_process_api_keys
-            .get(&provider.id)
-            .cloned()
-            .unwrap_or_default();
-        debug!(
-            "Rotation: trying provider '{}' (model: {})",
-            provider.id, model
-        );
-        let outcome = run_one_provider_with_timeout(&http_client, provider, model, api_key, prompt, transcription).await;
-        crate::rotation_state::record_outcome(
-            &trackers.llm,
-            &provider.id,
-            &outcome,
-            crate::rotation_state::now_secs(),
-        );
-        if let CallOutcome::Ok { text, .. } = outcome {
-            crate::post_process_router::record_usage(app, &provider.id);
-            log::info!("[GRAIN] post-process routed to '{}'", provider.id);
-            return Some(text);
+    match result {
+        Ok(text) => Some(text),
+        Err(e) => {
+            warn!("Post-process rotation: no provider produced output ({e})");
+            None
         }
-        warn!(
-            "Rotation: provider '{}' did not produce output — trying next",
-            provider.id
-        );
     }
-    None
 }
 
 /// Hard ceiling on a single post-process provider call. A provider that accepts
@@ -739,7 +759,8 @@ impl ShortcutAction for TranscribeAction {
     }
 
     fn set_post_process_override(&self, override_val: bool) {
-        self.post_process_override.store(override_val, Ordering::Relaxed);
+        self.post_process_override
+            .store(override_val, Ordering::Relaxed);
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
@@ -1181,7 +1202,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
     }
 
     fn set_post_process_override(&self, override_val: bool) {
-        self.post_process_override.store(override_val, Ordering::Relaxed);
+        self.post_process_override
+            .store(override_val, Ordering::Relaxed);
     }
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {

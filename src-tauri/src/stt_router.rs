@@ -15,9 +15,7 @@ use grain_core::{AppContext, SttProvider, SttProviderKind};
 use tauri::{AppHandle, Manager};
 
 use crate::managers::transcription::TranscriptionManager;
-use crate::rotation_state::{
-    now_secs, record_outcome, select_order, CallOutcome, RotationTrackers,
-};
+use crate::rotation_state::{CallOutcome, RotationTrackers};
 use crate::stt_client::SttError;
 
 /// Hard ceiling on a single cloud STT provider call. A provider that accepts the
@@ -110,88 +108,78 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
         .iter()
         .map(|p| (p.id.clone(), p.base_url.clone()))
         .collect();
-    let order = select_order(&trackers.stt, &candidates, 1, now_secs());
 
-    let mut last_err = "all STT providers exhausted (quota, cooldown, or errors)".to_string();
-    for id in &order {
-        let Some(provider) = eligible.iter().find(|p| &p.id == id) else {
-            continue;
-        };
-        let key = settings
-            .stt_api_keys
-            .get(&provider.id)
-            .cloned()
-            .unwrap_or_default();
-        
-        let client = app
-            .try_state::<reqwest::Client>()
-            .ok_or("STT routing: HTTP client not available")?
-            .inner();
+    let client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("STT routing: HTTP client not available")?
+        .inner()
+        .clone();
 
-        let call = tokio::time::timeout(
-            STT_REQUEST_TIMEOUT,
-            crate::stt_client::transcribe(client, provider, &samples, &key),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            log::warn!(
-                "[GRAIN] STT provider '{}' timed out after {}s",
-                provider.id,
-                STT_REQUEST_TIMEOUT.as_secs()
-            );
-            Err(SttError::Other("request timed out".to_string()))
-        });
+    // Failover walk lives in the shared driver; the closure maps one STT call
+    // (timeout + SttResult/SttError) into a CallOutcome the driver records.
+    crate::rotation_state::run_with_rotation(
+        &trackers.stt,
+        &candidates,
+        1, // nominal token estimate: STT carries no token budget
+        |id| {
+            let client = client.clone();
+            let eligible = &eligible;
+            let settings = &settings;
+            let samples = &samples;
+            async move {
+                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
+                    return CallOutcome::Failed;
+                };
+                let key = settings
+                    .stt_api_keys
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
 
-        match call {
-            Ok(res) => {
-                record_outcome(
-                    &trackers.stt,
-                    &provider.id,
-                    &CallOutcome::Ok {
-                        text: res.text.clone(),
+                let call = tokio::time::timeout(
+                    STT_REQUEST_TIMEOUT,
+                    crate::stt_client::transcribe(&client, provider, samples, &key),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    log::warn!(
+                        "[GRAIN] STT provider '{}' timed out after {}s",
+                        provider.id,
+                        STT_REQUEST_TIMEOUT.as_secs()
+                    );
+                    Err(SttError::Other("request timed out".to_string()))
+                });
+
+                match call {
+                    Ok(res) => CallOutcome::Ok {
+                        text: res.text,
                         remaining_requests: res.remaining_requests,
                         remaining_tokens: res.remaining_tokens,
                         total_tokens: None,
                     },
-                    now_secs(),
-                );
-                record_usage(&ctx, &provider.id);
-                log::info!(
-                    "[GRAIN] STT routed to '{}' ({:?})",
-                    provider.id,
-                    provider.kind
-                );
-                return Ok(res.text);
+                    Err(SttError::RateLimited { retry_after_s }) => {
+                        log::warn!(
+                            "[GRAIN] STT '{}' rate-limited — cooling down, trying next",
+                            provider.id
+                        );
+                        CallOutcome::RateLimited { retry_after_s }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[GRAIN] STT provider '{}' failed: {e} — trying next",
+                            provider.id
+                        );
+                        CallOutcome::Failed
+                    }
+                }
             }
-            Err(SttError::RateLimited { retry_after_s }) => {
-                record_outcome(
-                    &trackers.stt,
-                    &provider.id,
-                    &CallOutcome::RateLimited { retry_after_s },
-                    now_secs(),
-                );
-                log::warn!(
-                    "[GRAIN] STT '{}' rate-limited — cooling down, trying next",
-                    provider.id
-                );
-                last_err = format!("{} rate-limited", provider.id);
-            }
-            Err(e) => {
-                record_outcome(
-                    &trackers.stt,
-                    &provider.id,
-                    &CallOutcome::Failed,
-                    now_secs(),
-                );
-                log::warn!(
-                    "[GRAIN] STT provider '{}' failed: {e} — trying next",
-                    provider.id
-                );
-                last_err = e.to_string();
-            }
-        }
-    }
-    Err(last_err)
+        },
+        |id| {
+            record_usage(&ctx, id);
+            log::info!("[GRAIN] STT routed to '{id}'");
+        },
+    )
+    .await
 }
 
 /// Run the in-process model off the async runtime (it blocks for the inference).
