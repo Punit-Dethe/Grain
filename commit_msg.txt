@@ -1,0 +1,23 @@
+fix: cumulative MR merges for routing, memory, and audio fixes
+
+This commit integrates five major fixes to address bugs in routing, memory management, and audio capture:
+
+1. Audio Resampler Bug Fix (resampler.rs)
+- The capture pipeline was silently dropping the last 60-150ms of every recording.
+- Fixed `FrameResampler::finish()` to correctly flush rubato's internal FFT delay line and output the trailing latency.
+
+2. STT Eager Model Load Fix (actions.rs, stt_router.rs)
+- Prevented the on-device model from being loaded into RAM unconditionally on every batch press.
+- Gated local ASR model loading behind `will_route_to_cloud()` so it's skipped when STT smart rotation routes to a cloud provider.
+
+3. Post-Process Rotation Double Ordering Fix (actions.rs, post_process_router.rs)
+- Removed the desyncing `RR_CURSOR` and round-robin logic from `rotation_pool()`.
+- The rotation pool now correctly delegates ordering to `select_order` for best-first live health ordering, maintaining consistency with STT routing.
+
+4. Provider Call Timeouts (actions.rs, stt_router.rs)
+- Bounded every provider call with explicit timeouts so failover works correctly instead of stalling the pipeline.
+- Applied a 90s timeout for STT providers and a 120s timeout for post-process (LLM) providers.
+
+5. Rolling Window Bounded Memory (cursor.rs)
+- Bounded `SessionCursor` memory to prevent unbounded memory growth during long dictations.
+- Introduced `base_frame` and `compact()` to drop dead frames, keeping memory bounded to roughly one chunk plus the overlap window.

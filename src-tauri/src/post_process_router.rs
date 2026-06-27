@@ -2,22 +2,18 @@
 //!
 //! Post-processing keeps its OWN provider list (separate from STT). When
 //! `post_process_smart_rotation` is on, requests fan out across ENABLED
-//! post-process providers (round-robin + per-provider daily quota + failover);
-//! when off, the single selected provider is used (today's behavior).
+//! post-process providers (health-ordered by `select_order` + per-provider
+//! daily quota + failover); when off, the single selected provider is used
+//! (today's behavior).
 //!
 //! Only the quota bookkeeping + pool selection live here; the actual LLM call
 //! (Apple / structured-output / legacy) stays in `actions.rs` where its deps are.
 //! Reads/writes go through grain-core's owned `AppContext`, so this is headless.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use grain_core::{AppContext, AppSettings, PostProcessProvider};
 use tauri::{AppHandle, Manager};
-
-/// Round-robin cursor across the post-process pool (process-wide; survives across
-/// requests so consecutive post-processings hit different providers).
-static RR_CURSOR: AtomicUsize = AtomicUsize::new(0);
 
 fn ctx(app: &AppHandle) -> Option<Arc<AppContext>> {
     app.try_state::<Arc<AppContext>>()
@@ -35,21 +31,20 @@ fn is_eligible(p: &PostProcessProvider) -> bool {
         }
 }
 
-/// The rotation pool for this request: every eligible provider, ordered
-/// round-robin from a process-wide cursor so equally-ready providers share load.
+/// The rotation pool for this request: every eligible provider, in settings
+/// order. Ordering is NOT done here — the caller passes this set to
+/// `rotation_state::select_order`, which orders best-first by live health
+/// (recent 429s cool down, headroom leads). This mirrors `stt_router::cloud_pool`
+/// exactly so the two routers stay consistent: the pool filters, the tracker
+/// orders. (Previously this pre-shuffled round-robin, which `select_order` then
+/// discarded while a process-wide cursor desynced from the calls made.)
 pub fn rotation_pool(settings: &AppSettings) -> Vec<PostProcessProvider> {
-    let eligible: Vec<PostProcessProvider> = settings
+    settings
         .post_process_providers
         .iter()
         .filter(|p| is_eligible(p))
         .cloned()
-        .collect();
-    if eligible.len() <= 1 {
-        return eligible;
-    }
-    let n = eligible.len();
-    let start = RR_CURSOR.fetch_add(1, Ordering::Relaxed) % n;
-    (0..n).map(|i| eligible[(start + i) % n].clone()).collect()
+        .collect()
 }
 
 /// If the local date rolled over since the last reset, zero every provider's
