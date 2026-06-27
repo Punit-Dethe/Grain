@@ -101,7 +101,7 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
           <div className="text-sm font-medium text-ink truncate">
             {provider.label}
           </div>
-          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 min-w-0">
+          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 ease-in-out min-w-0">
             <span className="text-line font-medium shrink-0">|</span>
             <div className="flex items-center gap-1.5 text-xs text-ink-faint font-mono truncate">
               <span className="truncate">{provider.base_url}</span>
