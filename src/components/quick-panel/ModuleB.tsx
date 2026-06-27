@@ -135,8 +135,6 @@ export const ModuleB: React.FC = () => {
     if (smartRotation) setRoute(1);
   }, [smartRotation]);
 
-  // Launch-on-start has no Handy equivalent yet — placeholder, not persisted.
-  const [launch, setLaunch] = useState(false);
 
   const unloadEnum = (getSetting("model_unload_timeout") as string) ?? "never";
   const unloadLabel =
@@ -213,11 +211,8 @@ export const ModuleB: React.FC = () => {
           />
           <Spacer h={5} />
           <div className="flex" style={{ gap: 8 }}>
-            <MiniBox label="Launch" sub="Load on start">
-              <MechanicalToggle checked={launch} onChange={setLaunch} />
-            </MiniBox>
-            <MiniBox label="Unload" sub="Auto-idle">
-              <div style={{ width: 68 }}>
+            <MiniBox label="Unload model" sub="Idle timeout">
+              <div style={{ width: 140 }}>
                 <ConsoleSelect
                   value={unloadLabel}
                   options={UNLOAD.map((u) => u.label)}
@@ -237,9 +232,6 @@ export const ModuleB: React.FC = () => {
           />
           <Spacer h={5} />
           <div className="flex" style={{ gap: 8 }}>
-            <MiniBox label="Real-time" sub="coming soon">
-              <MechanicalToggle checked={false} />
-            </MiniBox>
             <MiniBox label="Smart Rotate" sub="Provider fallback">
               <MechanicalToggle
                 checked={smartRotation}
