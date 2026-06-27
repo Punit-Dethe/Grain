@@ -71,7 +71,7 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
   };
 
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
+    <div className="group flex items-center gap-3 px-4 py-3">
       {/* One selection control — radio (single) or checkbox (rotation). */}
       <button
         type="button"
@@ -97,12 +97,17 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
       </button>
 
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-ink truncate">
-          {provider.label}
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-ink-faint font-mono truncate">
-          <span className="truncate">{provider.base_url}</span>
-          {model ? <span>· {model}</span> : null}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="text-sm font-medium text-ink truncate">
+            {provider.label}
+          </div>
+          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 min-w-0">
+            <span className="text-line font-medium shrink-0">|</span>
+            <div className="flex items-center gap-1.5 text-xs text-ink-faint font-mono truncate">
+              <span className="truncate">{provider.base_url}</span>
+              {model ? <span className="shrink-0">· {model}</span> : null}
+            </div>
+          </div>
         </div>
         <div className="mt-0.5 text-[0.7rem] text-ink-soft">
           {quotaLimit != null
