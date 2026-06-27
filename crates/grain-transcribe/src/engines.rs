@@ -169,7 +169,11 @@ impl GrainModel {
                 }
             }
         };
-        Ok(Self { id: kind.as_str().to_string(), kind, loaded })
+        Ok(Self {
+            id: kind.as_str().to_string(),
+            kind,
+            loaded,
+        })
     }
 }
 
@@ -210,8 +214,8 @@ impl Asr for GrainModel {
         // spaced word positions across the chunk we own. Dedup is then by
         // POSITION on our timeline, never by the model's (possibly inconsistent)
         // overlap text — so every model deduplicates cleanly.
-        let words = segments_to_words(&result)
-            .or_else(|| synthesize_words(&result.text, chunk_dur_sec));
+        let words =
+            segments_to_words(&result).or_else(|| synthesize_words(&result.text, chunk_dur_sec));
         Ok((result.text, words))
     }
 }

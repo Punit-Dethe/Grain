@@ -589,8 +589,8 @@ pub struct AppSettings {
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
     /// [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
-    /// + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
-    /// accuracy on low-volume input without touching already-loud audio.
+    ///   + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
+    ///     accuracy on low-volume input without touching already-loud audio.
     #[serde(default = "default_audio_conditioning")]
     pub audio_conditioning: bool,
 }
@@ -706,13 +706,62 @@ pub fn default_post_process_providers() -> Vec<PostProcessProvider> {
     }
 
     let mut providers = vec![
-        p("openai", "OpenAI", "https://api.openai.com/v1", false, Some("/models"), true),
-        p("zai", "Z.AI", "https://api.z.ai/api/paas/v4", false, Some("/models"), true),
-        p("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", false, Some("/models"), true),
-        p("anthropic", "Anthropic", "https://api.anthropic.com/v1", false, Some("/models"), false),
-        p("groq", "Groq", "https://api.groq.com/openai/v1", false, Some("/models"), false),
-        p("cerebras", "Cerebras", "https://api.cerebras.ai/v1", false, Some("/models"), true),
-        p("gemini", "Gemini", "https://generativelanguage.googleapis.com/v1beta/openai", false, Some("/models"), true),
+        p(
+            "openai",
+            "OpenAI",
+            "https://api.openai.com/v1",
+            false,
+            Some("/models"),
+            true,
+        ),
+        p(
+            "zai",
+            "Z.AI",
+            "https://api.z.ai/api/paas/v4",
+            false,
+            Some("/models"),
+            true,
+        ),
+        p(
+            "openrouter",
+            "OpenRouter",
+            "https://openrouter.ai/api/v1",
+            false,
+            Some("/models"),
+            true,
+        ),
+        p(
+            "anthropic",
+            "Anthropic",
+            "https://api.anthropic.com/v1",
+            false,
+            Some("/models"),
+            false,
+        ),
+        p(
+            "groq",
+            "Groq",
+            "https://api.groq.com/openai/v1",
+            false,
+            Some("/models"),
+            false,
+        ),
+        p(
+            "cerebras",
+            "Cerebras",
+            "https://api.cerebras.ai/v1",
+            false,
+            Some("/models"),
+            true,
+        ),
+        p(
+            "gemini",
+            "Gemini",
+            "https://generativelanguage.googleapis.com/v1beta/openai",
+            false,
+            Some("/models"),
+            true,
+        ),
     ];
 
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -766,7 +815,10 @@ fn default_model_for_provider(provider_id: &str) -> String {
 fn default_post_process_models() -> HashMap<String, String> {
     let mut map = HashMap::new();
     for provider in default_post_process_providers() {
-        map.insert(provider.id.clone(), default_model_for_provider(&provider.id));
+        map.insert(
+            provider.id.clone(),
+            default_model_for_provider(&provider.id),
+        );
     }
     map
 }
@@ -876,7 +928,12 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 
     // [GRAIN] Seed the prompt-switcher + agent bindings for installs that predate them.
     let defaults = get_default_settings();
-    for id in ["prompt_next", "prompt_prev", "summon_agent", "transcribe_send_to_ai"] {
+    for id in [
+        "prompt_next",
+        "prompt_prev",
+        "summon_agent",
+        "transcribe_send_to_ai",
+    ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
                 settings.bindings.insert(id.to_string(), binding.clone());
@@ -1003,8 +1060,9 @@ pub fn get_default_settings() -> AppSettings {
         ShortcutBinding {
             id: "summon_agent".to_string(),
             name: "Summon Agent".to_string(),
-            description: "Open the AI agent on your selected text — dictate or type an instruction."
-                .to_string(),
+            description:
+                "Open the AI agent on your selected text — dictate or type an instruction."
+                    .to_string(),
             default_binding: default_agent_shortcut.to_string(),
             current_binding: default_agent_shortcut.to_string(),
         },

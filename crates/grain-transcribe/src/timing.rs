@@ -93,12 +93,23 @@ mod tests {
         let result = TranscriptionResult {
             text: "hello there world".into(),
             segments: Some(vec![
-                TranscriptionSegment { start: 0.0, end: 2.0, text: "hello there".into() },
-                TranscriptionSegment { start: 2.0, end: 3.0, text: "world".into() },
+                TranscriptionSegment {
+                    start: 0.0,
+                    end: 2.0,
+                    text: "hello there".into(),
+                },
+                TranscriptionSegment {
+                    start: 2.0,
+                    end: 3.0,
+                    text: "world".into(),
+                },
             ]),
         };
         let w = segments_to_words(&result).unwrap();
-        assert_eq!(w.iter().map(|x| x.word.as_str()).collect::<Vec<_>>(), ["hello", "there", "world"]);
+        assert_eq!(
+            w.iter().map(|x| x.word.as_str()).collect::<Vec<_>>(),
+            ["hello", "there", "world"]
+        );
         // first segment's two words split its [0,2) span
         assert_eq!(w[0].start, 0.0);
         assert_eq!(w[1].start, 1.0);
@@ -107,7 +118,10 @@ mod tests {
 
     #[test]
     fn no_segments_is_none() {
-        let result = TranscriptionResult { text: "x".into(), segments: None };
+        let result = TranscriptionResult {
+            text: "x".into(),
+            segments: None,
+        };
         assert!(segments_to_words(&result).is_none());
     }
 }

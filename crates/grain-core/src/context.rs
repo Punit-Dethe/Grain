@@ -44,7 +44,12 @@ impl AppContext {
             AppSettings::default()
         });
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        Arc::new(Self { settings: RwLock::new(settings), event_tx, resource_dir, data_dir })
+        Arc::new(Self {
+            settings: RwLock::new(settings),
+            event_tx,
+            resource_dir,
+            data_dir,
+        })
     }
 
     // -- settings ----------------------------------------------------------
@@ -52,7 +57,10 @@ impl AppContext {
     /// A clone of the current settings (the headless replacement for
     /// `get_settings(&app)`).
     pub fn settings(&self) -> AppSettings {
-        self.settings.read().expect("settings lock poisoned").clone()
+        self.settings
+            .read()
+            .expect("settings lock poisoned")
+            .clone()
     }
 
     /// Read a value out of settings under a shared lock without cloning the whole
@@ -222,7 +230,8 @@ mod tests {
         let data = dir.path().join("data");
         {
             let ctx = AppContext::new("res", &data);
-            ctx.update_settings(|s| s.selected_model = "parakeet-v3".into()).unwrap();
+            ctx.update_settings(|s| s.selected_model = "parakeet-v3".into())
+                .unwrap();
         }
         // Fresh context reads the same value back from disk.
         let ctx2 = AppContext::new("res", &data);
@@ -235,19 +244,29 @@ mod tests {
         let data = dir.path().join("data");
         let ctx = AppContext::new("res", &data);
         ctx.update_settings(|s| {
-            s.post_process_api_keys.insert("openai".into(), "sk-supersecret".into());
+            s.post_process_api_keys
+                .insert("openai".into(), "sk-supersecret".into());
         })
         .unwrap();
 
         let settings_raw = fs::read_to_string(data.join(SETTINGS_FILE)).unwrap();
         let secrets_raw = fs::read_to_string(data.join(SECRETS_FILE)).unwrap();
-        assert!(!settings_raw.contains("sk-supersecret"), "secret leaked into settings file");
-        assert!(secrets_raw.contains("sk-supersecret"), "secret missing from credential file");
+        assert!(
+            !settings_raw.contains("sk-supersecret"),
+            "secret leaked into settings file"
+        );
+        assert!(
+            secrets_raw.contains("sk-supersecret"),
+            "secret missing from credential file"
+        );
 
         // And it's transparently merged back on reload.
         let ctx2 = AppContext::new("res", &data);
         assert_eq!(
-            ctx2.settings().post_process_api_keys.get("openai").map(String::as_str),
+            ctx2.settings()
+                .post_process_api_keys
+                .get("openai")
+                .map(String::as_str),
             Some("sk-supersecret")
         );
     }
@@ -256,7 +275,9 @@ mod tests {
     fn events_broadcast_to_subscribers() {
         let (ctx, _dir) = ctx();
         let mut rx = ctx.subscribe();
-        ctx.emit(DaemonEvent::ModelLoaded { model_id: "parakeet".into() });
+        ctx.emit(DaemonEvent::ModelLoaded {
+            model_id: "parakeet".into(),
+        });
         match rx.try_recv() {
             Ok(DaemonEvent::ModelLoaded { model_id }) => assert_eq!(model_id, "parakeet"),
             other => panic!("unexpected: {other:?}"),

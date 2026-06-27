@@ -65,7 +65,13 @@ fn parse_args() -> Result<Args> {
     if positional.len() != 2 {
         bail!("usage: asr-harness <model-dir> <input.wav> [--engine NAME] [--block-ms N] [--window-s N]");
     }
-    Ok(Args { model_dir: positional[0].clone(), wav: positional[1].clone(), engine, block_ms, window_s })
+    Ok(Args {
+        model_dir: positional[0].clone(),
+        wav: positional[1].clone(),
+        engine,
+        block_ms,
+        window_s,
+    })
 }
 
 /// Read a WAV as mono 16 kHz i16 frames (averaging stereo, warning on rate).
@@ -109,7 +115,11 @@ fn run() -> Result<()> {
                 model_dir.display()
             )
         })?;
-    eprintln!("loading {} model from {} ...", kind.as_str(), model_dir.display());
+    eprintln!(
+        "loading {} model from {} ...",
+        kind.as_str(),
+        model_dir.display()
+    );
     let asr = GrainModel::load(kind, model_dir)?;
 
     let samples = read_wav_mono16(&args.wav)?;

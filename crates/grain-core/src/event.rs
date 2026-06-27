@@ -23,36 +23,68 @@ pub enum SessionMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum DaemonEvent {
     // -- Recording lifecycle --
-    RecordingStarted { session_id: u64, mode: SessionMode },
-    RecordingStopped { session_id: u64 },
-    SessionCancelled { session_id: u64 },
+    RecordingStarted {
+        session_id: u64,
+        mode: SessionMode,
+    },
+    RecordingStopped {
+        session_id: u64,
+    },
+    SessionCancelled {
+        session_id: u64,
+    },
 
     // -- Rolling-window progress --
     /// Intermediate assembled text after a chunk finalized.
-    ChunkComplete { session_id: u64, chunk_idx: u32, text: String },
+    ChunkComplete {
+        session_id: u64,
+        chunk_idx: u32,
+        text: String,
+    },
     /// Final assembled transcript for the session.
-    TranscriptionComplete { session_id: u64, text: String },
+    TranscriptionComplete {
+        session_id: u64,
+        text: String,
+    },
     /// LLM post-processing finished.
-    ProcessingComplete { session_id: u64, text: String },
+    ProcessingComplete {
+        session_id: u64,
+        text: String,
+    },
 
     // -- Model lifecycle (replaces `model-state-changed`) --
-    ModelLoading { model_id: String },
-    ModelLoaded { model_id: String },
+    ModelLoading {
+        model_id: String,
+    },
+    ModelLoaded {
+        model_id: String,
+    },
     ModelUnloaded,
-    ModelError { error: String },
+    ModelError {
+        error: String,
+    },
     /// Download/verify/extract progress (replaces `model-download-progress` etc.).
-    ModelDownloadProgress { model_id: String, progress: f32 },
+    ModelDownloadProgress {
+        model_id: String,
+        progress: f32,
+    },
 
     // -- Pill UI feed --
     /// Per-bucket audio energy driving the Aura Core dots (replaces `mic-level`).
-    AudioLevel { levels: Vec<f32> },
+    AudioLevel {
+        levels: Vec<f32>,
+    },
     /// Active prompt changed mid-speech → pill riser (← name →).
-    PromptChanged { name: String },
+    PromptChanged {
+        name: String,
+    },
 
     // -- Misc UI signals --
     ShowOverlay,
     HideOverlay,
-    PasteError { error: String },
+    PasteError {
+        error: String,
+    },
 
     /// Where the single pill should anchor — and whether to show at all
     /// (`OverlayPosition::None` = never show). Emitted on session start and when
