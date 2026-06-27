@@ -64,12 +64,7 @@ export const LocalModelSection: React.FC<LocalModelSectionProps> = ({
         }`}
       >
       {/* Summary row — decently thick */}
-      <div className="flex items-center gap-3 px-4 py-4">
-        <span
-          className={`w-2 h-2 rounded-full shrink-0 ${
-            disabled ? "bg-ink-faint" : "bg-status-ready"
-          }`}
-        />
+      <div className="flex items-center justify-between gap-3 px-4 py-4">
         <div className="min-w-0">
           <div className="text-sm font-semibold truncate">{activeName}</div>
           <div className="text-xs text-ink-soft">
@@ -78,6 +73,37 @@ export const LocalModelSection: React.FC<LocalModelSectionProps> = ({
               : t("settings.speechToText.localModel.activeHint")}
           </div>
         </div>
+
+        {active && !disabled && (
+          <div className="flex items-center gap-3 shrink-0">
+            {(active.accuracy_score > 0 || active.speed_score > 0) && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-2 justify-end">
+                  <span className="text-[0.65rem] font-medium text-ink-faint uppercase tracking-wider">
+                    Accuracy
+                  </span>
+                  <div className="w-10 h-1 bg-ink-faint/20 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-ink-soft rounded-full"
+                      style={{ width: `${active.accuracy_score * 100}%` }}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 justify-end">
+                  <span className="text-[0.65rem] font-medium text-ink-faint uppercase tracking-wider">
+                    Speed
+                  </span>
+                  <div className="w-10 h-1 bg-ink-faint/20 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-ink-soft rounded-full"
+                      style={{ width: `${active.speed_score * 100}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Bottom expand strip */}
@@ -100,8 +126,11 @@ export const LocalModelSection: React.FC<LocalModelSectionProps> = ({
       {/* Smooth height animation via the grid-rows 0fr↔1fr technique — no JS
           measuring, no jump. The inner clips its overflow as the row collapses. */}
       <div
-        className="grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none"
-        style={{ gridTemplateRows: open ? "1fr" : "0fr" }}
+        className="grid motion-reduce:transition-none"
+        style={{ 
+          gridTemplateRows: open ? "1fr" : "0fr",
+          transition: "grid-template-rows 300ms ease-out"
+        }}
       >
         <div className="overflow-hidden min-h-0">
           {hasOpened && (
