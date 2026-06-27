@@ -1118,7 +1118,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 }
             });
         }
-        rt.start_session();
+        rt.start_session(get_settings(app).rolling_window_seconds as f64);
         {
             let rm = Arc::clone(&rm);
             std::thread::spawn(move || {

@@ -10,7 +10,6 @@ import { LocalModelSection } from "./LocalModelSection";
 import { ProviderPool } from "../ProviderPool";
 import { RollingWindow } from "../RollingWindow";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
-import { LoadModelOnStartup } from "../LoadModelOnStartup";
 
 // [GRAIN] The unified Transcription tab. Top to bottom: the local model
 // (collapsible picker), the local engine settings, then the cloud providers — one
@@ -88,11 +87,10 @@ export const SpeechToTextSettings: React.FC = () => {
       {/* 1) Local model — collapsible picker; grays out while cloud rotation is on. */}
       <LocalModelSection disabled={smartRotation} />
 
-      {/* 2) Engine — local-model behaviour: rolling buffer, unload, preload. */}
+      {/* 2) Engine — local-model behaviour: rolling buffer, unload. */}
       <SettingsGroup title={t("settings.speechToText.groups.engine")}>
         <RollingWindow descriptionMode="tooltip" grouped />
         <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped />
-        <LoadModelOnStartup descriptionMode="tooltip" grouped />
       </SettingsGroup>
 
       {/* 3) Cloud providers — header carries smart rotation (+ info) and add. */}

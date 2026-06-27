@@ -444,10 +444,6 @@
           "sec60": "60 seconds"
         }
       },
-      "loadOnStartup": {
-        "label": "Load model on startup",
-        "description": "Load the local transcription model into memory when the app starts, so the first dictation has no warm-up delay."
-      },
       "localModel": {
         "none": "No model selected",
         "activeHint": "Active · used for on-device transcription",

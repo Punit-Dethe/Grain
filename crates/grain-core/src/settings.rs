@@ -593,6 +593,13 @@ pub struct AppSettings {
     ///     accuracy on low-volume input without touching already-loud audio.
     #[serde(default = "default_audio_conditioning")]
     pub audio_conditioning: bool,
+    /// [GRAIN] Rolling-window hard-cut length in SECONDS for the real-time
+    /// (rolling) transcription path. Drives `RollingWindowConfig::max_chunk_seconds`
+    /// in `rolling.rs`. Default 15 mirrors `RollingWindowConfig::default()`; the
+    /// engine clamps to [15, 60], so keep any setter in that range. The frontend
+    /// reflects this value directly (no hardcoded UI default).
+    #[serde(default = "default_rolling_window_seconds")]
+    pub rolling_window_seconds: u32,
 }
 
 fn default_model() -> String {
@@ -603,6 +610,11 @@ fn default_always_on_microphone() -> bool {
 }
 fn default_audio_conditioning() -> bool {
     true
+}
+/// Mirrors `RollingWindowConfig::default().max_chunk_seconds` (15.0s). Kept in
+/// sync with the rolling engine's `[15, 60]` clamp.
+fn default_rolling_window_seconds() -> u32 {
+    15
 }
 fn default_translate_to_english() -> bool {
     false
@@ -1142,6 +1154,7 @@ pub fn get_default_settings() -> AppSettings {
         whisper_gpu_device: default_whisper_gpu_device(),
         extra_recording_buffer_ms: 0,
         audio_conditioning: default_audio_conditioning(),
+        rolling_window_seconds: default_rolling_window_seconds(),
     }
 }
 
