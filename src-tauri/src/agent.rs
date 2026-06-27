@@ -323,9 +323,18 @@ fn capture_selection(app: &AppHandle) -> Option<String> {
         }
     }
 
-    // Restore the user's clipboard regardless of outcome.
-    if let Some(prev) = saved {
-        let _ = clipboard.write_text(prev);
+    // Restore the user's clipboard regardless of outcome. If there was prior
+    // text, put it back. If there was none (empty / non-text clipboard) but our
+    // synthetic copy DID land something, clear it so the capture stays invisible
+    // and we never leave the selected text sitting on the user's clipboard.
+    match saved {
+        Some(prev) => {
+            let _ = clipboard.write_text(prev);
+        }
+        None if captured.is_some() => {
+            let _ = clipboard.write_text(String::new());
+        }
+        None => {}
     }
 
     captured
@@ -382,7 +391,10 @@ pub fn agent_show_panel(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_panel(app: &AppHandle) -> Result<(), String> {
-    register_transient_shortcuts(app);
+    // The panel only needs the global Escape (close); it owns its own follow-up
+    // field for submitting, so it must not grab the global Enter. Registering
+    // close-only avoids the previous register-both-then-unregister-submit race.
+    register_close_shortcut_only(app);
 
     info!("[GRAIN] agent: showing panel");
     let win = match app.get_webview_window(PANEL_LABEL) {
@@ -398,7 +410,6 @@ fn show_panel(app: &AppHandle) -> Result<(), String> {
         }
     };
     show_and_focus(&win);
-    unregister_submit_shortcut_deferred(app);
     info!("[GRAIN] agent: panel shown");
     Ok(())
 }
@@ -503,13 +514,26 @@ fn transient_bindings() -> [ShortcutBinding; 2] {
 /// palette is on screen but ordinary webview keydown events never arrive.
 pub fn register_transient_shortcuts(app: &AppHandle) {
     for binding in transient_bindings() {
-        let _ = crate::shortcut::unregister_shortcut(app, binding.clone());
-        if let Err(e) = crate::shortcut::register_shortcut(app, binding.clone()) {
-            warn!(
-                "[GRAIN] agent: failed to register transient shortcut '{}': {}",
-                binding.current_binding, e
-            );
-        }
+        register_one_transient(app, binding);
+    }
+}
+
+/// Register ONLY the close (Escape) transient shortcut. The panel never submits
+/// via a global Enter (it owns its own follow-up field), so it must not grab the
+/// Enter shortcut at all. Registering both and then deferred-unregistering submit
+/// (the previous approach) raced its own registration and could leave Enter
+/// hijacked system-wide while only the panel was open.
+pub fn register_close_shortcut_only(app: &AppHandle) {
+    register_one_transient(app, close_binding());
+}
+
+fn register_one_transient(app: &AppHandle, binding: ShortcutBinding) {
+    let _ = crate::shortcut::unregister_shortcut(app, binding.clone());
+    if let Err(e) = crate::shortcut::register_shortcut(app, binding.clone()) {
+        warn!(
+            "[GRAIN] agent: failed to register transient shortcut '{}': {}",
+            binding.current_binding, e
+        );
     }
 }
 
@@ -522,13 +546,6 @@ pub fn unregister_transient_shortcuts(app: &AppHandle) {
 pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || unregister_transient_shortcuts(&app));
-}
-
-fn unregister_submit_shortcut_deferred(app: &AppHandle) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let _ = crate::shortcut::unregister_shortcut(&app, submit_binding());
-    });
 }
 
 /// Called by the transient global Enter shortcut. The frontend still owns typed

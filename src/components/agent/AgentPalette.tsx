@@ -154,6 +154,13 @@ export function AgentPalette() {
     try {
       const typed = inputValueRef.current.trim();
       if (typed) {
+        // Typed text wins. If a voice capture is still running (e.g. the global
+        // Enter fired before onChange cancelled it), cancel it so the mic is
+        // released rather than left recording after the palette closes.
+        if (statusRef.current === "recording") {
+          void commands.agentCancelDictation().catch(() => {});
+          setStatus("idle");
+        }
         await handToPanel(typed);
         return;
       }
