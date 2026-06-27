@@ -9,7 +9,9 @@
 //! validate every model against the engine.
 
 use anyhow::Result;
-use rolling_window::{AudioChunk, RollingWindowConfig, SessionCursor, TimelineAssembler, WordTiming};
+use rolling_window::{
+    AudioChunk, RollingWindowConfig, SessionCursor, TimelineAssembler, WordTiming,
+};
 
 pub mod engines;
 pub mod timing;
@@ -104,8 +106,12 @@ impl<A: Asr> RollingWindowSession<A> {
     fn process_chunk(&mut self, chunk: AudioChunk) -> Result<()> {
         let audio = i16_to_f32(&chunk.samples);
         let (text, words) = self.asr.transcribe(&audio)?;
-        self.assembler
-            .add_chunk(chunk.start_sec, chunk.fresh_start_sec, &text, words.as_deref());
+        self.assembler.add_chunk(
+            chunk.start_sec,
+            chunk.fresh_start_sec,
+            &text,
+            words.as_deref(),
+        );
         self.chunk_log
             .push((chunk.fresh_start_sec, self.assembler.text().to_string()));
         Ok(())

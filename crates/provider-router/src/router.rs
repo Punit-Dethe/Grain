@@ -26,7 +26,10 @@ pub struct ProviderPool {
 
 impl ProviderPool {
     pub fn new(providers: Vec<ProviderConfig>) -> Self {
-        Self { providers, rr_index: 0 }
+        Self {
+            providers,
+            rr_index: 0,
+        }
     }
 }
 
@@ -158,10 +161,16 @@ mod tests {
 
     #[test]
     fn round_robin_cycles_through_all_providers() {
-        let ps = vec![provider("p1", None, 0), provider("p2", None, 0), provider("p3", None, 0)];
+        let ps = vec![
+            provider("p1", None, 0),
+            provider("p2", None, 0),
+            provider("p3", None, 0),
+        ];
         let r = router(ps.clone(), vec![]);
         let mut pool = ProviderPool::new(ps);
-        let ids: Vec<String> = (0..3).map(|_| r.next_provider(&mut pool).unwrap().id).collect();
+        let ids: Vec<String> = (0..3)
+            .map(|_| r.next_provider(&mut pool).unwrap().id)
+            .collect();
         assert_eq!(ids, ["p1", "p2", "p3"]);
     }
 
@@ -170,7 +179,9 @@ mod tests {
         let ps = vec![provider("p1", None, 0), provider("p2", None, 0)];
         let r = router(ps.clone(), vec![]);
         let mut pool = ProviderPool::new(ps);
-        let ids: Vec<String> = (0..4).map(|_| r.next_provider(&mut pool).unwrap().id).collect();
+        let ids: Vec<String> = (0..4)
+            .map(|_| r.next_provider(&mut pool).unwrap().id)
+            .collect();
         assert_eq!(ids, ["p1", "p2", "p1", "p2"]);
     }
 

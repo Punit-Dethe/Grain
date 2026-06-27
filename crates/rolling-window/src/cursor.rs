@@ -307,7 +307,14 @@ mod tests {
 
     #[test]
     fn set_rolling_window_clamps() {
-        for (given, expected_s) in [(5.0, 15), (14.0, 15), (15.0, 15), (60.0, 60), (120.0, 60), (10.0, 15)] {
+        for (given, expected_s) in [
+            (5.0, 15),
+            (14.0, 15),
+            (15.0, 15),
+            (60.0, 60),
+            (120.0, 60),
+            (10.0, 15),
+        ] {
             let mut s = cur();
             s.set_rolling_window(given);
             assert_eq!(s.max_frames, expected_s * fps(&s), "given {given}");
@@ -414,8 +421,14 @@ mod tests {
         // Fresh regions tile the whole session exactly.
         assert_eq!(tail.fresh_start_sec, first.end_sec);
         // Payload length matches the tagged range.
-        assert_eq!(first.frame_count(), ((first.end_sec - first.start_sec) * f as f64) as usize);
-        assert_eq!(tail.frame_count(), ((tail.end_sec - tail.start_sec) * f as f64) as usize);
+        assert_eq!(
+            first.frame_count(),
+            ((first.end_sec - first.start_sec) * f as f64) as usize
+        );
+        assert_eq!(
+            tail.frame_count(),
+            ((tail.end_sec - tail.start_sec) * f as f64) as usize
+        );
     }
 
     #[test]
@@ -425,7 +438,7 @@ mod tests {
         let mut s = cur();
         let f = fps(&s);
         let bound = s.max_frames + s.overlap_frames + f; // +1s slack for the in-flight block
-        // 5 minutes of audio in 1s loud blocks (no silence early-finalize).
+                                                         // 5 minutes of audio in 1s loud blocks (no silence early-finalize).
         for sec in 0..300 {
             s.push_block(&block(f, 1000), 0.5);
             assert!(
@@ -438,7 +451,10 @@ mod tests {
         }
         // The absolute timeline still reflects the full session length.
         assert_eq!(s.total_frames(), 300 * f);
-        assert!(s.base_frame > 0, "compaction should have advanced base_frame");
+        assert!(
+            s.base_frame > 0,
+            "compaction should have advanced base_frame"
+        );
     }
 
     #[test]
@@ -459,10 +475,16 @@ mod tests {
         }
         for c in &chunks {
             // Each chunk's fresh region starts exactly where the previous ended.
-            assert!((c.fresh_start_sec - prev_end).abs() < 1e-6, "gap at {prev_end}");
+            assert!(
+                (c.fresh_start_sec - prev_end).abs() < 1e-6,
+                "gap at {prev_end}"
+            );
             prev_end = c.end_sec;
         }
-        assert!((prev_end - 60.0).abs() < 1e-6, "session should tile to 60s, got {prev_end}");
+        assert!(
+            (prev_end - 60.0).abs() < 1e-6,
+            "session should tile to 60s, got {prev_end}"
+        );
     }
 
     // -- cached-cursor slicer equivalence ---------------------------------
@@ -519,7 +541,7 @@ mod tests {
                 block(n, v)
             })
             .collect();
-        
+
         let all_samples = blocks.concat();
         let total = all_samples.len();
 

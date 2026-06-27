@@ -52,7 +52,10 @@ pub struct AppSettings {
 
 impl AppSettings {
     pub fn new(stt_providers: Vec<ProviderConfig>, llm_providers: Vec<ProviderConfig>) -> Self {
-        Self { stt_providers, llm_providers }
+        Self {
+            stt_providers,
+            llm_providers,
+        }
     }
 }
 

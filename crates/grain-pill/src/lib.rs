@@ -319,7 +319,10 @@ impl Aura {
 
 /// Load a system monospace/UI font for the riser label (Windows paths).
 fn load_font() -> Option<fontdue::Font> {
-    for path in ["C:/Windows/Fonts/consola.ttf", "C:/Windows/Fonts/segoeui.ttf"] {
+    for path in [
+        "C:/Windows/Fonts/consola.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+    ] {
         if let Ok(bytes) = std::fs::read(path) {
             if let Ok(font) = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
                 return Some(font);
@@ -331,7 +334,9 @@ fn load_font() -> Option<fontdue::Font> {
 
 /// Measure a string's advance width at `px` (no rasterization).
 fn text_width(font: &fontdue::Font, text: &str, px: f32) -> f32 {
-    text.chars().map(|ch| font.metrics(ch, px).advance_width).sum()
+    text.chars()
+        .map(|ch| font.metrics(ch, px).advance_width)
+        .sum()
 }
 
 /// Trim `text` so it fits within `max_w`, appending an ellipsis when cut. Keeps
@@ -365,7 +370,10 @@ impl CachedText {
     fn new(font: &fontdue::Font, text: &str, px: f32) -> Self {
         let glyphs: Vec<_> = text.chars().map(|ch| font.rasterize(ch, px)).collect();
         let total_width = glyphs.iter().map(|(m, _)| m.advance_width).sum();
-        CachedText { total_width, glyphs }
+        CachedText {
+            total_width,
+            glyphs,
+        }
     }
 }
 
@@ -400,9 +408,8 @@ fn draw_cached_text_centered(
                 }
                 let o = ((y * w + x) as usize) * 4;
                 let inv = 1.0 - ga;
-                let blend = |s: u8, d: u8| -> u8 {
-                    ((s as f32 * ga) + (d as f32 * inv)).min(255.0) as u8
-                };
+                let blend =
+                    |s: u8, d: u8| -> u8 { ((s as f32 * ga) + (d as f32 * inv)).min(255.0) as u8 };
                 data[o] = blend(color[0], data[o]);
                 data[o + 1] = blend(color[1], data[o + 1]);
                 data[o + 2] = blend(color[2], data[o + 2]);
@@ -564,7 +571,15 @@ mod present {
                     }
                 };
                 let old = SelectObject(mem, HGDIOBJ(dib.0));
-                Some(Presenter { hwnd, mem, dib, old, bits: bits as *mut u8, w, h })
+                Some(Presenter {
+                    hwnd,
+                    mem,
+                    dib,
+                    old,
+                    bits: bits as *mut u8,
+                    w,
+                    h,
+                })
             }
         }
 
@@ -582,7 +597,10 @@ mod present {
                     dst[o + 2] = src[o]; // R
                     dst[o + 3] = src[o + 3]; // A
                 }
-                let size = SIZE { cx: self.w, cy: self.h };
+                let size = SIZE {
+                    cx: self.w,
+                    cy: self.h,
+                };
                 let src_pt = POINT { x: 0, y: 0 };
                 let blend = BLENDFUNCTION {
                     BlendOp: AC_SRC_OVER as u8,
@@ -713,7 +731,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
 /// the pill surfaces without waiting for the next HIDDEN_TICK (up to 80 ms).
 fn spawn_event_client(remote: Arc<Mutex<Remote>>, proxy: EventLoopProxy<UserEvent>) {
     std::thread::spawn(move || {
-        let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
             Ok(rt) => rt,
             Err(e) => {
                 eprintln!("pill: tokio runtime failed: {e}");
@@ -854,7 +875,10 @@ impl App {
     /// Recomputed on each show so it follows the active monitor + setting changes.
     fn position_window(window: &Window, anchor: OverlayPosition) {
         let (w, h) = Self::win_size();
-        let Some(mon) = window.current_monitor().or_else(|| window.primary_monitor()) else {
+        let Some(mon) = window
+            .current_monitor()
+            .or_else(|| window.primary_monitor())
+        else {
             return;
         };
         let ms = mon.size();
@@ -871,8 +895,9 @@ impl App {
             // taskbar. The work area already excludes the taskbar, so this lifts the
             // pill clear of it (≈ a taskbar height up) on any taskbar size/edge.
             OverlayPosition::Bottom | OverlayPosition::None => {
-                let bottom = work_area_bottom(mp.x + (ms.width / 2) as i32, mp.y + (ms.height / 2) as i32)
-                    .unwrap_or(screen_bottom);
+                let bottom =
+                    work_area_bottom(mp.x + (ms.width / 2) as i32, mp.y + (ms.height / 2) as i32)
+                        .unwrap_or(screen_bottom);
                 bottom - h as i32 - margin
             }
         };
@@ -888,7 +913,7 @@ impl App {
             let (w, _) = Self::win_size();
             let arrow_inset = peek * 0.85;
             let (px0, px1) = (cell_px, w as f32 - cell_px);
-            
+
             let (lx, rx) = (px0 + arrow_inset, px1 - arrow_inset);
             let label_max = ((rx - lx) - 2.0 * pad).max(0.0);
             let truncated = truncate_to_width(font, &self.prompt_label, font_px, label_max);
@@ -947,11 +972,23 @@ impl App {
         };
         body.set_color(Color::from_rgba8(0, 0, 0, 240));
         if let Some(rect) = Rect::from_ltrb(x0 + r, y_off, x1 - r, y_off + pill_h) {
-            pixmap.fill_path(&PathBuilder::from_rect(rect), &body, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &PathBuilder::from_rect(rect),
+                &body,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
         for cx in [x0 + r, x1 - r] {
             if let Some(circle) = PathBuilder::from_circle(cx, y_off + r, r) {
-                pixmap.fill_path(&circle, &body, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(
+                    &circle,
+                    &body,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
             }
         }
 
@@ -975,7 +1012,13 @@ impl App {
                 let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
                 if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
                     paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
-                    pixmap.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+                    pixmap.fill_path(
+                        &circle,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
                 }
             }
         }
@@ -999,11 +1042,11 @@ impl App {
         let pill_h = ROWS as f32 * cell_px;
         let peek = RISER_PEEK * cell_px;
         let bar_top = y_off - peek * self.riser_progress;
-        
-        // [GRAIN] Keep it fully opaque. By matching the corner radii perfectly, 
+
+        // [GRAIN] Keep it fully opaque. By matching the corner radii perfectly,
         // it slides flawlessly behind the pill without any artifacts.
-        let alpha = 1.0; 
-        
+        let alpha = 1.0;
+
         let mut p = Paint {
             anti_alias: true,
             ..Default::default()
@@ -1011,7 +1054,7 @@ impl App {
         p.set_color(Color::from_rgba8(11, 11, 10, (235.0 * alpha) as u8));
 
         let (px0, px1) = (cell_px, w - cell_px);
-        
+
         // Drop the bar bottom to 50% of the pill height (the body hides the rest).
         let bar_bottom = y_off + pill_h * 0.5;
         // [GRAIN] Match the pill's corner radius exactly! This ensures that when the
@@ -1020,10 +1063,22 @@ impl App {
         let rr = pill_h / 2.0;
         // Rounded-top bar = vertical rect + horizontal rect + two top circles.
         if let Some(rect) = Rect::from_ltrb(px0, bar_top + rr, px1, bar_bottom) {
-            pixmap.fill_path(&PathBuilder::from_rect(rect), &p, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &PathBuilder::from_rect(rect),
+                &p,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
         if let Some(rect) = Rect::from_ltrb(px0 + rr, bar_top, px1 - rr, bar_bottom) {
-            pixmap.fill_path(&PathBuilder::from_rect(rect), &p, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &PathBuilder::from_rect(rect),
+                &p,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
         for cx in [px0 + rr, px1 - rr] {
             if let Some(circle) = PathBuilder::from_circle(cx, bar_top + rr, rr) {
@@ -1036,21 +1091,42 @@ impl App {
             // [GRAIN] Anchor the text rigidly to the top of the bar so it slides WITH the bar
             // exactly, instead of squishing/lagging as the visible crescent shrinks.
             let cy = bar_top + peek / 2.0;
-            
+
             // Fixed arrow positions, anchored a constant inset from the bar edges.
             let arrow_inset = peek * 0.85;
             let lx = px0 + arrow_inset;
             let rx = px1 - arrow_inset;
-            
+
             // Cache arrows and label on the fly if needed
             let cached_left = CachedText::new(font, "\u{2039}", font_px);
             let cached_right = CachedText::new(font, "\u{203a}", font_px);
-            
-            draw_cached_text_centered(pixmap, &cached_left, (lx, cy), font_px, [236, 229, 218], alpha);
-            draw_cached_text_centered(pixmap, &cached_right, (rx, cy), font_px, [236, 229, 218], alpha);
-            
+
+            draw_cached_text_centered(
+                pixmap,
+                &cached_left,
+                (lx, cy),
+                font_px,
+                [236, 229, 218],
+                alpha,
+            );
+            draw_cached_text_centered(
+                pixmap,
+                &cached_right,
+                (rx, cy),
+                font_px,
+                [236, 229, 218],
+                alpha,
+            );
+
             if let Some(cached_label) = &self.cached_label {
-                draw_cached_text_centered(pixmap, cached_label, (w / 2.0, cy), font_px, [236, 229, 218], alpha);
+                draw_cached_text_centered(
+                    pixmap,
+                    cached_label,
+                    (w / 2.0, cy),
+                    font_px,
+                    [236, 229, 218],
+                    alpha,
+                );
             }
         }
     }
@@ -1131,7 +1207,8 @@ impl ApplicationHandler<UserEvent> for App {
                     self.update_cached_label();
                 }
                 Key::Named(NamedKey::ArrowLeft) => {
-                    self.prompt_idx = (self.prompt_idx + self.prompts.len() - 1) % self.prompts.len();
+                    self.prompt_idx =
+                        (self.prompt_idx + self.prompts.len() - 1) % self.prompts.len();
                     self.prompt_label = self.prompts[self.prompt_idx].clone();
                     self.riser_hide_at = Some(Instant::now() + RISER_HOLD);
                     self.prompt_preview_until = Some(Instant::now() + RISER_HOLD);
@@ -1174,21 +1251,28 @@ impl ApplicationHandler<UserEvent> for App {
             }
 
             if becoming_hidden {
-                // Release the mic device the moment the pill goes away.
-                self._mic = None;
                 if let Some(window) = &self.window {
                     eprintln!("window: hide");
                     present::hide_window(window);
                 }
             }
 
-            // Open the mic only while visible (just-in-time), so the first frame
-            // can already react to the speaker.
-            if becoming_visible && self._mic.is_none() {
+            // [GRAIN] Mic lifecycle is gated on RECORDING, not mere visibility:
+            // only `roll_recording` consumes live amplitude, so opening the
+            // capture device for the Processing phase or a prompt-riser preview
+            // would light the OS "mic in use" indicator and wake the audio
+            // callback for nothing ("destroy if not in use"). Open it just-in-time
+            // when recording starts; release it the instant we leave Recording
+            // (stop → Processing) or the pill hides.
+            let needs_mic = self.visible && self.state == PillState::Recording;
+            if needs_mic && self._mic.is_none() {
                 self._mic = start_mic(self.amp.clone());
                 if self._mic.is_none() {
                     eprintln!("no microphone — falling back to a simulated signal");
                 }
+            } else if !needs_mic && self._mic.is_some() {
+                // Recording ended (or the pill hid) — free the device immediately.
+                self._mic = None;
             }
 
             if self.visible {
@@ -1240,15 +1324,20 @@ impl ApplicationHandler<UserEvent> for App {
 pub fn run_pill() {
     #[cfg(windows)]
     {
-        use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, HIGH_PRIORITY_CLASS};
+        use windows::Win32::System::Threading::{
+            GetCurrentProcess, SetPriorityClass, HIGH_PRIORITY_CLASS,
+        };
         use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
         unsafe {
-            let _ = SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.punitdethe.grain"));
+            let _ =
+                SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.punitdethe.grain"));
             let _ = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
         }
     }
     eprintln!("pill: starting (pid {})", std::process::id());
-    let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event().build().expect("create event loop");
+    let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event()
+        .build()
+        .expect("create event loop");
     let proxy = event_loop.create_proxy();
     let mut app = App::new(proxy);
     event_loop.run_app(&mut app).expect("run pill");

@@ -20,7 +20,8 @@ const SIMILARITY_THRESHOLD: f64 = 0.86;
 const PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 fn strip(word: &str) -> String {
-    word.trim_matches(|c| PUNCTUATION.contains(c)).to_lowercase()
+    word.trim_matches(|c| PUNCTUATION.contains(c))
+        .to_lowercase()
 }
 
 /// Canonicalize a token for comparison: strip punctuation, lowercase, and fold

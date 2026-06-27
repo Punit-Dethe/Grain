@@ -39,6 +39,12 @@ pub struct ChunkPump<T> {
     model_ready: bool,
     recording_done: bool,
     pub in_flight: Option<T>,
+    /// Generation the in-flight chunk was dispatched under. A result must carry
+    /// THIS token (obtained via [`in_flight_generation`](ChunkPump::in_flight_generation))
+    /// back to `complete`/`fail`; after [`clear`](ChunkPump::clear) bumps the
+    /// generation, the still-in-flight chunk's stamp no longer matches and its
+    /// late result is correctly discarded.
+    in_flight_generation: u64,
 
     #[cfg(test)]
     pub dispatched: Vec<T>,
@@ -57,6 +63,7 @@ impl<T> Default for ChunkPump<T> {
             model_ready: false,
             recording_done: false,
             in_flight: None,
+            in_flight_generation: 0,
             #[cfg(test)]
             dispatched: Vec::new(),
             #[cfg(test)]
@@ -102,6 +109,18 @@ impl<T: Clone> ChunkPump<T> {
     /// The chunk currently in flight, or `None` when idle.
     pub fn in_flight(&self) -> Option<&T> {
         self.in_flight.as_ref()
+    }
+
+    /// The generation token the in-flight chunk was dispatched under, or `None`
+    /// when idle. Callers MUST pass this value (not [`generation`](Self::generation))
+    /// back into `complete`/`fail`, so that a result completing after a
+    /// [`clear`](Self::clear) is recognized as stale and discarded.
+    pub fn in_flight_generation(&self) -> Option<u64> {
+        if self.busy {
+            Some(self.in_flight_generation)
+        } else {
+            None
+        }
     }
 
     /// Number of requests in flight — invariant: never exceeds 1.
@@ -157,6 +176,7 @@ impl<T: Clone> ChunkPump<T> {
         self.dispatched.push(chunk.clone());
 
         self.in_flight = Some(chunk);
+        self.in_flight_generation = self.generation;
         self.busy = true;
         true
     }
@@ -279,7 +299,10 @@ mod tests {
             p.complete(0, "");
         }
         assert_eq!(p.dispatched, vec![10, 20, 30]);
-        assert_eq!(p.succeeded.iter().map(|(c, _)| *c).collect::<Vec<_>>(), vec![10, 20, 30]);
+        assert_eq!(
+            p.succeeded.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
     }
 
     #[test]
@@ -289,7 +312,10 @@ mod tests {
         p.enqueue(1);
         p.enqueue(2);
         assert!(p.fail(0, "boom"));
-        assert_eq!(p.failed.iter().map(|(c, _)| *c).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(
+            p.failed.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+            vec![1]
+        );
         assert_eq!(p.dispatched, vec![1, 2], "draining continues after failure");
         assert!(p.complete(0, "ok"));
         assert!(p.is_idle());
@@ -323,6 +349,55 @@ mod tests {
         // The result still in flight under gen 0 is now stale and ignored.
         assert!(!p.complete(0, "late"));
         assert!(p.succeeded.is_empty());
+    }
+
+    #[test]
+    fn stale_result_discarded_when_caller_uses_public_api() {
+        // A real caller does not know the dispatch generation a priori — it must
+        // obtain it from the pump when the chunk goes out, then round-trip that
+        // exact token back on completion. This is the path the old API broke:
+        // reading generation() at completion time (after clear bumped it) made a
+        // stale result look current.
+        let mut p = pump();
+        p.mark_ready();
+        p.enqueue(1);
+        // Caller captures the token the in-flight chunk was dispatched under.
+        let token = p.in_flight_generation().expect("a chunk is in flight");
+        assert_eq!(token, 0);
+
+        // The session is reset mid-flight (e.g. user cancelled / new recording).
+        p.clear();
+        assert_eq!(p.generation(), 1);
+
+        // The old request finally returns; the caller passes back the token it
+        // captured at dispatch — NOT the pump's current generation.
+        assert!(
+            !p.complete(token, "late"),
+            "a result from the cleared generation must be discarded"
+        );
+        assert!(p.succeeded.is_empty());
+        assert!(p.is_idle());
+
+        // A fresh chunk under the new generation completes normally.
+        p.enqueue(2);
+        let fresh = p.in_flight_generation().expect("fresh chunk in flight");
+        assert_eq!(fresh, 1);
+        assert!(p.complete(fresh, "ok"));
+        assert_eq!(
+            p.succeeded.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn in_flight_generation_is_none_when_idle() {
+        let mut p = pump();
+        assert_eq!(p.in_flight_generation(), None);
+        p.mark_ready();
+        p.enqueue(1);
+        assert_eq!(p.in_flight_generation(), Some(0));
+        p.complete(0, "");
+        assert_eq!(p.in_flight_generation(), None);
     }
 
     #[test]

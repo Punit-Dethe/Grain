@@ -18,7 +18,6 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, VecDeque};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::ProviderConfig;
 
@@ -40,16 +39,28 @@ pub fn estimate_tokens(text: &str) -> i64 {
 /// `parse_rate_limit_headers`.
 pub fn parse_rate_limit_headers(headers: &HashMap<String, String>) -> (Option<i64>, Option<i64>) {
     let int_of = |name: &str| -> Option<i64> {
-        headers.get(name).and_then(|v| v.parse::<f64>().ok()).map(|f| f as i64)
+        headers
+            .get(name)
+            .and_then(|v| v.parse::<f64>().ok())
+            .map(|f| f as i64)
     };
-    (int_of("x-ratelimit-remaining-requests"), int_of("x-ratelimit-remaining-tokens"))
+    (
+        int_of("x-ratelimit-remaining-requests"),
+        int_of("x-ratelimit-remaining-tokens"),
+    )
 }
 
 /// Read Retry-After (seconds form) or x-ratelimit-reset; fall back to 60 s.
 /// Port of `llm_client._parse_retry_after`. Sub-second resets clamp to a 1 s floor.
 pub fn parse_retry_after(headers: &HashMap<String, String>) -> f64 {
-    for name in ["retry-after", "x-ratelimit-reset-requests", "x-ratelimit-reset-tokens"] {
-        let Some(value) = headers.get(name) else { continue };
+    for name in [
+        "retry-after",
+        "x-ratelimit-reset-requests",
+        "x-ratelimit-reset-tokens",
+    ] {
+        let Some(value) = headers.get(name) else {
+            continue;
+        };
         let text = value.trim().to_lowercase();
         let parsed = if let Some(stripped) = text.strip_suffix("ms") {
             stripped.parse::<f64>().ok().map(|f| (f / 1000.0).max(1.0))
@@ -73,8 +84,6 @@ struct ProviderHealth {
     /// Sliding window of (timestamp, total_tokens) for effective-TPM tracking.
     token_events: VecDeque<(f64, i64)>,
     request_events: VecDeque<f64>,
-    requests_today: i64,
-    day_stamp: i64,
     remaining_requests: Option<i64>,
     remaining_tokens: Option<i64>,
     header_time: f64,
@@ -126,22 +135,6 @@ impl RotationTracker {
         self.health.entry(provider_id.to_string()).or_default()
     }
 
-    fn current_day() -> i64 {
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        (secs / 86_400) as i64
-    }
-
-    fn roll_day(h: &mut ProviderHealth) {
-        let today = Self::current_day();
-        if h.day_stamp != today {
-            h.day_stamp = today;
-            h.requests_today = 0;
-        }
-    }
-
     // -- feedback from completed requests ----------------------------------
 
     pub fn record_success(
@@ -153,9 +146,7 @@ impl RotationTracker {
         now: f64,
     ) {
         let h = self.h(provider_id);
-        Self::roll_day(h);
         h.request_events.push_back(now);
-        h.requests_today += 1;
         if let Some(t) = total_tokens {
             if t != 0 {
                 h.token_events.push_back((now, t));
@@ -181,12 +172,18 @@ impl RotationTracker {
         h.remaining_tokens = Some(0);
         h.remaining_requests = Some(0);
         h.header_time = now;
+        // A 429 still consumed a request slot at the provider — count it so the
+        // request-headroom denominator reflects real load, not just successes.
+        h.request_events.push_back(now);
     }
 
     /// Non-429 failure (5xx, timeout) — brief cooldown so retries fan out.
     pub fn record_error(&mut self, provider_id: &str, now: f64) {
         let h = self.h(provider_id);
         h.cooldown_until = h.cooldown_until.max(now + 20.0);
+        // A failed attempt typically still hit the provider; count it toward the
+        // request window so headroom isn't overstated for a flaky provider.
+        h.request_events.push_back(now);
     }
 
     pub fn is_cooling_down(&mut self, provider_id: &str, now: f64) -> bool {
@@ -202,7 +199,6 @@ impl RotationTracker {
     /// the user's per-provider `quota_limit` is enforced by the caller, not here.
     pub fn headroom_score(&mut self, provider: &ProviderConfig, _est_tokens: i64, now: f64) -> f64 {
         let h = self.health.entry(provider.id.clone()).or_default();
-        Self::roll_day(h);
         let headers_fresh = (now - h.header_time) <= HEADER_TTL_S && h.header_time > 0.0;
 
         if !headers_fresh {
@@ -331,7 +327,10 @@ mod tests {
         assert_eq!(parse_retry_after(&hdr("retry-after", "2.5s")), 2.5);
         assert_eq!(parse_retry_after(&hdr("retry-after", "1m")), 60.0);
         // Sub-second resets clamp to a 1 s floor.
-        assert_eq!(parse_retry_after(&hdr("x-ratelimit-reset-tokens", "500ms")), 1.0);
+        assert_eq!(
+            parse_retry_after(&hdr("x-ratelimit-reset-tokens", "500ms")),
+            1.0
+        );
         assert_eq!(parse_retry_after(&HashMap::new()), 60.0);
         assert_eq!(parse_retry_after(&hdr("retry-after", "garbage")), 60.0);
     }
@@ -347,7 +346,13 @@ mod tests {
         assert_eq!(order[0].id, "b"); // healthy first
         assert_eq!(order.last().unwrap().id, "a"); // cooling last
         assert!(t.is_cooling_down("a", 1000.0));
-        assert_eq!(ids(&order).into_iter().collect::<std::collections::HashSet<_>>().len(), 2);
+        assert_eq!(
+            ids(&order)
+                .into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            2
+        );
         assert!(!t.is_cooling_down("a", 1031.0));
     }
 
@@ -382,7 +387,6 @@ mod tests {
         assert_eq!(order[0].id, "a"); // more headroom per the headers
     }
 
-
     #[test]
     fn unknown_provider_assumed_healthy() {
         let mut t = RotationTracker::new();
@@ -396,18 +400,40 @@ mod tests {
         let mut t = RotationTracker::new();
         let (a, b, c) = (p("a"), p("b"), p("c")); // all unknown host → equal full score
         let firsts: Vec<String> = (0..3)
-            .map(|_| t.select(&[a.clone(), b.clone(), c.clone()], 10, 0.0)[0].id.clone())
+            .map(|_| {
+                t.select(&[a.clone(), b.clone(), c.clone()], 10, 0.0)[0]
+                    .id
+                    .clone()
+            })
             .collect();
         // Round-robin tie-break means the front rotates rather than sticking.
-        assert!(firsts.iter().collect::<std::collections::HashSet<_>>().len() > 1);
+        assert!(
+            firsts
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1
+        );
     }
 
-
     #[test]
-    fn tracker_leaves_user_quota_to_the_caller() {
+    fn rate_limited_attempts_count_toward_request_window() {
+        // A 429 consumes a request slot at the provider. After the cooldown
+        // elapses, the provider's request-headroom must reflect that consumed
+        // attempt: the window denominator includes it, not only successes.
         let mut t = RotationTracker::new();
-        let p = ProviderConfig::new("q", "https://x/v1").with_quota(Some(100), 99);
-        assert_eq!(t.headroom_score(&p, 10, 0.0), 1.0);
-        assert_eq!(ids(&t.select(&[p], 10, 0.0)), ["q"]);
+        let p = p_host("a", "https://a.com");
+        // 429 at t=0 (record_rate_limited records the attempt in the window).
+        t.record_rate_limited("a", Some(5.0), 0.0);
+        // After cooldown a call succeeds, refreshing the header to remaining=1.
+        t.record_success("a", Some(10), Some(1), None, 6.0);
+        // Window now holds two attempts (the 429 at 0 and the success at 6),
+        // both within 60s. req_frac = remaining / (remaining + in_window)
+        //                          = 1 / (1 + 2) = 0.333  (not 1/2 = 0.5).
+        let score = t.headroom_score(&p, 10, 6.0);
+        assert!(
+            (score - (1.0 / 3.0)).abs() < 1e-6,
+            "429 attempt must be counted in the request window, got {score}"
+        );
     }
 }

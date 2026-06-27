@@ -26,7 +26,11 @@ pub struct WordTiming {
 
 impl WordTiming {
     pub fn new(word: impl Into<String>, start: f64, end: f64) -> Self {
-        Self { word: word.into(), start, end }
+        Self {
+            word: word.into(),
+            start,
+            end,
+        }
     }
 
     pub fn midpoint(&self) -> f64 {
@@ -43,7 +47,8 @@ const PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
 /// Strip leading/trailing punctuation and lowercase a single word for comparison.
 fn normalize(word: &str) -> String {
-    word.trim_matches(|c| PUNCTUATION.contains(c)).to_lowercase()
+    word.trim_matches(|c| PUNCTUATION.contains(c))
+        .to_lowercase()
 }
 
 /// Append `new_segment` to `existing`, deduplicating overlap words.
@@ -176,6 +181,20 @@ impl TimelineAssembler {
             }
         };
 
+        // A chunk with no audio PAST the fresh boundary carries only overlap
+        // context the previous chunk already covered — e.g. `SessionCursor::stop`
+        // flushing `[cursor - overlap, end)` when nothing is unsent
+        // (`fresh_start == end`). Every word then sits before `fresh_start`;
+        // admitting any (the boundary tolerance reaches `fresh_start - 0.25`)
+        // would re-commit, and thus DUPLICATE, the already-assembled tail. The
+        // timeline is ground truth, so the only correct action is to add nothing.
+        let has_fresh_audio = words
+            .iter()
+            .any(|w| (chunk_start_sec + w.midpoint()) >= fresh_start_sec && !w.word.is_empty());
+        if !has_fresh_audio {
+            return &self.text;
+        }
+
         let cutoff = fresh_start_sec - BOUNDARY_TOLERANCE_SEC;
         let mut accepted: Vec<&WordTiming> = words
             .iter()
@@ -191,7 +210,9 @@ impl TimelineAssembler {
             let start = all.len().saturating_sub(SEAM_SEARCH_WORDS);
             all[start..].to_vec()
         };
-        let max_n = SEAM_SEARCH_WORDS.min(accepted.len()).min(existing_tail.len());
+        let max_n = SEAM_SEARCH_WORDS
+            .min(accepted.len())
+            .min(existing_tail.len());
         for n in (1..=max_n).rev() {
             let head = &accepted[..n];
             // Extends past the jitter window — real new speech, never strip.
@@ -292,7 +313,10 @@ mod tests {
     #[test]
     fn multi_word_overlap_deduplicated() {
         assert_eq!(
-            merge_transcript("the quick brown fox jumps", "brown fox jumps over the lazy dog"),
+            merge_transcript(
+                "the quick brown fox jumps",
+                "brown fox jumps over the lazy dog"
+            ),
             "the quick brown fox jumps over the lazy dog"
         );
     }
@@ -315,7 +339,10 @@ mod tests {
 
     #[test]
     fn full_duplicate_chunk_adds_nothing() {
-        assert_eq!(merge_transcript("hello world", "hello world"), "hello world");
+        assert_eq!(
+            merge_transcript("hello world", "hello world"),
+            "hello world"
+        );
     }
 
     #[test]
@@ -325,7 +352,10 @@ mod tests {
 
     #[test]
     fn longest_overlap_is_preferred() {
-        assert_eq!(merge_transcript("a brown fox", "brown fox runs"), "a brown fox runs");
+        assert_eq!(
+            merge_transcript("a brown fox", "brown fox runs"),
+            "a brown fox runs"
+        );
     }
 
     #[test]
@@ -356,7 +386,12 @@ mod tests {
     fn assembler_first_chunk_accepts_everything() {
         let mut a = TimelineAssembler::new();
         let text = a
-            .add_chunk(0.0, 0.0, "hello world how are you", Some(&words("hello world how are you", 0.1)))
+            .add_chunk(
+                0.0,
+                0.0,
+                "hello world how are you",
+                Some(&words("hello world how are you", 0.1)),
+            )
             .to_string();
         assert_eq!(text, "hello world how are you");
     }
@@ -364,11 +399,21 @@ mod tests {
     #[test]
     fn assembler_drops_overlap_words_by_time() {
         let mut a = TimelineAssembler::new();
-        a.add_chunk(0.0, 0.0, "one two three", Some(&words("one two three", 10.5)));
+        a.add_chunk(
+            0.0,
+            0.0,
+            "one two three",
+            Some(&words("one two three", 10.5)),
+        );
         // Chunk 2: audio range [10, 22), fresh from 12. Overlap re-transcribed
         // DIFFERENTLY ("won too tree") — text merge would fail; time must not.
         let text = a
-            .add_chunk(10.0, 12.0, "won too tree four five", Some(&words("won too tree four five", 0.5)))
+            .add_chunk(
+                10.0,
+                12.0,
+                "won too tree four five",
+                Some(&words("won too tree four five", 0.5)),
+            )
             .to_string();
         let result_words: Vec<&str> = text.split_whitespace().collect();
         assert!(!result_words.contains(&"won"));
@@ -382,20 +427,29 @@ mod tests {
         let mut a = TimelineAssembler::new();
         a.add_chunk(0.0, 0.0, "yes yes", Some(&words("yes yes", 9.0)));
         // Same words spoken again, clearly inside the fresh region (abs 13s+).
-        let text = a.add_chunk(8.0, 10.0, "yes yes", Some(&words("yes yes", 5.0))).to_string();
+        let text = a
+            .add_chunk(8.0, 10.0, "yes yes", Some(&words("yes yes", 5.0)))
+            .to_string();
         assert_eq!(text, "yes yes yes yes");
     }
 
     #[test]
     fn assembler_seam_dedup_drops_boundary_double() {
         let mut a = TimelineAssembler::new();
-        a.add_chunk(0.0, 0.0, "we should ship it", Some(&words("we should ship it", 8.5)));
+        a.add_chunk(
+            0.0,
+            0.0,
+            "we should ship it",
+            Some(&words("we should ship it", 8.5)),
+        );
         // Next chunk fresh from 10.0; "it" re-appears at abs ~9.95 (inside ±0.25).
         let chunk2 = vec![
-            WordTiming::new("it", 1.85, 2.05),   // abs mid 9.95
-            WordTiming::new("today", 2.1, 2.5),  // abs mid 10.3
+            WordTiming::new("it", 1.85, 2.05),  // abs mid 9.95
+            WordTiming::new("today", 2.1, 2.5), // abs mid 10.3
         ];
-        let text = a.add_chunk(8.0, 10.0, "it today", Some(&chunk2)).to_string();
+        let text = a
+            .add_chunk(8.0, 10.0, "it today", Some(&chunk2))
+            .to_string();
         assert_eq!(text, "we should ship it today");
     }
 
@@ -403,7 +457,9 @@ mod tests {
     fn assembler_falls_back_to_text_merge_without_words() {
         let mut a = TimelineAssembler::new();
         a.add_chunk(0.0, 0.0, "hello world", None);
-        let text = a.add_chunk(8.0, 10.0, "world how are you", None).to_string();
+        let text = a
+            .add_chunk(8.0, 10.0, "world how are you", None)
+            .to_string();
         assert_eq!(text, "hello world how are you");
     }
 
@@ -421,12 +477,17 @@ mod tests {
         // "N three Mover" then continues "are sophisticated". Time drops "N",
         // fuzzy drops the "three Mover" repeat — leaving no duplication.
         let mut a = TimelineAssembler::new().with_fuzzy_seam(2.0);
-        a.add_chunk(0.0, 0.0, "ship the N3 Mover", Some(&words("ship the N3 Mover", 8.0)));
+        a.add_chunk(
+            0.0,
+            0.0,
+            "ship the N3 Mover",
+            Some(&words("ship the N3 Mover", 8.0)),
+        );
         let c2 = vec![
-            WordTiming::new("N", 1.6, 1.7),         // abs mid 9.65 → dropped by time
-            WordTiming::new("three", 1.9, 2.0),     // abs mid 9.95
-            WordTiming::new("Mover", 2.2, 2.3),     // abs mid 10.25
-            WordTiming::new("are", 2.6, 2.7),       // abs mid 10.65
+            WordTiming::new("N", 1.6, 1.7),     // abs mid 9.65 → dropped by time
+            WordTiming::new("three", 1.9, 2.0), // abs mid 9.95
+            WordTiming::new("Mover", 2.2, 2.3), // abs mid 10.25
+            WordTiming::new("are", 2.6, 2.7),   // abs mid 10.65
             WordTiming::new("sophisticated", 3.0, 3.2),
         ];
         let text = a
@@ -441,8 +502,39 @@ mod tests {
         // beyond the 2s seam window) must NOT be stripped.
         let mut a = TimelineAssembler::new().with_fuzzy_seam(2.0);
         a.add_chunk(0.0, 0.0, "yes yes", Some(&words("yes yes", 9.0)));
-        let text = a.add_chunk(8.0, 10.0, "yes yes", Some(&words("yes yes", 5.0))).to_string();
+        let text = a
+            .add_chunk(8.0, 10.0, "yes yes", Some(&words("yes yes", 5.0)))
+            .to_string();
         assert_eq!(text, "yes yes yes yes");
+    }
+
+    #[test]
+    fn zero_fresh_chunk_adds_nothing() {
+        // Reproduces `SessionCursor::stop` flushing when nothing is unsent: the
+        // final chunk is pure overlap (fresh_start == end), so every word the
+        // model returns is a re-transcription of already-committed audio. It must
+        // NOT be appended — otherwise the transcript's tail is duplicated.
+        let mut a = TimelineAssembler::new();
+        a.add_chunk(
+            0.0,
+            0.0,
+            "ship it today",
+            Some(&words("ship it today", 0.1)),
+        );
+        let before = a.text().to_string();
+        // Overlap-only chunk: audio [8, 10), fresh_start == end == 10. The model
+        // re-hears the committed tail; all word midpoints fall before 10.
+        let overlap = vec![
+            WordTiming::new("it", 1.5, 1.7),    // abs mid 9.6
+            WordTiming::new("today", 1.8, 2.0), // abs mid 9.9
+        ];
+        let text = a
+            .add_chunk(8.0, 10.0, "it today", Some(&overlap))
+            .to_string();
+        assert_eq!(
+            text, before,
+            "a zero-fresh chunk must not duplicate the tail"
+        );
     }
 
     #[test]
