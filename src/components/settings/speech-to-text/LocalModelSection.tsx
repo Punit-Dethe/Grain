@@ -47,9 +47,17 @@ export const LocalModelSection: React.FC<LocalModelSectionProps> = ({
 
   return (
     <div className="space-y-2.5">
-      <h2 className="px-1 font-mono text-[0.68rem] font-semibold text-ink uppercase tracking-[0.18em]">
-        {t("settings.speechToText.localModel.title")}
-      </h2>
+      <div className="flex items-center gap-2.5 px-1">
+        <h2 className="font-mono text-[0.68rem] font-semibold text-ink uppercase tracking-[0.18em]">
+          {t("settings.speechToText.localModel.title")}
+        </h2>
+        <div className="flex-1 flex items-center gap-2 translate-y-[-1px]">
+          <span className="flex-1 border-t border-line" />
+          <span className="grid place-items-center w-2.5 h-2.5 rounded-full border border-[var(--line-strong)] bg-paper shrink-0">
+            <span className="w-1 h-1 rounded-full bg-ink-faint/60" />
+          </span>
+        </div>
+      </div>
       <div
         className={`surface-well overflow-hidden transition-opacity duration-200 ${
           disabled ? "opacity-50" : ""
