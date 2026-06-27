@@ -99,8 +99,14 @@ pub struct SessionCursor {
     early_min_frames: usize,
     early_guard_frames: usize,
 
-    // The ENTIRE session's audio.
+    // A trailing WINDOW of the session's audio: everything from `base_frame`
+    // (its absolute frame index) to the current end. Frames before
+    // `sent_frames - overlap` are dropped after each emit (see `compact`),
+    // because the cursor can never slice them again. This bounds memory to
+    // ~one chunk + the overlap window regardless of session length.
     all_samples: Vec<i16>,
+    /// Absolute frame index of `all_samples[0]`. Advanced by `compact`.
+    base_frame: usize,
     /// Absolute cursor: number of leading frames already dispatched.
     sent_frames: usize,
     /// Frames of contiguous trailing silence (raw RMS based).
@@ -123,8 +129,31 @@ impl SessionCursor {
             early_min_frames,
             early_guard_frames,
             all_samples: Vec::new(),
+            base_frame: 0,
             sent_frames: 0,
             silence_frames: 0,
+        }
+    }
+
+    /// Total absolute frames the session has seen (including dropped ones).
+    fn total_frames(&self) -> usize {
+        self.base_frame + self.all_samples.len()
+    }
+
+    /// Drop leading frames the cursor can never reference again. The earliest
+    /// frame any future chunk needs is `sent_frames - overlap_frames` (the
+    /// overlap context preceding the cursor); everything before that is dead.
+    /// Advances `base_frame` so absolute frame math stays correct.
+    fn compact(&mut self) {
+        let keep_from = self.sent_frames.saturating_sub(self.overlap_frames);
+        if keep_from > self.base_frame {
+            let drop = keep_from - self.base_frame;
+            // `drop` is always <= all_samples.len(): sent_frames <= total_frames
+            // = base_frame + all_samples.len(), so keep_from - base_frame is
+            // bounded by all_samples.len().
+            let drop = drop.min(self.all_samples.len());
+            self.all_samples.drain(..drop);
+            self.base_frame += drop;
         }
     }
 
@@ -139,13 +168,14 @@ impl SessionCursor {
     /// Clear all state so a new session starts completely fresh.
     pub fn reset(&mut self) {
         self.all_samples.clear();
+        self.base_frame = 0;
         self.sent_frames = 0;
         self.silence_frames = 0;
     }
 
     /// The assembled transcript text region cursor — current end of session, sec.
     pub fn total_sec(&self) -> f64 {
-        self.frame_to_sec(self.all_samples.len())
+        self.frame_to_sec(self.total_frames())
     }
 
     /// Push one captured block with its raw RMS. Returns a finalized chunk if an
@@ -161,7 +191,7 @@ impl SessionCursor {
             self.silence_frames = 0;
         }
 
-        let unsent = self.all_samples.len() - self.sent_frames;
+        let unsent = self.total_frames() - self.sent_frames;
         let should_finalize = unsent >= self.max_frames
             || (unsent >= self.early_min_frames
                 && self.silence_frames >= self.silence_min_frames
@@ -179,7 +209,7 @@ impl SessionCursor {
     /// Port of `_emit_chunk_locked`. The overlap before the cursor protects
     /// boundary words; the assembler removes the duplicated region.
     pub fn emit_chunk(&mut self) -> Option<AudioChunk> {
-        let end = self.all_samples.len();
+        let end = self.total_frames();
         if end <= self.sent_frames {
             return None;
         }
@@ -198,6 +228,8 @@ impl SessionCursor {
         };
         self.sent_frames = end;
         self.silence_frames = 0;
+        // Release frames before the new overlap window — they can't be sliced again.
+        self.compact();
         Some(chunk)
     }
 
@@ -207,10 +239,10 @@ impl SessionCursor {
     pub fn stop(&mut self) -> Option<AudioChunk> {
         let start_frame = self.sent_frames.saturating_sub(self.overlap_frames);
         let fresh_start_frame = self.sent_frames;
-        let end_frame = self.all_samples.len();
+        let end_frame = self.total_frames();
         let samples = self.slice_frames(start_frame, end_frame);
         // Cursor now covers the whole session — nothing left unsent.
-        self.sent_frames = self.all_samples.len();
+        self.sent_frames = self.total_frames();
         if samples.is_empty() {
             return None;
         }
@@ -227,12 +259,26 @@ impl SessionCursor {
         frame as f64 / self.cfg.sample_rate as f64
     }
 
+    /// Slice the session by ABSOLUTE frame range `[start_frame, end_frame)`,
+    /// translating through `base_frame` into the retained buffer. A range that
+    /// starts before `base_frame` (already-compacted audio) is clamped to what
+    /// remains — the cursor never asks for dropped frames, so in practice the
+    /// requested start is always >= base_frame.
     fn slice_frames(&self, start_frame: usize, end_frame: usize) -> Vec<i16> {
-        if end_frame <= start_frame || start_frame >= self.all_samples.len() {
+        let total = self.total_frames();
+        if end_frame <= start_frame || start_frame >= total {
             return Vec::new();
         }
-        let end = end_frame.min(self.all_samples.len());
-        self.all_samples[start_frame..end].to_vec()
+        let end = end_frame.min(total);
+        // Translate absolute -> buffer-relative, clamping a start that predates
+        // the retained window to 0 (defensive; the cursor doesn't do this).
+        let rel_start = start_frame.saturating_sub(self.base_frame);
+        let rel_end = end.saturating_sub(self.base_frame);
+        if rel_end <= rel_start || rel_start >= self.all_samples.len() {
+            return Vec::new();
+        }
+        let rel_end = rel_end.min(self.all_samples.len());
+        self.all_samples[rel_start..rel_end].to_vec()
     }
 }
 
@@ -317,30 +363,44 @@ mod tests {
         assert_eq!(chunk.frame_count(), s.overlap_frames);
     }
 
+    /// Feed `secs` seconds of audio one 1s block at a time WITHOUT tripping an
+    /// auto-finalize (loud blocks, well under max_chunk_seconds), collecting any
+    /// emitted chunks. Used to drive the cursor through its real API.
+    fn feed_secs(s: &mut SessionCursor, secs: usize) -> Vec<AudioChunk> {
+        let f = fps(s);
+        let mut out = Vec::new();
+        for _ in 0..secs {
+            if let Some(c) = s.push_block(&block(f, 1000), 0.5) {
+                out.push(c);
+            }
+        }
+        out
+    }
+
     #[test]
     fn no_frames_dropped_across_chunk_and_stop() {
         let mut s = cur();
         let f = fps(&s);
-        let saved = vec![block(f, 1000); 25].concat();
-        // Emit one chunk at the 12s mark.
-        s.all_samples = saved[..12 * f].to_vec();
-        let first = s.emit_chunk();
-        assert!(first.is_some());
-        // Restore the full 25s (remaining 13s are the unsent tail).
-        s.all_samples = saved;
+        // 12s in, force a chunk; then 13s more, then stop. Total 25s.
+        feed_secs(&mut s, 12);
+        let first = s.emit_chunk().expect("chunk at 12s");
+        assert_eq!(first.end_sec, 12.0);
+        feed_secs(&mut s, 13);
         let tail = s.stop().expect("tail flushed");
         // Tail covers cursor(12s) - overlap(2s) to 25s = 15s.
         assert_eq!(tail.frame_count(), (25 - 12 + 2) * f);
+        // Fresh regions tile the whole session with no gap or overlap.
+        assert_eq!(tail.fresh_start_sec, first.end_sec);
+        assert_eq!(tail.end_sec, 25.0);
     }
 
     #[test]
     fn chunks_carry_exact_timeline_metadata() {
         let mut s = cur();
         let f = fps(&s);
-        let saved = vec![block(f, 1000); 25].concat();
-        s.all_samples = saved[..12 * f].to_vec();
+        feed_secs(&mut s, 12);
         let first = s.emit_chunk().unwrap();
-        s.all_samples = saved;
+        feed_secs(&mut s, 13);
         let tail = s.stop().unwrap();
 
         // First chunk: no overlap context exists yet — starts at 0.
@@ -356,6 +416,53 @@ mod tests {
         // Payload length matches the tagged range.
         assert_eq!(first.frame_count(), ((first.end_sec - first.start_sec) * f as f64) as usize);
         assert_eq!(tail.frame_count(), ((tail.end_sec - tail.start_sec) * f as f64) as usize);
+    }
+
+    #[test]
+    fn buffer_stays_bounded_over_long_session() {
+        // Drive many auto-finalized chunks; the retained buffer must never grow
+        // past ~one max chunk + overlap, no matter how long the session runs.
+        let mut s = cur();
+        let f = fps(&s);
+        let bound = s.max_frames + s.overlap_frames + f; // +1s slack for the in-flight block
+        // 5 minutes of audio in 1s loud blocks (no silence early-finalize).
+        for sec in 0..300 {
+            s.push_block(&block(f, 1000), 0.5);
+            assert!(
+                s.all_samples.len() <= bound,
+                "retained buffer {} exceeded bound {} at {}s",
+                s.all_samples.len(),
+                bound,
+                sec
+            );
+        }
+        // The absolute timeline still reflects the full session length.
+        assert_eq!(s.total_frames(), 300 * f);
+        assert!(s.base_frame > 0, "compaction should have advanced base_frame");
+    }
+
+    #[test]
+    fn compaction_preserves_absolute_timeline() {
+        // After compaction, emitted chunks must still carry correct ABSOLUTE
+        // timestamps (driven by base_frame), tiling the session with no gaps.
+        let mut s = cur();
+        let mut prev_end = 0.0_f64;
+        let mut chunks = Vec::new();
+        for _ in 0..60 {
+            // 60s; max_chunk is 15s so ~4 auto chunks fire.
+            if let Some(c) = s.push_block(&block(fps(&s), 1000), 0.5) {
+                chunks.push(c);
+            }
+        }
+        if let Some(c) = s.stop() {
+            chunks.push(c);
+        }
+        for c in &chunks {
+            // Each chunk's fresh region starts exactly where the previous ended.
+            assert!((c.fresh_start_sec - prev_end).abs() < 1e-6, "gap at {prev_end}");
+            prev_end = c.end_sec;
+        }
+        assert!((prev_end - 60.0).abs() < 1e-6, "session should tile to 60s, got {prev_end}");
     }
 
     // -- cached-cursor slicer equivalence ---------------------------------

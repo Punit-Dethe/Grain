@@ -20,12 +20,48 @@ use crate::rotation_state::{
 };
 use crate::stt_client::SttError;
 
+/// Hard ceiling on a single cloud STT provider call. A provider that accepts the
+/// upload but never returns a transcript must not stall the pipeline and must
+/// let rotation move on. 90s covers AssemblyAI's async upload + its own 60s poll
+/// deadline while still bounding a genuinely hung call. (The Agent and
+/// post-process LLM paths use their own 120s ceiling.)
+const STT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
 fn is_eligible(p: &SttProvider) -> bool {
     p.enabled
         && match p.quota_limit {
             Some(limit) => p.quota_used_today < limit,
             None => true,
         }
+}
+
+/// [GRAIN] The cloud-only rotation pool for the current settings: every enabled,
+/// under-quota provider whose `kind != Local`. Single source of truth shared by
+/// [`transcribe`] (what it actually routes to) and [`will_route_to_cloud`] (what
+/// the batch press path uses to decide whether to warm the local model), so the
+/// two can never drift apart.
+fn cloud_pool(settings: &grain_core::AppSettings) -> Vec<SttProvider> {
+    settings
+        .stt_providers
+        .iter()
+        .filter(|p| p.kind != SttProviderKind::Local && p.enabled && is_eligible(p))
+        .cloned()
+        .collect()
+}
+
+/// [GRAIN] True when a batch transcription started right now would be routed to a
+/// cloud provider instead of the in-process model: smart rotation is on AND at
+/// least one cloud provider is eligible (enabled + under today's quota).
+///
+/// `TranscribeAction::start` uses this to skip eagerly loading the local model
+/// when the recording will go to the cloud — the model would otherwise sit
+/// resident in RAM until the idle/immediate unload fires. Mirrors exactly the
+/// branch [`transcribe`] takes at stop time.
+pub fn will_route_to_cloud(app: &AppHandle) -> bool {
+    let Some(ctx) = app.try_state::<Arc<AppContext>>() else {
+        return false;
+    };
+    ctx.with_settings(|s| s.stt_smart_rotation && !cloud_pool(s).is_empty())
 }
 
 /// Transcribe `samples` honoring the STT routing settings. Returns the final
@@ -49,16 +85,18 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
 
     // Rotation ON: cloud-only pool (local never rotated), hard-gated by the
     // per-provider daily quota. The quota gate is OURS; the tracker only orders.
-    let eligible: Vec<SttProvider> = settings
-        .stt_providers
-        .iter()
-        .filter(|p| p.kind != SttProviderKind::Local && p.enabled && is_eligible(p))
-        .cloned()
-        .collect();
+    // Shared with `will_route_to_cloud` so the batch press path's load-skip
+    // decision matches what we route to here.
+    let eligible: Vec<SttProvider> = cloud_pool(&settings);
     if eligible.is_empty() {
-        return Err(
-            "smart rotation is on, but no cloud STT providers are configured/enabled (or all are over quota today)".to_string(),
+        // Rotation is on but nothing is eligible (no enabled cloud provider, or
+        // all over quota). Fall back to the local model rather than failing —
+        // `local()` loads it on demand, so this stays correct even though
+        // `TranscribeAction::start` skipped the eager warm-up.
+        log::warn!(
+            "[GRAIN] STT smart rotation is on but no cloud provider is eligible — falling back to local"
         );
+        return local(app, samples).await;
     }
 
     let trackers = app
@@ -90,7 +128,21 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
             .ok_or("STT routing: HTTP client not available")?
             .inner();
 
-        match crate::stt_client::transcribe(client, provider, &samples, &key).await {
+        let call = tokio::time::timeout(
+            STT_REQUEST_TIMEOUT,
+            crate::stt_client::transcribe(client, provider, &samples, &key),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            log::warn!(
+                "[GRAIN] STT provider '{}' timed out after {}s",
+                provider.id,
+                STT_REQUEST_TIMEOUT.as_secs()
+            );
+            Err(SttError::Other("request timed out".to_string()))
+        });
+
+        match call {
             Ok(res) => {
                 record_outcome(
                     &trackers.stt,
@@ -143,8 +195,17 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
 }
 
 /// Run the in-process model off the async runtime (it blocks for the inference).
+///
+/// Loads the model on demand if it isn't resident: `TranscribeAction::start`
+/// only warms it eagerly when the recording is staying local, so on the local
+/// path we must be self-sufficient. `initiate_model_load` is idempotent and
+/// non-blocking, and `transcribe` waits on the load condvar before inferring, so
+/// this is race-free with an in-flight warm-up.
 async fn local(app: &AppHandle, samples: Vec<f32>) -> Result<String, String> {
     let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
+    if !tm.is_model_loaded() {
+        tm.initiate_model_load();
+    }
     tokio::task::spawn_blocking(move || tm.transcribe(samples))
         .await
         .map_err(|e| format!("join: {e}"))?

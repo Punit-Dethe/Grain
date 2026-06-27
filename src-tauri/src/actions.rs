@@ -160,15 +160,16 @@ async fn post_process_transcription(
     let http_client = http_client.inner().clone();
 
     // Single-provider path: no rotation, so the tracker isn't consulted/updated.
-    match run_one_provider(&http_client, &provider, model, api_key, &prompt, transcription).await {
+    match run_one_provider_with_timeout(&http_client, &provider, model, api_key, &prompt, transcription).await {
         CallOutcome::Ok { text, .. } => Some(text),
         _ => None,
     }
 }
 
-/// [GRAIN] Rotation path: try ENABLED post-process providers in round-robin order
-/// until one returns a result, recording quota usage on success. Returns None if
-/// none are eligible or all fail (the caller then pastes the raw transcript).
+/// [GRAIN] Rotation path: try ENABLED post-process providers best-first by live
+/// health (recent 429s cool down, headroom leads — via `select_order`) until one
+/// returns a result, recording quota usage on success. Returns None if none are
+/// eligible or all fail (the caller then pastes the raw transcript).
 async fn post_process_rotated(
     app: &AppHandle,
     prompt: &str,
@@ -240,7 +241,7 @@ async fn post_process_rotated(
             "Rotation: trying provider '{}' (model: {})",
             provider.id, model
         );
-        let outcome = run_one_provider(&http_client, provider, model, api_key, prompt, transcription).await;
+        let outcome = run_one_provider_with_timeout(&http_client, provider, model, api_key, prompt, transcription).await;
         crate::rotation_state::record_outcome(
             &trackers.llm,
             &provider.id,
@@ -258,6 +259,43 @@ async fn post_process_rotated(
         );
     }
     None
+}
+
+/// Hard ceiling on a single post-process provider call. A provider that accepts
+/// the connection but never responds must not hang the transcribe→paste pipeline
+/// (and in rotation mode must yield so the next provider is tried). Matches the
+/// Agent's `AGENT_LLM_TIMEOUT` so all LLM paths behave the same.
+const LLM_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// [GRAIN] `run_one_provider` bounded by [`LLM_REQUEST_TIMEOUT`]. A timeout is
+/// surfaced as [`CallOutcome::Failed`] — identical to any other failure — so the
+/// single-provider path returns `None` and the rotation path fails over to the
+/// next candidate instead of stalling. Both post-process call sites go through
+/// here so neither can forget the deadline.
+async fn run_one_provider_with_timeout(
+    client: &reqwest::Client,
+    provider: &PostProcessProvider,
+    model: String,
+    api_key: String,
+    prompt: &str,
+    transcription: &str,
+) -> CallOutcome {
+    match tokio::time::timeout(
+        LLM_REQUEST_TIMEOUT,
+        run_one_provider(client, provider, model, api_key, prompt, transcription),
+    )
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            warn!(
+                "post-process provider '{}' timed out after {}s",
+                provider.id,
+                LLM_REQUEST_TIMEOUT.as_secs()
+            );
+            CallOutcome::Failed
+        }
+    }
 }
 
 /// Run ONE post-process provider with already-resolved model/key/prompt. Returns
@@ -575,8 +613,18 @@ impl ShortcutAction for TranscribeAction {
         let tm = app.state::<Arc<TranscriptionManager>>();
         let rm = app.state::<Arc<AudioRecordingManager>>();
 
-        // Load ASR model and VAD model in parallel
-        tm.initiate_model_load();
+        // [GRAIN] Only warm the local ASR model when this recording will be
+        // transcribed locally. When STT smart rotation routes batch to a cloud
+        // provider, loading the on-device model here is wasted work that sits
+        // resident in RAM until the idle/immediate unload fires. The cloud route
+        // never touches it; if rotation later finds no eligible provider,
+        // stt_router::local() loads the model on demand. VAD pre-load stays
+        // unconditional below — recording needs it for either backend.
+        if !crate::stt_router::will_route_to_cloud(app) {
+            tm.initiate_model_load();
+        } else {
+            debug!("[GRAIN] batch routes to cloud STT — skipping local model warm-up");
+        }
         let rm_clone = Arc::clone(&rm);
         std::thread::spawn(move || {
             if let Err(e) = rm_clone.preload_vad() {
