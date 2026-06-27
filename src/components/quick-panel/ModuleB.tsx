@@ -232,7 +232,7 @@ export const ModuleB: React.FC = () => {
           />
           <Spacer h={5} />
           <div className="flex" style={{ gap: 8 }}>
-            <MiniBox label="Smart Rotate" sub="Provider fallback">
+            <MiniBox label="Cloud Providers" sub="Enable remote">
               <MechanicalToggle
                 checked={smartRotation}
                 onChange={(v) => pool.setSmartRotation(v)}
