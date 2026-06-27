@@ -32,9 +32,7 @@ use crate::input::EnigoState;
 use crate::llm_client::LlmError;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
-use crate::rotation_state::{
-    now_secs, record_outcome, select_order, CallOutcome, RotationTrackers,
-};
+use crate::rotation_state::{CallOutcome, RotationTrackers};
 use crate::settings::{get_settings, ShortcutBinding, APPLE_INTELLIGENCE_PROVIDER_ID};
 
 /// Window labels (matched by their capability + the frontend router in
@@ -571,7 +569,14 @@ pub fn global_close(app: &AppHandle) {
 pub fn agent_start_dictation(app: AppHandle) -> Result<(), String> {
     let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
 
-    if !get_settings(&app).stt_smart_rotation {
+    // Warm the local model only when this dictation will actually be transcribed
+    // locally. `will_route_to_cloud` is the same predicate the batch press path
+    // uses, so the warm-up matches what `agent_stop_dictation` routes to: when
+    // rotation is on AND a cloud provider is eligible we skip the load (the model
+    // would otherwise sit resident in RAM unused); when rotation is off, or on
+    // but with no eligible cloud provider (local fallback), we pre-warm it so the
+    // transcript is ready quickly on stop.
+    if !crate::stt_router::will_route_to_cloud(&app) {
         let tm = app.state::<Arc<TranscriptionManager>>();
         tm.initiate_model_load();
     }
@@ -758,42 +763,46 @@ async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result
         .iter()
         .map(|p| (p.id.clone(), p.base_url.clone()))
         .collect();
-    let order = select_order(&trackers.llm, &candidates, est_tokens, now_secs());
 
     let Some(http_client) = app.try_state::<reqwest::Client>() else {
         return Err("Agent: shared HTTP client unavailable".into());
     };
     let http_client = http_client.inner().clone();
 
-    let mut last_err = "All AI providers failed.".to_string();
-    for id in &order {
-        let Some(provider) = eligible.iter().find(|p| &p.id == id) else {
-            continue;
-        };
-        let model = settings
-            .post_process_models
-            .get(&provider.id)
-            .cloned()
-            .unwrap_or_default();
-        let api_key = settings
-            .post_process_api_keys
-            .get(&provider.id)
-            .cloned()
-            .unwrap_or_default();
-
-        let outcome = run_agent_once(&http_client, provider, model, api_key, full).await;
-        record_outcome(&trackers.llm, &provider.id, &outcome, now_secs());
-        match outcome {
-            CallOutcome::Ok { text, .. } => {
-                crate::post_process_router::record_usage(app, &provider.id);
-                log::info!("[GRAIN] agent routed to '{}'", provider.id);
-                return Ok(text);
+    // Failover walk lives in the shared driver; we supply only how to run one
+    // provider (resolve model/key + call) and how to record quota on success.
+    crate::rotation_state::run_with_rotation(
+        &trackers.llm,
+        &candidates,
+        est_tokens,
+        |id| {
+            let http_client = http_client.clone();
+            let eligible = &eligible;
+            let settings = &settings;
+            let full = full;
+            async move {
+                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
+                    return CallOutcome::Failed;
+                };
+                let model = settings
+                    .post_process_models
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let api_key = settings
+                    .post_process_api_keys
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
+                run_agent_once(&http_client, provider, model, api_key, full).await
             }
-            CallOutcome::RateLimited { .. } => last_err = format!("{} rate-limited", provider.id),
-            CallOutcome::Failed => last_err = format!("{} failed", provider.id),
-        }
-    }
-    Err(last_err)
+        },
+        |id| {
+            crate::post_process_router::record_usage(app, id);
+            log::info!("[GRAIN] agent routed to '{id}'");
+        },
+    )
+    .await
 }
 
 /// Run ONE provider with already-resolved model/key. HTTP providers go through
