@@ -752,8 +752,8 @@
         "title": "Acknowledgments",
         "handy": {
           "title": "Handy",
-          "description": "The open-source AI desktop assistant that Grain is based on",
-          "details": "As we are a fork of handy, it's only fair to give acknowledgment inside the app. Check out the original project at https://github.com/cjpais/Handy"
+          "description": "The open-source AI desktop assistant",
+          "details": "Grain is proudly built upon the foundation of Handy. A special thanks to CJ Pais and contributors for their incredible work."
         },
         "whisper": {
           "title": "Whisper.cpp",
