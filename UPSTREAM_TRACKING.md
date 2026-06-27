@@ -7,8 +7,7 @@ Updates from upstream that exist in Handy's history, but have not yet been evalu
 
 | Date | Upstream Commit / PR | Category | Notes / Next Steps |
 | :--- | :--- | :--- | :--- |
-| **Jun 11, 2026** | `fix(models): show size for downloaded models (#1484)` | UI / Feature | Needs evaluation and porting. |
-| **Jun 11, 2026** | `fix(visualizer): scale FFT window to device sample rate (#1491)`| Audio / Fix | Needs evaluation against Grain's audio toolkit. |
+| - | *(None currently pending)* | - | - |
 
 ---
 
@@ -22,6 +21,8 @@ Updates from upstream that have been successfully ported, refactored, and merged
 | **Jun 24, 2026** | `fix: skip post-processing when transcription is empty (#1537)` | `8e761c3` | Applied upstream check. |
 | **Jun 23, 2026** | `live debug log viewer in app (#1535)` | `7400a9b` | Ported live log viewer and CLI tool. |
 | **Jun 18, 2026** | `fix: dropdown overflow in post-processing settings (#1402)` | `db42a12`* | Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix. |
+| **Jun 11, 2026** | `fix(models): show size for downloaded models (#1484)` | `db42a12`* | Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul). |
+| **Jun 11, 2026** | `fix(visualizer): scale FFT window to device sample rate (#1491)` | `353b37c`* | FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite). |
 
 ---
 
