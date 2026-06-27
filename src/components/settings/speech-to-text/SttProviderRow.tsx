@@ -54,27 +54,30 @@ export const SttProviderRow: React.FC<SttProviderRowProps> = ({
 
   return (
     <div
-      className={`flex items-center gap-3 px-4 py-3 transition-opacity ${
+      className={`group flex items-center gap-3 px-4 py-3 transition-opacity ${
         inactive ? "opacity-60" : ""
       }`}
     >
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span className="text-sm font-medium text-ink truncate">
             {provider.name}
           </span>
           {!hasKey && (
             <span
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-medium bg-status-error/15 text-status-error"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-medium bg-status-error/15 text-status-error shrink-0"
             >
               <KeyRound className="w-3 h-3" />
               {t("settings.speechToText.noKey")}
             </span>
           )}
-        </div>
-        <div className="mt-0.5 flex items-center gap-2 text-xs text-ink-faint font-mono truncate">
-          <span className="truncate">{provider.base_url}</span>
-          {provider.model ? <span>· {provider.model}</span> : null}
+          <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 min-w-0">
+            <span className="text-line font-medium shrink-0">|</span>
+            <div className="flex items-center gap-1.5 text-xs text-ink-faint font-mono truncate">
+              <span className="truncate">{provider.base_url}</span>
+              {provider.model ? <span className="shrink-0">· {provider.model}</span> : null}
+            </div>
+          </div>
         </div>
         <div className="mt-0.5 text-[0.7rem] text-ink-soft">
           {quotaLimit != null
