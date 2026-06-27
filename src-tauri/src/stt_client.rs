@@ -112,7 +112,11 @@ fn openai_url(base_url: &str) -> String {
 
 fn deepgram_url(base_url: &str, model: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    let base = if base.is_empty() { "https://api.deepgram.com" } else { base };
+    let base = if base.is_empty() {
+        "https://api.deepgram.com"
+    } else {
+        base
+    };
     let path = if base.ends_with("/listen") {
         ""
     } else if base.ends_with("/v1") {
@@ -125,7 +129,11 @@ fn deepgram_url(base_url: &str, model: &str) -> String {
 
 fn assemblyai_base(base_url: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    let base = if base.is_empty() { "https://api.assemblyai.com" } else { base };
+    let base = if base.is_empty() {
+        "https://api.assemblyai.com"
+    } else {
+        base
+    };
     if base.ends_with("/v2") {
         base.to_string()
     } else {
@@ -148,9 +156,7 @@ async fn openai(
     if !provider.model.is_empty() {
         form = form.text("model", provider.model.clone());
     }
-    let mut req = client
-        .post(&url)
-        .multipart(form);
+    let mut req = client.post(&url).multipart(form);
     if !api_key.is_empty() {
         req = req.bearer_auth(api_key);
     }

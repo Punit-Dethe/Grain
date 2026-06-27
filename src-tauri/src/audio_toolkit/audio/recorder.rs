@@ -312,10 +312,7 @@ impl AudioRecorder {
                 Vec::with_capacity(data.len() / channels),
             );
 
-            if sample_tx
-                .send(AudioChunk::Samples(chunk_to_send))
-                .is_err()
-            {
+            if sample_tx.send(AudioChunk::Samples(chunk_to_send)).is_err() {
                 log::error!("Failed to send samples");
             }
         };

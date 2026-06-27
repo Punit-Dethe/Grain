@@ -123,7 +123,10 @@ pub fn spawn_pill_supervisor() {
                 return;
             }
         };
-        log::info!("[GRAIN] pill supervisor: launching {} --pill", exe.display());
+        log::info!(
+            "[GRAIN] pill supervisor: launching {} --pill",
+            exe.display()
+        );
 
         // [GRAIN] Kill any stray pill left by a previous (crashed / force-quit)
         // session BEFORE spawning ours, so multiple overlapping layered windows
@@ -171,8 +174,7 @@ pub fn spawn_pill_supervisor() {
                 }
             }
 
-            match cmd.spawn()
-            {
+            match cmd.spawn() {
                 Ok(mut child) => {
                     // [GRAIN] Assign pill to the Job Object immediately after
                     // spawn, before anything else. If this fails the pill still
@@ -288,10 +290,7 @@ mod job_ffi {
             cb_job_object_information_length: u32,
         ) -> BOOL;
 
-        pub fn AssignProcessToJobObject(
-            h_job: HANDLE,
-            h_process: HANDLE,
-        ) -> BOOL;
+        pub fn AssignProcessToJobObject(h_job: HANDLE, h_process: HANDLE) -> BOOL;
 
         pub fn CloseHandle(h_object: HANDLE) -> BOOL;
 
@@ -320,8 +319,7 @@ fn create_job_object() -> Option<JobHandle> {
         }
 
         let mut info = job_ffi::JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        info.basic_limit_information.limit_flags =
-            job_ffi::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        info.basic_limit_information.limit_flags = job_ffi::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
 
         let ok = job_ffi::SetInformationJobObject(
             job,
@@ -373,15 +371,21 @@ fn kill_stray_pills() {
         let _ = std::process::Command::new("taskkill")
             .args(["/F", "/IM", "grain-pill.exe"])
             .output();
-        
+
         // Kill any multicall pills (processes with --pill in command line)
         let exe_name = std::env::current_exe()
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "grain.exe".to_string());
-            
+
         let _ = std::process::Command::new("wmic")
-            .args(["process", "where", &format!("name='{}' and commandline like '%--pill%'", exe_name), "call", "terminate"])
+            .args([
+                "process",
+                "where",
+                &format!("name='{}' and commandline like '%--pill%'", exe_name),
+                "call",
+                "terminate",
+            ])
             .output();
     }
     #[cfg(not(target_os = "windows"))]
@@ -390,7 +394,7 @@ fn kill_stray_pills() {
             .arg("-f")
             .arg("grain-pill")
             .output();
-            
+
         let _ = std::process::Command::new("pkill")
             .arg("-f")
             .arg("--pill")
