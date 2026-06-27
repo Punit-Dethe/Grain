@@ -73,6 +73,11 @@ export function AgentPalette() {
   const inputRef = useRef<HTMLInputElement>(null);
   const statusRef = useRef<Status>("idle");
   statusRef.current = status;
+  // Mirror the typed text into a ref so `submit` can read it without closing
+  // over `input` state — otherwise submit is recreated on every keystroke and
+  // every listener that depends on it re-subscribes (incl. a Tauri IPC listen).
+  const inputValueRef = useRef("");
+  inputValueRef.current = input;
   const submittingRef = useRef(false);
   const startedRef = useRef(false);
 
@@ -147,7 +152,7 @@ export function AgentPalette() {
     submittingRef.current = true;
 
     try {
-      const typed = input.trim();
+      const typed = inputValueRef.current.trim();
       if (typed) {
         await handToPanel(typed);
         return;
@@ -174,7 +179,7 @@ export function AgentPalette() {
       submittingRef.current = false;
       focusInput();
     }
-  }, [focusInput, handToPanel, input, t]);
+  }, [focusInput, handToPanel, t]);
 
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {

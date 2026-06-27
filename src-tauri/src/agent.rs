@@ -233,7 +233,27 @@ fn build_window(
         builder = builder.data_directory(data_dir.join("webview"));
     }
 
-    builder.build()
+    let window = builder.build()?;
+
+    // [GRAIN] Release the transient global Enter/Escape shortcuts when this
+    // surface is destroyed and no other agent window remains. This covers every
+    // close path (the in-window × button, the frontend's own Escape handler, or
+    // the backend `global_close`) so the shortcuts can never outlive the Agent
+    // and keep hijacking Enter/Escape system-wide ("destroy if not in use").
+    {
+        let app = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let palette_gone = app.get_webview_window(PALETTE_LABEL).is_none();
+                let panel_gone = app.get_webview_window(PANEL_LABEL).is_none();
+                if palette_gone && panel_gone {
+                    unregister_transient_shortcuts_deferred(&app);
+                }
+            }
+        });
+    }
+
+    Ok(window)
 }
 
 /// Monitor metrics in LOGICAL px as `(origin_x, origin_y, screen_w, screen_h)`.
@@ -427,13 +447,33 @@ pub fn agent_submit_instruction(app: AppHandle, text: String) -> Result<(), Stri
         if let Err(e) = app_for_panel.run_on_main_thread(move || {
             if let Err(e) = show_panel(&panel_handle) {
                 error!("[GRAIN] agent: failed to show panel: {e}");
+                report_submit_failure(&panel_handle, &e);
             }
         }) {
             error!("[GRAIN] agent: failed to schedule agent panel: {e:?}");
+            report_submit_failure(&app_for_task, &format!("{e:?}"));
         }
     });
 
     Ok(())
+}
+
+/// The panel handoff failed after the palette was already closed. Bring the
+/// palette back and tell it why, so the user can retry instead of being left
+/// with no Agent window and a wedged submit guard (the palette's
+/// `agent-submit-error` listener resets its state on this event).
+fn report_submit_failure(app: &AppHandle, message: &str) {
+    let app = app.clone();
+    let message = message.to_string();
+    let _ = app.clone().run_on_main_thread(move || {
+        show_palette(&app);
+        // Let the rebuilt palette webview mount its listener before emitting.
+        let app_for_emit = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(120));
+            let _ = app_for_emit.emit_to(PALETTE_LABEL, "agent-submit-error", message);
+        });
+    });
 }
 
 fn submit_binding() -> ShortcutBinding {
