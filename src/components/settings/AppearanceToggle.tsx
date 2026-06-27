@@ -13,7 +13,7 @@ export const AppearanceToggle: React.FC = () => {
 
   return (
     <SettingContainer
-      title="Appearance"
+      title="Toggle Light & Dark Mode"
       description="Switch the Settings window between light and dark mode. The Quick Panel appearance can be toggled independently."
       descriptionMode="tooltip"
       grouped={true}
