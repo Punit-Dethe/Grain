@@ -145,21 +145,37 @@ fn show_palette(app: &AppHandle) {
 /// foreground thread's input queue to ours, force the window foreground, then detach.
 fn show_and_focus(win: &tauri::WebviewWindow) {
     let _ = win.show();
+    focus_now(win);
+
+    // Hotkey-summoned windows can briefly lose focus again while the previous
+    // foreground app processes the key release. Re-focus shortly after first
+    // paint. A SINGLE retry task handles every delay (instead of one detached
+    // thread per delay), and each step re-resolves the window by label and runs
+    // the focus work on the main thread — so a window closed in the meantime
+    // (e.g. the palette being handed off to the panel) is a no-op rather than a
+    // focus call racing `close()`.
+    let app = win.app_handle().clone();
+    let label = win.label().to_string();
+    std::thread::spawn(move || {
+        for delay_ms in [60_u64, 180] {
+            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+            let app = app.clone();
+            let label = label.clone();
+            let _ = app.clone().run_on_main_thread(move || {
+                if let Some(w) = app.get_webview_window(&label) {
+                    focus_now(&w);
+                }
+            });
+        }
+    });
+}
+
+/// Pull a window to the foreground and grab keyboard focus right now (on the
+/// calling thread). On Windows this also bridges the foreground input queue.
+fn focus_now(win: &tauri::WebviewWindow) {
     let _ = win.set_focus();
     #[cfg(windows)]
     force_foreground(win);
-
-    // Hotkey-summoned windows can briefly lose focus again while the previous
-    // foreground app processes the key release. Retry shortly after first paint.
-    for delay_ms in [60_u64, 180] {
-        let w = win.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-            let _ = w.set_focus();
-            #[cfg(windows)]
-            force_foreground(&w);
-        });
-    }
 }
 
 #[cfg(windows)]

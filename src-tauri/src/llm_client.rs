@@ -240,15 +240,18 @@ fn build_auth_headers(
 ) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    // [GRAIN] Identify as Grain (not upstream Handy) on outbound requests — the
+    // Referer/User-Agent/X-Title surface in provider dashboards (e.g. OpenRouter
+    // shows X-Title), so they must reflect this client, not the fork origin.
     headers.insert(
         REFERER,
-        HeaderValue::from_static("https://github.com/cjpais/Handy"),
+        HeaderValue::from_static("https://gitlab.com/grain2/grain-stt"),
     );
     headers.insert(
         USER_AGENT,
-        HeaderValue::from_static("Handy/1.0 (+https://github.com/cjpais/Handy)"),
+        HeaderValue::from_static("Grain/1.0 (+https://gitlab.com/grain2/grain-stt)"),
     );
-    headers.insert("X-Title", HeaderValue::from_static("Handy"));
+    headers.insert("X-Title", HeaderValue::from_static("Grain"));
 
     if !api_key.is_empty() {
         // [GRAIN] Phase 2 note: will switch to provider.auth_style enum;
