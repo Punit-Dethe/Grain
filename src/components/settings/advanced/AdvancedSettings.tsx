@@ -29,10 +29,6 @@ export const AdvancedSettings: React.FC = () => {
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
-      {/* Appearance: light/dark mode toggle — synced with the Quick Panel. */}
-      <SettingsGroup title="Appearance">
-        <AppearanceToggle />
-      </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.app")}>
         <DefaultPanel grouped={true} />
@@ -72,6 +68,7 @@ export const AdvancedSettings: React.FC = () => {
           />
           <AccelerationSelector descriptionMode="tooltip" grouped={true} />
           <LazyStreamClose descriptionMode="tooltip" grouped={true} />
+          <AppearanceToggle />
         </SettingsGroup>
       )}
     </div>
