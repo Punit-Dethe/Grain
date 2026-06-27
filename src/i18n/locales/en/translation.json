@@ -445,6 +445,7 @@
         }
       },
       "localModel": {
+        "title": "Local model",
         "none": "No model selected",
         "activeHint": "Active · used for on-device transcription",
         "disabledByCloud": "Disabled — cloud transcription is handling this",
@@ -455,7 +456,7 @@
       "smartRotation": {
         "label": "Cloud transcription",
         "short": "Enable cloud providers",
-        "description": "When on, speech is transcribed by the cloud providers below. If multiple are enabled, it automatically rotates across them with per-provider daily quotas and failover. The local on-device model is disabled while this is on. When off, the local model is used with no network."
+        "description": "Disables the local model and uses your cloud providers. Rotates automatically if multiple are enabled."
       },
       "localActive": {
         "title": "Local on-device model",
