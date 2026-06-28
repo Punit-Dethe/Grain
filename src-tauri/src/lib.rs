@@ -194,26 +194,47 @@ fn apply_window_corner_rounding(window: &tauri::WebviewWindow) {
 fn show_main_window(app: &AppHandle) {
     // [GRAIN] The window is destroyed on close to free RAM, so recreate it if
     // absent. Every reopen path (tray, single-instance, macOS Reopen) lands here.
+    let mut is_new = false;
     let main_window = match app.get_webview_window("main") {
         Some(w) => w,
-        None => match build_main_window(app) {
-            Ok(w) => w,
-            Err(e) => {
-                log::error!("Failed to recreate main window: {}", e);
-                return;
+        None => {
+            is_new = true;
+            match build_main_window(app) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::error!("Failed to recreate main window: {}", e);
+                    return;
+                }
             }
-        },
+        }
     };
 
     if let Err(e) = main_window.unminimize() {
         log::error!("Failed to unminimize webview window: {}", e);
     }
-    if let Err(e) = main_window.show() {
-        log::error!("Failed to show webview window: {}", e);
+    
+    // Only show immediately if it's not a newly created window.
+    // If it is new, we let the frontend trigger the show command when it is ready.
+    if !is_new {
+        if let Err(e) = main_window.show() {
+            log::error!("Failed to show webview window: {}", e);
+        }
+        if let Err(e) = main_window.set_focus() {
+            log::error!("Failed to focus webview window: {}", e);
+        }
+    } else {
+        // Fallback: show the window after 4 seconds if the frontend hasn't triggered it
+        let window_clone = main_window.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
+            if let Ok(false) = window_clone.is_visible() {
+                log::warn!("[GRAIN] Frontend did not signal webview-ready in time; showing window via fallback");
+                let _ = window_clone.show();
+                let _ = window_clone.set_focus();
+            }
+        });
     }
-    if let Err(e) = main_window.set_focus() {
-        log::error!("Failed to focus webview window: {}", e);
-    }
+
     #[cfg(target_os = "macos")]
     {
         if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
