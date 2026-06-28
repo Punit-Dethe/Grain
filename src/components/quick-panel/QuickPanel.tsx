@@ -7,6 +7,7 @@ import { ModuleB } from "./ModuleB";
 import { ModuleC } from "./ModuleC";
 import { PatchCables } from "./PatchCables";
 import { useTheme } from "../../contexts/ThemeContext";
+import { useSystemStatus, type StatusTone } from "./useSystemStatus";
 import "./quickPanel.css";
 
 const DESIGN_W = 1280;
@@ -118,6 +119,61 @@ const ThemeToggle: React.FC<{
     </span>
   </button>
 );
+
+/** Maps a status tone to its accent colour. Orange / green / red only — the
+ *  panel's existing accent vocabulary (no new hues). */
+const toneColor = (tone: StatusTone): string => {
+  switch (tone) {
+    case "error":
+      return "#E5484D";
+    case "ok":
+      return "var(--qp-green)";
+    case "busy":
+    case "active":
+      return "var(--qp-orange)";
+    case "idle":
+    default:
+      return "rgb(var(--qp-ink-rgb) / 0.45)";
+  }
+};
+
+/** Bottom-right live status: an animated indicator dot + an ALL-CAPS label.
+ *  All state is derived from signals the webview already receives. */
+const StatusIndicator: React.FC = () => {
+  const status = useSystemStatus();
+  const color = toneColor(status.tone);
+  return (
+    <div className="flex items-center" style={{ gap: 8 }}>
+      <span
+        className={`qp-status-dot qp-status-dot--${status.tone}`}
+        style={{
+          width: 7,
+          height: 7,
+          borderRadius: "50%",
+          backgroundColor: color,
+          color, // currentColor drives the glow in the keyframes
+          flex: "none",
+        }}
+      />
+      <span
+        key={status.label}
+        className="qp-status-label"
+        style={{
+          fontFamily: "var(--qp-font-mono)",
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: "1.5px",
+          color:
+            status.tone === "idle"
+              ? "rgb(var(--qp-ink-rgb) / 0.4)"
+              : "rgb(var(--qp-ink-rgb) / 0.6)",
+        }}
+      >
+        {status.label}
+      </span>
+    </div>
+  );
+};
 
 export const QuickPanel: React.FC<QuickPanelProps> = ({ onOpenAdvanced }) => {
   // [GRAIN] Use independent quick panel theme state
@@ -241,17 +297,7 @@ export const QuickPanel: React.FC<QuickPanelProps> = ({ onOpenAdvanced }) => {
             >
               [ View Telemetry Logs ]
             </button>
-            <span
-              style={{
-                fontFamily: "var(--qp-font-mono)",
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: "1.5px",
-                color: "rgb(var(--qp-ink-rgb) / 0.4)",
-              }}
-            >
-              ACTIVE ROUTE: STANDBY // MOUNT PATCH LINES
-            </span>
+            <StatusIndicator />
           </div>
         </div>
       </ScaledStage>

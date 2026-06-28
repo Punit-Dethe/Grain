@@ -8,8 +8,8 @@ import {
   SegToggle,
   JackHousing,
   HistoryBox,
+  ConsoleDropdown,
 } from "./widgets";
-import { ConsoleDropdown, type DropdownItem } from "./ConsoleDropdown";
 import { useProcessingHistory } from "./useHistory";
 
 const MONO = "var(--qp-font-mono)";
@@ -76,13 +76,9 @@ export const ModuleC: React.FC = () => {
   // Prompts
   const prompts = getSetting("post_process_prompts") || [];
   const selectedPromptId = getSetting("post_process_selected_prompt_id") || "";
-  const selectedPromptName =
-    prompts.find((p) => p.id === selectedPromptId)?.name ||
-    prompts[0]?.name ||
-    "General";
-  const promptItems: DropdownItem[] = prompts.length
-    ? prompts.map((p) => ({ key: p.id, label: p.name }))
-    : [{ key: "__general", label: "General" }];
+  const promptOptions = prompts.length
+    ? prompts.map((p) => ({ value: p.id, label: p.name }))
+    : [{ value: "__general", label: "General" }];
   const onPromptChange = (key: string) => {
     const p = prompts.find((x) => x.id === key);
     if (p) void updateSetting("post_process_selected_prompt_id", p.id);
@@ -106,23 +102,28 @@ export const ModuleC: React.FC = () => {
   const configured = pool.providers.filter((p) =>
     pool.providersWithKeys.has(p.id),
   );
+  const hasProviders = configured.length > 0;
 
-  // Build dropdown items, marking rotation-enrolled providers.
-  const providerItems: DropdownItem[] = configured.map((p) => ({
-    key: p.id,
-    label: p.label,
-    inRotation: p.enabled,
-  }));
-
+  // Closed-state active provider for SELECT mode (rotation off).
   const activeKey =
     pool.selectedProviderId ||
     configured.find((p) => p.enabled)?.id ||
     configured[0]?.id ||
     "";
 
-  const onProviderChange = (key: string) => {
-    void pool.setActiveProvider(key);
-  };
+  // [GRAIN] Same workflow as Module B's cloud dropdown: when smart rotation is
+  // on, the closed label summarises how many providers are enabled (or prompts
+  // to turn one on); the open panel toggles each provider in/out of rotation.
+  const enabledCount = configured.filter((p) => p.enabled).length;
+  let rotationPlaceholder = "Configure providers";
+  if (enabledCount === 1) {
+    rotationPlaceholder =
+      configured.find((p) => p.enabled)?.label || "Configure providers";
+  } else if (enabledCount === 0 && hasProviders) {
+    rotationPlaceholder = "Turn on a provider";
+  } else if (hasProviders) {
+    rotationPlaceholder = `${enabledCount} / ${configured.length} active`;
+  }
 
   return (
     <>
@@ -139,10 +140,10 @@ export const ModuleC: React.FC = () => {
         Directive Prompt
       </div>
       <ConsoleDropdown
-        value={selectedPromptId || promptItems[0]?.key || ""}
-        items={promptItems}
+        value={selectedPromptId || promptOptions[0]?.value || ""}
+        options={promptOptions}
         height={34}
-        onChange={onPromptChange}
+        onSelect={onPromptChange}
       />
 
       <Spacer h={8} />
@@ -245,22 +246,34 @@ export const ModuleC: React.FC = () => {
       </div>
       <Spacer h={3} />
 
-      {/* Provider dropdown — rotation dots appear when smart rotation is on */}
-      <div style={{ opacity: configured.length ? 1 : 0.45 }}>
+      {/* Provider dropdown — mirrors Module B's cloud selector exactly.
+          Rotation OFF: SELECT the single active provider. Rotation ON: a
+          toggleable list where each provider can be enabled/disabled, with the
+          closed label summarising the active count. Orange accent throughout. */}
+      {pool.smartRotation ? (
+        <ConsoleDropdown
+          toggleable
+          placeholder={rotationPlaceholder}
+          options={configured.map((p) => ({
+            value: p.id,
+            label: p.label,
+            enabled: p.enabled,
+          }))}
+          emptyLabel="No providers configured"
+          onToggle={(id, next) => {
+            const provider = pool.providers.find((p) => p.id === id);
+            if (provider) void pool.setProviderEnabled(provider, next);
+          }}
+        />
+      ) : (
         <ConsoleDropdown
           value={activeKey}
-          items={
-            providerItems.length
-              ? providerItems
-              : [{ key: "__none", label: "No providers configured" }]
-          }
-          height={34}
-          smartRotation={pool.smartRotation}
-          rotationColor="#8B5CF6"
-          disabled={configured.length === 0}
-          onChange={onProviderChange}
+          placeholder={hasProviders ? undefined : "No providers configured"}
+          options={configured.map((p) => ({ value: p.id, label: p.label }))}
+          disabled={!hasProviders}
+          onSelect={(key) => void pool.setActiveProvider(key)}
         />
-      </div>
+      )}
 
       <Spacer h={5} />
 
