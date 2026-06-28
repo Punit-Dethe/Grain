@@ -175,7 +175,7 @@ export const useSystemStatus = (): SystemStatus => {
 
   const noProvider = stt.includes("NO PROVIDER") || pp === "NO PROVIDER";
   return {
-    label: `TRANSCRIPTION: ${stt} // PROCESSING: ${pp}`,
+    label: `${stt} // ${pp}`,
     tone: noProvider ? "idle" : "active",
     transient: false,
   };
