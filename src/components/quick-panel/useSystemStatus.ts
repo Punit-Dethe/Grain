@@ -14,14 +14,21 @@
  *    transient "pulse" timer is always cleared.
  *  - LOW NOISE: one prioritised status at a time, with a calm idle default.
  *
+ * Steady state: a persistent two-segment route line describing BOTH pipelines,
+ * read like the panel's signal chain —
+ *   `TRANSCRIPTION: <route> // PROCESSING: <route>`
+ * Transient events (model loading, transcribed, processed, error) surface over
+ * that line for a moment and then fall back to it.
+ *
  * Priority (highest wins): error > model loading > transient activity pulse
- * (transcribed / processed) > model loaded/unloaded route state > idle.
+ * (transcribed / processed) > persistent route line.
  */
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { events, type HistoryUpdatePayload } from "@/bindings";
 import { useSttPoolStore } from "@/stores/sttPoolStore";
 import { usePpPoolStore } from "@/stores/ppPoolStore";
+import { useModelStore } from "@/stores/modelStore";
 
 /** Visual tone for the indicator dot — maps to an accent colour + animation. */
 export type StatusTone = "idle" | "busy" | "active" | "ok" | "error";
@@ -30,6 +37,8 @@ export interface SystemStatus {
   /** Short ALL-CAPS label shown in the status bar. */
   label: string;
   tone: StatusTone;
+  /** True when this is a momentary event surfacing over the route line. */
+  transient: boolean;
 }
 
 interface ModelStateEvent {
@@ -56,6 +65,11 @@ export const useSystemStatus = (): SystemStatus => {
   const sttRotation = useSttPoolStore((s) => s.smartRotation);
   const cloudProviders = useSttPoolStore((s) => s.cloudProviders);
   const ppRotation = usePpPoolStore((s) => s.smartRotation);
+  const ppProviders = usePpPoolStore((s) => s.providers);
+  const ppProvidersWithKeys = usePpPoolStore((s) => s.providersWithKeys);
+  const ppSelectedId = usePpPoolStore((s) => s.selectedProviderId);
+  const models = useModelStore((s) => s.models);
+  const currentModel = useModelStore((s) => s.currentModel);
 
   // --- Model lifecycle: reuse the SAME webview event modelStore listens to. ---
   useEffect(() => {
@@ -113,31 +127,56 @@ export const useSystemStatus = (): SystemStatus => {
     };
   }, []);
 
-  // --- Resolve a single prioritised status. ---
+  // --- Transient events surface over the route line, then fall back. ---
   if (modelPhase === "error") {
-    return { label: "MODEL ERROR", tone: "error" };
+    return { label: "MODEL ERROR", tone: "error", transient: true };
   }
   if (modelPhase === "loading") {
-    return { label: "LOADING MODEL", tone: "busy" };
+    return { label: "LOADING MODEL", tone: "busy", transient: true };
   }
   if (pulse) {
-    return { label: pulse, tone: "ok" };
+    return { label: pulse, tone: "ok", transient: true };
   }
 
-  // Calm steady-state: describe the active route.
-  const enabledCloud = cloudProviders.filter((p) => p.enabled ?? true).length;
+  // --- Persistent steady-state: describe BOTH routes in one line. ---
+
+  // Transcription route: rotation ON → rotating across enabled cloud providers;
+  // OFF → the local in-process model.
+  let stt: string;
   if (sttRotation) {
-    const ppNote = ppRotation ? " + LLM" : "";
-    if (enabledCloud === 0) {
-      return { label: "ROTATION: NO PROVIDER ON", tone: "busy" };
-    }
-    return {
-      label: `ROTATING ${enabledCloud} CLOUD${ppNote}`,
-      tone: "active",
-    };
+    const enabledCloud = cloudProviders.filter((p) => p.enabled ?? true).length;
+    stt =
+      enabledCloud === 0
+        ? "ROTATE (NO PROVIDER ON)"
+        : `ROTATE ${enabledCloud} CLOUD`;
+  } else {
+    const name = models.find((m) => m.id === currentModel)?.name;
+    stt = name ? `LOCAL · ${name.toUpperCase()}` : "LOCAL";
   }
-  if (modelPhase === "loaded") {
-    return { label: "MODEL LOADED // IDLE", tone: "ok" };
+
+  // Processing route: rotation ON → rotating across enabled CONFIGURED
+  // providers; OFF → the selected provider (must have a key). No key anywhere
+  // → "NO PROVIDER".
+  const configured = ppProviders.filter((p) => ppProvidersWithKeys.has(p.id));
+  let pp: string;
+  if (configured.length === 0) {
+    pp = "NO PROVIDER";
+  } else if (ppRotation) {
+    const enabledPp = configured.filter((p) => p.enabled).length;
+    pp =
+      enabledPp === 0 ? "ROTATE (NONE ON)" : `ROTATE ${enabledPp} PROVIDER`;
+  } else {
+    const sel =
+      configured.find((p) => p.id === ppSelectedId) ??
+      configured.find((p) => p.enabled) ??
+      configured[0];
+    pp = sel ? sel.label.toUpperCase() : "NO PROVIDER";
   }
-  return { label: "LOCAL // STANDBY", tone: "idle" };
+
+  const noProvider = stt.includes("NO PROVIDER") || pp === "NO PROVIDER";
+  return {
+    label: `TRANSCRIPTION: ${stt} // PROCESSING: ${pp}`,
+    tone: noProvider ? "idle" : "active",
+    transient: false,
+  };
 };

@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string -- fixed console design typography. */
 import React from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ScaledStage } from "./ScaledStage";
@@ -137,13 +138,40 @@ const toneColor = (tone: StatusTone): string => {
   }
 };
 
-/** Bottom-right live status: an animated indicator dot + an ALL-CAPS label.
- *  All state is derived from signals the webview already receives. */
+/** Renders the persistent `TRANSCRIPTION: <v> // PROCESSING: <v>` line with the
+ *  segment labels + `//` separator dimmed and the route values emphasised, so it
+ *  reads like the panel's signal chain. Falls back to a single span for any
+ *  string that isn't in that shape. */
+const RouteLine: React.FC<{ text: string }> = ({ text }) => {
+  const dim = "rgb(var(--qp-ink-rgb) / 0.38)";
+  const bright = "rgb(var(--qp-ink-rgb) / 0.72)";
+  const match = text.match(
+    /^TRANSCRIPTION: (.+) \/\/ PROCESSING: (.+)$/,
+  );
+  if (!match) {
+    return <span style={{ color: bright }}>{text}</span>;
+  }
+  const [, stt, pp] = match;
+  return (
+    <>
+      <span style={{ color: dim }}>TRANSCRIPTION: </span>
+      <span style={{ color: bright }}>{stt}</span>
+      <span style={{ color: dim }}> // </span>
+      <span style={{ color: dim }}>PROCESSING: </span>
+      <span style={{ color: bright }}>{pp}</span>
+    </>
+  );
+};
+
+/** Bottom-right live status: an animated indicator dot + the route line.
+ *  Transient events surface as a single label; the steady state is the
+ *  two-segment route summary. All state is derived from signals the webview
+ *  already receives. */
 const StatusIndicator: React.FC = () => {
   const status = useSystemStatus();
   const color = toneColor(status.tone);
   return (
-    <div className="flex items-center" style={{ gap: 8 }}>
+    <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
       <span
         className={`qp-status-dot qp-status-dot--${status.tone}`}
         style={{
@@ -157,19 +185,20 @@ const StatusIndicator: React.FC = () => {
       />
       <span
         key={status.label}
-        className="qp-status-label"
+        className="qp-status-label truncate"
         style={{
           fontFamily: "var(--qp-font-mono)",
           fontSize: 10,
           fontWeight: 700,
           letterSpacing: "1.5px",
-          color:
-            status.tone === "idle"
-              ? "rgb(var(--qp-ink-rgb) / 0.4)"
-              : "rgb(var(--qp-ink-rgb) / 0.6)",
+          color: status.transient ? color : "rgb(var(--qp-ink-rgb) / 0.6)",
         }}
       >
-        {status.label}
+        {status.transient ? (
+          status.label
+        ) : (
+          <RouteLine text={status.label} />
+        )}
       </span>
     </div>
   );
