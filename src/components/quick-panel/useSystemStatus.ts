@@ -144,11 +144,15 @@ export const useSystemStatus = (): SystemStatus => {
   // OFF → the local in-process model.
   let stt: string;
   if (sttRotation) {
-    const enabledCloud = cloudProviders.filter((p) => p.enabled ?? true).length;
-    stt =
-      enabledCloud === 0
-        ? "ROTATE (NO PROVIDER ON)"
-        : `ROTATE ${enabledCloud} CLOUD`;
+    const enabledClouds = cloudProviders.filter((p) => p.enabled ?? true);
+    if (enabledClouds.length === 0) {
+      stt = "ROTATE (NO PROVIDER ON)";
+    } else if (enabledClouds.length === 1) {
+      // Only one in rotation → just name it.
+      stt = enabledClouds[0].name.toUpperCase();
+    } else {
+      stt = `ROTATE ${enabledClouds.length} CLOUD`;
+    }
   } else {
     const name = models.find((m) => m.id === currentModel)?.name;
     stt = name ? `LOCAL · ${name.toUpperCase()}` : "LOCAL";
@@ -162,9 +166,15 @@ export const useSystemStatus = (): SystemStatus => {
   if (configured.length === 0) {
     pp = "NO PROVIDER";
   } else if (ppRotation) {
-    const enabledPp = configured.filter((p) => p.enabled).length;
-    pp =
-      enabledPp === 0 ? "ROTATE (NONE ON)" : `ROTATE ${enabledPp} PROVIDER`;
+    const enabledPp = configured.filter((p) => p.enabled);
+    if (enabledPp.length === 0) {
+      pp = "ROTATE (NONE ON)";
+    } else if (enabledPp.length === 1) {
+      // Only one in rotation → just name it.
+      pp = enabledPp[0].label.toUpperCase();
+    } else {
+      pp = `ROTATE ${enabledPp.length} PROVIDER`;
+    }
   } else {
     const sel =
       configured.find((p) => p.id === ppSelectedId) ??
