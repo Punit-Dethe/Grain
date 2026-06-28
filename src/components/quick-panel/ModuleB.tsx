@@ -123,6 +123,9 @@ export const ModuleB: React.FC = () => {
   const cloudNames = pool.cloudProviders.map((p) => p.name);
   const hasCloud = pool.cloudProviders.length > 0;
 
+  const numToWord = (n: number) =>
+    ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"][n] ?? n.toString();
+
   const enabledCloudCount = pool.cloudProviders.filter((p) => p.enabled ?? true).length;
   const totalCloudCount = pool.cloudProviders.length;
   let dynamicPlaceholder = "Configure providers";
@@ -131,7 +134,7 @@ export const ModuleB: React.FC = () => {
       pool.cloudProviders.find((p) => p.enabled ?? true)?.name ||
       "Configure providers";
   } else if (totalCloudCount > 0) {
-    dynamicPlaceholder = `${enabledCloudCount} / ${totalCloudCount} active`;
+    dynamicPlaceholder = `${numToWord(enabledCloudCount)} out of ${numToWord(totalCloudCount)} active`;
   }
 
   return (
