@@ -16,7 +16,6 @@ import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { QuickPanel } from "./components/quick-panel/QuickPanel";
 import { ScaledStage } from "./components/quick-panel/ScaledStage";
-import { DotMatrixSplash } from "./components/DotMatrixSplash";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
@@ -56,10 +55,6 @@ function AppInner() {
     (state) => state.refreshOutputDevices,
   );
   const hasCompletedPostOnboardingInit = useRef(false);
-
-  const [showSplash, setShowSplash] = useState(() => {
-    return new URLSearchParams(window.location.search).get("first_open") === "true";
-  });
 
   useEffect(() => {
     checkOnboardingStatus();
@@ -262,10 +257,6 @@ function AppInner() {
     // Transition to main app - user has started a download
     setOnboardingStep("done");
   };
-
-  if (showSplash) {
-    return <DotMatrixSplash onComplete={() => setShowSplash(false)} />;
-  }
 
   // Still checking onboarding status
   if (onboardingStep === null) {
