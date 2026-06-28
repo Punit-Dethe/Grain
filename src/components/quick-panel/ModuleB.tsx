@@ -123,6 +123,17 @@ export const ModuleB: React.FC = () => {
   const cloudNames = pool.cloudProviders.map((p) => p.name);
   const hasCloud = pool.cloudProviders.length > 0;
 
+  const enabledCloudCount = pool.cloudProviders.filter((p) => p.enabled ?? true).length;
+  const totalCloudCount = pool.cloudProviders.length;
+  let dynamicPlaceholder = "Configure providers";
+  if (enabledCloudCount === 1) {
+    dynamicPlaceholder =
+      pool.cloudProviders.find((p) => p.enabled ?? true)?.name ||
+      "Configure providers";
+  } else if (totalCloudCount > 0) {
+    dynamicPlaceholder = `${enabledCloudCount} / ${totalCloudCount} active`;
+  }
+
   return (
     <>
       {/* Aura Core Monitor */}
@@ -208,7 +219,7 @@ export const ModuleB: React.FC = () => {
           {smartRotation ? (
             <ConsoleDropdown
               toggleable
-              placeholder="Configure providers"
+              placeholder={dynamicPlaceholder}
               options={pool.cloudProviders.map((p) => ({
                 value: p.id,
                 label: p.name,
