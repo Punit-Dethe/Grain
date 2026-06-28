@@ -16,6 +16,7 @@ import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { QuickPanel } from "./components/quick-panel/QuickPanel";
 import { ScaledStage } from "./components/quick-panel/ScaledStage";
+import { DotMatrixSplash } from "./components/DotMatrixSplash";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
@@ -260,7 +261,7 @@ function AppInner() {
 
   // Still checking onboarding status
   if (onboardingStep === null) {
-    return null;
+    return <DotMatrixSplash />;
   }
 
   if (onboardingStep === "accessibility") {
