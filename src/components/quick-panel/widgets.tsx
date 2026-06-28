@@ -1,5 +1,5 @@
 /* eslint-disable i18next/no-literal-string -- fixed console design typography. */
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 /* Theme helper shorthands — mirror ConsoleTheme.qml's ink()/inkOnOuter()/fill().
  * Alpha-bearing colours read the per-mode RGB triples set in quickPanel.css. */
@@ -410,8 +410,257 @@ export const SettingRow: React.FC<{
   </div>
 );
 
-/** Native-styled select matching the console combo boxes. When `disabled` it is
- *  dimmed and non-interactive (used to gate the cloud picker while cloud is off). */
+/** One selectable entry in a ConsoleDropdown. `toggleable` rows render a
+ *  right-edge ON/OFF control instead of a selection (used for rotation members);
+ *  `dotColor` shows a small leading status dot (e.g. green = key present). */
+export interface DropdownOption {
+  value: string;
+  label: string;
+  /** Leading status dot colour. Omit for no dot. */
+  dotColor?: string;
+  /** When set, the row shows an ON/OFF control reflecting this state. */
+  enabled?: boolean;
+}
+
+/** Custom console dropdown — the single source of truth for every combo box in
+ *  the quick panel (mic, unload timeout, local model, cloud providers). Closed
+ *  it reads like the old native select; open it floats a themed option list.
+ *
+ *  Two modes:
+ *   - SELECT (default): clicking a row fires `onSelect(value)` and closes.
+ *   - TOGGLE (`toggleable`): each row carries an ON/OFF control wired to
+ *     `onToggle(value, next)`; rows don't close the panel. ON state paints the
+ *     label orange and fills the row with darker beige (`--qp-ctrl-box-bg`).
+ *     The closed-state shows `placeholder` (e.g. "Configure providers") rather
+ *     than a single value. */
+export const ConsoleDropdown: React.FC<{
+  /** Closed-state label for SELECT mode (the current value's label). */
+  value?: string;
+  /** Closed-state label override (TOGGLE mode shows this, e.g. "Configure providers"). */
+  placeholder?: string;
+  options: DropdownOption[];
+  height?: number;
+  disabled?: boolean;
+  /** Leading dot colour for the CLOSED state (SELECT mode, e.g. local model). */
+  closedDotColor?: string;
+  toggleable?: boolean;
+  onSelect?: (value: string) => void;
+  onToggle?: (value: string, next: boolean) => void;
+  /** Shown in the panel when there are no options. */
+  emptyLabel?: string;
+}> = ({
+  value,
+  placeholder,
+  options,
+  height = 34,
+  disabled = false,
+  closedDotColor,
+  toggleable = false,
+  onSelect,
+  onToggle,
+  emptyLabel = "Nothing here yet",
+}) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click / Escape — no listeners linger while closed.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  // Closed-state label.
+  const closedLabel = toggleable
+    ? (placeholder ?? "Configure")
+    : (options.find((o) => o.value === value)?.label ??
+      value ??
+      placeholder ??
+      "");
+
+  return (
+    <div ref={rootRef} className="relative w-full" style={{ opacity: disabled ? 0.4 : 1 }}>
+      {/* Trigger */}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className={`relative w-full flex items-center ${
+          disabled ? "cursor-not-allowed" : "cursor-pointer"
+        }`}
+        style={{
+          height,
+          borderRadius: 6,
+          padding: closedDotColor ? "0 28px 0 24px" : "0 28px 0 10px",
+          backgroundColor: "var(--qp-input-bg)",
+          border: `1px solid ${open ? "#ff5d1e" : fill(0.1)}`,
+          fontSize: 11,
+          fontWeight: 600,
+          color: "var(--qp-input-text)",
+          textAlign: "left",
+          transition: "border-color 0.15s",
+        }}
+      >
+        {closedDotColor && (
+          <span
+            className="absolute"
+            style={{
+              left: 10,
+              top: "50%",
+              transform: "translateY(-50%)",
+              width: 6,
+              height: 6,
+              borderRadius: 3,
+              backgroundColor: closedDotColor,
+            }}
+          />
+        )}
+        <span className="flex-1 truncate">{closedLabel}</span>
+        <span
+          className="absolute pointer-events-none flex items-center justify-center"
+          style={{
+            right: 8,
+            top: "50%",
+            transform: `translateY(-50%) rotate(${open ? 180 : 0}deg)`,
+            fontSize: 9,
+            lineHeight: 1,
+            color: "var(--qp-input-text)",
+            transition: "transform 0.15s",
+          }}
+        >
+          ▾
+        </span>
+      </button>
+
+      {/* Panel */}
+      {open && !disabled && (
+        <div
+          className="absolute left-0 right-0 z-50 qp-scroll"
+          style={{
+            top: height + 4,
+            maxHeight: 220,
+            overflowY: "auto",
+            borderRadius: 6,
+            backgroundColor: "var(--qp-input-bg)",
+            border: `1px solid ${fill(0.15)}`,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
+            padding: 4,
+          }}
+        >
+          {options.length === 0 ? (
+            <div
+              className="flex items-center justify-center"
+              style={{ height: 30, fontSize: 11, fontWeight: 600, color: ink(0.4) }}
+            >
+              {emptyLabel}
+            </div>
+          ) : (
+            options.map((o) => {
+              const on = o.enabled ?? false;
+              const selected = !toggleable && o.value === value;
+              return (
+                <div
+                  key={o.value}
+                  onClick={() => {
+                    if (toggleable) {
+                      onToggle?.(o.value, !on);
+                    } else {
+                      onSelect?.(o.value);
+                      setOpen(false);
+                    }
+                  }}
+                  className="flex items-center cursor-pointer"
+                  style={{
+                    height: 30,
+                    borderRadius: 5,
+                    padding: "0 8px 0 10px",
+                    gap: 8,
+                    // ON rows (toggle mode) fill darker beige; selected rows in
+                    // select mode get a subtle highlight.
+                    backgroundColor:
+                      toggleable && on
+                        ? "var(--qp-ctrl-box-bg)"
+                        : selected
+                          ? fill(0.06)
+                          : "transparent",
+                    transition: "background-color 0.12s",
+                  }}
+                >
+                  {o.dotColor && (
+                    <span
+                      className="shrink-0"
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: 3,
+                        backgroundColor: o.dotColor,
+                      }}
+                    />
+                  )}
+                  <span
+                    className="flex-1 truncate"
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 600,
+                      // ON => orange text; otherwise normal ink (dimmed if a
+                      // toggle row is OFF).
+                      color:
+                        toggleable && on
+                          ? "#ff5d1e"
+                          : toggleable
+                            ? ink(0.55)
+                            : "var(--qp-input-text)",
+                    }}
+                  >
+                    {o.label}
+                  </span>
+                  {toggleable ? (
+                    <span
+                      className="shrink-0"
+                      style={{
+                        fontFamily: MONO,
+                        fontSize: 8,
+                        fontWeight: 700,
+                        letterSpacing: "0.5px",
+                        color: on ? "#ff5d1e" : ink(0.4),
+                      }}
+                    >
+                      {on ? "ON" : "OFF"}
+                    </span>
+                  ) : (
+                    selected && (
+                      <span
+                        className="shrink-0"
+                        style={{ fontSize: 11, fontWeight: 700, color: "#ff5d1e" }}
+                      >
+                        ✓
+                      </span>
+                    )
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/** Back-compat wrapper: the old string-list `ConsoleSelect` API now renders the
+ *  custom ConsoleDropdown so every existing call site gets the themed look. */
 export const ConsoleSelect: React.FC<{
   value?: string;
   options: string[];
@@ -419,83 +668,11 @@ export const ConsoleSelect: React.FC<{
   disabled?: boolean;
   onChange?: (v: string) => void;
 }> = ({ value, options, height = 34, disabled = false, onChange }) => (
-  <div
-    className="relative w-full"
-    style={{
-      height,
-      borderRadius: 6,
-      backgroundColor: "var(--qp-input-bg)",
-      border: `1px solid ${fill(0.1)}`,
-      opacity: disabled ? 0.4 : 1,
-      cursor: disabled ? "not-allowed" : "default",
-    }}
-  >
-    <select
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange?.(e.target.value)}
-      className={`w-full h-full bg-transparent outline-none appearance-none ${
-        disabled ? "cursor-not-allowed" : "cursor-pointer"
-      }`}
-      style={{
-        padding: "0 30px 0 10px",
-        fontSize: 11,
-        fontWeight: 600,
-        color: "var(--qp-input-text)",
-      }}
-    >
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
-    <span
-      className="absolute pointer-events-none flex items-center justify-center"
-      style={{
-        right: 8,
-        top: "50%",
-        transform: "translateY(-50%)",
-        fontSize: 9,
-        lineHeight: 1,
-        color: "var(--qp-input-text)",
-      }}
-    >
-      ▾
-    </span>
-  </div>
-);
-
-/** Sleek inline on/off pill for a single rotation member — sits on a thin row
- *  without the bulk of a full slide toggle. Filled orange + "ON" when active,
- *  hollow + "OFF" when inactive. */
-export const PillToggle: React.FC<{
-  checked: boolean;
-  disabled?: boolean;
-  onChange?: (next: boolean) => void;
-}> = ({ checked, disabled = false, onChange }) => (
-  <button
-    type="button"
+  <ConsoleDropdown
+    value={value}
+    options={options.map((o) => ({ value: o, label: o }))}
+    height={height}
     disabled={disabled}
-    onClick={() => onChange?.(!checked)}
-    className={`shrink-0 flex items-center justify-center ${
-      disabled ? "cursor-not-allowed" : "cursor-pointer"
-    }`}
-    style={{
-      width: 38,
-      height: 18,
-      borderRadius: 99,
-      fontFamily: "var(--qp-font-mono)",
-      fontSize: 8,
-      fontWeight: 700,
-      letterSpacing: "0.5px",
-      opacity: disabled ? 0.4 : 1,
-      color: checked ? "#ffffff" : ink(0.45),
-      backgroundColor: checked ? "#ff5d1e" : "transparent",
-      border: `1px solid ${checked ? "#ff5d1e" : fill(0.18)}`,
-      transition: "background-color 0.15s, color 0.15s, border-color 0.15s",
-    }}
-  >
-    {checked ? "ON" : "OFF"}
-  </button>
+    onSelect={onChange}
+  />
 );
