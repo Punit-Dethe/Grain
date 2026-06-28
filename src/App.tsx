@@ -62,15 +62,6 @@ function AppInner() {
   });
 
   useEffect(() => {
-    if (showSplash) {
-      const timer = setTimeout(() => {
-        setShowSplash(false);
-      }, 4000);
-      return () => clearTimeout(timer);
-    }
-  }, [showSplash]);
-
-  useEffect(() => {
     checkOnboardingStatus();
   }, []);
 
@@ -273,7 +264,7 @@ function AppInner() {
   };
 
   if (showSplash) {
-    return <DotMatrixSplash />;
+    return <DotMatrixSplash onComplete={() => setShowSplash(false)} />;
   }
 
   // Still checking onboarding status

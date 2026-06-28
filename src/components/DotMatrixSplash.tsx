@@ -1,7 +1,25 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
-export const DotMatrixSplash: React.FC = () => {
+export const DotMatrixSplash: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isFadingOut, setIsFadingOut] = useState(false);
+
+  useEffect(() => {
+    // Fade out after 4 seconds
+    const fadeTimer = setTimeout(() => {
+      setIsFadingOut(true);
+    }, 4000);
+
+    // Call onComplete after transition finishes (500ms)
+    const completeTimer = setTimeout(() => {
+      onComplete();
+    }, 4500);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(completeTimer);
+    };
+  }, [onComplete]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -184,6 +202,9 @@ export const DotMatrixSplash: React.FC = () => {
         alignItems: "center",
         justifyContent: "center",
         zIndex: 9999,
+        transition: "opacity 500ms cubic-bezier(0.25, 1, 0.5, 1)",
+        opacity: isFadingOut ? 0 : 1,
+        pointerEvents: isFadingOut ? "none" : "auto",
       }}
     >
       <canvas
