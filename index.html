@@ -4,8 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Grain</title>
-    <!-- [GRAIN] Quick Panel console fonts (Syne display + JetBrains Mono). TODO:
-         bundle locally for full offline use; loaded from Google Fonts for now. -->
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -33,7 +32,7 @@
          webview paints it the instant it has the document, BEFORE the JS bundle
          is parsed, so it covers the entire gap. It holds no JS, no React, no
          retained resources — it is plain markup the browser discards the moment
-         React removes #grain-splash on first mount (see main.tsx). */
+         React removes #grain-splash on first mount (see src/lib/utils/splash.ts). */
       #grain-splash {
         position: fixed;
         inset: 0;
@@ -42,7 +41,7 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 22px;
+        gap: 26px;
         background-color: #0c0b0a;
         /* Fade the splash out smoothly when React marks it for removal. */
         opacity: 1;
@@ -57,7 +56,7 @@
          rippling out from the center while a slow orange scanline sweeps across
          — a Teenage-Engineering instrument readout idling on the espresso frame.
          Pure CSS: the radial wave is one keyframe; each cell is staggered by its
-         ring distance from center (7 buckets cover all 49 cells), and the
+         ring distance from center (4 buckets cover all 49 cells), and the
          scanline is a single translating gradient bar clipped to the grid. */
       #grain-splash .grain-splash-matrix {
         position: relative;
@@ -74,20 +73,28 @@
         width: 9px;
         height: 9px;
         border-radius: 50%;
-        /* Unlit cell: a faint recessed LED. Lit state is driven by the ring
-           animation raising opacity + a soft orange glow. */
+        /* Unlit cell: a faint recessed LED. The lit state is driven by the ring
+           animation raising opacity + adding a soft orange glow. */
         background-color: #ff5d1e;
         opacity: 0.08;
         animation: grain-splash-ring 1800ms ease-in-out infinite;
       }
 
-      /* Ring buckets: Chebyshev distance from the 7x7 center cell (ring 0..6).
+      /* Ring buckets: Chebyshev distance from the 7x7 center cell (ring 0..3).
          Cells sharing a ring share a delay, so the pulse expands as a square
          wave from the middle and the whole matrix breathes as one. */
-      #grain-splash .grain-splash-matrix i.r0 { animation-delay: 0ms; }
-      #grain-splash .grain-splash-matrix i.r1 { animation-delay: 130ms; }
-      #grain-splash .grain-splash-matrix i.r2 { animation-delay: 260ms; }
-      #grain-splash .grain-splash-matrix i.r3 { animation-delay: 390ms; }
+      #grain-splash .grain-splash-matrix i.r0 {
+        animation-delay: 0ms;
+      }
+      #grain-splash .grain-splash-matrix i.r1 {
+        animation-delay: 130ms;
+      }
+      #grain-splash .grain-splash-matrix i.r2 {
+        animation-delay: 260ms;
+      }
+      #grain-splash .grain-splash-matrix i.r3 {
+        animation-delay: 390ms;
+      }
 
       /* Sweeping scanline: a narrow vertical highlight bar drifting left→right
          across the matrix, like a sensor pass on an instrument readout. */
@@ -113,14 +120,15 @@
           monospace;
         font-size: 11px;
         font-weight: 500;
-        letter-spacing: 0.22em;
+        letter-spacing: 0.34em;
         text-transform: uppercase;
+        /* Optical centering against the 0.34em right-side letter-spacing. */
+        padding-left: 0.34em;
         color: rgba(255, 255, 255, 0.32);
       }
 
-      /* One ring "lights up": dim recessed LED → bright with a soft orange
-         halo → back to dim. The shared keyframe + per-ring delay produces the
-         expanding concentric wave. */
+      /* One ring "lights up": dim recessed LED → bright with a soft orange halo
+         → back to dim. Shared keyframe + per-ring delay = expanding wave. */
       @keyframes grain-splash-ring {
         0%,
         100% {
@@ -137,7 +145,7 @@
         }
       }
 
-      /* Scanline drifts across the matrix width (matrix is ~95px incl. padding). */
+      /* Scanline drifts across the matrix width (~95px incl. padding). */
       @keyframes grain-splash-scan {
         0% {
           transform: translateX(-30px);
