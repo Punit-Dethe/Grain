@@ -21,6 +21,7 @@ import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
+import { dismissSplash } from "./lib/utils/splash";
 
 type OnboardingStep = "accessibility" | "model" | "done";
 
@@ -59,6 +60,20 @@ function AppInner() {
   useEffect(() => {
     checkOnboardingStatus();
   }, []);
+
+  // [GRAIN] Lift the static cold-start splash (painted by index.html) only once
+  // onboarding state has resolved — i.e. the first frame that renders REAL
+  // content. App renders `null` while checkOnboardingStatus()'s IPC round-trip
+  // is in flight, so dismissing earlier would briefly expose a blank frame.
+  // Double-rAF waits for the post-commit paint so the live UI is on screen
+  // underneath before the loader fades.
+  useEffect(() => {
+    if (onboardingStep === null) return;
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(() => dismissSplash());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [onboardingStep]);
 
   // Seed the initial panel state from settings
   useEffect(() => {

@@ -20,11 +20,116 @@
            rounded React card; near-black so it reads as an intentional frame. */
         background-color: #0c0b0a;
       }
+
+      /* [GRAIN] Static cold-start splash.
+         ------------------------------------------------------------------
+         The main settings window is DESTROYED on close to free WebView2 RAM
+         ("destroy if not in use"), so every reopen cold-spawns the webview
+         (~1s) and then boots Vite + React + i18n + IPC (~3-4s). The window is
+         shown immediately (deferring show() just produced a longer empty void),
+         so without this the user stares at a black frame during that boot.
+
+         This loader is intentionally pure inline HTML/CSS in index.html: the
+         webview paints it the instant it has the document, BEFORE the JS bundle
+         is parsed, so it covers the entire gap. It holds no JS, no React, no
+         retained resources — it is plain markup the browser discards the moment
+         React removes #grain-splash on first mount (see main.tsx). */
+      #grain-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 22px;
+        background-color: #0c0b0a;
+        /* Fade the splash out smoothly when React marks it for removal. */
+        opacity: 1;
+        transition: opacity 240ms ease-out;
+      }
+      #grain-splash.grain-splash-hide {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /* A 3x3 dot matrix that pulses in a diagonal wave — TE-instrument feel,
+         single confident orange accent on the near-black frame. */
+      #grain-splash .grain-splash-dots {
+        display: grid;
+        grid-template-columns: repeat(3, 10px);
+        grid-template-rows: repeat(3, 10px);
+        gap: 9px;
+      }
+      #grain-splash .grain-splash-dots i {
+        display: block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        background-color: #ff5d1e;
+        opacity: 0.18;
+        animation: grain-splash-pulse 1100ms ease-in-out infinite;
+      }
+      /* Diagonal wave: stagger by (row + col) so the pulse sweeps corner-to-corner. */
+      #grain-splash .grain-splash-dots i:nth-child(1) { animation-delay: 0ms; }
+      #grain-splash .grain-splash-dots i:nth-child(2) { animation-delay: 90ms; }
+      #grain-splash .grain-splash-dots i:nth-child(3) { animation-delay: 180ms; }
+      #grain-splash .grain-splash-dots i:nth-child(4) { animation-delay: 90ms; }
+      #grain-splash .grain-splash-dots i:nth-child(5) { animation-delay: 180ms; }
+      #grain-splash .grain-splash-dots i:nth-child(6) { animation-delay: 270ms; }
+      #grain-splash .grain-splash-dots i:nth-child(7) { animation-delay: 180ms; }
+      #grain-splash .grain-splash-dots i:nth-child(8) { animation-delay: 270ms; }
+      #grain-splash .grain-splash-dots i:nth-child(9) { animation-delay: 360ms; }
+
+      #grain-splash .grain-splash-label {
+        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+          monospace;
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.32);
+      }
+
+      @keyframes grain-splash-pulse {
+        0%,
+        100% {
+          opacity: 0.16;
+          transform: scale(0.82);
+        }
+        45% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+
+      /* Respect reduced-motion: hold the dots steady instead of pulsing. */
+      @media (prefers-reduced-motion: reduce) {
+        #grain-splash .grain-splash-dots i {
+          animation: none;
+          opacity: 0.6;
+        }
+        #grain-splash {
+          transition: none;
+        }
+      }
     </style>
   </head>
 
   <body>
     <div id="root"></div>
+
+    <!-- [GRAIN] Cold-start splash. Lives in static markup so it paints before
+         the JS bundle loads, covering the webview boot gap. React removes this
+         node on first mount (main.tsx). Only meaningful for the main window;
+         the transparent Agent windows hide it immediately in main.tsx. -->
+    <div id="grain-splash" role="presentation" aria-hidden="true">
+      <div class="grain-splash-dots">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+      <div class="grain-splash-label">Grain</div>
+    </div>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
