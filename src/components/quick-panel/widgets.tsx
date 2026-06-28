@@ -587,14 +587,8 @@ export const ConsoleDropdown: React.FC<{
                     borderRadius: 5,
                     padding: "0 8px 0 10px",
                     gap: 8,
-                    // ON rows (toggle mode) fill darker beige; selected rows in
-                    // select mode get a subtle highlight.
-                    backgroundColor:
-                      toggleable && on
-                        ? "var(--qp-ctrl-box-bg)"
-                        : selected
-                          ? fill(0.06)
-                          : "transparent",
+                    // Selected rows in select mode get a subtle highlight.
+                    backgroundColor: selected ? fill(0.06) : "transparent",
                     transition: "background-color 0.12s",
                   }}
                 >
@@ -614,31 +608,30 @@ export const ConsoleDropdown: React.FC<{
                     style={{
                       fontSize: 11,
                       fontWeight: 600,
-                      // ON => orange text; otherwise normal ink (dimmed if a
-                      // toggle row is OFF).
-                      color:
-                        toggleable && on
-                          ? "#ff5d1e"
-                          : toggleable
-                            ? ink(0.55)
-                            : "var(--qp-input-text)",
+                      color: "var(--qp-input-text)",
                     }}
                   >
                     {o.label}
                   </span>
                   {toggleable ? (
-                    <span
-                      className="shrink-0"
+                    <div
+                      className="shrink-0 flex items-center justify-center"
                       style={{
+                        width: 38,
+                        height: 18,
+                        borderRadius: 99,
                         fontFamily: MONO,
                         fontSize: 8,
                         fontWeight: 700,
                         letterSpacing: "0.5px",
-                        color: on ? "#ff5d1e" : ink(0.4),
+                        color: on ? "#ff5d1e" : ink(0.45),
+                        backgroundColor: on ? "var(--qp-ctrl-box-bg)" : "transparent",
+                        border: `1px solid ${on ? "transparent" : fill(0.18)}`,
+                        transition: "background-color 0.15s, color 0.15s, border-color 0.15s",
                       }}
                     >
                       {on ? "ON" : "OFF"}
-                    </span>
+                    </div>
                   ) : (
                     selected && (
                       <span
