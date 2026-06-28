@@ -4,14 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Grain</title>
-    <!-- [GRAIN] Quick Panel console fonts (Syne display + JetBrains Mono). TODO:
-         bundle locally for full offline use; loaded from Google Fonts for now. -->
+    <!-- [GRAIN] Quick Panel console fonts (Syne display + JetBrains Mono). 
+         Added Syncopate specifically for the hardware matrix splash sequence. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Syne:wght@600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Syncopate:wght@700&family=Syne:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
+    
     <style>
       html,
       body {
@@ -19,99 +20,35 @@
            in lib.rs). The page background fills any client area outside the
            rounded React card; near-black so it reads as an intentional frame. */
         background-color: #0c0b0a;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
       }
 
       /* [GRAIN] Static cold-start splash.
-         ------------------------------------------------------------------
-         The main settings window is DESTROYED on close to free WebView2 RAM
-         ("destroy if not in use"), so every reopen cold-spawns the webview
-         (~1s) and then boots Vite + React + i18n + IPC (~3-4s). The window is
-         shown immediately (deferring show() just produced a longer empty void),
-         so without this the user stares at a black frame during that boot.
-
-         This loader is intentionally pure inline HTML/CSS in index.html: the
+         This loader is intentionally pure inline HTML/CSS/JS in index.html: the
          webview paints it the instant it has the document, BEFORE the JS bundle
-         is parsed, so it covers the entire gap. It holds no JS, no React, no
-         retained resources — it is plain markup the browser discards the moment
-         React removes #grain-splash on first mount (see main.tsx). */
+         is parsed, so it covers the entire gap. */
       #grain-splash {
         position: fixed;
         inset: 0;
         z-index: 2147483647;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 22px;
-        background-color: #0c0b0a;
-        /* Fade the splash out smoothly when React marks it for removal. */
+        /* Updated to the dark aesthetic */
+        background-color: #12100E;
+        
+        /* Fade the splash out smoothly when React marks it for removal or the timer hits */
         opacity: 1;
-        transition: opacity 240ms ease-out;
-      }
-      #grain-splash.grain-splash-hide {
-        opacity: 0;
-        pointer-events: none;
+        transition: opacity 700ms ease-in-out;
       }
 
-      /* A 3x3 dot matrix that pulses in a diagonal wave — TE-instrument feel,
-         single confident orange accent on the near-black frame. */
-      #grain-splash .grain-splash-dots {
-        display: grid;
-        grid-template-columns: repeat(3, 10px);
-        grid-template-rows: repeat(3, 10px);
-        gap: 9px;
-      }
-      #grain-splash .grain-splash-dots i {
+      /* Canvas fills the splash container completely */
+      #splash-canvas {
         display: block;
-        width: 10px;
-        height: 10px;
-        border-radius: 2px;
-        background-color: #ff5d1e;
-        opacity: 0.18;
-        animation: grain-splash-pulse 1100ms ease-in-out infinite;
-      }
-      /* Diagonal wave: stagger by (row + col) so the pulse sweeps corner-to-corner. */
-      #grain-splash .grain-splash-dots i:nth-child(1) { animation-delay: 0ms; }
-      #grain-splash .grain-splash-dots i:nth-child(2) { animation-delay: 90ms; }
-      #grain-splash .grain-splash-dots i:nth-child(3) { animation-delay: 180ms; }
-      #grain-splash .grain-splash-dots i:nth-child(4) { animation-delay: 90ms; }
-      #grain-splash .grain-splash-dots i:nth-child(5) { animation-delay: 180ms; }
-      #grain-splash .grain-splash-dots i:nth-child(6) { animation-delay: 270ms; }
-      #grain-splash .grain-splash-dots i:nth-child(7) { animation-delay: 180ms; }
-      #grain-splash .grain-splash-dots i:nth-child(8) { animation-delay: 270ms; }
-      #grain-splash .grain-splash-dots i:nth-child(9) { animation-delay: 360ms; }
-
-      #grain-splash .grain-splash-label {
-        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
-          monospace;
-        font-size: 11px;
-        font-weight: 500;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-        color: rgba(255, 255, 255, 0.32);
-      }
-
-      @keyframes grain-splash-pulse {
-        0%,
-        100% {
-          opacity: 0.16;
-          transform: scale(0.82);
-        }
-        45% {
-          opacity: 1;
-          transform: scale(1);
-        }
-      }
-
-      /* Respect reduced-motion: hold the dots steady instead of pulsing. */
-      @media (prefers-reduced-motion: reduce) {
-        #grain-splash .grain-splash-dots i {
-          animation: none;
-          opacity: 0.6;
-        }
-        #grain-splash {
-          transition: none;
-        }
+        width: 100%;
+        height: 100%;
       }
     </style>
   </head>
@@ -119,16 +56,176 @@
   <body>
     <div id="root"></div>
 
-    <!-- [GRAIN] Cold-start splash. Lives in static markup so it paints before
-         the JS bundle loads, covering the webview boot gap. React removes this
-         node on first mount (main.tsx). Only meaningful for the main window;
-         the transparent Agent windows hide it immediately in main.tsx. -->
+    <!-- [GRAIN] Cold-start splash. React removes this node on first mount 
+         (main.tsx). We also include a fallback auto-fade in the JS below. -->
     <div id="grain-splash" role="presentation" aria-hidden="true">
-      <div class="grain-splash-dots">
-        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
-      </div>
-      <div class="grain-splash-label">Grain</div>
+      <canvas id="splash-canvas"></canvas>
     </div>
+
+    <script>
+      (function initSplash() {
+        const splashEl = document.getElementById("grain-splash");
+        const canvas = document.getElementById("splash-canvas");
+        const ctx = canvas.getContext("2d", { alpha: false });
+        
+        if (!ctx) return;
+
+        let animationId;
+        let width, height;
+        let cols = 0;
+        let rows = 0;
+        const dpr = window.devicePixelRatio || 1;
+
+        // Hardware grid configuration
+        const SPACING = 8;
+        const RADIUS = 2.5; 
+        
+        let textMap = new Uint8Array(0);
+        let activationTimes = new Float32Array(0);
+        let startTime = 0;
+        let isReady = false;
+
+        const setupCanvas = () => {
+          width = window.innerWidth;
+          height = window.innerHeight;
+          canvas.width = width * dpr;
+          canvas.height = height * dpr;
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+          
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.scale(dpr, dpr);
+          
+          cols = Math.ceil(width / SPACING);
+          rows = Math.ceil(height / SPACING);
+          
+          if (cols > 0 && rows > 0) {
+            textMap = new Uint8Array(cols * rows);
+            activationTimes = new Float32Array(cols * rows);
+            generateTextMap();
+          }
+        };
+
+        const generateTextMap = () => {
+          const offCanvas = document.createElement("canvas");
+          const offCtx = offCanvas.getContext("2d", { willReadFrequently: true });
+          if (!offCtx || cols === 0 || rows === 0) return;
+
+          offCanvas.width = cols;
+          offCanvas.height = rows;
+          
+          // Pure black background
+          offCtx.fillStyle = "black";
+          offCtx.fillRect(0, 0, cols, rows);
+
+          // Render "GRAIN" in the center using Syncopate
+          const fontSize = Math.max(20, Math.min(cols * 0.12, 120));
+          offCtx.font = `700 ${fontSize}px 'Syncopate', sans-serif`;
+          offCtx.textAlign = "center";
+          offCtx.textBaseline = "middle";
+          offCtx.fillStyle = "white";
+          
+          // Removed slashes - just clean, central GRAIN
+          offCtx.fillText("GRAIN", cols / 2, rows / 2);
+
+          const imgData = offCtx.getImageData(0, 0, cols, rows).data;
+          
+          for (let i = 0; i < cols * rows; i++) {
+            // Check alpha/white threshold
+            if (imgData[i * 4] > 128) {
+              textMap[i] = 1;
+              // Random activation time for the hardware "warm-up" effect
+              activationTimes[i] = 0.2 + Math.random() * 1.0;
+            } else {
+              textMap[i] = 0;
+            }
+          }
+        };
+
+        window.addEventListener("resize", setupCanvas);
+
+        const draw = () => {
+          if (!isReady || width <= 0 || height <= 0) {
+            animationId = requestAnimationFrame(draw);
+            return;
+          }
+          
+          const elapsed = (Date.now() - startTime) / 1000;
+
+          // Fill dark background
+          ctx.fillStyle = "#12100E";
+          ctx.fillRect(0, 0, width, height);
+
+          // Path2D batching for high performance drawing
+          const pathEmpty = new Path2D();
+          const pathDim = new Path2D();
+          const pathBright = new Path2D();
+
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const x = c * SPACING + (SPACING / 2);
+              const y = r * SPACING + (SPACING / 2);
+              const idx = c + r * cols;
+              
+              const isText = textMap[idx] === 1;
+              let brightness = 0; 
+
+              if (isText) {
+                const actTime = activationTimes[idx];
+                if (elapsed > actTime) {
+                  brightness = 2; // Fully powered on
+                } else if (elapsed > actTime - 0.15) {
+                  brightness = 1; // Briefly warming up (dim)
+                }
+              }
+
+              // Use solid squares to match the hardware module look
+              if (brightness === 0) {
+                pathEmpty.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+              } else if (brightness === 1) {
+                pathDim.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+              } else {
+                pathBright.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+              }
+            }
+          }
+
+          // Render batched paths with precise colors
+          ctx.fillStyle = "#221D1A"; // Unlit dark LEDs
+          ctx.fill(pathEmpty);
+
+          ctx.fillStyle = "#8A3D0B"; // Dim burnt orange (warming up)
+          ctx.fill(pathDim);
+
+          ctx.fillStyle = "#FF6B00"; // Bright glowing orange
+          ctx.fill(pathBright);
+
+          animationId = requestAnimationFrame(draw);
+        };
+
+        if ("fonts" in document) {
+          document.fonts.ready.then(() => {
+            isReady = true;
+            setupCanvas();
+            startTime = Date.now();
+            draw();
+
+            // Self-destruct safety: If React hasn't unmounted this div after 4 seconds,
+            // we fade it out ourselves to ensure the app is never blocked.
+            setTimeout(() => {
+              if (splashEl && !splashEl.classList.contains("grain-splash-hide")) {
+                splashEl.classList.add("grain-splash-hide");
+              }
+              // Stop the render loop completely after the fade out completes
+              setTimeout(() => {
+                cancelAnimationFrame(animationId);
+                window.removeEventListener("resize", setupCanvas);
+              }, 700);
+            }, 4000); 
+          });
+        }
+      })();
+    </script>
 
     <script type="module" src="/src/main.tsx"></script>
   </body>
