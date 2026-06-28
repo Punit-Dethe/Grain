@@ -58,6 +58,10 @@ function AppInner() {
   const hasCompletedPostOnboardingInit = useRef(false);
 
   useEffect(() => {
+    // Show window once the React application has mounted and rendered its initial HTML structure (with the splash screen)
+    void commands.showMainWindowCommand().catch((e) => {
+      console.warn("Failed to show main window on initial mount:", e);
+    });
     checkOnboardingStatus();
   }, []);
 
