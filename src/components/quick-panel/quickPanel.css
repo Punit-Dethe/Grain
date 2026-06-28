@@ -114,6 +114,62 @@
   transform: scale(1.08);
 }
 
+/* Bottom status-bar indicator dot. The dot breathes; `busy` adds a faster
+ * blink so a load/rotation-wait reads as in-progress. Exempt from the global
+ * surface crossfade so the animation stays crisp. */
+.qp-status-dot {
+  transition: none !important;
+}
+.qp-status-dot--idle {
+  animation: qp-status-breath 3.4s ease-in-out infinite;
+}
+.qp-status-dot--active,
+.qp-status-dot--ok {
+  animation: qp-status-breath 2s ease-in-out infinite;
+}
+.qp-status-dot--busy {
+  animation: qp-status-blink 0.9s ease-in-out infinite;
+}
+.qp-status-dot--error {
+  animation: qp-status-blink 0.6s steps(2, start) infinite;
+}
+@keyframes qp-status-breath {
+  0%,
+  100% {
+    opacity: 0.55;
+    box-shadow: 0 0 3px 0 currentColor;
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 7px 1px currentColor;
+  }
+}
+@keyframes qp-status-blink {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 7px 1px currentColor;
+  }
+  50% {
+    opacity: 0.3;
+    box-shadow: 0 0 2px 0 currentColor;
+  }
+}
+/* The status label crossfades softly when the text swaps. */
+.qp-status-label {
+  animation: qp-status-fade 0.28s ease-out;
+}
+@keyframes qp-status-fade {
+  from {
+    opacity: 0;
+    transform: translateY(1px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* Thin console scrollbars inside the history wells. */
 .qp-scroll::-webkit-scrollbar {
   width: 4px;
