@@ -19,6 +19,13 @@
  *   background even for a frame.
  */
 export function dismissSplash(instant = false): void {
+  // If the index.html script exposed the smart dismissal logic, use it:
+  if (typeof (window as any).__requestSplashDismissal === "function") {
+    (window as any).__requestSplashDismissal(instant);
+    return;
+  }
+
+  // Fallback for when the smart script failed to load or is missing:
   const splash = document.getElementById("grain-splash");
   if (!splash) return;
 

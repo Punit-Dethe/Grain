@@ -220,6 +220,8 @@
           animationId = requestAnimationFrame(draw);
         };
 
+        const MIN_SPLASH_TIME = 1500; // Minimum ms to show the splash before fading out
+
         window.__cleanupSplash = () => {
           cancelAnimationFrame(animationId);
           window.removeEventListener("resize", setupCanvas);
@@ -234,26 +236,40 @@
           }
         };
 
+        window.__requestSplashDismissal = (instant) => {
+          if (!splashEl) return;
+          if (instant) {
+            splashEl.remove();
+            window.__cleanupSplash();
+            return;
+          }
+
+          const elapsed = Date.now() - startTime;
+          const remaining = Math.max(0, MIN_SPLASH_TIME - elapsed);
+
+          setTimeout(() => {
+            if (!splashEl.classList.contains("grain-splash-hide")) {
+              splashEl.classList.add("grain-splash-hide");
+              setTimeout(() => {
+                splashEl.remove();
+                window.__cleanupSplash();
+              }, 400);
+            }
+          }, remaining);
+        };
+
         const begin = () => {
           isReady = true;
           setupCanvas();
           startTime = Date.now();
           draw();
 
-          // Self-destruct safety: if React hasn't unmounted this div after 2.5s,
-          // fade it out ourselves so the app is never blocked.
+          // Self-destruct safety fallback: if React completely fails to load or dismiss the splash
           setTimeout(() => {
-            if (
-              splashEl &&
-              !splashEl.classList.contains("grain-splash-hide")
-            ) {
-              splashEl.classList.add("grain-splash-hide");
+            if (window.__requestSplashDismissal) {
+              window.__requestSplashDismissal(false);
             }
-            // Stop the render loop completely after the fade-out completes.
-            setTimeout(() => {
-              if (window.__cleanupSplash) window.__cleanupSplash();
-            }, 400);
-          }, 2500);
+          }, 3500); // 3.5s fallback
         };
 
         // Wait for Syncopate so the GRAIN glyphs sample correctly; fall back to
