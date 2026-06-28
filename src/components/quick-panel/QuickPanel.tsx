@@ -138,26 +138,22 @@ const toneColor = (tone: StatusTone): string => {
   }
 };
 
-/** Renders the persistent `TRANSCRIPTION: <v> // PROCESSING: <v>` line with the
- *  segment labels + `//` separator dimmed and the route values emphasised, so it
- *  reads like the panel's signal chain. Falls back to a single span for any
- *  string that isn't in that shape. */
+/** Renders the persistent `<transcription route> // <processing route>` line:
+ *  the two route values are emphasised and the `//` separator is dimmed. No
+ *  segment labels. Falls back to a single span for any string without a `//`. */
 const RouteLine: React.FC<{ text: string }> = ({ text }) => {
   const dim = "rgb(var(--qp-ink-rgb) / 0.38)";
   const bright = "rgb(var(--qp-ink-rgb) / 0.72)";
-  const match = text.match(
-    /^TRANSCRIPTION: (.+) \/\/ PROCESSING: (.+)$/,
-  );
-  if (!match) {
+  const sep = text.indexOf(" // ");
+  if (sep === -1) {
     return <span style={{ color: bright }}>{text}</span>;
   }
-  const [, stt, pp] = match;
+  const stt = text.slice(0, sep);
+  const pp = text.slice(sep + 4);
   return (
     <>
-      <span style={{ color: dim }}>TRANSCRIPTION: </span>
       <span style={{ color: bright }}>{stt}</span>
       <span style={{ color: dim }}> // </span>
-      <span style={{ color: dim }}>PROCESSING: </span>
       <span style={{ color: bright }}>{pp}</span>
     </>
   );
