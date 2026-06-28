@@ -107,17 +107,8 @@ fn build_console_filter() -> env_filter::Filter {
 /// recreated on demand after the window is destroyed on close (freeing WebView2
 /// RAM). Sets the portable data_directory like the original setup did.
 fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
-    let state = app.state::<WindowState>();
-    let is_first_open = !state.has_opened.swap(true, std::sync::atomic::Ordering::Relaxed);
-
-    let path = if is_first_open {
-        "/?first_open=true"
-    } else {
-        "/"
-    };
-
     let mut win_builder =
-        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(path.into()))
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
             .title("Grain")
             // [GRAIN] Native Quick Panel console size (1280×760). The window is
             // locked to this 1280:760 aspect ratio (see the Resized handler) so it
@@ -198,10 +189,6 @@ fn apply_window_corner_rounding(window: &tauri::WebviewWindow) {
             Err(e) => log::debug!("[GRAIN] DWM corner preference not applied (likely Win10): {e}"),
         }
     }
-}
-
-struct WindowState {
-    has_opened: std::sync::atomic::AtomicBool,
 }
 
 fn show_main_window(app: &AppHandle) {
@@ -927,9 +914,6 @@ pub fn run(cli_args: CliArgs) {
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(grain_core::AppContext::new(resource_dir, data_dir));
-                app.manage(WindowState {
-                    has_opened: std::sync::atomic::AtomicBool::new(false),
-                });
             }
 
             let mut settings = get_settings(&app.handle());
