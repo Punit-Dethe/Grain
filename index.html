@@ -92,8 +92,8 @@
         const SPACING = 8;
         const RADIUS = 2.5;
 
-        let textMap = new Uint8Array(0);
-        let activationTimes = new Float32Array(0);
+        let activeCells = [];
+        let bgCanvas = null;
         let startTime = 0;
         let isReady = false;
 
@@ -112,9 +112,29 @@
           rows = Math.ceil(height / SPACING);
 
           if (cols > 0 && rows > 0) {
-            textMap = new Uint8Array(cols * rows);
-            activationTimes = new Float32Array(cols * rows);
             generateTextMap();
+            prerenderBackground();
+          }
+        };
+
+        const prerenderBackground = () => {
+          bgCanvas = document.createElement("canvas");
+          bgCanvas.width = width * dpr;
+          bgCanvas.height = height * dpr;
+          const bgCtx = bgCanvas.getContext("2d", { alpha: false });
+          if (!bgCtx) return;
+          bgCtx.scale(dpr, dpr);
+
+          bgCtx.fillStyle = "#12100E";
+          bgCtx.fillRect(0, 0, width, height);
+
+          bgCtx.fillStyle = "#221D1A";
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const x = c * SPACING + SPACING / 2;
+              const y = r * SPACING + SPACING / 2;
+              bgCtx.fillRect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+            }
           }
         };
 
@@ -142,15 +162,18 @@
           offCtx.fillText("GRAIN", cols / 2, rows / 2);
 
           const imgData = offCtx.getImageData(0, 0, cols, rows).data;
+          activeCells = [];
 
-          for (let i = 0; i < cols * rows; i++) {
-            // Check alpha/white threshold
-            if (imgData[i * 4] > 128) {
-              textMap[i] = 1;
-              // Random activation time for the hardware "warm-up" effect (FASTER)
-              activationTimes[i] = 0.1 + Math.random() * 0.5;
-            } else {
-              textMap[i] = 0;
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const i = c + r * cols;
+              if (imgData[i * 4] > 128) {
+                activeCells.push({
+                  x: c * SPACING + SPACING / 2,
+                  y: r * SPACING + SPACING / 2,
+                  actTime: 0.1 + Math.random() * 0.5
+                });
+              }
             }
           }
         };
@@ -158,62 +181,57 @@
         window.addEventListener("resize", setupCanvas);
 
         const draw = () => {
-          if (!isReady || width <= 0 || height <= 0) {
+          if (!isReady || width <= 0 || height <= 0 || !bgCanvas) {
             animationId = requestAnimationFrame(draw);
             return;
           }
 
           const elapsed = (Date.now() - startTime) / 1000;
 
-          // Fill dark background
-          ctx.fillStyle = "#12100E";
-          ctx.fillRect(0, 0, width, height);
+          // Draw the pre-rendered static background grid
+          ctx.drawImage(bgCanvas, 0, 0, width, height);
 
-          // Path2D batching for high performance drawing
-          const pathEmpty = new Path2D();
+          // Path2D batching for only the active text cells
           const pathDim = new Path2D();
           const pathBright = new Path2D();
+          let hasDim = false;
+          let hasBright = false;
 
-          for (let r = 0; r < rows; r++) {
-            for (let c = 0; c < cols; c++) {
-              const x = c * SPACING + SPACING / 2;
-              const y = r * SPACING + SPACING / 2;
-              const idx = c + r * cols;
-
-              const isText = textMap[idx] === 1;
-              let brightness = 0;
-
-              if (isText) {
-                const actTime = activationTimes[idx];
-                if (elapsed > actTime) {
-                  brightness = 2; // Fully powered on
-                } else if (elapsed > actTime - 0.1) {
-                  brightness = 1; // Briefly warming up (dim)
-                }
-              }
-
-              // Use solid squares to match the hardware module look
-              if (brightness === 0) {
-                pathEmpty.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
-              } else if (brightness === 1) {
-                pathDim.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
-              } else {
-                pathBright.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
-              }
+          for (let i = 0; i < activeCells.length; i++) {
+            const cell = activeCells[i];
+            if (elapsed > cell.actTime) {
+              pathBright.rect(cell.x - RADIUS, cell.y - RADIUS, RADIUS * 2, RADIUS * 2);
+              hasBright = true;
+            } else if (elapsed > cell.actTime - 0.1) {
+              pathDim.rect(cell.x - RADIUS, cell.y - RADIUS, RADIUS * 2, RADIUS * 2);
+              hasDim = true;
             }
           }
 
-          // Render batched paths with precise colors
-          ctx.fillStyle = "#221D1A"; // Unlit dark LEDs
-          ctx.fill(pathEmpty);
-
-          ctx.fillStyle = "#8A3D0B"; // Dim burnt orange (warming up)
-          ctx.fill(pathDim);
-
-          ctx.fillStyle = "#FF6B00"; // Bright glowing orange
-          ctx.fill(pathBright);
+          if (hasDim) {
+            ctx.fillStyle = "#8A3D0B"; // Dim burnt orange (warming up)
+            ctx.fill(pathDim);
+          }
+          if (hasBright) {
+            ctx.fillStyle = "#FF6B00"; // Bright glowing orange
+            ctx.fill(pathBright);
+          }
 
           animationId = requestAnimationFrame(draw);
+        };
+
+        window.__cleanupSplash = () => {
+          cancelAnimationFrame(animationId);
+          window.removeEventListener("resize", setupCanvas);
+          if (canvas) {
+            canvas.width = 0;
+            canvas.height = 0;
+          }
+          if (bgCanvas) {
+            bgCanvas.width = 0;
+            bgCanvas.height = 0;
+            bgCanvas = null;
+          }
         };
 
         const begin = () => {
@@ -233,8 +251,7 @@
             }
             // Stop the render loop completely after the fade-out completes.
             setTimeout(() => {
-              cancelAnimationFrame(animationId);
-              window.removeEventListener("resize", setupCanvas);
+              if (window.__cleanupSplash) window.__cleanupSplash();
             }, 400);
           }, 2500);
         };
