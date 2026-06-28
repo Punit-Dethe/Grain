@@ -57,11 +57,20 @@ function AppInner() {
   );
   const hasCompletedPostOnboardingInit = useRef(false);
 
+  const [showSplash, setShowSplash] = useState(() => {
+    return new URLSearchParams(window.location.search).get("first_open") === "true";
+  });
+
   useEffect(() => {
-    // Show window once the React application has mounted and rendered its initial HTML structure (with the splash screen)
-    void commands.showMainWindowCommand().catch((e) => {
-      console.warn("Failed to show main window on initial mount:", e);
-    });
+    if (showSplash) {
+      const timer = setTimeout(() => {
+        setShowSplash(false);
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [showSplash]);
+
+  useEffect(() => {
     checkOnboardingStatus();
   }, []);
 
@@ -263,9 +272,13 @@ function AppInner() {
     setOnboardingStep("done");
   };
 
+  if (showSplash) {
+    return <DotMatrixSplash />;
+  }
+
   // Still checking onboarding status
   if (onboardingStep === null) {
-    return <DotMatrixSplash />;
+    return null;
   }
 
   if (onboardingStep === "accessibility") {

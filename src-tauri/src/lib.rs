@@ -107,8 +107,17 @@ fn build_console_filter() -> env_filter::Filter {
 /// recreated on demand after the window is destroyed on close (freeing WebView2
 /// RAM). Sets the portable data_directory like the original setup did.
 fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    let state = app.state::<WindowState>();
+    let is_first_open = !state.has_opened.swap(true, std::sync::atomic::Ordering::Relaxed);
+
+    let path = if is_first_open {
+        "/?first_open=true"
+    } else {
+        "/"
+    };
+
     let mut win_builder =
-        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App(path.into()))
             .title("Grain")
             // [GRAIN] Native Quick Panel console size (1280×760). The window is
             // locked to this 1280:760 aspect ratio (see the Resized handler) so it
@@ -191,50 +200,33 @@ fn apply_window_corner_rounding(window: &tauri::WebviewWindow) {
     }
 }
 
+struct WindowState {
+    has_opened: std::sync::atomic::AtomicBool,
+}
+
 fn show_main_window(app: &AppHandle) {
     // [GRAIN] The window is destroyed on close to free RAM, so recreate it if
     // absent. Every reopen path (tray, single-instance, macOS Reopen) lands here.
-    let mut is_new = false;
     let main_window = match app.get_webview_window("main") {
         Some(w) => w,
-        None => {
-            is_new = true;
-            match build_main_window(app) {
-                Ok(w) => w,
-                Err(e) => {
-                    log::error!("Failed to recreate main window: {}", e);
-                    return;
-                }
+        None => match build_main_window(app) {
+            Ok(w) => w,
+            Err(e) => {
+                log::error!("Failed to recreate main window: {}", e);
+                return;
             }
-        }
+        },
     };
 
     if let Err(e) = main_window.unminimize() {
         log::error!("Failed to unminimize webview window: {}", e);
     }
-    
-    // Only show immediately if it's not a newly created window.
-    // If it is new, we let the frontend trigger the show command when it is ready.
-    if !is_new {
-        if let Err(e) = main_window.show() {
-            log::error!("Failed to show webview window: {}", e);
-        }
-        if let Err(e) = main_window.set_focus() {
-            log::error!("Failed to focus webview window: {}", e);
-        }
-    } else {
-        // Fallback: show the window after 4 seconds if the frontend hasn't triggered it
-        let window_clone = main_window.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(tokio::time::Duration::from_secs(4)).await;
-            if let Ok(false) = window_clone.is_visible() {
-                log::warn!("[GRAIN] Frontend did not signal webview-ready in time; showing window via fallback");
-                let _ = window_clone.show();
-                let _ = window_clone.set_focus();
-            }
-        });
+    if let Err(e) = main_window.show() {
+        log::error!("Failed to show webview window: {}", e);
     }
-
+    if let Err(e) = main_window.set_focus() {
+        log::error!("Failed to focus webview window: {}", e);
+    }
     #[cfg(target_os = "macos")]
     {
         if let Err(e) = app.set_activation_policy(tauri::ActivationPolicy::Regular) {
@@ -935,6 +927,9 @@ pub fn run(cli_args: CliArgs) {
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 app.manage(grain_core::AppContext::new(resource_dir, data_dir));
+                app.manage(WindowState {
+                    has_opened: std::sync::atomic::AtomicBool::new(false),
+                });
             }
 
             let mut settings = get_settings(&app.handle());
