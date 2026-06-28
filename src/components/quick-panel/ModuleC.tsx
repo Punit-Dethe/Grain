@@ -1,16 +1,15 @@
-/* eslint-disable i18next/no-literal-string -- fixed console design typography. */
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useSettings } from "../../hooks/useSettings";
-import { usePpPool } from "../settings/post-processing/pool/usePpPool";
+import { usePpPoolStore } from "@/stores/ppPoolStore";
 import {
   ink,
   fill,
   MechanicalToggle,
   SegToggle,
-  ConsoleSelect,
   JackHousing,
   HistoryBox,
 } from "./widgets";
+import { ConsoleDropdown, type DropdownItem } from "./ConsoleDropdown";
 import { useProcessingHistory } from "./useHistory";
 
 const MONO = "var(--qp-font-mono)";
@@ -61,10 +60,18 @@ const WordChip: React.FC<{ word: string; onRemove: () => void }> = ({
 
 export const ModuleC: React.FC = () => {
   const { getSetting, updateSetting } = useSettings();
-  const pool = usePpPool();
+  // [GRAIN] Use the singleton store — shared with the settings panel.
+  const pool = usePpPoolStore();
   const history = useProcessingHistory();
   const [llmMode, setLlmMode] = useState<0 | 1>(1); // visual placeholder (XIX/LLM)
   const [word, setWord] = useState("");
+
+  // Ensure the pool is loaded when this module mounts (no-op if already loaded).
+  useEffect(() => {
+    if (pool.loading && pool.view === null) {
+      void pool.reload();
+    }
+  }, []);
 
   // Prompts
   const prompts = getSetting("post_process_prompts") || [];
@@ -73,8 +80,11 @@ export const ModuleC: React.FC = () => {
     prompts.find((p) => p.id === selectedPromptId)?.name ||
     prompts[0]?.name ||
     "General";
-  const onPromptChange = (name: string) => {
-    const p = prompts.find((x) => x.name === name);
+  const promptItems: DropdownItem[] = prompts.length
+    ? prompts.map((p) => ({ key: p.id, label: p.name }))
+    : [{ key: "__general", label: "General" }];
+  const onPromptChange = (key: string) => {
+    const p = prompts.find((x) => x.id === key);
     if (p) void updateSetting("post_process_selected_prompt_id", p.id);
   };
 
@@ -96,13 +106,22 @@ export const ModuleC: React.FC = () => {
   const configured = pool.providers.filter((p) =>
     pool.providersWithKeys.has(p.id),
   );
-  const activeLabel =
-    configured.find((p) => p.id === pool.selectedProviderId)?.label ||
-    configured[0]?.label ||
-    "No providers configured";
-  const onProviderChange = (label: string) => {
-    const p = configured.find((x) => x.label === label);
-    if (p) void pool.setActiveProvider(p.id);
+
+  // Build dropdown items, marking rotation-enrolled providers.
+  const providerItems: DropdownItem[] = configured.map((p) => ({
+    key: p.id,
+    label: p.label,
+    inRotation: p.enabled,
+  }));
+
+  const activeKey =
+    pool.selectedProviderId ||
+    configured.find((p) => p.enabled)?.id ||
+    configured[0]?.id ||
+    "";
+
+  const onProviderChange = (key: string) => {
+    void pool.setActiveProvider(key);
   };
 
   return (
@@ -119,9 +138,9 @@ export const ModuleC: React.FC = () => {
       >
         Directive Prompt
       </div>
-      <ConsoleSelect
-        value={selectedPromptName}
-        options={prompts.length ? prompts.map((p) => p.name) : ["General"]}
+      <ConsoleDropdown
+        value={selectedPromptId || promptItems[0]?.key || ""}
+        items={promptItems}
         height={34}
         onChange={onPromptChange}
       />
@@ -225,19 +244,27 @@ export const ModuleC: React.FC = () => {
         />
       </div>
       <Spacer h={3} />
+
+      {/* Provider dropdown — rotation dots appear when smart rotation is on */}
       <div style={{ opacity: configured.length ? 1 : 0.45 }}>
-        <ConsoleSelect
-          value={activeLabel}
-          options={
-            configured.length
-              ? configured.map((p) => p.label)
-              : ["No providers configured"]
+        <ConsoleDropdown
+          value={activeKey}
+          items={
+            providerItems.length
+              ? providerItems
+              : [{ key: "__none", label: "No providers configured" }]
           }
           height={34}
+          smartRotation={pool.smartRotation}
+          rotationColor="#8B5CF6"
+          disabled={configured.length === 0}
           onChange={onProviderChange}
         />
       </div>
+
       <Spacer h={5} />
+
+      {/* Smart Rotate row — MechanicalToggle kept here (it's a setting row, not a dropdown row) */}
       <div
         className="flex items-center justify-between"
         style={{
@@ -258,7 +285,7 @@ export const ModuleC: React.FC = () => {
         </div>
         <MechanicalToggle
           checked={pool.smartRotation}
-          onChange={(v) => pool.setSmartRotation(v)}
+          onChange={(v) => void pool.setSmartRotation(v)}
         />
       </div>
 
