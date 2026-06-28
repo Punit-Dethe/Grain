@@ -3,7 +3,7 @@ import React, { useEffect, useState } from "react";
 import { commands, type ModelUnloadTimeout } from "@/bindings";
 import { useSettings } from "../../hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
-import { useSttPool } from "../settings/speech-to-text/useSttPool";
+import { useSttPoolStore } from "@/stores/sttPoolStore";
 import {
   ink,
   fill,
@@ -13,6 +13,7 @@ import {
   JackHousing,
   HistoryBox,
 } from "./widgets";
+import { ConsoleDropdown, type DropdownItem } from "./ConsoleDropdown";
 import { DotMatrix } from "./DotMatrix";
 import { useTranscriptionHistory } from "./useHistory";
 
@@ -35,7 +36,7 @@ const UNLOAD: { label: string; value: string }[] = [
   { label: "Never", value: "never" },
 ];
 
-/** Local model picker — green status dot + native select over the model store. */
+/** Local model picker — green status dot + custom dropdown over the model store. */
 const LocalModelSelect: React.FC<{
   models: { id: string; name: string; is_downloaded: boolean }[];
   currentId: string;
@@ -43,50 +44,46 @@ const LocalModelSelect: React.FC<{
 }> = ({ models, currentId, onSelect }) => {
   const downloaded = models.filter((m) => m.is_downloaded);
   const list = downloaded.length ? downloaded : models;
+  const items: DropdownItem[] = list.map((m) => ({ key: m.id, label: m.name }));
   return (
-    <div
-      className="relative w-full flex items-center"
-      style={{
-        height: 34,
-        borderRadius: 6,
-        backgroundColor: "var(--qp-input-bg)",
-        border: `1px solid ${fill(0.1)}`,
-      }}
-    >
+    <div className="relative w-full flex items-center" style={{ gap: 8 }}>
+      {/* Green status dot */}
       <span
-        className="absolute"
         style={{
-          left: 10,
           width: 6,
           height: 6,
           borderRadius: 3,
           backgroundColor: currentId ? "#10B981" : ink(0.18),
+          flexShrink: 0,
         }}
       />
-      <select
-        value={currentId}
-        onChange={(e) => onSelect(e.target.value)}
-        className="w-full h-full bg-transparent outline-none cursor-pointer appearance-none"
-        style={{
-          padding: "0 28px 0 24px",
-          fontSize: 11,
-          fontWeight: 600,
-          color: "var(--qp-input-text)",
-        }}
-      >
-        {list.length === 0 && <option value="">No model installed</option>}
-        {list.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
-      <span
-        className="absolute pointer-events-none"
-        style={{ right: 10, fontSize: 10, color: "var(--qp-input-text)" }}
-      >
-        ▾
-      </span>
+      <div style={{ flex: 1 }}>
+        {list.length === 0 ? (
+          <div
+            style={{
+              height: 34,
+              borderRadius: 6,
+              backgroundColor: "var(--qp-input-bg)",
+              border: `1px solid ${fill(0.1)}`,
+              display: "flex",
+              alignItems: "center",
+              padding: "0 10px",
+              fontSize: 11,
+              fontFamily: MONO,
+              color: ink(0.45),
+            }}
+          >
+            No model installed
+          </div>
+        ) : (
+          <ConsoleDropdown
+            value={currentId}
+            items={items}
+            height={34}
+            onChange={onSelect}
+          />
+        )}
+      </div>
     </div>
   );
 };
@@ -119,17 +116,26 @@ const MiniBox: React.FC<{
 );
 
 export const ModuleB: React.FC = () => {
-  const pool = useSttPool();
+  // [GRAIN] Use the singleton store — shared with the settings panel so
+  // provider changes there are reflected here immediately.
+  const pool = useSttPoolStore();
   const { getSetting, updateSetting } = useSettings();
   const { models, currentModel, selectModel } = useModelStore();
   const history = useTranscriptionHistory();
 
+  // Ensure the pool is loaded when this module mounts (no-op if already loaded).
+  useEffect(() => {
+    if (pool.loading && pool.view === null) {
+      void pool.reload();
+    }
+  }, []);
+
   const smartRotation = pool.smartRotation;
   // [GRAIN] LCL/CLD is a LOCAL view choice, independent of smart rotation —
   // switching to CLD must NOT enable rotation. Rotation is the SAME backend
-  // setting as the Transcription tab (via useSttPool → stt_smart_rotation), so
-  // toggling it here syncs there. When rotation IS on, cloud is active: force the
-  // cloud view and lock LCL (handled by `leftLocked`).
+  // setting as the Transcription tab (via sttPoolStore → stt_smart_rotation),
+  // so toggling it here syncs there. When rotation IS on, cloud is active:
+  // force the cloud view and lock LCL (handled by `leftLocked`).
   const [route, setRoute] = useState<0 | 1>(smartRotation ? 1 : 0);
   useEffect(() => {
     if (smartRotation) setRoute(1);
@@ -146,7 +152,26 @@ export const ModuleB: React.FC = () => {
     void updateSetting("model_unload_timeout", v);
   };
 
-  const cloudNames = pool.cloudProviders.map((p) => p.name);
+  // Build dropdown items for cloud providers, marking rotation-enrolled ones.
+  const cloudItems: DropdownItem[] = pool.cloudProviders.map((p) => ({
+    key: p.id,
+    label: p.name,
+    inRotation: p.enabled,
+  }));
+
+  // The "active" cloud provider in single-select mode is the first enabled one.
+  const activeCloudKey =
+    pool.cloudProviders.find((p) => p.enabled)?.id ??
+    pool.cloudProviders[0]?.id ??
+    "";
+
+  const handleCloudSelect = (key: string) => {
+    // In single-select mode (rotation off), enable only the chosen provider.
+    const target = pool.cloudProviders.find((p) => p.id === key);
+    if (target && !smartRotation) {
+      void pool.setProviderEnabled(target, true);
+    }
+  };
 
   return (
     <>
@@ -225,17 +250,26 @@ export const ModuleB: React.FC = () => {
         </>
       ) : (
         <>
-          <ConsoleSelect
-            value={cloudNames[0] ?? "No providers yet"}
-            options={cloudNames.length ? cloudNames : ["No providers yet"]}
+          {/* Cloud provider dropdown — shows rotation dots when smart rotation on */}
+          <ConsoleDropdown
+            value={activeCloudKey}
+            items={
+              cloudItems.length
+                ? cloudItems
+                : [{ key: "__none", label: "No providers yet" }]
+            }
             height={34}
+            smartRotation={smartRotation}
+            rotationColor="#FF5D1E"
+            disabled={cloudItems.length === 0}
+            onChange={handleCloudSelect}
           />
           <Spacer h={5} />
           <div className="flex" style={{ gap: 8 }}>
             <MiniBox label="Cloud Providers" sub="Enable remote">
               <MechanicalToggle
                 checked={smartRotation}
-                onChange={(v) => pool.setSmartRotation(v)}
+                onChange={(v) => void pool.setSmartRotation(v)}
               />
             </MiniBox>
           </div>
