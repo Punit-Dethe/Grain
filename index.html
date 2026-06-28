@@ -4,13 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Grain</title>
-
+    <!-- [GRAIN] Quick Panel console fonts (Syne display + JetBrains Mono).
+         Added Syncopate specifically for the hardware matrix splash sequence. -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Syne:wght@600;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Syncopate:wght@700&family=Syne:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
+
     <style>
       html,
       body {
@@ -18,164 +20,46 @@
            in lib.rs). The page background fills any client area outside the
            rounded React card; near-black so it reads as an intentional frame. */
         background-color: #0c0b0a;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
       }
 
       /* [GRAIN] Static cold-start splash.
-         ------------------------------------------------------------------
          The main settings window is DESTROYED on close to free WebView2 RAM
          ("destroy if not in use"), so every reopen cold-spawns the webview
          (~1s) and then boots Vite + React + i18n + IPC (~3-4s). The window is
-         shown immediately (deferring show() just produced a longer empty void),
-         so without this the user stares at a black frame during that boot.
+         shown immediately, so without this the user stares at a black frame.
 
-         This loader is intentionally pure inline HTML/CSS in index.html: the
+         This loader is intentionally pure inline HTML/CSS/JS in index.html: the
          webview paints it the instant it has the document, BEFORE the JS bundle
-         is parsed, so it covers the entire gap. It holds no JS, no React, no
-         retained resources — it is plain markup the browser discards the moment
-         React removes #grain-splash on first mount (see src/lib/utils/splash.ts). */
+         is parsed, so it covers the entire gap. React removes #grain-splash
+         once the live UI has painted (see src/lib/utils/splash.ts); a 2.5s
+         self-destruct timer below is a fallback so it can never block the app. */
       #grain-splash {
         position: fixed;
         inset: 0;
         z-index: 2147483647;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 26px;
-        background-color: #0c0b0a;
-        /* Fade the splash out smoothly when React marks it for removal. */
+        background-color: #12100e;
+
+        /* Fade the splash out smoothly when React marks it for removal or the
+           self-destruct timer hits. */
         opacity: 1;
-        transition: opacity 240ms ease-out;
+        transition: opacity 400ms ease-in-out;
       }
       #grain-splash.grain-splash-hide {
         opacity: 0;
         pointer-events: none;
       }
 
-      /* [GRAIN] A 7x7 LED dot-matrix "display". Dots light in concentric rings
-         rippling out from the center while a slow orange scanline sweeps across
-         — a Teenage-Engineering instrument readout idling on the espresso frame.
-         Pure CSS: the radial wave is one keyframe; each cell is staggered by its
-         ring distance from center (4 buckets cover all 49 cells), and the
-         scanline is a single translating gradient bar clipped to the grid. */
-      #grain-splash .grain-splash-matrix {
-        position: relative;
-        display: grid;
-        grid-template-columns: repeat(7, 9px);
-        grid-template-rows: repeat(7, 9px);
-        gap: 8px;
-        /* Clip the scanline sweep to the matrix bounds. */
-        overflow: hidden;
-        padding: 3px;
-      }
-      #grain-splash .grain-splash-matrix i {
+      /* Canvas fills the splash container completely. */
+      #splash-canvas {
         display: block;
-        width: 9px;
-        height: 9px;
-        border-radius: 50%;
-        /* Unlit cell: a faint recessed LED. The lit state is driven by the ring
-           animation raising opacity + adding a soft orange glow. */
-        background-color: #ff5d1e;
-        opacity: 0.08;
-        animation: grain-splash-ring 1800ms ease-in-out infinite;
-      }
-
-      /* Ring buckets: Chebyshev distance from the 7x7 center cell (ring 0..3).
-         Cells sharing a ring share a delay, so the pulse expands as a square
-         wave from the middle and the whole matrix breathes as one. */
-      #grain-splash .grain-splash-matrix i.r0 {
-        animation-delay: 0ms;
-      }
-      #grain-splash .grain-splash-matrix i.r1 {
-        animation-delay: 130ms;
-      }
-      #grain-splash .grain-splash-matrix i.r2 {
-        animation-delay: 260ms;
-      }
-      #grain-splash .grain-splash-matrix i.r3 {
-        animation-delay: 390ms;
-      }
-
-      /* Sweeping scanline: a narrow vertical highlight bar drifting left→right
-         across the matrix, like a sensor pass on an instrument readout. */
-      #grain-splash .grain-splash-matrix::after {
-        content: "";
-        position: absolute;
-        top: -10%;
-        bottom: -10%;
-        width: 26px;
-        background: linear-gradient(
-          90deg,
-          transparent 0%,
-          rgba(255, 93, 30, 0.5) 50%,
-          transparent 100%
-        );
-        filter: blur(2px);
-        mix-blend-mode: screen;
-        animation: grain-splash-scan 2600ms ease-in-out infinite;
-      }
-
-      #grain-splash .grain-splash-label {
-        font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
-          monospace;
-        font-size: 11px;
-        font-weight: 500;
-        letter-spacing: 0.34em;
-        text-transform: uppercase;
-        /* Optical centering against the 0.34em right-side letter-spacing. */
-        padding-left: 0.34em;
-        color: rgba(255, 255, 255, 0.32);
-      }
-
-      /* One ring "lights up": dim recessed LED → bright with a soft orange halo
-         → back to dim. Shared keyframe + per-ring delay = expanding wave. */
-      @keyframes grain-splash-ring {
-        0%,
-        100% {
-          opacity: 0.08;
-          box-shadow: none;
-          transform: scale(0.78);
-        }
-        40% {
-          opacity: 1;
-          box-shadow:
-            0 0 6px rgba(255, 93, 30, 0.7),
-            0 0 12px rgba(255, 93, 30, 0.35);
-          transform: scale(1);
-        }
-      }
-
-      /* Scanline drifts across the matrix width (~95px incl. padding). */
-      @keyframes grain-splash-scan {
-        0% {
-          transform: translateX(-30px);
-          opacity: 0;
-        }
-        20%,
-        80% {
-          opacity: 1;
-        }
-        100% {
-          transform: translateX(95px);
-          opacity: 0;
-        }
-      }
-
-      /* Respect reduced-motion: hold a calm, evenly-lit matrix — no ripple,
-         no scanline, no fade. */
-      @media (prefers-reduced-motion: reduce) {
-        #grain-splash .grain-splash-matrix i {
-          animation: none;
-          opacity: 0.45;
-          transform: none;
-        }
-        #grain-splash .grain-splash-matrix::after {
-          animation: none;
-          opacity: 0;
-        }
-        #grain-splash {
-          transition: none;
-        }
+        width: 100%;
+        height: 100%;
       }
     </style>
   </head>
@@ -183,23 +67,195 @@
   <body>
     <div id="root"></div>
 
-    <!-- [GRAIN] Cold-start splash. Static markup so it paints before the JS
-         bundle loads, covering the webview boot gap. React removes this node
-         once the live UI has painted (see src/lib/utils/splash.ts). The 49
-         cells carry a ring class (r0..r3 = Chebyshev distance from center) that
-         drives the radial wave; the scanline is a pseudo-element. -->
+    <!-- [GRAIN] Cold-start splash. React removes this node on first mount
+         (see src/lib/utils/splash.ts). We also include a fallback auto-fade in
+         the JS below so the app is never blocked if React is slow. -->
     <div id="grain-splash" role="presentation" aria-hidden="true">
-      <div class="grain-splash-matrix">
-        <i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i>
-        <i class="r3"></i><i class="r2"></i><i class="r2"></i><i class="r2"></i><i class="r2"></i><i class="r2"></i><i class="r3"></i>
-        <i class="r3"></i><i class="r2"></i><i class="r1"></i><i class="r1"></i><i class="r1"></i><i class="r2"></i><i class="r3"></i>
-        <i class="r3"></i><i class="r2"></i><i class="r1"></i><i class="r0"></i><i class="r1"></i><i class="r2"></i><i class="r3"></i>
-        <i class="r3"></i><i class="r2"></i><i class="r1"></i><i class="r1"></i><i class="r1"></i><i class="r2"></i><i class="r3"></i>
-        <i class="r3"></i><i class="r2"></i><i class="r2"></i><i class="r2"></i><i class="r2"></i><i class="r2"></i><i class="r3"></i>
-        <i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i><i class="r3"></i>
-      </div>
-      <div class="grain-splash-label">Grain</div>
+      <canvas id="splash-canvas"></canvas>
     </div>
+
+    <script>
+      (function initSplash() {
+        const splashEl = document.getElementById("grain-splash");
+        const canvas = document.getElementById("splash-canvas");
+        const ctx = canvas.getContext("2d", { alpha: false });
+
+        if (!ctx) return;
+
+        let animationId;
+        let width, height;
+        let cols = 0;
+        let rows = 0;
+        const dpr = window.devicePixelRatio || 1;
+
+        // Hardware grid configuration
+        const SPACING = 8;
+        const RADIUS = 2.5;
+
+        let textMap = new Uint8Array(0);
+        let activationTimes = new Float32Array(0);
+        let startTime = 0;
+        let isReady = false;
+
+        const setupCanvas = () => {
+          width = window.innerWidth;
+          height = window.innerHeight;
+          canvas.width = width * dpr;
+          canvas.height = height * dpr;
+          canvas.style.width = `${width}px`;
+          canvas.style.height = `${height}px`;
+
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.scale(dpr, dpr);
+
+          cols = Math.ceil(width / SPACING);
+          rows = Math.ceil(height / SPACING);
+
+          if (cols > 0 && rows > 0) {
+            textMap = new Uint8Array(cols * rows);
+            activationTimes = new Float32Array(cols * rows);
+            generateTextMap();
+          }
+        };
+
+        const generateTextMap = () => {
+          const offCanvas = document.createElement("canvas");
+          const offCtx = offCanvas.getContext("2d", {
+            willReadFrequently: true,
+          });
+          if (!offCtx || cols === 0 || rows === 0) return;
+
+          offCanvas.width = cols;
+          offCanvas.height = rows;
+
+          // Pure black background
+          offCtx.fillStyle = "black";
+          offCtx.fillRect(0, 0, cols, rows);
+
+          // Render "GRAIN" in the center using Syncopate
+          const fontSize = Math.max(20, Math.min(cols * 0.12, 120));
+          offCtx.font = `700 ${fontSize}px 'Syncopate', sans-serif`;
+          offCtx.textAlign = "center";
+          offCtx.textBaseline = "middle";
+          offCtx.fillStyle = "white";
+
+          offCtx.fillText("GRAIN", cols / 2, rows / 2);
+
+          const imgData = offCtx.getImageData(0, 0, cols, rows).data;
+
+          for (let i = 0; i < cols * rows; i++) {
+            // Check alpha/white threshold
+            if (imgData[i * 4] > 128) {
+              textMap[i] = 1;
+              // Random activation time for the hardware "warm-up" effect (FASTER)
+              activationTimes[i] = 0.1 + Math.random() * 0.5;
+            } else {
+              textMap[i] = 0;
+            }
+          }
+        };
+
+        window.addEventListener("resize", setupCanvas);
+
+        const draw = () => {
+          if (!isReady || width <= 0 || height <= 0) {
+            animationId = requestAnimationFrame(draw);
+            return;
+          }
+
+          const elapsed = (Date.now() - startTime) / 1000;
+
+          // Fill dark background
+          ctx.fillStyle = "#12100E";
+          ctx.fillRect(0, 0, width, height);
+
+          // Path2D batching for high performance drawing
+          const pathEmpty = new Path2D();
+          const pathDim = new Path2D();
+          const pathBright = new Path2D();
+
+          for (let r = 0; r < rows; r++) {
+            for (let c = 0; c < cols; c++) {
+              const x = c * SPACING + SPACING / 2;
+              const y = r * SPACING + SPACING / 2;
+              const idx = c + r * cols;
+
+              const isText = textMap[idx] === 1;
+              let brightness = 0;
+
+              if (isText) {
+                const actTime = activationTimes[idx];
+                if (elapsed > actTime) {
+                  brightness = 2; // Fully powered on
+                } else if (elapsed > actTime - 0.1) {
+                  brightness = 1; // Briefly warming up (dim)
+                }
+              }
+
+              // Use solid squares to match the hardware module look
+              if (brightness === 0) {
+                pathEmpty.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+              } else if (brightness === 1) {
+                pathDim.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+              } else {
+                pathBright.rect(x - RADIUS, y - RADIUS, RADIUS * 2, RADIUS * 2);
+              }
+            }
+          }
+
+          // Render batched paths with precise colors
+          ctx.fillStyle = "#221D1A"; // Unlit dark LEDs
+          ctx.fill(pathEmpty);
+
+          ctx.fillStyle = "#8A3D0B"; // Dim burnt orange (warming up)
+          ctx.fill(pathDim);
+
+          ctx.fillStyle = "#FF6B00"; // Bright glowing orange
+          ctx.fill(pathBright);
+
+          animationId = requestAnimationFrame(draw);
+        };
+
+        const begin = () => {
+          isReady = true;
+          setupCanvas();
+          startTime = Date.now();
+          draw();
+
+          // Self-destruct safety: if React hasn't unmounted this div after 2.5s,
+          // fade it out ourselves so the app is never blocked.
+          setTimeout(() => {
+            if (
+              splashEl &&
+              !splashEl.classList.contains("grain-splash-hide")
+            ) {
+              splashEl.classList.add("grain-splash-hide");
+            }
+            // Stop the render loop completely after the fade-out completes.
+            setTimeout(() => {
+              cancelAnimationFrame(animationId);
+              window.removeEventListener("resize", setupCanvas);
+            }, 400);
+          }, 2500);
+        };
+
+        // Wait for Syncopate so the GRAIN glyphs sample correctly; fall back to
+        // a short timeout if the Font Loading API is unavailable or slow.
+        if ("fonts" in document) {
+          let started = false;
+          const startOnce = () => {
+            if (started) return;
+            started = true;
+            begin();
+          };
+          document.fonts.ready.then(startOnce);
+          // Don't let a stalled font load delay the splash indefinitely.
+          setTimeout(startOnce, 300);
+        } else {
+          begin();
+        }
+      })();
+    </script>
 
     <script type="module" src="/src/main.tsx"></script>
   </body>
