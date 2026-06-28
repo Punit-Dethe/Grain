@@ -410,13 +410,15 @@ export const SettingRow: React.FC<{
   </div>
 );
 
-/** Native-styled select matching the console combo boxes. */
+/** Native-styled select matching the console combo boxes. When `disabled` it is
+ *  dimmed and non-interactive (used to gate the cloud picker while cloud is off). */
 export const ConsoleSelect: React.FC<{
   value?: string;
   options: string[];
   height?: number;
+  disabled?: boolean;
   onChange?: (v: string) => void;
-}> = ({ value, options, height = 34, onChange }) => (
+}> = ({ value, options, height = 34, disabled = false, onChange }) => (
   <div
     className="relative w-full"
     style={{
@@ -424,12 +426,17 @@ export const ConsoleSelect: React.FC<{
       borderRadius: 6,
       backgroundColor: "var(--qp-input-bg)",
       border: `1px solid ${fill(0.1)}`,
+      opacity: disabled ? 0.4 : 1,
+      cursor: disabled ? "not-allowed" : "default",
     }}
   >
     <select
       value={value}
+      disabled={disabled}
       onChange={(e) => onChange?.(e.target.value)}
-      className="w-full h-full bg-transparent outline-none cursor-pointer appearance-none"
+      className={`w-full h-full bg-transparent outline-none appearance-none ${
+        disabled ? "cursor-not-allowed" : "cursor-pointer"
+      }`}
       style={{
         padding: "0 30px 0 10px",
         fontSize: 11,
@@ -444,16 +451,51 @@ export const ConsoleSelect: React.FC<{
       ))}
     </select>
     <span
-      className="absolute pointer-events-none"
+      className="absolute pointer-events-none flex items-center justify-center"
       style={{
-        right: 10,
+        right: 8,
         top: "50%",
         transform: "translateY(-50%)",
-        fontSize: 10,
+        fontSize: 9,
+        lineHeight: 1,
         color: "var(--qp-input-text)",
       }}
     >
       ▾
     </span>
   </div>
+);
+
+/** Sleek inline on/off pill for a single rotation member — sits on a thin row
+ *  without the bulk of a full slide toggle. Filled orange + "ON" when active,
+ *  hollow + "OFF" when inactive. */
+export const PillToggle: React.FC<{
+  checked: boolean;
+  disabled?: boolean;
+  onChange?: (next: boolean) => void;
+}> = ({ checked, disabled = false, onChange }) => (
+  <button
+    type="button"
+    disabled={disabled}
+    onClick={() => onChange?.(!checked)}
+    className={`shrink-0 flex items-center justify-center ${
+      disabled ? "cursor-not-allowed" : "cursor-pointer"
+    }`}
+    style={{
+      width: 38,
+      height: 18,
+      borderRadius: 99,
+      fontFamily: "var(--qp-font-mono)",
+      fontSize: 8,
+      fontWeight: 700,
+      letterSpacing: "0.5px",
+      opacity: disabled ? 0.4 : 1,
+      color: checked ? "#ffffff" : ink(0.45),
+      backgroundColor: checked ? "#ff5d1e" : "transparent",
+      border: `1px solid ${checked ? "#ff5d1e" : fill(0.18)}`,
+      transition: "background-color 0.15s, color 0.15s, border-color 0.15s",
+    }}
+  >
+    {checked ? "ON" : "OFF"}
+  </button>
 );

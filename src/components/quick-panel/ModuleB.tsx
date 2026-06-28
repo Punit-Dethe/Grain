@@ -10,10 +10,11 @@ import {
   MechanicalToggle,
   SegToggle,
   ConsoleSelect,
+  PillToggle,
   JackHousing,
   HistoryBox,
 } from "./widgets";
-import { ConsoleDropdown, type DropdownItem } from "./ConsoleDropdown";
+import type { SttProvider } from "@/bindings";
 import { DotMatrix } from "./DotMatrix";
 import { useTranscriptionHistory } from "./useHistory";
 
@@ -36,7 +37,7 @@ const UNLOAD: { label: string; value: string }[] = [
   { label: "Never", value: "never" },
 ];
 
-/** Local model picker — green status dot + custom dropdown over the model store. */
+/** Local model picker — green status dot + native select over the model store. */
 const LocalModelSelect: React.FC<{
   models: { id: string; name: string; is_downloaded: boolean }[];
   currentId: string;
@@ -44,46 +45,139 @@ const LocalModelSelect: React.FC<{
 }> = ({ models, currentId, onSelect }) => {
   const downloaded = models.filter((m) => m.is_downloaded);
   const list = downloaded.length ? downloaded : models;
-  const items: DropdownItem[] = list.map((m) => ({ key: m.id, label: m.name }));
   return (
-    <div className="relative w-full flex items-center" style={{ gap: 8 }}>
-      {/* Green status dot */}
+    <div
+      className="relative w-full flex items-center"
+      style={{
+        height: 34,
+        borderRadius: 6,
+        backgroundColor: "var(--qp-input-bg)",
+        border: `1px solid ${fill(0.1)}`,
+      }}
+    >
       <span
+        className="absolute"
         style={{
+          left: 10,
+          top: "50%",
+          transform: "translateY(-50%)",
           width: 6,
           height: 6,
           borderRadius: 3,
           backgroundColor: currentId ? "#10B981" : ink(0.18),
-          flexShrink: 0,
         }}
       />
-      <div style={{ flex: 1 }}>
-        {list.length === 0 ? (
+      <select
+        value={currentId}
+        onChange={(e) => onSelect(e.target.value)}
+        className="w-full h-full bg-transparent outline-none cursor-pointer appearance-none"
+        style={{
+          padding: "0 28px 0 24px",
+          fontSize: 11,
+          fontWeight: 600,
+          color: "var(--qp-input-text)",
+        }}
+      >
+        {list.length === 0 && <option value="">No model installed</option>}
+        {list.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.name}
+          </option>
+        ))}
+      </select>
+      <span
+        className="absolute pointer-events-none flex items-center justify-center"
+        style={{
+          right: 8,
+          top: "50%",
+          transform: "translateY(-50%)",
+          fontSize: 9,
+          lineHeight: 1,
+          color: "var(--qp-input-text)",
+        }}
+      >
+        ▾
+      </span>
+    </div>
+  );
+};
+
+/** Sleek rotation roster — one thin row per cloud provider with a right-edge
+ *  ON/OFF pill so members can be flipped directly from the quick panel. A
+ *  green dot marks providers that currently have a key stored. */
+const ProviderRotationList: React.FC<{
+  providers: SttProvider[];
+  withKeys: Set<string>;
+  onToggle: (provider: SttProvider, enabled: boolean) => void;
+}> = ({ providers, withKeys, onToggle }) => {
+  if (providers.length === 0) {
+    return (
+      <div
+        className="flex items-center justify-center w-full"
+        style={{
+          height: 34,
+          borderRadius: 6,
+          backgroundColor: "var(--qp-input-bg)",
+          border: `1px solid ${fill(0.1)}`,
+          fontSize: 11,
+          fontWeight: 600,
+          color: ink(0.4),
+        }}
+      >
+        No providers yet
+      </div>
+    );
+  }
+  return (
+    <div
+      className="w-full flex flex-col"
+      style={{
+        borderRadius: 6,
+        backgroundColor: "var(--qp-input-bg)",
+        border: `1px solid ${fill(0.1)}`,
+        overflow: "hidden",
+      }}
+    >
+      {providers.map((p, i) => {
+        const enabled = p.enabled ?? true;
+        const hasKey = withKeys.has(p.id);
+        return (
           <div
+            key={p.id}
+            className="flex items-center"
             style={{
-              height: 34,
-              borderRadius: 6,
-              backgroundColor: "var(--qp-input-bg)",
-              border: `1px solid ${fill(0.1)}`,
-              display: "flex",
-              alignItems: "center",
-              padding: "0 10px",
-              fontSize: 11,
-              fontFamily: MONO,
-              color: ink(0.45),
+              height: 30,
+              padding: "0 8px 0 10px",
+              gap: 8,
+              borderTop: i === 0 ? "none" : `1px solid ${fill(0.06)}`,
             }}
           >
-            No model installed
+            <span
+              className="shrink-0"
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 3,
+                backgroundColor: hasKey ? "#10B981" : ink(0.18),
+              }}
+            />
+            <span
+              className="flex-1 truncate"
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                color: enabled ? "var(--qp-input-text)" : ink(0.4),
+              }}
+            >
+              {p.name}
+            </span>
+            <PillToggle
+              checked={enabled}
+              onChange={(next) => onToggle(p, next)}
+            />
           </div>
-        ) : (
-          <ConsoleDropdown
-            value={currentId}
-            items={items}
-            height={34}
-            onChange={onSelect}
-          />
-        )}
-      </div>
+        );
+      })}
     </div>
   );
 };
@@ -152,26 +246,7 @@ export const ModuleB: React.FC = () => {
     void updateSetting("model_unload_timeout", v);
   };
 
-  // Build dropdown items for cloud providers, marking rotation-enrolled ones.
-  const cloudItems: DropdownItem[] = pool.cloudProviders.map((p) => ({
-    key: p.id,
-    label: p.name,
-    inRotation: p.enabled,
-  }));
-
-  // The "active" cloud provider in single-select mode is the first enabled one.
-  const activeCloudKey =
-    pool.cloudProviders.find((p) => p.enabled)?.id ??
-    pool.cloudProviders[0]?.id ??
-    "";
-
-  const handleCloudSelect = (key: string) => {
-    // In single-select mode (rotation off), enable only the chosen provider.
-    const target = pool.cloudProviders.find((p) => p.id === key);
-    if (target && !smartRotation) {
-      void pool.setProviderEnabled(target, true);
-    }
-  };
+  const cloudNames = pool.cloudProviders.map((p) => p.name);
 
   return (
     <>
@@ -250,20 +325,22 @@ export const ModuleB: React.FC = () => {
         </>
       ) : (
         <>
-          {/* Cloud provider dropdown — shows rotation dots when smart rotation on */}
-          <ConsoleDropdown
-            value={activeCloudKey}
-            items={
-              cloudItems.length
-                ? cloudItems
-                : [{ key: "__none", label: "No providers yet" }]
-            }
-            height={34}
-            smartRotation={smartRotation}
-            rotationColor="#FF5D1E"
-            disabled={cloudItems.length === 0}
-            onChange={handleCloudSelect}
-          />
+          {/* When cloud is OFF the picker is gated (gray, non-toggleable);
+              when ON it becomes a sleek per-provider rotation roster. */}
+          {smartRotation ? (
+            <ProviderRotationList
+              providers={pool.cloudProviders}
+              withKeys={pool.providersWithKeys}
+              onToggle={(p, enabled) => void pool.setProviderEnabled(p, enabled)}
+            />
+          ) : (
+            <ConsoleSelect
+              value={cloudNames[0] ?? "No providers yet"}
+              options={cloudNames.length ? cloudNames : ["No providers yet"]}
+              height={34}
+              disabled
+            />
+          )}
           <Spacer h={5} />
           <div className="flex" style={{ gap: 8 }}>
             <MiniBox label="Cloud Providers" sub="Enable remote">
