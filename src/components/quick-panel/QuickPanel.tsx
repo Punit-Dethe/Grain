@@ -166,19 +166,21 @@ const RouteLine: React.FC<{ text: string }> = ({ text }) => {
 const StatusIndicator: React.FC = () => {
   const status = useSystemStatus();
   const color = toneColor(status.tone);
+  const dim = "rgb(var(--qp-ink-rgb) / 0.38)";
   return (
     <div className="flex items-center" style={{ gap: 8, minWidth: 0 }}>
       <span
-        className={`qp-status-dot qp-status-dot--${status.tone}`}
         style={{
-          width: 7,
-          height: 7,
-          borderRadius: "50%",
-          backgroundColor: color,
-          color, // currentColor drives the glow in the keyframes
-          flex: "none",
+          fontFamily: "var(--qp-font-mono)",
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: "1.5px",
+          color: dim,
+          whiteSpace: "nowrap",
         }}
-      />
+      >
+        SYSTEM STATUS
+      </span>
       <span
         key={status.label}
         className="qp-status-label truncate"
