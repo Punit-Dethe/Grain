@@ -213,9 +213,6 @@ export const ModuleB: React.FC = () => {
                 value: p.id,
                 label: p.name,
                 enabled: p.enabled ?? true,
-                dotColor: pool.providersWithKeys.has(p.id)
-                  ? "#10B981"
-                  : ink(0.18),
               }))}
               emptyLabel="No providers yet"
               onToggle={(id, next) => {
