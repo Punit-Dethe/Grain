@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use grain_core::settings::OverlayPosition;
-use grain_core::DaemonEvent;
+use grain_core::{DaemonEvent, SessionMode};
 
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
 use winit::application::ApplicationHandler;
@@ -70,6 +70,148 @@ enum PillState {
     /// [GRAIN] B4: something went wrong (model load / paste). Placeholder visual
     /// — a dim static grid; dismissed by click or the next session's events.
     Fallback,
+}
+
+/// [GRAIN] Native ASR Studio Window: which surface the single OS window is
+/// currently presenting. `Collapsed` is the classic small capsule (Batch/
+/// Rolling); `Studio` is the larger streaming-text window, driven by
+/// `SessionMode::NativeAsr`. The window is resized + repositioned on the rare
+/// transitions between the two (never per-frame).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PillMode {
+    Collapsed,
+    Studio,
+}
+
+// ── Studio Window geometry ──────────────────────────────────────────────────
+const STUDIO_W: f32 = 560.0;
+const STUDIO_H: f32 = 260.0;
+const STUDIO_PAD: f32 = 22.0;
+const STUDIO_CORNER_R: f32 = 20.0;
+const STUDIO_HEADER_H: f32 = 56.0;
+const STUDIO_PILL_SCALE: f32 = 0.74;
+const STUDIO_TEXT_PX: f32 = 19.0;
+const STUDIO_LABEL_PX: f32 = 14.0;
+const STUDIO_LINE_HEIGHT: f32 = STUDIO_TEXT_PX * 1.55;
+
+/// A rounded-rect path (quadratic corners — plenty smooth at this size; tiny-skia
+/// has no built-in rounded-rect constructor). Used for the Studio Window background.
+fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let mut pb = PathBuilder::new();
+    pb.move_to(x + r, y);
+    pb.line_to(x + w - r, y);
+    pb.quad_to(x + w, y, x + w, y + r);
+    pb.line_to(x + w, y + h - r);
+    pb.quad_to(x + w, y + h, x + w - r, y + h);
+    pb.line_to(x + r, y + h);
+    pb.quad_to(x, y + h, x, y + h - r);
+    pb.line_to(x, y + r);
+    pb.quad_to(x, y, x + r, y);
+    pb.close();
+    pb.finish()
+}
+
+/// Whether a word in the Studio Window's live transcript is settled (solid) or
+/// still volatile (rendered with a blur whose intensity reflects how unsettled
+/// the stabilizer thinks it is).
+#[derive(Clone, Copy, PartialEq)]
+enum RunStyle {
+    Committed,
+    Partial { stable: bool },
+}
+
+/// [GRAIN] Accumulated Native ASR transcript for the Studio Window, rebuilt
+/// from `Asr*` `DaemonEvent`s. `committed`/`partial` track the CURRENTLY OPEN
+/// segment (each event replaces the prior value — they carry the full prefix/
+/// tail, not a delta); `finished` holds segments already closed by
+/// `AsrSegmentFinal`. Cleared at the start of every new Native ASR session.
+#[derive(Clone, Default)]
+struct AsrDisplay {
+    finished: Vec<String>,
+    committed: String,
+    partial: String,
+    partial_stable: bool,
+}
+
+impl AsrDisplay {
+    fn runs(&self) -> Vec<(String, RunStyle)> {
+        let mut runs = Vec::new();
+        for seg in &self.finished {
+            runs.extend(seg.split_whitespace().map(|w| (w.to_string(), RunStyle::Committed)));
+        }
+        runs.extend(
+            self.committed
+                .split_whitespace()
+                .map(|w| (w.to_string(), RunStyle::Committed)),
+        );
+        runs.extend(self.partial.split_whitespace().map(|w| {
+            (
+                w.to_string(),
+                RunStyle::Partial {
+                    stable: self.partial_stable,
+                },
+            )
+        }));
+        runs
+    }
+}
+
+struct LaidLine {
+    words: Vec<(String, RunStyle)>,
+}
+
+/// Greedy word-wrap of styled runs into lines no wider than `max_w` at `px`.
+fn wrap_runs(font: &fontdue::Font, runs: &[(String, RunStyle)], px: f32, max_w: f32) -> Vec<LaidLine> {
+    let space_w = font.metrics(' ', px).advance_width;
+    let mut lines: Vec<LaidLine> = Vec::new();
+    let mut cur: Vec<(String, RunStyle)> = Vec::new();
+    let mut cur_w = 0.0f32;
+    for (word, style) in runs {
+        let word_w: f32 = word.chars().map(|c| font.metrics(c, px).advance_width).sum();
+        let added = if cur.is_empty() { word_w } else { word_w + space_w };
+        if !cur.is_empty() && cur_w + added > max_w {
+            lines.push(LaidLine {
+                words: std::mem::take(&mut cur),
+            });
+            cur_w = 0.0;
+        }
+        cur_w += if cur.is_empty() { word_w } else { word_w + space_w };
+        cur.push((word.clone(), *style));
+    }
+    if !cur.is_empty() {
+        lines.push(LaidLine { words: cur });
+    }
+    lines
+}
+
+/// Separable box blur applied in place to a single-channel coverage bitmap (a
+/// fontdue glyph raster). Used to render volatile partial-transcript words as
+/// visibly "not settled yet" — `radius` 0 is a no-op.
+fn box_blur(bmp: &mut [u8], w: usize, h: usize, radius: usize) {
+    if radius == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let mut tmp = vec![0u8; w * h];
+    // Horizontal pass.
+    for y in 0..h {
+        let row = &bmp[y * w..y * w + w];
+        for x in 0..w {
+            let lo = x.saturating_sub(radius);
+            let hi = (x + radius).min(w - 1);
+            let sum: u32 = row[lo..=hi].iter().map(|&v| v as u32).sum();
+            tmp[y * w + x] = (sum / (hi - lo + 1) as u32) as u8;
+        }
+    }
+    // Vertical pass.
+    for x in 0..w {
+        for y in 0..h {
+            let lo = y.saturating_sub(radius);
+            let hi = (y + radius).min(h - 1);
+            let sum: u32 = (lo..=hi).map(|yy| tmp[yy * w + x] as u32).sum();
+            bmp[y * w + x] = (sum / (hi - lo + 1) as u32) as u8;
+        }
+    }
 }
 
 /// Curved silhouette: cols 0/24 hidden; 1/23 keep rows 2–5; 2/22 keep rows 1–6.
@@ -420,6 +562,72 @@ fn draw_cached_text_centered(
     }
 }
 
+/// Blend one freshly-rasterized glyph bitmap into the pixmap at absolute
+/// top-left `(gx, gy)`. Shared by [`draw_word`] (Studio Window transcript).
+fn blend_glyph(
+    pixmap: &mut Pixmap,
+    m: &fontdue::Metrics,
+    bmp: &[u8],
+    gx: f32,
+    gy: f32,
+    color: [u8; 3],
+    alpha: f32,
+) {
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    let data = pixmap.data_mut();
+    for yy in 0..m.height {
+        for xx in 0..m.width {
+            let ga = bmp[yy * m.width + xx] as f32 / 255.0 * alpha;
+            if ga <= 0.003 {
+                continue;
+            }
+            let x = (gx + xx as f32) as i32;
+            let y = (gy + yy as f32) as i32;
+            if x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            let o = ((y * w + x) as usize) * 4;
+            let inv = 1.0 - ga;
+            let blend =
+                |s: u8, d: u8| -> u8 { ((s as f32 * ga) + (d as f32 * inv)).min(255.0) as u8 };
+            data[o] = blend(color[0], data[o]);
+            data[o + 1] = blend(color[1], data[o + 1]);
+            data[o + 2] = blend(color[2], data[o + 2]);
+            data[o + 3] = ((255.0 * ga) + (data[o + 3] as f32 * inv)).min(255.0) as u8;
+        }
+    }
+}
+
+/// Left-aligned word draw with optional blur (`blur_radius` 0 = crisp,
+/// committed text; >0 = the Studio Window's volatile partial-text look, the
+/// stabilizer's "not settled yet" signal made visible). Rasterizes per frame
+/// (the transcript changes every frame during dictation, so caching buys
+/// nothing) and returns the advance width consumed.
+fn draw_word(
+    pixmap: &mut Pixmap,
+    font: &fontdue::Font,
+    word: &str,
+    px: f32,
+    pen_x: f32,
+    baseline: f32,
+    color: [u8; 3],
+    alpha: f32,
+    blur_radius: usize,
+) -> f32 {
+    let mut pen = pen_x;
+    for ch in word.chars() {
+        let (m, mut bmp) = font.rasterize(ch, px);
+        if blur_radius > 0 {
+            box_blur(&mut bmp, m.width, m.height, blur_radius);
+        }
+        let gx = pen + m.xmin as f32;
+        let gy = baseline - (m.height as f32 + m.ymin as f32);
+        blend_glyph(pixmap, &m, &bmp, gx, gy, color, alpha);
+        pen += m.advance_width;
+    }
+    pen - pen_x
+}
+
 // ── Mic capture (direct, low-latency) ───────────────────────────────────────
 
 fn start_mic(amp: Arc<AtomicU32>) -> Option<cpal::Stream> {
@@ -665,6 +873,14 @@ struct Remote {
     /// and trigger the riser (+ a brief reveal when idle).
     prompt_name: String,
     prompt_seq: u64,
+    /// [GRAIN] Native ASR: which surface to present (Studio Window vs the
+    /// classic collapsed capsule), set from `RecordingStarted`'s `SessionMode`.
+    mode: PillMode,
+    /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
+    /// `Recording` (see `apply_event`) so the preview never changes once the
+    /// user releases the shortcut, even though the worker's drain can still
+    /// emit a few trailing `Asr*` events while finalizing.
+    asr: AsrDisplay,
 }
 
 impl Default for Remote {
@@ -675,6 +891,8 @@ impl Default for Remote {
             anchor: OverlayPosition::Bottom,
             prompt_name: String::new(),
             prompt_seq: 0,
+            mode: PillMode::Collapsed,
+            asr: AsrDisplay::default(),
         }
     }
 }
@@ -694,10 +912,19 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         }
         // Recording overrides processing: while recording the pill shows
         // recording; processing only appears after the stop signal.
-        DaemonEvent::RecordingStarted { .. } => {
+        DaemonEvent::RecordingStarted { mode, .. } => {
             r.state = PillState::Recording;
             r.visible = can_show(&r);
-            eprintln!("event: RecordingStarted -> show (recording)");
+            // [GRAIN] Native ASR → the Studio Window; every other mode is the
+            // classic collapsed capsule. Fresh `asr` buffer per session so a
+            // prior dictation's text never bleeds into the next.
+            r.mode = if mode == SessionMode::NativeAsr {
+                PillMode::Studio
+            } else {
+                PillMode::Collapsed
+            };
+            r.asr = AsrDisplay::default();
+            eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
         DaemonEvent::RecordingStopped { .. } => {
             r.state = PillState::Processing;
@@ -721,7 +948,24 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
         }
-        _ => {} // AudioLevel / etc. — not a state change
+        // [GRAIN] Native ASR Studio Window transcript. Only applied while still
+        // `Recording` — once the shortcut is released `state` flips to
+        // `Processing` and the preview must freeze exactly where it was, even
+        // though the worker's drain can keep emitting a few trailing events
+        // while it finalizes (`worker::drive_session`'s `finish()` drain).
+        DaemonEvent::AsrCommit { text, .. } if r.state == PillState::Recording => {
+            r.asr.committed = text;
+        }
+        DaemonEvent::AsrPartial { text, stable, .. } if r.state == PillState::Recording => {
+            r.asr.partial = text;
+            r.asr.partial_stable = stable;
+        }
+        DaemonEvent::AsrSegmentFinal { text, .. } if r.state == PillState::Recording => {
+            r.asr.finished.push(text);
+            r.asr.committed.clear();
+            r.asr.partial.clear();
+        }
+        _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
     }
 }
 
@@ -822,6 +1066,13 @@ struct App {
     visible: bool,
     presenter: Option<present::Presenter>,
     pixmap: Option<Pixmap>,
+    // [GRAIN] Native ASR Studio Window: current surface, its accumulated
+    // transcript, and the fade in/out that lets it disappear smoothly instead
+    // of vanishing (the collapsed capsule still hides instantly, unchanged).
+    mode: PillMode,
+    asr: AsrDisplay,
+    studio_alpha: f32,
+    closing: bool,
 }
 
 impl App {
@@ -860,6 +1111,10 @@ impl App {
             visible: false,
             presenter: None,
             pixmap: None,
+            mode: PillMode::Collapsed,
+            asr: AsrDisplay::default(),
+            studio_alpha: 0.0,
+            closing: false,
         }
     }
 
@@ -870,11 +1125,24 @@ impl App {
         )
     }
 
+    /// Window size for the given surface — the classic collapsed capsule or
+    /// the Native ASR Studio Window. Switching between them resizes the single
+    /// OS window (see `about_to_wait`'s mode-change handling); both are fixed
+    /// sizes, so the Studio Window scrolls its transcript rather than growing.
+    fn win_size_for(mode: PillMode) -> (u32, u32) {
+        match mode {
+            PillMode::Collapsed => Self::win_size(),
+            PillMode::Studio => (
+                (STUDIO_W * SCALE).round() as u32,
+                (STUDIO_H * SCALE).round() as u32,
+            ),
+        }
+    }
+
     /// [GRAIN] Place the pill on the monitor under it (or primary) per the user's
     /// `overlay_position`: centered horizontally, near the top or bottom edge.
     /// Recomputed on each show so it follows the active monitor + setting changes.
-    fn position_window(window: &Window, anchor: OverlayPosition) {
-        let (w, h) = Self::win_size();
+    fn position_window(window: &Window, anchor: OverlayPosition, w: u32, h: u32) {
         let Some(mon) = window
             .current_monitor()
             .or_else(|| window.primary_monitor())
@@ -900,6 +1168,9 @@ impl App {
                         .unwrap_or(screen_bottom);
                 bottom - h as i32 - margin
             }
+            // [GRAIN] Vertically centered on the monitor — the Studio Window's
+            // natural home (a tall content box reads poorly hugging an edge).
+            OverlayPosition::Center => mp.y + ((ms.height.saturating_sub(h)) / 2) as i32,
         };
         window.set_outer_position(PhysicalPosition::new(x, y));
     }
@@ -942,7 +1213,16 @@ impl App {
         }
     }
 
+    /// Dispatch to whichever surface is current. The two are independent,
+    /// fixed-size renderers (see `win_size_for`) — never mixed in one frame.
     fn render(&mut self) {
+        match self.mode {
+            PillMode::Collapsed => self.render_collapsed(),
+            PillMode::Studio => self.render_studio(),
+        }
+    }
+
+    fn render_collapsed(&mut self) {
         if self.window.is_none() {
             return;
         }
@@ -1027,6 +1307,152 @@ impl App {
             presenter.blit(&pixmap);
         }
         self.pixmap = Some(pixmap); // keep it for next frame
+    }
+
+    /// The Native ASR Studio Window: a tall content box with the classic
+    /// dot-matrix pill embedded top-right (same `Aura` field the collapsed
+    /// pill draws, just scaled down — recording/processing reads identically
+    /// in both surfaces) and the live transcript word-wrapped below it.
+    /// Self-contained (doesn't share drawing code with `render_collapsed`) so
+    /// the already-tuned collapsed renderer can never regress from this work.
+    fn render_studio(&mut self) {
+        if self.window.is_none() {
+            return;
+        }
+        let (w, h) = Self::win_size_for(PillMode::Studio);
+        let mut pixmap = self
+            .pixmap
+            .take()
+            .unwrap_or_else(|| Pixmap::new(w, h).unwrap());
+        pixmap.fill(Color::TRANSPARENT);
+
+        // Whole-window fade in/out (the "smoothly appears/disappears" ask) —
+        // every alpha below is scaled by this, never drawn at full opacity
+        // until the window has finished easing in.
+        let fade = self.studio_alpha.clamp(0.0, 1.0);
+        let scaled = |base: u8, mult: f32| -> u8 { (base as f32 * mult * fade).clamp(0.0, 255.0) as u8 };
+
+        // 1) Background — the EXACT fill the collapsed pill's capsule uses, so
+        // the embedded mini pill (drawn dots-only, no capsule of its own,
+        // below) reads as part of one continuous surface rather than a
+        // separate widget glued on top.
+        let mut bg = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        bg.set_color(Color::from_rgba8(0, 0, 0, scaled(240, 1.0)));
+        if let Some(path) = rounded_rect_path(0.0, 0.0, w as f32, h as f32, STUDIO_CORNER_R) {
+            pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
+        }
+
+        // 2) Header: status label (left) + the dot-matrix pill (right).
+        if let Some(font) = &self.font {
+            let label = match self.state {
+                PillState::Recording => "Transcribing…",
+                PillState::Processing => "Processing…",
+                PillState::Fallback => "Something went wrong",
+                PillState::Idle => "",
+            };
+            if !label.is_empty() {
+                let cached = CachedText::new(font, label, STUDIO_LABEL_PX);
+                let cy = STUDIO_HEADER_H / 2.0;
+                draw_cached_text_centered(
+                    &mut pixmap,
+                    &cached,
+                    (STUDIO_PAD + cached.total_width / 2.0, cy),
+                    STUDIO_LABEL_PX,
+                    [230, 226, 218],
+                    fade,
+                );
+            }
+        }
+
+        let cell_px = CELL * SCALE;
+        let pill_local_w = COLS as f32 * cell_px;
+        let pill_local_h = ROWS as f32 * cell_px;
+        let embed_w = pill_local_w * STUDIO_PILL_SCALE;
+        let embed_h = pill_local_h * STUDIO_PILL_SCALE;
+        let embed_x = w as f32 - STUDIO_PAD - embed_w;
+        let embed_y = (STUDIO_HEADER_H - embed_h) / 2.0;
+        let pill_transform =
+            Transform::from_scale(STUDIO_PILL_SCALE, STUDIO_PILL_SCALE).post_translate(embed_x, embed_y);
+        let dots = &self.aura.dots;
+        let radius = DOT_D * SCALE / 2.0;
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                if is_edge(col, row) {
+                    continue;
+                }
+                let c = dots[row * COLS + col];
+                if c[3] == 0 {
+                    continue;
+                }
+                let dx = col as f32 * cell_px + cell_px / 2.0;
+                let dy = row as f32 * cell_px + cell_px / 2.0;
+                if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
+                    paint.set_color(Color::from_rgba8(c[0], c[1], c[2], scaled(c[3], 1.0)));
+                    pixmap.fill_path(&circle, &paint, FillRule::Winding, pill_transform, None);
+                }
+            }
+        }
+
+        // 3) Transcript: word-wrapped, only the last lines that fit are shown
+        // (a teleprompter tail, not a growing window — see win_size_for's
+        // doc). Committed text is solid; the volatile tail is blurred, more so
+        // while the stabilizer still thinks it's unsettled.
+        if let Some(font) = &self.font {
+            let max_w = w as f32 - 2.0 * STUDIO_PAD;
+            let runs = self.asr.runs();
+            if !runs.is_empty() {
+                let lines = wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w);
+                let text_top = STUDIO_HEADER_H + STUDIO_PAD * 0.5;
+                let text_bottom = h as f32 - STUDIO_PAD;
+                let max_lines =
+                    (((text_bottom - text_top) / STUDIO_LINE_HEIGHT).floor() as usize).max(1);
+                let total = lines.len();
+                let shown = &lines[total.saturating_sub(max_lines)..];
+                // The oldest visible line fades in from the top when earlier
+                // lines have scrolled off, so new text never just "pops in".
+                let truncated_above = total > shown.len();
+                let space_w = font.metrics(' ', STUDIO_TEXT_PX).advance_width;
+
+                for (i, line) in shown.iter().enumerate() {
+                    let line_fade = if truncated_above && i == 0 { 0.45 } else { 1.0 };
+                    let baseline = text_top + STUDIO_LINE_HEIGHT * (i as f32 + 1.0);
+                    let mut pen = STUDIO_PAD;
+                    for (word, style) in &line.words {
+                        if pen > STUDIO_PAD {
+                            pen += space_w;
+                        }
+                        let (color, alpha, blur): ([u8; 3], f32, usize) = match style {
+                            RunStyle::Committed => ([238, 236, 232], 0.94, 0),
+                            RunStyle::Partial { stable: true } => ([198, 204, 214], 0.62, 1),
+                            RunStyle::Partial { stable: false } => ([182, 188, 200], 0.42, 2),
+                        };
+                        pen += draw_word(
+                            &mut pixmap,
+                            font,
+                            word,
+                            STUDIO_TEXT_PX,
+                            pen,
+                            baseline,
+                            color,
+                            alpha * fade * line_fade,
+                            blur,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Some(presenter) = &self.presenter {
+            presenter.blit(&pixmap);
+        }
+        self.pixmap = Some(pixmap);
     }
 
     /// Draw the prompt riser bar (rounded top) and its label in the crescent
@@ -1157,7 +1583,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // Initial placement using the current anchor; repositioned on each show.
         let anchor = self.remote.lock().unwrap().anchor;
-        Self::position_window(&window, anchor);
+        Self::position_window(&window, anchor, w, h);
 
         eprintln!("window: created {w}x{h} (hidden until a session starts)");
         self.window = Some(window);
@@ -1226,6 +1652,34 @@ impl ApplicationHandler<UserEvent> for App {
             // Pull authoritative state/visibility from the core (or dev keys).
             let r = self.remote.lock().unwrap().clone();
             self.state = r.state;
+            self.asr = r.asr.clone();
+
+            // [GRAIN] Resize/recreate the OS window the rare times the surface
+            // actually changes (Collapsed <-> Studio) — never per frame. The
+            // Presenter caches a fixed-size GDI bitmap, so it must be rebuilt
+            // for the new size; the cached pixmap is invalidated too (wrong
+            // dimensions otherwise).
+            if r.mode != self.mode {
+                self.mode = r.mode;
+                if let Some(window) = &self.window {
+                    let (w, h) = Self::win_size_for(self.mode);
+                    // [GRAIN] winit 0.30 renamed this `request_inner_size` (the
+                    // resize isn't always synchronous on every platform); on
+                    // Windows it applies immediately, so the Presenter rebuilt
+                    // right after is sized correctly for the very next frame.
+                    let _ = window.request_inner_size(PhysicalSize::new(w, h));
+                    self.presenter = present::Presenter::new(window, w as i32, h as i32);
+                }
+                self.pixmap = None;
+                self.studio_alpha = 0.0;
+                // A mode change always means a brand-new session just started
+                // (mode is only ever set from RecordingStarted) — never
+                // mid-transition leftovers from whatever the previous surface
+                // was doing, including an in-progress Studio close-fade, which
+                // this intentionally cuts short rather than leaving stale.
+                self.visible = false;
+                self.closing = false;
+            }
 
             // [GRAIN] Prompt switched → show the riser, and briefly reveal the
             // pill if no session is active (so the user sees the new title).
@@ -1240,21 +1694,35 @@ impl ApplicationHandler<UserEvent> for App {
             // Visible if the core says so OR we're inside a transient prompt preview.
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
             let want_visible = r.visible || preview_visible;
-            let becoming_visible = want_visible && !self.visible;
-            let becoming_hidden = !want_visible && self.visible;
-            self.visible = want_visible;
+            // [GRAIN] The Studio Window fades out instead of vanishing: while
+            // `closing` is true we keep `self.visible` true (so rendering/mic
+            // gating below behave as if still showing) and just ease
+            // `studio_alpha` toward 0, only actually hiding once it settles
+            // (below). The collapsed pill is unchanged — it still hides the
+            // instant the core says to.
+            let was_showing = self.visible || self.closing;
+            let becoming_visible = want_visible && !was_showing;
+            let starting_close = !want_visible && was_showing && !self.closing;
+
+            if becoming_visible {
+                self.visible = true;
+                self.closing = false;
+            } else if starting_close {
+                if self.mode == PillMode::Studio {
+                    self.closing = true;
+                } else {
+                    self.visible = false;
+                    if let Some(window) = &self.window {
+                        eprintln!("window: hide");
+                        present::hide_window(window);
+                    }
+                }
+            }
 
             // Snap the tick deadline to now so becoming_visible renders immediately
             // (UserEvent::Wake already shortened the sleep; this is the safety net).
             if becoming_visible {
                 self.next_tick = now;
-            }
-
-            if becoming_hidden {
-                if let Some(window) = &self.window {
-                    eprintln!("window: hide");
-                    present::hide_window(window);
-                }
             }
 
             // [GRAIN] Mic lifecycle is gated on RECORDING, not mere visibility:
@@ -1273,6 +1741,23 @@ impl ApplicationHandler<UserEvent> for App {
             } else if !needs_mic && self._mic.is_some() {
                 // Recording ended (or the pill hid) — free the device immediately.
                 self._mic = None;
+            }
+
+            if self.visible {
+                // Ease the Studio Window's whole-window fade. A no-op for the
+                // collapsed pill (which never sets `closing` and always
+                // targets full opacity, so `studio_alpha` just sits at 1.0).
+                let target_alpha = if self.closing { 0.0 } else { 1.0 };
+                self.studio_alpha += (target_alpha - self.studio_alpha) * 0.18;
+                if self.closing && self.studio_alpha < 0.02 {
+                    self.studio_alpha = 0.0;
+                    self.closing = false;
+                    self.visible = false;
+                    if let Some(window) = &self.window {
+                        eprintln!("window: hide (studio fade complete)");
+                        present::hide_window(window);
+                    }
+                }
             }
 
             if self.visible {
@@ -1301,7 +1786,8 @@ impl ApplicationHandler<UserEvent> for App {
                     if let Some(window) = &self.window {
                         // Re-anchor each show so a changed setting / active monitor
                         // takes effect immediately.
-                        Self::position_window(window, r.anchor);
+                        let (w, h) = Self::win_size_for(self.mode);
+                        Self::position_window(window, r.anchor, w, h);
                         eprintln!("window: show (content primed)");
                         present::show_window(window);
                     }
@@ -1341,4 +1827,98 @@ pub fn run_pill() {
     let proxy = event_loop.create_proxy();
     let mut app = App::new(proxy);
     event_loop.run_app(&mut app).expect("run pill");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn font() -> fontdue::Font {
+        // A minimal valid TTF (DejaVu-style placeholder isn't bundled with the
+        // crate); fall back to a system font like `load_font()` does, but fail
+        // loudly in CI rather than silently skipping — these tests only assert
+        // properties that hold for any monospace/UI font.
+        load_font().expect("a system font must be available to test text layout")
+    }
+
+    #[test]
+    fn asr_display_runs_orders_finished_then_committed_then_partial() {
+        let mut d = AsrDisplay::default();
+        d.finished.push("hello world".to_string());
+        d.committed = "this is".to_string();
+        d.partial = "a test".to_string();
+        d.partial_stable = true;
+
+        let runs = d.runs();
+        let words: Vec<&str> = runs.iter().map(|(w, _)| w.as_str()).collect();
+        assert_eq!(words, vec!["hello", "world", "this", "is", "a", "test"]);
+
+        // Finished + committed are solid; partial carries the stability flag.
+        assert!(matches!(runs[0].1, RunStyle::Committed));
+        assert!(matches!(runs[3].1, RunStyle::Committed));
+        assert!(matches!(runs[4].1, RunStyle::Partial { stable: true }));
+    }
+
+    #[test]
+    fn wrap_runs_breaks_at_max_width_not_mid_word() {
+        let font = font();
+        let px = 16.0;
+        let runs: Vec<(String, RunStyle)> = "one two three four five six seven"
+            .split_whitespace()
+            .map(|w| (w.to_string(), RunStyle::Committed))
+            .collect();
+
+        // Narrow enough that every line must hold only a couple of words.
+        let max_w = 80.0;
+        let lines = wrap_runs(&font, &runs, px, max_w);
+
+        assert!(lines.len() > 1, "narrow width must wrap onto multiple lines");
+        // No word is split: every original word appears exactly once, in order.
+        let rebuilt: Vec<&str> = lines
+            .iter()
+            .flat_map(|l| l.words.iter().map(|(w, _)| w.as_str()))
+            .collect();
+        let expected: Vec<&str> = "one two three four five six seven".split_whitespace().collect();
+        assert_eq!(rebuilt, expected);
+    }
+
+    #[test]
+    fn wrap_runs_single_line_when_width_is_generous() {
+        let font = font();
+        let runs: Vec<(String, RunStyle)> = vec![
+            ("hello".to_string(), RunStyle::Committed),
+            ("world".to_string(), RunStyle::Committed),
+        ];
+        let lines = wrap_runs(&font, &runs, 16.0, 10_000.0);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].words.len(), 2);
+    }
+
+    #[test]
+    fn box_blur_radius_zero_is_noop() {
+        let mut bmp = vec![0u8, 255, 0, 255, 0, 255, 0, 255, 0];
+        let before = bmp.clone();
+        box_blur(&mut bmp, 3, 3, 0);
+        assert_eq!(bmp, before);
+    }
+
+    #[test]
+    fn box_blur_smooths_a_sharp_edge() {
+        // A 1-pixel-wide bright column in a dark 5x1 row.
+        let mut bmp = vec![0u8, 0, 255, 0, 0];
+        box_blur(&mut bmp, 5, 1, 1);
+        // The center is averaged down (no longer fully bright) and its
+        // neighbors picked up some of its brightness (no longer fully dark) —
+        // i.e. the edge actually got softer, not just shuffled.
+        assert!(bmp[2] < 255, "center should have softened: {bmp:?}");
+        assert!(bmp[1] > 0, "left neighbor should pick up some brightness: {bmp:?}");
+        assert!(bmp[3] > 0, "right neighbor should pick up some brightness: {bmp:?}");
+    }
+
+    #[test]
+    fn rounded_rect_path_is_some_for_sane_dimensions() {
+        assert!(rounded_rect_path(0.0, 0.0, 100.0, 50.0, 12.0).is_some());
+        // Radius larger than half the smallest dimension is clamped, not rejected.
+        assert!(rounded_rect_path(0.0, 0.0, 20.0, 10.0, 999.0).is_some());
+    }
 }

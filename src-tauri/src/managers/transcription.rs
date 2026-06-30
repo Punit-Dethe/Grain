@@ -73,6 +73,10 @@ pub struct TranscriptionManager {
     watcher_handle: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
     is_loading: Arc<Mutex<bool>>,
     loading_condvar: Arc<Condvar>,
+    /// [GRAIN] M2: true while a transcription is actually running, so the
+    /// lifecycle arbiter treats Batch as having an active session and won't
+    /// evict it mid-transcription. Set/cleared by a RAII guard in `transcribe`.
+    transcribing: Arc<AtomicBool>,
 }
 
 impl TranscriptionManager {
@@ -87,6 +91,7 @@ impl TranscriptionManager {
             watcher_handle: Arc::new(Mutex::new(None)),
             is_loading: Arc::new(Mutex::new(false)),
             loading_condvar: Arc::new(Condvar::new()),
+            transcribing: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -174,6 +179,13 @@ impl TranscriptionManager {
     pub fn is_model_loaded(&self) -> bool {
         let engine = self.lock_engine();
         engine.is_some()
+    }
+
+    /// [GRAIN] M2: true while a model load is in progress OR a transcription is
+    /// running — the window during which the lifecycle arbiter must not evict
+    /// this engine.
+    pub fn is_busy(&self) -> bool {
+        self.transcribing.load(Ordering::Relaxed) || *self.is_loading.lock().unwrap()
     }
 
     /// Atomically check whether a model load is in progress and, if not, mark
@@ -267,9 +279,19 @@ impl TranscriptionManager {
         let load_start = std::time::Instant::now();
         debug!("Starting to load model: {}", model_id);
 
-        // [GRAIN] A5 mutual exclusion: free the rolling model before loading the
-        // batch model, so ≤1 model's weights are ever resident in RAM.
-        if let Some(rt) = self
+        // [GRAIN] M2 mutual exclusion: consult the lifecycle arbiter before
+        // loading, so ≤1 heavyweight model's weights are ever resident. It evicts
+        // the inactive Rolling/Native engine, or refuses if one holds an active
+        // session. Falls back to the legacy direct rolling-unload when the arbiter
+        // isn't managed (e.g. the headless path with no rolling engine).
+        if let Some(lifecycle) =
+            self.app_handle
+                .try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
+        {
+            lifecycle
+                .prepare_load(engine_lifecycle_core::EngineSlot::Batch, std::time::Instant::now())
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        } else if let Some(rt) = self
             .app_handle
             .try_state::<Arc<crate::rolling::RollingTranscriber>>()
         {
@@ -513,6 +535,18 @@ impl TranscriptionManager {
                 return Err(anyhow::anyhow!("Model is not loaded for transcription."));
             }
         }
+
+        // [GRAIN] M2: mark this engine busy for the whole transcription so the
+        // lifecycle arbiter won't evict it mid-work. The guard clears the flag on
+        // every exit path (success, early return, panic-unwind).
+        struct BusyGuard(Arc<AtomicBool>);
+        impl Drop for BusyGuard {
+            fn drop(&mut self) {
+                self.0.store(false, Ordering::Relaxed);
+            }
+        }
+        self.transcribing.store(true, Ordering::Relaxed);
+        let _busy = BusyGuard(self.transcribing.clone());
 
         // Get current settings for configuration
         let settings = get_settings(&self.app_handle);

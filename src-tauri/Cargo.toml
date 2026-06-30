@@ -23,6 +23,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # name = "cli"
 # path = "src/audio_toolkit/bin/cli.rs"
 
+[features]
+default = []
+# [GRAIN] M5: enable the real Sherpa-ONNX Native ASR backend. Pulls the native
+# sherpa-onnx lib (its build script downloads a prebuilt archive unless
+# SHERPA_ONNX_LIB_DIR is set). OFF by default — the demo route uses the fake
+# backend until this is enabled.
+native-asr-sherpa = ["dep:grain-asr-sherpa"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde_json = "1"
@@ -36,6 +44,11 @@ provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotatio
 grain-transcribe = { path = "../crates/grain-transcribe", features = [
   "whisper",
 ] } # [GRAIN] rolling engine (all models incl. whisper)
+engine_lifecycle_core = { package = "engine-lifecycle", path = "../crates/engine-lifecycle" } # [GRAIN] M2 lifecycle arbiter (renamed to avoid clashing with the engine_lifecycle module)
+grain-asr-core = { path = "../crates/grain-asr-core" } # [GRAIN] M1/M3 native ASR protocol + audio input policy
+grain-asr-sherpa = { path = "../crates/grain-asr-sherpa", features = [
+  "backend",
+], optional = true } # [GRAIN] M5 real Sherpa-ONNX backend (behind the native-asr-sherpa feature)
 once_cell = "1"
 tauri = { version = "2.10.2", features = [
   "protocol-asset",
@@ -77,6 +90,7 @@ chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
+bzip2 = "0.4" # [GRAIN] M4: extract Sherpa .tar.bz2 ASR model bundles
 sha2 = "0.10"
 transcribe-rs = { version = "0.3.8", features = ["whisper-cpp", "onnx"] }
 handy-keys = "0.2.4"

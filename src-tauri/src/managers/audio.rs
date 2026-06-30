@@ -152,6 +152,14 @@ fn create_audio_recorder(
                 {
                     rt.feed(frame);
                 }
+                // [GRAIN] M3: also fan out to the Native ASR input sink. Non-blocking
+                // and a no-op unless a native session has armed it, so Rolling/Batch
+                // are unaffected.
+                if let Some(input) = app_handle
+                    .try_state::<std::sync::Arc<crate::native_asr::NativeAsrInput>>()
+                {
+                    input.feed(frame);
+                }
             }
         });
 

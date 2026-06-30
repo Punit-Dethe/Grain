@@ -8,11 +8,13 @@ mod bridge; // [GRAIN] Tauri-shell → headless DaemonEvent bus
 pub mod cli;
 mod clipboard;
 mod commands;
+mod engine_lifecycle; // [GRAIN] M2: shared lifecycle arbiter wiring (Batch/Rolling/Native adapters)
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod helpers;
 mod input;
 mod llm_client;
 mod managers;
+mod native_asr; // [GRAIN] M3: native ASR audio input fan-out (pre-roll + bounded queue)
 mod overlay;
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
@@ -275,10 +277,45 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    // [GRAIN] M4: native ASR model registry (separate from the Batch/Rolling
+    // ModelManager; keyed by `selected_asr_model`).
+    match managers::asr_model::AsrModelManager::new(app_handle) {
+        Ok(m) => {
+            app_handle.manage(Arc::new(m));
+        }
+        Err(e) => log::error!("[GRAIN] failed to init ASR model manager: {e}"),
+    }
     // [GRAIN] real-time rolling transcription engine (on-demand model + idle-unload).
     let rolling_transcriber = Arc::new(rolling::RollingTranscriber::default());
     rolling_transcriber.start_idle_watcher(app_handle.clone());
+    // [GRAIN] M3: native ASR audio input sink (400 ms pre-roll, 256-frame bounded
+    // queue) at the host delivery rate. Inert until armed by the Native ASR path;
+    // the audio fan-out only costs one atomic load per frame while disarmed.
+    let native_input = Arc::new(native_asr::NativeAsrInput::new(
+        grain_asr_core::AudioFormat::HOST_DEFAULT.sample_rate_hz,
+        400,
+        256,
+    ));
+    // [GRAIN] M6: native ASR session manager (worker thread + DaemonEvent bridge).
+    // Created before the arbiter so the Native engine adapter can track its state.
+    let native_manager = Arc::new(native_asr::NativeAsrManager::new(
+        app_handle.clone(),
+        native_input.clone(),
+    ));
+    // [GRAIN] M2: shared engine-lifecycle arbiter. Both load paths consult it for
+    // mutual exclusion (replaces the old pairwise cross-unload). The Native engine
+    // adapter delegates to `native_manager` so a resident Native model counts
+    // toward the ≤1-heavyweight rule. Admission ceiling left `None` for now.
+    let lifecycle = Arc::new(engine_lifecycle::build_manager(
+        transcription_manager.clone(),
+        rolling_transcriber.clone(),
+        native_manager.clone(),
+        None,
+    ));
+    app_handle.manage(lifecycle);
     app_handle.manage(rolling_transcriber);
+    app_handle.manage(native_input);
+    app_handle.manage(native_manager);
     // [GRAIN] smart-rotation health trackers (one per domain), shared by the STT
     // and post-process routers for cooldown-aware provider ordering.
     app_handle.manage(Arc::new(rotation_state::RotationTrackers::default()));
@@ -720,6 +757,14 @@ pub fn run(cli_args: CliArgs) {
             commands::models::is_model_loading,
             commands::models::has_any_models_available,
             commands::models::has_any_models_or_downloads,
+            commands::native_asr::list_asr_models,
+            commands::native_asr::download_asr_model,
+            commands::native_asr::cancel_asr_model_download,
+            commands::native_asr::delete_asr_model,
+            commands::native_asr::select_asr_model,
+            commands::native_asr::start_native_asr,
+            commands::native_asr::stop_native_asr,
+            commands::native_asr::native_asr_running,
             commands::audio::update_microphone_mode,
             commands::audio::get_microphone_mode,
             commands::audio::get_windows_microphone_permission_status,
