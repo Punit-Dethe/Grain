@@ -1310,6 +1310,197 @@ impl ShortcutAction for RealtimeTranscribeAction {
     }
 }
 
+// [GRAIN] Native ASR — push-to-talk, exactly like Batch and Rolling: the
+// shortcut loads the backend, opens the mic, and streams live partial/commit
+// text to the Studio Window overlay (`worker::drive_session` → `Asr*`
+// `DaemonEvent`s, emitted directly by `NativeAsrManager`'s worker thread — this
+// action only owns the recording lifecycle, not the live text). `stop` finalizes
+// the transcript, pastes it, and saves history, mirroring `RealtimeTranscribeAction`.
+struct NativeAsrAction;
+
+impl ShortcutAction for NativeAsrAction {
+    fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        if !get_settings(app).experimental_enabled {
+            warn!("Native ASR shortcut pressed but Experimental features are disabled");
+            return;
+        }
+
+        // [GRAIN] The ASR model registry only gets managed when its on-disk init
+        // succeeds (see lib.rs); guard with try_state so a failed init surfaces as
+        // a clean no-op instead of panicking the shortcut handler thread.
+        let Some(asr_models) = app.try_state::<Arc<crate::managers::asr_model::AsrModelManager>>()
+        else {
+            warn!("Native ASR: model registry unavailable (init failed at startup)");
+            return;
+        };
+        let manager = Arc::clone(&app.state::<Arc<crate::native_asr::NativeAsrManager>>());
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+
+        // Mutual exclusion: free the inactive Batch/Rolling engine before starting.
+        if let Some(lifecycle) =
+            app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
+        {
+            if let Err(e) = lifecycle.prepare_load(
+                engine_lifecycle_core::EngineSlot::NativeAsr,
+                std::time::Instant::now(),
+            ) {
+                warn!("Native ASR: lifecycle admission failed: {e}");
+                return;
+            }
+        }
+
+        let binding_id = binding_id.to_string();
+        change_tray_icon(app, TrayIconState::Recording);
+
+        let settings = get_settings(app);
+        let is_always_on = settings.always_on_microphone;
+        let mut recording_error: Option<String> = None;
+        if is_always_on {
+            let rm_clone = Arc::clone(&rm);
+            let app_clone = app.clone();
+            std::thread::spawn(move || {
+                play_feedback_sound_blocking(&app_clone, SoundType::Start);
+                rm_clone.apply_mute();
+            });
+            if let Err(e) = rm.try_start_recording(&binding_id) {
+                recording_error = Some(e);
+            }
+        } else {
+            match rm.try_start_recording(&binding_id) {
+                Ok(()) => {
+                    let app2 = app.clone();
+                    let rm2 = Arc::clone(&rm);
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        play_feedback_sound_blocking(&app2, SoundType::Start);
+                        rm2.apply_mute();
+                    });
+                }
+                Err(e) => recording_error = Some(e),
+            }
+        }
+
+        if recording_error.is_none() {
+            let sid = SESSION_ID.fetch_add(1, Ordering::Relaxed) + 1;
+            crate::bridge::emit(
+                app,
+                DaemonEvent::OverlayConfig {
+                    position: get_settings(app).overlay_position,
+                },
+            );
+            crate::bridge::emit(
+                app,
+                DaemonEvent::RecordingStarted {
+                    session_id: sid,
+                    mode: SessionMode::NativeAsr,
+                },
+            );
+
+            let (backend, spec) = crate::commands::native_asr::resolve_backend(app, &asr_models);
+            manager.start(backend, spec, None, grain_asr_core::session::ContextHints::default());
+
+            shortcut::register_cancel_shortcut(app);
+        } else {
+            change_tray_icon(app, TrayIconState::Idle);
+            if let Some(err) = recording_error {
+                let error_type = if is_microphone_access_denied(&err) {
+                    "microphone_permission_denied"
+                } else if is_no_input_device_error(&err) {
+                    "no_input_device"
+                } else {
+                    "unknown"
+                };
+                let _ = app.emit(
+                    "recording-error",
+                    RecordingErrorEvent {
+                        error_type: error_type.to_string(),
+                        detail: Some(err),
+                    },
+                );
+            }
+        }
+    }
+
+    fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
+        shortcut::unregister_cancel_shortcut(app);
+
+        let ah = app.clone();
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let manager = Arc::clone(&app.state::<Arc<crate::native_asr::NativeAsrManager>>());
+        let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
+        let binding_id = binding_id.to_string();
+
+        let session_id = SESSION_ID.load(Ordering::Relaxed);
+        crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
+
+        change_tray_icon(app, TrayIconState::Transcribing);
+        rm.remove_mute();
+        play_feedback_sound(app, SoundType::Stop);
+
+        tauri::async_runtime::spawn(async move {
+            let _guard = FinishGuard(ah.clone());
+
+            // The mic frames already reached the worker live; the captured
+            // samples themselves are discarded (Native ASR has no WAV/batch use).
+            let _ = rm.stop_recording(&binding_id);
+
+            // [GRAIN] `manager.stop()` joins the worker thread (it runs `finish()`
+            // before returning), so it must not block the async runtime's only
+            // thread pool slot for this task indefinitely — spawn_blocking keeps
+            // the join off the async executor.
+            let raw = tauri::async_runtime::spawn_blocking(move || manager.stop())
+                .await
+                .unwrap_or(None);
+
+            let final_text = match raw {
+                Some(text) if !text.trim().is_empty() => {
+                    let settings = get_settings(&ah);
+                    let finalized = crate::audio_toolkit::finalize_transcript(
+                        &text,
+                        &settings.custom_words,
+                        settings.word_correction_threshold,
+                        &settings.app_language,
+                        &settings.custom_filler_words,
+                        false,
+                    );
+                    if let Err(e) = hm.save_entry(String::new(), finalized.clone(), false, None, None)
+                    {
+                        error!("Failed to save Native ASR history entry: {e}");
+                    }
+                    finalized
+                }
+                _ => String::new(),
+            };
+
+            if final_text.trim().is_empty() {
+                change_tray_icon(&ah, TrayIconState::Idle);
+            } else {
+                let ah_clone = ah.clone();
+                ah.run_on_main_thread(move || {
+                    if let Err(e) = utils::paste(final_text, ah_clone.clone()) {
+                        error!("Failed to paste Native ASR transcription: {e}");
+                        let _ = ah_clone.emit("paste-error", ());
+                    }
+                    change_tray_icon(&ah_clone, TrayIconState::Idle);
+                })
+                .unwrap_or_else(|e| {
+                    error!("Failed to run paste on main thread: {e:?}");
+                    change_tray_icon(&ah, TrayIconState::Idle);
+                });
+            }
+
+            // [GRAIN] processing finished → pill/Studio Window hides.
+            crate::bridge::emit(
+                &ah,
+                DaemonEvent::ProcessingComplete {
+                    session_id,
+                    text: String::new(),
+                },
+            );
+        });
+    }
+}
+
 pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::new(|| {
     let mut map = HashMap::new();
     map.insert(
@@ -1332,6 +1523,11 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
             post_process: true,
             post_process_override: AtomicBool::new(false),
         }) as Arc<dyn ShortcutAction>,
+    );
+    // [GRAIN] Native ASR — streaming dictation in the Studio Window.
+    map.insert(
+        "transcribe_native_asr".to_string(),
+        Arc::new(NativeAsrAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "cancel".to_string(),

@@ -16,6 +16,11 @@ pub enum SessionMode {
     VoiceToAI,
     /// Batch — record fully, then transcribe once (no rolling window).
     Batch,
+    /// [GRAIN] Native ASR — live streaming dictation. Tells the pill to switch
+    /// from the small collapsed capsule to the expanded Studio Window, since
+    /// only this mode has a stabilized live-text stream (`Asr*` events) worth
+    /// displaying.
+    NativeAsr,
 }
 
 /// One event broadcast by the daemon. `Clone` so every subscriber gets a copy;
@@ -91,5 +96,40 @@ pub enum DaemonEvent {
     /// the user changes the position setting, so the pill can place/hide itself.
     OverlayConfig {
         position: crate::settings::OverlayPosition,
+    },
+
+    // -- Native ASR (real-time streaming dictation) --
+    // The stabilized stream from the Native ASR path. `AsrCommit` text is
+    // immutable (safe to keep); `AsrPartial` text is volatile (display only).
+    /// Volatile tail for a segment. `stable` = the stabilizer is confident it
+    /// won't change (held only by commit lag), else it may still be rewritten.
+    AsrPartial {
+        session_id: u64,
+        segment_id: u64,
+        text: String,
+        stable: bool,
+    },
+    /// Newly committed (immutable) words appended to a segment's prefix.
+    AsrCommit {
+        session_id: u64,
+        segment_id: u64,
+        text: String,
+    },
+    /// A segment closed; `text` is its full final transcript.
+    AsrSegmentFinal {
+        session_id: u64,
+        segment_id: u64,
+        text: String,
+    },
+    /// The whole session closed; `text` is every segment joined (paste/history).
+    AsrSessionFinal {
+        session_id: u64,
+        text: String,
+    },
+    /// A surfaced Native ASR error.
+    AsrError {
+        session_id: u64,
+        recoverable: bool,
+        message: String,
     },
 }

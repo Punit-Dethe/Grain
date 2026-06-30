@@ -230,6 +230,10 @@ pub enum OverlayPosition {
     None,
     Top,
     Bottom,
+    /// [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
+    /// (a tall content box reads poorly hugging an edge); also selectable for
+    /// the small pill.
+    Center,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -485,6 +489,11 @@ pub struct AppSettings {
     pub update_checks_enabled: bool,
     #[serde(default = "default_model")]
     pub selected_model: String,
+    /// [GRAIN] Native ASR model id (separate registry from `selected_model`).
+    /// Empty = none selected. Never overload `selected_model`: Batch/Rolling and
+    /// Native ASR have different model topologies and lifecycles.
+    #[serde(default)]
+    pub selected_asr_model: String,
     #[serde(default = "default_always_on_microphone")]
     pub always_on_microphone: bool,
     #[serde(default)]
@@ -945,6 +954,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "prompt_prev",
         "summon_agent",
         "transcribe_send_to_ai",
+        "transcribe_native_asr",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1060,6 +1070,26 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    // [GRAIN] Native ASR: streaming dictation with live partial/committed text in
+    // the Studio Window overlay. Push-to-talk like the other capture modes — the
+    // engine loads/unloads automatically around the shortcut, never resident
+    // otherwise. Default mirrors the "+shift" relationship between
+    // transcribe_realtime and transcribe_with_post_process.
+    #[cfg(target_os = "macos")]
+    let default_native_asr_shortcut = "option+ctrl+shift+space";
+    #[cfg(not(target_os = "macos"))]
+    let default_native_asr_shortcut = "ctrl+alt+shift+space";
+    bindings.insert(
+        "transcribe_native_asr".to_string(),
+        ShortcutBinding {
+            id: "transcribe_native_asr".to_string(),
+            name: "Streaming Transcribe".to_string(),
+            description: "Native real-time dictation with live streaming text.".to_string(),
+            default_binding: default_native_asr_shortcut.to_string(),
+            current_binding: default_native_asr_shortcut.to_string(),
+        },
+    );
+
     // [GRAIN] Summon the Agent: a voice-first AI scratchpad in its own destroyable
     // window. Tap shortcut (fires on press). Captures the current selection, then
     // dictate/type an instruction; uses the configured post-process provider.
@@ -1107,6 +1137,7 @@ pub fn get_default_settings() -> AppSettings {
         autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),
         selected_model: "".to_string(),
+        selected_asr_model: String::new(),
         always_on_microphone: false,
         selected_microphone: None,
         clamshell_microphone: None,

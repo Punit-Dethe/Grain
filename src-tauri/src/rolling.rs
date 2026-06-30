@@ -107,9 +107,18 @@ impl RollingTranscriber {
             }
             let path = mm.get_model_path(&model_id).map_err(|e| e.to_string())?;
             let kind = map_engine(info.engine_type);
-            // [GRAIN] A5 mutual exclusion: free Handy's batch model before loading
-            // the rolling one, so ≤1 model's weights are ever resident.
-            if let Some(tm) =
+            // [GRAIN] M2 mutual exclusion: consult the lifecycle arbiter before
+            // loading the rolling model, so ≤1 heavyweight model's weights are
+            // ever resident. It evicts the inactive Batch/Native engine, or
+            // refuses if one holds an active session. Falls back to the legacy
+            // direct batch-unload when the arbiter isn't managed.
+            if let Some(lifecycle) =
+                app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
+            {
+                lifecycle
+                    .prepare_load(engine_lifecycle_core::EngineSlot::Rolling, Instant::now())
+                    .map_err(|e| e.to_string())?;
+            } else if let Some(tm) =
                 app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
             {
                 let _ = tm.unload_model();

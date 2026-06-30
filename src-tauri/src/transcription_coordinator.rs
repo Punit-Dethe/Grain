@@ -42,7 +42,9 @@ pub fn is_transcribe_binding(id: &str) -> bool {
         || id == "transcribe_with_post_process"
         || id == "transcribe_realtime"
         || id == "transcribe_send_to_ai"
-    // ^ [GRAIN] real-time binding shares the serialized record/transcribe lifecycle
+        || id == "transcribe_native_asr"
+    // ^ [GRAIN] real-time + Native ASR bindings share the serialized
+    // record/transcribe lifecycle, so they can never overlap each other or Batch.
 }
 
 impl TranscriptionCoordinator {
