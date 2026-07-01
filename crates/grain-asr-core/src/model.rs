@@ -63,6 +63,58 @@ pub struct MemoryProfile {
     pub approx_mb: u32,
 }
 
+/// How a transducer backend searches for the best token sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DecodingMethod {
+    /// One best path — fastest, deterministic.
+    Greedy,
+    /// Keep `num_active_paths` hypotheses — higher accuracy. Cheap on these
+    /// models because the decoder/joiner are tiny relative to the encoder, so
+    /// the extra search barely moves the real-time factor.
+    ModifiedBeamSearch { num_active_paths: u32 },
+}
+
+/// [GRAIN] Per-model runtime tuning — the model-specific "audio/decoding
+/// profile" a backend applies to maximize *this* model's accuracy and keep it
+/// real-time. The shape is backend-agnostic (any streaming ASR engine has these
+/// concepts); the sherpa backend maps it onto `OnlineRecognizerConfig`.
+///
+/// Extend this — not the host audio pipeline — when a knob is genuinely
+/// per-model. Some model-specific audio concerns are NOT yet expressible here
+/// and are tracked in the architecture plan (host pre-roll duration, and whether
+/// the model wants the recorder's high-pass/AGC conditioning bypassed); they
+/// live on the global recorder today and want to become part of this profile.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AsrTuning {
+    /// Intra-op threads for the ONNX session. Heavier encoders need more to
+    /// process each streaming chunk within its real-time budget (a model that
+    /// can't keep up drops frames → worse accuracy).
+    pub num_threads: u32,
+    /// Decoding search strategy.
+    pub decoding: DecodingMethod,
+    /// Trailing silence (seconds) after speech that closes a segment — the
+    /// model's own endpointer (maps to sherpa `rule2_min_trailing_silence`).
+    /// Lower = snappier segment finalization (commits flow sooner); higher =
+    /// more context per segment.
+    pub endpoint_trailing_silence_secs: f32,
+    /// Hard cap (seconds) on one utterance before a segment boundary is forced
+    /// even without a pause (maps to sherpa `rule3_min_utterance_length`).
+    pub endpoint_max_utterance_secs: f32,
+}
+
+impl Default for AsrTuning {
+    /// Conservative defaults that reproduce the pre-tuning behavior: single
+    /// thread, greedy, sherpa's stock endpoint timings.
+    fn default() -> Self {
+        Self {
+            num_threads: 1,
+            decoding: DecodingMethod::Greedy,
+            endpoint_trailing_silence_secs: 1.2,
+            endpoint_max_utterance_secs: 20.0,
+        }
+    }
+}
+
 /// On-disk file layout of a Native ASR model. An enum (not a flat struct) so each
 /// backend topology is explicit and the host can validate the right file set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,4 +145,10 @@ pub struct AsrModelSpec {
     /// Declared capabilities (a hint — see [`AsrCapabilities`]).
     pub capabilities: AsrCapabilities,
     pub memory: MemoryProfile,
+    /// [GRAIN] The model's runtime profile — decoding/endpoint/threading knobs
+    /// the backend applies to maximize this model's accuracy. Every model in the
+    /// catalog declares one; anything constructed without a specific profile uses
+    /// [`AsrTuning::default`] (the standardized fallback), so the pipeline stays
+    /// model-agnostic and no model is left un-tuned.
+    pub tuning: AsrTuning,
 }

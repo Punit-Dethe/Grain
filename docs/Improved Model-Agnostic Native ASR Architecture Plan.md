@@ -1222,3 +1222,41 @@ External:
 - DPDFNet in Sherpa-ONNX examples/docs: https://github.com/k2-fsa/sherpa-onnx/blob/master/c-api-examples/speech-enhancement-dpdfnet-c-api.c
 - `rust-asr-server`: https://github.com/aivo0/rust-asr-server
 - `yamabiko-whisper`: https://crates.io/crates/yamabiko-whisper
+
+---
+
+## Per-Model Runtime Profile (2026-07-02, `AsrTuning`)
+
+Every catalog model now declares an `AsrTuning` profile (`grain-asr-core::model`)
+— the standardized, model-agnostic way to tune a model. Missing/unspecified →
+`AsrTuning::default()` (single thread, greedy, sherpa stock endpoint timings), so
+no model is ever left un-tuned. The sherpa backend maps it onto
+`OnlineRecognizerConfig` in `load()`.
+
+Configurable now (all per-model, applied by the backend):
+- `num_threads` — heavier encoders need more to stay real-time (a model that
+  can't process each streaming chunk within its budget drops frames → worse
+  accuracy). Nemotron 0.6B → 4, fast-conformer → 2, zipformer → 1.
+- `decoding` — `Greedy` vs `ModifiedBeamSearch { num_active_paths }`. Beam search
+  is cheap on these models (tiny decoder/joiner vs the encoder) so the accurate
+  models use it (paths=4); the compact zipformer stays greedy.
+- `endpoint_trailing_silence_secs` (sherpa `rule2`) + `endpoint_max_utterance_secs`
+  (`rule3`). Snappier endpoint (Nemotron 0.8s) finalizes segments sooner, so
+  committed text flows instead of landing in one big block at a long pause.
+- Feature sample rate follows `AsrModelSpec::sample_rate_hz`; NeMo feature
+  *normalization* is auto-detected by sherpa from onnx metadata (not a manual knob).
+
+Known model-specific audio knobs NOT yet expressible in `AsrTuning` (they live on
+the GLOBAL recorder / native input today; tracked to migrate into the per-model
+profile so this stays fully model-agnostic):
+- **Voice conditioning (85 Hz high-pass + boost-only AGC)** — a global recorder
+  setting. NeMo/Nemotron models normalize features internally, so external AGC can
+  be redundant or mildly harmful; these models likely prefer raw 16 kHz. Wants a
+  per-model `prefers_raw_audio`/conditioning override.
+- **Pre-roll duration** — the `NativeAsrInput` pre-roll ring is a fixed 400 ms set
+  at construction. A higher-lookahead model (Nemotron 560 ms) may want more so the
+  first words aren't clipped. Wants to be per-model.
+
+When we make those per-model, extend `AsrTuning` (or a broader `ModelProfile`
+wrapping it) and have the Native ASR session reconfigure the recorder/input at
+session start from the active model's profile.

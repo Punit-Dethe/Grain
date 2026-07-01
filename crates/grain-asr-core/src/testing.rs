@@ -109,6 +109,7 @@ mod tests {
             languages: vec!["en".into()],
             capabilities: AsrCapabilities::streaming_minimal(),
             memory: MemoryProfile { approx_mb: 64 },
+            tuning: crate::model::AsrTuning::default(),
         }
     }
 

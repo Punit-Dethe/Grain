@@ -112,8 +112,7 @@ impl RollingTranscriber {
             // ever resident. It evicts the inactive Batch/Native engine, or
             // refuses if one holds an active session. Falls back to the legacy
             // direct batch-unload when the arbiter isn't managed.
-            if let Some(lifecycle) =
-                app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
+            if let Some(lifecycle) = app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
             {
                 lifecycle
                     .prepare_load(engine_lifecycle_core::EngineSlot::Rolling, Instant::now())

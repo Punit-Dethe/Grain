@@ -19,6 +19,7 @@ export const ShowOverlay: React.FC<ShowOverlayProps> = React.memo(
       { value: "none", label: t("settings.advanced.overlay.options.none") },
       { value: "bottom", label: t("settings.advanced.overlay.options.bottom") },
       { value: "top", label: t("settings.advanced.overlay.options.top") },
+      { value: "center", label: t("settings.advanced.overlay.options.center") },
     ];
 
     const selectedPosition = (getSetting("overlay_position") ||

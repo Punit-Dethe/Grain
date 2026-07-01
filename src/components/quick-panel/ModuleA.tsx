@@ -16,27 +16,43 @@ const Spacer: React.FC<{ h: number }> = ({ h }) => (
   <div style={{ height: h, flex: "none" }} />
 );
 
-/** A single hotkey row: label + keycap chips (read-only display). */
-const HotkeyRow: React.FC<{ label: string; binding: string }> = ({
+/** One column of the side-by-side capture-mode trio: label on top, keycaps
+ *  below (horizontally scrollable so a 4-key combo never breaks the column). */
+const HotkeyChip: React.FC<{ label: string; binding: string }> = ({
   label,
   binding,
 }) => (
   <div
-    className="flex items-center justify-between"
+    className="flex-1 flex flex-col items-center justify-center"
     style={{
-      height: 42,
+      height: 52,
+      minWidth: 0,
+      gap: 5,
       borderRadius: 6,
-      paddingLeft: 12,
-      paddingRight: 10,
+      padding: "0 6px",
       backgroundColor: fill(0.03),
       border: `1px solid ${fill(0.06)}`,
     }}
   >
-    <span style={{ fontSize: 11, fontWeight: 600, color: ink(0.85) }}>
+    <span
+      style={{
+        fontFamily: MONO,
+        fontSize: 8,
+        fontWeight: 700,
+        letterSpacing: "0.5px",
+        textTransform: "uppercase",
+        color: ink(0.55),
+      }}
+    >
       {label}
     </span>
     {binding ? (
-      <KeyCaps binding={binding} />
+      <div
+        className="max-w-full overflow-x-auto qp-scroll"
+        style={{ scrollbarWidth: "none" }}
+      >
+        <KeyCaps binding={binding} />
+      </div>
     ) : (
       <span style={{ fontFamily: MONO, fontSize: 9, color: ink(0.4) }}>
         unset
@@ -136,17 +152,17 @@ export const ModuleA: React.FC = () => {
       <WellLabel letterSpacing={1.5} marginBottom={8}>
         SYSTEM HOTKEYS
       </WellLabel>
-      <HotkeyRow label="Dictation" binding={bindingFor("transcribe")} />
-      <Spacer h={4} />
-      <HotkeyRow
-        label="Voice-to-AI"
-        binding={bindingFor("transcribe_with_post_process")}
-      />
-      <Spacer h={4} />
-      <HotkeyRow
-        label="Real-time"
-        binding={bindingFor("transcribe_realtime")}
-      />
+      {/* [GRAIN] The three capture engines, side-by-side: Batch, Rolling, Native
+          ASR. Voice-to-AI stays a modifier of Batch/Rolling — it's listed in the
+          main Settings hotkeys tab, not duplicated here. */}
+      <div className="flex items-stretch" style={{ gap: 6 }}>
+        <HotkeyChip label="Batch" binding={bindingFor("transcribe")} />
+        <HotkeyChip label="Rolling" binding={bindingFor("transcribe_realtime")} />
+        <HotkeyChip
+          label="Native ASR"
+          binding={bindingFor("transcribe_native_asr")}
+        />
+      </div>
 
       <Spacer h={20} />
 

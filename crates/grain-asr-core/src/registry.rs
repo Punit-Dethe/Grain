@@ -11,7 +11,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AsrBackendKind, AsrCapabilities, AsrModelFiles, AsrModelSpec, MemoryProfile};
+use crate::model::{
+    AsrBackendKind, AsrCapabilities, AsrModelFiles, AsrModelSpec, AsrTuning, MemoryProfile,
+};
 
 /// The relative filenames of a Sherpa streaming-transducer bundle, inside its
 /// installed model directory.
@@ -82,6 +84,9 @@ pub struct AsrModelCatalogEntry {
     pub sample_rate_hz: u32,
     pub capabilities: AsrCapabilities,
     pub memory: MemoryProfile,
+    /// The model's runtime profile (decoding/endpoint/threading). Every entry
+    /// declares one; use [`AsrTuning::default`] when the stock settings are fine.
+    pub tuning: AsrTuning,
     pub download: AsrDownload,
     pub layout: SherpaTransducerLayout,
 }
@@ -98,6 +103,7 @@ impl AsrModelCatalogEntry {
             languages: self.languages.clone(),
             capabilities: self.capabilities,
             memory: self.memory,
+            tuning: self.tuning,
         }
     }
 
@@ -112,37 +118,129 @@ impl AsrModelCatalogEntry {
     }
 }
 
-/// The built-in catalog of Native ASR models. Starts with one known-good Sherpa
-/// streaming transducer (the MVP target). Filenames/URL verified against the
-/// sherpa-onnx pretrained-models docs.
+/// The built-in catalog of Native ASR models. Every entry is a Sherpa streaming
+/// (online) transducer — encoder/decoder/joiner/tokens — so it drops straight
+/// into `OnlineRecognizer` with true word-by-word partials. Filenames/URLs
+/// verified against the sherpa-onnx `asr-models` GitHub releases + the models'
+/// HuggingFace file trees.
+///
+/// Note on Parakeet: NVIDIA's headline "Parakeet TDT 0.6b" is an OFFLINE
+/// transducer in sherpa-onnx (it only does VAD-chunked *simulated* streaming),
+/// so it does not fit this online architecture. The entry below is the
+/// STREAMING member of the same NeMo fast-conformer/Parakeet family — a true
+/// online transducer — which is the right fit for the live Studio Window.
 pub fn builtin_catalog() -> Vec<AsrModelCatalogEntry> {
-    vec![AsrModelCatalogEntry {
-        id: "sherpa-onnx-streaming-zipformer-en-2023-06-26".into(),
-        name: "Streaming Zipformer (English)".into(),
-        backend: AsrBackendKind::SherpaOnnx,
-        languages: vec!["en".into()],
-        sample_rate_hz: 16_000,
-        capabilities: AsrCapabilities {
-            partials: true,
-            immutable_final: true,
-            endpointing: true,
-            word_timestamps: true,
+    vec![
+        // NVIDIA Nemotron streaming 0.6B (int8) — the most accurate streaming
+        // model here. Big encoder (~622 MB), 560 ms lookahead → accuracy-first
+        // profile: beam search + more threads to stay real-time, and a snappier
+        // endpoint so segments finalize (and thus fully commit) sooner.
+        AsrModelCatalogEntry {
+            id: "sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25".into(),
+            name: "NVIDIA Nemotron Streaming (English, best accuracy)".into(),
+            backend: AsrBackendKind::SherpaOnnx,
+            languages: vec!["en".into()],
+            sample_rate_hz: 16_000,
+            capabilities: AsrCapabilities {
+                partials: true,
+                immutable_final: true,
+                endpointing: true,
+                word_timestamps: false,
+            },
+            memory: MemoryProfile { approx_mb: 720 },
+            // NeMo transducers only implement greedy search in sherpa-onnx
+            // (`modified_beam_search` makes the NeMo impl *abort the process*),
+            // and greedy transducer decoding is already essentially as accurate —
+            // beam search barely moves transducer WER. Accuracy here comes from
+            // the big encoder + enough threads to run it real-time.
+            tuning: AsrTuning {
+                num_threads: 4,
+                decoding: crate::model::DecodingMethod::Greedy,
+                endpoint_trailing_silence_secs: 0.8,
+                endpoint_max_utterance_secs: 20.0,
+            },
+            download: AsrDownload {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25.tar.bz2".into(),
+                sha256: None,
+                size_mb: 464,
+                archive_root: Some("sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25".into()),
+            },
+            layout: SherpaTransducerLayout {
+                encoder: "encoder.int8.onnx".into(),
+                decoder: "decoder.int8.onnx".into(),
+                joiner: "joiner.int8.onnx".into(),
+                tokens: "tokens.txt".into(),
+                config: None,
+            },
         },
-        memory: MemoryProfile { approx_mb: 350 },
-        download: AsrDownload {
-            url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2".into(),
-            sha256: None,
-            size_mb: 350,
-            archive_root: Some("sherpa-onnx-streaming-zipformer-en-2023-06-26".into()),
+        // NeMo fast-conformer (Parakeet family), 80 ms lookahead — low-latency,
+        // lighter encoder. Beam search is still cheap here; two threads keep it
+        // real-time on typical hardware.
+        AsrModelCatalogEntry {
+            id: "sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms".into(),
+            name: "Parakeet Streaming (English, low-latency)".into(),
+            backend: AsrBackendKind::SherpaOnnx,
+            languages: vec!["en".into()],
+            sample_rate_hz: 16_000,
+            capabilities: AsrCapabilities {
+                partials: true,
+                immutable_final: true,
+                endpointing: true,
+                word_timestamps: false,
+            },
+            memory: MemoryProfile { approx_mb: 520 },
+            // NeMo transducer → greedy only (see the Nemotron note above).
+            tuning: AsrTuning {
+                num_threads: 2,
+                decoding: crate::model::DecodingMethod::Greedy,
+                endpoint_trailing_silence_secs: 1.0,
+                endpoint_max_utterance_secs: 20.0,
+            },
+            download: AsrDownload {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms.tar.bz2".into(),
+                sha256: None,
+                size_mb: 429,
+                archive_root: Some("sherpa-onnx-nemo-streaming-fast-conformer-transducer-en-80ms".into()),
+            },
+            layout: SherpaTransducerLayout {
+                encoder: "encoder.onnx".into(),
+                decoder: "decoder.onnx".into(),
+                joiner: "joiner.onnx".into(),
+                tokens: "tokens.txt".into(),
+                config: None,
+            },
         },
-        layout: SherpaTransducerLayout {
-            encoder: "encoder-epoch-99-avg-1-chunk-16-left-128.onnx".into(),
-            decoder: "decoder-epoch-99-avg-1-chunk-16-left-128.onnx".into(),
-            joiner: "joiner-epoch-99-avg-1-chunk-16-left-128.onnx".into(),
-            tokens: "tokens.txt".into(),
-            config: None,
+        // Streaming Zipformer — small, fast, low-RAM. Greedy on one thread is
+        // plenty; the stock endpoint timing is fine for a compact model.
+        AsrModelCatalogEntry {
+            id: "sherpa-onnx-streaming-zipformer-en-2023-06-26".into(),
+            name: "Streaming Zipformer (English, compact)".into(),
+            backend: AsrBackendKind::SherpaOnnx,
+            languages: vec!["en".into()],
+            sample_rate_hz: 16_000,
+            capabilities: AsrCapabilities {
+                partials: true,
+                immutable_final: true,
+                endpointing: true,
+                word_timestamps: true,
+            },
+            memory: MemoryProfile { approx_mb: 350 },
+            tuning: AsrTuning::default(),
+            download: AsrDownload {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2".into(),
+                sha256: None,
+                size_mb: 350,
+                archive_root: Some("sherpa-onnx-streaming-zipformer-en-2023-06-26".into()),
+            },
+            layout: SherpaTransducerLayout {
+                encoder: "encoder-epoch-99-avg-1-chunk-16-left-128.onnx".into(),
+                decoder: "decoder-epoch-99-avg-1-chunk-16-left-128.onnx".into(),
+                joiner: "joiner-epoch-99-avg-1-chunk-16-left-128.onnx".into(),
+                tokens: "tokens.txt".into(),
+                config: None,
+            },
         },
-    }]
+    ]
 }
 
 /// Look up a catalog entry by id.

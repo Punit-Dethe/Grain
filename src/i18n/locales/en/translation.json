@@ -210,6 +210,10 @@
             "name": "Real-time",
             "description": "Stream words as you speak, using the rolling window."
           },
+          "transcribe_native_asr": {
+            "name": "Streaming Transcribe",
+            "description": "Native real-time dictation with live streaming text in the Studio Window."
+          },
           "cancel": {
             "name": "Cancel",
             "description": "Stop and discard the current recording."
@@ -354,7 +358,8 @@
         "options": {
           "none": "None",
           "bottom": "Bottom",
-          "top": "Top"
+          "top": "Top",
+          "center": "Center"
         }
       },
       "pasteMethod": {
@@ -445,12 +450,18 @@
         }
       },
       "localModel": {
-        "title": "Local model",
+        "title": "Standard model",
         "none": "No model selected",
         "activeHint": "Active · used for on-device transcription",
         "disabledByCloud": "Disabled — cloud transcription is handling this",
         "browse": "Browse models",
         "showLess": "Show less"
+      },
+      "asrModel": {
+        "title": "Streaming model",
+        "none": "No streaming model selected",
+        "activeHint": "Active · used for live streaming dictation",
+        "noneHint": "Pick a model to enable live streaming dictation"
       },
       "rotationNoProvider": "No provider is configured yet. Add a cloud provider before enabling cloud transcription.",
       "smartRotation": {

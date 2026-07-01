@@ -288,6 +288,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] real-time rolling transcription engine (on-demand model + idle-unload).
     let rolling_transcriber = Arc::new(rolling::RollingTranscriber::default());
     rolling_transcriber.start_idle_watcher(app_handle.clone());
+    // [GRAIN] Register the transcribe-cpp compute backends ONCE before any model
+    // load — required for the streaming (Native ASR) engine to find devices.
+    native_asr::init_transcribe_backend();
     // [GRAIN] M3: native ASR audio input sink (400 ms pre-roll, 256-frame bounded
     // queue) at the host delivery rate. Inert until armed by the Native ASR path;
     // the audio fan-out only costs one atomic load per frame while disarmed.

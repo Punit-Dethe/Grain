@@ -84,15 +84,33 @@ enum PillMode {
 }
 
 // ── Studio Window geometry ──────────────────────────────────────────────────
-const STUDIO_W: f32 = 560.0;
-const STUDIO_H: f32 = 260.0;
-const STUDIO_PAD: f32 = 22.0;
-const STUDIO_CORNER_R: f32 = 20.0;
-const STUDIO_HEADER_H: f32 = 56.0;
-const STUDIO_PILL_SCALE: f32 = 0.74;
-const STUDIO_TEXT_PX: f32 = 19.0;
-const STUDIO_LABEL_PX: f32 = 14.0;
-const STUDIO_LINE_HEIGHT: f32 = STUDIO_TEXT_PX * 1.55;
+//
+// A compact, deliberately-proportioned caption card. Everything below is on one
+// modular scale so nothing looks "off": the header eyebrow, the transcript, and
+// the activity grid all derive from STUDIO_PAD and a single line rhythm.
+const STUDIO_W: f32 = 452.0;
+// Sized so exactly three transcript lines sit with balanced top/bottom breathing
+// room (not crushed, not floaty): pad(20) + header(22) + gap(16) + 3·26 + pad(20).
+const STUDIO_H: f32 = 156.0;
+const STUDIO_PAD: f32 = 20.0;
+const STUDIO_CORNER_R: f32 = 16.0;
+// Header band (eyebrow label on the left, activity grid on the right).
+const STUDIO_HEADER_H: f32 = 22.0;
+// Gap between the header band and the first transcript baseline.
+const STUDIO_HEADER_GAP: f32 = 16.0;
+// Type scale: a small tracked eyebrow + a comfortable transcript body.
+const STUDIO_LABEL_PX: f32 = 10.5;
+const STUDIO_TEXT_PX: f32 = 16.0;
+const STUDIO_LINE_HEIGHT: f32 = 26.0;
+
+// ── Studio activity grid (replaces the embedded pill) ───────────────────────
+// A small dot-matrix equalizer in the header's top-right: columns of dots whose
+// lit height tracks the mic level (recording) or shimmers (processing). Same
+// dot-pixel language as the pill, but sleeker and frameless.
+const IND_COLS: usize = 14;
+const IND_ROWS: usize = 4;
+const IND_CELL: f32 = 5.0;
+const IND_DOT: f32 = 2.4;
 
 /// A rounded-rect path (quadratic corners — plenty smooth at this size; tiny-skia
 /// has no built-in rounded-rect constructor). Used for the Studio Window background.
@@ -135,6 +153,23 @@ struct AsrDisplay {
 }
 
 impl AsrDisplay {
+    /// Append a commit *delta* to the current segment's committed prefix.
+    /// `AsrCommit` events carry only the newly-committed words (see the
+    /// stabilizer), so they must be appended — never assigned — or committed
+    /// text collapses to just the last delta.
+    fn append_commit(&mut self, delta: &str) {
+        let delta = delta.trim();
+        if delta.is_empty() {
+            return;
+        }
+        if self.committed.is_empty() {
+            self.committed.push_str(delta);
+        } else {
+            self.committed.push(' ');
+            self.committed.push_str(delta);
+        }
+    }
+
     fn runs(&self) -> Vec<(String, RunStyle)> {
         let mut runs = Vec::new();
         for seg in &self.finished {
@@ -154,6 +189,18 @@ impl AsrDisplay {
             )
         }));
         runs
+    }
+
+    /// [GRAIN] Committed words only — what the Studio Window actually draws. To
+    /// match Handy's live UX we show ONLY committed text (stable, trustworthy);
+    /// the volatile/tentative tail is never rendered (a flickering tail hurts
+    /// readability). `runs()` still exposes the tentative tail for tests; the
+    /// renderer just uses this filtered view.
+    fn committed_runs(&self) -> Vec<(String, RunStyle)> {
+        self.runs()
+            .into_iter()
+            .filter(|(_, s)| matches!(s, RunStyle::Committed))
+            .collect()
     }
 }
 
@@ -628,6 +675,255 @@ fn draw_word(
     pen - pen_x
 }
 
+/// Left-aligned label with fixed letter-spacing (`tracking` px added after each
+/// glyph). Used for the Studio Window's small uppercase status eyebrow.
+fn draw_label_tracked(
+    pixmap: &mut Pixmap,
+    font: &fontdue::Font,
+    text: &str,
+    x: f32,
+    baseline: f32,
+    px: f32,
+    tracking: f32,
+    color: [u8; 3],
+    alpha: f32,
+) {
+    let mut pen = x;
+    for ch in text.chars() {
+        let (m, bmp) = font.rasterize(ch, px);
+        let gx = pen + m.xmin as f32;
+        let gy = baseline - (m.height as f32 + m.ymin as f32);
+        blend_glyph(pixmap, &m, &bmp, gx, gy, color, alpha);
+        pen += m.advance_width + tracking;
+    }
+}
+
+/// Paint the whole Studio Window card into `pixmap` (which must be the Studio
+/// size). Windowing-free so it renders identically in the app and in a PNG test.
+/// `fade` is the whole-card opacity (0..1), `phase` the equalizer clock, `amp`
+/// the current mic level (0..1).
+fn paint_studio_card(
+    pixmap: &mut Pixmap,
+    asr: &AsrDisplay,
+    state: PillState,
+    fade: f32,
+    phase: f32,
+    amp: f32,
+    font: Option<&fontdue::Font>,
+) {
+    let (w, h) = studio_pixel_size();
+    let (wf, hf) = (w as f32, h as f32);
+    pixmap.fill(Color::TRANSPARENT);
+
+    // 1) Card background: a near-black panel with a 1px inner top highlight so
+    // it reads as a raised premium surface, not a flat rectangle.
+    let mut bg = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    bg.set_color(Color::from_rgba8(13, 13, 15, (244.0 * fade) as u8));
+    if let Some(path) = rounded_rect_path(0.0, 0.0, wf, hf, STUDIO_CORNER_R) {
+        pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
+    }
+    let mut hair = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    hair.set_color(Color::from_rgba8(255, 255, 255, (14.0 * fade) as u8));
+    if let Some(rect) = Rect::from_ltrb(STUDIO_CORNER_R, 0.5, wf - STUDIO_CORNER_R, 1.5) {
+        pixmap.fill_path(
+            &PathBuilder::from_rect(rect),
+            &hair,
+            FillRule::Winding,
+            Transform::identity(),
+            None,
+        );
+    }
+
+    // 2) Header eyebrow (left) — small, uppercase, tracked, muted.
+    let band_center_y = STUDIO_PAD + STUDIO_HEADER_H / 2.0;
+    if let Some(font) = font {
+        let label = match state {
+            PillState::Recording => "TRANSCRIBING",
+            PillState::Processing => "PROCESSING",
+            PillState::Fallback => "ERROR",
+            PillState::Idle => "",
+        };
+        if !label.is_empty() {
+            draw_label_tracked(
+                pixmap,
+                font,
+                label,
+                STUDIO_PAD,
+                band_center_y + STUDIO_LABEL_PX * 0.34,
+                STUDIO_LABEL_PX,
+                2.0,
+                [150, 150, 160],
+                fade,
+            );
+        }
+    }
+
+    // 3) Activity equalizer (right), vertically centered in the header band.
+    let grid_w = IND_COLS as f32 * IND_CELL;
+    let grid_h = IND_ROWS as f32 * IND_CELL;
+    let gx = wf - STUDIO_PAD - grid_w;
+    let gy = STUDIO_PAD + (STUDIO_HEADER_H - grid_h) / 2.0;
+    draw_studio_indicator(pixmap, gx, gy, amp, state, phase, fade);
+
+    // 4) Transcript, anchored under the header with a fixed line rhythm.
+    if let Some(font) = font {
+        let max_w = wf - 2.0 * STUDIO_PAD;
+        let runs = asr.committed_runs();
+        if !runs.is_empty() {
+            let lines = wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w);
+            let text_top = STUDIO_PAD + STUDIO_HEADER_H + STUDIO_HEADER_GAP;
+            let text_bottom = hf - STUDIO_PAD;
+            let max_lines =
+                (((text_bottom - text_top) / STUDIO_LINE_HEIGHT).floor() as usize).max(1);
+            let total = lines.len();
+            let shown = &lines[total.saturating_sub(max_lines)..];
+            let space_w = font.metrics(' ', STUDIO_TEXT_PX).advance_width;
+
+            for (i, line) in shown.iter().enumerate() {
+                let baseline = text_top + STUDIO_TEXT_PX + STUDIO_LINE_HEIGHT * i as f32;
+                let mut pen = STUDIO_PAD;
+                for (word, style) in &line.words {
+                    if pen > STUDIO_PAD {
+                        pen += space_w;
+                    }
+                    // Committed text is stable and pasteable → always solid warm
+                    // white and CRISP, and it never dims as it scrolls up (graying
+                    // it would blur the committed/uncommitted distinction — the
+                    // user must always be able to trust the solid text). The
+                    // uncommitted tail is the "still being decided" region → shown
+                    // dimmer AND blurred; that blur is the loading signal, and it
+                    // resolves to crisp as the words commit.
+                    let (color, alpha, blur): ([u8; 3], f32, usize) = match style {
+                        RunStyle::Committed => ([238, 236, 232], 0.97, 0),
+                        RunStyle::Partial { stable: true } => ([198, 201, 208], 0.60, 2),
+                        RunStyle::Partial { stable: false } => ([186, 190, 198], 0.48, 3),
+                    };
+                    pen += draw_word(
+                        pixmap,
+                        font,
+                        word,
+                        STUDIO_TEXT_PX,
+                        pen,
+                        baseline,
+                        color,
+                        alpha * fade,
+                        blur,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Studio pixel size — the single source of truth used by both the free painter
+/// and `App::win_size_for(Studio)`.
+fn studio_pixel_size() -> (u32, u32) {
+    (
+        (STUDIO_W * SCALE).round() as u32,
+        (STUDIO_H * SCALE).round() as u32,
+    )
+}
+
+/// The Studio Window's activity grid — the pill's recording language distilled
+/// into a small frameless dot field:
+/// - RECORDING: random dots light up with grey→white shades, their *density*
+///   tracking the voice level (exactly like the pill's `roll_recording`).
+/// - PROCESSING: a warm orange "static" sparkle.
+/// - IDLE/Fallback: a calm faint breathing grid.
+///
+/// The random fields re-roll on a slow cadence (quantized `phase`), NOT every
+/// frame — a 60 fps re-roll reads as harsh flicker. `reroll_frames` sets the
+/// cadence per state (recording a touch livelier than processing).
+fn draw_studio_indicator(
+    pixmap: &mut Pixmap,
+    x0: f32,
+    y0: f32,
+    amp: f32,
+    state: PillState,
+    phase: f32,
+    fade: f32,
+) {
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    let radius = IND_DOT / 2.0;
+    const OFF: ([u8; 3], f32) = ([116, 120, 128], 0.06);
+
+    // Quantize the clock so the random field holds for a few frames, then
+    // re-rolls — a calm cadence instead of per-frame noise. ~7 frames for
+    // recording (lively), ~11 for processing (deliberately slower — the old
+    // per-frame sparkle was too quick).
+    let reroll_frames = match state {
+        PillState::Recording => 7.0,
+        PillState::Processing => 11.0,
+        _ => 12.0,
+    };
+    let tick = (phase / reroll_frames).floor();
+    let mut rng = Rng(
+        (tick.to_bits() as u64)
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            ^ 0xD1B5_4A32_D192_ED03,
+    );
+
+    // Recording density: fraction of dots lit tracks the mic level, with a small
+    // floor so there's always a little life. Matches the pill's amplitude→density.
+    let lit_ratio = (amp * 0.95).clamp(0.06, 0.95);
+
+    let total = IND_COLS * IND_ROWS;
+    for idx in 0..total {
+        let c = idx % IND_COLS;
+        let r = idx / IND_COLS;
+        let (rgb, mut a) = match state {
+            PillState::Recording => {
+                if rng.f32() < lit_ratio {
+                    // Grey→white tiers, brighter when louder (like the pill).
+                    let g = rng.f32();
+                    let rgb = if g < 0.34 {
+                        [150, 156, 166]
+                    } else if g < 0.68 {
+                        [186, 190, 198]
+                    } else {
+                        [224, 226, 231]
+                    };
+                    (rgb, 0.45 + amp * 0.45 + rng.f32() * 0.10)
+                } else {
+                    OFF
+                }
+            }
+            PillState::Processing => {
+                if rng.f32() < 0.42 {
+                    let b = 0.5 + rng.f32() * 0.5;
+                    ([255, 132, 62], 0.30 + b * 0.5)
+                } else {
+                    OFF
+                }
+            }
+            // Idle / Fallback: a calm faint grid with a slow breath.
+            _ => {
+                let breath = 0.05 + 0.05 * (phase * 0.04 + c as f32 * 0.3).sin().max(0.0);
+                ([140, 144, 152], breath)
+            }
+        };
+        a = (a * fade).min(fade);
+        if a <= 0.02 {
+            continue;
+        }
+        let cx = x0 + c as f32 * IND_CELL + IND_CELL / 2.0;
+        let cy = y0 + r as f32 * IND_CELL + IND_CELL / 2.0;
+        if let Some(circle) = PathBuilder::from_circle(cx, cy, radius) {
+            paint.set_color(Color::from_rgba8(rgb[0], rgb[1], rgb[2], (a * 255.0) as u8));
+            pixmap.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+}
+
 // ── Mic capture (direct, low-latency) ───────────────────────────────────────
 
 fn start_mic(amp: Arc<AtomicU32>) -> Option<cpal::Stream> {
@@ -948,13 +1244,16 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
         }
-        // [GRAIN] Native ASR Studio Window transcript. Only applied while still
+        // [GRAIN] transcribe-cpp streaming: the committed transcript is cumulative
+        // (the full flicker-free prefix), so set it directly. Only while still
         // `Recording` — once the shortcut is released `state` flips to
-        // `Processing` and the preview must freeze exactly where it was, even
-        // though the worker's drain can keep emitting a few trailing events
-        // while it finalizes (`worker::drive_session`'s `finish()` drain).
+        // `Processing` and the preview freezes where it was.
+        DaemonEvent::AsrStreamText { committed, .. } if r.state == PillState::Recording => {
+            r.asr.committed = committed;
+        }
+        // Legacy sherpa path (stabilized deltas). Kept until sherpa is deleted.
         DaemonEvent::AsrCommit { text, .. } if r.state == PillState::Recording => {
-            r.asr.committed = text;
+            r.asr.append_commit(&text);
         }
         DaemonEvent::AsrPartial { text, stable, .. } if r.state == PillState::Recording => {
             r.asr.partial = text;
@@ -1073,6 +1372,10 @@ struct App {
     asr: AsrDisplay,
     studio_alpha: f32,
     closing: bool,
+    /// Free-running clock for the Studio activity grid's equalizer motion
+    /// (advances one step per rendered frame — independent of the dot-field roll
+    /// cadence so the bars stay smooth).
+    studio_phase: f32,
 }
 
 impl App {
@@ -1115,6 +1418,7 @@ impl App {
             asr: AsrDisplay::default(),
             studio_alpha: 0.0,
             closing: false,
+            studio_phase: 0.0,
         }
     }
 
@@ -1132,10 +1436,7 @@ impl App {
     fn win_size_for(mode: PillMode) -> (u32, u32) {
         match mode {
             PillMode::Collapsed => Self::win_size(),
-            PillMode::Studio => (
-                (STUDIO_W * SCALE).round() as u32,
-                (STUDIO_H * SCALE).round() as u32,
-            ),
+            PillMode::Studio => studio_pixel_size(),
         }
     }
 
@@ -1309,12 +1610,12 @@ impl App {
         self.pixmap = Some(pixmap); // keep it for next frame
     }
 
-    /// The Native ASR Studio Window: a tall content box with the classic
-    /// dot-matrix pill embedded top-right (same `Aura` field the collapsed
-    /// pill draws, just scaled down — recording/processing reads identically
-    /// in both surfaces) and the live transcript word-wrapped below it.
-    /// Self-contained (doesn't share drawing code with `render_collapsed`) so
-    /// the already-tuned collapsed renderer can never regress from this work.
+    /// The Native ASR Studio Window — a compact, deliberately-proportioned
+    /// caption card. Top-left: a small tracked status eyebrow. Top-right: a
+    /// frameless dot-matrix equalizer (the pill's dot-pixel language, sleeker
+    /// and without the capsule). Below: the live transcript, word-wrapped, with
+    /// committed text solid and the volatile tail dimmed (and softly blurred
+    /// while the stabilizer hasn't settled it).
     fn render_studio(&mut self) {
         if self.window.is_none() {
             return;
@@ -1324,130 +1625,23 @@ impl App {
             .pixmap
             .take()
             .unwrap_or_else(|| Pixmap::new(w, h).unwrap());
-        pixmap.fill(Color::TRANSPARENT);
 
-        // Whole-window fade in/out (the "smoothly appears/disappears" ask) —
-        // every alpha below is scaled by this, never drawn at full opacity
-        // until the window has finished easing in.
+        // Advance the equalizer clock once per frame (smooth, cadence-free).
+        self.studio_phase += 1.0;
         let fade = self.studio_alpha.clamp(0.0, 1.0);
-        let scaled = |base: u8, mult: f32| -> u8 { (base as f32 * mult * fade).clamp(0.0, 255.0) as u8 };
+        let amp = self.current_amp();
 
-        // 1) Background — the EXACT fill the collapsed pill's capsule uses, so
-        // the embedded mini pill (drawn dots-only, no capsule of its own,
-        // below) reads as part of one continuous surface rather than a
-        // separate widget glued on top.
-        let mut bg = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        bg.set_color(Color::from_rgba8(0, 0, 0, scaled(240, 1.0)));
-        if let Some(path) = rounded_rect_path(0.0, 0.0, w as f32, h as f32, STUDIO_CORNER_R) {
-            pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
-        }
-
-        // 2) Header: status label (left) + the dot-matrix pill (right).
-        if let Some(font) = &self.font {
-            let label = match self.state {
-                PillState::Recording => "Transcribing…",
-                PillState::Processing => "Processing…",
-                PillState::Fallback => "Something went wrong",
-                PillState::Idle => "",
-            };
-            if !label.is_empty() {
-                let cached = CachedText::new(font, label, STUDIO_LABEL_PX);
-                let cy = STUDIO_HEADER_H / 2.0;
-                draw_cached_text_centered(
-                    &mut pixmap,
-                    &cached,
-                    (STUDIO_PAD + cached.total_width / 2.0, cy),
-                    STUDIO_LABEL_PX,
-                    [230, 226, 218],
-                    fade,
-                );
-            }
-        }
-
-        let cell_px = CELL * SCALE;
-        let pill_local_w = COLS as f32 * cell_px;
-        let pill_local_h = ROWS as f32 * cell_px;
-        let embed_w = pill_local_w * STUDIO_PILL_SCALE;
-        let embed_h = pill_local_h * STUDIO_PILL_SCALE;
-        let embed_x = w as f32 - STUDIO_PAD - embed_w;
-        let embed_y = (STUDIO_HEADER_H - embed_h) / 2.0;
-        let pill_transform =
-            Transform::from_scale(STUDIO_PILL_SCALE, STUDIO_PILL_SCALE).post_translate(embed_x, embed_y);
-        let dots = &self.aura.dots;
-        let radius = DOT_D * SCALE / 2.0;
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        for row in 0..ROWS {
-            for col in 0..COLS {
-                if is_edge(col, row) {
-                    continue;
-                }
-                let c = dots[row * COLS + col];
-                if c[3] == 0 {
-                    continue;
-                }
-                let dx = col as f32 * cell_px + cell_px / 2.0;
-                let dy = row as f32 * cell_px + cell_px / 2.0;
-                if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
-                    paint.set_color(Color::from_rgba8(c[0], c[1], c[2], scaled(c[3], 1.0)));
-                    pixmap.fill_path(&circle, &paint, FillRule::Winding, pill_transform, None);
-                }
-            }
-        }
-
-        // 3) Transcript: word-wrapped, only the last lines that fit are shown
-        // (a teleprompter tail, not a growing window — see win_size_for's
-        // doc). Committed text is solid; the volatile tail is blurred, more so
-        // while the stabilizer still thinks it's unsettled.
-        if let Some(font) = &self.font {
-            let max_w = w as f32 - 2.0 * STUDIO_PAD;
-            let runs = self.asr.runs();
-            if !runs.is_empty() {
-                let lines = wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w);
-                let text_top = STUDIO_HEADER_H + STUDIO_PAD * 0.5;
-                let text_bottom = h as f32 - STUDIO_PAD;
-                let max_lines =
-                    (((text_bottom - text_top) / STUDIO_LINE_HEIGHT).floor() as usize).max(1);
-                let total = lines.len();
-                let shown = &lines[total.saturating_sub(max_lines)..];
-                // The oldest visible line fades in from the top when earlier
-                // lines have scrolled off, so new text never just "pops in".
-                let truncated_above = total > shown.len();
-                let space_w = font.metrics(' ', STUDIO_TEXT_PX).advance_width;
-
-                for (i, line) in shown.iter().enumerate() {
-                    let line_fade = if truncated_above && i == 0 { 0.45 } else { 1.0 };
-                    let baseline = text_top + STUDIO_LINE_HEIGHT * (i as f32 + 1.0);
-                    let mut pen = STUDIO_PAD;
-                    for (word, style) in &line.words {
-                        if pen > STUDIO_PAD {
-                            pen += space_w;
-                        }
-                        let (color, alpha, blur): ([u8; 3], f32, usize) = match style {
-                            RunStyle::Committed => ([238, 236, 232], 0.94, 0),
-                            RunStyle::Partial { stable: true } => ([198, 204, 214], 0.62, 1),
-                            RunStyle::Partial { stable: false } => ([182, 188, 200], 0.42, 2),
-                        };
-                        pen += draw_word(
-                            &mut pixmap,
-                            font,
-                            word,
-                            STUDIO_TEXT_PX,
-                            pen,
-                            baseline,
-                            color,
-                            alpha * fade * line_fade,
-                            blur,
-                        );
-                    }
-                }
-            }
-        }
+        // All drawing lives in the windowing-free `paint_studio_card` so it can
+        // be rendered to a PNG in tests without a winit window/presenter.
+        paint_studio_card(
+            &mut pixmap,
+            &self.asr,
+            self.state,
+            fade,
+            self.studio_phase,
+            amp,
+            self.font.as_ref(),
+        );
 
         if let Some(presenter) = &self.presenter {
             presenter.blit(&pixmap);
@@ -1839,6 +2033,77 @@ mod tests {
         // loudly in CI rather than silently skipping — these tests only assert
         // properties that hold for any monospace/UI font.
         load_font().expect("a system font must be available to test text layout")
+    }
+
+    /// Render the Studio Window to a PNG for visual inspection. Not an
+    /// assertion test — it just proves `paint_studio_card` runs windowing-free
+    /// and produces the expected pixel size, and leaves an artifact to eyeball.
+    #[test]
+    fn studio_card_renders_to_png() {
+        use tiny_skia::PixmapPaint;
+
+        let font = font();
+        let (cw, ch) = studio_pixel_size();
+
+        // A realistic mid-dictation frame that wraps to three lines: a long
+        // committed (crisp) prefix + a short volatile (blurred) tail.
+        let mut asr = AsrDisplay::default();
+        asr.append_commit(
+            "Let's test the streaming transcription with the new Studio Window and make sure it wraps to three balanced lines",
+        );
+        asr.partial = "while the tail stays".into();
+        asr.partial_stable = false;
+
+        // Stack two states (Recording, Processing) on a desktop-like backdrop so
+        // proportions and the equalizer are easy to judge.
+        let margin = 24i32;
+        let gap = 20i32;
+        let bw = cw + margin as u32 * 2;
+        let bh = ch * 2 + margin as u32 * 2 + gap as u32;
+        let mut bg = Pixmap::new(bw, bh).unwrap();
+        bg.fill(Color::from_rgba8(205, 203, 198, 255));
+
+        for (i, state) in [PillState::Recording, PillState::Processing]
+            .into_iter()
+            .enumerate()
+        {
+            let mut card = Pixmap::new(cw, ch).unwrap();
+            paint_studio_card(&mut card, &asr, state, 1.0, 12.0, 0.6, Some(&font));
+            let y = margin + i as i32 * (ch as i32 + gap);
+            bg.draw_pixmap(
+                margin,
+                y,
+                card.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
+
+        let path = std::env::temp_dir().join("grain_studio_preview.png");
+        bg.save_png(&path).expect("save png");
+        eprintln!("STUDIO_PREVIEW_PNG={}", path.display());
+    }
+
+    #[test]
+    fn append_commit_accumulates_deltas_not_replaces() {
+        // AsrCommit events carry only the newly-committed words (deltas). The
+        // display must accumulate them into the running committed prefix — the
+        // old `committed = text` collapsed it to just the last delta.
+        let mut d = AsrDisplay::default();
+        d.append_commit("hello");
+        d.append_commit("there");
+        d.append_commit("friend");
+        assert_eq!(d.committed, "hello there friend");
+
+        // Empty/whitespace deltas are ignored and never inject stray spaces.
+        d.append_commit("   ");
+        assert_eq!(d.committed, "hello there friend");
+
+        // Committed words all render crisp (no blur / no gray).
+        let runs = d.runs();
+        assert!(runs.iter().all(|(_, s)| matches!(s, RunStyle::Committed)));
+        assert_eq!(runs.len(), 3);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use grain_asr_core::events::{AsrRawEvent, EndpointReason};
-use grain_asr_core::model::{AsrCapabilities, AsrModelFiles, AsrModelSpec};
+use grain_asr_core::model::{AsrCapabilities, AsrModelFiles, AsrModelSpec, DecodingMethod};
 use grain_asr_core::session::{AsrSession, AsrSessionConfig, AudioFrame, NativeAsrBackend};
 use sherpa_onnx::{OnlineRecognizer, OnlineRecognizerConfig, OnlineStream};
 
@@ -80,13 +80,46 @@ impl NativeAsrBackend for SherpaOnnxBackend {
         config.model_config.transducer.decoder = Some(path_str(decoder));
         config.model_config.transducer.joiner = Some(path_str(joiner));
         config.model_config.tokens = Some(path_str(tokens));
-        // Edge defaults: single intra-op thread, CPU EP. GPU EPs are a later,
-        // capability-gated option.
-        config.model_config.num_threads = 1;
-        config.model_config.provider = Some("cpu".into());
-        config.decoding_method = Some("greedy_search".into());
-        config.enable_endpoint = true;
 
+        // [GRAIN] Apply this model's runtime profile (`AsrModelSpec::tuning`)
+        // rather than one-size-fits-all defaults — heavier/best-accuracy models
+        // want more threads + beam search + a snappier endpoint; compact ones
+        // stay lean. The feature-extraction sample rate follows the spec; NeMo
+        // feature normalization is auto-detected by sherpa from model metadata.
+        let tuning = &model.tuning;
+        config.feat_config.sample_rate = model.sample_rate_hz as i32;
+        config.model_config.num_threads = tuning.num_threads.max(1) as i32;
+        // CPU EP for now; GPU EPs are a later, capability-gated option.
+        config.model_config.provider = Some("cpu".into());
+        match tuning.decoding {
+            DecodingMethod::Greedy => {
+                config.decoding_method = Some("greedy_search".into());
+            }
+            DecodingMethod::ModifiedBeamSearch { num_active_paths } => {
+                config.decoding_method = Some("modified_beam_search".into());
+                config.max_active_paths = num_active_paths.max(1) as i32;
+            }
+        }
+        // Model's own endpointer: rule2 = trailing silence after speech,
+        // rule3 = hard max utterance length. rule1 (silence before any speech)
+        // keeps sherpa's default.
+        config.enable_endpoint = model.capabilities.endpointing;
+        config.rule2_min_trailing_silence = tuning.endpoint_trailing_silence_secs;
+        config.rule3_min_utterance_length = tuning.endpoint_max_utterance_secs;
+
+        // [GRAIN] sherpa-onnx *aborts the process* on some invalid configs (e.g.
+        // `modified_beam_search` on a NeMo transducer) instead of returning null,
+        // so log the exact config we're about to build first — if a future model
+        // profile is wrong, the last line before the crash names the culprit.
+        log::info!(
+            "[GRAIN] sherpa-onnx creating recognizer for '{}': method={:?} threads={} rate={}Hz endpoint(rule2={}s,rule3={}s)",
+            model.id,
+            config.decoding_method,
+            config.model_config.num_threads,
+            config.feat_config.sample_rate,
+            config.rule2_min_trailing_silence,
+            config.rule3_min_utterance_length,
+        );
         let recognizer = OnlineRecognizer::create(&config).ok_or_else(|| {
             anyhow::anyhow!("failed to create sherpa-onnx recognizer (check model files / EP)")
         })?;
@@ -252,6 +285,48 @@ mod tests {
             .push_audio(AudioFrame::new(silence, 16_000))
             .expect("push_audio");
         let _ = session.finish().expect("finish");
+
+        // If the bundle ships a sample wav, decode it for real and print the
+        // transcript — this exercises the actual decode path on speech (not just
+        // silence) and lets us eyeball that a model produces sane text.
+        let wav_path = dir.join("test_wavs").join("0.wav");
+        if wav_path.exists() {
+            let mut reader = hound::WavReader::open(&wav_path).expect("open test wav");
+            let spec_wav = reader.spec();
+            let samples: Vec<f32> = match spec_wav.sample_format {
+                hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
+                hound::SampleFormat::Int => {
+                    let max = (1i64 << (spec_wav.bits_per_sample - 1)) as f32;
+                    reader
+                        .samples::<i32>()
+                        .map(|s| s.unwrap() as f32 / max)
+                        .collect()
+                }
+            };
+            let mut sess2 = backend
+                .start_session(AsrSessionConfig::default())
+                .expect("start session 2");
+            // Feed in 100 ms chunks like the live capture would.
+            let chunk = (spec_wav.sample_rate as usize) / 10;
+            for c in samples.chunks(chunk.max(1)) {
+                let frame = AudioFrame::new(Arc::from(c.to_vec().into_boxed_slice()), spec_wav.sample_rate);
+                let _ = sess2.push_audio(frame).expect("push_audio wav");
+            }
+            let finals = sess2.finish().expect("finish wav");
+            let text: String = finals
+                .iter()
+                .filter_map(|e| match e {
+                    AsrRawEvent::BackendFinal { text, .. } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!("NEMOTRON_TRANSCRIPT: {text}");
+            assert!(
+                !text.trim().is_empty(),
+                "real speech must produce a non-empty transcript"
+            );
+        }
 
         backend.unload();
     }
