@@ -36,6 +36,8 @@ export const GeneralSettings: React.FC = () => {
       <SettingsGroup title={t("settings.general.groups.captureModes")}>
         <ShortcutInput shortcutId="transcribe" grouped={true} />
         <ShortcutInput shortcutId="transcribe_realtime" grouped={true} />
+        {/* [GRAIN] Native ASR — streaming dictation in the Studio Window overlay. */}
+        <ShortcutInput shortcutId="transcribe_native_asr" grouped={true} />
         <ShortcutInput shortcutId="transcribe_with_post_process" grouped={true} />
         {/* [GRAIN] Summon the voice-first AI agent on the current selection. */}
         <ShortcutInput shortcutId="summon_agent" grouped={true} />

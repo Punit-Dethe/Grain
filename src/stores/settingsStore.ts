@@ -160,6 +160,8 @@ const settingUpdaters: {
     commands.changeAudioConditioningSetting(value as boolean),
   rolling_window_seconds: (value) =>
     commands.changeRollingWindowSecondsSetting(value as number),
+  // [GRAIN] Native ASR model selection — separate registry from `selected_model`.
+  selected_asr_model: (value) => commands.selectAsrModel(value as string),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

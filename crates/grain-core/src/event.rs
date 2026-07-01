@@ -99,8 +99,17 @@ pub enum DaemonEvent {
     },
 
     // -- Native ASR (real-time streaming dictation) --
-    // The stabilized stream from the Native ASR path. `AsrCommit` text is
-    // immutable (safe to keep); `AsrPartial` text is volatile (display only).
+    /// [GRAIN] transcribe-cpp streaming: the cumulative committed transcript so
+    /// far (flicker-free, growing). transcribe-cpp does its own commit
+    /// stabilization, so this replaces the sherpa-era `AsrCommit`/`AsrPartial`
+    /// split — the pill renders `committed` directly (committed-only, like Handy).
+    AsrStreamText {
+        session_id: u64,
+        committed: String,
+    },
+
+    // The stabilized stream from the (legacy sherpa) Native ASR path. `AsrCommit`
+    // text is immutable (safe to keep); `AsrPartial` text is volatile.
     /// Volatile tail for a segment. `stable` = the stabilizer is confident it
     /// won't change (held only by commit lag), else it may still be rewritten.
     AsrPartial {

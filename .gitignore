@@ -49,3 +49,5 @@ result
 
 # [GRAIN] machine-local build config (short target-dir for whisper MAX_PATH)
 src-tauri/.cargo/
+# Added by code-review-graph
+.code-review-graph/

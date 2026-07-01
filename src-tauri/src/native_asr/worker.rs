@@ -1,116 +1,73 @@
-//! [GRAIN] M6: Native ASR session driver + event bridge.
+//! [GRAIN] Native ASR streaming worker — transcribe-cpp engine.
 //!
-//! Blocking inference runs here, off the audio and async threads (the plan's
-//! isolation rule). [`drive_session`] pulls frames from a source, pushes them
-//! into a backend session, stabilizes the raw events, and emits pill-facing
-//! [`DaemonEvent`]s through a sink. It is generic over the frame source and the
-//! sink, so the scripted fake backend + a collecting sink exercise the whole
-//! pipeline with no Tauri, audio, model, or network (Milestone 6 exit).
+//! Loads a GGUF model, opens a streaming `Session`, and drives the
+//! feed → committed → finalize loop, emitting the cumulative committed
+//! transcript to the pill as [`DaemonEvent::AsrStreamText`]. transcribe-cpp does
+//! its own commit stabilization (`CommitPolicy::Auto`), so there is NO separate
+//! stabilizer here — `stream.text().committed` is already the flicker-free
+//! prefix Handy's UI (and ours) renders.
 //!
-//! The `drive_session`/manager glue is consumed by the Native ASR action in
-//! Milestone 7; allow it ahead of that wiring.
-#![allow(dead_code)]
+//! This module is deliberately self-contained (our own glue, not ported upstream
+//! line-for-line) so future upstream syncs stay simple.
 
-use grain_asr_core::events::{AsrEvent, Stability};
-use grain_asr_core::model::AsrModelSpec;
-use grain_asr_core::session::{AsrSessionConfig, AudioFrame, NativeAsrBackend};
-use grain_asr_core::stabilizer::{StabilizerConfig, TranscriptStabilizer};
+use std::path::Path;
+
+use grain_asr_core::session::AudioFrame;
 use grain_core::DaemonEvent;
+use transcribe_cpp::{Model, RunOptions, StreamOptions, Task};
 
-/// Map a stabilized [`AsrEvent`] to the pill-facing [`DaemonEvent`]. Per-word
-/// timing is intentionally dropped from the event bus (the low-RAM pill never
-/// renders it); the worker keeps words for the history/paste step.
-pub fn to_daemon(ev: AsrEvent) -> DaemonEvent {
-    match ev {
-        AsrEvent::Partial {
-            session_id,
-            segment_id,
-            text,
-            stability,
-            ..
-        } => DaemonEvent::AsrPartial {
-            session_id,
-            segment_id,
-            text,
-            stable: stability == Stability::Stable,
-        },
-        AsrEvent::Commit {
-            session_id,
-            segment_id,
-            text,
-            ..
-        } => DaemonEvent::AsrCommit {
-            session_id,
-            segment_id,
-            text,
-        },
-        AsrEvent::SegmentFinal {
-            session_id,
-            segment_id,
-            text,
-            ..
-        } => DaemonEvent::AsrSegmentFinal {
-            session_id,
-            segment_id,
-            text,
-        },
-        AsrEvent::SessionFinal { session_id, text } => {
-            DaemonEvent::AsrSessionFinal { session_id, text }
-        }
-        AsrEvent::Error {
-            session_id,
-            recoverable,
-            message,
-        } => DaemonEvent::AsrError {
-            session_id,
-            recoverable,
-            message,
-        },
-    }
-}
-
-/// What the frame source hands the worker on each pull.
+/// What the frame source hands the worker on each pull. transcribe-cpp buffers
+/// and commits continuously, so there's no explicit flush — just frames + stop.
 pub enum FrameCmd {
-    /// One captured frame to push into the session.
+    /// One captured frame (16 kHz mono f32) to feed the stream.
     Frame(AudioFrame),
-    /// Force a decode of buffered audio (e.g. a VAD endpoint) without ending.
-    Flush,
-    /// End the session: finish, emit the session final, and return.
+    /// End the session: finalize, emit the final text, and return.
     Stop,
 }
 
-/// Drive one Native ASR session to completion. Returns the assembled final text
-/// (also emitted as [`DaemonEvent::AsrSessionFinal`]) for the caller's
-/// history/paste step.
-///
-/// On a backend error the loop still finalizes from what was committed, so a
-/// crash never loses the user's dictation (refinement: crash-safe finalization).
-pub fn drive_session(
-    mut backend: Box<dyn NativeAsrBackend>,
-    spec: &AsrModelSpec,
-    config: AsrSessionConfig,
-    stab_config: StabilizerConfig,
+/// Drive one streaming session to completion. Returns the final committed text
+/// (also emitted as the last [`DaemonEvent::AsrStreamText`] +
+/// [`DaemonEvent::AsrSessionFinal`]) for the caller's paste/history step.
+pub fn drive_stream(
+    gguf_path: &Path,
+    language: Option<String>,
+    session_id: u64,
     mut next: impl FnMut() -> FrameCmd,
     mut emit: impl FnMut(DaemonEvent),
 ) -> anyhow::Result<String> {
-    let caps = backend.load(spec)?;
-    let session_id = config.session_id;
-    let mut session = backend.start_session(config)?;
-    let mut stab = TranscriptStabilizer::new(session_id, caps, stab_config);
+    let model = Model::load(gguf_path)
+        .map_err(|e| anyhow::anyhow!("failed to load GGUF model {}: {e}", gguf_path.display()))?;
+    let mut session = model
+        .session()
+        .map_err(|e| anyhow::anyhow!("failed to create transcribe-cpp session: {e}"))?;
 
+    let run = RunOptions {
+        task: Task::Transcribe,
+        language,
+        ..Default::default()
+    };
+    let mut stream = session
+        .stream(&run, &StreamOptions::default())
+        .map_err(|e| anyhow::anyhow!("failed to start transcribe-cpp stream: {e}"))?;
+
+    // Emit only when the committed text actually grows (transcribe-cpp already
+    // gates via `committed_changed`; the extra string compare guards against
+    // no-op churn so the pill isn't woken for nothing).
+    let mut last_committed = String::new();
     loop {
         match next() {
             FrameCmd::Frame(f) => {
-                for raw in session.push_audio(f)? {
-                    for ev in stab.ingest(raw) {
-                        emit(to_daemon(ev));
-                    }
-                }
-            }
-            FrameCmd::Flush => {
-                for raw in session.flush()? {
-                    for ev in stab.ingest(raw) {
-                        emit(to_daemon(ev));
+                let update = stream
+                    .feed(f.samples.as_ref())
+                    .map_err(|e| anyhow::anyhow!("stream feed failed: {e}"))?;
+                if update.committed_changed {
+                    let committed = stream.text().committed;
+                    if committed != last_committed {
+                        last_committed = committed.clone();
+                        emit(DaemonEvent::AsrStreamText {
+                            session_id,
+                            committed,
+                        });
                     }
                 }
             }
@@ -118,178 +75,73 @@ pub fn drive_session(
         }
     }
 
-    for raw in session.finish()? {
-        for ev in stab.ingest(raw) {
-            emit(to_daemon(ev));
-        }
-    }
-
-    let sf = stab.session_final();
-    let final_text = match &sf {
-        AsrEvent::SessionFinal { text, .. } => text.clone(),
-        _ => String::new(),
-    };
-    emit(to_daemon(sf));
-    backend.unload();
+    // Finalize flushes buffered audio; the committed prefix then holds the full
+    // transcript.
+    stream
+        .finalize()
+        .map_err(|e| anyhow::anyhow!("stream finalize failed: {e}"))?;
+    let final_text = stream.text().committed;
+    emit(DaemonEvent::AsrStreamText {
+        session_id,
+        committed: final_text.clone(),
+    });
+    emit(DaemonEvent::AsrSessionFinal {
+        session_id,
+        text: final_text.clone(),
+    });
     Ok(final_text)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grain_asr_core::events::AsrRawEvent;
-    use grain_asr_core::model::{
-        AsrBackendKind, AsrCapabilities, AsrModelFiles, AsrModelSpec, MemoryProfile,
-    };
-    use grain_asr_core::testing::ScriptedBackend;
+    use std::path::Path;
     use std::sync::Arc;
 
-    fn spec() -> AsrModelSpec {
-        AsrModelSpec {
-            id: "fake".into(),
-            name: "Fake".into(),
-            backend: AsrBackendKind::SherpaOnnx,
-            files: AsrModelFiles::SherpaTransducer {
-                encoder: "e".into(),
-                decoder: "d".into(),
-                joiner: "j".into(),
-                tokens: "t".into(),
-                config: None,
-            },
-            sample_rate_hz: 16_000,
-            languages: vec!["en".into()],
-            capabilities: AsrCapabilities::streaming_minimal(),
-            memory: MemoryProfile { approx_mb: 64 },
-        }
-    }
-
-    fn frame() -> AudioFrame {
-        AudioFrame::new(Arc::from(vec![0.0f32; 160].into_boxed_slice()), 16_000)
-    }
-
+    /// End-to-end streaming smoke test against a REAL GGUF model. Skips unless
+    /// both env vars are set (so CI without a model still passes):
+    ///   GRAIN_TC_GGUF = path to a streaming .gguf
+    ///   GRAIN_TC_WAV  = path to a 16 kHz mono wav of speech
+    /// The ggml backend DLLs must sit next to the test binary (copy them from the
+    /// build profile dir first — see the sherpa smoke test note).
     #[test]
-    fn scripted_backend_drives_daemon_events() {
-        let caps = AsrCapabilities::streaming_minimal();
-        let script = vec![
-            vec![AsrRawEvent::Partial {
-                segment_id: 0,
-                revision: 0,
-                text: "hello".into(),
-                words: vec![],
-            }],
-            vec![AsrRawEvent::Partial {
-                segment_id: 0,
-                revision: 1,
-                text: "hello world".into(),
-                words: vec![],
-            }],
-            vec![AsrRawEvent::BackendFinal {
-                segment_id: 0,
-                text: "hello world".into(),
-                words: vec![],
-            }],
-        ];
-        let backend = Box::new(ScriptedBackend::new(caps, script));
+    fn streams_a_real_gguf_when_present() {
+        let (Ok(gguf), Ok(wav)) =
+            (std::env::var("GRAIN_TC_GGUF"), std::env::var("GRAIN_TC_WAV"))
+        else {
+            eprintln!("GRAIN_TC_GGUF/GRAIN_TC_WAV unset — skipping transcribe-cpp smoke test");
+            return;
+        };
+        let _ = transcribe_cpp::init_backends_default();
 
-        // Frame source: three frames, then stop.
-        let mut pulled = 0;
-        let next = move || {
-            pulled += 1;
-            if pulled <= 3 {
-                FrameCmd::Frame(frame())
-            } else {
-                FrameCmd::Stop
+        let mut reader = hound::WavReader::open(&wav).expect("open wav");
+        let spec = reader.spec();
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.samples::<f32>().map(|s| s.unwrap()).collect(),
+            hound::SampleFormat::Int => {
+                let max = (1i64 << (spec.bits_per_sample - 1)) as f32;
+                reader
+                    .samples::<i32>()
+                    .map(|s| s.unwrap() as f32 / max)
+                    .collect()
             }
         };
+        // Feed in 100 ms chunks like the live capture would, then Stop.
+        let rate = spec.sample_rate;
+        let chunk = (rate as usize / 10).max(1);
+        let mut chunks: std::collections::VecDeque<Vec<f32>> =
+            samples.chunks(chunk).map(|c| c.to_vec()).collect();
+        let next = move || match chunks.pop_front() {
+            Some(c) => FrameCmd::Frame(AudioFrame::new(Arc::from(c.into_boxed_slice()), rate)),
+            None => FrameCmd::Stop,
+        };
 
-        let mut events = Vec::new();
-        let final_text = drive_session(
-            backend,
-            &spec(),
-            AsrSessionConfig {
-                session_id: 7,
-                ..Default::default()
-            },
-            StabilizerConfig::default(),
-            next,
-            |e| events.push(e),
-        )
-        .unwrap();
-
-        assert_eq!(final_text, "hello world");
+        let final_text =
+            drive_stream(Path::new(&gguf), None, 1, next, |_ev| {}).expect("drive_stream");
+        eprintln!("TRANSCRIBE_CPP_TRANSCRIPT: {final_text}");
         assert!(
-            events
-                .iter()
-                .any(|e| matches!(e, DaemonEvent::AsrCommit { .. })),
-            "expected at least one AsrCommit"
+            !final_text.trim().is_empty(),
+            "real speech must produce a non-empty transcript"
         );
-        assert!(events.iter().any(|e| matches!(
-            e,
-            DaemonEvent::AsrSegmentFinal { text, .. } if text == "hello world"
-        )));
-        match events.last().unwrap() {
-            DaemonEvent::AsrSessionFinal { session_id, text } => {
-                assert_eq!(*session_id, 7);
-                assert_eq!(text, "hello world");
-            }
-            other => panic!("expected AsrSessionFinal last, got {other:?}"),
-        }
-    }
-
-    /// M8 stop-while-decoding: if Stop arrives before the backend has emitted its
-    /// final, `finish()` drains the remaining decode so the transcript is not
-    /// lost. Here only two frames are pushed (two scripted batches) before Stop;
-    /// the third batch (the BackendFinal) is drained on finish.
-    #[test]
-    fn stop_mid_stream_drains_remaining_on_finish() {
-        let caps = AsrCapabilities::streaming_minimal();
-        let script = vec![
-            vec![AsrRawEvent::Partial {
-                segment_id: 0,
-                revision: 0,
-                text: "hello".into(),
-                words: vec![],
-            }],
-            vec![AsrRawEvent::Partial {
-                segment_id: 0,
-                revision: 1,
-                text: "hello world".into(),
-                words: vec![],
-            }],
-            vec![AsrRawEvent::BackendFinal {
-                segment_id: 0,
-                text: "hello world".into(),
-                words: vec![],
-            }],
-        ];
-        let backend = Box::new(ScriptedBackend::new(caps, script));
-
-        // Stop after only two frames — the BackendFinal batch is still queued.
-        let mut pulled = 0;
-        let next = move || {
-            pulled += 1;
-            if pulled <= 2 {
-                FrameCmd::Frame(frame())
-            } else {
-                FrameCmd::Stop
-            }
-        };
-
-        let mut events = Vec::new();
-        let final_text = drive_session(
-            backend,
-            &spec(),
-            AsrSessionConfig::default(),
-            StabilizerConfig::default(),
-            next,
-            |e| events.push(e),
-        )
-        .unwrap();
-
-        assert_eq!(final_text, "hello world", "remaining decode must not be lost");
-        assert!(events.iter().any(|e| matches!(
-            e,
-            DaemonEvent::AsrSegmentFinal { text, .. } if text == "hello world"
-        )));
     }
 }

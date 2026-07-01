@@ -17,7 +17,16 @@ backend = ["dep:sherpa-onnx"]
 grain-asr-core = { path = "../grain-asr-core" }
 anyhow = { workspace = true }
 log = "0.4"
-sherpa-onnx = { version = "1.13.3", optional = true }
+# [GRAIN] SHARED (DLL) linking, not the default `static`. The prebuilt Windows
+# *static* sherpa lib is built with the static CRT (`/MT`), which collides with
+# the rest of the app's dynamic CRT (`/MD`) — LNK2005 duplicate `std::` symbols —
+# and would also duplicate onnxruntime, which `ort`/transcribe-rs already links
+# statically for the Batch path. Shared linking sidesteps both: sherpa's C API
+# and its onnxruntime live in their own DLLs (copied next to the exe by the sys
+# build script) and never share symbols with the statically-linked onnxruntime.
+sherpa-onnx = { version = "1.13.3", default-features = false, features = [
+  "shared",
+], optional = true }
 
 [dev-dependencies]
 # Only used by the `backend`-gated fixture smoke test.

@@ -7,6 +7,7 @@ import { useSttPool } from "./useSttPool";
 import { SttProviderRow } from "./SttProviderRow";
 import { SttProviderForm } from "./SttProviderForm";
 import { LocalModelSection } from "./LocalModelSection";
+import { AsrModelSection } from "./AsrModelSection";
 import { ProviderPool } from "../ProviderPool";
 import { RollingWindow } from "../RollingWindow";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
@@ -86,6 +87,10 @@ export const SpeechToTextSettings: React.FC = () => {
 
       {/* 1) Local model — collapsible picker; grays out while cloud rotation is on. */}
       <LocalModelSection disabled={smartRotation} />
+
+      {/* 1b) Streaming / Native-ASR model — identical collapsible picker against
+          the separate ASR registry. Self-hides unless Experimental is enabled. */}
+      <AsrModelSection />
 
       {/* 2) Engine — local-model behaviour: rolling buffer, unload. */}
       <SettingsGroup title={t("settings.speechToText.groups.engine")}>

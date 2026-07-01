@@ -284,12 +284,15 @@ impl TranscriptionManager {
         // the inactive Rolling/Native engine, or refuses if one holds an active
         // session. Falls back to the legacy direct rolling-unload when the arbiter
         // isn't managed (e.g. the headless path with no rolling engine).
-        if let Some(lifecycle) =
-            self.app_handle
-                .try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
+        if let Some(lifecycle) = self
+            .app_handle
+            .try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
         {
             lifecycle
-                .prepare_load(engine_lifecycle_core::EngineSlot::Batch, std::time::Instant::now())
+                .prepare_load(
+                    engine_lifecycle_core::EngineSlot::Batch,
+                    std::time::Instant::now(),
+                )
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         } else if let Some(rt) = self
             .app_handle

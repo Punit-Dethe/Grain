@@ -986,6 +986,17 @@ impl ShortcutAction for CancelAction {
         if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
             rt.cancel_session();
         }
+        // [GRAIN] Native ASR: cancel must destroy the live session too, or the
+        // worker thread + resident backend leak until process exit (the mic is
+        // already released by `cancel_current_operation`, but the worker keeps
+        // spinning waiting for a stop signal that `stop_native_asr`/the shortcut
+        // action would otherwise send). `cancel()` disarms the input and joins
+        // the worker; the discarded final transcript is intentionally dropped.
+        if let Some(m) = app.try_state::<Arc<crate::native_asr::NativeAsrManager>>() {
+            if m.is_running() {
+                m.cancel();
+            }
+        }
         crate::bridge::emit(
             app,
             DaemonEvent::SessionCancelled {
@@ -1311,20 +1322,15 @@ impl ShortcutAction for RealtimeTranscribeAction {
 }
 
 // [GRAIN] Native ASR — push-to-talk, exactly like Batch and Rolling: the
-// shortcut loads the backend, opens the mic, and streams live partial/commit
-// text to the Studio Window overlay (`worker::drive_session` → `Asr*`
-// `DaemonEvent`s, emitted directly by `NativeAsrManager`'s worker thread — this
-// action only owns the recording lifecycle, not the live text). `stop` finalizes
-// the transcript, pastes it, and saves history, mirroring `RealtimeTranscribeAction`.
+// shortcut resolves the selected GGUF model, opens the mic, and streams live
+// committed text to the Studio Window overlay (transcribe-cpp worker →
+// `AsrStreamText` `DaemonEvent`s emitted by `NativeAsrManager`'s worker thread —
+// this action only owns the recording lifecycle, not the live text). `stop`
+// finalizes the transcript, pastes it, and saves history.
 struct NativeAsrAction;
 
 impl ShortcutAction for NativeAsrAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
-        if !get_settings(app).experimental_enabled {
-            warn!("Native ASR shortcut pressed but Experimental features are disabled");
-            return;
-        }
-
         // [GRAIN] The ASR model registry only gets managed when its on-disk init
         // succeeds (see lib.rs); guard with try_state so a failed init surfaces as
         // a clean no-op instead of panicking the shortcut handler thread.
@@ -1333,13 +1339,28 @@ impl ShortcutAction for NativeAsrAction {
             warn!("Native ASR: model registry unavailable (init failed at startup)");
             return;
         };
+
+        // Require a selected + installed streaming model (a real GGUF on disk).
+        // Without one, surface a clear, actionable error to the pill and don't
+        // open the mic.
+        let selected = get_settings(app).selected_asr_model;
+        let Some(gguf_path) = asr_models.get_gguf_path(&selected) else {
+            warn!("Native ASR: no streaming model selected/installed");
+            crate::bridge::emit(
+                app,
+                DaemonEvent::ModelError {
+                    error: "Install and select a streaming model in Settings → Speech to Text"
+                        .into(),
+                },
+            );
+            return;
+        };
+
         let manager = Arc::clone(&app.state::<Arc<crate::native_asr::NativeAsrManager>>());
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
 
         // Mutual exclusion: free the inactive Batch/Rolling engine before starting.
-        if let Some(lifecycle) =
-            app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
-        {
+        if let Some(lifecycle) = app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>() {
             if let Err(e) = lifecycle.prepare_load(
                 engine_lifecycle_core::EngineSlot::NativeAsr,
                 std::time::Instant::now(),
@@ -1396,8 +1417,8 @@ impl ShortcutAction for NativeAsrAction {
                 },
             );
 
-            let (backend, spec) = crate::commands::native_asr::resolve_backend(app, &asr_models);
-            manager.start(backend, spec, None, grain_asr_core::session::ContextHints::default());
+            let language = crate::commands::native_asr::language_hint(app);
+            manager.start(gguf_path, language);
 
             shortcut::register_cancel_shortcut(app);
         } else {
@@ -1463,7 +1484,8 @@ impl ShortcutAction for NativeAsrAction {
                         &settings.custom_filler_words,
                         false,
                     );
-                    if let Err(e) = hm.save_entry(String::new(), finalized.clone(), false, None, None)
+                    if let Err(e) =
+                        hm.save_entry(String::new(), finalized.clone(), false, None, None)
                     {
                         error!("Failed to save Native ASR history entry: {e}");
                     }

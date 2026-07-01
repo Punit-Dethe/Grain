@@ -1,28 +1,21 @@
-//! [GRAIN] M6: Native ASR session manager.
+//! [GRAIN] Native ASR session manager (transcribe-cpp).
 //!
-//! Owns the single live Native ASR session: it spawns the worker thread that
-//! runs [`super::worker::drive_session`], feeding it frames from the
-//! [`NativeAsrInput`] fan-out and emitting the stabilized stream onto the core's
-//! `DaemonEvent` bus (so the pill renders partial/commit/final exactly like the
-//! Batch/Rolling paths).
-//!
-//! The backend is injected (`start(backend, …)`): Milestone 6 drives it with the
-//! scripted fake; Milestone 5's Sherpa backend drops into the same call. The
-//! `start`/`stop`/`cancel` surface is wired to a shortcut/action in Milestone 7.
-#![allow(dead_code)]
+//! Owns the single live streaming session: it spawns the worker thread that runs
+//! [`super::worker::drive_stream`], feeding it frames from the [`NativeAsrInput`]
+//! fan-out and emitting the committed transcript onto the core's `DaemonEvent`
+//! bus (so the pill renders it exactly like before). The model is a GGUF file on
+//! disk; `start` takes its path + an optional language hint.
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use grain_asr_core::model::AsrModelSpec;
-use grain_asr_core::session::{AsrSessionConfig, ContextHints, NativeAsrBackend};
-use grain_asr_core::stabilizer::StabilizerConfig;
 use tauri::AppHandle;
 
 use super::input::NativeAsrInput;
-use super::worker::{drive_session, FrameCmd};
+use super::worker::{drive_stream, FrameCmd};
 
 struct Running {
     session_id: u64,
@@ -53,16 +46,11 @@ impl NativeAsrManager {
         self.running.lock().unwrap().is_some()
     }
 
-    /// Start a Native ASR session against `backend`/`spec`. Stops any prior
-    /// session first. Returns the new session id. The worker emits
-    /// `Asr*` `DaemonEvent`s and the final text lands on `AsrSessionFinal`.
-    pub fn start(
-        &self,
-        backend: Box<dyn NativeAsrBackend>,
-        spec: AsrModelSpec,
-        language: Option<String>,
-        hints: ContextHints,
-    ) -> u64 {
+    /// Start a streaming session against the GGUF model at `gguf_path`. Stops any
+    /// prior session first. Returns the new session id. The worker emits
+    /// `AsrStreamText` + `AsrSessionFinal`; the final text also comes back from
+    /// [`stop`](Self::stop) for the caller's paste/history step.
+    pub fn start(&self, gguf_path: PathBuf, language: Option<String>) -> u64 {
         self.stop(); // single live session
 
         let session_id = self.next_session_id.fetch_add(1, Ordering::Relaxed);
@@ -100,16 +88,9 @@ impl NativeAsrManager {
                     }
                 };
 
-                let config = AsrSessionConfig {
-                    session_id,
-                    language,
-                    hints,
-                    want_word_timestamps: true,
-                };
                 let emit = |ev| crate::bridge::emit(&app, ev);
 
-                match drive_session(backend, &spec, config, StabilizerConfig::default(), next, emit)
-                {
+                match drive_stream(&gguf_path, language, session_id, next, emit) {
                     Ok(text) => Some(text),
                     Err(e) => {
                         log::error!("[GRAIN] native ASR session {session_id} failed: {e}");
@@ -152,8 +133,7 @@ impl NativeAsrManager {
 
     /// Abort the live session without waiting for a clean final (cancel).
     pub fn cancel(&self) {
-        // The worker still runs `finish()` on Stop; for a hard cancel we just
-        // disarm the input first so no further frames are buffered, then stop.
+        // Disarm the input first so no further frames are buffered, then stop.
         self.input.disarm();
         self.stop();
     }
