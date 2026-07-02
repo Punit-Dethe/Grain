@@ -87,6 +87,35 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
+      # Bundle the VC++ runtime app-local so Grain starts on machines without
+      # a current Microsoft redistributable (upstream #1577 / issue #1527).
+      # build.rs stages msvcp140/vcruntime140/vcomp140 from these dirs into
+      # transcribe-libs/, which tauri.windows.conf.json bundles beside the exe.
+      - name: Locate VC++ runtime redist for app-local bundling
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsRoot = & $vswhere -latest -products * -property installationPath
+          if (-not $vsRoot) { throw "vswhere found no Visual Studio installation" }
+          $versionFile = Join-Path $vsRoot "VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt"
+          $redistVersion = (Get-Content $versionFile).Trim()
+          $archDir = Join-Path $vsRoot "VC\Redist\MSVC\$redistVersion\x64"
+          if (-not (Test-Path $archDir)) { throw "VC++ redist arch dir not found: $archDir" }
+          $crt = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.CRT" |
+            Sort-Object Name | Select-Object -Last 1
+          if (-not $crt -or -not (Test-Path (Join-Path $crt.FullName "msvcp140.dll"))) {
+            throw "VC++ CRT redist dir not found or incomplete under: $archDir"
+          }
+          $omp = Get-ChildItem $archDir -Directory -Filter "Microsoft.VC*.OpenMP" |
+            Sort-Object Name | Select-Object -Last 1
+          if (-not $omp -or -not (Test-Path (Join-Path $omp.FullName "vcomp140.dll"))) {
+            throw "VC++ OpenMP redist dir not found or incomplete under: $archDir"
+          }
+          $dirs = "$($crt.FullName);$($omp.FullName)"
+          Write-Host "HANDY_VC_REDIST_DIRS=$dirs"
+          Add-Content -Path $env:GITHUB_ENV -Value "HANDY_VC_REDIST_DIRS=$dirs"
+
       - name: Build, sign updater artifacts, and publish release
         uses: tauri-apps/tauri-action@v0
         env:
