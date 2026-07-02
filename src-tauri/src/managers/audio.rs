@@ -1,5 +1,6 @@
 use crate::audio_toolkit::{list_input_devices, vad::SmoothedVad, AudioRecorder, SileroVad};
 use crate::helpers::clamshell;
+use crate::managers::transcription::StreamRouter;
 use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info};
@@ -120,6 +121,7 @@ pub enum MicrophoneMode {
 fn create_audio_recorder(
     vad_path: &str,
     app_handle: &tauri::AppHandle,
+    stream_router: Arc<StreamRouter>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     let silero = SileroVad::new(vad_path, 0.3)
         .map_err(|e| anyhow::anyhow!("Failed to create SileroVad: {}", e))?;
@@ -152,14 +154,10 @@ fn create_audio_recorder(
                 {
                     rt.feed(frame);
                 }
-                // [GRAIN] M3: also fan out to the Native ASR input sink. Non-blocking
-                // and a no-op unless a native session has armed it, so Rolling/Batch
-                // are unaffected.
-                if let Some(input) =
-                    app_handle.try_state::<std::sync::Arc<crate::native_asr::NativeAsrInput>>()
-                {
-                    input.feed(frame);
-                }
+                // Fan out to the unified TranscriptionManager's live streaming
+                // worker (Native ASR path). A single relaxed atomic load when no
+                // stream is open, so Rolling/Batch are unaffected.
+                stream_router.feed(frame);
             }
         });
 
@@ -179,12 +177,18 @@ pub struct AudioRecordingManager {
     is_recording: Arc<Mutex<bool>>,
     did_mute: Arc<Mutex<bool>>,
     close_generation: Arc<AtomicU64>,
+    /// Live-preview frame route into the unified TranscriptionManager (passed in
+    /// explicitly so recorder recreation never depends on Tauri state ordering).
+    stream_router: Arc<StreamRouter>,
 }
 
 impl AudioRecordingManager {
     /* ---------- construction ------------------------------------------------ */
 
-    pub fn new(app: &tauri::AppHandle) -> Result<Self, anyhow::Error> {
+    pub fn new(
+        app: &tauri::AppHandle,
+        stream_router: Arc<StreamRouter>,
+    ) -> Result<Self, anyhow::Error> {
         let settings = get_settings(app);
         let mode = if settings.always_on_microphone {
             MicrophoneMode::AlwaysOn
@@ -202,6 +206,7 @@ impl AudioRecordingManager {
             is_recording: Arc::new(Mutex::new(false)),
             did_mute: Arc::new(Mutex::new(false)),
             close_generation: Arc::new(AtomicU64::new(0)),
+            stream_router,
         };
 
         // Always-on?  Open immediately.
@@ -303,6 +308,7 @@ impl AudioRecordingManager {
             *recorder_opt = Some(create_audio_recorder(
                 vad_path.to_str().unwrap(),
                 &self.app_handle,
+                Arc::clone(&self.stream_router),
             )?);
         }
         Ok(())

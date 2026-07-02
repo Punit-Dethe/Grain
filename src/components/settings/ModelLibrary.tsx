@@ -138,6 +138,9 @@ export const ModelLibrary: React.FC = () => {
 
   const filteredModels = useMemo(() => {
     return models.filter((model: ModelInfo) => {
+      // [GRAIN] This is the Standard/Batch list: streaming-capable models live
+      // in the separate Streaming section (AsrModelLibrary).
+      if (model.supports_streaming) return false;
       if (languageFilter !== "all") {
         if (!modelSupportsLanguage(model, languageFilter)) return false;
       }
@@ -236,7 +239,9 @@ export const ModelLibrary: React.FC = () => {
                         setLanguageSearch("");
                       }
                     }}
-                    placeholder={t("settings.general.language.searchPlaceholder")}
+                    placeholder={t(
+                      "settings.general.language.searchPlaceholder",
+                    )}
                     className="w-full px-2 py-1 text-sm bg-paper-sunken/60 border border-line rounded-md focus:outline-none focus:ring-1 focus:ring-accent"
                   />
                 </div>

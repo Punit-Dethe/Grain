@@ -408,17 +408,22 @@ impl Default for TypingTool {
     }
 }
 
+/// Compute preference for transcribe-cpp (whisper-family GGUF) model loads.
+/// Renamed from `WhisperAcceleratorSetting` when the batch path moved from
+/// transcribe-rs whisper.cpp onto transcribe-cpp (upstream parity); the stored
+/// values (`auto`/`cpu`/`gpu`) are unchanged, so old JSON deserializes via the
+/// field-level `alias` on [`AppSettings::transcribe_accelerator`].
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
-pub enum WhisperAcceleratorSetting {
+pub enum TranscribeAcceleratorSetting {
     Auto,
     Cpu,
     Gpu,
 }
 
-impl Default for WhisperAcceleratorSetting {
+impl Default for TranscribeAcceleratorSetting {
     fn default() -> Self {
-        WhisperAcceleratorSetting::Auto
+        TranscribeAcceleratorSetting::Auto
     }
 }
 
@@ -589,12 +594,17 @@ pub struct AppSettings {
     pub external_script_path: Option<String>,
     #[serde(default)]
     pub custom_filler_words: Option<Vec<String>>,
-    #[serde(default)]
-    pub whisper_accelerator: WhisperAcceleratorSetting,
+    #[serde(default, alias = "whisper_accelerator")]
+    pub transcribe_accelerator: TranscribeAcceleratorSetting,
     #[serde(default)]
     pub ort_accelerator: OrtAcceleratorSetting,
-    #[serde(default = "default_whisper_gpu_device")]
-    pub whisper_gpu_device: i32,
+    /// transcribe-cpp compute-device *registry index* for explicit GPU picks
+    /// (`-1` = auto). NOTE: deliberately NOT aliased to the old
+    /// `whisper_gpu_device` — that was a transcribe-rs UI ordinal with different
+    /// semantics, so legacy values reset to auto instead of pointing at a
+    /// possibly different device.
+    #[serde(default = "default_transcribe_gpu_device")]
+    pub transcribe_gpu_device: i32,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
     /// [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
@@ -869,7 +879,7 @@ fn default_post_process_prompts() -> Vec<LLMPrompt> {
     ]
 }
 
-fn default_whisper_gpu_device() -> i32 {
+fn default_transcribe_gpu_device() -> i32 {
     -1 // auto
 }
 fn default_typing_tool() -> TypingTool {
@@ -1180,9 +1190,9 @@ pub fn get_default_settings() -> AppSettings {
         typing_tool: default_typing_tool(),
         external_script_path: None,
         custom_filler_words: None,
-        whisper_accelerator: WhisperAcceleratorSetting::default(),
+        transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         ort_accelerator: OrtAcceleratorSetting::default(),
-        whisper_gpu_device: default_whisper_gpu_device(),
+        transcribe_gpu_device: default_transcribe_gpu_device(),
         extra_recording_buffer_ms: 0,
         audio_conditioning: default_audio_conditioning(),
         rolling_window_seconds: default_rolling_window_seconds(),

@@ -1,232 +1,107 @@
-//! [GRAIN] Real-time rolling-window transcription engine for the core.
+//! [GRAIN] Real-time rolling-window transcription driver.
 //!
-//! Uses grain-transcribe's `GrainModel` — loading the EXACT model files Handy
-//! already downloads/manages (via `ModelManager`) — with its OWN on-demand
-//! lifecycle. Mutual-exclusion with Handy's `TranscriptionManager` keeps ≤1
-//! model resident in RAM (task A5). Engine is loaded on hotkey press and unloaded
-//! when idle / when switching to batch.
+//! ISOLATED Grain module (Handy has no rolling mode — keep upstream files free
+//! of rolling knowledge so manual upstream syncs stay clean). Since the
+//! transcribe-cpp unification this module owns NO speech engine of its own:
+//! chunk transcription goes through the app-wide [`TranscriptionManager`]
+//! (`selected_model`, same engine slot as Batch / Native ASR), so switching
+//! between the three capture modes never leaves an extra engine's RAM remnant
+//! behind. What stays here is everything rolling-specific: the session cursor
+//! (chunking at silence), the serial chunk worker, and the timeline assembler.
+//!
+//! While a session is live the manager is put under a *rolling hold*
+//! ([`TranscriptionManager::set_rolling_hold`]): per-chunk custom-word/filler
+//! post-processing is skipped (the assembled transcript is finalized ONCE in
+//! the action) and the "Immediately" unload policy is deferred to session end.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
 
-use grain_transcribe::{block_rms, i16_to_f32, Asr, EngineKind, GrainModel};
-use rolling_window::{
-    AudioChunk, RollingWindowConfig, SessionCursor, TimelineAssembler, WordTiming,
-};
-use tauri::{AppHandle, Manager};
+use rolling_window::{AudioChunk, RollingWindowConfig, SessionCursor};
+use tauri::AppHandle;
 
-use crate::managers::model::{EngineType, ModelManager};
+use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
 
-/// Map Handy's model engine family to grain-transcribe's (1:1).
-fn map_engine(e: EngineType) -> EngineKind {
-    match e {
-        EngineType::Whisper => EngineKind::Whisper,
-        EngineType::Parakeet => EngineKind::Parakeet,
-        EngineType::Moonshine => EngineKind::Moonshine,
-        EngineType::MoonshineStreaming => EngineKind::MoonshineStreaming,
-        EngineType::SenseVoice => EngineKind::SenseVoice,
-        EngineType::GigaAM => EngineKind::GigaAM,
-        EngineType::Canary => EngineKind::Canary,
-        EngineType::Cohere => EngineKind::Cohere,
+/// Convert one captured `f32` frame to the `i16` block the session cursor
+/// expects (it was designed around 16-bit PCM levels for its silence tracking).
+fn f32_to_i16(frame: &[f32]) -> Vec<i16> {
+    frame
+        .iter()
+        .map(|&s| (s * 32768.0).clamp(-32768.0, 32767.0) as i16)
+        .collect()
+}
+
+/// RMS of an i16 block on the 0–1 float scale — the silence signal the cursor's
+/// early-finalize logic consumes. (Moved here from the retired grain-transcribe
+/// crate; the scale must match `RollingWindowConfig`'s silence thresholds.)
+fn block_rms(block: &[i16]) -> f64 {
+    if block.is_empty() {
+        return 0.0;
     }
+    let sum_sq: f64 = block
+        .iter()
+        .map(|&s| {
+            let f = s as f64 / 32768.0;
+            f * f
+        })
+        .sum();
+    (sum_sq / block.len() as f64).sqrt()
 }
 
-struct Loaded {
-    id: String,
-    model: GrainModel,
+fn i16_to_f32(samples: &[i16]) -> Vec<f32> {
+    samples.iter().map(|&s| s as f32 / 32768.0).collect()
 }
 
-// Model load lifecycle, surfaced as a lock-free signal so the session worker can
-// WAIT for an in-flight load instead of dropping early chunks (the load race).
-const LS_IDLE: u8 = 0;
-const LS_LOADING: u8 = 1;
-const LS_LOADED: u8 = 2;
-const LS_FAILED: u8 = 3;
-
-/// On-demand rolling transcription model, held in Tauri managed state.
-#[derive(Default)]
+/// Rolling-window driver, held in Tauri managed state. Stateless between
+/// sessions apart from the shared manager handle.
 pub struct RollingTranscriber {
-    loaded: Mutex<Option<Loaded>>,
-    /// Lock-free mirror of the load lifecycle (`LS_*`) for the worker to poll.
-    load_state: AtomicU8,
+    tm: Arc<TranscriptionManager>,
     /// The current live recording's rolling session, if any.
     active: Mutex<Option<Arc<RollingSession>>>,
-    /// Last-use timestamp (ms) for the idle-unload watcher.
-    last_activity: AtomicU64,
-    /// [GRAIN] Mirror of `settings.audio_conditioning`, refreshed on each load.
-    /// When set, each rolling chunk gets boost-only AGC before transcription —
-    /// the high-pass already ran upstream on the shared 16 kHz frame.
+    /// [GRAIN] Mirror of `settings.audio_conditioning`, refreshed on each
+    /// `ensure_loaded`. When set, each rolling chunk gets boost-only AGC before
+    /// transcription — the high-pass already ran upstream on the shared frame.
     conditioning: AtomicBool,
 }
 
-fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
-
 impl RollingTranscriber {
-    /// Load the currently-selected model if not already loaded (on hotkey press).
-    /// Reuses it if the selection is unchanged. Same files as Handy's batch path.
+    pub fn new(tm: Arc<TranscriptionManager>) -> Self {
+        Self {
+            tm,
+            active: Mutex::new(None),
+            conditioning: AtomicBool::new(false),
+        }
+    }
+
+    /// Kick off (or confirm) the batch model load on the shared manager (on
+    /// hotkey press). Non-blocking: chunk transcription waits on the manager's
+    /// load condvar, so a chunk emitted during the load is never dropped.
     pub fn ensure_loaded(&self, app: &AppHandle) -> Result<(), String> {
         let settings = get_settings(app);
-        let model_id = settings.selected_model;
         // Refresh the conditioning mirror so the session worker (no AppHandle)
         // can honor the current setting.
         self.conditioning
             .store(settings.audio_conditioning, Ordering::Relaxed);
+        let model_id = settings.selected_model;
         if model_id.is_empty() {
             return Err("no model selected".into());
         }
-        if self
-            .loaded
-            .lock()
-            .unwrap()
-            .as_ref()
-            .is_some_and(|l| l.id == model_id)
-        {
-            self.load_state.store(LS_LOADED, Ordering::Release);
-            self.touch();
-            return Ok(());
-        }
-        // Mark loading up-front so the worker waits rather than seeing IDLE and
-        // giving up while we fetch info / load weights.
-        self.load_state.store(LS_LOADING, Ordering::Release);
-        let load = (|| {
-            let mm = app.state::<Arc<ModelManager>>();
-            let info = mm
-                .get_model_info(&model_id)
-                .ok_or_else(|| format!("model not found: {model_id}"))?;
-            if !info.is_downloaded {
-                return Err(format!("model not downloaded: {model_id}"));
-            }
-            let path = mm.get_model_path(&model_id).map_err(|e| e.to_string())?;
-            let kind = map_engine(info.engine_type);
-            // [GRAIN] M2 mutual exclusion: consult the lifecycle arbiter before
-            // loading the rolling model, so ≤1 heavyweight model's weights are
-            // ever resident. It evicts the inactive Batch/Native engine, or
-            // refuses if one holds an active session. Falls back to the legacy
-            // direct batch-unload when the arbiter isn't managed.
-            if let Some(lifecycle) = app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>()
-            {
-                lifecycle
-                    .prepare_load(engine_lifecycle_core::EngineSlot::Rolling, Instant::now())
-                    .map_err(|e| e.to_string())?;
-            } else if let Some(tm) =
-                app.try_state::<Arc<crate::managers::transcription::TranscriptionManager>>()
-            {
-                let _ = tm.unload_model();
-            }
-            log::info!(
-                "[GRAIN] loading rolling model '{model_id}' ({kind:?}) from {}",
-                path.display()
-            );
-            let started = Instant::now();
-            // [GRAIN] Prefer the GPU for the rolling model. transcribe-rs's `Auto`
-            // deliberately excludes DirectML, so on Windows Parakeet runs on the
-            // CPU even with an idle GPU (the every-chunk CPU spike). When the user
-            // is on `Auto` AND DirectML is compiled in, load this model on
-            // DirectML; ORT's execution-provider chain falls back to CPU on its
-            // own if there's no DirectML device or an op isn't supported. We
-            // restore the global immediately after load so Handy's batch path
-            // keeps whatever accelerator the user chose. (No-op on Mac/Linux,
-            // whose `Auto` already selects CoreML/CUDA/ROCm.)
-            use transcribe_rs::accel::{get_ort_accelerator, set_ort_accelerator, OrtAccelerator};
-            let accel_prev = get_ort_accelerator();
-            let prefer_gpu = accel_prev == OrtAccelerator::Auto
-                && OrtAccelerator::available().contains(&OrtAccelerator::DirectMl);
-            if prefer_gpu {
-                log::info!("[GRAIN] rolling: preferring DirectML (GPU); CPU fallback is automatic");
-                set_ort_accelerator(OrtAccelerator::DirectMl);
-            }
-            let load_result = GrainModel::load(kind, &path);
-            if prefer_gpu {
-                set_ort_accelerator(accel_prev); // restore for the batch path
-            }
-            let model = load_result.map_err(|e| e.to_string())?;
-            log::info!("[GRAIN] rolling model loaded in {:?}", started.elapsed());
-            Ok::<_, String>(Loaded {
-                id: model_id,
-                model,
-            })
-        })();
-        match load {
-            Ok(loaded) => {
-                *self.loaded.lock().unwrap() = Some(loaded);
-                self.load_state.store(LS_LOADED, Ordering::Release);
-                self.touch();
-                Ok(())
-            }
-            Err(e) => {
-                self.load_state.store(LS_FAILED, Ordering::Release);
-                Err(e)
-            }
-        }
-    }
-
-    /// Free the model weights (idle / switching to batch).
-    pub fn unload(&self) {
-        self.load_state.store(LS_IDLE, Ordering::Release);
-        if self.loaded.lock().unwrap().take().is_some() {
-            log::info!("[GRAIN] rolling model unloaded");
-        }
-    }
-
-    /// Block until the model finishes loading (`true`) or the load failed / a
-    /// deadline passed (`false`). Used by the session worker so a chunk emitted
-    /// during the load is transcribed once weights are ready — never dropped.
-    fn wait_for_model(&self, max: Duration) -> bool {
-        let deadline = Instant::now() + max;
-        loop {
-            match self.load_state.load(Ordering::Acquire) {
-                LS_LOADED => return true,
-                LS_FAILED | LS_IDLE => return false,
-                _ => {} // LS_LOADING — keep waiting
-            }
-            if Instant::now() >= deadline {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-
-    pub fn is_loaded(&self) -> bool {
-        self.loaded.lock().unwrap().is_some()
-    }
-
-    /// Transcribe one chunk of 16 kHz mono `f32` → (text, optional chunk-relative
-    /// word timings). Errs if no model is loaded.
-    pub fn transcribe_chunk(
-        &self,
-        samples: &[f32],
-    ) -> Result<(String, Option<Vec<WordTiming>>), String> {
-        let mut guard = self.loaded.lock().unwrap();
-        let loaded = guard.as_mut().ok_or("rolling model not loaded")?;
-        loaded.model.transcribe(samples).map_err(|e| e.to_string())
+        self.tm.initiate_model_load_for(model_id);
+        Ok(())
     }
 
     // -- live session control ---------------------------------------------
 
-    /// Begin a live rolling session (on recording start). The model must already
-    /// be loaded via [`ensure_loaded`].
+    /// Begin a live rolling session (on recording start). Puts the shared
+    /// manager under the rolling hold for the duration of the session.
     pub fn start_session(self: &Arc<Self>, max_chunk_seconds: f64) {
-        // If a load is about to be (or is being) kicked off, advertise LOADING so
-        // the worker waits for it rather than racing to IDLE and dropping audio.
-        let _ = self.load_state.compare_exchange(
-            LS_IDLE,
-            LS_LOADING,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
+        self.tm.set_rolling_hold(true);
         let session = Arc::new(RollingSession::start(self.clone(), max_chunk_seconds));
         *self.active.lock().unwrap() = Some(session);
-        self.touch();
-        log::info!("[GRAIN] rolling session started");
+        log::info!("[GRAIN] rolling session started (shared engine)");
     }
 
     /// Feed one captured 16 kHz mono frame to the active session (audio thread).
@@ -238,51 +113,31 @@ impl RollingTranscriber {
     }
 
     /// Stop the live session: flush the tail, drain the worker, return the final
-    /// assembled transcript. `None` if no session was active.
+    /// assembled transcript. `None` if no session was active. Releases the
+    /// rolling hold and honors a deferred "Immediately" unload.
     pub fn finish_session(&self) -> Option<String> {
-        self.touch();
         let session = self.active.lock().unwrap().take()?;
-        Some(session.finish())
+        let text = session.finish();
+        self.tm.set_rolling_hold(false);
+        self.tm.maybe_unload_immediately("rolling session");
+        Some(text)
     }
 
     /// Abort the live session without producing a transcript (cancel).
     pub fn cancel_session(&self) {
-        self.active.lock().unwrap().take();
-    }
-
-    pub fn has_active_session(&self) -> bool {
-        self.active.lock().unwrap().is_some()
-    }
-
-    fn touch(&self) {
-        self.last_activity.store(now_ms(), Ordering::Relaxed);
-    }
-
-    /// Spawn the idle-unload watcher: frees the rolling model after the user's
-    /// configured `model_unload_timeout` of inactivity (mirrors Handy's TM).
-    pub fn start_idle_watcher(self: &Arc<Self>, app: AppHandle) {
-        let this = self.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_secs(10));
-            if this.has_active_session() || !this.is_loaded() {
-                continue;
-            }
-            let timeout = get_settings(&app).model_unload_timeout;
-            if let Some(limit_s) = timeout.to_seconds() {
-                let idle_ms = now_ms().saturating_sub(this.last_activity.load(Ordering::Relaxed));
-                if idle_ms > limit_s.saturating_mul(1000) {
-                    log::info!("[GRAIN] rolling model idle {}s — unloading", idle_ms / 1000);
-                    this.unload();
-                }
-            }
-        });
+        if self.active.lock().unwrap().take().is_some() {
+            self.tm.set_rolling_hold(false);
+            self.tm
+                .maybe_unload_immediately("cancelled rolling session");
+        }
     }
 }
 
 /// One live recording's rolling-window transcription. Frames are fed from the
 /// audio thread (cheap); a single worker thread transcribes finalized chunks
-/// serially (never blocking audio) and assembles the transcript. No partial
-/// text is ever surfaced — only the final string at [`finish`](RollingSession::finish).
+/// serially through the shared manager (never blocking audio) and assembles the
+/// transcript. No partial text is ever surfaced — only the final string at
+/// [`finish`](RollingSession::finish).
 struct RollingSession {
     cursor: Mutex<SessionCursor>,
     tx: Sender<Job>,
@@ -307,21 +162,13 @@ impl RollingSession {
         let cursor = SessionCursor::new(cfg);
         let (tx, rx) = mpsc::channel::<Job>();
         let worker = std::thread::spawn(move || {
-            // Time-based assembler with the fuzzy seam pass enabled (see merge.rs).
-            let mut assembler = TimelineAssembler::new().with_fuzzy_seam(overlap);
+            // Time-based assembler with the fuzzy seam pass enabled (see
+            // merge.rs). Word timings are no longer available from the shared
+            // batch path, so seams are reconciled by fuzzy text overlap alone.
+            let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(overlap);
             while let Ok(job) = rx.recv() {
                 match job {
                     Job::Chunk(chunk) => {
-                        // Chunks own their samples, so we can wait out an in-flight
-                        // model load instead of dropping the audio (the load race).
-                        if !transcriber.wait_for_model(Duration::from_secs(20)) {
-                            log::warn!(
-                                "[GRAIN] model not ready — dropping chunk [{:.1}..{:.1}]s",
-                                chunk.start_sec,
-                                chunk.end_sec
-                            );
-                            continue;
-                        }
                         let mut audio = i16_to_f32(&chunk.samples);
                         // [GRAIN] boost-only AGC lifts quiet/laptop-mic speech to a
                         // good level for the model. Per-chunk is safe here — chunks
@@ -330,8 +177,11 @@ impl RollingSession {
                         if transcriber.conditioning.load(Ordering::Relaxed) {
                             crate::audio_toolkit::audio::normalize_gain(&mut audio);
                         }
-                        match transcriber.transcribe_chunk(&audio) {
-                            Ok((text, words)) => {
+                        // The shared manager waits out an in-flight model load
+                        // internally, so a chunk arriving mid-load is transcribed
+                        // once weights are ready — never dropped.
+                        match transcriber.tm.transcribe(audio) {
+                            Ok(text) => {
                                 log::info!(
                                     "[GRAIN] chunk [{:.1}..{:.1}]s -> {:?}",
                                     chunk.fresh_start_sec,
@@ -342,7 +192,7 @@ impl RollingSession {
                                     chunk.start_sec,
                                     chunk.fresh_start_sec,
                                     &text,
-                                    words.as_deref(),
+                                    None,
                                 );
                             }
                             Err(e) => log::warn!("[GRAIN] rolling chunk transcribe failed: {e}"),
@@ -363,10 +213,7 @@ impl RollingSession {
     }
 
     fn feed(&self, frame: &[f32]) {
-        let buf: Vec<i16> = frame
-            .iter()
-            .map(|&s| (s * 32768.0).clamp(-32768.0, 32767.0) as i16)
-            .collect();
+        let buf = f32_to_i16(frame);
         self.frames_fed.fetch_add(buf.len(), Ordering::Relaxed);
         let rms = block_rms(&buf);
         let chunk = self.cursor.lock().unwrap().push_block(&buf, rms);

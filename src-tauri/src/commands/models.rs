@@ -21,6 +21,20 @@ pub async fn get_model_info(
     Ok(model_manager.get_model_info(&model_id))
 }
 
+/// Re-scan local sources (custom models dir + shared HF cache) for models added
+/// since launch
+#[tauri::command]
+#[specta::specta]
+pub async fn rescan_local_models(
+    model_manager: State<'_, Arc<ModelManager>>,
+) -> Result<(), String> {
+    let mm = model_manager.inner().clone();
+    tokio::task::spawn_blocking(move || mm.rescan_local_models())
+        .await
+        .map_err(|e| format!("rescan task panicked: {e}"))?
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn download_model(
@@ -100,25 +114,9 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
 
     // Persist the new selection early so the frontend sees the correct model
     // when it reacts to events emitted by load_model.
+    // [GRAIN] No `onboarding_completed` flag in Grain's settings schema.
     let mut settings = settings;
     settings.selected_model = model_id.to_string();
-
-    // Reset language to auto if the new model doesn't support the currently selected language.
-    // This prevents stale language settings from causing errors (e.g. Canary receiving zh-Hans)
-    // and stops downstream processing (e.g. OpenCC) from running on an irrelevant language.
-    if settings.selected_language != "auto"
-        && !model_info.supported_languages.is_empty()
-        && !model_info
-            .supported_languages
-            .contains(&settings.selected_language)
-    {
-        log::info!(
-            "Resetting language from '{}' to 'auto' (not supported by {})",
-            settings.selected_language,
-            model_id
-        );
-        settings.selected_language = "auto".to_string();
-    }
 
     write_settings(app, settings);
 
@@ -192,6 +190,19 @@ pub async fn is_model_loading(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn cancel_download(
+    model_manager: State<'_, Arc<ModelManager>>,
+    model_id: String,
+) -> Result<(), String> {
+    model_manager
+        .cancel_download(&model_id)
+        .map_err(|e| e.to_string())
+}
+
+// [GRAIN] Onboarding helpers kept from our fork (used by the frontend gate).
+
+#[tauri::command]
+#[specta::specta]
 pub async fn has_any_models_available(
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<bool, String> {
@@ -206,16 +217,5 @@ pub async fn has_any_models_or_downloads(
 ) -> Result<bool, String> {
     let models = model_manager.get_available_models();
     // Return true if any models are downloaded OR if any downloads are in progress
-    Ok(models.iter().any(|m| m.is_downloaded))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn cancel_download(
-    model_manager: State<'_, Arc<ModelManager>>,
-    model_id: String,
-) -> Result<(), String> {
-    model_manager
-        .cancel_download(&model_id)
-        .map_err(|e| e.to_string())
+    Ok(models.iter().any(|m| m.is_downloaded || m.is_downloading))
 }

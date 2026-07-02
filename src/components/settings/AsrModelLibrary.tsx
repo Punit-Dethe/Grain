@@ -3,44 +3,16 @@ import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
 import type { ModelCardStatus } from "@/components/onboarding";
 import { ModelCard } from "@/components/onboarding";
-import { useAsrModelStore } from "@/stores/asrModelStore";
+import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "@/hooks/useSettings";
-import { type AsrModelInfo, type ModelInfo } from "@/bindings";
+import { type ModelInfo } from "@/bindings";
 
-// [GRAIN] The Streaming / Native-ASR model browser — the twin of `ModelLibrary`
-// (the Batch/Rolling browser) against the SEPARATE ASR registry. It reuses the
-// exact same `ModelCard` so both categories share one beautiful interface, via
-// a small adapter that maps the ASR registry's shape onto the card's
-// `ModelInfo` props. ASR bundles have no accuracy/speed scores or translation,
-// so those fields are zeroed/false — `ModelCard` self-hides them, leaving the
-// card showing name, description, languages, and size exactly like a Batch one.
-
-/** Adapt an `AsrModelInfo` to the `ModelInfo` shape `ModelCard` renders.
- *  Fields the ASR registry doesn't carry are given neutral values that make
- *  `ModelCard` hide the corresponding UI (score bars, translation tag, custom
- *  badge), never fabricate it. */
-const asrToModelInfo = (m: AsrModelInfo): ModelInfo => ({
-  id: m.id,
-  name: m.name,
-  description: `Streaming · ${m.backend} · ~${m.memory_mb} MB RAM`,
-  filename: "",
-  url: null,
-  sha256: null,
-  size_mb: m.size_mb,
-  is_downloaded: m.is_downloaded,
-  is_downloading: m.is_downloading,
-  partial_size: 0,
-  is_directory: true,
-  // Not used by ModelCard's rendering; a valid enum value keeps the type honest.
-  engine_type: "Parakeet",
-  accuracy_score: 0,
-  speed_score: 0,
-  supports_translation: false,
-  is_recommended: false,
-  supported_languages: m.languages,
-  supports_language_selection: m.languages.length > 1,
-  is_custom: false,
-});
+// [GRAIN] The Streaming model browser — the twin of `ModelLibrary` (the
+// Standard/Batch list). Since the transcribe-cpp unification both sections read
+// the SAME unified model registry; this one shows the `supports_streaming`
+// slice and drives the separate `selected_asr_model` setting (what the
+// streaming shortcut loads). Downloads/deletes go through the shared
+// `modelStore`, so progress state is identical to the batch section.
 
 export const AsrModelLibrary: React.FC = () => {
   const { t } = useTranslation();
@@ -51,22 +23,27 @@ export const AsrModelLibrary: React.FC = () => {
   const {
     models,
     downloadingModels,
+    verifyingModels,
     extractingModels,
+    downloadProgress,
+    downloadStats,
     downloadModel,
     cancelDownload,
     deleteModel,
-    getDownloadProgress,
-    getDownloadSpeed,
-  } = useAsrModelStore();
+  } = useModelStore();
+
+  const streamingModels = useMemo(
+    () => models.filter((m: ModelInfo) => m.supports_streaming),
+    [models],
+  );
 
   const getModelStatus = (modelId: string): ModelCardStatus => {
-    // Extraction is checked before download so the large streaming models show
-    // the "extracting" phase once bytes finish transferring.
     if (modelId in extractingModels) return "extracting";
+    if (modelId in verifyingModels) return "verifying";
     if (modelId in downloadingModels) return "downloading";
     if (switchingModelId === modelId) return "switching";
     if (modelId === selectedAsrModel) return "active";
-    const model = models.find((m) => m.id === modelId);
+    const model = streamingModels.find((m) => m.id === modelId);
     if (model?.is_downloaded) return "available";
     return "downloadable";
   };
@@ -85,7 +62,7 @@ export const AsrModelLibrary: React.FC = () => {
   };
 
   const handleDelete = async (modelId: string) => {
-    const model = models.find((m) => m.id === modelId);
+    const model = streamingModels.find((m) => m.id === modelId);
     const modelName = model?.name || modelId;
     const isActive = modelId === selectedAsrModel;
     const confirmed = await ask(
@@ -95,13 +72,13 @@ export const AsrModelLibrary: React.FC = () => {
       { title: t("settings.models.deleteTitle"), kind: "warning" },
     );
     if (confirmed) {
-      // Deleting the active ASR model clears the selection backend-side; mirror
-      // that here so the picker doesn't keep showing it as active.
+      // Deleting the active streaming model clears the selection so the picker
+      // doesn't keep showing it as active.
       if (isActive) await updateSetting("selected_asr_model", "");
       try {
         await deleteModel(modelId);
       } catch (err) {
-        console.error(`Failed to delete ASR model ${modelId}:`, err);
+        console.error(`Failed to delete streaming model ${modelId}:`, err);
       }
     }
   };
@@ -110,15 +87,16 @@ export const AsrModelLibrary: React.FC = () => {
     try {
       await cancelDownload(modelId);
     } catch (err) {
-      console.error(`Failed to cancel ASR download for ${modelId}:`, err);
+      console.error(`Failed to cancel streaming download for ${modelId}:`, err);
     }
   };
 
   const { downloadedModels, availableModels } = useMemo(() => {
-    const downloaded: AsrModelInfo[] = [];
-    const available: AsrModelInfo[] = [];
-    for (const model of models) {
+    const downloaded: ModelInfo[] = [];
+    const available: ModelInfo[] = [];
+    for (const model of streamingModels) {
       if (
+        model.is_custom ||
         model.is_downloaded ||
         model.id in downloadingModels ||
         model.id in extractingModels
@@ -134,9 +112,9 @@ export const AsrModelLibrary: React.FC = () => {
       return 0;
     });
     return { downloadedModels: downloaded, availableModels: available };
-  }, [models, downloadingModels, extractingModels, selectedAsrModel]);
+  }, [streamingModels, downloadingModels, extractingModels, selectedAsrModel]);
 
-  if (models.length === 0) {
+  if (streamingModels.length === 0) {
     return (
       <div className="text-center py-8 text-ink-soft">
         {t("settings.models.noModelsMatch")}
@@ -154,14 +132,14 @@ export const AsrModelLibrary: React.FC = () => {
           {downloadedModels.map((model) => (
             <ModelCard
               key={model.id}
-              model={asrToModelInfo(model)}
+              model={model}
               status={getModelStatus(model.id)}
               onSelect={handleSelect}
               onDownload={handleDownload}
               onDelete={handleDelete}
               onCancel={handleCancel}
-              downloadProgress={getDownloadProgress(model.id)?.percentage}
-              downloadSpeed={getDownloadSpeed(model.id)}
+              downloadProgress={downloadProgress[model.id]?.percentage}
+              downloadSpeed={downloadStats[model.id]?.speed}
               showRecommended={false}
             />
           ))}
@@ -176,14 +154,14 @@ export const AsrModelLibrary: React.FC = () => {
           {availableModels.map((model) => (
             <ModelCard
               key={model.id}
-              model={asrToModelInfo(model)}
+              model={model}
               status={getModelStatus(model.id)}
               onSelect={handleSelect}
               onDownload={handleDownload}
               onDelete={handleDelete}
               onCancel={handleCancel}
-              downloadProgress={getDownloadProgress(model.id)?.percentage}
-              downloadSpeed={getDownloadSpeed(model.id)}
+              downloadProgress={downloadProgress[model.id]?.percentage}
+              downloadSpeed={downloadStats[model.id]?.speed}
               showRecommended={false}
             />
           ))}

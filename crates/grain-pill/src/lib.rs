@@ -173,7 +173,10 @@ impl AsrDisplay {
     fn runs(&self) -> Vec<(String, RunStyle)> {
         let mut runs = Vec::new();
         for seg in &self.finished {
-            runs.extend(seg.split_whitespace().map(|w| (w.to_string(), RunStyle::Committed)));
+            runs.extend(
+                seg.split_whitespace()
+                    .map(|w| (w.to_string(), RunStyle::Committed)),
+            );
         }
         runs.extend(
             self.committed
@@ -191,16 +194,15 @@ impl AsrDisplay {
         runs
     }
 
-    /// [GRAIN] Committed words only — what the Studio Window actually draws. To
-    /// match Handy's live UX we show ONLY committed text (stable, trustworthy);
-    /// the volatile/tentative tail is never rendered (a flickering tail hurts
-    /// readability). `runs()` still exposes the tentative tail for tests; the
-    /// renderer just uses this filtered view.
-    fn committed_runs(&self) -> Vec<(String, RunStyle)> {
+    /// [GRAIN] What the Studio Window actually draws: committed words PLUS the
+    /// volatile tentative tail, exactly like Handy's live overlay. The tail is
+    /// essential — transcribe-cpp's auto-commit can go long stretches without
+    /// committing (typically pausing right after a sentence boundary), and a
+    /// committed-only view visibly freezes during those stretches even though
+    /// decoding is healthy. The renderer styles the tail dimmer (but crisp, no
+    /// blur) so the stable/volatile distinction stays readable.
+    fn display_runs(&self) -> Vec<(String, RunStyle)> {
         self.runs()
-            .into_iter()
-            .filter(|(_, s)| matches!(s, RunStyle::Committed))
-            .collect()
     }
 }
 
@@ -209,21 +211,37 @@ struct LaidLine {
 }
 
 /// Greedy word-wrap of styled runs into lines no wider than `max_w` at `px`.
-fn wrap_runs(font: &fontdue::Font, runs: &[(String, RunStyle)], px: f32, max_w: f32) -> Vec<LaidLine> {
+fn wrap_runs(
+    font: &fontdue::Font,
+    runs: &[(String, RunStyle)],
+    px: f32,
+    max_w: f32,
+) -> Vec<LaidLine> {
     let space_w = font.metrics(' ', px).advance_width;
     let mut lines: Vec<LaidLine> = Vec::new();
     let mut cur: Vec<(String, RunStyle)> = Vec::new();
     let mut cur_w = 0.0f32;
     for (word, style) in runs {
-        let word_w: f32 = word.chars().map(|c| font.metrics(c, px).advance_width).sum();
-        let added = if cur.is_empty() { word_w } else { word_w + space_w };
+        let word_w: f32 = word
+            .chars()
+            .map(|c| font.metrics(c, px).advance_width)
+            .sum();
+        let added = if cur.is_empty() {
+            word_w
+        } else {
+            word_w + space_w
+        };
         if !cur.is_empty() && cur_w + added > max_w {
             lines.push(LaidLine {
                 words: std::mem::take(&mut cur),
             });
             cur_w = 0.0;
         }
-        cur_w += if cur.is_empty() { word_w } else { word_w + space_w };
+        cur_w += if cur.is_empty() {
+            word_w
+        } else {
+            word_w + space_w
+        };
         cur.push((word.clone(), *style));
     }
     if !cur.is_empty() {
@@ -774,7 +792,7 @@ fn paint_studio_card(
     // 4) Transcript, anchored under the header with a fixed line rhythm.
     if let Some(font) = font {
         let max_w = wf - 2.0 * STUDIO_PAD;
-        let runs = asr.committed_runs();
+        let runs = asr.display_runs();
         if !runs.is_empty() {
             let lines = wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w);
             let text_top = STUDIO_PAD + STUDIO_HEADER_H + STUDIO_HEADER_GAP;
@@ -797,12 +815,13 @@ fn paint_studio_card(
                     // it would blur the committed/uncommitted distinction — the
                     // user must always be able to trust the solid text). The
                     // uncommitted tail is the "still being decided" region → shown
-                    // dimmer AND blurred; that blur is the loading signal, and it
-                    // resolves to crisp as the words commit.
+                    // dimmer but CRISP (no blur — Handy renders its tentative tail
+                    // plainly, and blurred text flickering per-frame hurt
+                    // readability); it resolves to solid as the words commit.
                     let (color, alpha, blur): ([u8; 3], f32, usize) = match style {
                         RunStyle::Committed => ([238, 236, 232], 0.97, 0),
-                        RunStyle::Partial { stable: true } => ([198, 201, 208], 0.60, 2),
-                        RunStyle::Partial { stable: false } => ([186, 190, 198], 0.48, 3),
+                        RunStyle::Partial { stable: true } => ([200, 203, 210], 0.66, 0),
+                        RunStyle::Partial { stable: false } => ([186, 190, 198], 0.50, 0),
                     };
                     pen += draw_word(
                         pixmap,
@@ -866,11 +885,8 @@ fn draw_studio_indicator(
         _ => 12.0,
     };
     let tick = (phase / reroll_frames).floor();
-    let mut rng = Rng(
-        (tick.to_bits() as u64)
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            ^ 0xD1B5_4A32_D192_ED03,
-    );
+    let mut rng =
+        Rng((tick.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03);
 
     // Recording density: fraction of dots lit tracks the mic level, with a small
     // floor so there's always a little life. Matches the pill's amplitude→density.
@@ -919,7 +935,13 @@ fn draw_studio_indicator(
         let cy = y0 + r as f32 * IND_CELL + IND_CELL / 2.0;
         if let Some(circle) = PathBuilder::from_circle(cx, cy, radius) {
             paint.set_color(Color::from_rgba8(rgb[0], rgb[1], rgb[2], (a * 255.0) as u8));
-            pixmap.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &circle,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
     }
 }
@@ -1244,12 +1266,22 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
         }
-        // [GRAIN] transcribe-cpp streaming: the committed transcript is cumulative
-        // (the full flicker-free prefix), so set it directly. Only while still
-        // `Recording` — once the shortcut is released `state` flips to
-        // `Processing` and the preview freezes where it was.
-        DaemonEvent::AsrStreamText { committed, .. } if r.state == PillState::Recording => {
+        // [GRAIN] transcribe-cpp streaming: both parts are cumulative snapshots
+        // (the full flicker-free prefix + the volatile tail), so set them
+        // directly. The tail is what keeps the preview moving while the engine's
+        // auto-commit sits between commit points — without it the preview
+        // appears frozen (classically right after a full stop) even though
+        // decoding continues. Only while still `Recording` — once the shortcut
+        // is released `state` flips to `Processing` and the preview freezes
+        // where it was.
+        DaemonEvent::AsrStreamText {
+            committed,
+            tentative,
+            ..
+        } if r.state == PillState::Recording => {
             r.asr.committed = committed;
+            r.asr.partial = tentative;
+            r.asr.partial_stable = true;
         }
         // Legacy sherpa path (stabilized deltas). Kept until sherpa is deleted.
         DaemonEvent::AsrCommit { text, .. } if r.state == PillState::Recording => {
@@ -1614,8 +1646,8 @@ impl App {
     /// caption card. Top-left: a small tracked status eyebrow. Top-right: a
     /// frameless dot-matrix equalizer (the pill's dot-pixel language, sleeker
     /// and without the capsule). Below: the live transcript, word-wrapped, with
-    /// committed text solid and the volatile tail dimmed (and softly blurred
-    /// while the stabilizer hasn't settled it).
+    /// committed text solid and the volatile tentative tail dimmed but crisp
+    /// (it keeps the preview moving between the engine's commit points).
     fn render_studio(&mut self) {
         if self.window.is_none() {
             return;
@@ -2046,7 +2078,7 @@ mod tests {
         let (cw, ch) = studio_pixel_size();
 
         // A realistic mid-dictation frame that wraps to three lines: a long
-        // committed (crisp) prefix + a short volatile (blurred) tail.
+        // committed (crisp) prefix + a short volatile (dimmed) tail.
         let mut asr = AsrDisplay::default();
         asr.append_commit(
             "Let's test the streaming transcription with the new Studio Window and make sure it wraps to three balanced lines",
@@ -2137,13 +2169,18 @@ mod tests {
         let max_w = 80.0;
         let lines = wrap_runs(&font, &runs, px, max_w);
 
-        assert!(lines.len() > 1, "narrow width must wrap onto multiple lines");
+        assert!(
+            lines.len() > 1,
+            "narrow width must wrap onto multiple lines"
+        );
         // No word is split: every original word appears exactly once, in order.
         let rebuilt: Vec<&str> = lines
             .iter()
             .flat_map(|l| l.words.iter().map(|(w, _)| w.as_str()))
             .collect();
-        let expected: Vec<&str> = "one two three four five six seven".split_whitespace().collect();
+        let expected: Vec<&str> = "one two three four five six seven"
+            .split_whitespace()
+            .collect();
         assert_eq!(rebuilt, expected);
     }
 
@@ -2176,8 +2213,14 @@ mod tests {
         // neighbors picked up some of its brightness (no longer fully dark) —
         // i.e. the edge actually got softer, not just shuffled.
         assert!(bmp[2] < 255, "center should have softened: {bmp:?}");
-        assert!(bmp[1] > 0, "left neighbor should pick up some brightness: {bmp:?}");
-        assert!(bmp[3] > 0, "right neighbor should pick up some brightness: {bmp:?}");
+        assert!(
+            bmp[1] > 0,
+            "left neighbor should pick up some brightness: {bmp:?}"
+        );
+        assert!(
+            bmp[3] > 0,
+            "right neighbor should pick up some brightness: {bmp:?}"
+        );
     }
 
     #[test]

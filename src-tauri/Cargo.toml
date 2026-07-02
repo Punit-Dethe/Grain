@@ -23,15 +23,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # name = "cli"
 # path = "src/audio_toolkit/bin/cli.rs"
 
-[features]
-# [GRAIN] Sherpa is being RETIRED in favor of transcribe-cpp (see
-# docs/transcribe-cpp Migration Plan.md). Kept behind a non-default feature
-# during the migration so the tree still builds if we need to compare; the
-# Native ASR live path is moving to transcribe-cpp.
-default = []
-# Legacy Sherpa-ONNX Native ASR backend (being replaced by transcribe-cpp).
-native-asr-sherpa = ["dep:grain-asr-sherpa"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 serde_json = "1"
@@ -42,14 +33,6 @@ grain-pill = { path = "../crates/grain-pill" } # [GRAIN] overlay/HUD logic
 grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned settings + event bus
 rolling-window = { path = "../crates/rolling-window" } # [GRAIN] pure cursor + assembler
 provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotation: cooldowns + headroom ordering
-grain-transcribe = { path = "../crates/grain-transcribe", features = [
-  "whisper",
-] } # [GRAIN] rolling engine (all models incl. whisper)
-engine_lifecycle_core = { package = "engine-lifecycle", path = "../crates/engine-lifecycle" } # [GRAIN] M2 lifecycle arbiter (renamed to avoid clashing with the engine_lifecycle module)
-grain-asr-core = { path = "../crates/grain-asr-core" } # [GRAIN] M1/M3 native ASR protocol + audio input policy
-grain-asr-sherpa = { path = "../crates/grain-asr-sherpa", features = [
-  "backend",
-], optional = true } # [GRAIN] M5 real Sherpa-ONNX backend (behind the native-asr-sherpa feature)
 once_cell = "1"
 tauri = { version = "2.10.2", features = [
   "protocol-asset",
@@ -91,12 +74,13 @@ chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tar = "0.4.44"
 flate2 = "1.0"
-bzip2 = "0.4" # [GRAIN] M4: extract Sherpa .tar.bz2 ASR model bundles
 sha2 = "0.10"
-transcribe-rs = { version = "0.3.8", features = ["whisper-cpp", "onnx"] }
-# [GRAIN] transcribe-cpp — the unified GGUF/ggml ASR engine we're migrating the
-# Native ASR (live streaming) path onto (mirrors Handy upstream). Per-platform
-# backend features are set in the target tables below, exactly as upstream does.
+# Whisper-family models run through transcribe-cpp (GGUF/ggml, native backends);
+# transcribe-rs is now ONNX-only (Parakeet, Moonshine, SenseVoice, GigaAM,
+# Canary, Cohere) — mirrors Handy upstream exactly.
+transcribe-rs = { version = "0.3.8", features = ["onnx"] }
+# [GRAIN] transcribe-cpp — the unified GGUF/ggml ASR engine (batch + streaming),
+# mirrors Handy upstream. Per-platform backend features in the target tables.
 transcribe-cpp = { version = "0.1.0", default-features = false }
 # [GRAIN] GGUF model downloads for transcribe-cpp (Handy's cancellable fork).
 hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downloads", features = [
@@ -120,7 +104,6 @@ tauri-plugin-single-instance = "2.3.2"
 tauri-plugin-updater = "2.10.0"
 
 [target.'cfg(windows)'.dependencies]
-transcribe-rs = { version = "0.3.3", features = ["whisper-vulkan", "ort-directml"] }
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_System_Com_StructuredStorage",
@@ -144,14 +127,12 @@ transcribe-cpp = { version = "0.1.0", default-features = false, features = [
 
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
-transcribe-rs = { version = "0.3.3", features = ["whisper-metal"] }
 # [GRAIN] macOS links transcribe-cpp statically via Metal (ships no DLLs).
 transcribe-cpp = { version = "0.1.0", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
-transcribe-rs = { version = "0.3.3", features = ["whisper-vulkan"] }
 transcribe-cpp = { version = "0.1.0", default-features = false, features = [
   "dynamic-backends",
   "vulkan",
