@@ -145,14 +145,15 @@ fn create_audio_recorder(
             }
         })
         // [GRAIN] forward raw 16 kHz frames to the active rolling session (no-op
-        // unless a real-time recording is in progress).
+        // unless a real-time recording is in progress). `speech` is the frame's
+        // voice-activity decision (None when VAD is off).
         .with_sample_callback({
             let app_handle = app_handle.clone();
-            move |frame: &[f32]| {
+            move |frame: &[f32], speech: Option<bool>| {
                 if let Some(rt) =
                     app_handle.try_state::<std::sync::Arc<crate::rolling::RollingTranscriber>>()
                 {
-                    rt.feed(frame);
+                    rt.feed(frame, speech);
                 }
                 // Fan out to the unified TranscriptionManager's live streaming
                 // worker (Native ASR path). A single relaxed atomic load when no

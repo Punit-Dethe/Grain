@@ -189,12 +189,26 @@ Files: `grain-core/src/event.rs`, `managers/transcription.rs` hook,
    (b) Batch shortcut (parakeet) still pastes; (c) Rolling shortcut assembles
    and pastes; (d) Settings → Speech to Text shows Streaming vs Standard lists
    correctly split; downloads via the new HF path work.
-2. **Rolling window vNext:** a full analysis + research + phased plan exists in
-   `docs/Rolling Window vNext Plan.md` (approved direction, NOT yet
-   implemented). Phase 1 is a real regression fix: the unification dropped
-   word timings, so the assembler currently runs plain text merge instead of
-   its time-based dedup — transcribe-cpp exposes word/token timestamps to
-   restore it. Live preview is Phase 4 of that plan.
+2. **Rolling window vNext — SHIPPED** (`docs/Rolling Window vNext Plan.md`, now
+   marked IMPLEMENTED). Summary of what changed in the rolling path:
+   - Word timings restored: `TranscriptionManager::transcribe_rolling_chunk`
+     returns a `Transcript`; `rolling.rs` feeds real word timings to the
+     timeline assembler (positional dedup, not the plain-text fallback). Shared
+     `with_engine_session` helper crash-isolates both batch + rolling decodes;
+     the `rolling_hold` mechanism is GONE (batch `transcribe()` is upstream-shaped
+     again).
+   - VAD-aware chunk boundaries: the recorder's sample callback carries the
+     Silero decision; `SessionCursor::push_block_vad` gates silence on speech,
+     and hard cuts snap to the quietest 120 ms window (WhisperX min-cut).
+   - Research-tuned defaults: window **25 s**, overlap 2 s, silence 0.7 s,
+     early-min 12 s (`RollingWindowConfig::default` + `default_rolling_window_seconds`).
+   - Committed-context prompting (whisper-family) across the chunk seam.
+   - **Live preview is opt-in**: setting `rolling_live_preview` (default OFF,
+     zero overhead when off). ON shows the Studio Window with committed +
+     LocalAgreement-2 tentative tail. Toggle in Settings → Speech to Text →
+     Engine.
+   - Deleted `crates/rolling-window/src/chunk_pump.rs` (unused) and
+     `AudioChunk.attempts`.
 3. **Upstream sync cadence:** when upstream moves more ONNX models to GGUF or
    bumps transcribe-cpp past 0.1.0, re-port `managers/transcription.rs` +
    `model.rs` + `catalog.json` (files are verbatim-portable; re-apply the

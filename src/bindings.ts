@@ -333,15 +333,13 @@ async changeAppendTrailingSpaceSetting(enabled: boolean) : Promise<Result<null, 
 }
 },
 /**
- * [GRAIN] Set the rolling-window hard-cut length (seconds) for the real-time
- * transcription path. Clamped to the engine's supported `[15, 60]` range so an
- * out-of-range UI value can never reach `RollingWindowConfig`. Persisted only;
- * `RollingSession::start` reads it at the start of each rolling session, so the
- * next session picks up the change with no restart and nothing to live-update.
+ * [GRAIN] Toggle the rolling live preview (Studio Window caption during
+ * rolling dictation). Persisted only; each rolling session reads it at start,
+ * so OFF sessions never spawn the preview machinery — zero compute overhead.
  */
-async changeRollingWindowSecondsSetting(seconds: number) : Promise<Result<null, string>> {
+async changeRollingLivePreviewSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_rolling_window_seconds_setting", { seconds }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_rolling_live_preview_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1150,13 +1148,14 @@ transcribe_gpu_device?: number; extra_recording_buffer_ms?: number;
  */
 audio_conditioning?: boolean; 
 /**
- * [GRAIN] Rolling-window hard-cut length in SECONDS for the real-time
- * (rolling) transcription path. Drives `RollingWindowConfig::max_chunk_seconds`
- * in `rolling.rs`. Default 15 mirrors `RollingWindowConfig::default()`; the
- * engine clamps to [15, 60], so keep any setter in that range. The frontend
- * reflects this value directly (no hardcoded UI default).
+ * [GRAIN] Rolling live preview: show growing text in the Studio Window while
+ * dictating in the rolling (real-time) mode. OFF by default and OFF is
+ * truly zero-cost — the rolling worker takes exactly the same path it
+ * always did (no events, no extra decode). ON adds a committed-text preview
+ * after each chunk merge PLUS an efficient inter-chunk tail decode
+ * (LocalAgreement-2) that costs extra compute, so it is strictly opt-in.
  */
-rolling_window_seconds?: number }
+rolling_live_preview?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
