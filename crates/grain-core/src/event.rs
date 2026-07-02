@@ -100,12 +100,16 @@ pub enum DaemonEvent {
 
     // -- Native ASR (real-time streaming dictation) --
     /// [GRAIN] transcribe-cpp streaming: the cumulative committed transcript so
-    /// far (flicker-free, growing). transcribe-cpp does its own commit
-    /// stabilization, so this replaces the sherpa-era `AsrCommit`/`AsrPartial`
-    /// split — the pill renders `committed` directly (committed-only, like Handy).
+    /// far (flicker-free, growing) plus the volatile `tentative` tail the model
+    /// may still rewrite. The pill renders BOTH (Handy parity: its overlay shows
+    /// committed + tentative) — the engine's auto-commit can stall for long
+    /// stretches (often right after a sentence boundary), and without the tail
+    /// the live preview visibly freezes even though decoding continues.
     AsrStreamText {
         session_id: u64,
         committed: String,
+        #[serde(default)]
+        tentative: String,
     },
 
     // The stabilized stream from the (legacy sherpa) Native ASR path. `AsrCommit`

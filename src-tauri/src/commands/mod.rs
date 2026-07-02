@@ -1,7 +1,7 @@
 pub mod audio;
 pub mod history;
 pub mod models;
-pub mod native_asr; // [GRAIN] M4: native ASR model registry commands
+pub mod native_asr; // [GRAIN] streaming-model view of the unified catalog + selection
 pub mod post_process; // [GRAIN] post-process (LLM) routing-pool management
 pub mod stt; // [GRAIN] S6: STT routing-pool management
 pub mod transcription;

@@ -399,9 +399,9 @@ async changeShowTrayIconSetting(enabled: boolean) : Promise<Result<null, string>
     else return { status: "error", error: e  as any };
 }
 },
-async changeWhisperAcceleratorSetting(accelerator: WhisperAcceleratorSetting) : Promise<Result<null, string>> {
+async changeTranscribeAcceleratorSetting(accelerator: TranscribeAcceleratorSetting) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_whisper_accelerator_setting", { accelerator }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_transcribe_accelerator_setting", { accelerator }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -415,9 +415,9 @@ async changeOrtAcceleratorSetting(accelerator: OrtAcceleratorSetting) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
-async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
+async changeTranscribeGpuDevice(device: number) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("change_whisper_gpu_device", { device }) };
+    return { status: "ok", data: await TAURI_INVOKE("change_transcribe_gpu_device", { device }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -427,7 +427,7 @@ async changeWhisperGpuDevice(device: number) : Promise<Result<null, string>> {
  * Return which accelerators and GPU devices are available for this build.
  * 
  * First-call cost is dominated by enumerating GPU devices through the
- * whisper.cpp Metal/Vulkan backend, which loads dynamic libraries and
+ * transcribe.cpp Metal/Vulkan backend, which loads dynamic libraries and
  * probes hardware. Run it on the blocking pool so the webview thread
  * stays responsive — see also the startup pre-warm in `lib.rs`.
  */
@@ -847,7 +847,23 @@ async hasAnyModelsOrDownloads() : Promise<Result<boolean, string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async listAsrModels() : Promise<Result<AsrModelInfo[], string>> {
+/**
+ * Re-scan local sources (custom models dir + shared HF cache) for models added
+ * since launch
+ */
+async rescanLocalModels() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("rescan_local_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The streaming slice of the unified model catalog (`supports_streaming`),
+ * for the "Streaming model" section of Settings → Speech to Text.
+ */
+async listAsrModels() : Promise<Result<ModelInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("list_asr_models") };
 } catch (e) {
@@ -855,71 +871,13 @@ async listAsrModels() : Promise<Result<AsrModelInfo[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
-async downloadAsrModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("download_asr_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async cancelAsrModelDownload(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("cancel_asr_model_download", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async deleteAsrModel(modelId: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("delete_asr_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 /**
  * Persist the selected streaming model. Accepts any catalog id (download may
- * happen afterward); the start path checks the GGUF is actually present.
+ * happen afterward); the shortcut's start path checks it is actually on disk.
  */
 async selectAsrModel(modelId: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("select_asr_model", { modelId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Start a streaming Native ASR session on the selected GGUF model. Frees
- * Batch/Rolling via the lifecycle arbiter, opens the mic, and starts the worker.
- */
-async startNativeAsr() : Promise<Result<number, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("start_native_asr") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Stop the streaming session: stop the mic, finalize, paste, save to history.
- */
-async stopNativeAsr() : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("stop_native_asr") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Whether a Native ASR session is currently running.
- */
-async nativeAsrRunning() : Promise<Result<boolean, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("native_asr_running") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1177,7 +1135,15 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; whisper_accelerator?: WhisperAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; whisper_gpu_device?: number; extra_recording_buffer_ms?: number; 
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; 
+/**
+ * transcribe-cpp compute-device *registry index* for explicit GPU picks
+ * (`-1` = auto). NOTE: deliberately NOT aliased to the old
+ * `whisper_gpu_device` — that was a transcribe-rs UI ordinal with different
+ * semantics, so legacy values reset to auto instead of pointing at a
+ * possibly different device.
+ */
+transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; 
 /**
  * [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
  * + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
@@ -1192,18 +1158,20 @@ audio_conditioning?: boolean;
  * reflects this value directly (no hardcoded UI default).
  */
 rolling_window_seconds?: number }
-/**
- * UI-facing description of a streaming model: catalog metadata + install state.
- */
-export type AsrModelInfo = { id: string; name: string; backend: string; languages: string[]; sample_rate_hz: number; size_mb: number; memory_mb: number; is_downloaded: boolean; is_downloading: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
-export type AvailableAccelerators = { whisper: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"
-export type EngineType = "Whisper" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+export type EngineType = 
+/**
+ * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
+ * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
+ * the file, so this one variant covers the whole transcribe-cpp family.
+ */
+"TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
@@ -1218,8 +1186,32 @@ reset_bindings: string[] }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
-export type ModelInfo = { id: string; name: string; description: string; filename: string; url: string | null; sha256: string | null; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean }
+export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
+/**
+ * Where a model comes from and how Handy obtains it — the routing discriminant
+ * for downloading and on-disk resolution.
+ */
+export type ModelSource = 
+/**
+ * Direct HTTP download from a URL (current blob.handy.computer hosting).
+ */
+{ Url: { url: string; 
+/**
+ * Expected SHA-256 for integrity verification; `None` skips it.
+ */
+sha256: string | null } } | 
+/**
+ * A file inside a Hugging Face Hub repo, fetched via hf-hub into the shared
+ * HF cache (so other tools reuse it). The file within the repo is
+ * [`ModelInfo::filename`].
+ */
+{ HuggingFace: { repo_id: string; revision: string } } | 
+/**
+ * Already present on disk — a user-provided custom model, or one discovered
+ * in a shared cache. Nothing to download.
+ */
+"Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
 export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "none" | "top" | "bottom" | 
@@ -1293,8 +1285,15 @@ export type SttProviderKind =
  * Generic OpenAI-compatible `/v1/audio/transcriptions`.
  */
 "openai" | "deepgram" | "assemblyai"
+/**
+ * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.
+ * Renamed from `WhisperAcceleratorSetting` when the batch path moved from
+ * transcribe-rs whisper.cpp onto transcribe-cpp (upstream parity); the stored
+ * values (`auto`/`cpu`/`gpu`) are unchanged, so old JSON deserializes via the
+ * field-level `alias` on [`AppSettings::transcribe_accelerator`].
+ */
+export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
-export type WhisperAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

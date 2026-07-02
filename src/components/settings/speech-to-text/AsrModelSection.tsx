@@ -1,25 +1,30 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
-import { useAsrModelStore } from "@/stores/asrModelStore";
+import { useModelStore } from "@/stores/modelStore";
 import { useSettings } from "@/hooks/useSettings";
 import { AsrModelLibrary } from "../AsrModelLibrary";
 
-// [GRAIN] The Streaming / Native-ASR model section — the structural twin of
+// [GRAIN] The Streaming model section — the structural twin of
 // `LocalModelSection`, sitting directly below it. Collapsed: a summary row of
-// the selected streaming model with a "browse" strip. Expanded: the full ASR
-// model library (download / select / delete). Selecting a model auto-collapses.
+// the selected streaming model with a "browse" strip. Expanded: the streaming
+// slice of the unified model library (download / select / delete). Selecting a
+// model auto-collapses.
 export const AsrModelSection: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting } = useSettings();
-  const { models, initialize } = useAsrModelStore();
+  const { models: allModels, initialize } = useModelStore();
+  const models = useMemo(
+    () => allModels.filter((m) => m.supports_streaming),
+    [allModels],
+  );
 
   const selectedAsrModel = getSetting("selected_asr_model") ?? "";
 
   const [expanded, setExpanded] = useState(false);
   const [hasOpened, setHasOpened] = useState(false);
 
-  // Populate the ASR registry on mount (lists the catalog + install state).
+  // Populate the unified registry on mount (lists the catalog + install state).
   useEffect(() => {
     void initialize();
   }, [initialize]);
@@ -66,7 +71,7 @@ export const AsrModelSection: React.FC = () => {
           </div>
           {active && (
             <div className="flex items-center gap-1.5 shrink-0 text-[0.65rem] font-medium text-ink-faint uppercase tracking-wider">
-              ~{active.memory_mb} MB
+              ~{active.size_mb} MB
             </div>
           )}
         </div>

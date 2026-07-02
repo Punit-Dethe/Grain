@@ -5,6 +5,7 @@ use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error
 use crate::llm_client::LlmError;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
+use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::rotation_state::CallOutcome;
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
@@ -24,6 +25,12 @@ use std::time::Instant;
 
 /// [GRAIN] Monotonic id for the current recording session (pill events).
 static SESSION_ID: AtomicU64 = AtomicU64::new(0);
+
+/// [GRAIN] The current pill session id, for emitters outside this module (the
+/// unified TranscriptionManager mirrors live stream text to the pill).
+pub(crate) fn current_session_id() -> u64 {
+    SESSION_ID.load(Ordering::Relaxed)
+}
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
@@ -986,16 +993,11 @@ impl ShortcutAction for CancelAction {
         if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
             rt.cancel_session();
         }
-        // [GRAIN] Native ASR: cancel must destroy the live session too, or the
-        // worker thread + resident backend leak until process exit (the mic is
-        // already released by `cancel_current_operation`, but the worker keeps
-        // spinning waiting for a stop signal that `stop_native_asr`/the shortcut
-        // action would otherwise send). `cancel()` disarms the input and joins
-        // the worker; the discarded final transcript is intentionally dropped.
-        if let Some(m) = app.try_state::<Arc<crate::native_asr::NativeAsrManager>>() {
-            if m.is_running() {
-                m.cancel();
-            }
+        // [GRAIN] Native ASR: cancel must tear down the live stream worker too,
+        // or its command channel stays open and blocks the next start_stream.
+        // The discarded transcript is intentionally dropped.
+        if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
+            tm.cancel_stream();
         }
         crate::bridge::emit(
             app,
@@ -1321,30 +1323,25 @@ impl ShortcutAction for RealtimeTranscribeAction {
     }
 }
 
-// [GRAIN] Native ASR — push-to-talk, exactly like Batch and Rolling: the
-// shortcut resolves the selected GGUF model, opens the mic, and streams live
-// committed text to the Studio Window overlay (transcribe-cpp worker →
-// `AsrStreamText` `DaemonEvent`s emitted by `NativeAsrManager`'s worker thread —
-// this action only owns the recording lifecycle, not the live text). `stop`
-// finalizes the transcript, pastes it, and saves history.
+// [GRAIN] Native ASR — push-to-talk live streaming, on the SAME unified
+// TranscriptionManager engine as Batch/Rolling: the shortcut loads the selected
+// streaming model into the shared slot, opens the mic (frames fan out to the
+// manager's StreamRouter), and the manager's stream worker emits live committed
+// text to the Studio Window (`AsrStreamText` `DaemonEvent`s — this action only
+// owns the recording lifecycle, not the live text). `stop` finalizes the
+// stream, pastes the transcript, and saves history.
 struct NativeAsrAction;
 
 impl ShortcutAction for NativeAsrAction {
     fn start(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
-        // [GRAIN] The ASR model registry only gets managed when its on-disk init
-        // succeeds (see lib.rs); guard with try_state so a failed init surfaces as
-        // a clean no-op instead of panicking the shortcut handler thread.
-        let Some(asr_models) = app.try_state::<Arc<crate::managers::asr_model::AsrModelManager>>()
-        else {
-            warn!("Native ASR: model registry unavailable (init failed at startup)");
-            return;
-        };
-
-        // Require a selected + installed streaming model (a real GGUF on disk).
-        // Without one, surface a clear, actionable error to the pill and don't
-        // open the mic.
+        // Require a selected + installed + streaming-capable model. Without one,
+        // surface a clear, actionable error to the pill and don't open the mic.
         let selected = get_settings(app).selected_asr_model;
-        let Some(gguf_path) = asr_models.get_gguf_path(&selected) else {
+        let mm = app.state::<Arc<ModelManager>>();
+        let ok = mm
+            .get_model_info(&selected)
+            .is_some_and(|m| m.is_downloaded && m.supports_streaming);
+        if !ok {
             warn!("Native ASR: no streaming model selected/installed");
             crate::bridge::emit(
                 app,
@@ -1354,21 +1351,16 @@ impl ShortcutAction for NativeAsrAction {
                 },
             );
             return;
-        };
+        }
 
-        let manager = Arc::clone(&app.state::<Arc<crate::native_asr::NativeAsrManager>>());
+        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
 
-        // Mutual exclusion: free the inactive Batch/Rolling engine before starting.
-        if let Some(lifecycle) = app.try_state::<Arc<engine_lifecycle_core::LifecycleManager>>() {
-            if let Err(e) = lifecycle.prepare_load(
-                engine_lifecycle_core::EngineSlot::NativeAsr,
-                std::time::Instant::now(),
-            ) {
-                warn!("Native ASR: lifecycle admission failed: {e}");
-                return;
-            }
-        }
+        // Load the streaming model into the shared engine slot (swaps out a
+        // resident Batch model if needed), then open the stream worker: it waits
+        // for the load, and frames queued on the router are never lost.
+        tm.initiate_model_load_for(selected);
+        tm.start_stream();
 
         let binding_id = binding_id.to_string();
         change_tray_icon(app, TrayIconState::Recording);
@@ -1417,11 +1409,11 @@ impl ShortcutAction for NativeAsrAction {
                 },
             );
 
-            let language = crate::commands::native_asr::language_hint(app);
-            manager.start(gguf_path, language);
-
             shortcut::register_cancel_shortcut(app);
         } else {
+            // Tear down the pending stream worker so its channel doesn't leak
+            // and block the next start_stream.
+            tm.cancel_stream();
             change_tray_icon(app, TrayIconState::Idle);
             if let Some(err) = recording_error {
                 let error_type = if is_microphone_access_denied(&err) {
@@ -1447,7 +1439,7 @@ impl ShortcutAction for NativeAsrAction {
 
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-        let manager = Arc::clone(&app.state::<Arc<crate::native_asr::NativeAsrManager>>());
+        let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let binding_id = binding_id.to_string();
 
@@ -1461,37 +1453,50 @@ impl ShortcutAction for NativeAsrAction {
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
 
-            // The mic frames already reached the worker live; the captured
-            // samples themselves are discarded (Native ASR has no WAV/batch use).
-            let _ = rm.stop_recording(&binding_id);
+            // The mic frames already reached the stream worker live; keep the
+            // captured samples only as the batch-fallback input (mirrors Handy:
+            // a model that turned out not to stream still yields a transcript).
+            let samples = rm.stop_recording(&binding_id).unwrap_or_default();
 
-            // [GRAIN] `manager.stop()` joins the worker thread (it runs `finish()`
-            // before returning), so it must not block the async runtime's only
-            // thread pool slot for this task indefinitely — spawn_blocking keeps
-            // the join off the async executor.
-            let raw = tauri::async_runtime::spawn_blocking(move || manager.stop())
-                .await
-                .unwrap_or(None);
-
-            let final_text = match raw {
-                Some(text) if !text.trim().is_empty() => {
-                    let settings = get_settings(&ah);
-                    let finalized = crate::audio_toolkit::finalize_transcript(
-                        &text,
-                        &settings.custom_words,
-                        settings.word_correction_threshold,
-                        &settings.app_language,
-                        &settings.custom_filler_words,
-                        false,
-                    );
-                    if let Err(e) =
-                        hm.save_entry(String::new(), finalized.clone(), false, None, None)
-                    {
-                        error!("Failed to save Native ASR history entry: {e}");
+            // `finalize_stream` blocks up to its internal timeout while the
+            // worker flushes, so keep the wait off the async executor.
+            let tm_finalize = Arc::clone(&tm);
+            let finalized = tauri::async_runtime::spawn_blocking(move || {
+                match tm_finalize.finalize_stream() {
+                    // A finalized stream with usable text wins (already
+                    // custom-word/filler processed by finalize_stream).
+                    Ok(Some(text)) if !text.trim().is_empty() => text,
+                    // No usable stream → batch-transcribe the captured audio.
+                    Ok(_) if !samples.is_empty() => {
+                        warn!("Native ASR: stream produced no text — batch fallback");
+                        tm_finalize.transcribe(samples).unwrap_or_default()
                     }
-                    finalized
+                    Ok(_) => String::new(),
+                    Err(e) => {
+                        error!("Native ASR: stream finalize failed: {e}");
+                        String::new()
+                    }
                 }
-                _ => String::new(),
+            })
+            .await
+            .unwrap_or_default();
+
+            let final_text = if finalized.trim().is_empty() {
+                String::new()
+            } else {
+                if let Err(e) = hm.save_entry(String::new(), finalized.clone(), false, None, None) {
+                    error!("Failed to save Native ASR history entry: {e}");
+                }
+                // Protocol parity with the old worker: announce the session's
+                // final transcript on the event bus.
+                crate::bridge::emit(
+                    &ah,
+                    DaemonEvent::AsrSessionFinal {
+                        session_id,
+                        text: finalized.clone(),
+                    },
+                );
+                finalized
             };
 
             if final_text.trim().is_empty() {

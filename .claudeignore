@@ -1,0 +1,9 @@
+# Ignored for AI context to save tokens
+Cargo.lock
+bun.lock
+flake.lock
+/target/
+/node_modules/
+/dist/
+/build/
+*.log
