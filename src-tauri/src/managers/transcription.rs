@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_specta::Event;
 use transcribe_cpp::{
     Backend, Feature, Model, ModelOptions, RunExtension, RunOptions, Session, StreamOptions, Task,
-    TimestampKind, WhisperRunOptions,
+    TimestampKind, Transcript, WhisperRunOptions,
 };
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
@@ -235,12 +235,6 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
-    /// [GRAIN] True while a rolling-window session is live. Rolling transcribes
-    /// many overlapping chunks through [`transcribe`](Self::transcribe) and
-    /// finalizes ONCE on the assembled transcript, so while held: per-chunk
-    /// custom-word/filler post-processing is skipped and the "Immediately"
-    /// unload policy is deferred to the end of the session.
-    rolling_hold: Arc<AtomicBool>,
 }
 
 impl TranscriptionManager {
@@ -261,7 +255,6 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
-            rolling_hold: Arc::new(AtomicBool::new(false)),
         };
 
         // Start the idle watcher
@@ -420,21 +413,11 @@ impl TranscriptionManager {
         self.last_activity.store(Self::now_ms(), Ordering::Relaxed);
     }
 
-    /// [GRAIN] Enter/leave the rolling-session hold (see `rolling_hold`). The
-    /// rolling driver brackets its live session with these; on release it calls
-    /// [`maybe_unload_immediately`](Self::maybe_unload_immediately) itself so the
-    /// "Immediately" policy still fires once per session.
-    pub fn set_rolling_hold(&self, held: bool) {
-        self.rolling_hold.store(held, Ordering::Release);
-    }
-
-    /// Unloads the model immediately if the setting is enabled and the model is loaded
+    /// Unloads the model immediately if the setting is enabled and the model is
+    /// loaded. [GRAIN] The rolling driver calls this ONCE at session end (its
+    /// per-chunk decodes go through `transcribe_rolling_chunk`, which never
+    /// unloads), so the "Immediately" policy still fires once per dictation.
     pub fn maybe_unload_immediately(&self, context: &str) {
-        // [GRAIN] Deferred while a rolling session is live — unloading between
-        // chunks would fail every subsequent chunk of the same dictation.
-        if self.rolling_hold.load(Ordering::Acquire) {
-            return;
-        }
         let settings = get_settings(&self.app_handle);
         if settings.model_unload_timeout == ModelUnloadTimeout::Immediately
             && self.is_model_loaded()
@@ -1115,180 +1098,85 @@ impl TranscriptionManager {
             );
         }
 
-        // Whether the loaded transcribe-cpp model accepts a decode prompt
-        // (whisper family). Gates the whisper-only run extension below, and
-        // whether fuzzy custom-word correction still runs afterwards.
-        // Assigned inside the engine block below (single-variant since the
-        // ONNX removal), read after it.
-        let model_takes_initial_prompt;
-
-        // Perform transcription with the appropriate engine.
-        // We use catch_unwind to prevent engine panics from poisoning the mutex,
-        // which would make the app hang indefinitely on subsequent operations.
-        let result = {
-            let mut engine_guard = self.lock_engine();
-
-            // Take the engine out so we own it during transcription.
-            // If the engine panics, we simply don't put it back (effectively unloading it)
-            // instead of poisoning the mutex.
-            let mut engine = match engine_guard.take() {
-                Some(e) => e,
-                None => {
-                    return Err(anyhow::anyhow!(
-                        "Model failed to load after auto-load attempt. Please check your model settings."
-                    ));
-                }
-            };
-
-            // Release the lock before transcribing — no mutex held during the engine call
-            drop(engine_guard);
-
-            // Probe live transcribe-cpp capabilities once (cheap GGUF-metadata
-            // reads); the loaded session is the source of truth, not the
-            // ModelManager copy. The whisper run extension is kind-tagged, so
-            // non-whisper archs (parakeet, voxtral, …) reject it with
-            // INVALID_ARG; attach it — and translate — only where supported.
-            let model_supports_translate;
-            let model_languages: Vec<String>;
-            {
-                let LoadedEngine::TranscribeCpp(session) = &engine;
+        // Run the decode on the shared engine with crash isolation. The closure
+        // probes the loaded session's real capabilities (source of truth, not
+        // the ModelManager copy), builds the run plan, and returns both the text
+        // and whether the model took the custom-word prompt (gates the fuzzy
+        // post-correction below).
+        let (result, model_takes_initial_prompt) =
+            self.with_engine_session(&active_model, |session| {
                 let model = session.model();
                 let caps = model.capabilities();
-                model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
-                model_supports_translate = caps.supports_translate;
-                model_languages = caps.languages;
+                let takes_prompt = model.supports(Feature::InitialPrompt);
+                let model_supports_translate = caps.supports_translate;
+                let model_languages = caps.languages;
                 debug!(
                     "transcribe-cpp model '{}' on '{}': initial_prompt={}, translate={}, languages={:?}",
                     settings.selected_model,
                     model.backend(),
-                    model_takes_initial_prompt,
+                    takes_prompt,
                     model_supports_translate,
                     model_languages
                 );
-            }
 
-            let transcribe_result = catch_unwind(AssertUnwindSafe(|| -> Result<String> {
-                match &mut engine {
-                    LoadedEngine::TranscribeCpp(session) => {
-                        // Custom words become the initial prompt ONLY for models
-                        // that accept one (whisper family). Attaching the
-                        // whisper run extension to a non-whisper arch is rejected
-                        // with INVALID_ARG, so skip it there and let the fuzzy
-                        // post-correction handle custom words instead.
-                        let family =
-                            if settings.custom_words.is_empty() || !model_takes_initial_prompt {
-                                None
-                            } else {
-                                Some(RunExtension::Whisper(WhisperRunOptions {
-                                    initial_prompt: Some(settings.custom_words.join(", ")),
-                                    ..Default::default()
-                                }))
-                            };
+                // Custom words become the initial prompt ONLY for models that
+                // accept one (whisper family). Attaching the whisper run
+                // extension to a non-whisper arch is rejected with INVALID_ARG,
+                // so skip it there and let the fuzzy post-correction handle it.
+                let family = if settings.custom_words.is_empty() || !takes_prompt {
+                    None
+                } else {
+                    Some(RunExtension::Whisper(WhisperRunOptions {
+                        initial_prompt: Some(settings.custom_words.join(", ")),
+                        ..Default::default()
+                    }))
+                };
 
-                        let run_plan = transcribe_cpp_run_plan(
-                            settings.translate_to_english,
-                            &validated_language,
-                            &model_languages,
-                            model_supports_translate,
-                        );
+                let run_plan = transcribe_cpp_run_plan(
+                    settings.translate_to_english,
+                    &validated_language,
+                    &model_languages,
+                    model_supports_translate,
+                );
 
-                        let run_options = RunOptions {
-                            task: run_plan.task,
-                            language: run_plan.language,
-                            target_language: run_plan.target_language,
-                            // Whisper-family long-form (>30s) decode degenerates into a
-                            // repetition loop when an initial prompt is set AND timestamps
-                            // are off — a shared whisper.cpp behavior (verified: whisper.cpp
-                            // collapses in the same prompt + no-timestamps cell). Handy runs
-                            // whisper.cpp with timestamps on, so request segment timestamps
-                            // here too for parity, which keeps multi-window decode stable.
-                            // Only whisper advertises InitialPrompt; other arches keep None.
-                            timestamps: if model_takes_initial_prompt {
-                                TimestampKind::Segment
-                            } else {
-                                TimestampKind::None
-                            },
-                            family,
-                            ..Default::default()
-                        };
-
-                        debug!(
-                            "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}",
-                            run_options.task,
-                            run_options.language,
-                            run_options.family.is_some()
-                        );
-
-                        session
-                            .run(&audio, &run_options)
-                            .map(|t| t.text)
-                            .map_err(|e| {
-                                anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
-                            })
-                    }
-                }
-            }));
-
-            match transcribe_result {
-                Ok(inner_result) => {
-                    // Success or normal error: return the engine unless a model
-                    // switch/unload invalidated it while it was in use.
-                    self.return_engine(engine, &active_model);
-                    inner_result?
-                }
-                Err(panic_payload) => {
-                    // Engine panicked — do NOT put it back (it's in an unknown state).
-                    // The engine is dropped here, effectively unloading it.
-                    let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                        s.to_string()
-                    } else if let Some(s) = panic_payload.downcast_ref::<String>() {
-                        s.clone()
+                let run_options = RunOptions {
+                    task: run_plan.task,
+                    language: run_plan.language,
+                    target_language: run_plan.target_language,
+                    // Whisper-family long-form (>30s) decode degenerates into a
+                    // repetition loop when an initial prompt is set AND timestamps
+                    // are off — a shared whisper.cpp behavior. Handy runs
+                    // whisper.cpp with timestamps on, so request segment timestamps
+                    // here too for parity, which keeps multi-window decode stable.
+                    // Only whisper advertises InitialPrompt; other arches keep None.
+                    timestamps: if takes_prompt {
+                        TimestampKind::Segment
                     } else {
-                        "unknown panic".to_string()
-                    };
-                    error!(
-                        "Transcription engine panicked: {}. Model has been unloaded.",
-                        panic_msg
-                    );
+                        TimestampKind::None
+                    },
+                    family,
+                    ..Default::default()
+                };
 
-                    // Clear the model ID so it will be reloaded on next attempt
-                    {
-                        let mut current_model = self
-                            .current_model_id
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner());
-                        *current_model = None;
-                    }
+                debug!(
+                    "transcribe-cpp run: task={:?}, language={:?}, initial_prompt={}",
+                    run_options.task,
+                    run_options.language,
+                    run_options.family.is_some()
+                );
 
-                    let _ = self.app_handle.emit(
-                        "model-state-changed",
-                        ModelStateEvent {
-                            event_type: "unloaded".to_string(),
-                            model_id: None,
-                            model_name: None,
-                            error: Some(format!("Engine panicked: {}", panic_msg)),
-                        },
-                    );
-
-                    return Err(anyhow::anyhow!(
-                        "Transcription engine panicked: {}. The model has been unloaded and will reload on next attempt.",
-                        panic_msg
-                    ));
-                }
-            }
-        };
+                session
+                    .run(&audio, &run_options)
+                    .map(|t| (t.text, takes_prompt))
+                    .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))
+            })?;
 
         // Apply fuzzy word correction if custom words are configured — UNLESS the
         // words were already handed to the model as an initial prompt (whisper
         // family). Non-whisper transcribe-cpp models can't take a prompt, so they
-        // still get fuzzy correction here, same as the ONNX engines.
-        // [GRAIN] Skipped per-chunk during a rolling session: the assembled
-        // transcript gets custom-word + filler processing ONCE at session end.
-        let filtered_result = if self.rolling_hold.load(Ordering::Acquire) {
-            result
-        } else {
-            post_process_transcription_text(result, &settings, model_takes_initial_prompt)
-        };
+        // still get fuzzy correction here.
+        let filtered_result =
+            post_process_transcription_text(result, &settings, model_takes_initial_prompt);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1318,6 +1206,168 @@ impl TranscriptionManager {
         self.maybe_unload_immediately("transcription");
 
         Ok(final_result)
+    }
+
+    /// [GRAIN] Run one decode on the shared engine with crash isolation. Takes
+    /// the engine out of the mutex (so no lock is held during the native call),
+    /// runs `f` on its session inside `catch_unwind`, and either returns the
+    /// engine to the pool (success / normal error) or drops it and clears the
+    /// model id (panic — the engine is left in an unknown state). Shared by the
+    /// batch `transcribe` path and the rolling chunk path so both get identical
+    /// crash handling. Caller must have already waited for any in-flight load.
+    fn with_engine_session<T>(
+        &self,
+        active_model: &str,
+        f: impl FnOnce(&mut Session) -> Result<T>,
+    ) -> Result<T> {
+        // Wait for any in-flight model load before taking the engine.
+        {
+            let mut is_loading = self.is_loading.lock().unwrap();
+            while *is_loading {
+                is_loading = self.loading_condvar.wait(is_loading).unwrap();
+            }
+        }
+
+        // Take the engine out so we own it during the native call. On a panic we
+        // simply don't put it back (effectively unloading it) instead of
+        // poisoning the mutex.
+        let mut engine = match self.lock_engine().take() {
+            Some(e) => e,
+            None => {
+                return Err(anyhow::anyhow!(
+                    "Model is not loaded for transcription. Please check your model settings."
+                ));
+            }
+        };
+
+        let outcome = {
+            let LoadedEngine::TranscribeCpp(session) = &mut engine;
+            catch_unwind(AssertUnwindSafe(|| f(session)))
+        };
+
+        match outcome {
+            Ok(inner) => {
+                // Return the engine unless a model switch/unload invalidated it
+                // while it was in use.
+                self.return_engine(engine, active_model);
+                inner
+            }
+            Err(panic_payload) => {
+                // Engine panicked — do NOT put it back (dropped here = unloaded).
+                let panic_msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "unknown panic".to_string()
+                };
+                error!(
+                    "Transcription engine panicked: {}. Model has been unloaded.",
+                    panic_msg
+                );
+                {
+                    let mut current_model = self
+                        .current_model_id
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner());
+                    *current_model = None;
+                }
+                let _ = self.app_handle.emit(
+                    "model-state-changed",
+                    ModelStateEvent {
+                        event_type: "unloaded".to_string(),
+                        model_id: None,
+                        model_name: None,
+                        error: Some(format!("Engine panicked: {}", panic_msg)),
+                    },
+                );
+                Err(anyhow::anyhow!(
+                    "Transcription engine panicked: {}. The model has been unloaded and will reload on next attempt.",
+                    panic_msg
+                ))
+            }
+        }
+    }
+
+    /// [GRAIN] Decode one rolling-window chunk and return the FULL transcript
+    /// (text + word timings), NOT post-processed. The rolling driver owns the
+    /// dedup/assembly and applies custom-word + filler correction ONCE on the
+    /// assembled transcript at session end, so this path deliberately skips
+    /// per-chunk post-processing AND the idle/immediate unload (the session is
+    /// still live). Word-level timestamps are requested so the timeline
+    /// assembler can dedup overlaps by position; `context_prompt` (the committed
+    /// tail) conditions whisper-family models across the chunk seam.
+    pub fn transcribe_rolling_chunk(
+        &self,
+        audio: &[f32],
+        context_prompt: Option<&str>,
+    ) -> Result<Transcript> {
+        if audio.is_empty() {
+            return Ok(Transcript::default());
+        }
+        self.touch_activity();
+
+        let settings = get_settings(&self.app_handle);
+        let active_model = self
+            .get_current_model()
+            .unwrap_or_else(|| settings.selected_model.clone());
+        let validated_language =
+            effective_language_for_model(&settings, self.model_manager.as_ref(), &active_model);
+
+        self.with_engine_session(&active_model, |session| {
+            let model = session.model();
+            let caps = model.capabilities();
+            let takes_prompt = model.supports(Feature::InitialPrompt);
+            let model_supports_translate = caps.supports_translate;
+            let model_languages = caps.languages;
+
+            // Whisper-family models accept a decode prompt; feed custom words +
+            // the committed tail so spelling/casing stay consistent across the
+            // seam. Non-whisper arches reject the extension, so skip it there.
+            let family = if !takes_prompt {
+                None
+            } else {
+                let mut prompt = settings.custom_words.join(", ");
+                if let Some(ctx) = context_prompt.filter(|c| !c.trim().is_empty()) {
+                    if !prompt.is_empty() {
+                        prompt.push(' ');
+                    }
+                    prompt.push_str(ctx.trim());
+                }
+                if prompt.is_empty() {
+                    None
+                } else {
+                    Some(RunExtension::Whisper(WhisperRunOptions {
+                        initial_prompt: Some(prompt),
+                        ..Default::default()
+                    }))
+                }
+            };
+
+            let run_plan = transcribe_cpp_run_plan(
+                settings.translate_to_english,
+                &validated_language,
+                &model_languages,
+                model_supports_translate,
+            );
+
+            // Word timestamps drive the timeline assembler's positional dedup.
+            // `Auto` falls the model back to its richest supported granularity
+            // (segment for whisper, token for parakeet/nemotron) when it can't
+            // do word-level — the driver synthesizes timings if none come back.
+            let run_options = RunOptions {
+                task: run_plan.task,
+                language: run_plan.language,
+                target_language: run_plan.target_language,
+                timestamps: TimestampKind::Word,
+                family,
+                ..Default::default()
+            };
+
+            session
+                .run(audio, &run_options)
+                .map_err(|e| anyhow::anyhow!("rolling chunk transcription failed: {}", e))
+        })
     }
 }
 

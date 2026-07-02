@@ -43,13 +43,19 @@ pub struct RollingWindowConfig {
 
 impl Default for RollingWindowConfig {
     fn default() -> Self {
+        // Research-tuned, model-agnostic defaults (see docs/Rolling Window vNext
+        // Plan.md §3): 25 s window is the long-form sweet spot across Whisper v3
+        // and Parakeet/Nemotron; 2 s overlap protects boundary words; a 0.7 s
+        // pause is a natural sentence break for dictation but ignores the short
+        // in-word/breath pauses that a 0.6 s cut clipped; early-finalize only
+        // once ≥12 s of fresh speech has accumulated.
         Self {
             sample_rate: 16_000,
-            max_chunk_seconds: 15.0,
+            max_chunk_seconds: 25.0,
             overlap_seconds: 2.0,
             silence_threshold_rms: 0.008,
-            silence_min_duration: 0.6,
-            early_min_seconds: 10.0,
+            silence_min_duration: 0.7,
+            early_min_seconds: 12.0,
             early_guard_seconds: 3.0,
         }
     }
@@ -70,7 +76,6 @@ pub struct AudioChunk {
     pub start_sec: f64,
     pub fresh_start_sec: f64,
     pub end_sec: f64,
-    pub attempts: u32,
 }
 
 impl AudioChunk {
@@ -178,29 +183,121 @@ impl SessionCursor {
         self.frame_to_sec(self.total_frames())
     }
 
-    /// Push one captured block with its raw RMS. Returns a finalized chunk if an
-    /// auto-finalize boundary (hard cut or silence-gap early finalize) is crossed.
+    /// Push one captured block, deciding silence from its RAW rms. Returns a
+    /// finalized chunk if an auto-finalize boundary (hard cut or silence-gap
+    /// early finalize) is crossed. Use [`push_block_vad`](Self::push_block_vad)
+    /// when a voice-activity decision is available — it segments far better in
+    /// noisy rooms than a fixed RMS gate.
     pub fn push_block(&mut self, block: &[i16], raw_rms: f64) -> Option<AudioChunk> {
+        let is_silence = raw_rms < self.cfg.silence_threshold_rms;
+        self.push_block_inner(block, is_silence)
+    }
+
+    /// Push one captured block using a voice-activity decision for silence
+    /// tracking (`speech = true` → voiced). This is the preferred path: Silero
+    /// VAD segments on real speech/non-speech instead of a raw energy threshold,
+    /// so fans/keyboard noise don't defeat early-finalize and soft speech isn't
+    /// mistaken for a pause. Hard-cut snap-to-quiet still uses raw energy (a
+    /// gap inside continuous VAD-speech is where a word boundary most likely
+    /// falls).
+    pub fn push_block_vad(&mut self, block: &[i16], speech: bool) -> Option<AudioChunk> {
+        self.push_block_inner(block, !speech)
+    }
+
+    fn push_block_inner(&mut self, block: &[i16], is_silence: bool) -> Option<AudioChunk> {
         self.all_samples.extend_from_slice(block);
 
-        // Silence tracking uses RAW rms so quiet end-of-sentence speech is not
-        // mistaken for silence.
-        if raw_rms < self.cfg.silence_threshold_rms {
+        if is_silence {
             self.silence_frames += block.len();
         } else {
             self.silence_frames = 0;
         }
 
         let unsent = self.total_frames() - self.sent_frames;
-        let should_finalize = unsent >= self.max_frames
-            || (unsent >= self.early_min_frames
-                && self.silence_frames >= self.silence_min_frames
-                && unsent >= self.early_guard_frames);
+        let hard_cut = unsent >= self.max_frames;
+        let early_cut = unsent >= self.early_min_frames
+            && self.silence_frames >= self.silence_min_frames
+            && unsent >= self.early_guard_frames;
 
-        if should_finalize {
+        if hard_cut {
+            // No natural pause in a full window of speech — snap the boundary to
+            // the quietest sub-window near the end so the cut lands between words
+            // (WhisperX-style min-cut) instead of mid-phoneme.
+            self.emit_chunk_at(self.snap_hard_cut_end())
+        } else if early_cut {
             self.emit_chunk()
         } else {
             None
+        }
+    }
+
+    /// Choose the hard-cut end frame: the center of the quietest ~240 ms window
+    /// within the last `HARD_CUT_SNAP_SEC` of unsent audio, if one is quiet
+    /// enough and leaves a non-trivial fresh region; otherwise the natural end
+    /// (`total_frames`). Frames past the chosen cut roll into the next chunk.
+    fn snap_hard_cut_end(&self) -> usize {
+        const HARD_CUT_SNAP_SEC: f64 = 3.0;
+        // 120 ms window: small enough to nest inside a short inter-word gap
+        // (fluent speech pauses run ~80–300 ms), large enough to average out a
+        // single low sample.
+        const QUIET_WIN_SEC: f64 = 0.12;
+        // A window counts as a boundary gap if quieter than this multiple of the
+        // silence threshold — loose enough to catch the dip between words, tight
+        // enough not to fire mid-vowel.
+        const QUIET_REL: f64 = 2.0;
+
+        let sr = self.cfg.sample_rate as f64;
+        let end = self.total_frames();
+        let snap_frames = (HARD_CUT_SNAP_SEC * sr) as usize;
+        let quiet_win = ((QUIET_WIN_SEC * sr) as usize).max(1);
+        // Search region: last `snap_frames`, but never before the fresh region's
+        // guard (keep a meaningful fresh chunk) and never before base_frame.
+        let region_start = end
+            .saturating_sub(snap_frames)
+            .max(self.sent_frames + self.early_guard_frames)
+            .max(self.base_frame);
+        if end <= region_start + quiet_win {
+            return end; // not enough room to search
+        }
+
+        // Buffer-relative bounds of the search region.
+        let rel_start = region_start - self.base_frame;
+        let rel_end = (end - self.base_frame).min(self.all_samples.len());
+        if rel_end <= rel_start + quiet_win {
+            return end;
+        }
+
+        // Prefix sums of squares over the search region → O(1) window energy.
+        let region = &self.all_samples[rel_start..rel_end];
+        let mut prefix = Vec::with_capacity(region.len() + 1);
+        prefix.push(0.0f64);
+        let mut acc = 0.0f64;
+        for &s in region {
+            let f = s as f64 / 32768.0;
+            acc += f * f;
+            prefix.push(acc);
+        }
+
+        let step = (quiet_win / 2).max(1);
+        let mut best_ms = f64::INFINITY;
+        let mut best_center_rel = None;
+        let mut i = 0usize;
+        while i + quiet_win <= region.len() {
+            let ms = (prefix[i + quiet_win] - prefix[i]) / quiet_win as f64;
+            if ms < best_ms {
+                best_ms = ms;
+                best_center_rel = Some(i + quiet_win / 2);
+            }
+            i += step;
+        }
+
+        let threshold = (self.cfg.silence_threshold_rms * QUIET_REL).powi(2);
+        match best_center_rel {
+            Some(center_rel) if best_ms <= threshold => {
+                // Translate back to an absolute frame index.
+                rel_start + center_rel + self.base_frame
+            }
+            _ => end, // no quiet-enough gap — accept the mid-word hard cut
         }
     }
 
@@ -209,7 +306,15 @@ impl SessionCursor {
     /// Port of `_emit_chunk_locked`. The overlap before the cursor protects
     /// boundary words; the assembler removes the duplicated region.
     pub fn emit_chunk(&mut self) -> Option<AudioChunk> {
-        let end = self.total_frames();
+        self.emit_chunk_at(self.total_frames())
+    }
+
+    /// Emit frames `[cursor - overlap, end)` as a chunk and advance the cursor
+    /// to `end`. `end` is normally `total_frames()`; the hard-cut snap passes an
+    /// earlier boundary so the cut lands in a quiet gap, leaving `[end, total)`
+    /// to roll into the next chunk. `end` is clamped to the valid range.
+    fn emit_chunk_at(&mut self, end: usize) -> Option<AudioChunk> {
+        let end = end.clamp(self.sent_frames, self.total_frames());
         if end <= self.sent_frames {
             return None;
         }
@@ -224,7 +329,6 @@ impl SessionCursor {
             start_sec: self.frame_to_sec(start_frame),
             fresh_start_sec: self.frame_to_sec(fresh_start_frame),
             end_sec: self.frame_to_sec(end),
-            attempts: 0,
         };
         self.sent_frames = end;
         self.silence_frames = 0;
@@ -251,8 +355,23 @@ impl SessionCursor {
             start_sec: self.frame_to_sec(start_frame),
             fresh_start_sec: self.frame_to_sec(fresh_start_frame),
             end_sec: self.frame_to_sec(end_frame),
-            attempts: 0,
         })
+    }
+
+    /// Snapshot the not-yet-finalized audio (`[cursor - overlap, total)`)
+    /// WITHOUT advancing the cursor — for the opt-in live preview's inter-chunk
+    /// tail decode. Capped to the `max_sec` most-recent seconds so an unusually
+    /// long unsent span stays cheap to re-decode. Returns the samples and their
+    /// absolute session start time in seconds.
+    pub fn peek_unsent_tail(&self, max_sec: f64) -> (Vec<i16>, f64) {
+        let end = self.total_frames();
+        let cap = (max_sec * self.cfg.sample_rate as f64) as usize;
+        let start = self
+            .sent_frames
+            .saturating_sub(self.overlap_frames)
+            .max(end.saturating_sub(cap));
+        let samples = self.slice_frames(start, end);
+        (samples, self.frame_to_sec(start))
     }
 
     fn frame_to_sec(&self, frame: usize) -> f64 {
@@ -319,6 +438,66 @@ mod tests {
             s.set_rolling_window(given);
             assert_eq!(s.max_frames, expected_s * fps(&s), "given {given}");
         }
+    }
+
+    #[test]
+    fn vad_early_finalizes_on_silence_run() {
+        let mut s = cur();
+        let f = fps(&s);
+        let mut out = Vec::new();
+        // 12s voiced (reaches early_min), then a 0.7s non-speech run (reaches
+        // silence_min) → exactly one early-finalize chunk.
+        for _ in 0..12 {
+            if let Some(c) = s.push_block_vad(&block(f, 3000), true) {
+                out.push(c);
+            }
+        }
+        let sil = (0.7 * f as f64) as usize;
+        if let Some(c) = s.push_block_vad(&block(sil, 0), false) {
+            out.push(c);
+        }
+        assert_eq!(out.len(), 1, "one VAD-triggered early finalize");
+    }
+
+    #[test]
+    fn vad_ignores_sub_threshold_pause() {
+        let mut s = cur();
+        let f = fps(&s);
+        for _ in 0..12 {
+            s.push_block_vad(&block(f, 3000), true);
+        }
+        // 0.5s pause is below silence_min (0.7s) — must NOT finalize.
+        let sil = (0.5 * f as f64) as usize;
+        assert!(s.push_block_vad(&block(sil, 0), false).is_none());
+    }
+
+    #[test]
+    fn snap_hard_cut_lands_in_quiet_gap() {
+        let mut s = cur();
+        let f = fps(&s);
+        // A full window of loud audio with a quiet 300 ms gap ~1.5s before the
+        // end. The hard cut should snap into that gap, not slice mid-signal.
+        let mut buf = vec![3000i16; 25 * f];
+        let gap_center = (23.5 * f as f64) as usize;
+        let gap_half = (0.15 * f as f64) as usize;
+        for x in &mut buf[gap_center - gap_half..gap_center + gap_half] {
+            *x = 0;
+        }
+        s.all_samples = buf;
+        let cut_sec = s.snap_hard_cut_end() as f64 / f as f64;
+        assert!(
+            (cut_sec - 23.5).abs() < 0.3,
+            "hard cut snapped to {cut_sec}s, expected ~23.5s"
+        );
+    }
+
+    #[test]
+    fn snap_hard_cut_without_gap_uses_natural_end() {
+        let mut s = cur();
+        let f = fps(&s);
+        // Uniformly loud — no quiet window, so the cut stays at total_frames().
+        s.all_samples = vec![3000i16; 25 * f];
+        assert_eq!(s.snap_hard_cut_end(), s.total_frames());
     }
 
     #[test]

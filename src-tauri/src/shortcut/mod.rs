@@ -1119,16 +1119,14 @@ pub fn change_audio_conditioning_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
-/// [GRAIN] Set the rolling-window hard-cut length (seconds) for the real-time
-/// transcription path. Clamped to the engine's supported `[15, 60]` range so an
-/// out-of-range UI value can never reach `RollingWindowConfig`. Persisted only;
-/// `RollingSession::start` reads it at the start of each rolling session, so the
-/// next session picks up the change with no restart and nothing to live-update.
+/// [GRAIN] Toggle the rolling live preview (Studio Window caption during
+/// rolling dictation). Persisted only; each rolling session reads it at start,
+/// so OFF sessions never spawn the preview machinery — zero compute overhead.
 #[tauri::command]
 #[specta::specta]
-pub fn change_rolling_window_seconds_setting(app: AppHandle, seconds: u32) -> Result<(), String> {
+pub fn change_rolling_live_preview_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
-    settings.rolling_window_seconds = seconds.clamp(15, 60);
+    settings.rolling_live_preview = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }

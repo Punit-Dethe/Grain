@@ -9,7 +9,7 @@ import { SttProviderForm } from "./SttProviderForm";
 import { LocalModelSection } from "./LocalModelSection";
 import { AsrModelSection } from "./AsrModelSection";
 import { ProviderPool } from "../ProviderPool";
-import { RollingWindow } from "../RollingWindow";
+import { RollingLivePreview } from "../RollingLivePreview";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
 
 // [GRAIN] The unified Transcription tab. Top to bottom: the local model
@@ -92,9 +92,11 @@ export const SpeechToTextSettings: React.FC = () => {
           the separate ASR registry. Self-hides unless Experimental is enabled. */}
       <AsrModelSection />
 
-      {/* 2) Engine — local-model behaviour: rolling buffer, unload. */}
+      {/* 2) Engine — local-model behaviour: live preview, unload. The rolling
+          window length is fixed by the model-agnostic engine defaults and is
+          intentionally not user-configurable. */}
       <SettingsGroup title={t("settings.speechToText.groups.engine")}>
-        <RollingWindow descriptionMode="tooltip" grouped />
+        <RollingLivePreview descriptionMode="tooltip" grouped />
         <ModelUnloadTimeoutSetting descriptionMode="tooltip" grouped />
       </SettingsGroup>
 

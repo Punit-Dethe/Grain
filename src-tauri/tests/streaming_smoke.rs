@@ -16,7 +16,7 @@
 
 use std::time::Instant;
 
-use transcribe_cpp::{Model, RunOptions, StreamOptions, Task};
+use transcribe_cpp::{Model, RunOptions, StreamOptions, Task, TimestampKind};
 
 fn read_wav_f32(path: &str) -> Vec<f32> {
     let mut reader = hound::WavReader::open(path).expect("open wav");
@@ -104,4 +104,55 @@ fn streams_a_real_gguf_when_present() {
         tentative_updates > 0,
         "no tentative updates — the pill's moving tail would never move"
     );
+}
+
+/// [GRAIN] Validates the rolling path's core assumption: a batch run with
+/// `TimestampKind::Word` returns populated, monotonic word rows (which
+/// `rolling::map_word_timings` maps into the timeline assembler). Gated on the
+/// same env vars; skips when unset. Works with any catalog model (parakeet,
+/// nemotron, whisper…) — the point is that SOME timing granularity comes back.
+#[test]
+fn batch_run_returns_word_timings() {
+    let (Ok(gguf), Ok(wav)) = (
+        std::env::var("GRAIN_TC_GGUF"),
+        std::env::var("GRAIN_TC_WAV"),
+    ) else {
+        eprintln!("GRAIN_TC_GGUF / GRAIN_TC_WAV not set — skipping word-timing test");
+        return;
+    };
+
+    transcribe_cpp::init_logging();
+    transcribe_cpp::init_backends_default().expect("init transcribe-cpp backends");
+
+    let samples = read_wav_f32(&wav);
+    let model = Model::load(&gguf).expect("load gguf");
+    let mut session = model.session().expect("create session");
+    let transcript = session
+        .run(
+            &samples,
+            &RunOptions {
+                task: Task::Transcribe,
+                timestamps: TimestampKind::Word,
+                ..Default::default()
+            },
+        )
+        .expect("batch run");
+
+    eprintln!(
+        "words={} timestamp_kind={:?} text={:?}",
+        transcript.words.len(),
+        transcript.timestamp_kind,
+        transcript.text
+    );
+    assert!(!transcript.text.trim().is_empty(), "no text");
+    assert!(
+        !transcript.words.is_empty(),
+        "no word rows — rolling would fall back to synthesized timings"
+    );
+    // Word times must be non-decreasing (they drive positional dedup).
+    let mut prev = i64::MIN;
+    for w in &transcript.words {
+        assert!(w.t0_ms >= prev, "word times not monotonic at {:?}", w.text);
+        prev = w.t0_ms;
+    }
 }

@@ -439,17 +439,9 @@
         "routing": "Transcription routing",
         "providers": "Cloud providers"
       },
-      "rollingWindow": {
-        "label": "Rolling window",
-        "description": "How much trailing audio the real-time path keeps in its rolling buffer before flushing to the model.",
-        "options": {
-          "sec15": "15 seconds",
-          "sec20": "20 seconds",
-          "sec25": "25 seconds",
-          "sec30": "30 seconds",
-          "sec45": "45 seconds",
-          "sec60": "60 seconds"
-        }
+      "rollingLivePreview": {
+        "label": "Live preview",
+        "description": "Show text as you speak in real-time (rolling) mode. Off by default; turning it on adds extra transcription work, so it uses more CPU/GPU while dictating."
       },
       "localModel": {
         "title": "Standard model",

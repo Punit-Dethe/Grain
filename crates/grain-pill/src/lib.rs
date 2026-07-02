@@ -115,14 +115,13 @@ const STUDIO_H: f32 =
 // dot / waveform / timer so the Studio Window matches the collapsed capsule.
 const ACCENT: [u8; 3] = [255, 93, 30];
 
-// ── Bottom control-row waveform — dot-matrix equalizer ───────────────────────
-// A centre-expanding LED-style dot grid: WAVE_COLS columns × WAVE_ROWS rows of
-// circular dots.  Active dots grow outward from the centre row in proportion to
-// the column's amplitude; inactive dots are barely-visible ghosts.
-const WAVE_COLS: usize = 13;   // number of equalizer bands
-const WAVE_ROWS: usize = 7;    // must be odd so there is an exact centre row
-const DOT_R: f32     = 2.0;    // dot radius (px)
-const DOT_PITCH: f32 = 6.5;    // centre-to-centre spacing (px) — controls gap
+// ── Bottom control-row waveform (replaces the old dot-matrix equalizer) ──────
+// A simple reactive bar meter, centered in the control row — Handy's `.swave`.
+const WAVE_BARS: usize = 9;
+const WAVE_BAR_W: f32 = 4.0;
+const WAVE_GAP: f32 = 3.0;
+const WAVE_MAX_H: f32 = 18.0;
+const WAVE_MIN_H: f32 = 3.0;
 
 /// A rounded-rect path (quadratic corners — plenty smooth at this size; tiny-skia
 /// has no built-in rounded-rect constructor). Used for the Studio Window background.
@@ -1047,97 +1046,30 @@ fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32) {
     }
 }
 
-/// The centre waveform — a dot-matrix equalizer grid (`WAVE_COLS` × `WAVE_ROWS`
-/// dots).  Each column has its own animated amplitude driven by `amp` + a
-/// per-column travelling ripple keyed from `phase`.  Dots that fall within the
-/// active range (symmetric around the centre row) render in the accent colour;
-/// the rest are drawn as barely-visible ghosts, producing the classic LED-matrix
-/// look.  The whole grid fades in/out with `fade`.
+/// The center waveform — `WAVE_BARS` reactive bars whose heights track the mic
+/// level with a symmetric center-tall envelope plus a traveling ripple so it
+/// never reads as static (Handy's `.swave`, driven from our single RMS level).
 fn draw_waveform(pixmap: &mut Pixmap, amp: f32, phase: f32, wf: f32, cy: f32, fade: f32) {
-    // Total grid width / height.
-    let total_w = WAVE_COLS as f32 * DOT_PITCH;
-    let total_h = WAVE_ROWS as f32 * DOT_PITCH;
-    let x0 = (wf - total_w) / 2.0 + DOT_PITCH / 2.0; // centre of first column
-    let y0 = cy - total_h / 2.0 + DOT_PITCH / 2.0;   // centre of first row
-
-    let centre_row = (WAVE_ROWS / 2) as i32;
-    let half_col   = (WAVE_COLS as f32 - 1.0) / 2.0;
-
-    let mut p = Paint { anti_alias: true, ..Default::default() };
-
-    for col in 0..WAVE_COLS {
-        // Centre-tall envelope: columns at the edges are 55 % as tall as the middle.
-        let d   = (col as f32 - half_col).abs() / half_col;
+    let total_w = WAVE_BARS as f32 * WAVE_BAR_W + (WAVE_BARS as f32 - 1.0) * WAVE_GAP;
+    let x0 = (wf - total_w) / 2.0;
+    let mut p = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], (fade * 255.0) as u8));
+    let half = (WAVE_BARS as f32 - 1.0) / 2.0;
+    for i in 0..WAVE_BARS {
+        // Center-tall envelope (edges 0.55 → center 1.0).
+        let d = (i as f32 - half).abs() / half;
         let env = 0.55 + 0.45 * (1.0 - d);
-
-        // Per-column travelling ripple — each column uses a different speed and
-        // phase offset so the bands look disconnected and punchy (matches the TSX
-        // demo mode).
-        let speed  = 3.0 + (col % 4) as f32 * 1.5;
-        let offset = col as f32 * 2.5;
-        let ripple = 0.55 + 0.45 * (phase * speed * 0.012 + offset).sin()
-                          * (phase * speed * 0.006 - offset).cos().abs();
-
-        let col_amp = (amp * env * ripple).clamp(0.0, 1.0);
-
-        // How many rows from centre are active (0 = only centre dot, max = all).
-        let max_active = (col_amp * centre_row as f32).round() as i32;
-
-        for row in 0..WAVE_ROWS {
-            let cx = x0 + col as f32 * DOT_PITCH;
-            let cy_dot = y0 + row as f32 * DOT_PITCH;
-            let dist = (row as i32 - centre_row).abs();
-            let active = dist <= max_active;
-
-            let (r, g, b, a) = if active {
-                // Active dot: accent colour, full opacity × fade.
-                (
-                    ACCENT[0],
-                    ACCENT[1],
-                    ACCENT[2],
-                    (fade * 255.0) as u8,
-                )
-            } else {
-                // Ghost dot: very dim, roughly 8 % of fade.
-                (
-                    ACCENT[0] / 6,
-                    ACCENT[1] / 6,
-                    ACCENT[2] / 6,
-                    (fade * 22.0) as u8,
-                )
-            };
-
-            p.set_color(Color::from_rgba8(r, g, b, a));
-
-            // Draw a circle via a tiny square path approximated by four cubics.
-            // tiny-skia has no circle primitive so we use a PathBuilder arc pair.
-            let mut pb = PathBuilder::new();
-            pb.move_to(cx + DOT_R, cy_dot);
-            // Two 180° arcs to form a full circle.
-            pb.cubic_to(
-                cx + DOT_R, cy_dot - DOT_R * 0.552,
-                cx + DOT_R * 0.552, cy_dot - DOT_R,
-                cx, cy_dot - DOT_R,
-            );
-            pb.cubic_to(
-                cx - DOT_R * 0.552, cy_dot - DOT_R,
-                cx - DOT_R, cy_dot - DOT_R * 0.552,
-                cx - DOT_R, cy_dot,
-            );
-            pb.cubic_to(
-                cx - DOT_R, cy_dot + DOT_R * 0.552,
-                cx - DOT_R * 0.552, cy_dot + DOT_R,
-                cx, cy_dot + DOT_R,
-            );
-            pb.cubic_to(
-                cx + DOT_R * 0.552, cy_dot + DOT_R,
-                cx + DOT_R, cy_dot + DOT_R * 0.552,
-                cx + DOT_R, cy_dot,
-            );
-            pb.close();
-            if let Some(path) = pb.finish() {
-                pixmap.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
-            }
+        // Per-bar traveling ripple keeps the meter alive at steady levels.
+        let ripple = 0.5 + 0.5 * (phase * 0.28 + i as f32 * 0.9).sin();
+        let v = (amp * env * (0.55 + 0.45 * ripple)).clamp(0.0, 1.0);
+        let bh = WAVE_MIN_H + v.powf(0.7) * (WAVE_MAX_H - WAVE_MIN_H);
+        let x = x0 + i as f32 * (WAVE_BAR_W + WAVE_GAP);
+        let y = cy - bh / 2.0;
+        if let Some(path) = rounded_rect_path(x, y, WAVE_BAR_W, bh, WAVE_BAR_W / 2.0) {
+            pixmap.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
         }
     }
 }

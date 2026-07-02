@@ -1,9 +1,36 @@
 # Rolling Window vNext — Analysis, Research, and Plan
 
-> Status: **PLAN ONLY — no code changes yet** (owner directive). Written after a
-> full read of `crates/rolling-window` + `src-tauri/src/rolling.rs` and web
-> research on current streaming-ASR practice. Companion: `docs/TRANSITION-LOG.md`
-> (the unified transcribe-cpp engine this plan builds on).
+> Status: **IMPLEMENTED** (P1–P5 shipped July 2026). Originally written as a
+> plan; the phases below are now built and tested. Companion:
+> `docs/TRANSITION-LOG.md`.
+>
+> **What shipped vs the plan:**
+> - **P1 (timed dedup) — DONE.** `TranscriptionManager::transcribe_rolling_chunk`
+>   returns `Transcript` (Word timestamps) with no per-chunk post-processing /
+>   unload; `rolling.rs` maps real word timings (synthesizes only if a model
+>   returns none) and skips zero-fresh chunks. `rolling_hold` removed;
+>   `transcribe()` is back to upstream shape via a shared `with_engine_session`
+>   crash-isolation helper. (Verified: parakeet returns 18 Word rows on a real
+>   run; batch path re-verified on Vulkan.)
+> - **P2 (boundaries) — DONE.** `push_block_vad` (Silero decision) for silence
+>   gating with RMS fallback; hard cuts snap to the quietest 120 ms window in the
+>   last 3 s (WhisperX-style min-cut). Defaults retuned: **window 25 s, overlap
+>   2 s, silence 0.7 s, early-min 12 s** (research §3). The audio recorder's
+>   sample callback now carries the per-frame VAD decision.
+> - **P3 (context) — DONE (context prompting).** Committed tail (≤200 chars,
+>   minus a 5-word rollback suffix) conditions whisper-family chunk decodes.
+>   **Deferred:** the confidence-aware overlap *replacement* (rewriting committed
+>   text) — it needs the assembler to track per-word confidence, a real
+>   regression risk against a well-tested component for a modest gain. Confidence
+>   is instead consumed by P4's LocalAgreement. See §4 P3 note.
+> - **P4 (live preview) — DONE, opt-in.** Setting `rolling_live_preview`
+>   (default OFF). OFF = byte-for-byte the old path (worker blocks on `recv()`,
+>   no events, no extra decode). ON = Studio Window caption: committed text after
+>   each chunk merge + an inter-chunk tail decode every 2 s gated by
+>   LocalAgreement-2 (only text two consecutive decodes agree on becomes the
+>   tentative tail). Toggle lives in Settings → Speech to Text → Engine.
+> - **P5 (housekeeping) — DONE.** `chunk_pump.rs` + `AudioChunk.attempts`
+>   deleted. 101 backend + 52 rolling-window tests pass; `tsc` clean.
 
 ---
 
