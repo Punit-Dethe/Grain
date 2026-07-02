@@ -16,6 +16,7 @@
 //!
 //! Keys (standalone preview): R recording · P processing · I idle · Esc quit.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -24,7 +25,7 @@ use std::time::{Duration, Instant};
 use grain_core::settings::OverlayPosition;
 use grain_core::{DaemonEvent, SessionMode};
 
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Rect, Transform};
+use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -85,32 +86,43 @@ enum PillMode {
 
 // ── Studio Window geometry ──────────────────────────────────────────────────
 //
-// A compact, deliberately-proportioned caption card. Everything below is on one
-// modular scale so nothing looks "off": the header eyebrow, the transcript, and
-// the activity grid all derive from STUDIO_PAD and a single line rhythm.
+// [GRAIN] Modeled on Handy's live-transcription overlay (upstream
+// `src/overlay/RecordingOverlay.css`): the live transcript flows in the TOP
+// region (bottom-anchored, newest line lowest) and dissolves into the card's
+// dark surface at the top edge, while a single control row sits pinned at the
+// BOTTOM — recording dot (left) · reactive waveform (center) · elapsed timer +
+// cancel glyph (right). Sizes are one modular scale off STUDIO_PAD + the line
+// rhythm so nothing looks "off".
 const STUDIO_W: f32 = 452.0;
-// Sized so exactly three transcript lines sit with balanced top/bottom breathing
-// room (not crushed, not floaty): pad(20) + header(22) + gap(16) + 3·26 + pad(20).
-const STUDIO_H: f32 = 156.0;
-const STUDIO_PAD: f32 = 20.0;
+const STUDIO_PAD: f32 = 18.0; // horizontal inset for text + control row
 const STUDIO_CORNER_R: f32 = 16.0;
-// Header band (eyebrow label on the left, activity grid on the right).
-const STUDIO_HEADER_H: f32 = 22.0;
-// Gap between the header band and the first transcript baseline.
-const STUDIO_HEADER_GAP: f32 = 16.0;
-// Type scale: a small tracked eyebrow + a comfortable transcript body.
-const STUDIO_LABEL_PX: f32 = 10.5;
-const STUDIO_TEXT_PX: f32 = 16.0;
-const STUDIO_LINE_HEIGHT: f32 = 26.0;
+const STUDIO_TOP_PAD: f32 = 14.0; // breathing room above the first transcript line
+// Transcript type scale — a comfortable italic caption body (Handy: 15px/1.35).
+const STUDIO_TEXT_PX: f32 = 15.5;
+const STUDIO_LINE_HEIGHT: f32 = 21.0;
+// Handy caps the live text at ~4 lines; older lines scroll up and fade out.
+const STUDIO_MAX_LINES: usize = 4;
+// Height of the top dissolve band (older lines fade into the dark surface).
+const STUDIO_FADE_PX: f32 = 20.0;
+// Bottom control row (dot · waveform · timer + cancel). Handy `--ov-base-h`.
+const STUDIO_CTRL_H: f32 = 40.0;
+// Card height = top pad + N transcript lines + control row. No trailing pad: the
+// control row already carries its own vertical centering.
+const STUDIO_H: f32 =
+    STUDIO_TOP_PAD + STUDIO_LINE_HEIGHT * STUDIO_MAX_LINES as f32 + STUDIO_CTRL_H;
 
-// ── Studio activity grid (replaces the embedded pill) ───────────────────────
-// A small dot-matrix equalizer in the header's top-right: columns of dots whose
-// lit height tracks the mic level (recording) or shimmers (processing). Same
-// dot-pixel language as the pill, but sleeker and frameless.
-const IND_COLS: usize = 14;
-const IND_ROWS: usize = 4;
-const IND_CELL: f32 = 5.0;
-const IND_DOT: f32 = 2.4;
+// [GRAIN] Grain's brand accent (the pill's orange), reused for the live overlay's
+// dot / waveform / timer so the Studio Window matches the collapsed capsule.
+const ACCENT: [u8; 3] = [255, 93, 30];
+
+// ── Bottom control-row waveform — dot-matrix equalizer ───────────────────────
+// A centre-expanding LED-style dot grid: WAVE_COLS columns × WAVE_ROWS rows of
+// circular dots.  Active dots grow outward from the centre row in proportion to
+// the column's amplitude; inactive dots are barely-visible ghosts.
+const WAVE_COLS: usize = 13;   // number of equalizer bands
+const WAVE_ROWS: usize = 7;    // must be odd so there is an exact centre row
+const DOT_R: f32     = 2.0;    // dot radius (px)
+const DOT_PITCH: f32 = 6.5;    // centre-to-centre spacing (px) — controls gap
 
 /// A rounded-rect path (quadratic corners — plenty smooth at this size; tiny-skia
 /// has no built-in rounded-rect constructor). Used for the Studio Window background.
@@ -693,33 +705,25 @@ fn draw_word(
     pen - pen_x
 }
 
-/// Left-aligned label with fixed letter-spacing (`tracking` px added after each
-/// glyph). Used for the Studio Window's small uppercase status eyebrow.
-fn draw_label_tracked(
-    pixmap: &mut Pixmap,
-    font: &fontdue::Font,
-    text: &str,
-    x: f32,
-    baseline: f32,
-    px: f32,
-    tracking: f32,
-    color: [u8; 3],
-    alpha: f32,
-) {
-    let mut pen = x;
-    for ch in text.chars() {
-        let (m, bmp) = font.rasterize(ch, px);
-        let gx = pen + m.xmin as f32;
-        let gy = baseline - (m.height as f32 + m.ymin as f32);
-        blend_glyph(pixmap, &m, &bmp, gx, gy, color, alpha);
-        pen += m.advance_width + tracking;
-    }
+// [GRAIN] Reusable off-screen layer for the live transcript. Rendering the text
+// into its own transparent pixmap lets us apply the top dissolve gradient to the
+// GLYPHS ONLY (fading them into the card's dark surface) without punching a hole
+// in the card background. Kept thread-local + reused across frames so the Studio
+// Window's per-frame draw stays allocation-free ("destroy if not in use").
+thread_local! {
+    static STUDIO_TEXT_LAYER: RefCell<Option<Pixmap>> = const { RefCell::new(None) };
 }
 
 /// Paint the whole Studio Window card into `pixmap` (which must be the Studio
 /// size). Windowing-free so it renders identically in the app and in a PNG test.
-/// `fade` is the whole-card opacity (0..1), `phase` the equalizer clock, `amp`
-/// the current mic level (0..1).
+///
+/// [GRAIN] Layout mirrors Handy's live-transcription overlay
+/// (`src/overlay/RecordingOverlay.*`): the live transcript fills the TOP region
+/// (bottom-anchored — newest line lowest — dissolving into the surface at the
+/// top edge) and a single control row is pinned to the BOTTOM: recording dot
+/// (left) · reactive waveform (center) · elapsed timer + cancel glyph (right).
+/// `fade` is the whole-card opacity (0..1), `phase` the animation clock, `amp`
+/// the current mic level (0..1), `elapsed_secs` the recording timer.
 fn paint_studio_card(
     pixmap: &mut Pixmap,
     asr: &AsrDisplay,
@@ -727,6 +731,7 @@ fn paint_studio_card(
     fade: f32,
     phase: f32,
     amp: f32,
+    elapsed_secs: u64,
     font: Option<&fontdue::Font>,
 ) {
     let (w, h) = studio_pixel_size();
@@ -758,86 +763,15 @@ fn paint_studio_card(
         );
     }
 
-    // 2) Header eyebrow (left) — small, uppercase, tracked, muted.
-    let band_center_y = STUDIO_PAD + STUDIO_HEADER_H / 2.0;
+    // 2) Live transcript — top region, bottom-anchored, top edge dissolving.
+    let ctrl_top = hf - STUDIO_CTRL_H;
     if let Some(font) = font {
-        let label = match state {
-            PillState::Recording => "TRANSCRIBING",
-            PillState::Processing => "PROCESSING",
-            PillState::Fallback => "ERROR",
-            PillState::Idle => "",
-        };
-        if !label.is_empty() {
-            draw_label_tracked(
-                pixmap,
-                font,
-                label,
-                STUDIO_PAD,
-                band_center_y + STUDIO_LABEL_PX * 0.34,
-                STUDIO_LABEL_PX,
-                2.0,
-                [150, 150, 160],
-                fade,
-            );
-        }
+        // Leave a hair of space so descenders never touch the control row.
+        draw_transcript(pixmap, asr, font, STUDIO_TOP_PAD, ctrl_top - 2.0, fade);
     }
 
-    // 3) Activity equalizer (right), vertically centered in the header band.
-    let grid_w = IND_COLS as f32 * IND_CELL;
-    let grid_h = IND_ROWS as f32 * IND_CELL;
-    let gx = wf - STUDIO_PAD - grid_w;
-    let gy = STUDIO_PAD + (STUDIO_HEADER_H - grid_h) / 2.0;
-    draw_studio_indicator(pixmap, gx, gy, amp, state, phase, fade);
-
-    // 4) Transcript, anchored under the header with a fixed line rhythm.
-    if let Some(font) = font {
-        let max_w = wf - 2.0 * STUDIO_PAD;
-        let runs = asr.display_runs();
-        if !runs.is_empty() {
-            let lines = wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w);
-            let text_top = STUDIO_PAD + STUDIO_HEADER_H + STUDIO_HEADER_GAP;
-            let text_bottom = hf - STUDIO_PAD;
-            let max_lines =
-                (((text_bottom - text_top) / STUDIO_LINE_HEIGHT).floor() as usize).max(1);
-            let total = lines.len();
-            let shown = &lines[total.saturating_sub(max_lines)..];
-            let space_w = font.metrics(' ', STUDIO_TEXT_PX).advance_width;
-
-            for (i, line) in shown.iter().enumerate() {
-                let baseline = text_top + STUDIO_TEXT_PX + STUDIO_LINE_HEIGHT * i as f32;
-                let mut pen = STUDIO_PAD;
-                for (word, style) in &line.words {
-                    if pen > STUDIO_PAD {
-                        pen += space_w;
-                    }
-                    // Committed text is stable and pasteable → always solid warm
-                    // white and CRISP, and it never dims as it scrolls up (graying
-                    // it would blur the committed/uncommitted distinction — the
-                    // user must always be able to trust the solid text). The
-                    // uncommitted tail is the "still being decided" region → shown
-                    // dimmer but CRISP (no blur — Handy renders its tentative tail
-                    // plainly, and blurred text flickering per-frame hurt
-                    // readability); it resolves to solid as the words commit.
-                    let (color, alpha, blur): ([u8; 3], f32, usize) = match style {
-                        RunStyle::Committed => ([238, 236, 232], 0.97, 0),
-                        RunStyle::Partial { stable: true } => ([200, 203, 210], 0.66, 0),
-                        RunStyle::Partial { stable: false } => ([186, 190, 198], 0.50, 0),
-                    };
-                    pen += draw_word(
-                        pixmap,
-                        font,
-                        word,
-                        STUDIO_TEXT_PX,
-                        pen,
-                        baseline,
-                        color,
-                        alpha * fade,
-                        blur,
-                    );
-                }
-            }
-        }
-    }
+    // 3) Control row pinned to the bottom.
+    draw_control_row(pixmap, state, amp, phase, elapsed_secs, ctrl_top, wf, fade, font);
 }
 
 /// Studio pixel size — the single source of truth used by both the free painter
@@ -849,99 +783,361 @@ fn studio_pixel_size() -> (u32, u32) {
     )
 }
 
-/// The Studio Window's activity grid — the pill's recording language distilled
-/// into a small frameless dot field:
-/// - RECORDING: random dots light up with grey→white shades, their *density*
-///   tracking the voice level (exactly like the pill's `roll_recording`).
-/// - PROCESSING: a warm orange "static" sparkle.
-/// - IDLE/Fallback: a calm faint breathing grid.
-///
-/// The random fields re-roll on a slow cadence (quantized `phase`), NOT every
-/// frame — a 60 fps re-roll reads as harsh flicker. `reroll_frames` sets the
-/// cadence per state (recording a touch livelier than processing).
-fn draw_studio_indicator(
-    pixmap: &mut Pixmap,
-    x0: f32,
-    y0: f32,
-    amp: f32,
-    state: PillState,
-    phase: f32,
+/// Render the live transcript into the top region `[text_top, text_bottom]`,
+/// bottom-anchored (newest line lowest), with the top `STUDIO_FADE_PX` dissolving
+/// into the card surface — Handy's `mask-image` top fade, done here by rendering
+/// the glyphs into their own layer and ramping that layer's alpha at the top.
+fn draw_transcript(
+    card: &mut Pixmap,
+    asr: &AsrDisplay,
+    font: &fontdue::Font,
+    text_top: f32,
+    text_bottom: f32,
     fade: f32,
 ) {
-    let mut paint = Paint {
+    let runs = asr.display_runs();
+    if runs.is_empty() {
+        return;
+    }
+    let (cw, _) = studio_pixel_size();
+    let region_h = text_bottom - text_top;
+    if region_h <= 1.0 {
+        return;
+    }
+    let rh = region_h.ceil() as u32;
+    let max_w = cw as f32 - 2.0 * STUDIO_PAD;
+    let lines = wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w);
+    // Keep only the last N lines; older ones have scrolled off the top.
+    let shown = &lines[lines.len().saturating_sub(STUDIO_MAX_LINES)..];
+    let n = shown.len();
+    let space_w = font.metrics(' ', STUDIO_TEXT_PX).advance_width;
+
+    STUDIO_TEXT_LAYER.with(|cell| {
+        let mut slot = cell.borrow_mut();
+        // Reuse the scratch layer; only reallocate when the region size changes.
+        let need_new = !matches!(slot.as_ref(), Some(p) if p.width() == cw && p.height() == rh);
+        if need_new {
+            *slot = Pixmap::new(cw, rh);
+        }
+        let Some(layer) = slot.as_mut() else {
+            return;
+        };
+        layer.fill(Color::TRANSPARENT);
+
+        // Bottom-anchor: newest line (i = n-1) sits flush at the region bottom;
+        // earlier lines stack upward. Local coords (y down from the region top).
+        for (i, line) in shown.iter().enumerate() {
+            let box_bottom = region_h - (n - 1 - i) as f32 * STUDIO_LINE_HEIGHT;
+            let baseline = box_bottom - (STUDIO_LINE_HEIGHT - STUDIO_TEXT_PX);
+            let mut pen = STUDIO_PAD;
+            for (word, style) in &line.words {
+                if pen > STUDIO_PAD {
+                    pen += space_w;
+                }
+                // Committed text is stable/pasteable → solid warm white, crisp,
+                // and it never grays as it scrolls up (the user must be able to
+                // trust the solid text). The uncommitted tail is the "still being
+                // decided" region → dimmer but crisp (Handy renders its tentative
+                // tail plainly; blurred per-frame text hurt readability).
+                let (color, alpha): ([u8; 3], f32) = match style {
+                    RunStyle::Committed => ([238, 236, 232], 0.97),
+                    RunStyle::Partial { stable: true } => ([200, 203, 210], 0.66),
+                    RunStyle::Partial { stable: false } => ([186, 190, 198], 0.50),
+                };
+                pen += draw_word(
+                    layer, font, word, STUDIO_TEXT_PX, pen, baseline, color, alpha, 0,
+                );
+            }
+        }
+
+        // Dissolve the top band so older lines melt into the dark surface.
+        fade_top_band(layer, STUDIO_FADE_PX);
+
+        // Composite over the card with the whole-card opacity.
+        card.draw_pixmap(
+            0,
+            text_top.round() as i32,
+            layer.as_ref(),
+            &PixmapPaint {
+                opacity: fade,
+                ..Default::default()
+            },
+            Transform::identity(),
+            None,
+        );
+    });
+}
+
+/// Ramp the alpha of the top `fade_px` rows of a (premultiplied) layer from 0 at
+/// the very top to 1 at the band's bottom, so text there fades to nothing.
+fn fade_top_band(layer: &mut Pixmap, fade_px: f32) {
+    let w = layer.width() as usize;
+    let h = layer.height() as usize;
+    let band = (fade_px.ceil() as usize).min(h);
+    if band == 0 || w == 0 {
+        return;
+    }
+    let data = layer.data_mut();
+    for y in 0..band {
+        let f = (((y as f32 + 0.5) / fade_px).clamp(0.0, 1.0)) * 255.0;
+        for x in 0..w {
+            let o = (y * w + x) * 4;
+            // Premultiplied RGBA → scale every channel to keep it valid.
+            for k in 0..4 {
+                data[o + k] = (data[o + k] as u32 * f as u32 / 255) as u8;
+            }
+        }
+    }
+}
+
+/// The bottom control row: recording dot (left) · reactive waveform (center) ·
+/// elapsed timer + cancel glyph (right), vertically centered in `STUDIO_CTRL_H`.
+/// Processing/Fallback swap the dot for a spinner and the waveform for a status
+/// label. The cancel glyph is display-only for now (the pill has no back-channel
+/// to the core); it mirrors Handy's `.sx` purely for visual parity.
+fn draw_control_row(
+    pixmap: &mut Pixmap,
+    state: PillState,
+    amp: f32,
+    phase: f32,
+    elapsed_secs: u64,
+    ctrl_top: f32,
+    wf: f32,
+    fade: f32,
+    font: Option<&fontdue::Font>,
+) {
+    let cy = ctrl_top + STUDIO_CTRL_H / 2.0;
+    let recording = state == PillState::Recording;
+
+    // LEFT — pulsing recording dot, or a spinner while finalizing.
+    let left_cx = STUDIO_PAD + 6.0;
+    if recording {
+        draw_rec_dot(pixmap, left_cx, cy, phase, fade);
+    } else {
+        draw_spinner(pixmap, left_cx, cy, phase, fade);
+    }
+
+    // RIGHT — cancel glyph, with the elapsed timer to its left while recording.
+    let x_cx = wf - STUDIO_PAD - 11.0; // 22px circle, 11px from the inset edge
+    draw_x_button(pixmap, x_cx, cy, fade);
+    if recording {
+        if let Some(font) = font {
+            let label = fmt_elapsed(elapsed_secs);
+            let tw = text_width(font, &label, 12.0);
+            let tx = x_cx - 11.0 - 10.0 - tw; // button half-width + gap
+            draw_word(
+                pixmap,
+                font,
+                &label,
+                12.0,
+                tx,
+                cy + 12.0 * 0.34,
+                [154, 152, 148],
+                fade,
+                0,
+            );
+        }
+    }
+
+    // CENTER — reactive waveform while recording, else a status label.
+    if recording {
+        draw_waveform(pixmap, amp, phase, wf, cy, fade);
+    } else if let Some(font) = font {
+        let label = match state {
+            PillState::Processing => "Processing",
+            PillState::Fallback => "Error",
+            _ => "",
+        };
+        if !label.is_empty() {
+            let tw = text_width(font, label, 12.5);
+            draw_word(
+                pixmap,
+                font,
+                label,
+                12.5,
+                (wf - tw) / 2.0,
+                cy + 12.5 * 0.34,
+                [176, 178, 184],
+                fade,
+                0,
+            );
+        }
+    }
+}
+
+/// Elapsed recording time as `m:ss` (Handy's overlay timer format).
+fn fmt_elapsed(secs: u64) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// A solid accent dot with an expanding, fading pulse ring (Handy's `.sdot`).
+fn draw_rec_dot(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
+    let mut p = Paint {
         anti_alias: true,
         ..Default::default()
     };
-    let radius = IND_DOT / 2.0;
-    const OFF: ([u8; 3], f32) = ([116, 120, 128], 0.06);
-
-    // Quantize the clock so the random field holds for a few frames, then
-    // re-rolls — a calm cadence instead of per-frame noise. ~7 frames for
-    // recording (lively), ~11 for processing (deliberately slower — the old
-    // per-frame sparkle was too quick).
-    let reroll_frames = match state {
-        PillState::Recording => 7.0,
-        PillState::Processing => 11.0,
-        _ => 12.0,
-    };
-    let tick = (phase / reroll_frames).floor();
-    let mut rng =
-        Rng((tick.to_bits() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ 0xD1B5_4A32_D192_ED03);
-
-    // Recording density: fraction of dots lit tracks the mic level, with a small
-    // floor so there's always a little life. Matches the pill's amplitude→density.
-    let lit_ratio = (amp * 0.95).clamp(0.06, 0.95);
-
-    let total = IND_COLS * IND_ROWS;
-    for idx in 0..total {
-        let c = idx % IND_COLS;
-        let r = idx / IND_COLS;
-        let (rgb, mut a) = match state {
-            PillState::Recording => {
-                if rng.f32() < lit_ratio {
-                    // Grey→white tiers, brighter when louder (like the pill).
-                    let g = rng.f32();
-                    let rgb = if g < 0.34 {
-                        [150, 156, 166]
-                    } else if g < 0.68 {
-                        [186, 190, 198]
-                    } else {
-                        [224, 226, 231]
-                    };
-                    (rgb, 0.45 + amp * 0.45 + rng.f32() * 0.10)
-                } else {
-                    OFF
-                }
-            }
-            PillState::Processing => {
-                if rng.f32() < 0.42 {
-                    let b = 0.5 + rng.f32() * 0.5;
-                    ([255, 132, 62], 0.30 + b * 0.5)
-                } else {
-                    OFF
-                }
-            }
-            // Idle / Fallback: a calm faint grid with a slow breath.
-            _ => {
-                let breath = 0.05 + 0.05 * (phase * 0.04 + c as f32 * 0.3).sin().max(0.0);
-                ([140, 144, 152], breath)
-            }
-        };
-        a = (a * fade).min(fade);
-        if a <= 0.02 {
-            continue;
+    // One pulse every ~1.9s (phase advances one step per rendered frame ≈ TICK).
+    let t = ((phase * TICK.as_secs_f32()) / 1.9).fract();
+    let ring_r = 3.5 + t * 7.0;
+    let ring_a = ((1.0 - t) * 0.32 * fade * 255.0) as u8;
+    if ring_a > 0 {
+        if let Some(c) = PathBuilder::from_circle(cx, cy, ring_r) {
+            p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], ring_a));
+            pixmap.fill_path(&c, &p, FillRule::Winding, Transform::identity(), None);
         }
-        let cx = x0 + c as f32 * IND_CELL + IND_CELL / 2.0;
-        let cy = y0 + r as f32 * IND_CELL + IND_CELL / 2.0;
-        if let Some(circle) = PathBuilder::from_circle(cx, cy, radius) {
-            paint.set_color(Color::from_rgba8(rgb[0], rgb[1], rgb[2], (a * 255.0) as u8));
-            pixmap.fill_path(
-                &circle,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
+    }
+    if let Some(c) = PathBuilder::from_circle(cx, cy, 3.5) {
+        p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], (fade * 255.0) as u8));
+        pixmap.fill_path(&c, &p, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
+/// A rotating dot-ring spinner (the finalizing indicator, Handy's `.sspinner`).
+fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
+    let mut p = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    let r = 6.0;
+    let head = phase * 0.18;
+    const N: usize = 8;
+    for i in 0..N {
+        let ang = head + i as f32 * std::f32::consts::TAU / N as f32;
+        let bright = i as f32 / (N - 1) as f32; // comet trail
+        let a = ((0.12 + bright * 0.8) * fade * 255.0) as u8;
+        let dx = cx + ang.cos() * r;
+        let dy = cy + ang.sin() * r;
+        if let Some(c) = PathBuilder::from_circle(dx, dy, 1.4) {
+            p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], a));
+            pixmap.fill_path(&c, &p, FillRule::Winding, Transform::identity(), None);
+        }
+    }
+}
+
+/// The circular cancel affordance — a subtle hairline disc with a muted ✗
+/// (Handy's `.sx`). Display-only: it is drawn for visual parity but the pill has
+/// no back-channel to trigger a cancel yet.
+fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32) {
+    let mut bg = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    bg.set_color(Color::from_rgba8(255, 255, 255, (16.0 * fade) as u8));
+    if let Some(c) = PathBuilder::from_circle(cx, cy, 11.0) {
+        pixmap.fill_path(&c, &bg, FillRule::Winding, Transform::identity(), None);
+    }
+    let mut stroke_paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    stroke_paint.set_color(Color::from_rgba8(168, 168, 168, (fade * 235.0) as u8));
+    let d = 3.8;
+    let mut pb = PathBuilder::new();
+    pb.move_to(cx - d, cy - d);
+    pb.line_to(cx + d, cy + d);
+    pb.move_to(cx + d, cy - d);
+    pb.line_to(cx - d, cy + d);
+    if let Some(path) = pb.finish() {
+        let stroke = tiny_skia::Stroke {
+            width: 1.6,
+            line_cap: tiny_skia::LineCap::Round,
+            ..Default::default()
+        };
+        pixmap.stroke_path(&path, &stroke_paint, &stroke, Transform::identity(), None);
+    }
+}
+
+/// The centre waveform — a dot-matrix equalizer grid (`WAVE_COLS` × `WAVE_ROWS`
+/// dots).  Each column has its own animated amplitude driven by `amp` + a
+/// per-column travelling ripple keyed from `phase`.  Dots that fall within the
+/// active range (symmetric around the centre row) render in the accent colour;
+/// the rest are drawn as barely-visible ghosts, producing the classic LED-matrix
+/// look.  The whole grid fades in/out with `fade`.
+fn draw_waveform(pixmap: &mut Pixmap, amp: f32, phase: f32, wf: f32, cy: f32, fade: f32) {
+    // Total grid width / height.
+    let total_w = WAVE_COLS as f32 * DOT_PITCH;
+    let total_h = WAVE_ROWS as f32 * DOT_PITCH;
+    let x0 = (wf - total_w) / 2.0 + DOT_PITCH / 2.0; // centre of first column
+    let y0 = cy - total_h / 2.0 + DOT_PITCH / 2.0;   // centre of first row
+
+    let centre_row = (WAVE_ROWS / 2) as i32;
+    let half_col   = (WAVE_COLS as f32 - 1.0) / 2.0;
+
+    let mut p = Paint { anti_alias: true, ..Default::default() };
+
+    for col in 0..WAVE_COLS {
+        // Centre-tall envelope: columns at the edges are 55 % as tall as the middle.
+        let d   = (col as f32 - half_col).abs() / half_col;
+        let env = 0.55 + 0.45 * (1.0 - d);
+
+        // Per-column travelling ripple — each column uses a different speed and
+        // phase offset so the bands look disconnected and punchy (matches the TSX
+        // demo mode).
+        let speed  = 3.0 + (col % 4) as f32 * 1.5;
+        let offset = col as f32 * 2.5;
+        let ripple = 0.55 + 0.45 * (phase * speed * 0.012 + offset).sin()
+                          * (phase * speed * 0.006 - offset).cos().abs();
+
+        let col_amp = (amp * env * ripple).clamp(0.0, 1.0);
+
+        // How many rows from centre are active (0 = only centre dot, max = all).
+        let max_active = (col_amp * centre_row as f32).round() as i32;
+
+        for row in 0..WAVE_ROWS {
+            let cx = x0 + col as f32 * DOT_PITCH;
+            let cy_dot = y0 + row as f32 * DOT_PITCH;
+            let dist = (row as i32 - centre_row).abs();
+            let active = dist <= max_active;
+
+            let (r, g, b, a) = if active {
+                // Active dot: accent colour, full opacity × fade.
+                (
+                    ACCENT[0],
+                    ACCENT[1],
+                    ACCENT[2],
+                    (fade * 255.0) as u8,
+                )
+            } else {
+                // Ghost dot: very dim, roughly 8 % of fade.
+                (
+                    ACCENT[0] / 6,
+                    ACCENT[1] / 6,
+                    ACCENT[2] / 6,
+                    (fade * 22.0) as u8,
+                )
+            };
+
+            p.set_color(Color::from_rgba8(r, g, b, a));
+
+            // Draw a circle via a tiny square path approximated by four cubics.
+            // tiny-skia has no circle primitive so we use a PathBuilder arc pair.
+            let mut pb = PathBuilder::new();
+            pb.move_to(cx + DOT_R, cy_dot);
+            // Two 180° arcs to form a full circle.
+            pb.cubic_to(
+                cx + DOT_R, cy_dot - DOT_R * 0.552,
+                cx + DOT_R * 0.552, cy_dot - DOT_R,
+                cx, cy_dot - DOT_R,
             );
+            pb.cubic_to(
+                cx - DOT_R * 0.552, cy_dot - DOT_R,
+                cx - DOT_R, cy_dot - DOT_R * 0.552,
+                cx - DOT_R, cy_dot,
+            );
+            pb.cubic_to(
+                cx - DOT_R, cy_dot + DOT_R * 0.552,
+                cx - DOT_R * 0.552, cy_dot + DOT_R,
+                cx, cy_dot + DOT_R,
+            );
+            pb.cubic_to(
+                cx + DOT_R * 0.552, cy_dot + DOT_R,
+                cx + DOT_R, cy_dot + DOT_R * 0.552,
+                cx + DOT_R, cy_dot,
+            );
+            pb.close();
+            if let Some(path) = pb.finish() {
+                pixmap.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
+            }
         }
     }
 }
@@ -1404,10 +1600,16 @@ struct App {
     asr: AsrDisplay,
     studio_alpha: f32,
     closing: bool,
-    /// Free-running clock for the Studio activity grid's equalizer motion
-    /// (advances one step per rendered frame — independent of the dot-field roll
-    /// cadence so the bars stay smooth).
+    /// Free-running clock for the Studio control row's animation (waveform
+    /// ripple, dot pulse, spinner) — advances one step per rendered frame,
+    /// independent of the dot-field roll cadence so the motion stays smooth.
     studio_phase: f32,
+    /// [GRAIN] Studio recording timer. `studio_since` is set when a session
+    /// enters Recording; `studio_elapsed` is refreshed from it each frame while
+    /// recording and then FROZEN once we leave Recording (the timer stops at the
+    /// value it had, matching Handy's overlay, rather than resetting to 0).
+    studio_since: Option<Instant>,
+    studio_elapsed: u64,
 }
 
 impl App {
@@ -1451,6 +1653,8 @@ impl App {
             studio_alpha: 0.0,
             closing: false,
             studio_phase: 0.0,
+            studio_since: None,
+            studio_elapsed: 0,
         }
     }
 
@@ -1672,6 +1876,7 @@ impl App {
             fade,
             self.studio_phase,
             amp,
+            self.studio_elapsed,
             self.font.as_ref(),
         );
 
@@ -1880,6 +2085,15 @@ impl ApplicationHandler<UserEvent> for App {
             self.state = r.state;
             self.asr = r.asr.clone();
 
+            // [GRAIN] Studio recording timer: advance while Recording, freeze the
+            // instant we leave it (Processing keeps the final elapsed on screen).
+            if self.state == PillState::Recording {
+                let since = *self.studio_since.get_or_insert(now);
+                self.studio_elapsed = now.saturating_duration_since(since).as_secs();
+            } else {
+                self.studio_since = None;
+            }
+
             // [GRAIN] Resize/recreate the OS window the rare times the surface
             // actually changes (Collapsed <-> Studio) — never per frame. The
             // Presenter caches a fixed-size GDI bitmap, so it must be rebuilt
@@ -1898,6 +2112,9 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.pixmap = None;
                 self.studio_alpha = 0.0;
+                // Fresh session → reset the recording timer.
+                self.studio_since = None;
+                self.studio_elapsed = 0;
                 // A mode change always means a brand-new session just started
                 // (mode is only ever set from RecordingStarted) — never
                 // mid-transition leftovers from whatever the previous surface
@@ -2077,13 +2294,14 @@ mod tests {
         let font = font();
         let (cw, ch) = studio_pixel_size();
 
-        // A realistic mid-dictation frame that wraps to three lines: a long
-        // committed (crisp) prefix + a short volatile (dimmed) tail.
+        // A realistic mid-dictation frame that overflows the 4-line cap so the
+        // top-edge dissolve is visible: a long committed (crisp) prefix + a short
+        // volatile (dimmed) tail.
         let mut asr = AsrDisplay::default();
         asr.append_commit(
-            "Let's test the streaming transcription with the new Studio Window and make sure it wraps to three balanced lines",
+            "Let's test the streaming transcription with the new Studio Window layout and make sure it fills more than four lines so the oldest visible line dissolves into the dark surface at the very top edge of the card",
         );
-        asr.partial = "while the tail stays".into();
+        asr.partial = "while the tail stays dimmed".into();
         asr.partial_stable = false;
 
         // Stack two states (Recording, Processing) on a desktop-like backdrop so
@@ -2100,7 +2318,7 @@ mod tests {
             .enumerate()
         {
             let mut card = Pixmap::new(cw, ch).unwrap();
-            paint_studio_card(&mut card, &asr, state, 1.0, 12.0, 0.6, Some(&font));
+            paint_studio_card(&mut card, &asr, state, 1.0, 12.0, 0.6, 18, Some(&font));
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
                 margin,
