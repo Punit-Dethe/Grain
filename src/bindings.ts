@@ -407,14 +407,6 @@ async changeTranscribeAcceleratorSetting(accelerator: TranscribeAcceleratorSetti
     else return { status: "error", error: e  as any };
 }
 },
-async changeOrtAcceleratorSetting(accelerator: OrtAcceleratorSetting) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_ort_accelerator_setting", { accelerator }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async changeTranscribeGpuDevice(device: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_transcribe_gpu_device", { device }) };
@@ -874,6 +866,9 @@ async listAsrModels() : Promise<Result<ModelInfo[], string>> {
 /**
  * Persist the selected streaming model. Accepts any catalog id (download may
  * happen afterward); the shortcut's start path checks it is actually on disk.
+ * Hard category guard: only streaming-capable models may become
+ * `selected_asr_model` (the mirror of `switch_active_model`'s standard-only
+ * guard). Clearing the selection with an empty id is always allowed.
  */
 async selectAsrModel(modelId: string) : Promise<Result<null, string>> {
     try {
@@ -1076,9 +1071,13 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
-historyUpdatePayload: HistoryUpdatePayload
+historyUpdatePayload: HistoryUpdatePayload,
+streamPhaseEvent: StreamPhaseEvent,
+streamTextEvent: StreamTextEvent
 }>({
-historyUpdatePayload: "history-update-payload"
+historyUpdatePayload: "history-update-payload",
+streamPhaseEvent: "stream-phase-event",
+streamTextEvent: "stream-text-event"
 })
 
 /** user-defined constants **/
@@ -1135,7 +1134,7 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; ort_accelerator?: OrtAcceleratorSetting; 
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
  * transcribe-cpp compute-device *registry index* for explicit GPU picks
  * (`-1` = auto). NOTE: deliberately NOT aliased to the old
@@ -1160,7 +1159,7 @@ audio_conditioning?: boolean;
 rolling_window_seconds?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
-export type AvailableAccelerators = { transcribe: string[]; ort: string[]; gpu_devices: GpuDeviceOption[] }
+export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
@@ -1213,7 +1212,6 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
-export type OrtAcceleratorSetting = "auto" | "cpu" | "cuda" | "directml" | "rocm"
 export type OverlayPosition = "none" | "top" | "bottom" | 
 /**
  * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
@@ -1248,6 +1246,38 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * Phase of the streaming overlay card, emitted to drive its UI state.
+ */
+export type StreamPhase = 
+/**
+ * Receiving audio / live text (or waiting for the stream to begin). Rust
+ * does not emit this today; the frontend starts in this phase and Rust only
+ * emits transitions away from it.
+ */
+"listening" | 
+/**
+ * Finalizing or post-processing — show a spinner.
+ */
+"working"
+/**
+ * Emitted to switch the streaming overlay to a working spinner.
+ */
+export type StreamPhaseEvent = { phase: StreamPhase; 
+/**
+ * Present only when `phase` is `Working`.
+ */
+kind?: StreamWorkKind | null }
+/**
+ * Live transcription snapshot emitted to the overlay during a streaming run.
+ * `committed` is the append-only, flicker-free prefix; `tentative` is the
+ * volatile suffix the model may still rewrite.
+ */
+export type StreamTextEvent = { committed: string; tentative: string }
+/**
+ * Semantic kind of "working" phase, used to localize the spinner label.
+ */
+export type StreamWorkKind = "transcribing" | "polishing"
 /**
  * A read-only view of the STT pool. API keys are NEVER returned — only the set
  * of provider ids that currently have a key stored.

@@ -108,6 +108,18 @@ pub fn switch_active_model(app: &AppHandle, model_id: &str) -> Result<(), String
         return Err(format!("Model not downloaded: {}", model_id));
     }
 
+    // [GRAIN] Hard category guard: `selected_model` (Batch/Rolling) may only be
+    // a STANDARD model. Streaming models are selected via `select_asr_model`
+    // into `selected_asr_model`. This is the single choke point for every
+    // selected_model writer (settings UI, quick panel, tray), so no surface can
+    // cross the categories.
+    if model_info.supports_streaming {
+        return Err(format!(
+            "'{}' is a streaming model — select it in the Streaming section instead",
+            model_info.name
+        ));
+    }
+
     let settings = get_settings(app);
     let unload_timeout = settings.model_unload_timeout;
     let old_model = settings.selected_model.clone();

@@ -109,7 +109,6 @@ export const ModuleB: React.FC = () => {
     if (smartRotation) setRoute(1);
   }, [smartRotation]);
 
-
   const unloadEnum = (getSetting("model_unload_timeout") as string) ?? "never";
   const unloadLabel =
     UNLOAD.find((u) => u.value === unloadEnum)?.label ?? "Never";
@@ -123,7 +122,9 @@ export const ModuleB: React.FC = () => {
   const cloudNames = pool.cloudProviders.map((p) => p.name);
   const hasCloud = pool.cloudProviders.length > 0;
 
-  const enabledCloudCount = pool.cloudProviders.filter((p) => p.enabled ?? true).length;
+  const enabledCloudCount = pool.cloudProviders.filter(
+    (p) => p.enabled ?? true,
+  ).length;
   const totalCloudCount = pool.cloudProviders.length;
   let dynamicPlaceholder = "Configure providers";
   if (enabledCloudCount === 1) {
@@ -192,8 +193,11 @@ export const ModuleB: React.FC = () => {
 
       {route === 0 ? (
         <>
+          {/* [GRAIN] Standard/batch models only — streaming models are selected
+              in Settings → Speech to Text → Streaming and must never become
+              `selected_model` (strict per-category separation). */}
           <LocalModelSelect
-            models={models}
+            models={models.filter((m) => !m.supports_streaming)}
             currentId={currentModel}
             onSelect={(id) => void selectModel(id)}
           />

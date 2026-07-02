@@ -427,23 +427,6 @@ impl Default for TranscribeAcceleratorSetting {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum OrtAcceleratorSetting {
-    Auto,
-    Cpu,
-    Cuda,
-    #[serde(rename = "directml")]
-    DirectMl,
-    Rocm,
-}
-
-impl Default for OrtAcceleratorSetting {
-    fn default() -> Self {
-        OrtAcceleratorSetting::Auto
-    }
-}
-
 /// Map of provider id → API key. Persisted to a SEPARATE credential file by
 /// [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
 #[derive(Clone, Default, Serialize, Deserialize, Type)]
@@ -596,8 +579,6 @@ pub struct AppSettings {
     pub custom_filler_words: Option<Vec<String>>,
     #[serde(default, alias = "whisper_accelerator")]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
-    #[serde(default)]
-    pub ort_accelerator: OrtAcceleratorSetting,
     /// transcribe-cpp compute-device *registry index* for explicit GPU picks
     /// (`-1` = auto). NOTE: deliberately NOT aliased to the old
     /// `whisper_gpu_device` — that was a transcribe-rs UI ordinal with different
@@ -1191,7 +1172,6 @@ pub fn get_default_settings() -> AppSettings {
         external_script_path: None,
         custom_filler_words: None,
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
-        ort_accelerator: OrtAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),
         extra_recording_buffer_ms: 0,
         audio_conditioning: default_audio_conditioning(),

@@ -1,9 +1,13 @@
+// [GRAIN] transcribe-rs (ONNX) was removed entirely: every legacy ONNX family
+// (parakeet, moonshine, sensevoice, gigaam, canary, cohere) ships as GGUF in
+// the bundled catalog, so transcribe-cpp is the ONLY inference engine. The
+// `EngineType` ONNX variants remain as inert enum tags for upstream-diff
+// parity; loading one yields a clear error pointing at the GGUF equivalent.
 use crate::audio_toolkit::{apply_custom_words, filter_transcription_output};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
 use crate::settings::{
-    get_settings, AppSettings, ModelUnloadTimeout, OrtAcceleratorSetting,
-    TranscribeAcceleratorSetting,
+    get_settings, AppSettings, ModelUnloadTimeout, TranscribeAcceleratorSetting,
 };
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -19,18 +23,6 @@ use tauri_specta::Event;
 use transcribe_cpp::{
     Backend, Feature, Model, ModelOptions, RunExtension, RunOptions, Session, StreamOptions, Task,
     TimestampKind, WhisperRunOptions,
-};
-use transcribe_rs::{
-    onnx::{
-        canary::CanaryModel,
-        cohere::CohereModel,
-        gigaam::GigaAMModel,
-        moonshine::{MoonshineModel, MoonshineVariant, StreamingModel},
-        parakeet::{ParakeetModel, ParakeetParams, TimestampGranularity},
-        sense_voice::{SenseVoiceModel, SenseVoiceParams},
-        Quantization,
-    },
-    SpeechModel, TranscribeOptions,
 };
 
 const STREAM_PERF_LOG_INTERVAL: Duration = Duration::from_secs(5);
@@ -157,17 +149,11 @@ impl StreamRouter {
 }
 
 enum LoadedEngine {
-    /// Whisper-family models (whisper, breeze-asr, custom .bin/.gguf) via
-    /// transcribe-cpp. Holds the live `Session`, which keeps its `Model` alive
-    /// internally, so repeated dictation reuses the session without reloading.
+    /// Any GGUF/GGML model via transcribe-cpp — the only engine since the
+    /// [GRAIN] transcribe-rs removal. Holds the live `Session`, which keeps its
+    /// `Model` alive internally, so repeated dictation reuses the session
+    /// without reloading.
     TranscribeCpp(Session),
-    Parakeet(ParakeetModel),
-    Moonshine(MoonshineModel),
-    MoonshineStreaming(StreamingModel),
-    SenseVoice(SenseVoiceModel),
-    GigaAM(GigaAMModel),
-    Canary(CanaryModel),
-    Cohere(CohereModel),
 }
 
 /// RAII guard that clears the `is_loading` flag and notifies waiters on drop.
@@ -602,74 +588,17 @@ impl TranscriptionManager {
                 );
                 LoadedEngine::TranscribeCpp(session)
             }
-            EngineType::Parakeet => {
-                let engine =
-                    ParakeetModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                        let error_msg =
-                            format!("Failed to load parakeet model {}: {}", model_id, e);
-                        emit_loading_failed(&error_msg);
-                        anyhow::anyhow!(error_msg)
-                    })?;
-                LoadedEngine::Parakeet(engine)
-            }
-            EngineType::Moonshine => {
-                let engine = MoonshineModel::load(
-                    &model_path,
-                    MoonshineVariant::Base,
-                    &Quantization::default(),
-                )
-                .map_err(|e| {
-                    let error_msg = format!("Failed to load moonshine model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::Moonshine(engine)
-            }
-            EngineType::MoonshineStreaming => {
-                let engine = StreamingModel::load(&model_path, 0, &Quantization::default())
-                    .map_err(|e| {
-                        let error_msg = format!(
-                            "Failed to load moonshine streaming model {}: {}",
-                            model_id, e
-                        );
-                        emit_loading_failed(&error_msg);
-                        anyhow::anyhow!(error_msg)
-                    })?;
-                LoadedEngine::MoonshineStreaming(engine)
-            }
-            EngineType::SenseVoice => {
-                let engine =
-                    SenseVoiceModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                        let error_msg =
-                            format!("Failed to load SenseVoice model {}: {}", model_id, e);
-                        emit_loading_failed(&error_msg);
-                        anyhow::anyhow!(error_msg)
-                    })?;
-                LoadedEngine::SenseVoice(engine)
-            }
-            EngineType::GigaAM => {
-                let engine = GigaAMModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                    let error_msg = format!("Failed to load gigaam model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::GigaAM(engine)
-            }
-            EngineType::Canary => {
-                let engine = CanaryModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                    let error_msg = format!("Failed to load canary model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::Canary(engine)
-            }
-            EngineType::Cohere => {
-                let engine = CohereModel::load(&model_path, &Quantization::Int8).map_err(|e| {
-                    let error_msg = format!("Failed to load cohere model {}: {}", model_id, e);
-                    emit_loading_failed(&error_msg);
-                    anyhow::anyhow!(error_msg)
-                })?;
-                LoadedEngine::Cohere(engine)
+            // [GRAIN] transcribe-rs (ONNX) was removed; these engine tags can
+            // only appear for a leftover on-disk ONNX model from an old build.
+            // Every family ships as GGUF in the catalog — point the user there.
+            other => {
+                let error_msg = format!(
+                    "Model '{}' uses the retired ONNX engine ({:?}); download its GGUF \
+                     version from the model list instead",
+                    model_id, other
+                );
+                emit_loading_failed(&error_msg);
+                return Err(anyhow::anyhow!(error_msg));
             }
         };
 
@@ -759,15 +688,13 @@ impl TranscriptionManager {
 
     /// The compute backend the currently-loaded engine is bound to, for
     /// diagnostics (e.g. confirming `--device-index` actually bound a GPU rather
-    /// than falling back to CPU/auto). transcribe-cpp (whisper-family) reports
-    /// its real backend string; ONNX engines report "onnx"; `None` when no
-    /// model is loaded.
+    /// than falling back to CPU/auto). Reports transcribe-cpp's real backend
+    /// string; `None` when no model is loaded.
     pub fn current_backend(&self) -> Option<String> {
         match self.lock_engine().as_ref() {
             Some(LoadedEngine::TranscribeCpp(session)) => {
                 Some(session.model().backend().to_string())
             }
-            Some(_) => Some("onnx".to_string()),
             None => None,
         }
     }
@@ -867,37 +794,27 @@ impl TranscriptionManager {
             }
         };
 
-        // Only transcribe-cpp models expose streaming; ONNX engines fall back to
-        // batch. The loaded session (not the ModelManager copy) is the source of
+        // The loaded session (not the ModelManager copy) is the source of
         // truth for run-path capabilities.
-        let (supports_streaming, supports_translate, languages) = match &engine {
-            LoadedEngine::TranscribeCpp(session) => {
-                let model = session.model();
-                let caps = model.capabilities();
-                info!(
-                    "Live preview: model '{}' arch='{}' variant='{}' supports_streaming={} \
-                     supports_translate={} languages={:?}",
-                    model_id,
-                    model.arch(),
-                    model.variant(),
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.languages,
-                );
-                (
-                    caps.supports_streaming,
-                    caps.supports_translate,
-                    caps.languages,
-                )
-            }
-            _ => {
-                info!(
-                    "Live preview: model '{}' is not a transcribe-cpp model; \
-                     streaming is unavailable, using batch transcription",
-                    model_id
-                );
-                (false, false, Vec::new())
-            }
+        let (supports_streaming, supports_translate, languages) = {
+            let LoadedEngine::TranscribeCpp(session) = &engine;
+            let model = session.model();
+            let caps = model.capabilities();
+            info!(
+                "Live preview: model '{}' arch='{}' variant='{}' supports_streaming={} \
+                 supports_translate={} languages={:?}",
+                model_id,
+                model.arch(),
+                model.variant(),
+                caps.supports_streaming,
+                caps.supports_translate,
+                caps.languages,
+            );
+            (
+                caps.supports_streaming,
+                caps.supports_translate,
+                caps.languages,
+            )
         };
 
         if !supports_streaming {
@@ -932,10 +849,7 @@ impl TranscriptionManager {
         let mut finalize_reply: Option<mpsc::Sender<Option<String>>> = None;
         let mut finalize_result: Option<Option<String>> = None;
         let stream_started = 'stream: {
-            let session = match &mut engine {
-                LoadedEngine::TranscribeCpp(s) => s,
-                _ => break 'stream false,
-            };
+            let LoadedEngine::TranscribeCpp(session) = &mut engine;
 
             // Read the backend string before beginning the stream — the
             // `Stream` borrows `session` mutably for its lifetime, so we can't
@@ -1204,7 +1118,9 @@ impl TranscriptionManager {
         // Whether the loaded transcribe-cpp model accepts a decode prompt
         // (whisper family). Gates the whisper-only run extension below, and
         // whether fuzzy custom-word correction still runs afterwards.
-        let mut model_takes_initial_prompt = false;
+        // Assigned inside the engine block below (single-variant since the
+        // ONNX removal), read after it.
+        let model_takes_initial_prompt;
 
         // Perform transcription with the appropriate engine.
         // We use catch_unwind to prevent engine panics from poisoning the mutex,
@@ -1232,9 +1148,10 @@ impl TranscriptionManager {
             // ModelManager copy. The whisper run extension is kind-tagged, so
             // non-whisper archs (parakeet, voxtral, …) reject it with
             // INVALID_ARG; attach it — and translate — only where supported.
-            let mut model_supports_translate = false;
-            let mut model_languages: Vec<String> = Vec::new();
-            if let LoadedEngine::TranscribeCpp(session) = &engine {
+            let model_supports_translate;
+            let model_languages: Vec<String>;
+            {
+                let LoadedEngine::TranscribeCpp(session) = &engine;
                 let model = session.model();
                 let caps = model.capabilities();
                 model_takes_initial_prompt = model.supports(Feature::InitialPrompt);
@@ -1308,79 +1225,6 @@ impl TranscriptionManager {
                             .map_err(|e| {
                                 anyhow::anyhow!("transcribe-cpp transcription failed: {}", e)
                             })
-                    }
-                    LoadedEngine::Parakeet(parakeet_engine) => {
-                        let params = ParakeetParams {
-                            timestamp_granularity: Some(TimestampGranularity::Segment),
-                            ..Default::default()
-                        };
-                        parakeet_engine
-                            .transcribe_with(&audio, &params)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("Parakeet transcription failed: {}", e))
-                    }
-                    LoadedEngine::Moonshine(moonshine_engine) => moonshine_engine
-                        .transcribe(&audio, &TranscribeOptions::default())
-                        .map(|r| r.text)
-                        .map_err(|e| anyhow::anyhow!("Moonshine transcription failed: {}", e)),
-                    LoadedEngine::MoonshineStreaming(streaming_engine) => streaming_engine
-                        .transcribe(&audio, &TranscribeOptions::default())
-                        .map(|r| r.text)
-                        .map_err(|e| {
-                            anyhow::anyhow!("Moonshine streaming transcription failed: {}", e)
-                        }),
-                    LoadedEngine::SenseVoice(sense_voice_engine) => {
-                        let language = match normalize_cjk_language(&validated_language) {
-                            "zh" => Some("zh".to_string()),
-                            "en" => Some("en".to_string()),
-                            "ja" => Some("ja".to_string()),
-                            "ko" => Some("ko".to_string()),
-                            "yue" => Some("yue".to_string()),
-                            _ => None,
-                        };
-                        let params = SenseVoiceParams {
-                            language,
-                            use_itn: Some(true),
-                        };
-                        sense_voice_engine
-                            .transcribe_with(&audio, &params)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("SenseVoice transcription failed: {}", e))
-                    }
-                    LoadedEngine::GigaAM(gigaam_engine) => gigaam_engine
-                        .transcribe(&audio, &TranscribeOptions::default())
-                        .map(|r| r.text)
-                        .map_err(|e| anyhow::anyhow!("GigaAM transcription failed: {}", e)),
-                    LoadedEngine::Canary(canary_engine) => {
-                        let lang = if validated_language == "auto" {
-                            None
-                        } else {
-                            Some(validated_language.clone())
-                        };
-                        let options = TranscribeOptions {
-                            language: lang,
-                            translate: settings.translate_to_english,
-                            ..Default::default()
-                        };
-                        canary_engine
-                            .transcribe(&audio, &options)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("Canary transcription failed: {}", e))
-                    }
-                    LoadedEngine::Cohere(cohere_engine) => {
-                        let lang = if validated_language == "auto" {
-                            None
-                        } else {
-                            Some(normalize_cjk_language(&validated_language).to_string())
-                        };
-                        let options = TranscribeOptions {
-                            language: lang,
-                            ..Default::default()
-                        };
-                        cohere_engine
-                            .transcribe(&audio, &options)
-                            .map(|r| r.text)
-                            .map_err(|e| anyhow::anyhow!("Cohere transcription failed: {}", e))
                     }
                 }
             }));
@@ -1853,31 +1697,19 @@ fn resolve_gpu_device(setting: TranscribeAcceleratorSetting, gpu_device: i32) ->
     }
 }
 
-/// Apply the user's ORT accelerator preference to the transcribe-rs global.
-/// Called on startup and before loading a model.
+/// Log the user's accelerator preference on startup / before loading a model.
 ///
-/// The transcribe.cpp (whisper-family) backend is no longer set here: it is
-/// chosen at model-load time from [`select_transcribe_backend`], so changing the
-/// accelerator only needs a model reload (see `reload_model_on_next_use`).
+/// The transcribe.cpp backend is not set here: it is chosen at model-load time
+/// from [`select_transcribe_backend`], so changing the accelerator only needs a
+/// model reload (see `reload_model_on_next_use`). [GRAIN] The old ORT
+/// (transcribe-rs) global is gone with the ONNX engine removal.
 pub fn apply_accelerator_settings(app: &tauri::AppHandle) {
-    use transcribe_rs::accel;
-
     let settings = get_settings(app);
 
     info!(
         "transcribe.cpp accelerator preference: {:?} (applied on next model load)",
         settings.transcribe_accelerator
     );
-
-    let ort_pref = match settings.ort_accelerator {
-        OrtAcceleratorSetting::Auto => accel::OrtAccelerator::Auto,
-        OrtAcceleratorSetting::Cpu => accel::OrtAccelerator::CpuOnly,
-        OrtAcceleratorSetting::Cuda => accel::OrtAccelerator::Cuda,
-        OrtAcceleratorSetting::DirectMl => accel::OrtAccelerator::DirectMl,
-        OrtAcceleratorSetting::Rocm => accel::OrtAccelerator::Rocm,
-    };
-    accel::set_ort_accelerator(ort_pref);
-    info!("ORT accelerator set to: {}", ort_pref);
 }
 
 #[derive(Serialize, Clone, Debug, Type)]
@@ -1915,24 +1747,16 @@ fn cached_gpu_devices() -> &'static [GpuDeviceOption] {
 #[derive(Serialize, Clone, Debug, Type)]
 pub struct AvailableAccelerators {
     pub transcribe: Vec<String>,
-    pub ort: Vec<String>,
     pub gpu_devices: Vec<GpuDeviceOption>,
 }
 
-/// Return which accelerators are compiled into this build.
+/// Return which accelerators are compiled into this build. [GRAIN] The ORT
+/// (transcribe-rs) accelerator list is gone with the ONNX engine removal.
 pub fn get_available_accelerators() -> AvailableAccelerators {
-    use transcribe_rs::accel::OrtAccelerator;
-
-    let ort_options: Vec<String> = OrtAccelerator::available()
-        .into_iter()
-        .map(|a| a.to_string())
-        .collect();
-
     let transcribe_options = vec!["auto".to_string(), "cpu".to_string(), "gpu".to_string()];
 
     AvailableAccelerators {
         transcribe: transcribe_options,
-        ort: ort_options,
         gpu_devices: cached_gpu_devices().to_vec(),
     }
 }

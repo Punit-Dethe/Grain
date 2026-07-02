@@ -42,14 +42,20 @@ capture modes share that single resident engine — the separate rolling
 (grain-transcribe) and native-ASR (worker/manager) engines are GONE, along with
 their idle RAM remnants.**
 
-### Engine routing (mirrors upstream EXACTLY — change only when upstream does)
-- `EngineType::TranscribeCpp` = every GGUF/GGML model (whisper family, parakeet
-  gguf, nemotron, moonshine gguf, voxtral, qwen3, canary gguf, …) → the
-  `transcribe-cpp` crate (batch `session.run` AND streaming `session.stream`).
-- `EngineType::{Parakeet, Moonshine, MoonshineStreaming, SenseVoice, GigaAM,
-  Canary, Cohere}` = the legacy ONNX models → `transcribe-rs 0.3.8`
-  (`features = ["onnx"]` ONLY; whisper-cpp features are gone from Cargo).
-- Upstream migrates ONNX models to cpp slowly; we follow, never lead.
+### Engine routing — transcribe-cpp ONLY (owner decision, diverges from upstream)
+- `EngineType::TranscribeCpp` = every GGUF/GGML model → the `transcribe-cpp`
+  crate (batch `session.run` AND streaming `session.stream`). It is the ONLY
+  inference engine.
+- **transcribe-rs (ONNX) was REMOVED ENTIRELY** in a follow-up session (owner
+  decision — dead weight, all families ship as GGUF). Precondition verified
+  before deletion: whisper (12), parakeet (10), moonshine (17) — and in fact
+  every legacy family — exist as GGUF in the catalog. The `EngineType` ONNX
+  variants remain as inert enum tags for upstream-diff parity; loading one
+  errors with "download its GGUF version". The 11 legacy ONNX table entries
+  were removed from `model.rs` (frontend shows only GGUF models now), along
+  with the GigaAM migration, the `ort_accelerator` setting/enum/command, and
+  the ORT dropdown in `AccelerationSelector`. NOTE: upstream still HAS
+  transcribe-rs — on future syncs, do NOT reintroduce it; re-apply this removal.
 
 ### What was ported / replaced (upstream files, verbatim + marked hooks)
 - `src-tauri/src/catalog/` — **NEW**: bundled `catalog.json` (65 models) +
@@ -138,15 +144,40 @@ Files: `grain-core/src/event.rs`, `managers/transcription.rs` hook,
 - NOT yet verified live: mic dictation through the GUI (all three shortcuts) —
   needs a human speaking. Everything up to the mic is exercised.
 
+### Follow-up session: streaming panic fix + category separation + ONNX removal
+- **Streaming was silently dead in the GUI**: `StreamTextEvent.emit` PANICKED
+  ("Event stream-text-event not found in registry!") because the event wasn't
+  in our `collect_events![]` — tauri-specta rc.21 panics on unregistered
+  emits. The panic killed the stream worker mid-lease (engine dropped → even
+  the batch fallback found nothing loaded → no pill text, no paste). FIX:
+  `StreamTextEvent` + `StreamPhaseEvent` registered in `lib.rs`
+  (`mount_events` already ran at setup). GOTCHA for future syncs: any
+  tauri_specta event a ported file emits MUST be in `collect_events![]`.
+- **Strict per-category model selection** (`selected_model` = standard only,
+  `selected_asr_model` = streaming only), enforced at every layer:
+  - Hard guards at the two choke points: `switch_active_model` rejects
+    streaming models; `select_asr_model` rejects non-streaming (empty id =
+    clear is allowed).
+  - `auto_select_model_if_needed` only auto-picks non-streaming, and CLEARS a
+    legacy streaming `selected_model`.
+  - Tray model submenu + Quick Panel `LocalModelSelect` + Onboarding filter to
+    non-streaming. Settings lists were already split by `supports_streaming`.
+  - The footer's model SELECTOR was replaced by a READ-ONLY status indicator
+    (`model-selector/ModelSelector.tsx`): shows whichever model currently
+    occupies the shared engine slot (follows `model-state-changed` model_id,
+    so it flips batch↔streaming naturally) + loaded/unloaded. Its dropdown,
+    `ModelDropdown.tsx`/`ModelStatusButton.tsx`, and its
+    auto-select-on-download behavior were deleted.
+
 ### User-machine migration notes (this dev machine)
-- The old nemotron GGUF was moved to
-  `<app_data>/models/nemotron-3.5-streaming-0.6b.gguf` so custom-model
-  discovery picks it up with id `nemotron-3.5-streaming-0.6b` — which equals
-  the persisted `selected_asr_model`, so the streaming shortcut keeps working
-  without a redownload (header probe confirms `supports_streaming=true`).
-- Old registries' storage is now orphaned and can be deleted manually:
-  `<app_data>/models/asr-gguf/` (~700 MB, duplicate of the moved file) and
-  `<app_data>/models/asr/` (sherpa-era bundles).
+- The user has since downloaded + selected catalog GGUF models for BOTH
+  categories (batch = parakeet-tdt-0.6b-v2-gguf, streaming = nemotron
+  catalog entry), so nothing is stranded by the ONNX removal.
+- Redundant files that can be deleted manually: `<app_data>/models/asr-gguf/`
+  (~700 MB), `<app_data>/models/asr/` (sherpa bundles),
+  `<app_data>/models/parakeet-tdt-0.6b-v2-int8/` (retired ONNX parakeet,
+  ~450 MB), and `<app_data>/models/nemotron-3.5-streaming-0.6b.gguf` (716 MB
+  custom copy, superseded by the catalog download in the HF cache).
 
 ---
 
@@ -158,9 +189,12 @@ Files: `grain-core/src/event.rs`, `managers/transcription.rs` hook,
    (b) Batch shortcut (parakeet) still pastes; (c) Rolling shortcut assembles
    and pastes; (d) Settings → Speech to Text shows Streaming vs Standard lists
    correctly split; downloads via the new HF path work.
-2. **Rolling live-preview (owner wants LATER):** rolling already surfaces
-   chunk text at silence commits internally — surface it as a toggleable live
-   preview (pill) in a later session.
+2. **Rolling window vNext:** a full analysis + research + phased plan exists in
+   `docs/Rolling Window vNext Plan.md` (approved direction, NOT yet
+   implemented). Phase 1 is a real regression fix: the unification dropped
+   word timings, so the assembler currently runs plain text merge instead of
+   its time-based dedup — transcribe-cpp exposes word/token timestamps to
+   restore it. Live preview is Phase 4 of that plan.
 3. **Upstream sync cadence:** when upstream moves more ONNX models to GGUF or
    bumps transcribe-cpp past 0.1.0, re-port `managers/transcription.rs` +
    `model.rs` + `catalog.json` (files are verbatim-portable; re-apply the

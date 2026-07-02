@@ -669,7 +669,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::get_keyboard_implementation,
             shortcut::change_show_tray_icon_setting,
             shortcut::change_transcribe_accelerator_setting,
-            shortcut::change_ort_accelerator_setting,
             shortcut::change_transcribe_gpu_device,
             shortcut::get_available_accelerators,
             shortcut::handy_keys::start_handy_keys_recording,
@@ -748,7 +747,16 @@ pub fn run(cli_args: CliArgs) {
             commands::history::update_recording_retention_period,
             helpers::clamshell::is_laptop,
         ])
-        .events(collect_events![managers::history::HistoryUpdatePayload,]);
+        .events(collect_events![
+            managers::history::HistoryUpdatePayload,
+            // The live-preview events MUST be registered even though Grain's
+            // webview doesn't render them (the native pill does, via the WS
+            // bridge): tauri-specta's Event::emit PANICS on an unregistered
+            // event, which killed the stream worker mid-lease (no pill text,
+            // engine dropped, batch fallback found nothing loaded).
+            managers::transcription::StreamTextEvent,
+            managers::transcription::StreamPhaseEvent,
+        ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
     specta_builder
@@ -949,18 +957,12 @@ pub fn run(cli_args: CliArgs) {
 
             initialize_core_logic(&app_handle);
 
-            // [GRAIN] Accelerator enumeration is NOT pre-warmed at boot anymore.
-            // `transcribe_rs::whisper_cpp::gpu::list_gpu_devices` loads the
-            // Vulkan/CUDA/DirectML backends (the full NVIDIA compute stack —
-            // nvgpucomp64/nvoglv64/nvcuda64/nvptxJitCompiler64/directml, ~200MB of
-            // mapped images + committed driver heaps) just to fill the Advanced
-            // accelerator dropdown. Grain is a tray app that idles in the
-            // background, so holding that resident for a settings page nobody may
-            // open is the wrong trade ("if it's not in use, destroy it"). The
-            // `get_available_accelerators` command still runs (and caches in its
-            // OnceLock) the first time the Advanced page asks for it — that page
-            // already shows a loading state, so the one-time cost is paid lazily,
-            // only when actually needed.
+            // [GRAIN] Accelerator enumeration is NOT pre-warmed at boot:
+            // `get_available_accelerators` enumerates transcribe-cpp's GPU
+            // devices lazily (and caches in its OnceLock) the first time the
+            // Advanced page asks for it — that page already shows a loading
+            // state, so the one-time cost is paid only when actually needed
+            // ("if it's not in use, destroy it").
 
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
