@@ -1,14 +1,20 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { commands } from "@/bindings";
 import { getTranslatedModelName } from "../../lib/utils/modelTranslation";
 import { useModelStore } from "../../stores/modelStore";
-import ModelStatusButton from "./ModelStatusButton";
-import ModelDropdown from "./ModelDropdown";
+import { useSettings } from "../../hooks/useSettings";
 import DownloadProgressDisplay from "./DownloadProgressDisplay";
 
 import { ModelStateEvent } from "@/lib/types/events";
+
+// [GRAIN] READ-ONLY engine status for the footer. With per-category model
+// selections (standard batch model vs streaming model) a single global picker
+// here was wrong — selection lives in Settings → Speech to Text. This shows
+// whichever model currently occupies the ONE shared engine slot (batch OR
+// streaming, they replace each other) and whether it is loaded, plus transient
+// download/verify/extract activity from the shared registry.
 
 type ModelStatus =
   | "ready"
@@ -20,76 +26,89 @@ type ModelStatus =
   | "unloaded"
   | "none";
 
-interface ModelSelectorProps {
-  onError?: (error: string) => void;
-}
+// Each state resolves to a warm, desaturated status token (see App.css) rather
+// than a raw Tailwind hue, so the dot harmonizes with the beige paper. Only the
+// transient states (loading/downloading/verifying/extracting) pulse; the rest
+// are steady.
+const STATUS_DOT: Record<ModelStatus, string> = {
+  ready: "bg-status-ready",
+  loading: "bg-status-load animate-pulse",
+  downloading: "bg-accent animate-pulse",
+  verifying: "bg-status-warn animate-pulse",
+  extracting: "bg-status-warn animate-pulse",
+  error: "bg-status-error",
+  unloaded: "bg-status-idle",
+  none: "bg-status-error",
+};
 
-const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
+const ModelSelector: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting } = useSettings();
   const {
     models,
-    currentModel,
     downloadProgress,
     downloadStats,
     verifyingModels,
     extractingModels,
-    selectModel,
   } = useModelStore();
 
   const [modelStatus, setModelStatus] = useState<ModelStatus>("unloaded");
   const [modelError, setModelError] = useState<string | null>(null);
-  const [showModelDropdown, setShowModelDropdown] = useState(false);
-  // Track pending model switch for optimistic display
-  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+  // The model occupying (or last occupying) the shared engine slot. Falls back
+  // to the persisted standard selection before anything has ever loaded.
+  const [engineModelId, setEngineModelId] = useState<string | null>(null);
 
-  const dropdownRef = useRef<HTMLDivElement>(null);
+  const selectedModel = (getSetting("selected_model") as string) ?? "";
+  const displayModelId = engineModelId || selectedModel;
 
-  const displayModelId = pendingModelId || currentModel;
-
-  // Check model status when currentModel changes
+  // Initial snapshot: is something already resident in the engine slot?
   useEffect(() => {
     const checkStatus = async () => {
-      if (currentModel) {
-        try {
-          const statusResult = await commands.getTranscriptionModelStatus();
-          if (statusResult.status === "ok") {
-            setModelStatus(
-              statusResult.data === currentModel ? "ready" : "unloaded",
-            );
+      try {
+        const statusResult = await commands.getTranscriptionModelStatus();
+        if (statusResult.status === "ok") {
+          if (statusResult.data) {
+            setEngineModelId(statusResult.data);
+            setModelStatus("ready");
+          } else {
+            setModelStatus(selectedModel ? "unloaded" : "none");
           }
-        } catch {
-          setModelStatus("error");
-          setModelError("Failed to check model status");
         }
-      } else {
-        setModelStatus("none");
+      } catch {
+        setModelStatus("error");
+        setModelError("Failed to check model status");
       }
     };
     checkStatus();
-  }, [currentModel]);
+    // Re-derive the "none" fallback if the selection appears later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedModel]);
 
   useEffect(() => {
-    // Listen for model loading lifecycle events
+    // Follow the engine slot through model loading lifecycle events. The
+    // payload's model_id tells us WHICH model (batch or streaming) is being
+    // loaded, so the indicator naturally flips between categories.
     const modelStateUnlisten = listen<ModelStateEvent>(
       "model-state-changed",
       (event) => {
-        const { event_type, error } = event.payload;
+        const { event_type, model_id, error } = event.payload;
         switch (event_type) {
           case "loading_started":
+            if (model_id) setEngineModelId(model_id);
             setModelStatus("loading");
             setModelError(null);
             break;
           case "loading_completed":
+            if (model_id) setEngineModelId(model_id);
             setModelStatus("ready");
             setModelError(null);
-            setPendingModelId(null);
             break;
           case "loading_failed":
             setModelStatus("error");
             setModelError(error || "Failed to load model");
-            setPendingModelId(null);
             break;
           case "unloaded":
+            // Keep showing the last resident model's name, just as unloaded.
             setModelStatus("unloaded");
             setModelError(null);
             break;
@@ -97,61 +116,10 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
       },
     );
 
-    // Auto-select model when download completes (fires after extraction too)
-    const downloadCompleteUnlisten = listen<string>(
-      "model-download-complete",
-      (event) => {
-        const modelId = event.payload;
-        setTimeout(async () => {
-          try {
-            const isRecording = await commands.isRecording();
-            if (!isRecording) {
-              setPendingModelId(modelId);
-              setModelError(null);
-              setShowModelDropdown(false);
-              const success = await selectModel(modelId);
-              if (!success) {
-                setPendingModelId(null);
-              }
-            }
-          } catch {
-            // Ignore errors in auto-select
-          }
-        }, 500);
-      },
-    );
-
-    // Click outside to close dropdown
-    const handleClickOutside = (event: MouseEvent) => {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setShowModelDropdown(false);
-      }
-    };
-
-    document.addEventListener("mousedown", handleClickOutside);
-
     return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
       modelStateUnlisten.then((fn) => fn());
-      downloadCompleteUnlisten.then((fn) => fn());
     };
-  }, [selectModel]);
-
-  const handleModelSelect = async (modelId: string) => {
-    setPendingModelId(modelId);
-    setModelError(null);
-    setShowModelDropdown(false);
-    const success = await selectModel(modelId);
-    if (!success) {
-      setPendingModelId(null);
-      setModelStatus("error");
-      setModelError("Failed to switch model");
-      onError?.("Failed to switch model");
-    }
-  };
+  }, []);
 
   const getModelDisplayText = (): string => {
     const verifyingKeys = Object.keys(verifyingModels);
@@ -213,12 +181,6 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
               modelName: getTranslatedModelName(currentModelInfo, t),
             })
           : t("modelSelector.loadingGeneric");
-      case "extracting":
-        return currentModelInfo
-          ? t("modelSelector.extracting", {
-              modelName: getTranslatedModelName(currentModelInfo, t),
-            })
-          : t("modelSelector.extractingGeneric");
       case "error":
         return modelError || t("modelSelector.modelError");
       case "unloaded":
@@ -242,24 +204,30 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ onError }) => {
     return modelStatus;
   };
 
+  const status = getDisplayStatus();
+  const displayText = getModelDisplayText();
+  const loadedLabel =
+    status === "ready"
+      ? t("modelSelector.stateLoaded", { defaultValue: "loaded" })
+      : status === "unloaded"
+        ? t("modelSelector.stateUnloaded", { defaultValue: "unloaded" })
+        : null;
+
   return (
     <>
-      {/* Model Status and Switcher */}
-      <div className="relative" ref={dropdownRef}>
-        <ModelStatusButton
-          status={getDisplayStatus()}
-          displayText={getModelDisplayText()}
-          isDropdownOpen={showModelDropdown}
-          onClick={() => setShowModelDropdown(!showModelDropdown)}
+      {/* Read-only engine status: dot + model name (+ loaded/unloaded). */}
+      <div
+        className="flex items-center gap-2 cursor-default"
+        title={`Model status: ${displayText}`}
+      >
+        <div
+          className={`w-2 h-2 rounded-full ${STATUS_DOT[status] ?? "bg-status-idle"}`}
         />
-
-        {/* Model Dropdown */}
-        {showModelDropdown && (
-          <ModelDropdown
-            models={models}
-            currentModelId={displayModelId}
-            onModelSelect={handleModelSelect}
-          />
+        <span className="max-w-40 truncate">{displayText}</span>
+        {loadedLabel && (
+          <span className="font-mono text-[0.62rem] uppercase tracking-wider text-ink-faint">
+            {loadedLabel}
+          </span>
         )}
       </div>
 

@@ -25,6 +25,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
   } = useModelStore();
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
+  // [GRAIN] Onboarding picks the STANDARD (batch) model — `selected_model`
+  // must never point at a streaming model (strict per-category separation;
+  // streaming models are chosen later in Settings → Speech to Text).
+  const standardModels = models.filter((m: ModelInfo) => !m.supports_streaming);
+
   const isDownloading = selectedModelId !== null;
 
   // Watch for the selected model to finish downloading + verifying + extracting
@@ -99,7 +104,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
 
       <div className="max-w-[600px] w-full mx-auto text-center flex-1 flex flex-col min-h-0">
         <div className="flex flex-col gap-4 pb-6">
-          {models
+          {standardModels
             .filter((m: ModelInfo) => !m.is_downloaded)
             .filter((model: ModelInfo) => model.is_recommended)
             .map((model: ModelInfo) => (
@@ -116,7 +121,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
               />
             ))}
 
-          {models
+          {standardModels
             .filter((m: ModelInfo) => !m.is_downloaded)
             .filter((model: ModelInfo) => !model.is_recommended)
             .sort(

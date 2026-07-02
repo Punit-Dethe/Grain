@@ -644,407 +644,10 @@ impl ModelManager {
             },
         );
 
-        // Add NVIDIA Parakeet models (directory-based)
-        available_models.insert(
-            "parakeet-tdt-0.6b-v2".to_string(),
-            ModelInfo {
-                id: "parakeet-tdt-0.6b-v2".to_string(),
-                name: "Parakeet V2".to_string(),
-                description: "English only. The best model for English speakers.".to_string(),
-                filename: "parakeet-tdt-0.6b-v2-int8".to_string(), // Directory name
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/parakeet-v2-int8.tar.gz".to_string(),
-                    sha256: Some(
-                        "ac9b9429984dd565b25097337a887bb7f0f8ac393573661c651f0e7d31563991"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 451,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Parakeet,
-                accuracy_score: 0.85,
-                speed_score: 0.85,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: vec!["en".to_string()],
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        // Parakeet V3 supported languages (25 EU languages + Russian/Ukrainian):
-        // bg, hr, cs, da, nl, en, et, fi, fr, de, el, hu, it, lv, lt, mt, pl, pt, ro, sk, sl, es, sv, ru, uk
-        let parakeet_v3_languages: Vec<String> = vec![
-            "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv",
-            "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-
-        available_models.insert(
-            "parakeet-tdt-0.6b-v3".to_string(),
-            ModelInfo {
-                id: "parakeet-tdt-0.6b-v3".to_string(),
-                name: "Parakeet V3".to_string(),
-                description: "Fast and accurate. Supports 25 European languages.".to_string(),
-                filename: "parakeet-tdt-0.6b-v3-int8".to_string(), // Directory name
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/parakeet-v3-int8.tar.gz".to_string(),
-                    sha256: Some(
-                        "43d37191602727524a7d8c6da0eef11c4ba24320f5b4730f1a2497befc2efa77"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 456,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Parakeet,
-                accuracy_score: 0.80,
-                speed_score: 0.85,
-                supports_translation: false,
-                is_recommended: true,
-                supported_languages: parakeet_v3_languages,
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        available_models.insert(
-            "moonshine-base".to_string(),
-            ModelInfo {
-                id: "moonshine-base".to_string(),
-                name: "Moonshine Base".to_string(),
-                description: "Very fast, English only. Handles accents well.".to_string(),
-                filename: "moonshine-base".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/moonshine-base.tar.gz".to_string(),
-                    sha256: Some(
-                        "04bf6ab012cfceebd4ac7cf88c1b31d027bbdd3cd704649b692e2e935236b7e8"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 55,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Moonshine,
-                accuracy_score: 0.70,
-                speed_score: 0.90,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: vec!["en".to_string()],
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        available_models.insert(
-            "moonshine-tiny-streaming-en".to_string(),
-            ModelInfo {
-                id: "moonshine-tiny-streaming-en".to_string(),
-                name: "Moonshine V2 Tiny".to_string(),
-                description: "Ultra-fast, English only".to_string(),
-                filename: "moonshine-tiny-streaming-en".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/moonshine-tiny-streaming-en.tar.gz"
-                        .to_string(),
-                    sha256: Some(
-                        "465addcfca9e86117415677dfdc98b21edc53537210333a3ecdb58509a80abaf"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 31,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::MoonshineStreaming,
-                accuracy_score: 0.55,
-                speed_score: 0.95,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: vec!["en".to_string()],
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        available_models.insert(
-            "moonshine-small-streaming-en".to_string(),
-            ModelInfo {
-                id: "moonshine-small-streaming-en".to_string(),
-                name: "Moonshine V2 Small".to_string(),
-                description: "Fast, English only. Good balance of speed and accuracy.".to_string(),
-                filename: "moonshine-small-streaming-en".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/moonshine-small-streaming-en.tar.gz"
-                        .to_string(),
-                    sha256: Some(
-                        "dbb3e1c1832bd88a4ac712f7449a136cc2c9a18c5fe33a12ed1b7cb1cfe9cdd5"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 99,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::MoonshineStreaming,
-                accuracy_score: 0.65,
-                speed_score: 0.90,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: vec!["en".to_string()],
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        available_models.insert(
-            "moonshine-medium-streaming-en".to_string(),
-            ModelInfo {
-                id: "moonshine-medium-streaming-en".to_string(),
-                name: "Moonshine V2 Medium".to_string(),
-                description: "English only. High quality.".to_string(),
-                filename: "moonshine-medium-streaming-en".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/moonshine-medium-streaming-en.tar.gz"
-                        .to_string(),
-                    sha256: Some(
-                        "07a66f3bff1c77e75a2f637e5a263928a08baae3c29c4c053fc968a9a9373d13"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 192,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::MoonshineStreaming,
-                accuracy_score: 0.75,
-                speed_score: 0.80,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: vec!["en".to_string()],
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        // SenseVoice supported languages
-        let sense_voice_languages: Vec<String> = vec!["zh", "en", "yue", "ja", "ko"]
-            .into_iter()
-            .map(String::from)
-            .collect();
-
-        available_models.insert(
-            "sense-voice-int8".to_string(),
-            ModelInfo {
-                id: "sense-voice-int8".to_string(),
-                name: "SenseVoice".to_string(),
-                description: "Very fast. Chinese, English, Japanese, Korean, Cantonese."
-                    .to_string(),
-                filename: "sense-voice-int8".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/sense-voice-int8.tar.gz".to_string(),
-                    sha256: Some(
-                        "171d611fe5d353a50bbb741b6f3ef42559b1565685684e9aa888ef563ba3e8a4"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 152,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::SenseVoice,
-                accuracy_score: 0.65,
-                speed_score: 0.95,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: sense_voice_languages,
-                supports_language_selection: true,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        // GigaAM v3 supported languages
-        let gigaam_languages: Vec<String> = vec!["ru"].into_iter().map(String::from).collect();
-
-        available_models.insert(
-            "gigaam-v3-e2e-ctc".to_string(),
-            ModelInfo {
-                id: "gigaam-v3-e2e-ctc".to_string(),
-                name: "GigaAM v3".to_string(),
-                description: "Russian speech recognition. Fast and accurate.".to_string(),
-                filename: "giga-am-v3-int8".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/giga-am-v3-int8.tar.gz".to_string(),
-                    sha256: Some(
-                        "d872462268430db140b69b72e0fc4b787b194c1dbe51b58de39444d55b6da45b"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 151,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::GigaAM,
-                accuracy_score: 0.85,
-                speed_score: 0.75,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: gigaam_languages,
-                supports_language_selection: false,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
-
-        // Canary 180m Flash supported languages (4 languages)
-        let canary_flash_languages: Vec<String> = vec!["en", "de", "es", "fr"]
-            .into_iter()
-            .map(String::from)
-            .collect();
-
-        available_models.insert(
-            "canary-180m-flash".to_string(),
-            ModelInfo {
-                id: "canary-180m-flash".to_string(),
-                name: "Canary 180M Flash".to_string(),
-                description: "Very fast. English, German, Spanish, French. Supports translation."
-                    .to_string(),
-                filename: "canary-180m-flash".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/canary-180m-flash.tar.gz".to_string(),
-                    sha256: Some(
-                        "6d9cfca6118b296e196eaedc1c8fa9788305a7b0f1feafdb6dc91932ab6e53f7"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 146,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Canary,
-                accuracy_score: 0.75,
-                speed_score: 0.85,
-                supports_translation: true,
-                is_recommended: false,
-                supported_languages: canary_flash_languages,
-                supports_language_selection: true,
-                is_custom: false,
-                supports_streaming: false,
-                // Canary (NeMo) requires an explicit source language — no auto-detect.
-                supports_language_detection: false,
-            },
-        );
-
-        // Canary 1B v2 supported languages (25 EU languages)
-        let canary_1b_languages: Vec<String> = vec![
-            "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv",
-            "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es", "sv", "ru", "uk",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-
-        available_models.insert(
-            "canary-1b-v2".to_string(),
-            ModelInfo {
-                id: "canary-1b-v2".to_string(),
-                name: "Canary 1B v2".to_string(),
-                description: "Accurate multilingual. 25 European languages. Supports translation."
-                    .to_string(),
-                filename: "canary-1b-v2".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/canary-1b-v2.tar.gz".to_string(),
-                    sha256: Some(
-                        "02305b2a25f9cf3e7deaffa7f94df00efa44f442cd55c101c2cb9c000f904666"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 691,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Canary,
-                accuracy_score: 0.85,
-                speed_score: 0.70,
-                supports_translation: true,
-                is_recommended: false,
-                supported_languages: canary_1b_languages,
-                supports_language_selection: true,
-                is_custom: false,
-                supports_streaming: false,
-                // Canary (NeMo) requires an explicit source language — no auto-detect.
-                supports_language_detection: false,
-            },
-        );
-
-        let cohere_languages: Vec<String> = vec![
-            "en", "fr", "de", "it", "es", "pt", "el", "nl", "pl", "zh", "ja", "ko", "vi", "ar",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect();
-
-        available_models.insert(
-            "cohere-int8".to_string(),
-            ModelInfo {
-                id: "cohere-int8".to_string(),
-                name: "Cohere".to_string(),
-                description: "A large, slower, but very accurate multilingual model.".to_string(),
-                filename: "cohere-int8".to_string(),
-                source: ModelSource::Url {
-                    url: "https://blob.handy.computer/cohere-int8.tar.gz".to_string(),
-                    sha256: Some(
-                        "ea2257d52434f3644574f187dcdcf666e302cd11b92866116ab8e14cd9c887f0"
-                            .to_string(),
-                    ),
-                },
-                size_mb: 1708,
-                is_downloaded: false,
-                is_downloading: false,
-                partial_size: 0,
-                is_directory: true,
-                engine_type: EngineType::Cohere,
-                accuracy_score: 0.90,
-                speed_score: 0.60,
-                supports_translation: false,
-                is_recommended: false,
-                supported_languages: cohere_languages,
-                supports_language_selection: true,
-                is_custom: false,
-                supports_streaming: false,
-                supports_language_detection: true,
-            },
-        );
+        // [GRAIN] The legacy ONNX model entries (Parakeet/Moonshine/SenseVoice/
+        // GigaAM/Canary/Cohere via transcribe-rs) were REMOVED: every family ships
+        // as GGUF in the bundled catalog below, and transcribe-rs is no longer a
+        // dependency. Only the whisper .bin legacy entries (transcribe-cpp) remain.
 
         // Seed the bundled offline catalog before the on-disk scans, so a model
         // already in the HF cache dedups onto its richer catalog entry (the scans
@@ -1072,9 +675,6 @@ impl ModelManager {
 
         // Migrate any bundled models to user directory
         manager.migrate_bundled_models()?;
-
-        // Migrate GigaAM from single-file to directory format
-        manager.migrate_gigaam_to_directory()?;
 
         // Check which models are already downloaded
         manager.update_download_status()?;
@@ -1258,50 +858,6 @@ impl ModelManager {
         Ok(())
     }
 
-    /// Migrate GigaAM from the old single-file format (giga-am-v3.int8.onnx)
-    /// to the new directory format (giga-am-v3-int8/model.int8.onnx + vocab.txt).
-    /// This was required by the transcribe-rs 0.3.x upgrade.
-    fn migrate_gigaam_to_directory(&self) -> Result<()> {
-        let old_file = self.models_dir.join("giga-am-v3.int8.onnx");
-        let new_dir = self.models_dir.join("giga-am-v3-int8");
-
-        if !old_file.exists() || new_dir.exists() {
-            return Ok(());
-        }
-
-        info!("Migrating GigaAM from single-file to directory format");
-
-        let vocab_path = self
-            .app_handle
-            .path()
-            .resolve(
-                "resources/models/gigaam_vocab.txt",
-                tauri::path::BaseDirectory::Resource,
-            )
-            .map_err(|e| anyhow::anyhow!("Failed to resolve GigaAM vocab path: {}", e))?;
-
-        info!(
-            "Resolved vocab path: {:?} (exists: {})",
-            vocab_path,
-            vocab_path.exists()
-        );
-        info!("Old file: {:?} (exists: {})", old_file, old_file.exists());
-        info!("New dir: {:?} (exists: {})", new_dir, new_dir.exists());
-
-        fs::create_dir_all(&new_dir)?;
-        fs::rename(&old_file, new_dir.join("model.int8.onnx"))?;
-        fs::copy(&vocab_path, new_dir.join("vocab.txt"))?;
-
-        // Clean up old partial file if it exists
-        let old_partial = self.models_dir.join("giga-am-v3.int8.onnx.partial");
-        if old_partial.exists() {
-            let _ = fs::remove_file(&old_partial);
-        }
-
-        info!("GigaAM migration complete");
-        Ok(())
-    }
-
     fn update_download_status(&self) -> Result<()> {
         let mut models = self.available_models.lock().unwrap();
 
@@ -1364,16 +920,26 @@ impl ModelManager {
         let mut settings = get_settings(&self.app_handle);
 
         // Clear stale selection: selected model is set but doesn't exist
-        // in available_models (e.g. deleted custom model file)
+        // in available_models (e.g. deleted custom model file).
+        // [GRAIN] Also clear a selection that violates the per-category rule
+        // (a streaming model left in `selected_model` by an older build) so
+        // auto-selection below can replace it with a standard model.
         if !settings.selected_model.is_empty() {
             let models = self.available_models.lock().unwrap();
-            let exists = models.contains_key(&settings.selected_model);
+            let entry = models.get(&settings.selected_model);
+            let exists = entry.is_some();
+            let is_streaming = entry.map(|m| m.supports_streaming).unwrap_or(false);
             drop(models);
 
-            if !exists {
+            if !exists || is_streaming {
                 info!(
-                    "Selected model '{}' not found in available models, clearing selection",
-                    settings.selected_model
+                    "Selected model '{}' is {} — clearing selection",
+                    settings.selected_model,
+                    if exists {
+                        "a streaming model (batch selection must be standard)"
+                    } else {
+                        "not found in available models"
+                    }
                 );
                 settings.selected_model = String::new();
                 write_settings(&self.app_handle, settings.clone());
@@ -1386,11 +952,14 @@ impl ModelManager {
 
         // If no model is selected, pick the first downloaded one using the same
         // ranked order the UI receives.
+        // [GRAIN] Standard models only: `selected_model` (Batch/Rolling) must
+        // never auto-fill with a streaming model (per-category separation —
+        // `selected_asr_model` is chosen explicitly in the Streaming section).
         if settings.selected_model.is_empty() {
             if let Some(available_model) = self
                 .get_available_models()
                 .into_iter()
-                .find(|model| model.is_downloaded)
+                .find(|model| model.is_downloaded && !model.supports_streaming)
             {
                 info!(
                     "Auto-selecting model: {} ({})",

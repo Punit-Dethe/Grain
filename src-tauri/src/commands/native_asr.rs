@@ -30,9 +30,27 @@ pub async fn list_asr_models(
 
 /// Persist the selected streaming model. Accepts any catalog id (download may
 /// happen afterward); the shortcut's start path checks it is actually on disk.
+/// Hard category guard: only streaming-capable models may become
+/// `selected_asr_model` (the mirror of `switch_active_model`'s standard-only
+/// guard). Clearing the selection with an empty id is always allowed.
 #[tauri::command]
 #[specta::specta]
-pub async fn select_asr_model(app_handle: AppHandle, model_id: String) -> Result<(), String> {
+pub async fn select_asr_model(
+    app_handle: AppHandle,
+    model_manager: State<'_, Arc<ModelManager>>,
+    model_id: String,
+) -> Result<(), String> {
+    if !model_id.is_empty() {
+        let info = model_manager
+            .get_model_info(&model_id)
+            .ok_or_else(|| format!("Model not found: {}", model_id))?;
+        if !info.supports_streaming {
+            return Err(format!(
+                "'{}' is not a streaming model — select it in the Standard section instead",
+                info.name
+            ));
+        }
+    }
     let mut settings = get_settings(&app_handle);
     settings.selected_asr_model = model_id;
     write_settings(&app_handle, settings);

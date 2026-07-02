@@ -146,6 +146,8 @@
   "modelSelector": {
     "custom": "Custom",
     "active": "Active",
+    "stateLoaded": "loaded",
+    "stateUnloaded": "unloaded",
     "switching": "Switching...",
     "noModelsAvailable": "No models available",
     "verifying": "Verifying {{modelName}}...",
