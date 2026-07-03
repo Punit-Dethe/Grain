@@ -17,6 +17,6 @@ pub mod settings;
 pub use context::AppContext;
 pub use event::{DaemonEvent, SessionMode};
 pub use settings::{
-    AppMatch, AppMode, AppSettings, PostProcessProvider, SecretMap, SttProvider,
-    SttProviderKind, STT_LOCAL_PROVIDER_ID,
+    AppMatch, AppMode, AppSettings, DictCandidate, PostProcessProvider, SecretMap,
+    SttProvider, SttProviderKind, STT_LOCAL_PROVIDER_ID,
 };

@@ -138,6 +138,19 @@ pub struct AppMode {
     pub enabled: bool,
 }
 
+/// [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
+/// repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
+/// is suggested (pill), and on accept it moves into `custom_words`. Persisted so
+/// the count survives across sessions (the user rarely corrects the same term
+/// twice in one sitting).
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct DictCandidate {
+    /// The corrected spelling as the user typed it (display + what gets added).
+    pub word: String,
+    /// How many distinct paste-sessions this correction has been observed in.
+    pub count: u32,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -669,6 +682,18 @@ pub struct AppSettings {
     /// field's content; password fields are always skipped.
     #[serde(default)]
     pub context_nearby_terms: bool,
+    /// [GRAIN] Auto-add to dictionary: when on, Grain briefly watches the field it
+    /// just pasted into (~10s) and, if you re-spell one of the pasted words the
+    /// same way across a couple of pastes, offers to add that spelling to your
+    /// dictionary (confirm by clicking the pill). OFF by default and **truly
+    /// zero-overhead when off** — no watcher is ever spawned. Only proper-noun /
+    /// identifier-shaped corrections are considered; common words are ignored.
+    #[serde(default)]
+    pub auto_dictionary_enabled: bool,
+    /// [GRAIN] Persisted learning counters for auto-add-to-dictionary (see
+    /// [`DictCandidate`]). Not user-facing; managed by the watcher.
+    #[serde(default)]
+    pub dictionary_candidates: Vec<DictCandidate>,
 }
 
 fn default_model() -> String {
@@ -1255,6 +1280,8 @@ pub fn get_default_settings() -> AppSettings {
         context_awareness_enabled: false,
         app_modes: Vec::new(),
         context_nearby_terms: false,
+        auto_dictionary_enabled: false,
+        dictionary_candidates: Vec::new(),
     }
 }
 
