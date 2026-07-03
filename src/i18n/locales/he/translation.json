@@ -12,6 +12,7 @@
     "models": "מודלים",
     "advanced": "מתקדם",
     "postProcessing": "עיבוד משלים",
+    "experimentations": "ניסויים",
     "history": "היסטוריה",
     "debug": "ניפוי שגיאות",
     "about": "אודות"
@@ -535,6 +536,22 @@
           "description": "הסקה מהירה לביצועים גבוהים עבור מודל זיהוי הדיבור Whisper של OpenAI",
           "details": "Handy משתמש ב-Whisper.cpp לתמלול מהיר ומקומי. תודה לעבודה המדהימה של Georgi Gerganov וכל התורמים."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "סניפטים",
+        "description": "אמרו ביטוי הפעלה בזמן הכתבה ו-Grain יחליף אותו בטקסט השמור שלכם — קישור, כתובת או פסקה שלמה. ההתאמה מתעלמת מרישיות ומסימני פיסוק.",
+        "triggerPlaceholder": "ביטוי הפעלה (למשל grain github repo)",
+        "replacementPlaceholder": "טקסט חלופי — קישור, כתובת או פסקה",
+        "add": "הוספת סניפט",
+        "update": "שמירת שינויים",
+        "cancel": "ביטול",
+        "edit": "עריכת הסניפט",
+        "delete": "מחיקת הסניפט",
+        "toggle": "הפעלה או השבתה של הסניפט",
+        "duplicate": "כבר קיים סניפט עם ביטוי ההפעלה \"{{trigger}}\"",
+        "empty": "אין סניפטים עדיין. הוסיפו את הראשון למעלה."
       }
     }
   },

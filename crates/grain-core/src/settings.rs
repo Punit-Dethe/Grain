@@ -93,6 +93,23 @@ pub struct LLMPrompt {
     pub prompt: String,
 }
 
+/// [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a
+/// final transcript, it is replaced by the expansion text verbatim. Matching is
+/// case/punctuation tolerant so rolling-window chunk artifacts ("Grain, GitHub
+/// repo.") still expand.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct Snippet {
+    pub id: String,
+    pub trigger: String,
+    pub replacement: String,
+    #[serde(default = "default_snippet_enabled")]
+    pub enabled: bool,
+}
+
+fn default_snippet_enabled() -> bool {
+    true
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -502,6 +519,9 @@ pub struct AppSettings {
     pub log_level: LogLevel,
     #[serde(default = "default_custom_words")]
     pub custom_words: Vec<String>,
+    /// [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
     #[serde(default)]
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
@@ -1146,6 +1166,7 @@ pub fn get_default_settings() -> AppSettings {
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
+        snippets: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),

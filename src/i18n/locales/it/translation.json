@@ -12,6 +12,7 @@
     "models": "Modelli",
     "advanced": "Avanzate",
     "postProcessing": "Post-Elaborazione",
+    "experimentations": "Sperimentazioni",
     "history": "Cronologia",
     "debug": "Debug",
     "about": "Informazioni"
@@ -535,6 +536,22 @@
           "description": "Inferenza ad alte prestazioni del modello di riconoscimento vocale automatico Whisper di OpenAI",
           "details": "Handy usa Whisper.cpp per il riconoscimento vocale veloce in locale. Grazie a Georgi Gerganov e collaboratori per il fantastico lavoro."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippet",
+        "description": "Pronuncia una frase di attivazione durante la dettatura e Grain la sostituirà con il testo salvato: un link, un indirizzo o un intero paragrafo. Il confronto ignora maiuscole e punteggiatura.",
+        "triggerPlaceholder": "Frase di attivazione (es. grain github repo)",
+        "replacementPlaceholder": "Testo sostitutivo: link, indirizzo o paragrafo",
+        "add": "Aggiungi snippet",
+        "update": "Salva modifiche",
+        "cancel": "Annulla",
+        "edit": "Modifica snippet",
+        "delete": "Elimina snippet",
+        "toggle": "Attiva o disattiva questo snippet",
+        "duplicate": "Esiste già uno snippet con l'attivatore \"{{trigger}}\"",
+        "empty": "Nessuno snippet. Aggiungi il primo qui sopra."
       }
     }
   },

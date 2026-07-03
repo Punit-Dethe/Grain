@@ -36,6 +36,7 @@
     "speechToText": "Transcription",
     "advanced": "Advanced",
     "postProcessing": "Processing",
+    "experimentations": "Experimentations",
     "history": "History",
     "debug": "Debug",
     "about": "About"
@@ -764,6 +765,22 @@
           "description": "High-performance inference of OpenAI's Whisper automatic speech recognition model",
           "details": "Grain uses Whisper.cpp for fast, local speech-to-text processing. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippets",
+        "description": "Say a trigger phrase while dictating and Grain replaces it with your saved text — a link, an address, or a whole paragraph. Matching ignores case and punctuation.",
+        "triggerPlaceholder": "Trigger phrase (e.g. grain github repo)",
+        "replacementPlaceholder": "Replacement text — a link, address, or paragraph",
+        "add": "Add snippet",
+        "update": "Save changes",
+        "cancel": "Cancel",
+        "edit": "Edit snippet",
+        "delete": "Delete snippet",
+        "toggle": "Enable or disable this snippet",
+        "duplicate": "A snippet with the trigger \"{{trigger}}\" already exists",
+        "empty": "No snippets yet. Add your first one above."
       }
     }
   },

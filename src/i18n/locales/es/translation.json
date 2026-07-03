@@ -12,6 +12,7 @@
     "models": "Modelos",
     "advanced": "Avanzado",
     "postProcessing": "Post Proceso",
+    "experimentations": "Experimentaciones",
     "history": "Historial",
     "debug": "Depuración",
     "about": "Acerca de"
@@ -535,6 +536,22 @@
           "description": "Inferencia de alto rendimiento del modelo de reconocimiento automático de voz Whisper de OpenAI",
           "details": "Handy usa Whisper.cpp para procesamiento de voz a texto rápido y local. Gracias al increíble trabajo de Georgi Gerganov y colaboradores."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippets",
+        "description": "Di una frase de activación al dictar y Grain la reemplazará por tu texto guardado: un enlace, una dirección o un párrafo entero. La coincidencia ignora mayúsculas y puntuación.",
+        "triggerPlaceholder": "Frase de activación (p. ej. grain github repo)",
+        "replacementPlaceholder": "Texto de reemplazo: un enlace, dirección o párrafo",
+        "add": "Añadir snippet",
+        "update": "Guardar cambios",
+        "cancel": "Cancelar",
+        "edit": "Editar snippet",
+        "delete": "Eliminar snippet",
+        "toggle": "Activar o desactivar este snippet",
+        "duplicate": "Ya existe un snippet con el activador «{{trigger}}»",
+        "empty": "Aún no hay snippets. Añade el primero arriba."
       }
     }
   },

@@ -280,6 +280,14 @@ async updateCustomWords(words: string[]) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_snippets", { snippets }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Temporarily unregister a binding while the user is editing it in the UI.
  * This avoids firing the action while keys are being recorded.
@@ -1092,7 +1100,11 @@ default_panel?: DefaultPanel; start_hidden?: boolean; autostart_enabled?: boolea
  * Empty = none selected. Never overload `selected_model`: Batch/Rolling and
  * Native ASR have different model topologies and lifecycles.
  */
-selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
+selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
+/**
+ * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
+ */
+snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
 /**
  * [GRAIN] When true, post-processing routes among ENABLED post-process
  * providers (round-robin + per-provider daily quota + failover). When false
@@ -1234,6 +1246,13 @@ export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "
  */
 export type SecretMap = Partial<{ [key in string]: string }>
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+/**
+ * [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a
+ * final transcript, it is replaced by the expansion text verbatim. Matching is
+ * case/punctuation tolerant so rolling-window chunk artifacts ("Grain, GitHub
+ * repo.") still expand.
+ */
+export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
  * Live transcription snapshot emitted to the overlay during a streaming run.

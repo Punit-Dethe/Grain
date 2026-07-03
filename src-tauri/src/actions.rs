@@ -1273,6 +1273,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     &settings.app_language,
                     &settings.custom_filler_words,
                     false,
+                    &settings.snippets,
                 )
             } else if !samples.is_empty() {
                 warn!("[GRAIN] rolling produced no text — falling back to batch");

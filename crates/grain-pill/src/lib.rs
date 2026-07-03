@@ -117,11 +117,13 @@ const STUDIO_CTRL_H: f32 = 40.0;
 // window resize). At the cap the top gap is 0, so max height omits it.
 const STUDIO_MAX_CARD_H: f32 = STUDIO_LINE_HEIGHT * STUDIO_MAX_LINES as f32 + STUDIO_CTRL_H;
 // [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
-// slower / smoother. 0.10 ≈ a gentle ~350ms settle at 60fps (0.22 felt abrupt).
-const STUDIO_GROW_EASE: f32 = 0.10;
-// New transcript words ramp their alpha in over this long instead of popping —
-// each freshly-decoded word at the tail fades on smoothly.
-const STUDIO_WORD_REVEAL: Duration = Duration::from_millis(170);
+// slower / smoother. 0.07 ≈ a soft ~500ms settle at 60fps — deliberately gentle
+// so a new line rises in without the quick "snap" that read as a glitch.
+const STUDIO_GROW_EASE: f32 = 0.07;
+// New transcript words ramp their alpha in over this long instead of popping.
+// Slower = smoother; long enough that fast streaming words dissolve in rather
+// than flicking on.
+const STUDIO_WORD_REVEAL: Duration = Duration::from_millis(260);
 
 // [GRAIN] Grain's brand accent (the pill's orange), reused for the live overlay's
 // dot / waveform / timer so the Studio Window matches the collapsed capsule.

@@ -12,6 +12,7 @@
     "models": "모델",
     "advanced": "고급",
     "postProcessing": "후처리",
+    "experimentations": "실험 기능",
     "history": "히스토리",
     "debug": "디버그",
     "about": "정보"
@@ -535,6 +536,22 @@
           "description": "OpenAI의 Whisper 자동 음성 인식 모델의 고성능 추론",
           "details": "Handy는 빠르고 로컬 음성-텍스트 처리를 위해 Whisper.cpp를 사용합니다. Georgi Gerganov와 기여자들의 놀라운 작업에 감사드립니다."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "스니펫",
+        "description": "받아쓰기 중에 트리거 문구를 말하면 Grain이 저장된 텍스트(링크, 주소, 문단 등)로 바꿔줍니다. 대소문자와 문장 부호는 무시됩니다.",
+        "triggerPlaceholder": "트리거 문구 (예: grain github repo)",
+        "replacementPlaceholder": "대체 텍스트 — 링크, 주소 또는 문단",
+        "add": "스니펫 추가",
+        "update": "변경 사항 저장",
+        "cancel": "취소",
+        "edit": "스니펫 편집",
+        "delete": "스니펫 삭제",
+        "toggle": "이 스니펫 켜기/끄기",
+        "duplicate": "트리거 \"{{trigger}}\"가 있는 스니펫이 이미 있습니다",
+        "empty": "아직 스니펫이 없습니다. 위에서 첫 스니펫을 추가하세요."
       }
     }
   },

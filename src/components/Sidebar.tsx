@@ -1,6 +1,14 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { Cog, FlaskConical, History, Info, Sparkles, AudioLines } from "lucide-react";
+import {
+  Beaker,
+  Cog,
+  FlaskConical,
+  History,
+  Info,
+  Sparkles,
+  AudioLines,
+} from "lucide-react";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
 import { useTheme } from "../contexts/ThemeContext";
@@ -12,6 +20,7 @@ import {
   AboutSettings,
   PostProcessingSettings,
   SpeechToTextSettings,
+  ExperimentationsSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -64,6 +73,14 @@ export const SECTIONS_CONFIG = {
     component: PostProcessingSettings,
     enabled: (settings) => settings?.post_process_enabled ?? false,
   },
+  // [GRAIN] Home for in-progress features (snippets, …). Always visible — not
+  // gated behind debug/experimental flags.
+  experimentations: {
+    labelKey: "sidebar.experimentations",
+    icon: Beaker,
+    component: ExperimentationsSettings,
+    enabled: () => true,
+  },
   history: {
     labelKey: "sidebar.history",
     icon: History,
@@ -112,7 +129,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-5 pt-7">
         <div
           className="h-[30px] rounded-md flex items-center justify-center"
-          style={{ backgroundColor: isSettingsDark ? "var(--color-accent)" : "var(--color-ink)" }}
+          style={{
+            backgroundColor: isSettingsDark
+              ? "var(--color-accent)"
+              : "var(--color-ink)",
+          }}
         >
           <span
             className="text-[0.7rem] tracking-[0.18em]"

@@ -166,6 +166,7 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
                                 &settings.app_language,
                                 &settings.custom_filler_words,
                                 false,
+                                &settings.snippets,
                             ),
                             remaining_requests: res.remaining_requests,
                             remaining_tokens: res.remaining_tokens,

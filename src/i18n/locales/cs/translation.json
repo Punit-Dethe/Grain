@@ -12,6 +12,7 @@
     "models": "Modely",
     "advanced": "Pokročilé",
     "postProcessing": "Následné zpracování",
+    "experimentations": "Experimenty",
     "history": "Historie",
     "debug": "Ladění",
     "about": "O aplikaci"
@@ -535,6 +536,22 @@
           "description": "Vysoce výkonné inferenční zpracování modelu automatického rozpoznávání řeči Whisper od OpenAI",
           "details": "Handy používá Whisper.cpp pro rychlé lokální zpracování řeči na text. Díky skvělé práci Georgiho Gerganova a přispěvatelů."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippety",
+        "description": "Vyslovte při diktování spouštěcí frázi a Grain ji nahradí uloženým textem — odkazem, adresou nebo celým odstavcem. Porovnání ignoruje velikost písmen a interpunkci.",
+        "triggerPlaceholder": "Spouštěcí fráze (např. grain github repo)",
+        "replacementPlaceholder": "Náhradní text — odkaz, adresa nebo odstavec",
+        "add": "Přidat snippet",
+        "update": "Uložit změny",
+        "cancel": "Zrušit",
+        "edit": "Upravit snippet",
+        "delete": "Smazat snippet",
+        "toggle": "Zapnout nebo vypnout tento snippet",
+        "duplicate": "Snippet se spouštěčem „{{trigger}}“ už existuje",
+        "empty": "Zatím žádné snippety. Přidejte první výše."
       }
     }
   },
