@@ -118,6 +118,18 @@ async fn post_process_transcription(
         return None;
     }
 
+    // [GRAIN] Context awareness: layer automatic SOFT context (per detected app
+    // category) and any matching user MODE (hard formatting) on top of the base
+    // prompt. Detection is one cheap OS call made ONCE here — never per rolling
+    // chunk — and `compose_prompt` returns the base untouched when the feature is
+    // off, nothing is detected, and no mode matches (so the common path is today's).
+    let prompt = if settings.context_awareness_enabled {
+        let ctx = crate::context_detect::detect_active_context(settings.context_nearby_terms);
+        crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref())
+    } else {
+        prompt
+    };
+
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
     // post-processing keeps its own provider list.

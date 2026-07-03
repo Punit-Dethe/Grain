@@ -289,6 +289,49 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Toggle context awareness (post-processing SOFT context + user MODES).
+ */
+async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_context_awareness_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Toggle the silent nearby-term hints (reads focused-field unique tokens
+ * via UI Automation). Only effective when context awareness is also on.
+ */
+async changeContextNearbyTermsSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_context_nearby_terms_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
+ * entries missing a name, prompt, or a non-blank matcher value — the UI enforces
+ * this too, but this guards direct invoke calls.
+ */
+async updateAppModes(modes: AppMode[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_app_modes", { modes }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
+ * resolved (unsupported platform, no foreground window). Silent — no UI.
+ */
+async detectActiveApp() : Promise<DetectedApp | null> {
+    return await TAURI_INVOKE("detect_active_app");
+},
+/**
  * Temporarily unregister a binding while the user is editing it in the UI.
  * This avoids firing the action while keys are being recorded.
  */
@@ -1090,6 +1133,22 @@ export type AgentMessage = {
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
 role: string; content: string }
+/**
+ * [GRAIN] How an [`AppMode`] is bound to the active target. A mode fires when the
+ * foreground app (or, in a browser, the current site) matches. `Process` matches
+ * the executable stem case-insensitively (e.g. `"Code"`, `"slack"`); `UrlHost`
+ * matches the browser address-bar host by suffix (`"mail.google.com"` also
+ * matches `"…mail.google.com"`), so users type a bare host, not a regex.
+ */
+export type AppMatch = { kind: "process"; value: string } | { kind: "url_host"; value: string }
+/**
+ * [GRAIN] A user-defined "mode": a specific post-processing prompt (HARD
+ * formatting) applied ONLY when its `matcher` hits the active app/site. This is
+ * the opt-in, per-target layer that rides on top of the always-on base prompt +
+ * automatic soft context. The `prompt` is inline (self-contained) rather than a
+ * reference into `post_process_prompts`, so a mode can be shared/exported whole.
+ */
+export type AppMode = { id: string; name: string; match: AppMatch; prompt: string; enabled?: boolean }
 export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
 /**
  * [GRAIN] Which panel is visible when the main window opens.
@@ -1157,7 +1216,30 @@ audio_conditioning?: boolean;
  * after each chunk merge PLUS an efficient inter-chunk tail decode
  * (LocalAgreement-2) that costs extra compute, so it is strictly opt-in.
  */
-rolling_live_preview?: boolean }
+rolling_live_preview?: boolean; 
+/**
+ * [GRAIN] Context awareness (post-processing only): when on, the backend
+ * detects the foreground app/site right before LLM post-processing and layers
+ * an automatic SOFT context line (tone/vocab, never restructuring) plus any
+ * matching user [`AppMode`] (HARD formatting) on top of the selected base
+ * prompt. OFF by default — zero behavior change until opted in, and it only
+ * affects installs that also run post-processing.
+ */
+context_awareness_enabled?: boolean; 
+/**
+ * [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
+ * default; only consulted when `context_awareness_enabled` is true.
+ */
+app_modes?: AppMode[]; 
+/**
+ * [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
+ * read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
+ * names) from the focused field via UI Automation and pass them to the LLM as
+ * an *additive, low-authority* bias — never the raw text, never persisted,
+ * never surfaced in the UI. OFF by default because it reads the focused
+ * field's content; password fields are always skipped.
+ */
+context_nearby_terms?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
@@ -1165,6 +1247,25 @@ export type BindingResponse = { success: boolean; binding: ShortcutBinding | nul
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"
+/**
+ * [GRAIN] A one-shot snapshot of the current foreground app, for the "capture
+ * focused app" button when creating a mode. Backend-side detection so the same
+ * exe-stem normalization used at match time pre-fills the matcher exactly.
+ */
+export type DetectedApp = { 
+/**
+ * Executable stem (the value a `Process` mode matches on).
+ */
+exe: string; 
+/**
+ * Human-facing name (window title, for display).
+ */
+name: string; 
+/**
+ * Browser address-bar host, when the foreground app is a browser and the
+ * URL reader resolved it. `None` otherwise.
+ */
+url_host: string | null }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,

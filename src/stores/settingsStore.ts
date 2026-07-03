@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AppMode,
   AppSettings as Settings,
   AudioDevice,
   Snippet,
@@ -117,6 +118,11 @@ const settingUpdaters: {
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
+  context_awareness_enabled: (value) =>
+    commands.changeContextAwarenessEnabledSetting(value as boolean),
+  context_nearby_terms: (value) =>
+    commands.changeContextNearbyTermsSetting(value as boolean),
+  app_modes: (value) => commands.updateAppModes(value as AppMode[]),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>
