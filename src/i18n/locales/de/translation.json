@@ -12,6 +12,7 @@
     "models": "Modelle",
     "advanced": "Erweitert",
     "postProcessing": "Nachbearbeitung",
+    "experimentations": "Experimente",
     "history": "Verlauf",
     "debug": "Debug",
     "about": "Info"
@@ -535,6 +536,22 @@
           "description": "Hochleistungs-Inferenz des Whisper-Spracherkennungsmodells von OpenAI",
           "details": "Handy verwendet Whisper.cpp für schnelle, lokale Sprach-zu-Text-Verarbeitung. Dank an Georgi Gerganov und die Mitwirkenden für ihre großartige Arbeit."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippets",
+        "description": "Sage beim Diktieren eine Auslösephrase und Grain ersetzt sie durch deinen gespeicherten Text – einen Link, eine Adresse oder einen ganzen Absatz. Groß-/Kleinschreibung und Satzzeichen werden ignoriert.",
+        "triggerPlaceholder": "Auslösephrase (z. B. grain github repo)",
+        "replacementPlaceholder": "Ersatztext – Link, Adresse oder Absatz",
+        "add": "Snippet hinzufügen",
+        "update": "Änderungen speichern",
+        "cancel": "Abbrechen",
+        "edit": "Snippet bearbeiten",
+        "delete": "Snippet löschen",
+        "toggle": "Snippet aktivieren oder deaktivieren",
+        "duplicate": "Ein Snippet mit dem Auslöser „{{trigger}}“ existiert bereits",
+        "empty": "Noch keine Snippets. Füge oben dein erstes hinzu."
       }
     }
   },

@@ -12,6 +12,7 @@
     "models": "模型",
     "advanced": "高级",
     "postProcessing": "后处理",
+    "experimentations": "实验功能",
     "history": "历史记录",
     "debug": "调试",
     "about": "关于"
@@ -535,6 +536,22 @@
           "description": "OpenAI Whisper 自动语音识别模型的高性能推理",
           "details": "Handy 使用 Whisper.cpp 进行快速的本地语音转文字处理。感谢 Georgi Gerganov 和贡献者们的出色工作。"
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "片段",
+        "description": "听写时说出触发短语,Grain 会将其替换为你保存的文本——链接、地址或整段文字。匹配时忽略大小写和标点。",
+        "triggerPlaceholder": "触发短语(例如 grain github repo)",
+        "replacementPlaceholder": "替换文本——链接、地址或段落",
+        "add": "添加片段",
+        "update": "保存更改",
+        "cancel": "取消",
+        "edit": "编辑片段",
+        "delete": "删除片段",
+        "toggle": "启用或停用此片段",
+        "duplicate": "触发词为“{{trigger}}”的片段已存在",
+        "empty": "还没有片段。请在上方添加第一个。"
       }
     }
   },

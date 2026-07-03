@@ -6,6 +6,7 @@ export { HistorySettings } from "./history/HistorySettings";
 export { AboutSettings } from "./about/AboutSettings";
 export { PostProcessingSettings } from "./post-processing/PostProcessingSettings";
 export { SpeechToTextSettings } from "./speech-to-text/SpeechToTextSettings";
+export { ExperimentationsSettings } from "./experimentations/ExperimentationsSettings";
 
 // Individual setting components
 export { MicrophoneSelector } from "./MicrophoneSelector";

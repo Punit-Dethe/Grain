@@ -172,7 +172,15 @@ pub async fn set_active_model(
     _transcription_manager: State<'_, Arc<TranscriptionManager>>,
     model_id: String,
 ) -> Result<(), String> {
-    switch_active_model(&app_handle, &model_id)
+    // [GRAIN] `switch_active_model` eagerly loads the model (GGUF weights + GPU
+    // init), which is fully blocking and can take seconds. Running it inline on
+    // the async runtime stalls Tauri's IPC/event processing, so the whole window
+    // greys out ("not responding") until it returns — the onboarding freeze after
+    // a download finishes. Offload it to a blocking thread so the UI stays live
+    // (mirrors how the tray path already spawns a thread for this).
+    tauri::async_runtime::spawn_blocking(move || switch_active_model(&app_handle, &model_id))
+        .await
+        .map_err(|e| format!("model switch task failed: {e}"))?
 }
 
 #[tauri::command]

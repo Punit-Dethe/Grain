@@ -12,6 +12,7 @@
     "models": "Modelos",
     "advanced": "Avançado",
     "postProcessing": "Pós-Processamento",
+    "experimentations": "Experimentações",
     "history": "Histórico",
     "debug": "Depuração",
     "about": "Sobre"
@@ -535,6 +536,22 @@
           "description": "Inferência de alto desempenho do modelo de reconhecimento automático de fala Whisper da OpenAI",
           "details": "O Handy usa Whisper.cpp para processamento rápido e local de fala para texto. Agradecemos ao incrível trabalho de Georgi Gerganov e colaboradores."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippets",
+        "description": "Diga uma frase de ativação ao ditar e o Grain a substituirá pelo seu texto salvo — um link, um endereço ou um parágrafo inteiro. A correspondência ignora maiúsculas e pontuação.",
+        "triggerPlaceholder": "Frase de ativação (ex.: grain github repo)",
+        "replacementPlaceholder": "Texto de substituição — link, endereço ou parágrafo",
+        "add": "Adicionar snippet",
+        "update": "Salvar alterações",
+        "cancel": "Cancelar",
+        "edit": "Editar snippet",
+        "delete": "Excluir snippet",
+        "toggle": "Ativar ou desativar este snippet",
+        "duplicate": "Já existe um snippet com o gatilho \"{{trigger}}\"",
+        "empty": "Nenhum snippet ainda. Adicione o primeiro acima."
       }
     }
   },

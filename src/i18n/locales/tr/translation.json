@@ -12,6 +12,7 @@
     "models": "Modeller",
     "advanced": "Gelişmiş",
     "postProcessing": "Son İşlem",
+    "experimentations": "Denemeler",
     "history": "Geçmiş",
     "debug": "Hata Ayıklama",
     "about": "Hakkında"
@@ -535,6 +536,22 @@
           "description": "OpenAI'nin Whisper otomatik konuşma tanıma modelinin yüksek performanslı çıkarımı",
           "details": "Handy, hızlı ve yerel konuşmadan metne dönüştürme için Whisper.cpp kullanır. Georgi Gerganov ve katkıda bulunanların harika çalışmaları için teşekkür ederiz."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippet'ler",
+        "description": "Dikte ederken bir tetikleyici ifade söyleyin, Grain onu kayıtlı metninizle değiştirsin — bir bağlantı, adres veya koca bir paragraf. Eşleştirme büyük/küçük harf ve noktalama işaretlerini yok sayar.",
+        "triggerPlaceholder": "Tetikleyici ifade (örn. grain github repo)",
+        "replacementPlaceholder": "Yerine geçecek metin — bağlantı, adres veya paragraf",
+        "add": "Snippet ekle",
+        "update": "Değişiklikleri kaydet",
+        "cancel": "İptal",
+        "edit": "Snippet'i düzenle",
+        "delete": "Snippet'i sil",
+        "toggle": "Bu snippet'i aç veya kapat",
+        "duplicate": "\"{{trigger}}\" tetikleyicili bir snippet zaten var",
+        "empty": "Henüz snippet yok. İlkini yukarıdan ekleyin."
       }
     }
   },

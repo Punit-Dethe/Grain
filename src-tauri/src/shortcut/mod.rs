@@ -675,6 +675,22 @@ pub fn update_custom_words(app: AppHandle, words: Vec<String>) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Result<(), String> {
+    // Persist only usable rules: a snippet needs a non-blank trigger and a
+    // non-empty expansion. The UI enforces this too; this guards direct
+    // invoke calls.
+    let snippets: Vec<settings::Snippet> = snippets
+        .into_iter()
+        .filter(|s| !s.trigger.trim().is_empty() && !s.replacement.is_empty())
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.snippets = snippets;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_word_correction_threshold_setting(
     app: AppHandle,
     threshold: f64,

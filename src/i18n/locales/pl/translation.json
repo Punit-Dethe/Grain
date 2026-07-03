@@ -12,6 +12,7 @@
     "models": "Modele",
     "advanced": "Zaawansowane",
     "postProcessing": "Postproces",
+    "experimentations": "Eksperymenty",
     "history": "Historia",
     "debug": "Debugowanie",
     "about": "O programie"
@@ -535,6 +536,22 @@
           "description": "Wydajne wykonywanie modelu rozpoznawania mowy Whisper od OpenAI",
           "details": "Handy używa Whisper.cpp do szybkiego, lokalnego przetwarzania mowy na tekst. Dzięki niesamowitej pracy Georgi Gerganova i współtwórców."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippety",
+        "description": "Wypowiedz frazę wyzwalającą podczas dyktowania, a Grain zastąpi ją zapisanym tekstem — linkiem, adresem lub całym akapitem. Dopasowanie ignoruje wielkość liter i interpunkcję.",
+        "triggerPlaceholder": "Fraza wyzwalająca (np. grain github repo)",
+        "replacementPlaceholder": "Tekst zastępczy — link, adres lub akapit",
+        "add": "Dodaj snippet",
+        "update": "Zapisz zmiany",
+        "cancel": "Anuluj",
+        "edit": "Edytuj snippet",
+        "delete": "Usuń snippet",
+        "toggle": "Włącz lub wyłącz ten snippet",
+        "duplicate": "Snippet z wyzwalaczem „{{trigger}}” już istnieje",
+        "empty": "Brak snippetów. Dodaj pierwszy powyżej."
       }
     }
   },

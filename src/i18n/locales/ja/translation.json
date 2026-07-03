@@ -12,6 +12,7 @@
     "models": "モデル",
     "advanced": "詳細設定",
     "postProcessing": "後処理",
+    "experimentations": "実験機能",
     "history": "履歴",
     "debug": "デバッグ",
     "about": "概要"
@@ -535,6 +536,22 @@
           "description": "OpenAIのWhisper自動音声認識モデルの高性能推論",
           "details": "Handyは高速でローカルな音声からテキストへの変換にWhisper.cppを使用しています。Georgi Gerganov氏と貢献者の皆様の素晴らしい仕事に感謝します。"
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "スニペット",
+        "description": "音声入力中にトリガーフレーズを話すと、Grain が保存済みのテキスト(リンク、住所、段落など)に置き換えます。大文字小文字や句読点の違いは無視されます。",
+        "triggerPlaceholder": "トリガーフレーズ(例: grain github repo)",
+        "replacementPlaceholder": "置換テキスト(リンク、住所、段落など)",
+        "add": "スニペットを追加",
+        "update": "変更を保存",
+        "cancel": "キャンセル",
+        "edit": "スニペットを編集",
+        "delete": "スニペットを削除",
+        "toggle": "このスニペットの有効/無効を切り替え",
+        "duplicate": "トリガー「{{trigger}}」のスニペットは既に存在します",
+        "empty": "スニペットはまだありません。上から最初のスニペットを追加してください。"
       }
     }
   },

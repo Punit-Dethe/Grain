@@ -1295,11 +1295,14 @@ impl TranscriptionManager {
                 model_supports_translate,
             );
 
-            // Word timestamps drive the timeline assembler's positional dedup.
-            // `Auto` falls the model back to its richest supported granularity
-            // (segment for whisper, token for parakeet/nemotron) when it can't
-            // do word-level — the driver synthesizes timings if none come back.
-            let run_options = RunOptions {
+            // Word timestamps give the timeline assembler the best positional
+            // dedup. But not every backend/model supports word-level granularity
+            // — some (seen in release builds) reject it outright with
+            // "unsupported timestamp granularity". Rather than dropping the chunk,
+            // retry with the SAME granularity the (working) batch path uses and
+            // let `synthesize_word_timings` fill in evenly-spaced timings; rolling
+            // still assembles, just with coarser word positions.
+            let mut run_options = RunOptions {
                 task: run_plan.task,
                 language: run_plan.language,
                 target_language: run_plan.target_language,
@@ -1308,9 +1311,19 @@ impl TranscriptionManager {
                 ..Default::default()
             };
 
-            session
-                .run(audio, &run_options)
-                .map_err(|e| anyhow::anyhow!("rolling chunk transcription failed: {}", e))
+            match session.run(audio, &run_options) {
+                Ok(t) => Ok(t),
+                Err(_) => {
+                    run_options.timestamps = if takes_prompt {
+                        TimestampKind::Segment
+                    } else {
+                        TimestampKind::None
+                    };
+                    session
+                        .run(audio, &run_options)
+                        .map_err(|e| anyhow::anyhow!("rolling chunk transcription failed: {}", e))
+                }
+            }
         })
     }
 }
@@ -1504,11 +1517,16 @@ fn post_process_transcription_text(
         raw
     };
 
-    filter_transcription_output(
+    let filtered = filter_transcription_output(
         &corrected,
         &settings.app_language,
         &settings.custom_filler_words,
-    )
+    );
+
+    // [GRAIN] Voice snippets run LAST, on the corrected/filtered full
+    // transcript — this covers the local batch and stream-finalize paths
+    // (rolling + cloud STT expand via `finalize_transcript`).
+    crate::audio_toolkit::apply_snippets(&filtered, &settings.snippets)
 }
 
 /// Decide a transcribe-cpp run's task + translation target from settings.

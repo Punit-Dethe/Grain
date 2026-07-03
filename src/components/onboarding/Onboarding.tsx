@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import type { ModelInfo } from "@/bindings";
 import type { ModelCardStatus } from "./ModelCard";
 import ModelCard from "./ModelCard";
-import HandyTextLogo from "../icons/HandyTextLogo";
+
 import { useModelStore } from "../../stores/modelStore";
 
 interface OnboardingProps {
@@ -94,9 +94,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col p-6 gap-4 inset-0">
+    <div className="h-screen w-screen flex flex-col p-6 gap-4 inset-0 bg-background text-text">
       <div className="flex flex-col items-center gap-2 shrink-0">
-        <HandyTextLogo width={200} />
+        <div className="flex items-center justify-center py-4">
+          <h1 className="text-6xl font-black tracking-tight" style={{ color: "#FF5D1E" }}>GRAIN</h1>
+        </div>
         <p className="text-text/70 max-w-md font-medium mx-auto">
           {t("onboarding.subtitle")}
         </p>

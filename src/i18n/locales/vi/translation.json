@@ -12,6 +12,7 @@
     "models": "Mô hình",
     "advanced": "Nâng cao",
     "postProcessing": "Xử lý sau",
+    "experimentations": "Thử nghiệm",
     "history": "Lịch sử",
     "debug": "Gỡ lỗi",
     "about": "Giới thiệu"
@@ -535,6 +536,22 @@
           "description": "Suy luận hiệu suất cao của mô hình nhận dạng giọng nói tự động Whisper của OpenAI",
           "details": "Handy sử dụng Whisper.cpp để xử lý chuyển đổi giọng nói thành văn bản nhanh, cục bộ. Cảm ơn công việc tuyệt vời của Georgi Gerganov và các cộng tác viên."
         }
+      }
+    },
+    "experimentations": {
+      "snippets": {
+        "title": "Snippet",
+        "description": "Nói cụm từ kích hoạt khi đọc chính tả và Grain sẽ thay nó bằng văn bản đã lưu — một liên kết, địa chỉ hoặc cả đoạn văn. Việc so khớp bỏ qua chữ hoa/thường và dấu câu.",
+        "triggerPlaceholder": "Cụm từ kích hoạt (ví dụ: grain github repo)",
+        "replacementPlaceholder": "Văn bản thay thế — liên kết, địa chỉ hoặc đoạn văn",
+        "add": "Thêm snippet",
+        "update": "Lưu thay đổi",
+        "cancel": "Hủy",
+        "edit": "Sửa snippet",
+        "delete": "Xóa snippet",
+        "toggle": "Bật hoặc tắt snippet này",
+        "duplicate": "Đã tồn tại snippet với cụm kích hoạt \"{{trigger}}\"",
+        "empty": "Chưa có snippet nào. Thêm snippet đầu tiên ở trên."
       }
     }
   },

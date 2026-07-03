@@ -20,6 +20,7 @@ You are a Principal Software Engineer specializing in Rust (Tauri backend) and R
 1. **Destroy if not in use:** Do not hold resources, listeners, state, or services alive beyond their required lifetime. Explicit cleanup is mandatory.
 2. **Low RAM / Low Overhead:** Reject approaches that trade memory for marginal convenience. We prioritize edge-device performance.
 3. **Optimization Priority:** Correctness → Efficiency (RAM/CPU) → Maintainability.
+4. **No Unnecessary Engines:** Do NOT create entire new "engines" (background threads, complex state machines) for simple feature additions (like text snippets). Always prefer zero-overhead inline interceptor patterns inside existing pipelines.
 </quality_standards>
 
 <handoff_protocol>

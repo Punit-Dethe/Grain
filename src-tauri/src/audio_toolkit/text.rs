@@ -174,6 +174,8 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
 ///   The local Whisper batch path sets this because it already biases the model
 ///   via `initial_prompt`; paths with no such biasing (rolling, cloud, Agent)
 ///   pass `false` so the dictionary is honored.
+/// * `snippets` - the user's voice snippets; expanded LAST so triggers match
+///   the corrected/filtered text (may be empty).
 ///
 /// # Returns
 /// The finalized transcript.
@@ -184,13 +186,15 @@ pub fn finalize_transcript(
     app_language: &str,
     custom_filler_words: &Option<Vec<String>>,
     skip_custom_words: bool,
+    snippets: &[crate::settings::Snippet],
 ) -> String {
     let corrected = if skip_custom_words || custom_words.is_empty() {
         text.to_string()
     } else {
         apply_custom_words(text, custom_words, word_correction_threshold)
     };
-    filter_transcription_output(&corrected, app_language, custom_filler_words)
+    let filtered = filter_transcription_output(&corrected, app_language, custom_filler_words);
+    crate::audio_toolkit::apply_snippets(&filtered, snippets)
 }
 
 /// Preserves the case pattern of the original word when applying a replacement
@@ -402,6 +406,7 @@ mod tests {
             "en",
             &None,
             false,
+            &[],
         );
         assert!(result.contains("ChargeBee"), "got: {result}");
         assert!(!result.contains("um"), "fillers not removed: {result}");
@@ -412,8 +417,15 @@ mod tests {
         // Whisper path: fuzzy correction skipped (model already biased), but
         // filler filtering still applies.
         let custom = vec!["ChargeBee".to_string()];
-        let result =
-            finalize_transcript("um the Charge B dashboard", &custom, 0.5, "en", &None, true);
+        let result = finalize_transcript(
+            "um the Charge B dashboard",
+            &custom,
+            0.5,
+            "en",
+            &None,
+            true,
+            &[],
+        );
         assert!(
             !result.contains("ChargeBee"),
             "should not fuzzy-correct: {result}"
@@ -424,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_finalize_empty_custom_words_is_just_filter() {
-        let result = finalize_transcript("um hello world", &[], 0.5, "en", &None, false);
+        let result = finalize_transcript("um hello world", &[], 0.5, "en", &None, false, &[]);
         assert_eq!(result, "hello world");
     }
 
