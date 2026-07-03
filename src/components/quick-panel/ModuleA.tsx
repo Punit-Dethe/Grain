@@ -136,13 +136,13 @@ export const ModuleA: React.FC = () => {
       <WellLabel letterSpacing={1.5} marginBottom={8}>
         SYSTEM HOTKEYS
       </WellLabel>
-      {/* [GRAIN] The three capture engines, vertically stacked: Batch, Rolling, Native ASR */}
-      <HotkeyRow label="Batch" binding={bindingFor("transcribe")} />
+      {/* [GRAIN] The three capture engines, vertically stacked: Standard, Flow, Live */}
+      <HotkeyRow label="Standard" binding={bindingFor("transcribe")} />
       <Spacer h={4} />
-      <HotkeyRow label="Rolling" binding={bindingFor("transcribe_realtime")} />
+      <HotkeyRow label="Flow" binding={bindingFor("transcribe_realtime")} />
       <Spacer h={4} />
       <HotkeyRow
-        label="Native ASR"
+        label="Live"
         binding={bindingFor("transcribe_native_asr")}
       />
 

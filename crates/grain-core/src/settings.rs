@@ -680,7 +680,11 @@ fn default_sound_theme() -> SoundTheme {
     SoundTheme::Marimba
 }
 fn default_post_process_enabled() -> bool {
-    false
+    // [GRAIN] AI post-processing is exposed ON by default so the feature is
+    // discoverable out of the box. This only makes the post-process shortcut +
+    // controls available; plain dictation never routes to an LLM on its own, so
+    // a fresh install with no API key still transcribes normally.
+    true
 }
 fn default_app_language() -> String {
     sys_locale::get_locale()
@@ -984,7 +988,7 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe".to_string(),
         ShortcutBinding {
             id: "transcribe".to_string(),
-            name: "Transcribe".to_string(),
+            name: "Standard".to_string(),
             description: "Converts your speech into text.".to_string(),
             default_binding: default_shortcut.to_string(),
             current_binding: default_shortcut.to_string(),
@@ -1030,7 +1034,7 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe_realtime".to_string(),
         ShortcutBinding {
             id: "transcribe_realtime".to_string(),
-            name: "Real-Time Transcribe".to_string(),
+            name: "Flow".to_string(),
             description: "Rolling-window transcription that processes as you speak.".to_string(),
             default_binding: default_realtime_shortcut.to_string(),
             current_binding: default_realtime_shortcut.to_string(),
@@ -1075,7 +1079,7 @@ pub fn get_default_settings() -> AppSettings {
         "transcribe_native_asr".to_string(),
         ShortcutBinding {
             id: "transcribe_native_asr".to_string(),
-            name: "Streaming Transcribe".to_string(),
+            name: "Live".to_string(),
             description: "Native real-time dictation with live streaming text.".to_string(),
             default_binding: default_native_asr_shortcut.to_string(),
             current_binding: default_native_asr_shortcut.to_string(),
@@ -1120,7 +1124,9 @@ pub fn get_default_settings() -> AppSettings {
 
     AppSettings {
         bindings,
-        push_to_talk: true,
+        // [GRAIN] Push-to-talk defaults OFF — a fresh install uses toggle-style
+        // capture (press once to start, again to stop) rather than hold-to-talk.
+        push_to_talk: false,
         audio_feedback: false,
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),

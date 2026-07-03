@@ -8,6 +8,10 @@ import { ProgressBar } from "../shared";
 import { useSettings } from "../../hooks/useSettings";
 import { commands } from "../../bindings";
 
+// [GRAIN] Where portable users are sent to grab a fresh build by hand (the
+// in-app updater can't replace a portable install). Points at Grain's own repo.
+const RELEASES_URL = "https://github.com/Punit-Dethe/Grain/releases/latest";
+
 interface UpdateCheckerProps {
   className?: string;
 }
@@ -48,7 +52,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
 
     checkForUpdates();
 
-    // Listen for update check events
+    // Listen for update check events (e.g. a manual "Check for Updates" trigger)
     const updateUnlisten = listen("check-for-updates", () => {
       handleManualUpdateCheck();
     });
@@ -203,7 +207,7 @@ const UpdateChecker: React.FC<UpdateCheckerProps> = ({ className = "" }) => {
               <button
                 className="px-3 py-1.5 text-sm rounded bg-logo-primary text-white hover:bg-logo-primary/80 transition-colors"
                 onClick={() => {
-                  openUrl("https://github.com/cjpais/Handy/releases/latest");
+                  openUrl(RELEASES_URL);
                   setShowPortableUpdateDialog(false);
                 }}
               >

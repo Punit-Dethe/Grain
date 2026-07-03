@@ -52,7 +52,7 @@ pub static INTENTIONAL_QUIT: AtomicBool = AtomicBool::new(false);
 pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Listener, Manager};
+use tauri::{AppHandle, Listener, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
@@ -356,13 +356,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             "settings" => {
                 show_main_window(app);
             }
-            "check_updates" => {
-                let settings = settings::get_settings(app);
-                if settings.update_checks_enabled {
-                    show_main_window(app);
-                    let _ = app.emit("check-for-updates", ());
-                }
-            }
             "copy_last_transcript" => {
                 tray::copy_last_transcript(app);
             }
@@ -443,18 +436,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // grain-pill is now the SINGLE overlay surface for both batch and rolling
     // (driven by DaemonEvents over the local WS). Nothing to create here; the
     // pill is launched + supervised separately (events_server::spawn_pill_supervisor).
-}
-
-#[tauri::command]
-#[specta::specta]
-fn trigger_update_check(app: AppHandle) -> Result<(), String> {
-    let settings = settings::get_settings(&app);
-    if !settings.update_checks_enabled {
-        return Ok(());
-    }
-    app.emit("check-for-updates", ())
-        .map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 #[tauri::command]
@@ -673,7 +654,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::get_available_accelerators,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
-            trigger_update_check,
             show_main_window_command,
             agent::agent_get_context,
             agent::agent_set_instruction,
@@ -755,7 +735,6 @@ pub fn run(cli_args: CliArgs) {
             // event, which killed the stream worker mid-lease (no pill text,
             // engine dropped, batch fallback found nothing loaded).
             managers::transcription::StreamTextEvent,
-            managers::transcription::StreamPhaseEvent,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds

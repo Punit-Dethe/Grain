@@ -40,7 +40,6 @@ const WordChip: React.FC<{ word: string; onRemove: () => void }> = ({
         fontWeight: 700,
         color: ink(0.75),
         whiteSpace: "nowrap",
-        transition: "background-color 0.1s",
       }}
     >
       {word}

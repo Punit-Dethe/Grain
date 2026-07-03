@@ -6,7 +6,6 @@ import App from "./App";
 import { AgentPalette } from "./components/agent/AgentPalette";
 import { AgentPanel } from "./components/agent/AgentPanel";
 import { initUiScale } from "./lib/utils/uiScale";
-import { dismissSplash } from "./lib/utils/splash";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
 document.documentElement.dataset.platform = platform();
@@ -28,9 +27,6 @@ if (winLabel === "agent" || winLabel === "agent-panel") {
   document.documentElement.dataset.window = winLabel;
   document.documentElement.style.background = "transparent";
   document.body.style.background = "transparent";
-  // Agent windows are transparent + frameless; the splash background would show
-  // through as an opaque block, so drop it instantly with no fade.
-  dismissSplash(true);
   root.render(
     <React.StrictMode>
       {winLabel === "agent" ? <AgentPalette /> : <AgentPanel />}
@@ -54,8 +50,4 @@ if (winLabel === "agent" || winLabel === "agent-panel") {
       <App />
     </React.StrictMode>,
   );
-
-  // The splash is dismissed by App itself once onboarding state resolves (so it
-  // never lifts to reveal the blank `null` frame App renders while that IPC
-  // round-trip is in flight). See the dismissSplash call in App.tsx.
 }
