@@ -83,6 +83,15 @@ pub enum DaemonEvent {
     PromptChanged {
         name: String,
     },
+    /// [GRAIN] Auto-dictionary: offer to learn a corrected word. The pill shows a
+    /// clickable `Add "word"?` prompt; a click sends a reverse WS action back to
+    /// the core (see `events_server`).
+    DictionarySuggestion {
+        word: String,
+    },
+    /// [GRAIN] Dismiss any active dictionary suggestion (accepted, timed out, or
+    /// superseded).
+    DictionarySuggestionClear,
 
     // -- Misc UI signals --
     ShowOverlay,

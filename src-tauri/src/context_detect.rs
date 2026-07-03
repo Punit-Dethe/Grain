@@ -93,13 +93,25 @@ fn category_for_exe(stem: &str) -> AppCategory {
         "notion", "obsidian", "winword", "onenote", "evernote", "bear",
         "typora", "logseq",
     ];
-    // Browsers (site-level refinement is a later increment).
+    // Browsers — kept broad so URL/site awareness is browser-agnostic. Covers
+    // Chromium forks and Gecko/Firefox forks; the URL reader itself works off the
+    // accessibility tree, not a per-browser rule.
     const BROWSER: &[&str] = &[
-        "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc",
-        "browser", "chromium", "zen",
+        "chrome", "msedge", "firefox", "brave", "opera", "operagx", "vivaldi",
+        "arc", "browser", "chromium", "zen", "librewolf", "waterfox", "floorp",
+        "mullvad", "palemoon", "seamonkey", "thorium", "yandex", "maxthon",
+        "midori", "epic", "min", "sidekick", "wavebox", "falkon", "qutebrowser",
+        "ungoogled", "duckduckgo", "tor",
     ];
 
-    let hit = |set: &[&str]| set.iter().any(|k| stem == *k || stem.contains(k));
+    // Short keys (≤3 chars, e.g. "wt", "zen", "arc", "tor", "min", "x") must match
+    // the stem EXACTLY — substring-matching them would misfire on ordinary words
+    // ("editor" contains "tor", "examine" contains "min"). Longer keys may match as
+    // a substring so channel variants ("code - insiders", "whatsappdesktop") resolve.
+    let hit = |set: &[&str]| {
+        set.iter()
+            .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
+    };
     if hit(IDE) {
         AppCategory::Ide
     } else if hit(EMAIL) {
@@ -348,6 +360,20 @@ pub fn detect_active_context(read_nearby_terms: bool) -> Option<ActiveContext> {
     }
 }
 
+/// Read the currently focused editable field's full text via UI Automation, for
+/// the auto-dictionary watcher. `None` on unsupported platforms, password fields,
+/// or any failure. Silent — no UI.
+pub fn read_focused_text() -> Option<String> {
+    #[cfg(windows)]
+    {
+        uia::read_focused_value()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 #[cfg(windows)]
 mod windows_impl {
     use super::{category_for_exe, AppCategory, ActiveContext};
@@ -459,6 +485,10 @@ mod uia {
         UIA_ValuePatternId,
     };
 
+    /// Upper bound on `Edit` controls inspected when hunting the address bar —
+    /// keeps a page full of inputs from making URL detection expensive.
+    const MAX_EDIT_SCAN: i32 = 60;
+
     /// RAII COM init: balances a successful `CoInitializeEx` with `CoUninitialize`.
     /// If the thread was already in a different apartment (`RPC_E_CHANGED_MODE`),
     /// COM is still usable and we leave it alone.
@@ -501,8 +531,14 @@ mod uia {
         }
     }
 
-    /// Address-bar URL → host. Finds the first `Edit` descendant of the browser
-    /// window (the address/search bar on Chromium & Firefox) and reads its value.
+    /// Address-bar URL → host, **browser-agnostic**. Rather than assume the first
+    /// `Edit` descendant is the address bar (true on Chromium, false on Gecko /
+    /// heavily-customized chromes like Zen), enumerate every `Edit` descendant and
+    /// return the first whose value parses as a host. Tree order puts the browser
+    /// chrome before page content, so the real address bar wins over any page
+    /// input that happens to hold a URL. If a browser's URL bar is collapsed out
+    /// of the tree (e.g. Zen compact mode with the bar hidden), nothing is found
+    /// and we degrade to the generic Browser category — no error, no UI.
     unsafe fn read_url(automation: &IUIAutomation, hwnd: HWND) -> Option<String> {
         let root = automation.ElementFromHandle(hwnd).ok()?;
         let cond = automation
@@ -511,9 +547,21 @@ mod uia {
                 &VARIANT::from(UIA_EditControlTypeId.0),
             )
             .ok()?;
-        let edit = root.FindFirst(TreeScope_Descendants, &cond).ok()?;
-        let value = read_value(&edit)?;
-        host_from_url(&value)
+        let edits = root.FindAll(TreeScope_Descendants, &cond).ok()?;
+        let len = edits.Length().unwrap_or(0);
+        // Cap the scan so a page with many inputs can't make this expensive.
+        for i in 0..len.min(MAX_EDIT_SCAN) {
+            let Ok(edit) = edits.GetElement(i) else {
+                continue;
+            };
+            // The URL can surface as the edit's value (typical) or, on some
+            // browsers, its name — try both.
+            let candidate = read_value(&edit).or_else(|| read_name(&edit));
+            if let Some(host) = candidate.and_then(|v| host_from_url(&v)) {
+                return Some(host);
+            }
+        }
+        None
     }
 
     /// Unique non-dictionary terms from the currently focused element's value.
@@ -531,11 +579,36 @@ mod uia {
         }
     }
 
+    /// The focused field's raw text (auto-dictionary watcher). Own COM scope so it
+    /// is safe to call standalone from the watcher thread. Password fields skipped.
+    pub(in crate::context_detect) fn read_focused_value() -> Option<String> {
+        unsafe {
+            let _com = ComGuard::init();
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let el = automation.GetFocusedElement().ok()?;
+            if is_password(&el) {
+                return None;
+            }
+            read_value(&el)
+        }
+    }
+
     /// The element's `ValuePattern` value as a non-empty `String`, if available.
     unsafe fn read_value(el: &IUIAutomationElement) -> Option<String> {
         let vp: IUIAutomationValuePattern = el.GetCurrentPatternAs(UIA_ValuePatternId).ok()?;
         let bstr = vp.CurrentValue().ok()?;
         let s = bstr.to_string();
+        if s.trim().is_empty() {
+            None
+        } else {
+            Some(s)
+        }
+    }
+
+    /// The element's Name as a non-empty `String` (URL fallback on some browsers).
+    unsafe fn read_name(el: &IUIAutomationElement) -> Option<String> {
+        let s = el.CurrentName().ok()?.to_string();
         if s.trim().is_empty() {
             None
         } else {
