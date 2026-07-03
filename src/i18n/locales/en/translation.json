@@ -24,7 +24,6 @@
   },
   "tray": {
     "settings": "Settings...",
-    "checkUpdates": "Check for Updates...",
     "copyLastTranscript": "Copy Last Transcript",
     "unloadModel": "Unload Model",
     "model": "Model",
@@ -205,15 +204,15 @@
         "pressKeys": "Press keys...",
         "bindings": {
           "transcribe": {
-            "name": "Dictation",
+            "name": "Standard",
             "description": "Record your voice and paste the plain transcript."
           },
           "transcribe_realtime": {
-            "name": "Real-time",
+            "name": "Flow",
             "description": "Stream words as you speak, using the rolling window."
           },
           "transcribe_native_asr": {
-            "name": "Streaming Transcribe",
+            "name": "Live",
             "description": "Native real-time dictation with live streaming text in the Studio Window."
           },
           "cancel": {

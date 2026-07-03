@@ -1,0 +1,115 @@
+name: "Grain Release (Windows)"
+
+# [GRAIN] Windows-only, free release + auto-update pipeline.
+#
+# Flow: bump `version` in src-tauri/tauri.conf.json, commit, then run this
+# workflow (Actions tab → "Grain Release (Windows)" → Run workflow). It builds
+# the NSIS installer, signs the UPDATER artifacts with the minisign key (free —
+# no paid code-signing service), and creates a GitHub Release (draft by default)
+# containing the installer, its `.sig`, and `latest.json`.
+#
+# The updater endpoint (tauri.conf.json) points at
+# `releases/latest/download/latest.json`. A DRAFT release is not "latest", so
+# updates only reach users once you PUBLISH the release — that publish step is
+# your final "ship to everyone" gate. Build locally first to verify, then run
+# this to produce the exact same artifact for distribution.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.grain-keys/grain.updater.key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  contents of ~/.grain-keys/grain.updater.key.password
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create the GitHub release as a draft (publish manually to ship the update)"
+        type: boolean
+        default: true
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - name: Enable long paths (Windows)
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --system core.longpaths true
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tauri.conf.json
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(grep -o '"version": "[^"]*"' src-tauri/tauri.conf.json | cut -d'"' -f4)
+          echo "Application version: $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: windows-x86_64
+
+      - name: Install Vulkan SDK
+        uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+
+      # whisper/ggml cmake builds create paths that exceed Windows MAX_PATH
+      # (260 chars). Shorten the target dir to keep paths under the limit.
+      - name: Shorten build path (Windows MAX_PATH)
+        shell: pwsh
+        run: |
+          $drive = Split-Path -Qualifier $env:GITHUB_WORKSPACE
+          $targetDir = "$drive\t"
+          New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
+          echo "CARGO_TARGET_DIR=$targetDir" >> $env:GITHUB_ENV
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Build, sign updater artifacts, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Minisign key for the updater (free). Public half lives in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # CPU-compat: disable AVX/FMA/etc so CPUs lacking them don't SIGILL.
+          # The Vulkan backend does the heavy compute, so the perf impact is negligible.
+          GGML_NATIVE: "OFF"
+          GGML_AVX: "OFF"
+          GGML_AVX2: "OFF"
+          GGML_FMA: "OFF"
+          GGML_F16C: "OFF"
+        with:
+          tagName: v${{ steps.version.outputs.version }}
+          releaseName: v${{ steps.version.outputs.version }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          prerelease: false
+          releaseBody: |
+            Grain v${{ steps.version.outputs.version }} (Windows).
+
+            Download the `.exe` installer below. Existing installs update automatically
+            once this release is published.
+          # NSIS installer only (matches tauri.conf.json windows.nsis).
+          args: "--bundles nsis"

@@ -1,7 +1,6 @@
 {
   "tray": {
     "settings": "הגדרות...",
-    "checkUpdates": "בדוק עדכונים...",
     "copyLastTranscript": "העתק את התמלול האחרון",
     "unloadModel": "פרוק מודל",
     "model": "מודל",

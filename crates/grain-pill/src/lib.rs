@@ -93,23 +93,35 @@ enum PillMode {
 // BOTTOM — recording dot (left) · reactive waveform (center) · elapsed timer +
 // cancel glyph (right). Sizes are one modular scale off STUDIO_PAD + the line
 // rhythm so nothing looks "off".
-const STUDIO_W: f32 = 452.0;
+const STUDIO_W: f32 = 420.0; // a touch narrower than Handy's 452 — tighter caption box
 const STUDIO_PAD: f32 = 18.0; // horizontal inset for text + control row
 const STUDIO_CORNER_R: f32 = 16.0;
-const STUDIO_TOP_PAD: f32 = 14.0; // breathing room above the first transcript line
+// [GRAIN] While the card is still GROWING (1–3 lines) it carries a small
+// breathing gap above the first line. At the 4-line cap the gap closes to 0 so
+// the text reaches the very top edge and the top dissolve takes over.
+const STUDIO_GROW_TOP_GAP: f32 = 9.0;
 // Transcript type scale — a comfortable italic caption body (Handy: 15px/1.35).
 const STUDIO_TEXT_PX: f32 = 15.5;
 const STUDIO_LINE_HEIGHT: f32 = 21.0;
-// Handy caps the live text at ~4 lines; older lines scroll up and fade out.
+// Live text caps at 4 lines; older lines scroll up and dissolve at the top edge.
 const STUDIO_MAX_LINES: usize = 4;
-// Height of the top dissolve band (older lines fade into the dark surface).
-const STUDIO_FADE_PX: f32 = 20.0;
+// Height of the top dissolve band (only active once the card hits the 4-line
+// cap; while growing the text is crisp to the top gap, no fade).
+const STUDIO_FADE_PX: f32 = 22.0;
 // Bottom control row (dot · waveform · timer + cancel). Handy `--ov-base-h`.
 const STUDIO_CTRL_H: f32 = 40.0;
-// Card height = top pad + N transcript lines + control row. No trailing pad: the
-// control row already carries its own vertical centering.
-const STUDIO_H: f32 =
-    STUDIO_TOP_PAD + STUDIO_LINE_HEIGHT * STUDIO_MAX_LINES as f32 + STUDIO_CTRL_H;
+// [GRAIN] The card GROWS with the transcript: 1 line → 4 lines, then it caps and
+// scrolls. The OS window is sized to the TALLEST the card ever gets (the capped
+// 4-line height) and shorter cards are drawn bottom-anchored inside it, the
+// space above left transparent — so growth is pure compositing (no per-frame
+// window resize). At the cap the top gap is 0, so max height omits it.
+const STUDIO_MAX_CARD_H: f32 = STUDIO_LINE_HEIGHT * STUDIO_MAX_LINES as f32 + STUDIO_CTRL_H;
+// [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
+// slower / smoother. 0.10 ≈ a gentle ~350ms settle at 60fps (0.22 felt abrupt).
+const STUDIO_GROW_EASE: f32 = 0.10;
+// New transcript words ramp their alpha in over this long instead of popping —
+// each freshly-decoded word at the tail fades on smoothly.
+const STUDIO_WORD_REVEAL: Duration = Duration::from_millis(170);
 
 // [GRAIN] Grain's brand accent (the pill's orange), reused for the live overlay's
 // dot / waveform / timer so the Studio Window matches the collapsed capsule.
@@ -723,6 +735,7 @@ thread_local! {
 /// (left) · reactive waveform (center) · elapsed timer + cancel glyph (right).
 /// `fade` is the whole-card opacity (0..1), `phase` the animation clock, `amp`
 /// the current mic level (0..1), `elapsed_secs` the recording timer.
+#[allow(clippy::too_many_arguments)]
 fn paint_studio_card(
     pixmap: &mut Pixmap,
     asr: &AsrDisplay,
@@ -732,10 +745,23 @@ fn paint_studio_card(
     amp: f32,
     elapsed_secs: u64,
     font: Option<&fontdue::Font>,
+    // [GRAIN] The (eased) drawn card height and the transcript's line count. The
+    // card is bottom-anchored inside the fixed-size window; `n_lines` decides the
+    // top gap + whether the top dissolve is active (only at the 4-line cap).
+    card_h: f32,
+    n_lines: usize,
+    // Per-word reveal multipliers (see `draw_transcript`); `&[]` = fully revealed.
+    reveal_alpha: &[f32],
 ) {
     let (w, h) = studio_pixel_size();
     let (wf, hf) = (w as f32, h as f32);
     pixmap.fill(Color::TRANSPARENT);
+
+    // The card hugs the window's BOTTOM edge and grows upward; the region above
+    // it stays fully transparent so shorter cards simply appear smaller.
+    let card_h = card_h.clamp(studio_card_height(1), hf);
+    let card_top = hf - card_h;
+    let at_cap = n_lines >= STUDIO_MAX_LINES;
 
     // 1) Card background: a near-black panel with a 1px inner top highlight so
     // it reads as a raised premium surface, not a flat rectangle.
@@ -744,7 +770,7 @@ fn paint_studio_card(
         ..Default::default()
     };
     bg.set_color(Color::from_rgba8(13, 13, 15, (244.0 * fade) as u8));
-    if let Some(path) = rounded_rect_path(0.0, 0.0, wf, hf, STUDIO_CORNER_R) {
+    if let Some(path) = rounded_rect_path(0.0, card_top, wf, card_h, STUDIO_CORNER_R) {
         pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
     }
     let mut hair = Paint {
@@ -752,7 +778,12 @@ fn paint_studio_card(
         ..Default::default()
     };
     hair.set_color(Color::from_rgba8(255, 255, 255, (14.0 * fade) as u8));
-    if let Some(rect) = Rect::from_ltrb(STUDIO_CORNER_R, 0.5, wf - STUDIO_CORNER_R, 1.5) {
+    if let Some(rect) = Rect::from_ltrb(
+        STUDIO_CORNER_R,
+        card_top + 0.5,
+        wf - STUDIO_CORNER_R,
+        card_top + 1.5,
+    ) {
         pixmap.fill_path(
             &PathBuilder::from_rect(rect),
             &hair,
@@ -762,24 +793,65 @@ fn paint_studio_card(
         );
     }
 
-    // 2) Live transcript — top region, bottom-anchored, top edge dissolving.
-    let ctrl_top = hf - STUDIO_CTRL_H;
+    // 2) Live transcript. While growing (1–3 lines) it sits below a small top
+    // gap and stays crisp to the top; at the cap the gap closes to the edge and
+    // the top dissolve (`at_cap`) melts the oldest line into the surface.
+    let top_gap = if at_cap { 0.0 } else { STUDIO_GROW_TOP_GAP };
+    let text_top = card_top + top_gap;
+    let ctrl_top = card_top + card_h - STUDIO_CTRL_H;
     if let Some(font) = font {
         // Leave a hair of space so descenders never touch the control row.
-        draw_transcript(pixmap, asr, font, STUDIO_TOP_PAD, ctrl_top - 2.0, fade);
+        draw_transcript(
+            pixmap,
+            asr,
+            font,
+            text_top,
+            ctrl_top - 2.0,
+            fade,
+            at_cap,
+            reveal_alpha,
+        );
     }
 
-    // 3) Control row pinned to the bottom.
+    // 3) Control row pinned to the card's bottom.
     draw_control_row(pixmap, state, amp, phase, elapsed_secs, ctrl_top, wf, fade, font);
 }
 
 /// Studio pixel size — the single source of truth used by both the free painter
-/// and `App::win_size_for(Studio)`.
+/// and `App::win_size_for(Studio)`. Height is the TALLEST the card ever gets
+/// (the 4-line cap); shorter cards draw bottom-anchored inside this window.
 fn studio_pixel_size() -> (u32, u32) {
     (
         (STUDIO_W * SCALE).round() as u32,
-        (STUDIO_H * SCALE).round() as u32,
+        (STUDIO_MAX_CARD_H * SCALE).round() as u32,
     )
+}
+
+/// The card's drawn height for `n` visible transcript lines (clamped 1..=cap).
+/// Below the cap it carries the small top gap; at the cap the gap closes so the
+/// text meets the top edge.
+fn studio_card_height(n: usize) -> f32 {
+    let n = n.clamp(1, STUDIO_MAX_LINES);
+    let top_gap = if n >= STUDIO_MAX_LINES {
+        0.0
+    } else {
+        STUDIO_GROW_TOP_GAP
+    };
+    top_gap + n as f32 * STUDIO_LINE_HEIGHT + STUDIO_CTRL_H
+}
+
+/// How many lines the current transcript wraps to at the Studio width (before
+/// the cap) — this drives the card's grow height. `1` when empty so a fresh
+/// session opens at its smallest size rather than flashing tall.
+fn studio_line_count(asr: &AsrDisplay, font: Option<&fontdue::Font>) -> usize {
+    let Some(font) = font else { return 1 };
+    let runs = asr.display_runs();
+    if runs.is_empty() {
+        return 1;
+    }
+    let (cw, _) = studio_pixel_size();
+    let max_w = cw as f32 - 2.0 * STUDIO_PAD;
+    wrap_runs(font, &runs, STUDIO_TEXT_PX, max_w).len().max(1)
 }
 
 /// Render the live transcript into the top region `[text_top, text_bottom]`,
@@ -793,6 +865,14 @@ fn draw_transcript(
     text_top: f32,
     text_bottom: f32,
     fade: f32,
+    // [GRAIN] Only dissolve the top edge once the card has hit the 4-line cap and
+    // is scrolling. While it's still growing (1–3 lines) the text is crisp all
+    // the way up to the small top gap — no fade.
+    fade_top: bool,
+    // [GRAIN] Per-word reveal multipliers (0..1), indexed by global word order in
+    // `asr.display_runs()`. Freshly-appeared words ramp 0→1 so text fades in
+    // smoothly. Empty slice (or missing index) means fully revealed.
+    reveal_alpha: &[f32],
 ) {
     let runs = asr.display_runs();
     if runs.is_empty() {
@@ -823,6 +903,12 @@ fn draw_transcript(
         };
         layer.fill(Color::TRANSPARENT);
 
+        // Map the shown words back to their global index in `runs` (the shown
+        // words are the contiguous TAIL of the full run list) so each word picks
+        // up the right per-word reveal alpha.
+        let shown_word_count: usize = shown.iter().map(|l| l.words.len()).sum();
+        let mut gidx = runs.len().saturating_sub(shown_word_count);
+
         // Bottom-anchor: newest line (i = n-1) sits flush at the region bottom;
         // earlier lines stack upward. Local coords (y down from the region top).
         for (i, line) in shown.iter().enumerate() {
@@ -833,24 +919,42 @@ fn draw_transcript(
                 if pen > STUDIO_PAD {
                     pen += space_w;
                 }
-                // Committed text is stable/pasteable → solid warm white, crisp,
-                // and it never grays as it scrolls up (the user must be able to
-                // trust the solid text). The uncommitted tail is the "still being
-                // decided" region → dimmer but crisp (Handy renders its tentative
-                // tail plainly; blurred per-frame text hurt readability).
+                let reveal = reveal_alpha.get(gidx).copied().unwrap_or(1.0);
+                gidx += 1;
+                // Committed text is stable/pasteable → solid warm white, crisp.
+                // [GRAIN] transcribe-cpp's auto-commit is CONSERVATIVE: it can
+                // leave most of an utterance in the "tentative" tail for a long
+                // time even though that text is already stable and flicker-free.
+                // Styling that whole tail as dim grey made the preview read as
+                // "nothing is committing" (only the first line or two ever looked
+                // final). So a STABLE tail now renders near-committed white — it
+                // is trustworthy text — and only the genuinely volatile
+                // (unstable) tail is dimmed, marking the live decoding edge.
                 let (color, alpha): ([u8; 3], f32) = match style {
                     RunStyle::Committed => ([238, 236, 232], 0.97),
-                    RunStyle::Partial { stable: true } => ([200, 203, 210], 0.66),
-                    RunStyle::Partial { stable: false } => ([186, 190, 198], 0.50),
+                    RunStyle::Partial { stable: true } => ([232, 230, 226], 0.93),
+                    RunStyle::Partial { stable: false } => ([196, 200, 208], 0.60),
                 };
                 pen += draw_word(
-                    layer, font, word, STUDIO_TEXT_PX, pen, baseline, color, alpha, 0,
+                    layer,
+                    font,
+                    word,
+                    STUDIO_TEXT_PX,
+                    pen,
+                    baseline,
+                    color,
+                    alpha * reveal,
+                    0,
                 );
             }
         }
 
-        // Dissolve the top band so older lines melt into the dark surface.
-        fade_top_band(layer, STUDIO_FADE_PX);
+        // Dissolve the top band so older lines melt into the dark surface —
+        // only once the card has capped and is scrolling (while growing, the
+        // text stays crisp up to the top gap).
+        if fade_top {
+            fade_top_band(layer, STUDIO_FADE_PX);
+        }
 
         // Composite over the card with the whole-card opacity.
         card.draw_pixmap(
@@ -1542,6 +1646,13 @@ struct App {
     /// value it had, matching Handy's overlay, rather than resetting to 0).
     studio_since: Option<Instant>,
     studio_elapsed: u64,
+    /// [GRAIN] Eased Studio card height (px). Grows from a 1-line card toward the
+    /// 4-line cap as the transcript wraps onto more lines; `0.0` means "unset —
+    /// snap to the target on the next frame" (start of each session).
+    studio_grown_h: f32,
+    /// [GRAIN] First-seen time per transcript word (global order) — drives the
+    /// per-word fade-in. Grows as words are decoded; cleared each new session.
+    reveal_since: Vec<Instant>,
 }
 
 impl App {
@@ -1587,6 +1698,8 @@ impl App {
             studio_phase: 0.0,
             studio_since: None,
             studio_elapsed: 0,
+            studio_grown_h: 0.0,
+            reveal_since: Vec::new(),
         }
     }
 
@@ -1799,6 +1912,41 @@ impl App {
         let fade = self.studio_alpha.clamp(0.0, 1.0);
         let amp = self.current_amp();
 
+        // [GRAIN] Grow the card smoothly toward the height its current line count
+        // needs (1 line → 4-line cap). First frame snaps; afterwards it eases so
+        // each new line rises in rather than jumping. Pure compositing inside the
+        // fixed max-size window — no OS resize.
+        let n_lines = studio_line_count(&self.asr, self.font.as_ref());
+        let target_h = studio_card_height(n_lines);
+        if self.studio_grown_h <= 0.0 {
+            self.studio_grown_h = target_h;
+        } else {
+            self.studio_grown_h += (target_h - self.studio_grown_h) * STUDIO_GROW_EASE;
+        }
+
+        // [GRAIN] Per-word reveal: stamp the first-seen time of each word (indexed
+        // by global order) so freshly-decoded words fade in instead of popping.
+        // Words are only ever appended at the tail (committed grows at the front,
+        // tentative at the end) so index-based tracking is stable — a word that is
+        // merely revised in place keeps its stamp and never re-fades.
+        let now = Instant::now();
+        let word_count = self.asr.display_runs().len();
+        if self.reveal_since.len() > word_count {
+            self.reveal_since.truncate(word_count);
+        }
+        while self.reveal_since.len() < word_count {
+            self.reveal_since.push(now);
+        }
+        let reveal_ms = STUDIO_WORD_REVEAL.as_secs_f32();
+        let reveal_alpha: Vec<f32> = self
+            .reveal_since
+            .iter()
+            .map(|t| {
+                let x = (now.saturating_duration_since(*t).as_secs_f32() / reveal_ms).clamp(0.0, 1.0);
+                x * x * (3.0 - 2.0 * x) // smoothstep — ease-in-out
+            })
+            .collect();
+
         // All drawing lives in the windowing-free `paint_studio_card` so it can
         // be rendered to a PNG in tests without a winit window/presenter.
         paint_studio_card(
@@ -1810,6 +1958,9 @@ impl App {
             amp,
             self.studio_elapsed,
             self.font.as_ref(),
+            self.studio_grown_h,
+            n_lines,
+            &reveal_alpha,
         );
 
         if let Some(presenter) = &self.presenter {
@@ -2044,9 +2195,12 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.pixmap = None;
                 self.studio_alpha = 0.0;
-                // Fresh session → reset the recording timer.
+                // Fresh session → reset the recording timer and re-snap the card
+                // to its starting (1-line) height so it grows from small again.
                 self.studio_since = None;
                 self.studio_elapsed = 0;
+                self.studio_grown_h = 0.0;
+                self.reveal_since.clear();
                 // A mode change always means a brand-new session just started
                 // (mode is only ever set from RecordingStarted) — never
                 // mid-transition leftovers from whatever the previous surface
@@ -2191,7 +2345,7 @@ pub fn run_pill() {
         use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
         unsafe {
             let _ =
-                SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.punitdethe.grain"));
+                SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.grain.app"));
             let _ = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
         }
     }
@@ -2250,7 +2404,21 @@ mod tests {
             .enumerate()
         {
             let mut card = Pixmap::new(cw, ch).unwrap();
-            paint_studio_card(&mut card, &asr, state, 1.0, 12.0, 0.6, 18, Some(&font));
+            // The sample text overflows 4 lines → render the capped (max-height)
+            // card so the top dissolve is exercised.
+            paint_studio_card(
+                &mut card,
+                &asr,
+                state,
+                1.0,
+                12.0,
+                0.6,
+                18,
+                Some(&font),
+                studio_card_height(STUDIO_MAX_LINES),
+                STUDIO_MAX_LINES,
+                &[],
+            );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
                 margin,
@@ -2265,6 +2433,67 @@ mod tests {
         let path = std::env::temp_dir().join("grain_studio_preview.png");
         bg.save_png(&path).expect("save png");
         eprintln!("STUDIO_PREVIEW_PNG={}", path.display());
+    }
+
+    /// [GRAIN] Render the card at 1 → 4 wrapped lines so the GROW behavior is
+    /// eyeball-able: 1–3 lines carry a small top gap and stay crisp to the top
+    /// (no dissolve); the 4-line card closes the gap to the edge and turns the
+    /// top dissolve on. Not an assertion test — leaves a PNG artifact.
+    #[test]
+    fn studio_card_growth_strip_renders_to_png() {
+        use tiny_skia::PixmapPaint;
+
+        let font = font();
+        let (cw, ch) = studio_pixel_size();
+
+        // Increasingly long committed text so it wraps to 1, 2, 3, then 4+ lines.
+        let samples = [
+            "Hey there,",
+            "Hey there, so I just want to know how the",
+            "Hey there, so I just want to know how the light transcription is working",
+            "Hey there, so I just want to know how the light transcription is working and yeah, that is basically what I'm gonna do next",
+        ];
+
+        let margin = 24i32;
+        let gap = 16i32;
+        let bw = cw + margin as u32 * 2;
+        let bh = ch * samples.len() as u32 + margin as u32 * 2 + gap as u32 * (samples.len() as u32 - 1);
+        let mut bg = Pixmap::new(bw, bh).unwrap();
+        bg.fill(Color::from_rgba8(205, 203, 198, 255));
+
+        for (i, text) in samples.iter().enumerate() {
+            let mut asr = AsrDisplay::default();
+            asr.append_commit(text);
+            let n = studio_line_count(&asr, Some(&font));
+            let card_h = studio_card_height(n);
+            let mut card = Pixmap::new(cw, ch).unwrap();
+            paint_studio_card(
+                &mut card,
+                &asr,
+                PillState::Recording,
+                1.0,
+                12.0,
+                0.6,
+                (i * 3) as u64,
+                Some(&font),
+                card_h,
+                n,
+                &[],
+            );
+            let y = margin + i as i32 * (ch as i32 + gap);
+            bg.draw_pixmap(
+                margin,
+                y,
+                card.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
+
+        let path = std::env::temp_dir().join("grain_studio_growth.png");
+        bg.save_png(&path).expect("save png");
+        eprintln!("STUDIO_GROWTH_PNG={}", path.display());
     }
 
     #[test]

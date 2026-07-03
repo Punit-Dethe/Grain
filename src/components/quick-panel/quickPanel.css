@@ -84,14 +84,19 @@
   --qp-line-rgb: 255 255 255;
 }
 
-/* Smooth the light/dark crossfade on the roles that read as surfaces/text,
- * approximating the QML's animated `t` driver. */
+/* [GRAIN] Unified light/dark crossfade. This is the SINGLE source of truth for
+ * animating theme-driven colours: every surface, border and text role fades at
+ * the exact same duration + easing so the whole panel flips as one, instead of
+ * elements changing at staggered times. Widgets must NOT set their own
+ * `transition` on background-color/color/border-color — doing so overrides this
+ * rule for that element and desyncs it (that was the bug). Non-colour
+ * transitions (transform, opacity) are fine to set locally. */
 .qp-root,
 .qp-root * {
   transition:
-    background-color 380ms cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 380ms cubic-bezier(0.4, 0, 0.2, 1),
-    color 380ms cubic-bezier(0.4, 0, 0.2, 1);
+    background-color 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 260ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 260ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Pulsing terminal ring on an active-sink jack (the copy-target marker). */

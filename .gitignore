@@ -51,3 +51,11 @@ result
 src-tauri/.cargo/
 # Added by code-review-graph
 .code-review-graph/
+
+# [GRAIN] Updater signing keys — NEVER commit these. The real keypair lives
+# outside the repo (~/.grain-keys); these patterns are a safety net.
+.grain-keys/
+*.updater.key
+*.updater.key.pub
+*.updater.key.password
+grain.updater.key*

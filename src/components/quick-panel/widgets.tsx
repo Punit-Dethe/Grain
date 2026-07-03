@@ -124,7 +124,6 @@ export const SegToggle: React.FC<{
         style={{
           borderRadius: 6,
           backgroundColor: value === idx ? activeColor : "transparent",
-          transition: "background-color 0.15s",
           fontFamily: MONO,
           fontSize: 10,
           fontWeight: 700,
@@ -246,7 +245,6 @@ const HistoryRow: React.FC<{ entry: HistoryEntry }> = ({ entry }) => {
         padding: "0 8px",
         gap: 8,
         backgroundColor: hover ? fill(0.05) : "transparent",
-        transition: "background-color 0.12s",
       }}
     >
       <span style={{ fontFamily: MONO, fontSize: 8, color: ink(0.4), flex: "none" }}>
@@ -510,7 +508,6 @@ export const ConsoleDropdown: React.FC<{
           fontWeight: 600,
           color: "var(--qp-input-text)",
           textAlign: "left",
-          transition: "border-color 0.15s",
         }}
       >
         {closedDotColor && (
@@ -589,7 +586,6 @@ export const ConsoleDropdown: React.FC<{
                     gap: 8,
                     // Selected rows in select mode get a subtle highlight.
                     backgroundColor: selected ? fill(0.06) : "transparent",
-                    transition: "background-color 0.12s",
                   }}
                 >
                   {o.dotColor && (
@@ -627,7 +623,6 @@ export const ConsoleDropdown: React.FC<{
                         color: on ? "#ff5d1e" : ink(0.45),
                         backgroundColor: on ? "var(--qp-ctrl-box-bg)" : "transparent",
                         border: `1px solid ${on ? "transparent" : fill(0.18)}`,
-                        transition: "background-color 0.15s, color 0.15s, border-color 0.15s",
                       }}
                     >
                       {on ? "ON" : "OFF"}
