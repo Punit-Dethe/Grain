@@ -708,6 +708,7 @@ impl ShortcutAction for TranscribeAction {
         // never touches it; if rotation later finds no eligible provider,
         // stt_router::local() loads the model on demand. VAD pre-load stays
         // unconditional below — recording needs it for either backend.
+        let kickoff_started = Instant::now();
         if !crate::stt_router::will_route_to_cloud(app) {
             tm.initiate_model_load();
         } else {
@@ -719,16 +720,28 @@ impl ShortcutAction for TranscribeAction {
                 debug!("VAD pre-load failed: {}", e);
             }
         });
+        let kickoff_elapsed = kickoff_started.elapsed();
 
         let binding_id = binding_id.to_string();
+        let tray_started = Instant::now();
         change_tray_icon(app, TrayIconState::Recording);
+        let tray_elapsed = tray_started.elapsed();
         // [GRAIN] The winit pill is the single overlay surface for BOTH batch and
         // rolling — driven by the DaemonEvents below (emitted on successful start,
         // same pattern as the rolling path). No Handy webview overlay.
 
         // Get the microphone mode to determine audio feedback timing
+        let plan_started = Instant::now();
         let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
+        let plan_elapsed = plan_started.elapsed();
+        // Everything above runs before capture can begin, so each span here is
+        // added keypress->capture latency. [GRAIN] No overlay step: the pill is
+        // shown by DaemonEvents after the recording actually starts.
+        debug!(
+            "start-path pre-recording steps: model_kickoff={:?} tray={:?} settings={:?}",
+            kickoff_elapsed, tray_elapsed, plan_elapsed
+        );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
         let mut recording_error: Option<String> = None;

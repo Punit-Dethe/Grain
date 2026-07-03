@@ -3,7 +3,7 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings;
 use crate::tray_i18n::get_tray_translations;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::image::Image;
@@ -57,6 +57,8 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     let icon_path = get_icon_path(theme, icon.clone());
 
     let icon_started = std::time::Instant::now();
+    // [GRAIN] non-panicking icon load: a missing/corrupt resource logs an
+    // error instead of taking the process down (upstream uses .expect()).
     if let Err(err) = load_tray_icon(
         app.path()
             .resolve(icon_path, tauri::path::BaseDirectory::Resource),
@@ -65,10 +67,17 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     {
         error!("Failed to update tray icon '{icon_path}': {err}");
     }
-    let _icon_elapsed = icon_started.elapsed();
+    let icon_elapsed = icon_started.elapsed();
 
     // Update menu based on state
+    let menu_started = std::time::Instant::now();
     update_tray_menu(app, &icon, None);
+    debug!(
+        "tray icon change ({:?}): set_icon={:?} menu={:?}",
+        icon,
+        icon_elapsed,
+        menu_started.elapsed()
+    );
 }
 
 fn load_tray_icon(resolved_icon_path: tauri::Result<PathBuf>) -> tauri::Result<Image<'static>> {

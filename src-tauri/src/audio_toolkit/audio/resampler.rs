@@ -394,4 +394,27 @@ mod tests {
             "trailing marker did not survive resampling (tail energy {energy})"
         );
     }
+
+    #[test]
+    fn finish_does_not_leak_tail_into_next_session() {
+        // 48kHz -> 16kHz, 30ms frames (480 output samples per frame).
+        let mut rs = FrameResampler::new(48000, 16000, Duration::from_millis(30));
+
+        // Leave a partial chunk buffered, then end the session.
+        rs.push(&[0.5f32; 100], |_| {});
+        rs.finish(|_| {});
+
+        // One fresh chunk yields ~341 output samples — below one frame, so
+        // nothing should be emitted yet. If finish() left its padded tail in
+        // in_buf, that tail is re-processed first, the output crosses the
+        // 480-sample frame boundary, and a stale frame is emitted here.
+        let mut emitted = 0usize;
+        rs.push(&[0.25f32; RESAMPLER_CHUNK_SIZE], |frame| {
+            emitted += frame.len()
+        });
+        assert_eq!(
+            emitted, 0,
+            "stale resampler tail from finish() leaked into the next session"
+        );
+    }
 }

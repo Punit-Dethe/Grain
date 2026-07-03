@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use cpal::{
@@ -20,7 +20,10 @@ use crate::audio_toolkit::{
 };
 
 enum Cmd {
-    Start,
+    /// Begin capturing. Carries the send timestamp so the consumer can log how
+    /// long the command sat in the channel (and how much audio was dropped
+    /// before it was seen).
+    Start(Instant),
     Stop(mpsc::Sender<Vec<f32>>),
     Shutdown,
 }
@@ -56,6 +59,13 @@ pub struct AudioRecorder {
     // (VAD compaction and stop-time padding/AGC only ever append or rescale — they
     // never reorder the prefix). Reset to 0 on each `Start`.
     recorded_len: Arc<AtomicUsize>,
+    /// Preferred stream config cached per device name. The two HAL property
+    /// queries in `get_preferred_config` cost ~40-85ms per open (worse on
+    /// USB/Bluetooth), which lands on the keypress->capture path in on-demand
+    /// mode. Keyed by name so a system-default change misses naturally;
+    /// cleared whenever an open fails so a stale rate/format self-heals on the
+    /// caller's retry.
+    config_cache: Arc<Mutex<Option<(String, cpal::SupportedStreamConfig)>>>,
 }
 
 impl AudioRecorder {
@@ -69,6 +79,7 @@ impl AudioRecorder {
             sample_cb: None,
             conditioning: Arc::new(AtomicBool::new(false)),
             recorded_len: Arc::new(AtomicUsize::new(0)),
+            config_cache: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -141,13 +152,27 @@ impl AudioRecorder {
         let sample_cb = self.sample_cb.clone(); // [GRAIN]
         let conditioning = self.conditioning.clone(); // [GRAIN] live atomic
         let recorded_len = self.recorded_len.clone(); // [GRAIN] Prompt Record split mark
+        let config_cache = Arc::clone(&self.config_cache);
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
             let stop_flag_for_stream = stop_flag.clone();
             let init_result = (|| -> Result<(cpal::Stream, u32), String> {
-                let config = AudioRecorder::get_preferred_config(&thread_device)
-                    .map_err(|e| format!("Failed to fetch preferred config: {e}"))?;
+                let config_started = Instant::now();
+                let device_name = thread_device.name().unwrap_or_default();
+                let cached_config = config_cache
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .filter(|(name, _)| !device_name.is_empty() && *name == device_name)
+                    .map(|(_, cfg)| cfg.clone());
+                let config_was_cached = cached_config.is_some();
+                let config = match cached_config {
+                    Some(cfg) => cfg,
+                    None => AudioRecorder::get_preferred_config(&thread_device)
+                        .map_err(|e| format!("Failed to fetch preferred config: {e}"))?,
+                };
+                let config_elapsed = config_started.elapsed();
 
                 let sample_rate = config.sample_rate().0;
                 let channels = config.channels() as usize;
@@ -160,6 +185,7 @@ impl AudioRecorder {
                     config.sample_format()
                 );
 
+                let build_started = Instant::now();
                 let stream = match config.sample_format() {
                     cpal::SampleFormat::U8 => AudioRecorder::build_stream::<u8>(
                         &thread_device,
@@ -205,10 +231,25 @@ impl AudioRecorder {
                         return Err(format!("Unsupported sample format: {sample_format:?}"));
                     }
                 };
+                let build_elapsed = build_started.elapsed();
 
+                let play_started = Instant::now();
                 stream
                     .play()
                     .map_err(|e| format!("Failed to start microphone stream: {e}"))?;
+                log::debug!(
+                    "mic worker init: fetch_config={:?} (cached={}) build_stream={:?} play={:?}",
+                    config_elapsed,
+                    config_was_cached,
+                    build_elapsed,
+                    play_started.elapsed()
+                );
+
+                // The device accepted this config; remember it so the next
+                // open skips the HAL property queries entirely.
+                if !config_was_cached && !device_name.is_empty() {
+                    *config_cache.lock().unwrap() = Some((device_name, config));
+                }
 
                 Ok((stream, sample_rate))
             })();
@@ -216,6 +257,9 @@ impl AudioRecorder {
             match init_result {
                 Ok((stream, sample_rate)) => {
                     let _ = init_tx.send(Ok(()));
+                    // Timestamp for the play()-returned -> first-samples gap the
+                    // init handshake can't see (hardware dependent).
+                    let stream_running_at = Instant::now();
                     // Keep the stream alive while we process samples.
                     run_consumer(
                         sample_rate,
@@ -227,10 +271,15 @@ impl AudioRecorder {
                         conditioning,
                         recorded_len,
                         stop_flag,
+                        stream_running_at,
                     );
                     drop(stream);
                 }
                 Err(error_message) => {
+                    // A failed open may mean the cached config went stale
+                    // (device re-plugged, rate/format changed in the OS).
+                    // Drop it so the next attempt re-queries the device.
+                    *config_cache.lock().unwrap() = None;
                     log::error!("{error_message}");
                     let _ = init_tx.send(Err(error_message));
                 }
@@ -265,7 +314,7 @@ impl AudioRecorder {
 
     pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start)?;
+            tx.send(Cmd::Start(Instant::now()))?;
         }
         Ok(())
     }
@@ -472,6 +521,7 @@ fn run_consumer(
     conditioning: Arc<AtomicBool>,                                                // [GRAIN] live
     recorded_len: Arc<AtomicUsize>, // [GRAIN] Prompt Record split mark
     stop_flag: Arc<AtomicBool>,
+    stream_running_at: Instant,
 ) {
     let mut frame_resampler = FrameResampler::new(
         in_sample_rate as usize,
@@ -487,6 +537,13 @@ fn run_consumer(
     // the batch buffer, and the rolling sample callback. Reset on every Start.
     let mut highpass = HighPass::new(constants::WHISPER_SAMPLE_RATE);
     let mut scratch = Vec::<f32>::new();
+
+    // ---------- latency instrumentation ---------------------------------- //
+    // First-chunk arrival exposes the play()->samples-flowing gap; the
+    // first-captured log confirms capture begins with the chunk in flight
+    // when Cmd::Start lands.
+    let mut first_chunk_logged = false;
+    let mut awaiting_first_captured_chunk: Option<Instant> = None;
 
     // ---------- spectrum visualisation setup ---------------------------- //
     const BUCKETS: usize = 16;
@@ -539,60 +596,21 @@ fn run_consumer(
         }
     }
 
-    loop {
-        let chunk = match sample_rx.recv() {
-            Ok(c) => c,
-            Err(_) => break, // stream closed
-        };
-
-        let raw = match chunk {
-            AudioChunk::Samples(s) => s,
-            AudioChunk::EndOfStream => continue,
-        };
-
-        // ---------- spectrum processing ---------------------------------- //
-        if let Some(buckets) = visualizer.feed(&raw) {
-            if let Some(cb) = &level_cb {
-                cb(buckets);
-            }
-        }
-
-        // ---------- existing pipeline ------------------------------------ //
-        frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            // [GRAIN] high-pass the 16 kHz frame (de-rumble) before it reaches
-            // VAD, the batch buffer, and the rolling engine. Stateful across
-            // frames; only while recording so the idle mic stays free.
-            let f: &[f32] = if recording && conditioning.load(Ordering::Relaxed) {
-                scratch.clear();
-                scratch.extend_from_slice(frame);
-                highpass.process_in_place(&mut scratch);
-                &scratch
-            } else {
-                frame
-            };
-            // Step VAD once here; reuse its decision for the rolling engine.
-            let speech = handle_frame(f, recording, &vad, &mut processed_samples);
-            // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
-            // engine with its voice-activity decision (rolling keeps EVERY frame
-            // for a continuous timeline; `speech` only drives its silence gate).
-            if recording {
-                if let Some(cb) = &sample_cb {
-                    cb(f, speech);
-                }
-            }
-        });
-
-        // [GRAIN] Publish the live buffer length so Prompt Record can mark the
-        // content→instruction split at click time. Cheap: one relaxed store per
-        // captured chunk (not per frame), and only meaningful while recording.
-        if recording {
-            recorded_len.store(processed_samples.len(), Ordering::Relaxed);
-        }
-
-        // non-blocking check for a command
+    // Runs until the stream closes and `recv` returns `Err`.
+    while let Ok(chunk) = sample_rx.recv() {
+        // Handle pending commands BEFORE the in-flight chunk so a Start
+        // captures it. Commands used to be polled after processing, which
+        // silently dropped one buffer period of audio (~10ms built-in, up to
+        // ~100ms on Bluetooth) at every recording start.
+        let mut pending = Some(chunk);
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                Cmd::Start => {
+                Cmd::Start(sent_at) => {
+                    log::debug!(
+                        "Cmd::Start processed {:?} after send; capture begins with the in-flight chunk",
+                        sent_at.elapsed()
+                    );
+                    awaiting_first_captured_chunk = Some(Instant::now());
                     stop_flag.store(false, Ordering::Relaxed);
                     processed_samples.clear();
                     recorded_len.store(0, Ordering::Relaxed); // [GRAIN] fresh mark baseline
@@ -607,6 +625,24 @@ fn run_consumer(
                 Cmd::Stop(reply_tx) => {
                     recording = false;
                     stop_flag.store(true, Ordering::Relaxed);
+
+                    // The chunk in hand arrived before the stop; it belongs to
+                    // the recording, so feed it ahead of the drain below.
+                    // [GRAIN] Like the drain path: batch buffer only, no
+                    // rolling callback — the session is over.
+                    if let Some(AudioChunk::Samples(raw)) = pending.take() {
+                        frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                            let f: &[f32] = if conditioning.load(Ordering::Relaxed) {
+                                scratch.clear();
+                                scratch.extend_from_slice(frame);
+                                highpass.process_in_place(&mut scratch);
+                                &scratch
+                            } else {
+                                frame
+                            };
+                            let _ = handle_frame(f, true, &vad, &mut processed_samples);
+                        });
+                    }
 
                     // Drain all remaining audio until the producer confirms end-of-stream.
                     // The cpal callback sees the stop flag, sends EndOfStream, and goes
@@ -667,6 +703,68 @@ fn run_consumer(
                     stop_flag.store(true, Ordering::Relaxed);
                     return;
                 }
+            }
+        }
+
+        let raw = match pending.take() {
+            Some(AudioChunk::Samples(s)) => s,
+            // EndOfStream, or the chunk was consumed by a Stop above.
+            _ => continue,
+        };
+
+        let chunk_ms = raw.len() as f64 * 1000.0 / in_sample_rate as f64;
+        if !first_chunk_logged {
+            first_chunk_logged = true;
+            log::debug!(
+                "first audio chunk arrived {:?} after stream start ({:.1}ms of audio)",
+                stream_running_at.elapsed(),
+                chunk_ms
+            );
+        }
+
+        // ---------- spectrum processing ---------------------------------- //
+        if let Some(buckets) = visualizer.feed(&raw) {
+            if let Some(cb) = &level_cb {
+                cb(buckets);
+            }
+        }
+
+        // ---------- existing pipeline ------------------------------------ //
+        frame_resampler.push(&raw, &mut |frame: &[f32]| {
+            // [GRAIN] high-pass the 16 kHz frame (de-rumble) before it reaches
+            // VAD, the batch buffer, and the rolling engine. Stateful across
+            // frames; only while recording so the idle mic stays free.
+            let f: &[f32] = if recording && conditioning.load(Ordering::Relaxed) {
+                scratch.clear();
+                scratch.extend_from_slice(frame);
+                highpass.process_in_place(&mut scratch);
+                &scratch
+            } else {
+                frame
+            };
+            // Step VAD once here; reuse its decision for the rolling engine.
+            let speech = handle_frame(f, recording, &vad, &mut processed_samples);
+            // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
+            // engine with its voice-activity decision (rolling keeps EVERY frame
+            // for a continuous timeline; `speech` only drives its silence gate).
+            if recording {
+                if let Some(cb) = &sample_cb {
+                    cb(f, speech);
+                }
+            }
+        });
+
+        if recording {
+            // [GRAIN] Publish the live buffer length so Prompt Record can mark
+            // the content→instruction split at click time. Cheap: one relaxed
+            // store per captured chunk (not per frame).
+            recorded_len.store(processed_samples.len(), Ordering::Relaxed);
+            if let Some(started) = awaiting_first_captured_chunk.take() {
+                log::debug!(
+                    "first captured chunk ({:.1}ms of audio) processed {:?} after Cmd::Start",
+                    chunk_ms,
+                    started.elapsed()
+                );
             }
         }
     }
