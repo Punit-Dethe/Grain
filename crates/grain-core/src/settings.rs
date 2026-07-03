@@ -110,6 +110,34 @@ fn default_snippet_enabled() -> bool {
     true
 }
 
+/// [GRAIN] How an [`AppMode`] is bound to the active target. A mode fires when the
+/// foreground app (or, in a browser, the current site) matches. `Process` matches
+/// the executable stem case-insensitively (e.g. `"Code"`, `"slack"`); `UrlHost`
+/// matches the browser address-bar host by suffix (`"mail.google.com"` also
+/// matches `"…mail.google.com"`), so users type a bare host, not a regex.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum AppMatch {
+    Process(String),
+    UrlHost(String),
+}
+
+/// [GRAIN] A user-defined "mode": a specific post-processing prompt (HARD
+/// formatting) applied ONLY when its `matcher` hits the active app/site. This is
+/// the opt-in, per-target layer that rides on top of the always-on base prompt +
+/// automatic soft context. The `prompt` is inline (self-contained) rather than a
+/// reference into `post_process_prompts`, so a mode can be shared/exported whole.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct AppMode {
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "match")]
+    pub matcher: AppMatch,
+    pub prompt: String,
+    #[serde(default = "default_snippet_enabled")]
+    pub enabled: bool,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 pub struct PostProcessProvider {
     pub id: String,
@@ -621,6 +649,26 @@ pub struct AppSettings {
     /// (LocalAgreement-2) that costs extra compute, so it is strictly opt-in.
     #[serde(default = "default_rolling_live_preview")]
     pub rolling_live_preview: bool,
+    /// [GRAIN] Context awareness (post-processing only): when on, the backend
+    /// detects the foreground app/site right before LLM post-processing and layers
+    /// an automatic SOFT context line (tone/vocab, never restructuring) plus any
+    /// matching user [`AppMode`] (HARD formatting) on top of the selected base
+    /// prompt. OFF by default — zero behavior change until opted in, and it only
+    /// affects installs that also run post-processing.
+    #[serde(default)]
+    pub context_awareness_enabled: bool,
+    /// [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
+    /// default; only consulted when `context_awareness_enabled` is true.
+    #[serde(default)]
+    pub app_modes: Vec<AppMode>,
+    /// [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
+    /// read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
+    /// names) from the focused field via UI Automation and pass them to the LLM as
+    /// an *additive, low-authority* bias — never the raw text, never persisted,
+    /// never surfaced in the UI. OFF by default because it reads the focused
+    /// field's content; password fields are always skipped.
+    #[serde(default)]
+    pub context_nearby_terms: bool,
 }
 
 fn default_model() -> String {
@@ -1204,6 +1252,9 @@ pub fn get_default_settings() -> AppSettings {
         extra_recording_buffer_ms: 0,
         audio_conditioning: default_audio_conditioning(),
         rolling_live_preview: default_rolling_live_preview(),
+        context_awareness_enabled: false,
+        app_modes: Vec::new(),
+        context_nearby_terms: false,
     }
 }
 

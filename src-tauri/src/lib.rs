@@ -9,6 +9,7 @@ mod catalog;
 pub mod cli;
 mod clipboard;
 mod commands;
+mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod helpers;
 mod input;
@@ -638,6 +639,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             shortcut::update_snippets,
+            shortcut::change_context_awareness_enabled_setting,
+            shortcut::change_context_nearby_terms_setting,
+            shortcut::update_app_modes,
+            shortcut::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,
             shortcut::change_mute_while_recording_setting,

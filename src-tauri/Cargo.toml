@@ -111,6 +111,10 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
   "Win32_Graphics_Dwm",
+  # [GRAIN] Context awareness: UI Automation for browser URL + silent nearby-term
+  # reading; COM for the automation object.
+  "Win32_UI_Accessibility",
+  "Win32_System_Com",
 ] }
 winreg = "0.55"
 

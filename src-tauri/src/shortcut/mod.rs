@@ -689,6 +689,80 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
     Ok(())
 }
 
+/// [GRAIN] Toggle context awareness (post-processing SOFT context + user MODES).
+#[tauri::command]
+#[specta::specta]
+pub fn change_context_awareness_enabled_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.context_awareness_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Toggle the silent nearby-term hints (reads focused-field unique tokens
+/// via UI Automation). Only effective when context awareness is also on.
+#[tauri::command]
+#[specta::specta]
+pub fn change_context_nearby_terms_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.context_nearby_terms = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
+/// entries missing a name, prompt, or a non-blank matcher value — the UI enforces
+/// this too, but this guards direct invoke calls.
+#[tauri::command]
+#[specta::specta]
+pub fn update_app_modes(app: AppHandle, modes: Vec<settings::AppMode>) -> Result<(), String> {
+    let modes: Vec<settings::AppMode> = modes
+        .into_iter()
+        .filter(|m| {
+            let has_target = match &m.matcher {
+                settings::AppMatch::Process(v) | settings::AppMatch::UrlHost(v) => {
+                    !v.trim().is_empty()
+                }
+            };
+            !m.name.trim().is_empty() && !m.prompt.trim().is_empty() && has_target
+        })
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.app_modes = modes;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] A one-shot snapshot of the current foreground app, for the "capture
+/// focused app" button when creating a mode. Backend-side detection so the same
+/// exe-stem normalization used at match time pre-fills the matcher exactly.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct DetectedApp {
+    /// Executable stem (the value a `Process` mode matches on).
+    pub exe: String,
+    /// Human-facing name (window title, for display).
+    pub name: String,
+    /// Browser address-bar host, when the foreground app is a browser and the
+    /// URL reader resolved it. `None` otherwise.
+    pub url_host: Option<String>,
+}
+
+/// [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
+/// resolved (unsupported platform, no foreground window). Silent — no UI.
+#[tauri::command]
+#[specta::specta]
+pub fn detect_active_app() -> Option<DetectedApp> {
+    // The capture button only needs the app/URL, not focused-field terms.
+    crate::context_detect::detect_active_context(false).map(|c| DetectedApp {
+        exe: c.exe,
+        name: c.app_name,
+        url_host: c.url_host,
+    })
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_word_correction_threshold_setting(
