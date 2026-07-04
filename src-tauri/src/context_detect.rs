@@ -549,6 +549,10 @@ pub struct ActiveContext {
     pub app_name: String,
     /// Executable stem, lowercased, no extension (the [`AppMatch::Process`] key).
     pub exe: String,
+    /// Full executable path, when resolvable. Unlike `exe` (a stem for *matching*),
+    /// this is a *launchable* path — used by voice actions' "capture focused app"
+    /// to fill an App target you can actually open. Empty when unavailable.
+    pub exe_path: String,
     pub category: AppCategory,
     /// Browser address-bar host, when the foreground app is a browser and UI
     /// Automation resolved it (e.g. `mail.google.com`). `None` otherwise.
@@ -736,6 +740,7 @@ mod windows_impl {
             Some(ActiveContext {
                 app_name,
                 exe,
+                exe_path,
                 category,
                 url_host,
                 nearby_terms,
@@ -1011,6 +1016,7 @@ mod tests {
         ActiveContext {
             app_name: exe.to_string(),
             exe: exe.to_string(),
+            exe_path: String::new(),
             category,
             url_host: None,
             nearby_terms: Vec::new(),
