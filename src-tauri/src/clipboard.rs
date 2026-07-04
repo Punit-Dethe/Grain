@@ -659,6 +659,12 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
             .map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
     }
 
+    // [GRAIN] Auto-add to dictionary: begin the short post-paste watch. No-ops
+    // (zero overhead) when the feature is off; never runs when nothing was pasted.
+    if paste_method != PasteMethod::None {
+        crate::dictionary::on_pasted(&app_handle, &text);
+    }
+
     Ok(())
 }
 

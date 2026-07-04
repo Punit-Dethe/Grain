@@ -10,6 +10,7 @@ pub mod cli;
 mod clipboard;
 mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
+mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod helpers;
 mod input;
@@ -29,6 +30,7 @@ mod transcription_coordinator;
 mod tray;
 mod tray_i18n;
 mod utils;
+mod voice_actions; // [GRAIN] voice actions: spoken trigger → open apps/sites
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -639,8 +641,12 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             shortcut::update_snippets,
+            shortcut::update_actions,
+            voice_actions::run_action,
+            voice_actions::pick_action_app,
             shortcut::change_context_awareness_enabled_setting,
             shortcut::change_context_nearby_terms_setting,
+            shortcut::change_auto_dictionary_enabled_setting,
             shortcut::update_app_modes,
             shortcut::detect_active_app,
             shortcut::suspend_binding,

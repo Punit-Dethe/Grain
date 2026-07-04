@@ -21,11 +21,13 @@ import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationS
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
 import { AppearanceToggle } from "../AppearanceToggle";
+import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
 export const AdvancedSettings: React.FC = () => {
   const { t } = useTranslation();
-  const { getSetting } = useSettings();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
   const experimentalEnabled = getSetting("experimental_enabled") || false;
+  const autoDictionary = getSetting("auto_dictionary_enabled") ?? false;
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
@@ -48,6 +50,15 @@ export const AdvancedSettings: React.FC = () => {
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
         <CustomWords descriptionMode="tooltip" grouped />
+        <ToggleSwitch
+          label="Auto-add to dictionary"
+          description="After pasting, briefly watch for you re-spelling a word (e.g. a name Grain got wrong). If you make the same correction across a couple of pastes, the pill offers to add that spelling — click it to accept. Only proper nouns and identifiers are learned; off = zero overhead."
+          descriptionMode="tooltip"
+          grouped
+          checked={autoDictionary}
+          isUpdating={isUpdating("auto_dictionary_enabled")}
+          onChange={(v) => updateSetting("auto_dictionary_enabled", v)}
+        />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 

@@ -608,11 +608,18 @@ pub(crate) async fn process_transcription_output(
     post_process: bool,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
-    let mut final_text = transcription.to_string();
+
+    // [GRAIN] Voice actions: fire any spoken trigger (open apps/sites) and strip
+    // it from what we paste. Runs on the finalized transcript BEFORE
+    // post-processing so a pure command ("start coding") never costs an LLM call
+    // — if the whole utterance was the command, `final_text` is now empty and the
+    // paste path below already skips empty output. Zero-cost when no actions
+    // are configured (a single `is_empty()` check inside `intercept`).
+    let mut final_text = crate::voice_actions::intercept(app, transcription);
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
 
-    if let Some(converted_text) = maybe_convert_chinese_variant(&settings, transcription).await {
+    if let Some(converted_text) = maybe_convert_chinese_variant(&settings, &final_text).await {
         final_text = converted_text;
     }
 
@@ -1504,6 +1511,10 @@ impl ShortcutAction for NativeAsrAction {
             })
             .await
             .unwrap_or_default();
+
+            // [GRAIN] Voice actions also apply to the Live streaming path: fire
+            // any spoken trigger and strip it before paste (no-op when unused).
+            let finalized = crate::voice_actions::intercept(&ah, &finalized);
 
             let final_text = if finalized.trim().is_empty() {
                 String::new()

@@ -155,3 +155,15 @@ pub enum DaemonEvent {
         message: String,
     },
 }
+
+/// [GRAIN] The reverse channel: actions the pill sends BACK to the core over the
+/// same local WebSocket (the core's events server reads these). Kept tiny and
+/// self-describing so the transport stays a single duplex JSON stream.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum PillAction {
+    /// User clicked the pill's dictionary suggestion — learn `word`.
+    DictionaryAccept { word: String },
+    /// User dismissed the suggestion without accepting.
+    DictionaryDismiss,
+}

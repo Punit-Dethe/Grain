@@ -689,6 +689,30 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
     Ok(())
 }
 
+/// [GRAIN] Persist the user's voice actions (trigger → open apps/sites). Drops
+/// entries with a blank trigger or no targets, and prunes blank target values —
+/// the UI enforces this too, but this guards direct invoke calls.
+#[tauri::command]
+#[specta::specta]
+pub fn update_actions(app: AppHandle, actions: Vec<settings::VoiceAction>) -> Result<(), String> {
+    let actions: Vec<settings::VoiceAction> = actions
+        .into_iter()
+        .map(|mut a| {
+            a.targets.retain(|t| match t {
+                settings::ActionTarget::App(v) | settings::ActionTarget::Url(v) => {
+                    !v.trim().is_empty()
+                }
+            });
+            a
+        })
+        .filter(|a| !a.trigger.trim().is_empty() && !a.targets.is_empty())
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.actions = actions;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Toggle context awareness (post-processing SOFT context + user MODES).
 #[tauri::command]
 #[specta::specta]
@@ -698,6 +722,16 @@ pub fn change_context_awareness_enabled_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.context_awareness_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Toggle auto-add-to-dictionary. Off = zero overhead (no watcher spawns).
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_dictionary_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.auto_dictionary_enabled = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }

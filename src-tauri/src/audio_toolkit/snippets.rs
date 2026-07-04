@@ -27,23 +27,25 @@ struct CompiledSnippet<'a> {
 }
 
 /// A whitespace token of the transcript with its byte span and normalized form.
-struct Token<'a> {
-    start: usize,
-    end: usize,
+/// `pub(crate)` so voice actions can reuse the same tolerant matcher instead of
+/// reimplementing normalization.
+pub(crate) struct Token<'a> {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
     norm: String,
     raw: &'a str,
 }
 
 /// Lowercased alphanumeric characters only. Unicode-aware so non-Latin
 /// transcripts normalize consistently with their triggers.
-fn normalize(word: &str) -> String {
+pub(crate) fn normalize(word: &str) -> String {
     word.chars()
         .filter(|c| c.is_alphanumeric())
         .flat_map(char::to_lowercase)
         .collect()
 }
 
-fn tokenize(text: &str) -> Vec<Token<'_>> {
+pub(crate) fn tokenize(text: &str) -> Vec<Token<'_>> {
     let mut tokens = Vec::new();
     let mut offset = 0;
     for part in text.split_whitespace() {
@@ -84,8 +86,8 @@ fn punct_suffix_start(raw: &str) -> usize {
 }
 
 /// Try to match `flat` starting at token `i`. Returns the index one past the
-/// last consumed token on success.
-fn match_at(tokens: &[Token], i: usize, flat: &str) -> Option<usize> {
+/// last consumed token on success. `pub(crate)` for reuse by voice actions.
+pub(crate) fn match_at(tokens: &[Token], i: usize, flat: &str) -> Option<usize> {
     // The anchor token must contribute characters — a bare "-" or "…" token
     // can't start a match (it would widen the replaced span for no reason).
     if tokens[i].norm.is_empty() {

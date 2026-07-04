@@ -7,6 +7,7 @@ import type {
   AudioDevice,
   Snippet,
   TranscribeAcceleratorSetting,
+  VoiceAction,
 } from "@/bindings";
 import { commands } from "@/bindings";
 
@@ -118,11 +119,14 @@ const settingUpdaters: {
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
+  actions: (value) => commands.updateActions(value as VoiceAction[]),
   context_awareness_enabled: (value) =>
     commands.changeContextAwarenessEnabledSetting(value as boolean),
   context_nearby_terms: (value) =>
     commands.changeContextNearbyTermsSetting(value as boolean),
   app_modes: (value) => commands.updateAppModes(value as AppMode[]),
+  auto_dictionary_enabled: (value) =>
+    commands.changeAutoDictionaryEnabledSetting(value as boolean),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>

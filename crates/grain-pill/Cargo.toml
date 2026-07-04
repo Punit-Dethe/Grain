@@ -18,7 +18,7 @@ raw-window-handle = "0.6"
 fontdue = "0.9" # text rasterization for the prompt riser
 # [GRAIN] receive DaemonEvents from the core over the local WebSocket.
 grain-core = { path = "../grain-core" }
-tokio = { version = "1", features = ["rt", "net", "time", "io-util"] }
+tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros", "sync"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 serde_json = "1"
