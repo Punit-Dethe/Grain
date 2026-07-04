@@ -39,6 +39,16 @@ pub enum DaemonEvent {
         session_id: u64,
     },
 
+    /// [GRAIN] Prompt Record: the user clicked the compact pill mid-recording to
+    /// begin dictating an AI *instruction* (everything spoken after this point is
+    /// a prompt for post-processing, not content). Drives the pill's blue dot
+    /// tint. One-way for now — `active` goes true and stays true until the session
+    /// ends (no toggle-off, by design, to keep the interaction dead simple).
+    PromptRecordingChanged {
+        session_id: u64,
+        active: bool,
+    },
+
     // -- Rolling-window progress --
     /// Intermediate assembled text after a chunk finalized.
     ChunkComplete {
@@ -166,4 +176,8 @@ pub enum PillAction {
     DictionaryAccept { word: String },
     /// User dismissed the suggestion without accepting.
     DictionaryDismiss,
+    /// [GRAIN] User clicked the compact pill mid-recording to enter Prompt Record
+    /// mode. The core marks the current audio position as the content→instruction
+    /// split point and echoes back `PromptRecordingChanged { active: true }`.
+    PromptRecord,
 }

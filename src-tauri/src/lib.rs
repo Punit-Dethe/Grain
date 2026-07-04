@@ -19,6 +19,7 @@ mod managers;
 mod overlay;
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
+mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 mod settings;
@@ -312,7 +313,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
 
     // [GRAIN] start the local WebSocket event transport + launch/supervise the pill.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
-        events_server::start(ctx.inner().clone());
+        events_server::start(ctx.inner().clone(), app_handle.clone());
     }
     events_server::spawn_pill_supervisor();
 

@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use grain_core::AppContext;
+use tauri::{AppHandle, Manager};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::tungstenite::Message;
@@ -20,7 +21,12 @@ pub const EVENTS_PORT: u16 = 7124;
 static EVENTS_READY: AtomicBool = AtomicBool::new(false);
 
 /// Spawn the event WS server on the Tauri async runtime.
-pub fn start(ctx: Arc<AppContext>) {
+///
+/// `app` is carried alongside the headless `ctx` because the reverse channel now
+/// needs Tauri-managed state: a Prompt Record click must reach the
+/// `AudioRecordingManager` to snapshot the audio split mark. Event emission stays
+/// headless (`ctx.emit`).
+pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -62,7 +68,8 @@ pub fn start(ctx: Arc<AppContext>) {
                 match listener.accept().await {
                     Ok((stream, _)) => {
                         let ctx = ctx.clone();
-                        tokio::spawn(handle(stream, ctx));
+                        let app = app.clone();
+                        tokio::spawn(handle(stream, ctx, app));
                     }
                     Err(e) => log::warn!("[GRAIN] events WS accept error: {e}"),
                 }
@@ -71,7 +78,7 @@ pub fn start(ctx: Arc<AppContext>) {
     });
 }
 
-async fn handle(stream: TcpStream, ctx: Arc<AppContext>) {
+async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     let ws = match tokio_tungstenite::accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
@@ -100,7 +107,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>) {
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
                     if let Ok(action) = serde_json::from_str::<grain_core::PillAction>(&txt) {
-                        handle_pill_action(&ctx, action);
+                        handle_pill_action(&ctx, &app, action);
                     }
                 }
                 Some(Ok(_)) => {}
@@ -110,15 +117,32 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>) {
     }
 }
 
-/// Apply a reverse-channel action from the pill. Kept headless (operates on the
-/// shared `AppContext`), so it needs no Tauri `AppHandle`.
-fn handle_pill_action(ctx: &Arc<AppContext>, action: grain_core::PillAction) {
+/// Apply a reverse-channel action from the pill. Mostly headless (operates on the
+/// shared `AppContext`); the Prompt Record click additionally reaches
+/// Tauri-managed state via `app` to mark the audio split point.
+fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core::PillAction) {
     match action {
         grain_core::PillAction::DictionaryAccept { word } => {
             crate::dictionary::accept_word(ctx, &word);
         }
         grain_core::PillAction::DictionaryDismiss => {
             ctx.emit(grain_core::DaemonEvent::DictionarySuggestionClear);
+        }
+        // [GRAIN] Prompt Record: snapshot the content→instruction split at the
+        // click. Arm succeeds only while recording and only once (one-way); we
+        // echo `PromptRecordingChanged { active: true }` so the pill turns blue
+        // only after the core has actually registered the mark.
+        grain_core::PillAction::PromptRecord => {
+            if let Some(rm) =
+                app.try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+            {
+                if rm.arm_prompt_record() {
+                    ctx.emit(grain_core::DaemonEvent::PromptRecordingChanged {
+                        session_id: crate::actions::current_session_id(),
+                        active: true,
+                    });
+                }
+            }
         }
     }
 }

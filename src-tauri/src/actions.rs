@@ -82,6 +82,10 @@ async fn post_process_transcription(
     app: &AppHandle,
     settings: &AppSettings,
     transcription: &str,
+    // [GRAIN] Prompt Record: an instruction the user dictated mid-recording (by
+    // clicking the pill). Layered as the ABSOLUTE highest-priority stage in
+    // `compose_prompt`, above any hard app mode.
+    spoken_prompt: Option<&str>,
 ) -> Option<String> {
     if transcription.trim().is_empty() {
         debug!("Post-processing skipped because transcription is empty");
@@ -123,12 +127,17 @@ async fn post_process_transcription(
     // prompt. Detection is one cheap OS call made ONCE here — never per rolling
     // chunk — and `compose_prompt` returns the base untouched when the feature is
     // off, nothing is detected, and no mode matches (so the common path is today's).
-    let prompt = if settings.context_awareness_enabled {
-        let ctx = crate::context_detect::detect_active_context(settings.context_nearby_terms);
-        crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref())
+    // [GRAIN] Detect context only when the feature is on (one cheap OS call). The
+    // spoken Prompt Record instruction is independent of that toggle, so
+    // `compose_prompt` is always consulted — it returns the base untouched when
+    // there is neither a spoken instruction nor any context layer to add.
+    let ctx = if settings.context_awareness_enabled {
+        crate::context_detect::detect_active_context(settings.context_nearby_terms)
     } else {
-        prompt
+        None
     };
+    let prompt =
+        crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref(), spoken_prompt);
 
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
@@ -606,6 +615,12 @@ pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
     post_process: bool,
+    // [GRAIN] Prompt Record: the spoken AI instruction for this transcript (audio
+    // after the pill-click mark), already transcribed. `None` for a normal
+    // dictation. When present, the caller also forces `post_process = true` so the
+    // instruction is actually applied regardless of which shortcut stopped the
+    // session.
+    spoken_prompt: Option<String>,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
 
@@ -624,7 +639,8 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(app, &settings, &final_text).await
+        if let Some(processed_text) =
+            post_process_transcription(app, &settings, &final_text, spoken_prompt.as_deref()).await
         {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
@@ -857,8 +873,17 @@ impl ShortcutAction for TranscribeAction {
                     // through the STT dispatcher — local in-process by default,
                     // or cloud rotation when smart rotation is on. The WAV task
                     // above runs concurrently while this awaits.
+                    //
+                    // [GRAIN] Prompt Record: if the user clicked the pill mid-
+                    // recording, the buffer is split at that mark into content +
+                    // a spoken AI instruction, each transcribed independently. A
+                    // recorded instruction forces the AI path regardless of which
+                    // shortcut stopped the session. No mark → a single pass, as before.
+                    let prompt_mark = rm.take_prompt_mark();
                     let transcription_time = Instant::now();
-                    let transcription_result = crate::stt_router::transcribe(&ah, samples).await;
+                    let (transcription_result, spoken_prompt) =
+                        crate::prompt_record::transcribe_split(&ah, samples, prompt_mark).await;
+                    let post_process = post_process || spoken_prompt.is_some();
 
                     // Await WAV save and verify
                     let wav_saved = match wav_handle.await {
@@ -894,9 +919,13 @@ impl ShortcutAction for TranscribeAction {
 
                             // [GRAIN] pill is already in "processing" from the
                             // RecordingStopped above — no extra overlay call needed.
-                            let processed =
-                                process_transcription_output(&ah, &transcription, post_process)
-                                    .await;
+                            let processed = process_transcription_output(
+                                &ah,
+                                &transcription,
+                                post_process,
+                                spoken_prompt,
+                            )
+                            .await;
 
                             // Save to history if WAV was saved
                             if wav_saved {
@@ -1275,35 +1304,60 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
             // Full audio (for WAV/history + the batch fallback).
             let samples = rm.stop_recording(&binding_id).unwrap_or_default();
-            // Drain the rolling worker → final assembled transcript.
+            // [GRAIN] Prompt Record mark (the pill-click split point), taken before
+            // draining the worker.
+            let prompt_mark = rm.take_prompt_mark();
+            // Drain the rolling worker → final assembled transcript. Always done,
+            // even under Prompt Record, so the worker never leaks — its text is
+            // just unused in that case (it mixed content + instruction).
             let rolling_text = rt.finish_session().unwrap_or_default();
 
-            let final_text = if !rolling_text.trim().is_empty() {
-                // [GRAIN] Apply the shared final-text stage (custom-word dictionary
-                // + filler/stutter filtering) ONCE on the assembled transcript.
-                // The rolling engine never biases via Whisper `initial_prompt`, so
-                // the fuzzy custom-word pass must run here. Done once per dictation,
-                // NOT per 15-20s chunk.
-                let settings = get_settings(&ah);
-                crate::audio_toolkit::finalize_transcript(
-                    &rolling_text,
-                    &settings.custom_words,
-                    settings.word_correction_threshold,
-                    &settings.app_language,
-                    &settings.custom_filler_words,
-                    false,
-                    &settings.snippets,
+            // [GRAIN] Prompt Record: the rolling-assembled text covers the WHOLE
+            // utterance (content + spoken instruction mixed), so it can't be split.
+            // Re-transcribe the two audio slices batch-style instead. This extra
+            // pass only happens when the user actually clicked the pill.
+            let (final_text, spoken_prompt, post_process) = if let Some(m) =
+                prompt_mark.filter(|&m| m > 0 && m < samples.len())
+            {
+                let (content_res, spoken) =
+                    crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
+                // `transcribe_split` routes through the STT dispatcher, which
+                // finalizes internally — don't finalize again.
+                (
+                    content_res.unwrap_or_default(),
+                    spoken.clone(),
+                    post_process || spoken.is_some(),
                 )
-            } else if !samples.is_empty() {
-                warn!("[GRAIN] rolling produced no text — falling back to batch");
-                // `tm.transcribe` already runs finalize_transcript internally, so
-                // the fallback text is finalized; don't finalize it again.
-                tm.transcribe(samples.clone()).unwrap_or_default()
             } else {
-                String::new()
+                let ft = if !rolling_text.trim().is_empty() {
+                    // [GRAIN] Apply the shared final-text stage (custom-word dictionary
+                    // + filler/stutter filtering) ONCE on the assembled transcript.
+                    // The rolling engine never biases via Whisper `initial_prompt`, so
+                    // the fuzzy custom-word pass must run here. Done once per dictation,
+                    // NOT per 15-20s chunk.
+                    let settings = get_settings(&ah);
+                    crate::audio_toolkit::finalize_transcript(
+                        &rolling_text,
+                        &settings.custom_words,
+                        settings.word_correction_threshold,
+                        &settings.app_language,
+                        &settings.custom_filler_words,
+                        false,
+                        &settings.snippets,
+                    )
+                } else if !samples.is_empty() {
+                    warn!("[GRAIN] rolling produced no text — falling back to batch");
+                    // `tm.transcribe` already runs finalize_transcript internally, so
+                    // the fallback text is finalized; don't finalize it again.
+                    tm.transcribe(samples.clone()).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                (ft, None, post_process)
             };
 
-            let processed = process_transcription_output(&ah, &final_text, post_process).await;
+            let processed =
+                process_transcription_output(&ah, &final_text, post_process, spoken_prompt).await;
             let final_text = processed.final_text;
 
             if !samples.is_empty() {

@@ -593,67 +593,107 @@ fn matching_mode<'a>(settings: &'a AppSettings, ctx: &ActiveContext) -> Option<&
         .find(|m| m.enabled && mode_matches(m, ctx))
 }
 
-/// Compose the final post-processing system prompt from the three stages.
+/// Compose the final post-processing system prompt from up to four stages.
 ///
-/// Returns `base` unchanged when nothing applies (context off, no detection, and
-/// no matching mode), so the common path is byte-for-byte today's behavior. When
-/// context or a mode applies, a compact preamble is prepended (NOT appended — so
+/// `spoken_instruction` is the **Prompt Record** layer: an instruction the user
+/// dictated mid-recording (by clicking the pill), aimed at THIS transcript. It is
+/// the absolute highest authority — above a hard app mode — and is applied even
+/// when context awareness is off.
+///
+/// Returns `base` unchanged when nothing applies (no spoken instruction, context
+/// off / no detection / no matching mode), so the common path is byte-for-byte
+/// today's behavior. Otherwise a compact preamble is prepended (NOT appended — so
 /// it precedes the transcript in both the structured and legacy `${output}`
 /// paths) framing the layers and their priority.
-pub fn compose_prompt(base: &str, settings: &AppSettings, ctx: Option<&ActiveContext>) -> String {
-    if !settings.context_awareness_enabled {
-        return base.to_string();
-    }
-    let Some(ctx) = ctx else {
-        return base.to_string();
-    };
+pub fn compose_prompt(
+    base: &str,
+    settings: &AppSettings,
+    ctx: Option<&ActiveContext>,
+    spoken_instruction: Option<&str>,
+) -> String {
+    let spoken = spoken_instruction
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
-    let soft = ctx.category.soft_line();
-    let mode = matching_mode(settings, ctx);
-    let has_terms = !ctx.nearby_terms.is_empty();
-    if soft.is_none() && mode.is_none() && !has_terms {
+    // Context-awareness layers only when the feature is on AND a target was
+    // detected. The spoken instruction is independent of that toggle.
+    let ctx = if settings.context_awareness_enabled {
+        ctx
+    } else {
+        None
+    };
+    let soft = ctx.and_then(|c| c.category.soft_line());
+    let mode = ctx.and_then(|c| matching_mode(settings, c));
+    let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
+    let has_ctx = soft.is_some() || mode.is_some() || !terms.is_empty();
+
+    if spoken.is_none() && !has_ctx {
         return base.to_string(); // nothing to add — untouched.
     }
 
-    let mut pre = String::with_capacity(base.len() + 512);
-    pre.push_str("[Context awareness]\n");
-    pre.push_str(&format!(
-        "The user is dictating into \"{}\".",
-        ctx.app_name.trim()
-    ));
-    if let Some(host) = &ctx.url_host {
-        pre.push_str(&format!(" (website: {host})"));
-    }
-    pre.push('\n');
-    if let Some(line) = soft {
-        pre.push_str("Soft context (tone/vocabulary only, never restructure): ");
-        pre.push_str(line);
-        pre.push('\n');
-    }
-    if let Some(m) = mode {
+    let mut pre = String::with_capacity(base.len() + 640);
+
+    // 1) Spoken instruction — ABSOLUTE highest priority. The user just dictated it
+    // for this exact transcript, so it outranks every rule below (including a hard
+    // app mode). It is an instruction ABOUT the transcript, never content to emit.
+    if let Some(instr) = spoken {
+        pre.push_str("[Spoken instruction — HIGHEST PRIORITY]\n");
         pre.push_str(
-            "User formatting instructions for this app (HIGHEST priority — follow exactly): ",
+            "The user just dictated this instruction for how to transform the \
+             transcript. Treat it as the top authority, above every rule below \
+             (including any app-specific formatting). Apply it to the transcript; \
+             never output the instruction text itself:\n",
         );
-        pre.push_str(m.prompt.trim());
-        pre.push('\n');
+        pre.push_str(instr);
+        pre.push_str("\n\n");
     }
-    if has_terms {
-        // Additive, LOW authority: only fix a term to one of these spellings when
-        // the transcript clearly meant it; otherwise ignore. Never insert them.
+
+    // 2) Context-awareness block (soft context / hard app mode / nearby terms).
+    if has_ctx {
+        if let Some(c) = ctx {
+            pre.push_str("[Context awareness]\n");
+            pre.push_str(&format!(
+                "The user is dictating into \"{}\".",
+                c.app_name.trim()
+            ));
+            if let Some(host) = &c.url_host {
+                pre.push_str(&format!(" (website: {host})"));
+            }
+            pre.push('\n');
+        }
+        if let Some(line) = soft {
+            pre.push_str("Soft context (tone/vocabulary only, never restructure): ");
+            pre.push_str(line);
+            pre.push('\n');
+        }
+        if let Some(m) = mode {
+            pre.push_str(
+                "User formatting instructions for this app (HIGHEST priority among \
+                 the rules below — follow exactly; the spoken instruction above, if \
+                 any, still wins): ",
+            );
+            pre.push_str(m.prompt.trim());
+            pre.push('\n');
+        }
+        if !terms.is_empty() {
+            // Additive, LOW authority: only fix a term to one of these spellings when
+            // the transcript clearly meant it; otherwise ignore. Never insert them.
+            pre.push_str(
+                "Nearby terms the user may be referring to — use ONLY to correct the \
+                 spelling of a word already in the transcript (proper nouns, code \
+                 identifiers, library names); do NOT insert any that were not spoken: ",
+            );
+            pre.push_str(&terms.join(", "));
+            pre.push('\n');
+        }
         pre.push_str(
-            "Nearby terms the user may be referring to — use ONLY to correct the \
-             spelling of a word already in the transcript (proper nouns, code \
-             identifiers, library names); do NOT insert any that were not spoken: ",
+            "Apply the above as guidance over the cleanup rules below. Priority when \
+             instructions conflict: the spoken instruction first, then the user's app \
+             instructions, then the base cleanup rules, then soft context. Keep edits \
+             minimal, preserve meaning, and never invent content that was not dictated.\n\n",
         );
-        pre.push_str(&ctx.nearby_terms.join(", "));
-        pre.push('\n');
     }
-    pre.push_str(
-        "Apply the above as guidance over the cleanup rules below. Priority when \
-         instructions conflict: the user's app instructions first, then the base \
-         cleanup rules, then soft context. Keep edits minimal, preserve meaning, \
-         and never invent content that was not dictated.\n\n",
-    );
+
     pre.push_str(base);
     pre
 }
@@ -1040,7 +1080,7 @@ mod tests {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE PROMPT ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide))),
+            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide)), None),
             base
         );
     }
@@ -1051,7 +1091,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("unknownapp", AppCategory::Other))),
+            compose_prompt(base, &s, Some(&ctx("unknownapp", AppCategory::Other)), None),
             base
         );
     }
@@ -1061,7 +1101,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
-        let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide)));
+        let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide)), None);
         assert!(out.starts_with("[Context awareness]"));
         assert!(out.contains("code editor"));
         assert!(out.ends_with(base)); // base preserved verbatim at the tail.
@@ -1082,6 +1122,7 @@ mod tests {
             "BASE ${output}",
             &s,
             Some(&ctx("chrome", AppCategory::Browser)),
+            None,
         );
         assert!(out.contains("HIGHEST priority"));
         assert!(out.contains("tweet under 280"));
@@ -1136,9 +1177,51 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("unknownapp", AppCategory::Other);
         c.nearby_terms = vec!["Rita".into(), "PyTorch".into()];
-        let out = compose_prompt("BASE ${output}", &s, Some(&c));
+        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
         assert!(out.contains("Nearby terms"));
         assert!(out.contains("Rita, PyTorch"));
+    }
+
+    #[test]
+    fn spoken_instruction_added_even_with_context_off() {
+        let s = AppSettings::default(); // context_awareness_enabled = false
+        let base = "BASE ${output}";
+        let out = compose_prompt(base, &s, None, Some("  make it a haiku  "));
+        assert!(out.starts_with("[Spoken instruction"));
+        assert!(out.contains("HIGHEST PRIORITY"));
+        assert!(out.contains("make it a haiku")); // trimmed, present
+        assert!(out.ends_with(base)); // base preserved verbatim at the tail.
+    }
+
+    #[test]
+    fn blank_spoken_instruction_is_ignored() {
+        let s = AppSettings::default();
+        let base = "BASE";
+        assert_eq!(compose_prompt(base, &s, None, Some("   ")), base);
+        assert_eq!(compose_prompt(base, &s, None, None), base);
+    }
+
+    #[test]
+    fn spoken_instruction_outranks_app_mode() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.app_modes.push(AppMode {
+            id: "x".into(),
+            name: "X post".into(),
+            matcher: AppMatch::Process("chrome".into()),
+            prompt: "Rewrite as a tweet.".into(),
+            enabled: true,
+        });
+        let out = compose_prompt(
+            "BASE ${output}",
+            &s,
+            Some(&ctx("chrome", AppCategory::Browser)),
+            Some("translate it into French"),
+        );
+        // The spoken instruction must appear ABOVE the app-mode instructions.
+        let spoken_pos = out.find("translate it into French").unwrap();
+        let mode_pos = out.find("Rewrite as a tweet").unwrap();
+        assert!(spoken_pos < mode_pos, "spoken instruction must precede app mode");
     }
 
     #[cfg(windows)]
