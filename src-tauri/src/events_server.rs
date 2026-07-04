@@ -94,11 +94,31 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>) {
                 Err(RecvError::Lagged(_)) => continue, // dropped some; keep streaming
                 Err(RecvError::Closed) => break,        // bus closed (shutdown)
             },
-            // Detect client close / drain pings.
+            // Reverse channel: the pill sends back small JSON actions (e.g. the
+            // user clicked the dictionary suggestion). Anything unrecognized is
+            // ignored; a closed/errored read ends the connection.
             msg = read.next() => match msg {
+                Some(Ok(Message::Text(txt))) => {
+                    if let Ok(action) = serde_json::from_str::<grain_core::PillAction>(&txt) {
+                        handle_pill_action(&ctx, action);
+                    }
+                }
                 Some(Ok(_)) => {}
                 _ => break,
             },
+        }
+    }
+}
+
+/// Apply a reverse-channel action from the pill. Kept headless (operates on the
+/// shared `AppContext`), so it needs no Tauri `AppHandle`.
+fn handle_pill_action(ctx: &Arc<AppContext>, action: grain_core::PillAction) {
+    match action {
+        grain_core::PillAction::DictionaryAccept { word } => {
+            crate::dictionary::accept_word(ctx, &word);
+        }
+        grain_core::PillAction::DictionaryDismiss => {
+            ctx.emit(grain_core::DaemonEvent::DictionarySuggestionClear);
         }
     }
 }

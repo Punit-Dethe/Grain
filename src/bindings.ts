@@ -289,6 +289,41 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] Persist the user's voice actions (trigger → open apps/sites). Drops
+ * entries with a blank trigger or no targets, and prunes blank target values.
+ */
+async updateActions(actions: VoiceAction[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_actions", { actions }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Open a set of action targets on demand — powers the Settings "Test" button.
+ */
+async runAction(targets: ActionTarget[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("run_action", { targets }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Native file picker for choosing an application/executable to launch.
+ * Returns the absolute path, or null if the dialog was cancelled.
+ */
+async pickActionApp() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pick_action_app") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle context awareness (post-processing SOFT context + user MODES).
  */
 async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -306,6 +341,17 @@ async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<nu
 async changeContextNearbyTermsSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_context_nearby_terms_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Toggle auto-add-to-dictionary. Off = zero overhead (no watcher spawns).
+ */
+async changeAutoDictionaryEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_dictionary_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1142,6 +1188,17 @@ role: string; content: string }
  */
 export type AppMatch = { kind: "process"; value: string } | { kind: "url_host"; value: string }
 /**
+ * [GRAIN] One thing a voice ACTION opens: an application/file/folder (launched
+ * with the OS default handler) or a URL (opened in the default browser).
+ */
+export type ActionTarget = { kind: "app"; value: string } | { kind: "url"; value: string }
+/**
+ * [GRAIN] A voice ACTION (Experimentations tab): when the trigger phrase is
+ * spoken, every target opens and the trigger is stripped from the pasted text.
+ * One action can open several apps + sites at once (a "workflow").
+ */
+export type VoiceAction = { id: string; trigger: string; targets: ActionTarget[]; enabled?: boolean }
+/**
  * [GRAIN] A user-defined "mode": a specific post-processing prompt (HARD
  * formatting) applied ONLY when its `matcher` hits the active app/site. This is
  * the opt-in, per-target layer that rides on top of the always-on base prompt +
@@ -1163,7 +1220,11 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
-snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
+snippets?: Snippet[];
+/**
+ * [GRAIN] Voice actions (Experimentations tab): trigger phrase → open apps/sites.
+ */
+actions?: VoiceAction[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
 /**
  * [GRAIN] When true, post-processing routes among ENABLED post-process
  * providers (round-robin + per-provider daily quota + failover). When false
@@ -1239,7 +1300,21 @@ app_modes?: AppMode[];
  * never surfaced in the UI. OFF by default because it reads the focused
  * field's content; password fields are always skipped.
  */
-context_nearby_terms?: boolean }
+context_nearby_terms?: boolean; 
+/**
+ * [GRAIN] Auto-add to dictionary: when on, Grain briefly watches the field it
+ * just pasted into (~10s) and, if you re-spell one of the pasted words the
+ * same way across a couple of pastes, offers to add that spelling to your
+ * dictionary (confirm by clicking the pill). OFF by default and **truly
+ * zero-overhead when off** — no watcher is ever spawned. Only proper-noun /
+ * identifier-shaped corrections are considered; common words are ignored.
+ */
+auto_dictionary_enabled?: boolean; 
+/**
+ * [GRAIN] Persisted learning counters for auto-add-to-dictionary (see
+ * [`DictCandidate`]). Not user-facing; managed by the watcher.
+ */
+dictionary_candidates?: DictCandidate[] }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
@@ -1266,6 +1341,22 @@ name: string;
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
+/**
+ * [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
+ * repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
+ * is suggested (pill), and on accept it moves into `custom_words`. Persisted so
+ * the count survives across sessions (the user rarely corrects the same term
+ * twice in one sitting).
+ */
+export type DictCandidate = { 
+/**
+ * The corrected spelling as the user typed it (display + what gets added).
+ */
+word: string; 
+/**
+ * How many distinct paste-sessions this correction has been observed in.
+ */
+count: number }
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,

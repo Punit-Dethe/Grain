@@ -71,37 +71,98 @@ impl AppCategory {
 fn category_for_exe(stem: &str) -> AppCategory {
     // IDEs / editors / terminals.
     const IDE: &[&str] = &[
-        "code", "cursor", "windsurf", "devenv", "idea64", "idea", "pycharm64",
-        "pycharm", "webstorm64", "webstorm", "goland64", "clion64", "rider64",
-        "rustrover64", "phpstorm64", "sublime_text", "zed", "nvim", "vim",
-        "windowsterminal", "wt", "powershell", "pwsh", "cmd", "alacritty",
-        "wezterm-gui", "wezterm", "kitty", "conemu", "hyper",
+        "code",
+        "cursor",
+        "windsurf",
+        "devenv",
+        "idea64",
+        "idea",
+        "pycharm64",
+        "pycharm",
+        "webstorm64",
+        "webstorm",
+        "goland64",
+        "clion64",
+        "rider64",
+        "rustrover64",
+        "phpstorm64",
+        "sublime_text",
+        "zed",
+        "nvim",
+        "vim",
+        "windowsterminal",
+        "wt",
+        "powershell",
+        "pwsh",
+        "cmd",
+        "alacritty",
+        "wezterm-gui",
+        "wezterm",
+        "kitty",
+        "conemu",
+        "hyper",
     ];
     // Email clients.
-    const EMAIL: &[&str] = &["outlook", "thunderbird", "hmaildesktop", "mailspring", "spark"];
+    const EMAIL: &[&str] = &[
+        "outlook",
+        "thunderbird",
+        "hmaildesktop",
+        "mailspring",
+        "spark",
+    ];
     // Work chat.
     const WORK_CHAT: &[&str] = &["slack", "teams", "ms-teams", "webex", "discord"];
     // Personal messengers.
     const PERSONAL_CHAT: &[&str] = &[
-        "whatsapp", "messenger", "telegram", "signal", "wechat", "line",
-        "viber", "imessage",
+        "whatsapp",
+        "messenger",
+        "telegram",
+        "signal",
+        "wechat",
+        "line",
+        "viber",
+        "imessage",
     ];
     // Social composers (native desktop clients).
     const SOCIAL: &[&str] = &["x", "twitter", "tweetdeck"];
     // Docs / notes.
     const DOCS: &[&str] = &[
-        "notion", "obsidian", "winword", "onenote", "evernote", "bear",
-        "typora", "logseq",
+        "notion", "obsidian", "winword", "onenote", "evernote", "bear", "typora", "logseq",
     ];
     // Browsers — kept broad so URL/site awareness is browser-agnostic. Covers
     // Chromium forks and Gecko/Firefox forks; the URL reader itself works off the
     // accessibility tree, not a per-browser rule.
     const BROWSER: &[&str] = &[
-        "chrome", "msedge", "firefox", "brave", "opera", "operagx", "vivaldi",
-        "arc", "browser", "chromium", "zen", "librewolf", "waterfox", "floorp",
-        "mullvad", "palemoon", "seamonkey", "thorium", "yandex", "maxthon",
-        "midori", "epic", "min", "sidekick", "wavebox", "falkon", "qutebrowser",
-        "ungoogled", "duckduckgo", "tor",
+        "chrome",
+        "msedge",
+        "firefox",
+        "brave",
+        "opera",
+        "operagx",
+        "vivaldi",
+        "arc",
+        "browser",
+        "chromium",
+        "zen",
+        "librewolf",
+        "waterfox",
+        "floorp",
+        "mullvad",
+        "palemoon",
+        "seamonkey",
+        "thorium",
+        "yandex",
+        "maxthon",
+        "midori",
+        "epic",
+        "min",
+        "sidekick",
+        "wavebox",
+        "falkon",
+        "qutebrowser",
+        "ungoogled",
+        "duckduckgo",
+        "tor",
     ];
 
     // Short keys (≤3 chars, e.g. "wt", "zen", "arc", "tor", "min", "x") must match
@@ -143,38 +204,288 @@ const MAX_SCAN_CHARS: usize = 4000;
 /// purpose: the shape heuristics in [`extract_unique_terms`] do the heavy lifting;
 /// this only catches common *lowercase* words that would otherwise slip through.
 const COMMON_WORDS: &[&str] = &[
-    "the", "and", "you", "that", "was", "for", "are", "with", "his", "they",
-    "this", "have", "from", "one", "had", "but", "not", "what", "all", "were",
-    "when", "your", "can", "said", "there", "use", "each", "which", "she", "how",
-    "their", "will", "other", "about", "out", "many", "then", "them", "these",
-    "some", "her", "would", "make", "like", "him", "into", "time", "has", "look",
-    "two", "more", "write", "see", "number", "way", "could", "people", "than",
-    "first", "water", "been", "call", "who", "its", "now", "find", "long", "down",
-    "day", "did", "get", "come", "made", "may", "part", "over", "new", "sound",
-    "take", "only", "little", "work", "know", "place", "year", "live", "back",
-    "give", "most", "very", "after", "thing", "our", "just", "name", "good",
-    "sentence", "man", "think", "say", "great", "where", "help", "through",
-    "much", "before", "line", "right", "too", "mean", "old", "any", "same",
-    "tell", "boy", "follow", "came", "want", "show", "also", "around", "form",
-    "three", "small", "set", "put", "end", "does", "another", "well", "large",
-    "must", "big", "even", "such", "because", "turn", "here", "why", "ask",
-    "went", "men", "read", "need", "land", "different", "home", "move", "try",
-    "kind", "hand", "picture", "again", "change", "off", "play", "spell", "air",
-    "away", "animal", "house", "point", "page", "letter", "mother", "answer",
-    "found", "study", "still", "learn", "should", "america", "world", "high",
-    "every", "near", "add", "food", "between", "own", "below", "country",
-    "plant", "last", "school", "father", "keep", "tree", "never", "start",
-    "city", "earth", "eye", "light", "thought", "head", "under", "story", "saw",
-    "left", "few", "while", "along", "might", "close", "something", "seem",
-    "next", "hard", "open", "example", "begin", "life", "always", "those",
-    "both", "paper", "together", "got", "group", "often", "run", "important",
-    "until", "children", "side", "feet", "car", "mile", "night", "walk", "white",
-    "sea", "began", "grow", "took", "river", "four", "carry", "state", "once",
-    "book", "hear", "stop", "without", "second", "later", "miss", "idea",
-    "enough", "eat", "face", "watch", "far", "really", "almost", "let", "above",
-    "girl", "sometimes", "mountain", "cut", "young", "talk", "soon", "list",
-    "song", "being", "leave", "family", "it's", "please", "thanks", "hey", "hi",
-    "yeah", "okay", "just", "going", "really", "actually", "basically",
+    "the",
+    "and",
+    "you",
+    "that",
+    "was",
+    "for",
+    "are",
+    "with",
+    "his",
+    "they",
+    "this",
+    "have",
+    "from",
+    "one",
+    "had",
+    "but",
+    "not",
+    "what",
+    "all",
+    "were",
+    "when",
+    "your",
+    "can",
+    "said",
+    "there",
+    "use",
+    "each",
+    "which",
+    "she",
+    "how",
+    "their",
+    "will",
+    "other",
+    "about",
+    "out",
+    "many",
+    "then",
+    "them",
+    "these",
+    "some",
+    "her",
+    "would",
+    "make",
+    "like",
+    "him",
+    "into",
+    "time",
+    "has",
+    "look",
+    "two",
+    "more",
+    "write",
+    "see",
+    "number",
+    "way",
+    "could",
+    "people",
+    "than",
+    "first",
+    "water",
+    "been",
+    "call",
+    "who",
+    "its",
+    "now",
+    "find",
+    "long",
+    "down",
+    "day",
+    "did",
+    "get",
+    "come",
+    "made",
+    "may",
+    "part",
+    "over",
+    "new",
+    "sound",
+    "take",
+    "only",
+    "little",
+    "work",
+    "know",
+    "place",
+    "year",
+    "live",
+    "back",
+    "give",
+    "most",
+    "very",
+    "after",
+    "thing",
+    "our",
+    "just",
+    "name",
+    "good",
+    "sentence",
+    "man",
+    "think",
+    "say",
+    "great",
+    "where",
+    "help",
+    "through",
+    "much",
+    "before",
+    "line",
+    "right",
+    "too",
+    "mean",
+    "old",
+    "any",
+    "same",
+    "tell",
+    "boy",
+    "follow",
+    "came",
+    "want",
+    "show",
+    "also",
+    "around",
+    "form",
+    "three",
+    "small",
+    "set",
+    "put",
+    "end",
+    "does",
+    "another",
+    "well",
+    "large",
+    "must",
+    "big",
+    "even",
+    "such",
+    "because",
+    "turn",
+    "here",
+    "why",
+    "ask",
+    "went",
+    "men",
+    "read",
+    "need",
+    "land",
+    "different",
+    "home",
+    "move",
+    "try",
+    "kind",
+    "hand",
+    "picture",
+    "again",
+    "change",
+    "off",
+    "play",
+    "spell",
+    "air",
+    "away",
+    "animal",
+    "house",
+    "point",
+    "page",
+    "letter",
+    "mother",
+    "answer",
+    "found",
+    "study",
+    "still",
+    "learn",
+    "should",
+    "america",
+    "world",
+    "high",
+    "every",
+    "near",
+    "add",
+    "food",
+    "between",
+    "own",
+    "below",
+    "country",
+    "plant",
+    "last",
+    "school",
+    "father",
+    "keep",
+    "tree",
+    "never",
+    "start",
+    "city",
+    "earth",
+    "eye",
+    "light",
+    "thought",
+    "head",
+    "under",
+    "story",
+    "saw",
+    "left",
+    "few",
+    "while",
+    "along",
+    "might",
+    "close",
+    "something",
+    "seem",
+    "next",
+    "hard",
+    "open",
+    "example",
+    "begin",
+    "life",
+    "always",
+    "those",
+    "both",
+    "paper",
+    "together",
+    "got",
+    "group",
+    "often",
+    "run",
+    "important",
+    "until",
+    "children",
+    "side",
+    "feet",
+    "car",
+    "mile",
+    "night",
+    "walk",
+    "white",
+    "sea",
+    "began",
+    "grow",
+    "took",
+    "river",
+    "four",
+    "carry",
+    "state",
+    "once",
+    "book",
+    "hear",
+    "stop",
+    "without",
+    "second",
+    "later",
+    "miss",
+    "idea",
+    "enough",
+    "eat",
+    "face",
+    "watch",
+    "far",
+    "really",
+    "almost",
+    "let",
+    "above",
+    "girl",
+    "sometimes",
+    "mountain",
+    "cut",
+    "young",
+    "talk",
+    "soon",
+    "list",
+    "song",
+    "being",
+    "leave",
+    "family",
+    "it's",
+    "please",
+    "thanks",
+    "hey",
+    "hi",
+    "yeah",
+    "okay",
+    "just",
+    "going",
+    "really",
+    "actually",
+    "basically",
 ];
 
 /// Extract UNIQUE, non-dictionary tokens worth biasing the LLM with — the
@@ -214,8 +525,7 @@ pub fn extract_unique_terms(text: &str) -> Vec<String> {
             && chars.iter().any(|c| c.is_uppercase());
         // Plain lowercase words with no distinguishing shape are ordinary prose —
         // skip them even if they dodged the stop-list, to stay high-signal.
-        let intentional =
-            internal_upper || has_underscore || has_digit || first_upper || all_upper;
+        let intentional = internal_upper || has_underscore || has_digit || first_upper || all_upper;
         if !intentional {
             continue;
         }
@@ -376,7 +686,7 @@ pub fn read_focused_text() -> Option<String> {
 
 #[cfg(windows)]
 mod windows_impl {
-    use super::{category_for_exe, AppCategory, ActiveContext};
+    use super::{category_for_exe, ActiveContext, AppCategory};
     use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -480,10 +790,13 @@ mod uia {
     };
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationValuePattern,
-        TreeScope_Descendants, UIA_ControlTypePropertyId, UIA_EditControlTypeId,
-        UIA_ValuePatternId,
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
+        IUIAutomationValuePattern, TreeScope_Descendants, UIA_ControlTypePropertyId,
+        UIA_EditControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
     };
+
+    /// Cap on focused-field text scanned (bounds cost on huge documents).
+    const MAX_TEXT_CHARS: usize = 8000;
 
     /// Upper bound on `Edit` controls inspected when hunting the address bar —
     /// keeps a page full of inputs from making URL detection expensive.
@@ -521,7 +834,11 @@ mod uia {
                     Ok(a) => a,
                     Err(_) => return (None, Vec::new()),
                 };
-            let url = if want_url { read_url(&automation, hwnd) } else { None };
+            let url = if want_url {
+                read_url(&automation, hwnd)
+            } else {
+                None
+            };
             let terms = if want_terms {
                 read_focused_terms(&automation)
             } else {
@@ -573,7 +890,7 @@ mod uia {
         if is_password(&el) {
             return Vec::new();
         }
-        match read_value(&el) {
+        match read_text_content(&el) {
             Some(text) => extract_unique_terms(&text),
             None => Vec::new(),
         }
@@ -590,11 +907,12 @@ mod uia {
             if is_password(&el) {
                 return None;
             }
-            read_value(&el)
+            read_text_content(&el)
         }
     }
 
     /// The element's `ValuePattern` value as a non-empty `String`, if available.
+    /// (Single-line edits, address bars, most web inputs.)
     unsafe fn read_value(el: &IUIAutomationElement) -> Option<String> {
         let vp: IUIAutomationValuePattern = el.GetCurrentPatternAs(UIA_ValuePatternId).ok()?;
         let bstr = vp.CurrentValue().ok()?;
@@ -604,6 +922,35 @@ mod uia {
         } else {
             Some(s)
         }
+    }
+
+    /// Full textual content of an editable element: `ValuePattern` first (cheap,
+    /// covers single-line inputs), falling back to `TextPattern`'s document range.
+    /// **This is essential for multiline editors** (Notepad, VS Code, chat/mail
+    /// composers, browser `<textarea>`s), which expose `TextPattern` but often NOT
+    /// `ValuePattern` — reading only ValuePattern returned nothing there. Capped.
+    unsafe fn read_text_content(el: &IUIAutomationElement) -> Option<String> {
+        if let Some(v) = read_value(el) {
+            return Some(cap(v));
+        }
+        if let Ok(tp) = el.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId) {
+            if let Ok(range) = tp.DocumentRange() {
+                if let Ok(bstr) = range.GetText(MAX_TEXT_CHARS as i32) {
+                    let s = bstr.to_string();
+                    if !s.trim().is_empty() {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn cap(mut s: String) -> String {
+        if s.len() > MAX_TEXT_CHARS {
+            s.truncate(MAX_TEXT_CHARS);
+        }
+        s
     }
 
     /// The element's Name as a non-empty `String` (URL fallback on some browsers).
@@ -686,7 +1033,10 @@ mod tests {
     fn disabled_returns_base_untouched() {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE PROMPT ${output}";
-        assert_eq!(compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide))), base);
+        assert_eq!(
+            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide))),
+            base
+        );
     }
 
     #[test]
@@ -722,7 +1072,11 @@ mod tests {
             prompt: "Rewrite as a tweet under 280 chars.".into(),
             enabled: true,
         });
-        let out = compose_prompt("BASE ${output}", &s, Some(&ctx("chrome", AppCategory::Browser)));
+        let out = compose_prompt(
+            "BASE ${output}",
+            &s,
+            Some(&ctx("chrome", AppCategory::Browser)),
+        );
         assert!(out.contains("HIGHEST priority"));
         assert!(out.contains("tweet under 280"));
     }
@@ -754,7 +1108,9 @@ mod tests {
         assert!(terms.contains(&"snake_case".to_string()));
         assert!(terms.contains(&"PyTorch".to_string()));
         // Ordinary lowercase prose contributes nothing.
-        for w in ["asked", "the", "hook", "bug", "today", "because", "was", "broken"] {
+        for w in [
+            "asked", "the", "hook", "bug", "today", "because", "was", "broken",
+        ] {
             assert!(!terms.iter().any(|t| t == w), "leaked prose word: {w}");
         }
     }
@@ -782,10 +1138,22 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn host_from_url_parsing() {
-        assert_eq!(host_from_url("https://mail.google.com/mail/u/0"), Some("mail.google.com".into()));
-        assert_eq!(host_from_url("mail.google.com/mail"), Some("mail.google.com".into()));
-        assert_eq!(host_from_url("https://www.x.com/home"), Some("x.com".into()));
-        assert_eq!(host_from_url("user:pass@host.example.com:8080/p"), Some("host.example.com".into()));
+        assert_eq!(
+            host_from_url("https://mail.google.com/mail/u/0"),
+            Some("mail.google.com".into())
+        );
+        assert_eq!(
+            host_from_url("mail.google.com/mail"),
+            Some("mail.google.com".into())
+        );
+        assert_eq!(
+            host_from_url("https://www.x.com/home"),
+            Some("x.com".into())
+        );
+        assert_eq!(
+            host_from_url("user:pass@host.example.com:8080/p"),
+            Some("host.example.com".into())
+        );
         assert_eq!(host_from_url("how to parse a url"), None); // search query.
         assert_eq!(host_from_url(""), None);
         assert_eq!(host_from_url("localhost"), None); // no dot → not host-shaped.
