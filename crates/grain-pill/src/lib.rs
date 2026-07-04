@@ -14,7 +14,8 @@
 //!   expands leftward to reveal lit-pixel glyphs — ✓ + ✗ while recording, ✓
 //!   while processing. Click ✓ to confirm, ✗ to cancel.
 //!
-//! Keys (standalone preview): R recording · P processing · I idle · Esc quit.
+//! Keys (standalone preview): R recording · P processing · I idle · B prompt-record
+//! (blue tint, press after R) · Esc quit.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -23,12 +24,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use grain_core::settings::OverlayPosition;
-use grain_core::{DaemonEvent, SessionMode};
+use grain_core::{DaemonEvent, PillAction, SessionMode};
 
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId, WindowLevel};
@@ -404,6 +405,11 @@ struct Aura {
     eligible: Vec<usize>, // non-edge, non-button cells (the voice-density field)
     dots: Vec<Rgba>,
     rng: Rng,
+    /// [GRAIN] Prompt Record: when true, the RECORDING dot field is tinted a
+    /// grey/light-blue mix (instead of grey/white) to signal the user is now
+    /// dictating an AI instruction. The density-tracks-volume behavior is
+    /// unchanged — only the palette shifts.
+    prompt_recording: bool,
 }
 
 impl Aura {
@@ -423,6 +429,7 @@ impl Aura {
             eligible,
             dots: vec![NONE; ROWS * COLS],
             rng: Rng(0x9E3779B97F4A7C15),
+            prompt_recording: false,
         }
     }
 
@@ -658,17 +665,34 @@ impl Aura {
             eligible.swap(i, j.min(i));
         }
 
+        // [GRAIN] Prompt Record tints the same density field a grey/light-blue mix
+        // so the user can see, at a glance, that they're now dictating an AI
+        // instruction. Only the colors differ — placement/density are identical.
+        let blue = self.prompt_recording;
         self.clear_to([12, 12, 12, 255]); // only lit pixels appear; unlit stay near-black dark grey
         for (k, &idx) in eligible.iter().enumerate() {
             if k >= active_count {
                 break;
             }
             if k < hot_count {
-                self.dots[idx] = [189, 193, 201, 235];
+                self.dots[idx] = if blue {
+                    [150, 196, 255, 235] // light-blue hot dot
+                } else {
+                    [189, 193, 201, 235]
+                };
             } else {
                 let a = (0.34 + lit_base * 0.30 + self.rng.f32() * flicker).min(0.82);
                 let g = self.rng.f32();
-                let (rr, gg, bb) = if g < 0.33 {
+                let (rr, gg, bb) = if blue {
+                    // Grey + light-blue mix: two blue tiers and one neutral grey.
+                    if g < 0.33 {
+                        (110, 162, 224) // blue
+                    } else if g < 0.66 {
+                        (140, 148, 160) // grey (the mix)
+                    } else {
+                        (172, 206, 246) // light blue
+                    }
+                } else if g < 0.33 {
                     (168, 174, 184)
                 } else if g < 0.66 {
                     (140, 148, 160)
@@ -1407,7 +1431,7 @@ mod present {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowLongPtrW, SetWindowLongPtrW, ShowWindow, UpdateLayeredWindow, GWL_EXSTYLE,
-        SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WS_EX_LAYERED,
+        SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WS_EX_LAYERED, WS_EX_NOACTIVATE,
     };
 
     fn hwnd_of(window: &winit::window::Window) -> Option<HWND> {
@@ -1421,7 +1445,15 @@ mod present {
         if let Some(hwnd) = hwnd_of(window) {
             unsafe {
                 let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
-                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED.0 as isize);
+                // [GRAIN] WS_EX_LAYERED for per-pixel alpha; WS_EX_NOACTIVATE so a
+                // Prompt Record click on the pill delivers WM_LBUTTONDOWN (→ winit
+                // MouseInput) WITHOUT activating the window — the dictation target
+                // keeps focus, so the paste still lands where the user is typing.
+                SetWindowLongPtrW(
+                    hwnd,
+                    GWL_EXSTYLE,
+                    ex | WS_EX_LAYERED.0 as isize | WS_EX_NOACTIVATE.0 as isize,
+                );
             }
         }
     }
@@ -1586,6 +1618,10 @@ struct Remote {
     /// live preview). Only a streaming session is allowed to expand into `Studio`,
     /// and only once it has text.
     streaming: bool,
+    /// [GRAIN] Prompt Record: the user clicked the compact pill mid-recording and
+    /// is now dictating an AI instruction. Tints the recording dots blue. Set by
+    /// `PromptRecordingChanged`; reset at the start/stop of every session.
+    prompt_recording: bool,
     /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
     /// `Recording` (see `apply_event`) so the preview never changes once the
     /// user releases the shortcut, even though the worker's drain can still
@@ -1603,6 +1639,7 @@ impl Default for Remote {
             prompt_seq: 0,
             mode: PillMode::Collapsed,
             streaming: false,
+            prompt_recording: false,
             asr: AsrDisplay::default(),
         }
     }
@@ -1633,13 +1670,22 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             // Fresh `asr` buffer per session so prior text never bleeds in.
             r.mode = PillMode::Collapsed;
             r.streaming = mode == SessionMode::NativeAsr;
+            r.prompt_recording = false; // fresh session — never carry a prior mark's tint.
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
         DaemonEvent::RecordingStopped { .. } => {
             r.state = PillState::Processing;
             r.visible = can_show(&r);
+            r.prompt_recording = false; // recording over → drop the blue tint.
             eprintln!("event: RecordingStopped -> processing");
+        }
+        // [GRAIN] Prompt Record: the core registered the pill-click split mark.
+        // Only meaningful while recording (the compact pill); flips the dot field
+        // to the grey/light-blue mix.
+        DaemonEvent::PromptRecordingChanged { active, .. } => {
+            r.prompt_recording = active && r.state == PillState::Recording;
+            eprintln!("event: PromptRecordingChanged -> {}", r.prompt_recording);
         }
         DaemonEvent::ProcessingComplete { .. } | DaemonEvent::SessionCancelled { .. } => {
             r.visible = false;
@@ -1704,7 +1750,13 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
 /// Reconnects forever — the pill is always-on; the core may come and go.
 /// Sends a `UserEvent::Wake` to the winit loop on every session state change so
 /// the pill surfaces without waiting for the next HIDDEN_TICK (up to 80 ms).
-fn spawn_event_client(remote: Arc<Mutex<Remote>>, proxy: EventLoopProxy<UserEvent>) {
+fn spawn_event_client(
+    remote: Arc<Mutex<Remote>>,
+    proxy: EventLoopProxy<UserEvent>,
+    // [GRAIN] Outbound pill actions (Prompt Record clicks) from the winit thread,
+    // forwarded over the same WebSocket's write half.
+    mut action_rx: tokio::sync::mpsc::UnboundedReceiver<PillAction>,
+) {
     std::thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -1717,7 +1769,7 @@ fn spawn_event_client(remote: Arc<Mutex<Remote>>, proxy: EventLoopProxy<UserEven
             }
         };
         rt.block_on(async move {
-            use futures_util::StreamExt;
+            use futures_util::{SinkExt, StreamExt};
             use tokio_tungstenite::tungstenite::Message;
             // Try to connect initially for a few seconds
             let mut attempts = 0;
@@ -1739,27 +1791,48 @@ fn spawn_event_client(remote: Arc<Mutex<Remote>>, proxy: EventLoopProxy<UserEven
             };
 
             if let Some(ws) = ws_stream {
-                let (_w, mut read) = ws.split();
-                while let Some(Ok(msg)) = read.next().await {
-                    if let Message::Text(txt) = msg {
-                        if let Ok(ev) = serde_json::from_str::<DaemonEvent>(txt.as_str()) {
-                            // Wake the event loop for session-relevant events so the
-                            // pill surfaces immediately, not after HIDDEN_TICK ms.
-                            let is_session_event = matches!(
-                                ev,
-                                DaemonEvent::RecordingStarted { .. }
-                                    | DaemonEvent::RecordingStopped { .. }
-                                    | DaemonEvent::ProcessingComplete { .. }
-                                    | DaemonEvent::SessionCancelled { .. }
-                                    | DaemonEvent::ModelError { .. }
-                                    | DaemonEvent::PasteError { .. }
-                                    | DaemonEvent::OverlayConfig { .. }
-                            );
-                            apply_event(&remote, ev);
-                            if is_session_event {
-                                let _ = proxy.send_event(UserEvent::Wake);
+                // [GRAIN] Duplex: read DaemonEvents in, write PillActions out
+                // (the reverse channel — e.g. a Prompt Record click).
+                let (mut write, mut read) = ws.split();
+                loop {
+                    tokio::select! {
+                        msg = read.next() => match msg {
+                            Some(Ok(Message::Text(txt))) => {
+                                if let Ok(ev) = serde_json::from_str::<DaemonEvent>(txt.as_str()) {
+                                    // Wake the event loop for session-relevant events so the
+                                    // pill surfaces immediately, not after HIDDEN_TICK ms.
+                                    let is_session_event = matches!(
+                                        ev,
+                                        DaemonEvent::RecordingStarted { .. }
+                                            | DaemonEvent::RecordingStopped { .. }
+                                            | DaemonEvent::ProcessingComplete { .. }
+                                            | DaemonEvent::SessionCancelled { .. }
+                                            | DaemonEvent::ModelError { .. }
+                                            | DaemonEvent::PasteError { .. }
+                                            | DaemonEvent::OverlayConfig { .. }
+                                            | DaemonEvent::PromptRecordingChanged { .. }
+                                    );
+                                    apply_event(&remote, ev);
+                                    if is_session_event {
+                                        let _ = proxy.send_event(UserEvent::Wake);
+                                    }
+                                }
                             }
-                        }
+                            Some(Ok(_)) => {} // ping/pong/binary — ignore
+                            _ => break,       // closed/errored — core gone
+                        },
+                        action = action_rx.recv() => match action {
+                            Some(a) => {
+                                if let Ok(json) = serde_json::to_string(&a) {
+                                    if write.send(Message::Text(json.into())).await.is_err() {
+                                        break; // write failed — core gone
+                                    }
+                                }
+                            }
+                            // All senders dropped — the App (and thus the process)
+                            // is going away; end the connection.
+                            None => break,
+                        },
                     }
                 }
                 eprintln!("ws: disconnected — core app died, exiting.");
@@ -1777,6 +1850,9 @@ struct App {
     window: Option<Rc<Window>>,
     aura: Aura,
     state: PillState,
+    /// [GRAIN] Prompt Record active for this session (mirrors `Remote`). Drives the
+    /// collapsed pill's blue dot tint.
+    prompt_recording: bool,
     amp: Arc<AtomicU32>,
     _mic: Option<cpal::Stream>,
     sim_target: f32,
@@ -1794,6 +1870,10 @@ struct App {
     next_tick: Instant,
     next_roll: Instant,
     remote: Arc<Mutex<Remote>>,
+    /// [GRAIN] Reverse channel to the core: a pill click (Prompt Record) is sent as
+    /// a `PillAction` over the same WebSocket. The winit thread hands the action to
+    /// the WS task through this unbounded sender.
+    action_tx: tokio::sync::mpsc::UnboundedSender<PillAction>,
     visible: bool,
     presenter: Option<present::Presenter>,
     pixmap: Option<Pixmap>,
@@ -1830,11 +1910,15 @@ impl App {
         // "mic in use" indicator). We open it only while the pill is visible and
         // close it on hide — see `about_to_wait`.
         let remote = Arc::new(Mutex::new(Remote::default()));
-        spawn_event_client(remote.clone(), proxy);
+        // [GRAIN] Reverse channel for pill clicks (Prompt Record). Unbounded so the
+        // winit thread never blocks handing an action to the async WS task.
+        let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel::<PillAction>();
+        spawn_event_client(remote.clone(), proxy, action_rx);
         App {
             window: None,
             aura: Aura::new(),
             state: PillState::Idle,
+            prompt_recording: false,
             amp,
             _mic: None,
             sim_target: 0.5,
@@ -1854,6 +1938,7 @@ impl App {
             next_tick: Instant::now(),
             next_roll: Instant::now(),
             remote,
+            action_tx,
             visible: false,
             presenter: None,
             pixmap: None,
@@ -2392,7 +2477,24 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.render(),
-            // [GRAIN] Hover/click interactions removed — the pill is display-only.
+            // [GRAIN] Prompt Record: a left-click on the COMPACT pill while recording
+            // enters AI-instruction mode — everything spoken after this is a prompt
+            // for the LLM, not content. One-way (no un-toggle, to keep it dead
+            // simple) and only meaningful on the collapsed capsule for now. We send
+            // the action to the core and let its `PromptRecordingChanged` echo flip
+            // the dots blue, so the visual only changes once the mark is registered.
+            WindowEvent::MouseInput {
+                state: ElementState::Pressed,
+                button: MouseButton::Left,
+                ..
+            } => {
+                if self.state == PillState::Recording
+                    && self.mode == PillMode::Collapsed
+                    && !self.prompt_recording
+                {
+                    let _ = self.action_tx.send(PillAction::PromptRecord);
+                }
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -2415,6 +2517,12 @@ impl ApplicationHandler<UserEvent> for App {
                     r.visible = true;
                 }
                 Key::Character("i") => self.remote.lock().unwrap().visible = false,
+                // [GRAIN] Dev preview: toggle the Prompt Record blue tint (press R
+                // first, then B). Mirrors the real PromptRecordingChanged event.
+                Key::Character("b") => {
+                    let mut r = self.remote.lock().unwrap();
+                    r.prompt_recording = !r.prompt_recording;
+                }
                 // Preview the prompt riser (← / →). Real trigger = DaemonEvent::PromptChanged.
                 Key::Named(NamedKey::ArrowRight) => {
                     self.prompt_idx = (self.prompt_idx + 1) % self.prompts.len();
@@ -2443,6 +2551,7 @@ impl ApplicationHandler<UserEvent> for App {
             // Pull authoritative state/visibility from the core (or dev keys).
             let r = self.remote.lock().unwrap().clone();
             self.state = r.state;
+            self.prompt_recording = r.prompt_recording;
             self.asr = r.asr.clone();
 
             // [GRAIN] Resize/recreate the OS window the rare times the surface
@@ -2585,6 +2694,9 @@ impl ApplicationHandler<UserEvent> for App {
                             _ => self.aura.roll_studio(amp),
                         }
                     } else {
+                        // [GRAIN] Feed the Prompt Record tint into the collapsed
+                        // recording field (grey/light-blue mix while active).
+                        self.aura.prompt_recording = self.prompt_recording;
                         self.aura.roll(self.state, amp);
                     }
                     self.next_roll = now + ROLL_INTERVAL;

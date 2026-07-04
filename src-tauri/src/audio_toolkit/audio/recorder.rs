@@ -1,7 +1,7 @@
 use std::{
     io::Error,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc, Mutex,
     },
     time::Duration,
@@ -49,6 +49,13 @@ pub struct AudioRecorder {
     // (the recorder is created once and reused for the app's lifetime). Default
     // off here; the audio manager seeds it from settings (default on).
     conditioning: Arc<AtomicBool>,
+    // [GRAIN] Live length (in 16 kHz mono samples) of the current recording's
+    // finalized buffer, mirrored out of the worker thread once per captured chunk.
+    // Used by Prompt Record to mark the content→instruction split point at click
+    // time: the value is a valid index into the `Vec<f32>` that `stop()` returns
+    // (VAD compaction and stop-time padding/AGC only ever append or rescale — they
+    // never reorder the prefix). Reset to 0 on each `Start`.
+    recorded_len: Arc<AtomicUsize>,
 }
 
 impl AudioRecorder {
@@ -61,7 +68,17 @@ impl AudioRecorder {
             level_cb: None,
             sample_cb: None,
             conditioning: Arc::new(AtomicBool::new(false)),
+            recorded_len: Arc::new(AtomicUsize::new(0)),
         })
+    }
+
+    /// [GRAIN] The number of 16 kHz mono samples captured into the CURRENT
+    /// recording so far (0 when idle). Prompt Record snapshots this at click time
+    /// as the split index into the buffer that `stop()` will return. Lags real
+    /// time by at most one capture chunk (tens of ms) — inconsequential for a
+    /// spoken content→instruction boundary.
+    pub fn recorded_len(&self) -> usize {
+        self.recorded_len.load(Ordering::Relaxed)
     }
 
     /// [GRAIN] Seed voice conditioning (high-pass + boost-only AGC) at build time.
@@ -123,6 +140,7 @@ impl AudioRecorder {
         let level_cb = self.level_cb.clone();
         let sample_cb = self.sample_cb.clone(); // [GRAIN]
         let conditioning = self.conditioning.clone(); // [GRAIN] live atomic
+        let recorded_len = self.recorded_len.clone(); // [GRAIN] Prompt Record split mark
 
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
@@ -207,6 +225,7 @@ impl AudioRecorder {
                         level_cb,
                         sample_cb,
                         conditioning,
+                        recorded_len,
                         stop_flag,
                     );
                     drop(stream);
@@ -451,6 +470,7 @@ fn run_consumer(
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
     sample_cb: Option<Arc<dyn Fn(&[f32], Option<bool>) + Send + Sync + 'static>>, // [GRAIN]
     conditioning: Arc<AtomicBool>,                                                // [GRAIN] live
+    recorded_len: Arc<AtomicUsize>, // [GRAIN] Prompt Record split mark
     stop_flag: Arc<AtomicBool>,
 ) {
     let mut frame_resampler = FrameResampler::new(
@@ -562,12 +582,20 @@ fn run_consumer(
             }
         });
 
+        // [GRAIN] Publish the live buffer length so Prompt Record can mark the
+        // content→instruction split at click time. Cheap: one relaxed store per
+        // captured chunk (not per frame), and only meaningful while recording.
+        if recording {
+            recorded_len.store(processed_samples.len(), Ordering::Relaxed);
+        }
+
         // non-blocking check for a command
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 Cmd::Start => {
                     stop_flag.store(false, Ordering::Relaxed);
                     processed_samples.clear();
+                    recorded_len.store(0, Ordering::Relaxed); // [GRAIN] fresh mark baseline
                     recording = true;
                     highpass.reset(); // [GRAIN] fresh filter state per session
                     visualizer.reset();

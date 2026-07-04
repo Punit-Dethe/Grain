@@ -181,6 +181,12 @@ pub struct AudioRecordingManager {
     /// Live-preview frame route into the unified TranscriptionManager (passed in
     /// explicitly so recorder recreation never depends on Tauri state ordering).
     stream_router: Arc<StreamRouter>,
+    /// [GRAIN] Prompt Record split mark: the sample index where the user clicked
+    /// the pill mid-recording to switch from dictating CONTENT to dictating an AI
+    /// INSTRUCTION. `Some(n)` once armed (one-way per session); `None` otherwise.
+    /// Snapshotted from the recorder's live length so it indexes the buffer
+    /// `stop_recording` returns. Reset at the start of every recording.
+    prompt_mark: Arc<Mutex<Option<usize>>>,
 }
 
 impl AudioRecordingManager {
@@ -208,6 +214,7 @@ impl AudioRecordingManager {
             did_mute: Arc::new(Mutex::new(false)),
             close_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
+            prompt_mark: Arc::new(Mutex::new(None)),
         };
 
         // Always-on?  Open immediately.
@@ -434,6 +441,8 @@ impl AudioRecordingManager {
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                 if rec.start().is_ok() {
                     *self.is_recording.lock().unwrap() = true;
+                    // [GRAIN] Fresh Prompt Record baseline: no split marked yet.
+                    *self.prompt_mark.lock().unwrap() = None;
                     *state = RecordingState::Recording {
                         binding_id: binding_id.to_string(),
                     };
@@ -531,6 +540,37 @@ impl AudioRecordingManager {
         )
     }
 
+    /// [GRAIN] Prompt Record: mark the current audio position as the
+    /// content→instruction split point (the user clicked the pill). One-way per
+    /// session — a second call while already armed is a no-op. Returns `true` only
+    /// when it newly armed (so the caller knows to flip the pill blue), `false`
+    /// when not recording or already armed. The mark is snapshotted from the
+    /// recorder's live length, so it indexes the buffer `stop_recording` returns.
+    pub fn arm_prompt_record(&self) -> bool {
+        if !self.is_recording() {
+            return false;
+        }
+        let mut mark = self.prompt_mark.lock().unwrap();
+        if mark.is_some() {
+            return false; // already armed — one-way, no toggle.
+        }
+        let len = match self.recorder.lock().unwrap().as_ref() {
+            Some(rec) => rec.recorded_len(),
+            None => return false,
+        };
+        *mark = Some(len);
+        debug!("Prompt Record armed at sample {len}");
+        true
+    }
+
+    /// [GRAIN] Take (and clear) the Prompt Record split mark for the finished
+    /// session. `Some(n)` means the user dictated an AI instruction starting at
+    /// sample `n`; the caller slices the captured buffer there. Clearing here means
+    /// a mark never leaks into the next recording.
+    pub fn take_prompt_mark(&self) -> Option<usize> {
+        self.prompt_mark.lock().unwrap().take()
+    }
+
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
         let mut state = self.state.lock().unwrap();
@@ -538,6 +578,9 @@ impl AudioRecordingManager {
         if let RecordingState::Recording { .. } = *state {
             *state = RecordingState::Idle;
             drop(state);
+
+            // [GRAIN] Discard any Prompt Record mark along with the audio.
+            *self.prompt_mark.lock().unwrap() = None;
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                 let _ = rec.stop(); // Discard the result
