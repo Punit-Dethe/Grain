@@ -111,11 +111,11 @@ const STUDIO_FADE_PX: f32 = 22.0;
 // Bottom control row: recording dot (left) · dot-matrix "waveform" (center) ·
 // cancel X (right). Its height matches the small pill's dot field (ROWS·CELL) so
 // the collapsed capsule can grow into it without the matrix changing size.
-const STUDIO_CTRL_H: f32 = ROWS as f32 * CELL; // 40.0 at CELL=5
-                                               // [GRAIN] A breathing gap BELOW the control row so the dot-matrix never touches
-                                               // the capsule's bottom edge (per the unified-pill spec — the pill "grows a little
-                                               // bit down" past the matrix).
-const STUDIO_BOTTOM_PAD: f32 = 8.0;
+const STUDIO_CTRL_H: f32 = 26.0; // holds the 22px cancel disc + the trimmed matrix
+                                 // [GRAIN] A breathing gap BELOW the control row so the dot-matrix never touches
+                                 // the capsule's bottom edge (per the unified-pill spec — the pill "grows a little
+                                 // bit down" past the matrix).
+const STUDIO_BOTTOM_PAD: f32 = 5.0;
 // [GRAIN] The card GROWS with the transcript: 1 line → 4 lines, then it caps and
 // scrolls. The OS window is sized to the TALLEST the card ever gets (the capped
 // 4-line height) and shorter cards are drawn bottom-anchored inside it, the
@@ -130,10 +130,37 @@ const STUDIO_MAX_CARD_H: f32 =
 // the full card width so the recording dot (left) and cancel X (right) ride the
 // animated edges, and the transcript + controls fade in with `expand`.
 const STUDIO_MIN_W: f32 = COLS as f32 * CELL; // collapsed pill width (the dot field)
-const STUDIO_EXPAND_EASE: f32 = 0.16; // per-frame ease of the width grow (~200ms)
-                                      // [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
-                                      // slower / smoother. 0.07 ≈ a soft ~500ms settle at 60fps — deliberately gentle
-                                      // so a new line rises in without the quick "snap" that read as a glitch.
+const STUDIO_EXPAND_EASE: f32 = 0.14; // per-frame ease of the grow — gentle/smooth
+                                      // [GRAIN] The transcript is not painted until the pill has (all but) finished
+                                      // expanding — the first word appears only once the capsule is fully open, then
+                                      // fades in via the normal per-word reveal.
+const STUDIO_TEXT_GATE: f32 = 0.98;
+
+// [GRAIN] The REDUCED dot-matrix shown INSIDE the expanded pill: the small pill's
+// field trimmed to a compact, purely voice-reactive core. The top/bottom two rows
+// and the left/right two columns are turned OFF (not deleted — just never lit, in
+// any state), and the four corners of the remaining block are unlit too so its
+// edges curve. Rows 2..=5 and cols 2..=22 of the COLS×ROWS grid survive.
+const STUDIO_MTX_R0: usize = 2;
+const STUDIO_MTX_R1: usize = ROWS - 3; // 5
+const STUDIO_MTX_C0: usize = 2;
+const STUDIO_MTX_C1: usize = COLS - 3; // 22
+
+/// Whether grid cell `(c, r)` belongs to the reduced studio matrix: inside the
+/// trimmed rows/cols and not one of its four corners.
+fn is_studio_cell(c: usize, r: usize) -> bool {
+    if !(STUDIO_MTX_R0..=STUDIO_MTX_R1).contains(&r)
+        || !(STUDIO_MTX_C0..=STUDIO_MTX_C1).contains(&c)
+    {
+        return false;
+    }
+    let corner =
+        (r == STUDIO_MTX_R0 || r == STUDIO_MTX_R1) && (c == STUDIO_MTX_C0 || c == STUDIO_MTX_C1);
+    !corner
+}
+// [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
+// slower / smoother. 0.07 ≈ a soft ~500ms settle at 60fps — deliberately gentle
+// so a new line rises in without the quick "snap" that read as a glitch.
 const STUDIO_GROW_EASE: f32 = 0.07;
 // New transcript words ramp their alpha in over this long instead of popping.
 // Slower = smoother; long enough that fast streaming words dissolve in rather
@@ -387,6 +414,10 @@ struct Aura {
     phase: f32,
     btn_angle: f32,
     eligible: Vec<usize>, // non-edge, non-button cells (the voice-density field)
+    // [GRAIN] The reduced studio field: the cells lit in the EXPANDED pill
+    // (`is_studio_cell`). No orange button zone here — the expanded matrix is
+    // purely voice-reactive white/gray.
+    studio_eligible: Vec<usize>,
     dots: Vec<Rgba>,
     rng: Rng,
 }
@@ -394,10 +425,14 @@ struct Aura {
 impl Aura {
     fn new() -> Self {
         let mut eligible = Vec::new();
+        let mut studio_eligible = Vec::new();
         for r in 0..ROWS {
             for c in 0..COLS {
                 if !is_edge(c, r) && !is_button(c, r) {
                     eligible.push(r * COLS + c);
+                }
+                if is_studio_cell(c, r) {
+                    studio_eligible.push(r * COLS + c);
                 }
             }
         }
@@ -406,8 +441,101 @@ impl Aura {
             phase: 0.0,
             btn_angle: 0.0,
             eligible,
+            studio_eligible,
             dots: vec![NONE; ROWS * COLS],
             rng: Rng(0x9E3779B97F4A7C15),
+        }
+    }
+
+    /// [GRAIN] Roll the REDUCED studio field: a purely voice-reactive white/gray
+    /// scatter over `studio_eligible` only — no orange recording/processing zone,
+    /// no idle sweep. Every other cell is turned fully OFF so the trimmed shape
+    /// (with its curved, corner-clipped edges) is exactly what shows in the
+    /// expanded pill, regardless of `PillState`.
+    fn roll_studio(&mut self, amp: f32) {
+        self.phase += 1.0;
+        self.energy = self.energy * 0.35 + amp * 0.65;
+        let lit_base = self.energy;
+        let flicker = 0.10;
+        let jitter = if lit_base > 0.001 {
+            (self.rng.f32() - 0.5) * flicker
+        } else {
+            0.0
+        };
+        let lit_ratio = (lit_base + jitter).clamp(0.0, 0.94);
+
+        // Everything OFF; only the voice-lit studio cells will appear.
+        for d in self.dots.iter_mut() {
+            *d = NONE;
+        }
+
+        let mut eligible = self.studio_eligible.clone();
+        let active_count = (eligible.len() as f32 * lit_ratio).round() as usize;
+        let hot_count = (active_count as f32 * 0.08).round() as usize;
+        for i in (1..eligible.len()).rev() {
+            let j = (self.rng.f32() * (i as f32 + 1.0)) as usize;
+            eligible.swap(i, j.min(i));
+        }
+        for (k, &idx) in eligible.iter().enumerate() {
+            if k >= active_count {
+                break;
+            }
+            if k < hot_count {
+                self.dots[idx] = [189, 193, 201, 235];
+            } else {
+                let a = (0.34 + lit_base * 0.30 + self.rng.f32() * flicker).min(0.82);
+                let g = self.rng.f32();
+                let (rr, gg, bb) = if g < 0.33 {
+                    (168, 174, 184)
+                } else if g < 0.66 {
+                    (140, 148, 160)
+                } else {
+                    (200, 204, 212)
+                };
+                self.dots[idx] = [rr, gg, bb, (a * 255.0) as u8];
+            }
+        }
+        self.energy = (self.energy * 0.74).max(0.0);
+    }
+
+    /// [GRAIN] The RECORDING state's studio field: a proper waveform drawn in the
+    /// reduced dot grid (not a random scatter). Each visible column is a vertical
+    /// slice symmetric about the horizontal center — the inner rows form an
+    /// always-present center line whose brightness tracks the mic level, and the
+    /// outer rows bloom in on louder columns. A center-tall envelope tapers the
+    /// curved ends and a slow traveling ripple makes the crest move like real
+    /// audio. All non-studio cells stay OFF.
+    fn roll_studio_waveform(&mut self, amp: f32) {
+        self.phase += 1.0;
+        self.energy = self.energy * 0.5 + amp * 0.5;
+        let level = self.energy.clamp(0.0, 1.0);
+
+        for d in self.dots.iter_mut() {
+            *d = NONE;
+        }
+
+        let center = (STUDIO_MTX_R0 + STUDIO_MTX_R1) as f32 / 2.0; // 3.5
+        let cols = (STUDIO_MTX_C1 - STUDIO_MTX_C0) as f32;
+        for c in STUDIO_MTX_C0..=STUDIO_MTX_C1 {
+            let x = (c - STUDIO_MTX_C0) as f32 / cols;
+            // Curved-end taper + a traveling ripple so the crest moves.
+            let env = 0.55 + 0.45 * (std::f32::consts::PI * x).sin();
+            let ripple = 0.5 + 0.5 * (self.phase * 0.20 + c as f32 * 0.7).sin();
+            let v = (level * env * (0.4 + 0.6 * ripple)).clamp(0.0, 1.0);
+            for r in STUDIO_MTX_R0..=STUDIO_MTX_R1 {
+                if !is_studio_cell(c, r) {
+                    continue;
+                }
+                let dist = (r as f32 - center).abs(); // 0.5 (inner) or 1.5 (outer)
+                let a = if dist < 1.0 {
+                    0.22 + 0.60 * v // center line, always faintly present
+                } else {
+                    ((v - 0.30) / 0.60).clamp(0.0, 1.0) * 0.9 // outer crest blooms on peaks
+                };
+                if a > 0.02 {
+                    self.dots[r * COLS + c] = [200, 204, 212, (a.clamp(0.0, 1.0) * 255.0) as u8];
+                }
+            }
         }
     }
 
@@ -830,7 +958,10 @@ fn paint_studio_card(
     let text_top = card_top + top_gap;
     let ctrl_top = card_top + card_h - STUDIO_CTRL_H - STUDIO_BOTTOM_PAD;
     if let Some(font) = font {
-        if expand > 0.01 && n_lines > 0 {
+        // [GRAIN] Hold the transcript until the pill is fully expanded — the first
+        // word must not appear mid-grow. Once open, it's drawn at full opacity and
+        // the per-word reveal fades it in.
+        if expand >= STUDIO_TEXT_GATE && n_lines > 0 {
             // Leave a hair of space so descenders never touch the control row.
             draw_transcript(
                 pixmap,
@@ -838,7 +969,7 @@ fn paint_studio_card(
                 font,
                 text_top,
                 ctrl_top - 2.0,
-                fade * expand,
+                fade,
                 at_cap,
                 reveal_alpha,
             );
@@ -1070,12 +1201,15 @@ fn draw_control_row(
     let x_cx = cap_right - STUDIO_PAD - 11.0;
     draw_x_button(pixmap, x_cx, cy, side);
 
-    // CENTER — the dot-matrix aura (the small pill), as the waveform. Full opacity
-    // and fixed at the window center so it stays put while the capsule grows.
+    // CENTER — the reduced dot-matrix aura, as the waveform. Full opacity and fixed
+    // at the window center so it stays put while the capsule grows. The lit rows
+    // are 2..=5, so offset the full-grid origin up by their center (20px) to sit
+    // the VISIBLE block on the control-row axis (`cy`).
     let (w, _) = studio_pixel_size();
     let field_w = COLS as f32 * CELL;
     let mtx_left = (w as f32 - field_w) / 2.0;
-    draw_dot_matrix(pixmap, dots, mtx_left, ctrl_top, fade);
+    let visible_mid = (STUDIO_MTX_R0 as f32 + STUDIO_MTX_R1 as f32 + 1.0) * 0.5 * CELL; // 20px
+    draw_dot_matrix(pixmap, dots, mtx_left, cy - visible_mid, fade);
 }
 
 /// Draw the COLS×ROWS aura dot-field at `(left, top)` (cell = `CELL·SCALE`),
@@ -1442,9 +1576,14 @@ struct Remote {
     /// and trigger the riser (+ a brief reveal when idle).
     prompt_name: String,
     prompt_seq: u64,
-    /// [GRAIN] Native ASR: which surface to present (Studio Window vs the
-    /// classic collapsed capsule), set from `RecordingStarted`'s `SessionMode`.
+    /// [GRAIN] Which surface to present. Starts `Collapsed` for EVERY session; a
+    /// streaming session (see `streaming`) flips it to `Studio` only when the first
+    /// transcript word arrives, so the pill visibly expands from the small capsule.
     mode: PillMode,
+    /// [GRAIN] True while this session is a live-streaming one (Native ASR / rolling
+    /// live preview). Only a streaming session is allowed to expand into `Studio`,
+    /// and only once it has text.
+    streaming: bool,
     /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
     /// `Recording` (see `apply_event`) so the preview never changes once the
     /// user releases the shortcut, even though the worker's drain can still
@@ -1461,6 +1600,7 @@ impl Default for Remote {
             prompt_name: String::new(),
             prompt_seq: 0,
             mode: PillMode::Collapsed,
+            streaming: false,
             asr: AsrDisplay::default(),
         }
     }
@@ -1484,14 +1624,13 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         DaemonEvent::RecordingStarted { mode, .. } => {
             r.state = PillState::Recording;
             r.visible = can_show(&r);
-            // [GRAIN] Native ASR → the Studio Window; every other mode is the
-            // classic collapsed capsule. Fresh `asr` buffer per session so a
-            // prior dictation's text never bleeds into the next.
-            r.mode = if mode == SessionMode::NativeAsr {
-                PillMode::Studio
-            } else {
-                PillMode::Collapsed
-            };
+            // [GRAIN] Every session opens as the small collapsed capsule. A live
+            // STREAMING session (Native ASR / rolling live preview) is allowed to
+            // expand into the Studio surface, but only once its first word lands
+            // (handled after the match) — so the pill grows FROM the small pill.
+            // Fresh `asr` buffer per session so prior text never bleeds in.
+            r.mode = PillMode::Collapsed;
+            r.streaming = mode == SessionMode::NativeAsr;
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
@@ -1548,6 +1687,14 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.asr.partial.clear();
         }
         _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
+    }
+
+    // [GRAIN] First-word expand: the instant a streaming session has any transcript
+    // to show, flip from the small collapsed capsule to the Studio surface. The App
+    // sees the mode change and grows the pill out (width + height) smoothly.
+    if r.streaming && r.mode == PillMode::Collapsed && !r.asr.display_runs().is_empty() {
+        r.mode = PillMode::Studio;
+        eprintln!("event: first transcript word -> expand to Studio");
     }
 }
 
@@ -1941,6 +2088,10 @@ impl App {
         // to the full card so it reads as the small pill EXPANDING. Reset to 0 at
         // each new session (mode change), so every stream opens with the grow.
         self.studio_expand += (1.0 - self.studio_expand) * STUDIO_EXPAND_EASE;
+        if self.studio_expand > 0.995 {
+            self.studio_expand = 1.0; // settle exactly so the text gate opens cleanly
+        }
+        let fully_open = self.studio_expand >= STUDIO_TEXT_GATE;
 
         // [GRAIN] Per-word reveal: stamp the first-seen time of each word (indexed
         // by global order) so freshly-decoded words fade in instead of popping.
@@ -1954,6 +2105,15 @@ impl App {
         }
         while self.reveal_since.len() < word_count {
             self.reveal_since.push(now);
+        }
+        // Until the pill is fully open the transcript is hidden (see
+        // `paint_studio_card`); hold every word's reveal clock at `now` so the
+        // first words fade in cleanly AFTER the expansion instead of appearing
+        // already-revealed the instant the gate opens.
+        if !fully_open {
+            for t in self.reveal_since.iter_mut() {
+                *t = now;
+            }
         }
         let reveal_ms = STUDIO_WORD_REVEAL.as_secs_f32();
         let reveal_alpha: Vec<f32> = self
@@ -2289,6 +2449,13 @@ impl ApplicationHandler<UserEvent> for App {
             // for the new size; the cached pixmap is invalidated too (wrong
             // dimensions otherwise).
             if r.mode != self.mode {
+                // [GRAIN] Collapsed→Studio while already on screen is the FIRST-WORD
+                // expand (mid-session): keep it visible at full opacity so it grows
+                // seamlessly instead of fading/flashing. Every other transition
+                // (fresh session, Studio→Collapsed) resets the fade as before.
+                let seamless_expand = self.mode == PillMode::Collapsed
+                    && r.mode == PillMode::Studio
+                    && (self.visible || self.closing);
                 self.mode = r.mode;
                 if let Some(window) = &self.window {
                     let (w, h) = Self::win_size_for(self.mode);
@@ -2298,21 +2465,28 @@ impl ApplicationHandler<UserEvent> for App {
                     // right after is sized correctly for the very next frame.
                     let _ = window.request_inner_size(PhysicalSize::new(w, h));
                     self.presenter = present::Presenter::new(window, w as i32, h as i32);
+                    // Re-anchor the resized window so the capsule stays put across
+                    // the swap (both surfaces are bottom-anchored + centered, so the
+                    // small capsule lands exactly where the collapsed pill was).
+                    Self::position_window(window, r.anchor, w, h);
                 }
                 self.pixmap = None;
-                self.studio_alpha = 0.0;
-                // Fresh session → re-snap the card to its starting (collapsed)
-                // size so it grows/expands from small again.
-                self.studio_grown_h = 0.0;
+                // Grow the card from the COLLAPSED (matrix-only) height and the
+                // collapsed width, so a streaming session opens as the small pill
+                // and expands out when the first word lands.
+                self.studio_grown_h = studio_card_height(0);
                 self.studio_expand = 0.0;
                 self.reveal_since.clear();
-                // A mode change always means a brand-new session just started
-                // (mode is only ever set from RecordingStarted) — never
-                // mid-transition leftovers from whatever the previous surface
-                // was doing, including an in-progress Studio close-fade, which
-                // this intentionally cuts short rather than leaving stale.
-                self.visible = false;
-                self.closing = false;
+                // Re-roll immediately so the first Studio frame already shows the
+                // reduced voice-reactive field (not a stale full-pill frame).
+                self.next_roll = now;
+                if seamless_expand {
+                    self.studio_alpha = 1.0;
+                } else {
+                    self.studio_alpha = 0.0;
+                    self.visible = false;
+                    self.closing = false;
+                }
             }
 
             // [GRAIN] Prompt switched → show the riser, and briefly reveal the
@@ -2399,7 +2573,18 @@ impl ApplicationHandler<UserEvent> for App {
                 // calm; everything else eases every frame for smoothness.
                 if now >= self.next_roll {
                     let amp = self.current_amp();
-                    self.aura.roll(self.state, amp);
+                    // The expanded pill uses the REDUCED field: a true waveform
+                    // while recording, the voice-reactive scatter for the other
+                    // states. The collapsed pill keeps its full state-driven roll.
+                    if self.mode == PillMode::Studio {
+                        if self.state == PillState::Recording {
+                            self.aura.roll_studio_waveform(amp);
+                        } else {
+                            self.aura.roll_studio(amp);
+                        }
+                    } else {
+                        self.aura.roll(self.state, amp);
+                    }
                     self.next_roll = now + ROLL_INTERVAL;
                 }
                 // Ease the prompt riser, auto-hiding after RISER_HOLD.
@@ -2508,10 +2693,15 @@ mod tests {
             .enumerate()
         {
             let mut card = Pixmap::new(cw, ch).unwrap();
-            // A rolled aura supplies the dot-matrix "waveform".
+            // A rolled aura supplies the dot-matrix field: a waveform while
+            // recording, the reactive scatter otherwise.
             let mut aura = Aura::new();
             for _ in 0..3 {
-                aura.roll(state, 0.6);
+                if state == PillState::Recording {
+                    aura.roll_studio_waveform(0.6);
+                } else {
+                    aura.roll_studio(0.6);
+                }
             }
             // The sample text overflows 4 lines → render the capped (max-height)
             // card so the top dissolve is exercised. `expand = 1.0` = fully open.
@@ -2579,7 +2769,7 @@ mod tests {
             let mut card = Pixmap::new(cw, ch).unwrap();
             let mut aura = Aura::new();
             for _ in 0..3 {
-                aura.roll(PillState::Recording, 0.6);
+                aura.roll_studio_waveform(0.6);
             }
             paint_studio_card(
                 &mut card,
@@ -2638,7 +2828,7 @@ mod tests {
 
         let mut aura = Aura::new();
         for _ in 0..3 {
-            aura.roll(PillState::Recording, 0.6);
+            aura.roll_studio_waveform(0.6);
         }
         for (i, &expand) in steps.iter().enumerate() {
             // The text only exists once expanded; while opening, height is minimal.
