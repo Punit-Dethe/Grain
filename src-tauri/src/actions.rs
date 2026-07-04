@@ -1542,19 +1542,24 @@ impl ShortcutAction for NativeAsrAction {
             // captured samples only as the batch-fallback input (mirrors Handy:
             // a model that turned out not to stream still yields a transcript).
             let samples = rm.stop_recording(&binding_id).unwrap_or_default();
+            // [GRAIN] Prompt Record split mark (a pill click on the Studio waveform).
+            let prompt_mark = rm.take_prompt_mark();
 
-            // `finalize_stream` blocks up to its internal timeout while the
-            // worker flushes, so keep the wait off the async executor.
+            // `finalize_stream` blocks up to its internal timeout while the worker
+            // flushes, so keep the wait off the async executor. Always run it (even
+            // under Prompt Record) so the stream worker never leaks — its text is
+            // just unused when we re-transcribe the sliced audio below.
             let tm_finalize = Arc::clone(&tm);
+            let samples_for_fallback = samples.clone();
             let finalized = tauri::async_runtime::spawn_blocking(move || {
                 match tm_finalize.finalize_stream() {
                     // A finalized stream with usable text wins (already
                     // custom-word/filler processed by finalize_stream).
                     Ok(Some(text)) if !text.trim().is_empty() => text,
                     // No usable stream → batch-transcribe the captured audio.
-                    Ok(_) if !samples.is_empty() => {
+                    Ok(_) if !samples_for_fallback.is_empty() => {
                         warn!("Native ASR: stream produced no text — batch fallback");
-                        tm_finalize.transcribe(samples).unwrap_or_default()
+                        tm_finalize.transcribe(samples_for_fallback).unwrap_or_default()
                     }
                     Ok(_) => String::new(),
                     Err(e) => {
@@ -1566,26 +1571,60 @@ impl ShortcutAction for NativeAsrAction {
             .await
             .unwrap_or_default();
 
-            // [GRAIN] Voice actions also apply to the Live streaming path: fire
-            // any spoken trigger and strip it before paste (no-op when unused).
-            let finalized = crate::voice_actions::intercept(&ah, &finalized);
-
-            let final_text = if finalized.trim().is_empty() {
-                String::new()
-            } else {
-                if let Err(e) = hm.save_entry(String::new(), finalized.clone(), false, None, None) {
-                    error!("Failed to save Native ASR history entry: {e}");
+            let final_text = if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
+                // [GRAIN] Prompt Record on the streaming path: the live transcript
+                // covered content + the spoken instruction together, so it can't be
+                // split. Re-transcribe the two audio slices and post-process the
+                // content with the spoken instruction (AI forced on, regardless of
+                // which shortcut stopped the session). `process_transcription_output`
+                // also runs voice actions on the content.
+                let (content_res, spoken) =
+                    crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
+                let content = content_res.unwrap_or_default();
+                let processed = process_transcription_output(&ah, &content, true, spoken).await;
+                let ft = processed.final_text;
+                if !ft.trim().is_empty() {
+                    if let Err(e) = hm.save_entry(
+                        String::new(),
+                        content.clone(),
+                        true,
+                        processed.post_processed_text.clone(),
+                        processed.post_process_prompt.clone(),
+                    ) {
+                        error!("Failed to save Native ASR history entry: {e}");
+                    }
+                    crate::bridge::emit(
+                        &ah,
+                        DaemonEvent::AsrSessionFinal {
+                            session_id,
+                            text: ft.clone(),
+                        },
+                    );
                 }
-                // Protocol parity with the old worker: announce the session's
-                // final transcript on the event bus.
-                crate::bridge::emit(
-                    &ah,
-                    DaemonEvent::AsrSessionFinal {
-                        session_id,
-                        text: finalized.clone(),
-                    },
-                );
-                finalized
+                ft
+            } else {
+                // [GRAIN] Voice actions also apply to the Live streaming path: fire
+                // any spoken trigger and strip it before paste (no-op when unused).
+                let finalized = crate::voice_actions::intercept(&ah, &finalized);
+                if finalized.trim().is_empty() {
+                    String::new()
+                } else {
+                    if let Err(e) =
+                        hm.save_entry(String::new(), finalized.clone(), false, None, None)
+                    {
+                        error!("Failed to save Native ASR history entry: {e}");
+                    }
+                    // Protocol parity with the old worker: announce the session's
+                    // final transcript on the event bus.
+                    crate::bridge::emit(
+                        &ah,
+                        DaemonEvent::AsrSessionFinal {
+                            session_id,
+                            text: finalized.clone(),
+                        },
+                    );
+                    finalized
+                }
             };
 
             if final_text.trim().is_empty() {
