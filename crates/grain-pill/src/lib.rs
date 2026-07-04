@@ -136,28 +136,16 @@ const STUDIO_EXPAND_EASE: f32 = 0.14; // per-frame ease of the grow — gentle/s
                                       // fades in via the normal per-word reveal.
 const STUDIO_TEXT_GATE: f32 = 0.98;
 
-// [GRAIN] The REDUCED dot-matrix shown INSIDE the expanded pill: the small pill's
-// field trimmed to a compact, purely voice-reactive core. The top/bottom two rows
-// and the left/right two columns are turned OFF (not deleted — just never lit, in
-// any state), and the four corners of the remaining block are unlit too so its
-// edges curve. Rows 2..=5 and cols 2..=22 of the COLS×ROWS grid survive.
-const STUDIO_MTX_R0: usize = 2;
-const STUDIO_MTX_R1: usize = ROWS - 3; // 5
-const STUDIO_MTX_C0: usize = 2;
-const STUDIO_MTX_C1: usize = COLS - 3; // 22
+// [GRAIN] The REDUCED dot-matrix shown INSIDE the expanded pill: TWO centered
+// ROWS (3–4) spanning the FULL pill width (cols 0–24, edge-silhouette respected
+// by the roll functions). Volume is visualized by lighting columns from the
+// horizontal center outward — silence = nothing lit, loud = all columns lit.
+// Unlit pixels are fully black (NONE).
+const STUDIO_MTX_R0: usize = 3;
+const STUDIO_MTX_R1: usize = 4;
+const STUDIO_MTX_C0: usize = 0;
+const STUDIO_MTX_C1: usize = COLS - 1; // 24
 
-/// Whether grid cell `(c, r)` belongs to the reduced studio matrix: inside the
-/// trimmed rows/cols and not one of its four corners.
-fn is_studio_cell(c: usize, r: usize) -> bool {
-    if !(STUDIO_MTX_R0..=STUDIO_MTX_R1).contains(&r)
-        || !(STUDIO_MTX_C0..=STUDIO_MTX_C1).contains(&c)
-    {
-        return false;
-    }
-    let corner =
-        (r == STUDIO_MTX_R0 || r == STUDIO_MTX_R1) && (c == STUDIO_MTX_C0 || c == STUDIO_MTX_C1);
-    !corner
-}
 // [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
 // slower / smoother. 0.07 ≈ a soft ~500ms settle at 60fps — deliberately gentle
 // so a new line rises in without the quick "snap" that read as a glitch.
@@ -414,10 +402,6 @@ struct Aura {
     phase: f32,
     btn_angle: f32,
     eligible: Vec<usize>, // non-edge, non-button cells (the voice-density field)
-    // [GRAIN] The reduced studio field: the cells lit in the EXPANDED pill
-    // (`is_studio_cell`). No orange button zone here — the expanded matrix is
-    // purely voice-reactive white/gray.
-    studio_eligible: Vec<usize>,
     dots: Vec<Rgba>,
     rng: Rng,
 }
@@ -425,14 +409,10 @@ struct Aura {
 impl Aura {
     fn new() -> Self {
         let mut eligible = Vec::new();
-        let mut studio_eligible = Vec::new();
         for r in 0..ROWS {
             for c in 0..COLS {
                 if !is_edge(c, r) && !is_button(c, r) {
                     eligible.push(r * COLS + c);
-                }
-                if is_studio_cell(c, r) {
-                    studio_eligible.push(r * COLS + c);
                 }
             }
         }
@@ -441,100 +421,124 @@ impl Aura {
             phase: 0.0,
             btn_angle: 0.0,
             eligible,
-            studio_eligible,
             dots: vec![NONE; ROWS * COLS],
             rng: Rng(0x9E3779B97F4A7C15),
         }
     }
 
-    /// [GRAIN] Roll the REDUCED studio field: a purely voice-reactive white/gray
-    /// scatter over `studio_eligible` only — no orange recording/processing zone,
-    /// no idle sweep. Every other cell is turned fully OFF so the trimmed shape
-    /// (with its curved, corner-clipped edges) is exactly what shows in the
-    /// expanded pill, regardless of `PillState`.
-    fn roll_studio(&mut self, amp: f32) {
+    /// [GRAIN] Roll the REDUCED studio field for IDLE/FALLBACK: a calm, dim
+    /// breathing presence in the 2-row strip. Center columns glow faintly and
+    /// pulse gently so the user knows the pill is alive. Unlit = fully black.
+    fn roll_studio(&mut self, _amp: f32) {
         self.phase += 1.0;
-        self.energy = self.energy * 0.35 + amp * 0.65;
-        let lit_base = self.energy;
-        let flicker = 0.10;
-        let jitter = if lit_base > 0.001 {
-            (self.rng.f32() - 0.5) * flicker
-        } else {
-            0.0
-        };
-        let lit_ratio = (lit_base + jitter).clamp(0.0, 0.94);
 
-        // Everything OFF; only the voice-lit studio cells will appear.
+        // Everything OFF.
         for d in self.dots.iter_mut() {
             *d = NONE;
         }
 
-        let mut eligible = self.studio_eligible.clone();
-        let active_count = (eligible.len() as f32 * lit_ratio).round() as usize;
-        let hot_count = (active_count as f32 * 0.08).round() as usize;
-        for i in (1..eligible.len()).rev() {
-            let j = (self.rng.f32() * (i as f32 + 1.0)) as usize;
-            eligible.swap(i, j.min(i));
-        }
-        for (k, &idx) in eligible.iter().enumerate() {
-            if k >= active_count {
-                break;
-            }
-            if k < hot_count {
-                self.dots[idx] = [189, 193, 201, 235];
-            } else {
-                let a = (0.34 + lit_base * 0.30 + self.rng.f32() * flicker).min(0.82);
-                let g = self.rng.f32();
-                let (rr, gg, bb) = if g < 0.33 {
-                    (168, 174, 184)
-                } else if g < 0.66 {
-                    (140, 148, 160)
-                } else {
-                    (200, 204, 212)
-                };
-                self.dots[idx] = [rr, gg, bb, (a * 255.0) as u8];
+        // Gentle breathing: center columns pulse softly, fading toward edges.
+        let center = (STUDIO_MTX_C0 + STUDIO_MTX_C1) as f32 / 2.0; // 12.0
+        let max_dist = center - STUDIO_MTX_C0 as f32; // 12.0
+        let breath = 0.15 + 0.10 * (self.phase * 0.04).sin();
+        for r in STUDIO_MTX_R0..=STUDIO_MTX_R1 {
+            for c in STUDIO_MTX_C0..=STUDIO_MTX_C1 {
+                if is_edge(c, r) {
+                    continue;
+                }
+                let dist = (c as f32 - center).abs();
+                // Only the inner ~6 columns glow; outer columns stay black.
+                let a = ((1.0 - dist / (max_dist * 0.5)).max(0.0) * breath).clamp(0.0, 0.5);
+                if a > 0.02 {
+                    self.dots[r * COLS + c] = [150, 160, 180, (a * 255.0) as u8];
+                }
             }
         }
-        self.energy = (self.energy * 0.74).max(0.0);
     }
 
-    /// [GRAIN] The RECORDING state's studio field: a proper waveform drawn in the
-    /// reduced dot grid (not a random scatter). Each visible column is a vertical
-    /// slice symmetric about the horizontal center — the inner rows form an
-    /// always-present center line whose brightness tracks the mic level, and the
-    /// outer rows bloom in on louder columns. A center-tall envelope tapers the
-    /// curved ends and a slow traveling ripple makes the crest move like real
-    /// audio. All non-studio cells stay OFF.
+    /// [GRAIN] Roll the PROCESSING state's studio field: orange sparkle across
+    /// the 2-row strip, matching the collapsed pill's orange processing but
+    /// constrained to the studio rows only. Unlit = fully black.
+    fn roll_studio_processing(&mut self) {
+        self.phase += 1.0;
+
+        for d in self.dots.iter_mut() {
+            *d = NONE;
+        }
+
+        for r in STUDIO_MTX_R0..=STUDIO_MTX_R1 {
+            for c in STUDIO_MTX_C0..=STUDIO_MTX_C1 {
+                if is_edge(c, r) {
+                    continue;
+                }
+                let shade = self.rng.f32();
+                let (rr, gg, bb) = if shade < 0.40 {
+                    (255, 93, 30)   // deep orange
+                } else if shade < 0.72 {
+                    (255, 145, 70)  // mid orange
+                } else {
+                    (255, 185, 110) // light orange
+                };
+                let a = if self.rng.f32() < 0.30 {
+                    0.60 + self.rng.f32() * 0.40
+                } else {
+                    0.10 + self.rng.f32() * 0.25
+                };
+                self.dots[r * COLS + c] = [rr, gg, bb, (a * 255.0) as u8];
+            }
+        }
+    }
+
+    /// [GRAIN] The RECORDING state's studio field: 2 rows (3–4), full pill width.
+    /// Volume (mic amplitude) determines how many columns light up symmetrically
+    /// from the horizontal center outward — silence = nothing lit, louder = more
+    /// columns bloom toward the edges. Unlit = fully black (NONE).
     fn roll_studio_waveform(&mut self, amp: f32) {
         self.phase += 1.0;
-        self.energy = self.energy * 0.5 + amp * 0.5;
+        // Asymmetric smoothing: fast attack (0.65) so quiet speech registers
+        // immediately, slower decay (0.35) so the glow lingers naturally.
+        if amp > self.energy {
+            self.energy = self.energy * 0.35 + amp * 0.65;
+        } else {
+            self.energy = self.energy * 0.7 + amp * 0.3;
+        }
         let level = self.energy.clamp(0.0, 1.0);
 
         for d in self.dots.iter_mut() {
             *d = NONE;
         }
 
-        let center = (STUDIO_MTX_R0 + STUDIO_MTX_R1) as f32 / 2.0; // 3.5
-        let cols = (STUDIO_MTX_C1 - STUDIO_MTX_C0) as f32;
-        for c in STUDIO_MTX_C0..=STUDIO_MTX_C1 {
-            let x = (c - STUDIO_MTX_C0) as f32 / cols;
-            // Curved-end taper + a traveling ripple so the crest moves.
-            let env = 0.55 + 0.45 * (std::f32::consts::PI * x).sin();
-            let ripple = 0.5 + 0.5 * (self.phase * 0.20 + c as f32 * 0.7).sin();
-            let v = (level * env * (0.4 + 0.6 * ripple)).clamp(0.0, 1.0);
-            for r in STUDIO_MTX_R0..=STUDIO_MTX_R1 {
-                if !is_studio_cell(c, r) {
+        // Center column is 12.0 (between cols 12 and 13 for a 25-wide grid).
+        let center = (STUDIO_MTX_C0 + STUDIO_MTX_C1) as f32 / 2.0; // 12.0
+        // Maximum distance from center to an edge column.
+        let max_dist = center - STUDIO_MTX_C0 as f32; // 12.0
+        // Square-root curve: amplifies low volumes (0.1 → 0.32, 0.25 → 0.50)
+        // while keeping medium/high volumes natural (0.5 → 0.71, 1.0 → 1.0).
+        let shaped = level.sqrt();
+        let reach = shaped * max_dist;
+
+        for r in STUDIO_MTX_R0..=STUDIO_MTX_R1 {
+            for c in STUDIO_MTX_C0..=STUDIO_MTX_C1 {
+                if is_edge(c, r) {
                     continue;
                 }
-                let dist = (r as f32 - center).abs(); // 0.5 (inner) or 1.5 (outer)
-                let a = if dist < 1.0 {
-                    0.22 + 0.60 * v // center line, always faintly present
-                } else {
-                    ((v - 0.30) / 0.60).clamp(0.0, 1.0) * 0.9 // outer crest blooms on peaks
-                };
-                if a > 0.02 {
-                    self.dots[r * COLS + c] = [200, 204, 212, (a.clamp(0.0, 1.0) * 255.0) as u8];
+                let dist = (c as f32 - center).abs(); // 0.0 to 12.0
+                if dist > reach {
+                    continue; // outside the volume reach → stays black
                 }
+                // Brightness: brighter near center, dimmer at the edges of reach.
+                let proximity = 1.0 - (dist / reach.max(0.01));
+                let a = (0.30 + proximity * 0.55 + self.rng.f32() * 0.08).clamp(0.0, 0.92);
+                // Slight color variation: brighter at center.
+                let g = self.rng.f32();
+                let (rr, gg, bb) = if proximity > 0.7 {
+                    (200, 204, 212) // bright center
+                } else if g < 0.5 {
+                    (168, 174, 184) // mid
+                } else {
+                    (140, 148, 160) // dim edge
+                };
+                self.dots[r * COLS + c] = [rr, gg, bb, (a * 255.0) as u8];
             }
         }
     }
@@ -1201,14 +1205,12 @@ fn draw_control_row(
     let x_cx = cap_right - STUDIO_PAD - 11.0;
     draw_x_button(pixmap, x_cx, cy, side);
 
-    // CENTER — the reduced dot-matrix aura, as the waveform. Full opacity and fixed
-    // at the window center so it stays put while the capsule grows. The lit rows
-    // are 2..=5, so offset the full-grid origin up by their center (20px) to sit
-    // the VISIBLE block on the control-row axis (`cy`).
+    // CENTER — the reduced 2-row dot-matrix, centered on the control row.
+    // Rows 3–4 are the studio strip; their vertical center sits on `cy`.
     let (w, _) = studio_pixel_size();
     let field_w = COLS as f32 * CELL;
     let mtx_left = (w as f32 - field_w) / 2.0;
-    let visible_mid = (STUDIO_MTX_R0 as f32 + STUDIO_MTX_R1 as f32 + 1.0) * 0.5 * CELL; // 20px
+    let visible_mid = (STUDIO_MTX_R0 as f32 + STUDIO_MTX_R1 as f32 + 1.0) * 0.5 * CELL;
     draw_dot_matrix(pixmap, dots, mtx_left, cy - visible_mid, fade);
 }
 
@@ -2573,14 +2575,14 @@ impl ApplicationHandler<UserEvent> for App {
                 // calm; everything else eases every frame for smoothness.
                 if now >= self.next_roll {
                     let amp = self.current_amp();
-                    // The expanded pill uses the REDUCED field: a true waveform
-                    // while recording, the voice-reactive scatter for the other
-                    // states. The collapsed pill keeps its full state-driven roll.
+                    // The expanded pill uses the 2-column field: center-outward
+                    // waveform while recording, orange sparkle while processing,
+                    // calm breathing for idle/fallback. Collapsed pill unchanged.
                     if self.mode == PillMode::Studio {
-                        if self.state == PillState::Recording {
-                            self.aura.roll_studio_waveform(amp);
-                        } else {
-                            self.aura.roll_studio(amp);
+                        match self.state {
+                            PillState::Recording => self.aura.roll_studio_waveform(amp),
+                            PillState::Processing => self.aura.roll_studio_processing(),
+                            _ => self.aura.roll_studio(amp),
                         }
                     } else {
                         self.aura.roll(self.state, amp);
@@ -2697,10 +2699,10 @@ mod tests {
             // recording, the reactive scatter otherwise.
             let mut aura = Aura::new();
             for _ in 0..3 {
-                if state == PillState::Recording {
-                    aura.roll_studio_waveform(0.6);
-                } else {
-                    aura.roll_studio(0.6);
+                match state {
+                    PillState::Recording => aura.roll_studio_waveform(0.6),
+                    PillState::Processing => aura.roll_studio_processing(),
+                    _ => aura.roll_studio(0.6),
                 }
             }
             // The sample text overflows 4 lines → render the capped (max-height)
