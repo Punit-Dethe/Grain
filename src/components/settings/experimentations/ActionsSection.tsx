@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   AppWindow,
   Globe,
@@ -8,6 +8,7 @@ import {
   Pencil,
   Trash2,
   FolderOpen,
+  Crosshair,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { ActionTarget, VoiceAction } from "@/bindings";
@@ -42,6 +43,20 @@ export const ActionsSection: React.FC = () => {
   const updating = isUpdating("actions");
 
   const [form, setForm] = useState(emptyForm);
+  // Which target row is mid-capture, and its live countdown (null = idle).
+  const [capturing, setCapturing] = useState<{
+    index: number;
+    countdown: number;
+  } | null>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Clear any pending capture timers on unmount so we never touch a dead component.
+  useEffect(
+    () => () => {
+      timers.current.forEach(clearTimeout);
+    },
+    [],
+  );
 
   const trimmedTrigger = form.trigger.trim();
   const validTargets = form.targets.filter((t) => t.value.trim().length > 0);
@@ -82,6 +97,45 @@ export const ActionsSection: React.FC = () => {
     if (res.status === "ok" && res.data) {
       setTarget(i, { value: res.data });
     }
+  };
+
+  // "Capture focused app": a short countdown lets the user switch to their
+  // target app (this Settings window is focused right now), then we read the
+  // foreground app on the backend and fill this row. A browser with a resolved
+  // URL becomes a Website target (its host); anything else becomes an App target
+  // with the launchable executable path — reusing the same detection that powers
+  // Context Aware's capture, which handles Microsoft Store apps well.
+  const startCapture = (i: number) => {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+    setCapturing({ index: i, countdown: 3 });
+    for (let s = 1; s <= 2; s++) {
+      timers.current.push(
+        setTimeout(
+          () => setCapturing({ index: i, countdown: 3 - s }),
+          s * 1000,
+        ),
+      );
+    }
+    timers.current.push(
+      setTimeout(async () => {
+        setCapturing(null);
+        const app = await commands.detectActiveApp();
+        if (!app) {
+          toast.error("Couldn't detect the focused app. Try again.");
+          return;
+        }
+        if (app.url_host) {
+          setTarget(i, { kind: "url", value: app.url_host });
+        } else if (app.exe_path) {
+          setTarget(i, { kind: "app", value: app.exe_path });
+        } else {
+          toast.error(
+            `Couldn't resolve a launchable path for ${app.name || app.exe}.`,
+          );
+        }
+      }, 3000),
+    );
   };
 
   const testTargets = async (targets: ActionTarget[]) => {
@@ -222,6 +276,26 @@ export const ActionsSection: React.FC = () => {
                 disabled={updating}
               />
 
+              {/* Capture the currently focused app/site into this row. */}
+              <button
+                type="button"
+                onClick={() => startCapture(i)}
+                disabled={updating || capturing !== null}
+                title="Capture focused app — switch to it during the countdown"
+                className={`shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                  capturing?.index === i
+                    ? "text-accent"
+                    : "text-ink-soft hover:text-accent"
+                }`}
+              >
+                {capturing?.index === i ? (
+                  <span className="text-xs font-mono w-4 text-center tabular-nums">
+                    {capturing.countdown}
+                  </span>
+                ) : (
+                  <Crosshair width={16} height={16} />
+                )}
+              </button>
               {target.kind === "app" && (
                 <button
                   type="button"

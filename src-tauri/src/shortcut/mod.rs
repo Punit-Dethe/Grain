@@ -777,6 +777,9 @@ pub fn update_app_modes(app: AppHandle, modes: Vec<settings::AppMode>) -> Result
 pub struct DetectedApp {
     /// Executable stem (the value a `Process` mode matches on).
     pub exe: String,
+    /// Full, launchable executable path (for voice actions' app capture). Empty
+    /// when it couldn't be resolved.
+    pub exe_path: String,
     /// Human-facing name (window title, for display).
     pub name: String,
     /// Browser address-bar host, when the foreground app is a browser and the
@@ -792,6 +795,7 @@ pub fn detect_active_app() -> Option<DetectedApp> {
     // The capture button only needs the app/URL, not focused-field terms.
     crate::context_detect::detect_active_context(false).map(|c| DetectedApp {
         exe: c.exe,
+        exe_path: c.exe_path,
         name: c.app_name,
         url_host: c.url_host,
     })

@@ -290,7 +290,8 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 },
 /**
  * [GRAIN] Persist the user's voice actions (trigger → open apps/sites). Drops
- * entries with a blank trigger or no targets, and prunes blank target values.
+ * entries with a blank trigger or no targets, and prunes blank target values —
+ * the UI enforces this too, but this guards direct invoke calls.
  */
 async updateActions(actions: VoiceAction[]) : Promise<Result<null, string>> {
     try {
@@ -301,7 +302,8 @@ async updateActions(actions: VoiceAction[]) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] Open a set of action targets on demand — powers the Settings "Test" button.
+ * [GRAIN] Open a set of targets on demand — powers the Settings "Test" button so
+ * a user can confirm an action before saving it.
  */
 async runAction(targets: ActionTarget[]) : Promise<Result<null, string>> {
     try {
@@ -312,8 +314,9 @@ async runAction(targets: ActionTarget[]) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] Native file picker for choosing an application/executable to launch.
- * Returns the absolute path, or null if the dialog was cancelled.
+ * [GRAIN] Native file picker for choosing an application/executable to launch,
+ * so users never have to type a path. Returns the absolute path, or `None` if
+ * the dialog was cancelled. Runs the modal off the async executor.
  */
 async pickActionApp() : Promise<Result<string | null, string>> {
     try {
@@ -1172,6 +1175,13 @@ streamTextEvent: "stream-text-event"
 /** user-defined types **/
 
 /**
+ * [GRAIN] One thing a voice ACTION opens. `App` is launched with the OS default
+ * handler (an executable, a document, or a folder — cross-platform via the
+ * opener); `Url` is opened in the user's default browser. Kept as a two-variant
+ * enum so the UI stays a single App/Website toggle (childishly simple).
+ */
+export type ActionTarget = { kind: "app"; value: string } | { kind: "url"; value: string }
+/**
  * One conversation turn from the frontend.
  */
 export type AgentMessage = { 
@@ -1187,17 +1197,6 @@ role: string; content: string }
  * matches `"…mail.google.com"`), so users type a bare host, not a regex.
  */
 export type AppMatch = { kind: "process"; value: string } | { kind: "url_host"; value: string }
-/**
- * [GRAIN] One thing a voice ACTION opens: an application/file/folder (launched
- * with the OS default handler) or a URL (opened in the default browser).
- */
-export type ActionTarget = { kind: "app"; value: string } | { kind: "url"; value: string }
-/**
- * [GRAIN] A voice ACTION (Experimentations tab): when the trigger phrase is
- * spoken, every target opens and the trigger is stripped from the pasted text.
- * One action can open several apps + sites at once (a "workflow").
- */
-export type VoiceAction = { id: string; trigger: string; targets: ActionTarget[]; enabled?: boolean }
 /**
  * [GRAIN] A user-defined "mode": a specific post-processing prompt (HARD
  * formatting) applied ONLY when its `matcher` hits the active app/site. This is
@@ -1220,7 +1219,7 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
-snippets?: Snippet[];
+snippets?: Snippet[]; 
 /**
  * [GRAIN] Voice actions (Experimentations tab): trigger phrase → open apps/sites.
  */
@@ -1332,6 +1331,11 @@ export type DetectedApp = {
  * Executable stem (the value a `Process` mode matches on).
  */
 exe: string; 
+/**
+ * Full, launchable executable path (for voice actions' app capture). Empty
+ * when it couldn't be resolved.
+ */
+exe_path: string; 
 /**
  * Human-facing name (window title, for display).
  */
@@ -1498,6 +1502,15 @@ export type SttProviderKind =
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * [GRAIN] A voice ACTION (Experimentations tab): when the (normalized) trigger
+ * phrase is spoken, every `target` is opened and the trigger is stripped from
+ * the pasted text. One action can open several apps + sites at once — a
+ * "workflow" (e.g. "start coding" opens the editor, terminal, and two docs).
+ * Matching reuses the snippet matcher, so it is case/punctuation tolerant and
+ * survives rolling-window chunk artifacts. No AI, no network — a local launch.
+ */
+export type VoiceAction = { id: string; trigger: string; targets: ActionTarget[]; enabled?: boolean }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

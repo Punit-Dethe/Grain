@@ -108,17 +108,32 @@ const STUDIO_MAX_LINES: usize = 4;
 // Height of the top dissolve band (only active once the card hits the 4-line
 // cap; while growing the text is crisp to the top gap, no fade).
 const STUDIO_FADE_PX: f32 = 22.0;
-// Bottom control row (dot · waveform · timer + cancel). Handy `--ov-base-h`.
-const STUDIO_CTRL_H: f32 = 40.0;
+// Bottom control row: recording dot (left) · dot-matrix "waveform" (center) ·
+// cancel X (right). Its height matches the small pill's dot field (ROWS·CELL) so
+// the collapsed capsule can grow into it without the matrix changing size.
+const STUDIO_CTRL_H: f32 = ROWS as f32 * CELL; // 40.0 at CELL=5
+                                               // [GRAIN] A breathing gap BELOW the control row so the dot-matrix never touches
+                                               // the capsule's bottom edge (per the unified-pill spec — the pill "grows a little
+                                               // bit down" past the matrix).
+const STUDIO_BOTTOM_PAD: f32 = 8.0;
 // [GRAIN] The card GROWS with the transcript: 1 line → 4 lines, then it caps and
 // scrolls. The OS window is sized to the TALLEST the card ever gets (the capped
 // 4-line height) and shorter cards are drawn bottom-anchored inside it, the
 // space above left transparent — so growth is pure compositing (no per-frame
 // window resize). At the cap the top gap is 0, so max height omits it.
-const STUDIO_MAX_CARD_H: f32 = STUDIO_LINE_HEIGHT * STUDIO_MAX_LINES as f32 + STUDIO_CTRL_H;
-// [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
-// slower / smoother. 0.07 ≈ a soft ~500ms settle at 60fps — deliberately gentle
-// so a new line rises in without the quick "snap" that read as a glitch.
+const STUDIO_MAX_CARD_H: f32 =
+    STUDIO_LINE_HEIGHT * STUDIO_MAX_LINES as f32 + STUDIO_CTRL_H + STUDIO_BOTTOM_PAD;
+
+// [GRAIN] Unified pill: the streaming ("Studio") surface EXPANDS from the small
+// pill. The dot-matrix aura (the small pill's entire body) becomes the bottom-
+// center "waveform"; the black capsule eases outward from the collapsed width to
+// the full card width so the recording dot (left) and cancel X (right) ride the
+// animated edges, and the transcript + controls fade in with `expand`.
+const STUDIO_MIN_W: f32 = COLS as f32 * CELL; // collapsed pill width (the dot field)
+const STUDIO_EXPAND_EASE: f32 = 0.16; // per-frame ease of the width grow (~200ms)
+                                      // [GRAIN] Per-frame easing for the card's grow toward its target height. Lower =
+                                      // slower / smoother. 0.07 ≈ a soft ~500ms settle at 60fps — deliberately gentle
+                                      // so a new line rises in without the quick "snap" that read as a glitch.
 const STUDIO_GROW_EASE: f32 = 0.07;
 // New transcript words ramp their alpha in over this long instead of popping.
 // Slower = smoother; long enough that fast streaming words dissolve in rather
@@ -128,14 +143,6 @@ const STUDIO_WORD_REVEAL: Duration = Duration::from_millis(260);
 // [GRAIN] Grain's brand accent (the pill's orange), reused for the live overlay's
 // dot / waveform / timer so the Studio Window matches the collapsed capsule.
 const ACCENT: [u8; 3] = [255, 93, 30];
-
-// ── Bottom control-row waveform (replaces the old dot-matrix equalizer) ──────
-// A simple reactive bar meter, centered in the control row — Handy's `.swave`.
-const WAVE_BARS: usize = 9;
-const WAVE_BAR_W: f32 = 4.0;
-const WAVE_GAP: f32 = 3.0;
-const WAVE_MAX_H: f32 = 18.0;
-const WAVE_MIN_H: f32 = 3.0;
 
 /// A rounded-rect path (quadratic corners — plenty smooth at this size; tiny-skia
 /// has no built-in rounded-rect constructor). Used for the Studio Window background.
@@ -737,6 +744,14 @@ thread_local! {
 /// (left) · reactive waveform (center) · elapsed timer + cancel glyph (right).
 /// `fade` is the whole-card opacity (0..1), `phase` the animation clock, `amp`
 /// the current mic level (0..1), `elapsed_secs` the recording timer.
+/// [GRAIN] Paint the unified pill's EXPANDED (streaming) surface: a black capsule
+/// that eases outward from the collapsed pill width to the full card, carrying the
+/// live transcript on top and — pinned to the bottom — the recording dot (left),
+/// the dot-matrix aura as the "waveform" (center), and the cancel X (right). The
+/// dot-matrix is the very same COLS×ROWS field the collapsed pill shows, so the
+/// two states are one continuous design. Windowing-free (rendered to a PNG in
+/// tests). `expand` (0..1) grows the width and fades in the transcript + side
+/// controls; the dot-matrix stays full-opacity throughout (it IS the small pill).
 #[allow(clippy::too_many_arguments)]
 fn paint_studio_card(
     pixmap: &mut Pixmap,
@@ -744,8 +759,6 @@ fn paint_studio_card(
     state: PillState,
     fade: f32,
     phase: f32,
-    amp: f32,
-    elapsed_secs: u64,
     font: Option<&fontdue::Font>,
     // [GRAIN] The (eased) drawn card height and the transcript's line count. The
     // card is bottom-anchored inside the fixed-size window; `n_lines` decides the
@@ -754,6 +767,10 @@ fn paint_studio_card(
     n_lines: usize,
     // Per-word reveal multipliers (see `draw_transcript`); `&[]` = fully revealed.
     reveal_alpha: &[f32],
+    // The pre-rolled dot-matrix aura (COLS×ROWS) — drawn as the center waveform.
+    dots: &[Rgba],
+    // Width-grow 0..1 (collapsed pill width → full card width).
+    expand: f32,
 ) {
     let (w, h) = studio_pixel_size();
     let (wf, hf) = (w as f32, h as f32);
@@ -761,29 +778,40 @@ fn paint_studio_card(
 
     // The card hugs the window's BOTTOM edge and grows upward; the region above
     // it stays fully transparent so shorter cards simply appear smaller.
-    let card_h = card_h.clamp(studio_card_height(1), hf);
+    let card_h = card_h.clamp(studio_card_height(0), hf);
     let card_top = hf - card_h;
     let at_cap = n_lines >= STUDIO_MAX_LINES;
 
-    // 1) Card background: a near-black panel with a 1px inner top highlight so
+    // Capsule spans an eased width, centered; bottom-anchored, grows upward.
+    let expand = expand.clamp(0.0, 1.0);
+    let cap_w = STUDIO_MIN_W + (wf - STUDIO_MIN_W) * expand;
+    let cap_left = (wf - cap_w) / 2.0;
+    let cap_right = cap_left + cap_w;
+
+    // 1) Capsule background: a near-black panel with a 1px inner top highlight so
     // it reads as a raised premium surface, not a flat rectangle.
     let mut bg = Paint {
         anti_alias: true,
         ..Default::default()
     };
     bg.set_color(Color::from_rgba8(13, 13, 15, (244.0 * fade) as u8));
-    if let Some(path) = rounded_rect_path(0.0, card_top, wf, card_h, STUDIO_CORNER_R) {
+    if let Some(path) = rounded_rect_path(cap_left, card_top, cap_w, card_h, STUDIO_CORNER_R) {
         pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
     }
     let mut hair = Paint {
         anti_alias: true,
         ..Default::default()
     };
-    hair.set_color(Color::from_rgba8(255, 255, 255, (14.0 * fade) as u8));
+    hair.set_color(Color::from_rgba8(
+        255,
+        255,
+        255,
+        (14.0 * fade * expand) as u8,
+    ));
     if let Some(rect) = Rect::from_ltrb(
-        STUDIO_CORNER_R,
+        cap_left + STUDIO_CORNER_R,
         card_top + 0.5,
-        wf - STUDIO_CORNER_R,
+        cap_right - STUDIO_CORNER_R,
         card_top + 1.5,
     ) {
         pixmap.fill_path(
@@ -795,28 +823,32 @@ fn paint_studio_card(
         );
     }
 
-    // 2) Live transcript. While growing (1–3 lines) it sits below a small top
-    // gap and stays crisp to the top; at the cap the gap closes to the edge and
-    // the top dissolve (`at_cap`) melts the oldest line into the surface.
+    // 2) Live transcript, fading in with the expansion. While growing (1–3 lines)
+    // it sits below a small top gap and stays crisp to the top; at the cap the gap
+    // closes and the top dissolve (`at_cap`) melts the oldest line into the surface.
     let top_gap = if at_cap { 0.0 } else { STUDIO_GROW_TOP_GAP };
     let text_top = card_top + top_gap;
-    let ctrl_top = card_top + card_h - STUDIO_CTRL_H;
+    let ctrl_top = card_top + card_h - STUDIO_CTRL_H - STUDIO_BOTTOM_PAD;
     if let Some(font) = font {
-        // Leave a hair of space so descenders never touch the control row.
-        draw_transcript(
-            pixmap,
-            asr,
-            font,
-            text_top,
-            ctrl_top - 2.0,
-            fade,
-            at_cap,
-            reveal_alpha,
-        );
+        if expand > 0.01 && n_lines > 0 {
+            // Leave a hair of space so descenders never touch the control row.
+            draw_transcript(
+                pixmap,
+                asr,
+                font,
+                text_top,
+                ctrl_top - 2.0,
+                fade * expand,
+                at_cap,
+                reveal_alpha,
+            );
+        }
     }
 
     // 3) Control row pinned to the card's bottom.
-    draw_control_row(pixmap, state, amp, phase, elapsed_secs, ctrl_top, wf, fade, font);
+    draw_control_row(
+        pixmap, state, phase, dots, cap_left, cap_right, ctrl_top, fade, expand,
+    );
 }
 
 /// Studio pixel size — the single source of truth used by both the free painter
@@ -839,17 +871,19 @@ fn studio_card_height(n: usize) -> f32 {
     } else {
         STUDIO_GROW_TOP_GAP
     };
-    top_gap + n as f32 * STUDIO_LINE_HEIGHT + STUDIO_CTRL_H
+    top_gap + n as f32 * STUDIO_LINE_HEIGHT + STUDIO_CTRL_H + STUDIO_BOTTOM_PAD
 }
 
 /// How many lines the current transcript wraps to at the Studio width (before
 /// the cap) — this drives the card's grow height. `1` when empty so a fresh
 /// session opens at its smallest size rather than flashing tall.
 fn studio_line_count(asr: &AsrDisplay, font: Option<&fontdue::Font>) -> usize {
-    let Some(font) = font else { return 1 };
+    let Some(font) = font else { return 0 };
     let runs = asr.display_runs();
     if runs.is_empty() {
-        return 1;
+        // No transcript yet → 0 lines: the card opens at the bare dot-matrix
+        // height (like the small pill) and grows as words stream in.
+        return 0;
     }
     let (cw, _) = studio_pixel_size();
     let max_w = cw as f32 - 2.0 * STUDIO_PAD;
@@ -1000,79 +1034,85 @@ fn fade_top_band(layer: &mut Pixmap, fade_px: f32) {
 /// Processing/Fallback swap the dot for a spinner and the waveform for a status
 /// label. The cancel glyph is display-only for now (the pill has no back-channel
 /// to the core); it mirrors Handy's `.sx` purely for visual parity.
+/// The unified pill's bottom control row: recording dot (left) · the dot-matrix
+/// aura as the "waveform" (center) · cancel X (right). The dot/X ride the capsule's
+/// animated edges (`cap_left`/`cap_right`) and fade in with `expand`; the matrix
+/// is drawn at full opacity and fixed center (it is the collapsed pill, always
+/// present). Processing/Fallback keep the same layout — the matrix itself carries
+/// the state animation (processing shimmer), and the left dot becomes a spinner.
+#[allow(clippy::too_many_arguments)]
 fn draw_control_row(
     pixmap: &mut Pixmap,
     state: PillState,
-    amp: f32,
     phase: f32,
-    elapsed_secs: u64,
+    dots: &[Rgba],
+    cap_left: f32,
+    cap_right: f32,
     ctrl_top: f32,
-    wf: f32,
     fade: f32,
-    font: Option<&fontdue::Font>,
+    expand: f32,
 ) {
     let cy = ctrl_top + STUDIO_CTRL_H / 2.0;
     let recording = state == PillState::Recording;
+    // Side controls belong to the EXPANDED form only — fade them with the width so
+    // the collapsed pill (expand≈0) is just the bare dot-matrix, as before.
+    let side = fade * expand.clamp(0.0, 1.0);
 
     // LEFT — pulsing recording dot, or a spinner while finalizing.
-    let left_cx = STUDIO_PAD + 6.0;
+    let left_cx = cap_left + STUDIO_PAD + 6.0;
     if recording {
-        draw_rec_dot(pixmap, left_cx, cy, phase, fade);
+        draw_rec_dot(pixmap, left_cx, cy, phase, side);
     } else {
-        draw_spinner(pixmap, left_cx, cy, phase, fade);
+        draw_spinner(pixmap, left_cx, cy, phase, side);
     }
 
-    // RIGHT — cancel glyph, with the elapsed timer to its left while recording.
-    let x_cx = wf - STUDIO_PAD - 11.0; // 22px circle, 11px from the inset edge
-    draw_x_button(pixmap, x_cx, cy, fade);
-    if recording {
-        if let Some(font) = font {
-            let label = fmt_elapsed(elapsed_secs);
-            let tw = text_width(font, &label, 12.0);
-            let tx = x_cx - 11.0 - 10.0 - tw; // button half-width + gap
-            draw_word(
-                pixmap,
-                font,
-                &label,
-                12.0,
-                tx,
-                cy + 12.0 * 0.34,
-                [154, 152, 148],
-                fade,
-                0,
-            );
-        }
-    }
+    // RIGHT — cancel glyph (display-only), 22px circle inset from the edge.
+    let x_cx = cap_right - STUDIO_PAD - 11.0;
+    draw_x_button(pixmap, x_cx, cy, side);
 
-    // CENTER — reactive waveform while recording, else a status label.
-    if recording {
-        draw_waveform(pixmap, amp, phase, wf, cy, fade);
-    } else if let Some(font) = font {
-        let label = match state {
-            PillState::Processing => "Processing",
-            PillState::Fallback => "Error",
-            _ => "",
-        };
-        if !label.is_empty() {
-            let tw = text_width(font, label, 12.5);
-            draw_word(
-                pixmap,
-                font,
-                label,
-                12.5,
-                (wf - tw) / 2.0,
-                cy + 12.5 * 0.34,
-                [176, 178, 184],
-                fade,
-                0,
-            );
-        }
-    }
+    // CENTER — the dot-matrix aura (the small pill), as the waveform. Full opacity
+    // and fixed at the window center so it stays put while the capsule grows.
+    let (w, _) = studio_pixel_size();
+    let field_w = COLS as f32 * CELL;
+    let mtx_left = (w as f32 - field_w) / 2.0;
+    draw_dot_matrix(pixmap, dots, mtx_left, ctrl_top, fade);
 }
 
-/// Elapsed recording time as `m:ss` (Handy's overlay timer format).
-fn fmt_elapsed(secs: u64) -> String {
-    format!("{}:{:02}", secs / 60, secs % 60)
+/// Draw the COLS×ROWS aura dot-field at `(left, top)` (cell = `CELL·SCALE`),
+/// skipping the rounded-corner edge cells and scaling every dot's alpha by `fade`.
+/// This is the exact field the collapsed pill renders, reused as the expanded
+/// pill's center "waveform" so the two states share one dot language.
+fn draw_dot_matrix(pixmap: &mut Pixmap, dots: &[Rgba], left: f32, top: f32, fade: f32) {
+    let cell_px = CELL * SCALE;
+    let radius = DOT_D * SCALE / 2.0;
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    for row in 0..ROWS {
+        for col in 0..COLS {
+            if is_edge(col, row) {
+                continue;
+            }
+            let c = dots[row * COLS + col];
+            let a = (c[3] as f32 * fade) as u8;
+            if a == 0 {
+                continue;
+            }
+            let dx = left + col as f32 * cell_px + cell_px / 2.0;
+            let dy = top + row as f32 * cell_px + cell_px / 2.0;
+            if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
+                paint.set_color(Color::from_rgba8(c[0], c[1], c[2], a));
+                pixmap.fill_path(
+                    &circle,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
+            }
+        }
+    }
 }
 
 /// A solid accent dot with an expanding, fading pulse ring (Handy's `.sdot`).
@@ -1092,7 +1132,12 @@ fn draw_rec_dot(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
         }
     }
     if let Some(c) = PathBuilder::from_circle(cx, cy, 3.5) {
-        p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], (fade * 255.0) as u8));
+        p.set_color(Color::from_rgba8(
+            ACCENT[0],
+            ACCENT[1],
+            ACCENT[2],
+            (fade * 255.0) as u8,
+        ));
         pixmap.fill_path(&c, &p, FillRule::Winding, Transform::identity(), None);
     }
 }
@@ -1149,34 +1194,6 @@ fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32) {
             ..Default::default()
         };
         pixmap.stroke_path(&path, &stroke_paint, &stroke, Transform::identity(), None);
-    }
-}
-
-/// The center waveform — `WAVE_BARS` reactive bars whose heights track the mic
-/// level with a symmetric center-tall envelope plus a traveling ripple so it
-/// never reads as static (Handy's `.swave`, driven from our single RMS level).
-fn draw_waveform(pixmap: &mut Pixmap, amp: f32, phase: f32, wf: f32, cy: f32, fade: f32) {
-    let total_w = WAVE_BARS as f32 * WAVE_BAR_W + (WAVE_BARS as f32 - 1.0) * WAVE_GAP;
-    let x0 = (wf - total_w) / 2.0;
-    let mut p = Paint {
-        anti_alias: true,
-        ..Default::default()
-    };
-    p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], (fade * 255.0) as u8));
-    let half = (WAVE_BARS as f32 - 1.0) / 2.0;
-    for i in 0..WAVE_BARS {
-        // Center-tall envelope (edges 0.55 → center 1.0).
-        let d = (i as f32 - half).abs() / half;
-        let env = 0.55 + 0.45 * (1.0 - d);
-        // Per-bar traveling ripple keeps the meter alive at steady levels.
-        let ripple = 0.5 + 0.5 * (phase * 0.28 + i as f32 * 0.9).sin();
-        let v = (amp * env * (0.55 + 0.45 * ripple)).clamp(0.0, 1.0);
-        let bh = WAVE_MIN_H + v.powf(0.7) * (WAVE_MAX_H - WAVE_MIN_H);
-        let x = x0 + i as f32 * (WAVE_BAR_W + WAVE_GAP);
-        let y = cy - bh / 2.0;
-        if let Some(path) = rounded_rect_path(x, y, WAVE_BAR_W, bh, WAVE_BAR_W / 2.0) {
-            pixmap.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
-        }
     }
 }
 
@@ -1642,16 +1659,14 @@ struct App {
     /// ripple, dot pulse, spinner) — advances one step per rendered frame,
     /// independent of the dot-field roll cadence so the motion stays smooth.
     studio_phase: f32,
-    /// [GRAIN] Studio recording timer. `studio_since` is set when a session
-    /// enters Recording; `studio_elapsed` is refreshed from it each frame while
-    /// recording and then FROZEN once we leave Recording (the timer stops at the
-    /// value it had, matching Handy's overlay, rather than resetting to 0).
-    studio_since: Option<Instant>,
-    studio_elapsed: u64,
     /// [GRAIN] Eased Studio card height (px). Grows from a 1-line card toward the
     /// 4-line cap as the transcript wraps onto more lines; `0.0` means "unset —
     /// snap to the target on the next frame" (start of each session).
     studio_grown_h: f32,
+    /// [GRAIN] Eased Studio card WIDTH grow, 0..1 (collapsed pill width → full
+    /// card). Reset to 0 at each new session so the streaming pill visibly expands
+    /// from the small capsule; eases to 1 over ~200ms.
+    studio_expand: f32,
     /// [GRAIN] First-seen time per transcript word (global order) — drives the
     /// per-word fade-in. Grows as words are decoded; cleared each new session.
     reveal_since: Vec<Instant>,
@@ -1698,9 +1713,8 @@ impl App {
             studio_alpha: 0.0,
             closing: false,
             studio_phase: 0.0,
-            studio_since: None,
-            studio_elapsed: 0,
             studio_grown_h: 0.0,
+            studio_expand: 0.0,
             reveal_since: Vec::new(),
         }
     }
@@ -1893,12 +1907,10 @@ impl App {
         self.pixmap = Some(pixmap); // keep it for next frame
     }
 
-    /// The Native ASR Studio Window — a compact, deliberately-proportioned
-    /// caption card. Top-left: a small tracked status eyebrow. Top-right: a
-    /// frameless dot-matrix equalizer (the pill's dot-pixel language, sleeker
-    /// and without the capsule). Below: the live transcript, word-wrapped, with
-    /// committed text solid and the volatile tentative tail dimmed but crisp
-    /// (it keeps the preview moving between the engine's commit points).
+    /// The unified pill's EXPANDED (streaming) surface — the collapsed capsule
+    /// grown into a caption card: live transcript up top, and pinned to the bottom
+    /// the recording dot (left) · the dot-matrix aura as the "waveform" (center) ·
+    /// cancel X (right). The prompt riser still slides up from behind the top edge.
     fn render_studio(&mut self) {
         if self.window.is_none() {
             return;
@@ -1912,12 +1924,11 @@ impl App {
         // Advance the equalizer clock once per frame (smooth, cadence-free).
         self.studio_phase += 1.0;
         let fade = self.studio_alpha.clamp(0.0, 1.0);
-        let amp = self.current_amp();
 
         // [GRAIN] Grow the card smoothly toward the height its current line count
-        // needs (1 line → 4-line cap). First frame snaps; afterwards it eases so
-        // each new line rises in rather than jumping. Pure compositing inside the
-        // fixed max-size window — no OS resize.
+        // needs (0 lines = bare dot-matrix → 4-line cap). First frame snaps;
+        // afterwards it eases so each new line rises in rather than jumping. Pure
+        // compositing inside the fixed max-size window — no OS resize.
         let n_lines = studio_line_count(&self.asr, self.font.as_ref());
         let target_h = studio_card_height(n_lines);
         if self.studio_grown_h <= 0.0 {
@@ -1925,6 +1936,11 @@ impl App {
         } else {
             self.studio_grown_h += (target_h - self.studio_grown_h) * STUDIO_GROW_EASE;
         }
+
+        // [GRAIN] Width grow: the capsule eases open from the collapsed pill width
+        // to the full card so it reads as the small pill EXPANDING. Reset to 0 at
+        // each new session (mode change), so every stream opens with the grow.
+        self.studio_expand += (1.0 - self.studio_expand) * STUDIO_EXPAND_EASE;
 
         // [GRAIN] Per-word reveal: stamp the first-seen time of each word (indexed
         // by global order) so freshly-decoded words fade in instead of popping.
@@ -1944,12 +1960,13 @@ impl App {
             .reveal_since
             .iter()
             .map(|t| {
-                let x = (now.saturating_duration_since(*t).as_secs_f32() / reveal_ms).clamp(0.0, 1.0);
+                let x =
+                    (now.saturating_duration_since(*t).as_secs_f32() / reveal_ms).clamp(0.0, 1.0);
                 x * x * (3.0 - 2.0 * x) // smoothstep — ease-in-out
             })
             .collect();
 
-        // All drawing lives in the windowing-free `paint_studio_card` so it can
+        // Most drawing lives in the windowing-free `paint_studio_card` so it can
         // be rendered to a PNG in tests without a winit window/presenter.
         paint_studio_card(
             &mut pixmap,
@@ -1957,18 +1974,114 @@ impl App {
             self.state,
             fade,
             self.studio_phase,
-            amp,
-            self.studio_elapsed,
             self.font.as_ref(),
             self.studio_grown_h,
             n_lines,
             &reveal_alpha,
+            &self.aura.dots,
+            self.studio_expand,
         );
+
+        // [GRAIN] Prompt riser — same mid-speech prompt switcher as the collapsed
+        // pill, here sliding up from behind the (animated-width) capsule's top edge.
+        if self.riser_progress > 0.01 {
+            let (wf, hf) = (w as f32, h as f32);
+            let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
+            let card_top = hf - card_h;
+            let cap_w = STUDIO_MIN_W + (wf - STUDIO_MIN_W) * self.studio_expand.clamp(0.0, 1.0);
+            let cap_left = (wf - cap_w) / 2.0;
+            self.draw_studio_riser(&mut pixmap, cap_left, cap_left + cap_w, card_top, fade);
+        }
 
         if let Some(presenter) = &self.presenter {
             presenter.blit(&pixmap);
         }
         self.pixmap = Some(pixmap);
+    }
+
+    /// Draw the prompt riser for the EXPANDED pill: a near-black rounded-top bar
+    /// that slides up from behind the capsule's top edge (`card_top`), spanning the
+    /// capsule's current width (`px0..px1`), carrying the active prompt name with
+    /// `‹`/`›` arrows. Mirrors the collapsed pill's riser so prompt switching feels
+    /// identical in both states.
+    fn draw_studio_riser(&self, pixmap: &mut Pixmap, px0: f32, px1: f32, card_top: f32, fade: f32) {
+        let cell_px = Self::cell_px();
+        let peek = RISER_PEEK * cell_px;
+        let bar_top = card_top - peek * self.riser_progress;
+        let rr = (peek / 2.0).min((px1 - px0) / 2.0).max(0.0);
+        // Extend a little BELOW the capsule top so the bar tucks seamlessly behind
+        // the capsule (which is painted over it).
+        let bar_bottom = card_top + rr;
+        let alpha = (self.riser_progress.clamp(0.0, 1.0) * fade * 244.0) as u8;
+        if alpha == 0 {
+            return;
+        }
+
+        let mut p = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        p.set_color(Color::from_rgba8(13, 13, 15, alpha));
+        // Rounded-top capsule bar (square-ish bottom; the capsule hides it).
+        if let Some(rect) = Rect::from_ltrb(px0, bar_top + rr, px1, bar_bottom) {
+            pixmap.fill_path(
+                &PathBuilder::from_rect(rect),
+                &p,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+        if let Some(rect) = Rect::from_ltrb(px0 + rr, bar_top, px1 - rr, bar_bottom) {
+            pixmap.fill_path(
+                &PathBuilder::from_rect(rect),
+                &p,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
+        }
+        for cx in [px0 + rr, px1 - rr] {
+            if let Some(circle) = PathBuilder::from_circle(cx, bar_top + rr, rr) {
+                pixmap.fill_path(&circle, &p, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+
+        if let Some(font) = &self.font {
+            let font_px = peek * 0.6;
+            let cy = bar_top + peek / 2.0;
+            let arrow_inset = peek * 0.85;
+            let (lx, rx) = (px0 + arrow_inset, px1 - arrow_inset);
+            let text_a = self.riser_progress.clamp(0.0, 1.0) * fade;
+            let cached_left = CachedText::new(font, "\u{2039}", font_px);
+            let cached_right = CachedText::new(font, "\u{203a}", font_px);
+            draw_cached_text_centered(
+                pixmap,
+                &cached_left,
+                (lx, cy),
+                font_px,
+                [236, 229, 218],
+                text_a,
+            );
+            draw_cached_text_centered(
+                pixmap,
+                &cached_right,
+                (rx, cy),
+                font_px,
+                [236, 229, 218],
+                text_a,
+            );
+            if let Some(cached_label) = &self.cached_label {
+                draw_cached_text_centered(
+                    pixmap,
+                    cached_label,
+                    ((px0 + px1) / 2.0, cy),
+                    font_px,
+                    [236, 229, 218],
+                    text_a,
+                );
+            }
+        }
     }
 
     /// Draw the prompt riser bar (rounded top) and its label in the crescent
@@ -2170,15 +2283,6 @@ impl ApplicationHandler<UserEvent> for App {
             self.state = r.state;
             self.asr = r.asr.clone();
 
-            // [GRAIN] Studio recording timer: advance while Recording, freeze the
-            // instant we leave it (Processing keeps the final elapsed on screen).
-            if self.state == PillState::Recording {
-                let since = *self.studio_since.get_or_insert(now);
-                self.studio_elapsed = now.saturating_duration_since(since).as_secs();
-            } else {
-                self.studio_since = None;
-            }
-
             // [GRAIN] Resize/recreate the OS window the rare times the surface
             // actually changes (Collapsed <-> Studio) — never per frame. The
             // Presenter caches a fixed-size GDI bitmap, so it must be rebuilt
@@ -2197,11 +2301,10 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 self.pixmap = None;
                 self.studio_alpha = 0.0;
-                // Fresh session → reset the recording timer and re-snap the card
-                // to its starting (1-line) height so it grows from small again.
-                self.studio_since = None;
-                self.studio_elapsed = 0;
+                // Fresh session → re-snap the card to its starting (collapsed)
+                // size so it grows/expands from small again.
                 self.studio_grown_h = 0.0;
+                self.studio_expand = 0.0;
                 self.reveal_since.clear();
                 // A mode change always means a brand-new session just started
                 // (mode is only ever set from RecordingStarted) — never
@@ -2346,8 +2449,7 @@ pub fn run_pill() {
         };
         use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
         unsafe {
-            let _ =
-                SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.grain.app"));
+            let _ = SetCurrentProcessExplicitAppUserModelID(windows::core::w!("com.grain.app"));
             let _ = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
         }
     }
@@ -2406,20 +2508,25 @@ mod tests {
             .enumerate()
         {
             let mut card = Pixmap::new(cw, ch).unwrap();
+            // A rolled aura supplies the dot-matrix "waveform".
+            let mut aura = Aura::new();
+            for _ in 0..3 {
+                aura.roll(state, 0.6);
+            }
             // The sample text overflows 4 lines → render the capped (max-height)
-            // card so the top dissolve is exercised.
+            // card so the top dissolve is exercised. `expand = 1.0` = fully open.
             paint_studio_card(
                 &mut card,
                 &asr,
                 state,
                 1.0,
                 12.0,
-                0.6,
-                18,
                 Some(&font),
                 studio_card_height(STUDIO_MAX_LINES),
                 STUDIO_MAX_LINES,
                 &[],
+                &aura.dots,
+                1.0,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -2459,7 +2566,8 @@ mod tests {
         let margin = 24i32;
         let gap = 16i32;
         let bw = cw + margin as u32 * 2;
-        let bh = ch * samples.len() as u32 + margin as u32 * 2 + gap as u32 * (samples.len() as u32 - 1);
+        let bh =
+            ch * samples.len() as u32 + margin as u32 * 2 + gap as u32 * (samples.len() as u32 - 1);
         let mut bg = Pixmap::new(bw, bh).unwrap();
         bg.fill(Color::from_rgba8(205, 203, 198, 255));
 
@@ -2469,18 +2577,22 @@ mod tests {
             let n = studio_line_count(&asr, Some(&font));
             let card_h = studio_card_height(n);
             let mut card = Pixmap::new(cw, ch).unwrap();
+            let mut aura = Aura::new();
+            for _ in 0..3 {
+                aura.roll(PillState::Recording, 0.6);
+            }
             paint_studio_card(
                 &mut card,
                 &asr,
                 PillState::Recording,
                 1.0,
                 12.0,
-                0.6,
-                (i * 3) as u64,
                 Some(&font),
                 card_h,
                 n,
                 &[],
+                &aura.dots,
+                1.0,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -2496,6 +2608,74 @@ mod tests {
         let path = std::env::temp_dir().join("grain_studio_growth.png");
         bg.save_png(&path).expect("save png");
         eprintln!("STUDIO_GROWTH_PNG={}", path.display());
+    }
+
+    /// [GRAIN] Render the WIDTH-expand animation (`expand` 0 → 1) so the "small
+    /// pill grows into the streaming card" motion is eyeball-able: at 0 the capsule
+    /// is just the dot-matrix width (the collapsed pill) with the dot/X hidden; as
+    /// it opens, the capsule widens and the side controls fade in on the edges.
+    /// Not an assertion test — leaves a PNG artifact.
+    #[test]
+    fn studio_expand_strip_renders_to_png() {
+        use tiny_skia::PixmapPaint;
+
+        let font = font();
+        let (cw, ch) = studio_pixel_size();
+
+        let mut asr = AsrDisplay::default();
+        asr.append_commit(
+            "Hey there, so I just want to know how the light transcription is working",
+        );
+
+        let steps = [0.0_f32, 0.35, 0.7, 1.0];
+        let margin = 24i32;
+        let gap = 16i32;
+        let bw = cw + margin as u32 * 2;
+        let bh =
+            ch * steps.len() as u32 + margin as u32 * 2 + gap as u32 * (steps.len() as u32 - 1);
+        let mut bg = Pixmap::new(bw, bh).unwrap();
+        bg.fill(Color::from_rgba8(205, 203, 198, 255));
+
+        let mut aura = Aura::new();
+        for _ in 0..3 {
+            aura.roll(PillState::Recording, 0.6);
+        }
+        for (i, &expand) in steps.iter().enumerate() {
+            // The text only exists once expanded; while opening, height is minimal.
+            let n = if expand > 0.5 {
+                studio_line_count(&asr, Some(&font))
+            } else {
+                0
+            };
+            let card_h = studio_card_height(n);
+            let mut card = Pixmap::new(cw, ch).unwrap();
+            paint_studio_card(
+                &mut card,
+                &asr,
+                PillState::Recording,
+                1.0,
+                12.0,
+                Some(&font),
+                card_h,
+                n,
+                &[],
+                &aura.dots,
+                expand,
+            );
+            let y = margin + i as i32 * (ch as i32 + gap);
+            bg.draw_pixmap(
+                margin,
+                y,
+                card.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
+
+        let path = std::env::temp_dir().join("grain_studio_expand.png");
+        bg.save_png(&path).expect("save png");
+        eprintln!("STUDIO_EXPAND_PNG={}", path.display());
     }
 
     #[test]
