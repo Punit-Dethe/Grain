@@ -20,7 +20,7 @@ pub fn init_shortcuts(app: &AppHandle) {
 
     // Register all default shortcuts, applying user customizations
     for (id, default_binding) in default_bindings {
-        if id == "cancel" || id == "transcribe_send_to_ai" {
+        if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
             continue; // Skip dynamic shortcuts, they will be registered dynamically
         }
         // Skip post-processing shortcut when the feature is disabled

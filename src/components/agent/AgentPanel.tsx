@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { commands, type AgentMessage } from "@/bindings";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  RotateCcw,
+  X,
+  Check,
+} from "lucide-react";
+import { commands, type AgentMessage, type AgentAutocopy } from "@/bindings";
 import "./agent.css";
 
 type Role = "user" | "assistant";
@@ -13,37 +21,95 @@ interface ChatMessage {
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 // Glyph constants (kept out of JSX so the i18n lint doesn't treat them as copy).
-const CLOSE_X = "×";
 const SEND_ARROW = "↵";
-const SEP = "·";
+const ENTER_GLYPH = "⏎";
+
+/** Pretty-print one part of a shortcut binding for the keycap chips. */
+function keycapLabel(part: string): string {
+  const p = part.trim().toLowerCase();
+  switch (p) {
+    case "ctrl":
+    case "control":
+      return "Ctrl";
+    case "alt":
+      return "Alt";
+    case "option":
+      return "⌥";
+    case "shift":
+      return "⇧";
+    case "meta":
+    case "cmd":
+    case "command":
+      return "⌘";
+    case "enter":
+      return ENTER_GLYPH;
+    case "space":
+      return "Space";
+    case "escape":
+      return "Esc";
+    default:
+      return p.length === 1 ? p.toUpperCase() : p[0].toUpperCase() + p.slice(1);
+  }
+}
 
 /**
- * [GRAIN] The Agent panel — the right-side conversation.
+ * [GRAIN] The Agent panel — the bottom-right reply surface, in two stages:
  *
- * Seeded with the instruction the palette handed off, it runs the request, shows
- * the reply (auto-copied), and offers a follow-up input. The selection captured
- * at summon is the LLM context (never shown verbatim). Esc closes (destroys) it.
+ *   COMPACT (the reference card): retry pager (‹ 1/N ›) top-left, ✕ top-right,
+ *   the captured text (quote, expandable via "More"), the reply, and a bottom
+ *   bar — Ask follow up (+ its configurable shortcut as keycaps) · copy ·
+ *   retry · Confirm ⏎ (pastes the displayed reply into the source app).
+ *
+ *   EXPANDED (the conversation): grows to the sidebar footprint when the user
+ *   asks a follow-up (button, shortcut, or the Quick-Agent pill offer). Retry
+ *   and the version pager disappear once a follow-up exists — versions belong
+ *   to the first reply only. Esc closes either stage.
+ *
+ * Auto-copy honors the `agent_autocopy` setting: off / first reply / all.
  */
 export function AgentPanel() {
   const { t } = useTranslation();
   const win = getCurrentWindow();
 
+  // Conversation (expanded stage). In the compact stage this holds only the
+  // first user turn; the assistant replies live in `versions`.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // Retry versions of the FIRST reply (compact stage), and which one is shown.
+  const [versions, setVersions] = useState<string[]>([]);
+  const [versionIdx, setVersionIdx] = useState(0);
+  const [expanded, setExpanded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const [followupShortcut, setFollowupShortcut] = useState<string>("");
 
   const contextRef = useRef<string | null>(null);
+  const instructionRef = useRef<string>("");
+  const autocopyRef = useRef<AgentAutocopy>("first");
+  const firstCopyDoneRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const versionsRef = useRef<string[]>([]);
+  const versionIdxRef = useRef(0);
+  const expandedRef = useRef(false);
+  const busyRef = useRef(false);
   const followupRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const hasAutoCopied = useRef(false);
   const flashTimer = useRef<number | undefined>(undefined);
   const startedRef = useRef(false);
   messagesRef.current = messages;
+  versionsRef.current = versions;
+  versionIdxRef.current = versionIdx;
+  expandedRef.current = expanded;
+  busyRef.current = busy;
 
-  const lastReply =
-    [...messages].reverse().find((m) => m.role === "assistant")?.content ?? "";
+  const lastReplyOf = (msgs: ChatMessage[]) =>
+    [...msgs].reverse().find((m) => m.role === "assistant")?.content ?? "";
+
+  /** The reply the surface currently presents (pager-aware in compact). */
+  const displayedReply = expanded
+    ? lastReplyOf(messages)
+    : (versions[versionIdx] ?? "");
 
   const flashCopied = useCallback(() => {
     setCopyFlash(true);
@@ -51,7 +117,53 @@ export function AgentPanel() {
     flashTimer.current = window.setTimeout(() => setCopyFlash(false), 1600);
   }, []);
 
-  const run = useCallback(
+  /** Auto-copy per the user's policy (off / first / all). */
+  const maybeAutoCopy = useCallback(
+    (reply: string) => {
+      if (!reply.trim()) return;
+      const policy = autocopyRef.current;
+      const shouldCopy =
+        policy === "all" || (policy === "first" && !firstCopyDoneRef.current);
+      firstCopyDoneRef.current = true;
+      if (shouldCopy) {
+        commands.agentCopy(reply).then(flashCopied).catch(() => {});
+      }
+    },
+    [flashCopied],
+  );
+
+  /** Run the FIRST instruction (or a retry of it) — compact stage. */
+  const runFirst = useCallback(
+    async (instruction: string) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const payload: AgentMessage[] = [
+          { role: "user", content: instruction },
+        ];
+        const res = await commands.agentRun(payload, contextRef.current);
+        if (res.status === "ok") {
+          const reply = res.data;
+          setVersions((prev) => {
+            const next = [...prev, reply];
+            setVersionIdx(next.length - 1);
+            return next;
+          });
+          maybeAutoCopy(reply);
+        } else {
+          setError(res.error || t("agent.error"));
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : t("agent.error"));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [maybeAutoCopy, t],
+  );
+
+  /** Run the whole conversation — expanded stage. */
+  const runConversation = useCallback(
     async (history: ChatMessage[]) => {
       setBusy(true);
       setError(null);
@@ -67,10 +179,7 @@ export function AgentPanel() {
             ...prev,
             { id: rid(), role: "assistant", content: reply },
           ]);
-          if (!hasAutoCopied.current && reply.trim()) {
-            hasAutoCopied.current = true;
-            commands.agentCopy(reply).then(flashCopied).catch(() => {});
-          }
+          maybeAutoCopy(reply);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -81,19 +190,107 @@ export function AgentPanel() {
         followupRef.current?.focus();
       }
     },
-    [flashCopied, t],
+    [maybeAutoCopy, t],
   );
 
-  // Mount: pull context + the first instruction the palette handed off, run it.
+  /** Expand into the conversation stage (button / shortcut / pill offer). */
+  const expand = useCallback(() => {
+    if (expandedRef.current) {
+      followupRef.current?.focus();
+      return;
+    }
+    // The first run is still in flight — expanding now would strand its reply
+    // in the (hidden) version list. The button is disabled; this also covers
+    // the global follow-up shortcut.
+    if (busyRef.current || versionsRef.current.length === 0) return;
+    // Freeze the displayed version into the conversation history.
+    const reply = versionsRef.current[versionIdxRef.current] ?? "";
+    const seed: ChatMessage[] = [];
+    if (instructionRef.current) {
+      seed.push({ id: rid(), role: "user", content: instructionRef.current });
+    }
+    if (reply) {
+      seed.push({ id: rid(), role: "assistant", content: reply });
+    }
+    setMessages(seed);
+    setExpanded(true);
+    void commands.agentSetPanelMode(true).catch(() => {});
+    window.setTimeout(() => followupRef.current?.focus(), 60);
+  }, []);
+
+  /** Confirm: paste the displayed reply back into the source app (backend
+   * closes this window, refocuses the target, and pastes). */
+  const confirm = useCallback(() => {
+    const text = expandedRef.current
+      ? lastReplyOf(messagesRef.current)
+      : (versionsRef.current[versionIdxRef.current] ?? "");
+    if (!text.trim() || busyRef.current) return;
+    void commands.agentConfirmPaste(text).catch(() => {});
+  }, []);
+
+  const retry = useCallback(() => {
+    if (busyRef.current || expandedRef.current || !instructionRef.current)
+      return;
+    void runFirst(instructionRef.current);
+  }, [runFirst]);
+
+  const copyReply = useCallback(() => {
+    const text = expandedRef.current
+      ? lastReplyOf(messagesRef.current)
+      : (versionsRef.current[versionIdxRef.current] ?? "");
+    if (!text) return;
+    commands.agentCopy(text).then(flashCopied).catch(() => {});
+  }, [flashCopied]);
+
+  // Mount: load settings (autocopy policy + follow-up shortcut), the summon
+  // context, then either a retained Quick-Agent conversation (→ expanded) or
+  // the palette's first instruction (→ compact, run it).
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
     (async () => {
       try {
+        const res = await commands.getAppSettings();
+        if (res.status === "ok") {
+          autocopyRef.current = res.data.agent_autocopy ?? "first";
+          const b = res.data.bindings["agent_followup"];
+          if (b) setFollowupShortcut(b.current_binding);
+        }
+      } catch {
+        /* defaults hold */
+      }
+      try {
         contextRef.current = await commands.agentGetContext();
       } catch {
         /* no context is fine */
       }
+
+      // Quick-Agent reopen: a retained conversation starts us EXPANDED.
+      try {
+        const retained = await commands.agentTakeConversation();
+        if (retained.length > 0) {
+          instructionRef.current =
+            retained.find((m) => m.role === "user")?.content ?? "";
+          // Replies already delivered (pasted) count against "first"-copy.
+          firstCopyDoneRef.current = retained.some(
+            (m) => m.role === "assistant",
+          );
+          setMessages(
+            retained.map((m) => ({
+              id: rid(),
+              role: m.role === "assistant" ? "assistant" : "user",
+              content: m.content,
+            })),
+          );
+          setExpanded(true);
+          void commands.agentSetPanelMode(true).catch(() => {});
+          window.setTimeout(() => followupRef.current?.focus(), 60);
+          return;
+        }
+      } catch {
+        /* nothing retained */
+      }
+
       let instruction: string | null = null;
       try {
         instruction = await commands.agentTakeInstruction();
@@ -101,16 +298,13 @@ export function AgentPanel() {
         /* nothing queued */
       }
       if (instruction && instruction.trim()) {
-        const seed: ChatMessage[] = [
-          { id: rid(), role: "user", content: instruction.trim() },
-        ];
-        setMessages(seed);
-        await run(seed);
+        instructionRef.current = instruction.trim();
+        await runFirst(instructionRef.current);
       }
     })();
-  }, [run]);
+  }, [runFirst]);
 
-  // Esc closes — global so it works even when the field isn't focused.
+  // Esc closes — global so it works even when no field is focused.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -122,71 +316,218 @@ export function AgentPanel() {
     return () => window.removeEventListener("keydown", onKey);
   }, [win]);
 
+  // Backend bridges: the transient global Enter (compact → confirm) and the
+  // follow-up shortcut / pill click (→ expand).
+  useEffect(() => {
+    let unEnter: (() => void) | undefined;
+    let unFollow: (() => void) | undefined;
+    void win
+      .listen("agent-global-enter", () => {
+        if (!expandedRef.current) confirm();
+      })
+      .then((fn) => {
+        unEnter = fn;
+      });
+    void win
+      .listen("agent-followup", () => {
+        expand();
+      })
+      .then((fn) => {
+        unFollow = fn;
+      });
+    return () => {
+      unEnter?.();
+      unFollow?.();
+    };
+  }, [confirm, expand, win]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, busy]);
+  }, [messages, versions, versionIdx, busy]);
 
   const sendFollowup = useCallback(async () => {
     const el = followupRef.current;
     const text = el?.value.trim() ?? "";
-    if (!text || busy) return;
+    if (!text || busyRef.current) return;
     if (el) el.value = "";
     const next: ChatMessage[] = [
       ...messagesRef.current,
       { id: rid(), role: "user", content: text },
     ];
     setMessages(next);
-    await run(next);
-  }, [busy, run]);
+    await runConversation(next);
+  }, [runConversation]);
 
-  const copyReply = useCallback(() => {
-    if (!lastReply) return;
-    commands.agentCopy(lastReply).then(flashCopied).catch(() => {});
-  }, [lastReply, flashCopied]);
+  const quoteText = contextRef.current?.trim() || instructionRef.current;
+  const shortcutParts = followupShortcut
+    ? followupShortcut.split("+").map(keycapLabel)
+    : [];
+  const canConfirm = !busy && displayedReply.trim().length > 0;
 
+  // ── COMPACT: the reference reply card ─────────────────────────────────────
+  if (!expanded) {
+    return (
+      <div className="agent-panel-root">
+        <div className="agc-card">
+          {/* Header: version pager (left) · close (right). Draggable. */}
+          <div className="agc-head" data-tauri-drag-region>
+            <div className="agc-pager">
+              <button
+                type="button"
+                className="agc-pager-btn"
+                disabled={busy || versionIdx <= 0}
+                onClick={() => setVersionIdx((i) => Math.max(0, i - 1))}
+                title={t("agent.prevVersion")}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="agc-pager-count">
+                {Math.min(versionIdx + 1, Math.max(versions.length, 1))}/
+                {Math.max(versions.length, 1)}
+              </span>
+              <button
+                type="button"
+                className="agc-pager-btn"
+                disabled={busy || versionIdx >= versions.length - 1}
+                onClick={() =>
+                  setVersionIdx((i) => Math.min(versions.length - 1, i + 1))
+                }
+                title={t("agent.nextVersion")}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+            <span className="agc-spacer" />
+            <button
+              type="button"
+              className="agc-close"
+              title={t("agent.escCue")}
+              onClick={() => void win.close()}
+            >
+              <X size={15} />
+            </button>
+          </div>
+
+          {/* The captured text (selection, else the instruction). */}
+          {quoteText && (
+            <div
+              className={`agc-quote ${quoteOpen ? "is-open" : ""}`}
+              onClick={() => setQuoteOpen((v) => !v)}
+              role="button"
+              tabIndex={-1}
+            >
+              <span className="agc-quote-text">“{quoteText}</span>
+              {!quoteOpen && quoteText.length > 120 && (
+                <span className="agc-quote-more">…{t("agent.more")}</span>
+              )}
+            </div>
+          )}
+
+          {/* Reply */}
+          <div className="agc-body">
+            {busy ? (
+              <div className="agent-typing" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            ) : error ? (
+              <div className="agc-error">{error}</div>
+            ) : (
+              <div className="agc-reply">{displayedReply}</div>
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Bottom bar: Ask follow up + keycaps · copy · retry · Confirm ⏎ */}
+          <div className="agc-foot">
+            <button
+              type="button"
+              className="agc-followup-btn"
+              disabled={busy || versions.length === 0}
+              onClick={expand}
+            >
+              {t("agent.askFollowup")}
+              {shortcutParts.map((p, i) => (
+                <span key={i} className="agc-keycap">
+                  {p}
+                </span>
+              ))}
+            </button>
+            <span className="agc-spacer" />
+            <button
+              type="button"
+              className={`agc-icon-btn ${copyFlash ? "is-flash" : ""}`}
+              disabled={!canConfirm}
+              onClick={copyReply}
+              title={t("agent.copyReply")}
+            >
+              {copyFlash ? <Check size={14} /> : <Copy size={14} />}
+            </button>
+            <button
+              type="button"
+              className="agc-icon-btn"
+              disabled={busy || versions.length === 0}
+              onClick={retry}
+              title={t("agent.retry")}
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button
+              type="button"
+              className="agc-confirm"
+              disabled={!canConfirm}
+              onClick={confirm}
+              title={t("agent.confirmHint")}
+            >
+              {t("agent.confirm")}
+              <span className="agc-confirm-glyph">{ENTER_GLYPH}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── EXPANDED: the conversation ─────────────────────────────────────────────
   return (
     <div className="agent-panel-root">
-      <div className="agent-card agent-card--panel">
+      <div className="agc-card agc-card--expanded">
         {/* Header (draggable) */}
-        <div className="agent-pan-head" data-tauri-drag-region>
-          <span className={`agent-dot-status ${busy ? "is-busy" : "is-ready"}`} />
-          <span className="agent-brand">{t("agent.brand")}</span>
-          {busy && (
-            <span className="agent-pan-processing">
-              {SEP} {t("agent.processing")}
-            </span>
-          )}
-          <span className="agent-spacer" />
+        <div className="agc-head" data-tauri-drag-region>
+          <span
+            className={`agent-dot-status ${busy ? "is-busy" : "is-ready"}`}
+          />
+          <span className="agc-brand">{t("agent.brand")}</span>
+          <span className="agc-spacer" />
           <button
             type="button"
-            className="agent-close"
+            className="agc-close"
             title={t("agent.escCue")}
             onClick={() => void win.close()}
           >
-            {CLOSE_X}
+            <X size={15} />
           </button>
         </div>
 
-        <div className="agent-divider" />
-
         {/* Conversation */}
-        <div className="agent-pan-scroll">
+        <div className="agc-scroll">
           {messages.map((m) => (
-            <div key={m.id} className="agent-turn">
+            <div key={m.id} className="agc-turn">
               <div
-                className={`agent-turn-label ${m.role === "user" ? "is-user" : "is-grain"}`}
+                className={`agc-turn-label ${m.role === "user" ? "is-user" : "is-grain"}`}
               >
                 {m.role === "user" ? t("agent.you") : t("agent.grain")}
               </div>
-              <div className={`agent-turn-body agent-turn-body--${m.role}`}>
+              <div className={`agc-turn-body agc-turn-body--${m.role}`}>
                 {m.content}
               </div>
             </div>
           ))}
 
           {busy && (
-            <div className="agent-turn">
-              <div className="agent-turn-label is-grain">{t("agent.grain")}</div>
+            <div className="agc-turn">
+              <div className="agc-turn-label is-grain">{t("agent.grain")}</div>
               <div className="agent-typing" aria-hidden="true">
                 <span />
                 <span />
@@ -195,37 +536,16 @@ export function AgentPanel() {
             </div>
           )}
 
-          {error && <div className="agent-error">{error}</div>}
+          {error && <div className="agc-error">{error}</div>}
           <div ref={endRef} />
         </div>
 
-        {/* Copy row (only once there's a reply and no error) */}
-        {!error && lastReply && (
-          <>
-            <div className="agent-divider" />
-            <div className="agent-copyrow">
-              <button
-                type="button"
-                className={`agent-copybtn ${copyFlash ? "is-flash" : ""}`}
-                onClick={copyReply}
-              >
-                {copyFlash ? t("agent.copied") : t("agent.copyReply")}
-              </button>
-              {copyFlash && (
-                <span className="agent-copyhint">{t("agent.autoCopied")}</span>
-              )}
-              <span className="agent-spacer" />
-              <span className="agent-cue">{t("agent.escCue")}</span>
-            </div>
-          </>
-        )}
-
         {/* Follow-up input */}
-        <div className={`agent-followup ${busy ? "is-busy" : ""}`}>
+        <div className={`agc-input ${busy ? "is-busy" : ""}`}>
           <input
             ref={followupRef}
             type="text"
-            className="agent-followup-field"
+            className="agc-input-field"
             disabled={busy}
             placeholder={
               busy ? t("agent.followupWaiting") : t("agent.followupPlaceholder")
@@ -239,12 +559,37 @@ export function AgentPanel() {
           />
           <button
             type="button"
-            className="agent-followup-send"
+            className="agc-send"
             disabled={busy}
             title={t("agent.followupPlaceholder")}
             onClick={() => void sendFollowup()}
           >
             {SEND_ARROW}
+          </button>
+        </div>
+
+        {/* Bottom bar: copy · Confirm (pastes the latest reply) */}
+        <div className="agc-foot agc-foot--expanded">
+          <span className="agc-cue">{t("agent.escCue")}</span>
+          <span className="agc-spacer" />
+          <button
+            type="button"
+            className={`agc-icon-btn ${copyFlash ? "is-flash" : ""}`}
+            disabled={!canConfirm}
+            onClick={copyReply}
+            title={t("agent.copyReply")}
+          >
+            {copyFlash ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+          <button
+            type="button"
+            className="agc-confirm"
+            disabled={!canConfirm}
+            onClick={confirm}
+            title={t("agent.confirmHint")}
+          >
+            {t("agent.confirm")}
+            <span className="agc-confirm-glyph">{ENTER_GLYPH}</span>
           </button>
         </div>
       </div>

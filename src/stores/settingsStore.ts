@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { listen } from "@tauri-apps/api/event";
 import type {
+  AgentAutocopy,
+  AgentContextMode,
   AppMode,
   AppSettings as Settings,
   AudioDevice,
@@ -127,6 +129,12 @@ const settingUpdaters: {
   app_modes: (value) => commands.updateAppModes(value as AppMode[]),
   auto_dictionary_enabled: (value) =>
     commands.changeAutoDictionaryEnabledSetting(value as boolean),
+  agent_autocopy: (value) =>
+    commands.changeAgentAutocopySetting(value as AgentAutocopy),
+  agent_quick_enabled: (value) =>
+    commands.changeAgentQuickEnabledSetting(value as boolean),
+  agent_context_mode: (value) =>
+    commands.changeAgentContextModeSetting(value as AgentContextMode),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>

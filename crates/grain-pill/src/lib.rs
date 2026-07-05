@@ -1631,6 +1631,12 @@ struct Remote {
     /// dictating an AI instruction. Tints the recording dots / Studio waveform blue
     /// (the sole visual indicator). Set by `PromptRecordingChanged`; reset per session.
     prompt_recording: bool,
+    /// [GRAIN] Quick-Agent follow-up offer: the configured shortcut label while
+    /// an offer is live (`AgentFollowupOffer`), else `None`. Reveals the pill
+    /// with an "ASK FOLLOW-UP" riser; a click sends `PillAction::AgentFollowup`.
+    agent_offer: Option<String>,
+    /// Bumped on every offer/clear so the App detects the transition.
+    agent_offer_seq: u64,
     /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
     /// `Recording` (see `apply_event`) so the preview never changes once the
     /// user releases the shortcut, even though the worker's drain can still
@@ -1649,6 +1655,8 @@ impl Default for Remote {
             mode: PillMode::Collapsed,
             streaming: false,
             prompt_recording: false,
+            agent_offer: None,
+            agent_offer_seq: 0,
             asr: AsrDisplay::default(),
         }
     }
@@ -1680,6 +1688,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.mode = PillMode::Collapsed;
             r.streaming = mode == SessionMode::NativeAsr;
             r.prompt_recording = false; // fresh session — never carry a prior mark's tint.
+            // A new session supersedes any lingering Quick-Agent follow-up offer.
+            if r.agent_offer.take().is_some() {
+                r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
+            }
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
@@ -1712,6 +1724,20 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_name = name;
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
+        }
+        // [GRAIN] Quick Agent: reveal the pill with the "ask follow-up" riser
+        // until the core withdraws the offer (panel opened / expired / new
+        // session). A click on the pill in this window sends `AgentFollowup`.
+        DaemonEvent::AgentFollowupOffer { shortcut } => {
+            r.agent_offer = Some(shortcut);
+            r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
+            eprintln!("event: AgentFollowupOffer -> reveal");
+        }
+        DaemonEvent::AgentFollowupClear => {
+            if r.agent_offer.take().is_some() {
+                r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
+            }
+            eprintln!("event: AgentFollowupClear -> withdraw");
         }
         // [GRAIN] transcribe-cpp streaming: both parts are cumulative snapshots
         // (the full flicker-free prefix + the volatile tail), so set them
@@ -1875,6 +1901,11 @@ struct App {
     cached_label: Option<CachedText>,
     last_prompt_seq: u64,
     prompt_preview_until: Option<Instant>,
+    // [GRAIN] Quick-Agent follow-up offer (mirrors `Remote::agent_offer`): while
+    // set, the pill stays revealed with an "ASK FOLLOW-UP · <shortcut>" riser
+    // and a click sends `PillAction::AgentFollowup` instead of Prompt Record.
+    agent_offer: Option<String>,
+    last_agent_offer_seq: u64,
     riser_progress: f32,
     riser_hide_at: Option<Instant>,
     next_tick: Instant,
@@ -1943,6 +1974,8 @@ impl App {
             cached_label: None,
             last_prompt_seq: 0,
             prompt_preview_until: None,
+            agent_offer: None,
+            last_agent_offer_seq: 0,
             riser_progress: 0.0,
             riser_hide_at: None,
             next_tick: Instant::now(),
@@ -2405,30 +2438,34 @@ impl App {
             let cy = bar_top + peek / 2.0;
 
             // Fixed arrow positions, anchored a constant inset from the bar edges.
-            let arrow_inset = peek * 0.85;
-            let lx = px0 + arrow_inset;
-            let rx = px1 - arrow_inset;
+            // [GRAIN] The ‹ › arrows belong to the prompt SWITCHER; the
+            // follow-up offer is a single clickable affordance, so they hide.
+            if self.agent_offer.is_none() {
+                let arrow_inset = peek * 0.85;
+                let lx = px0 + arrow_inset;
+                let rx = px1 - arrow_inset;
 
-            // Cache arrows and label on the fly if needed
-            let cached_left = CachedText::new(font, "\u{2039}", font_px);
-            let cached_right = CachedText::new(font, "\u{203a}", font_px);
+                // Cache arrows and label on the fly if needed
+                let cached_left = CachedText::new(font, "\u{2039}", font_px);
+                let cached_right = CachedText::new(font, "\u{203a}", font_px);
 
-            draw_cached_text_centered(
-                pixmap,
-                &cached_left,
-                (lx, cy),
-                font_px,
-                [236, 229, 218],
-                alpha,
-            );
-            draw_cached_text_centered(
-                pixmap,
-                &cached_right,
-                (rx, cy),
-                font_px,
-                [236, 229, 218],
-                alpha,
-            );
+                draw_cached_text_centered(
+                    pixmap,
+                    &cached_left,
+                    (lx, cy),
+                    font_px,
+                    [236, 229, 218],
+                    alpha,
+                );
+                draw_cached_text_centered(
+                    pixmap,
+                    &cached_right,
+                    (rx, cy),
+                    font_px,
+                    [236, 229, 218],
+                    alpha,
+                );
+            }
 
             if let Some(cached_label) = &self.cached_label {
                 draw_cached_text_centered(
@@ -2503,6 +2540,10 @@ impl ApplicationHandler<UserEvent> for App {
                 // Studio card (whose center waveform is the click affordance).
                 if self.state == PillState::Recording && !self.prompt_recording {
                     let _ = self.action_tx.send(PillAction::PromptRecord);
+                } else if self.agent_offer.is_some() && self.state != PillState::Recording {
+                    // [GRAIN] Quick Agent: the pill is up as a follow-up offer —
+                    // a click reopens the Agent expanded with the conversation.
+                    let _ = self.action_tx.send(PillAction::AgentFollowup);
                 }
             }
             WindowEvent::KeyboardInput {
@@ -2620,9 +2661,29 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update_cached_label();
             }
 
-            // Visible if the core says so OR we're inside a transient prompt preview.
+            // [GRAIN] Quick-Agent follow-up offer changed → adopt it. While live
+            // the riser carries "ASK FOLLOW-UP · <shortcut>" and stays up (the
+            // hold below pins the riser target at 1); on clear it eases away.
+            if r.agent_offer_seq != self.last_agent_offer_seq {
+                self.last_agent_offer_seq = r.agent_offer_seq;
+                self.agent_offer = r.agent_offer.clone();
+                match &self.agent_offer {
+                    Some(shortcut) => {
+                        self.prompt_label =
+                            format!("ASK FOLLOW-UP \u{b7} {}", shortcut.to_uppercase());
+                        self.update_cached_label();
+                    }
+                    None => {
+                        self.riser_hide_at = None;
+                    }
+                }
+            }
+
+            // Visible if the core says so, we're inside a transient prompt
+            // preview, or a Quick-Agent follow-up offer is live.
+            let offer_live = self.agent_offer.is_some();
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
-            let want_visible = r.visible || preview_visible;
+            let want_visible = r.visible || preview_visible || offer_live;
             // [GRAIN] The Studio Window fades out instead of vanishing: while
             // `closing` is true we keep `self.visible` true (so rendering/mic
             // gating below behave as if still showing) and just ease
@@ -2712,10 +2773,15 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     self.next_roll = now + ROLL_INTERVAL;
                 }
-                // Ease the prompt riser, auto-hiding after RISER_HOLD.
-                let riser_target = match self.riser_hide_at {
-                    Some(t) if now < t => 1.0,
-                    _ => 0.0,
+                // Ease the prompt riser, auto-hiding after RISER_HOLD. A live
+                // follow-up offer pins it up until the core withdraws the offer.
+                let riser_target = if offer_live {
+                    1.0
+                } else {
+                    match self.riser_hide_at {
+                        Some(t) if now < t => 1.0,
+                        _ => 0.0,
+                    }
                 };
                 self.riser_progress += (riser_target - self.riser_progress) * 0.12;
                 if riser_target == 0.0 && self.riser_progress < 0.02 {
