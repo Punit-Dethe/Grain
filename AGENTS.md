@@ -30,7 +30,7 @@ HOWEVER, if you are actively working and become stuck, confused, NEED past infor
 
 **Git Protocol:**
 1. **Always Commit and Push:** When a task is complete, always commit your changes and push them to GitHub before waiting for the next user request.
-2. **Preserve User Identity:** NEVER change the Git configuration (e.g., `user.name`, `user.email`). Always use the machine's existing Git identity, and ensure that any IDE settings like `"includeCoAuthoredBy"` are ALWAYS set to `false`.
+2. **Preserve User Identity:** NEVER change the Git configuration (e.g., `user.name`, `user.email`). Do not include any "Co-authored-by" tags. Always use the machine's existing Git identity.
 
 **Logging (Autonomous but Filtered):**
 Do NOT ask the user for permission to log. Log autonomously, but ONLY if the event falls into one of these 4 categories:
