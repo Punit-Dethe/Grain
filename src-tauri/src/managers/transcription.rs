@@ -812,6 +812,11 @@ impl TranscriptionManager {
             );
 
             let mut perf = StreamPerf::new();
+            // [GRAIN] Read the "scrap that" toggle once per stream (not per emit).
+            // When on, the live committed/tentative preview is scrubbed past the
+            // last reset phrase so the Studio pill restarts + collapses; the final
+            // text is scrubbed again independently in `finalize_stream`.
+            let scrap_that = get_settings(&self.app_handle).scrap_that_enabled;
             while let Ok(cmd) = rx.recv() {
                 match cmd {
                     StreamCmd::Feed(pcm) => {
@@ -830,7 +835,15 @@ impl TranscriptionManager {
                                 if update.committed_changed || update.tentative_changed {
                                     let text = stream.text();
                                     perf.record_emit();
-                                    self.emit_stream_text(&text.committed, &text.tentative);
+                                    let (committed, tentative): (String, String) = if scrap_that {
+                                        crate::audio_toolkit::scrub_stream_preview(
+                                            &text.committed,
+                                            &text.tentative,
+                                        )
+                                    } else {
+                                        (text.committed.to_string(), text.tentative.to_string())
+                                    };
+                                    self.emit_stream_text(&committed, &tentative);
                                 }
                                 perf.maybe_log();
                             }
@@ -1507,6 +1520,15 @@ fn post_process_transcription_text(
     settings: &AppSettings,
     custom_words_already_prompted: bool,
 ) -> String {
+    // [GRAIN] "Scrap that" runs FIRST, on the raw transcript: anything spoken
+    // before the last reset phrase is discarded so the rest of the pipeline
+    // (custom words / fillers / snippets) only sees the kept remainder.
+    let raw = if settings.scrap_that_enabled {
+        crate::audio_toolkit::strip_scrapped(&raw)
+    } else {
+        raw
+    };
+
     let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
         apply_custom_words(
             &raw,

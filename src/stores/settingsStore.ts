@@ -129,6 +129,8 @@ const settingUpdaters: {
   app_modes: (value) => commands.updateAppModes(value as AppMode[]),
   auto_dictionary_enabled: (value) =>
     commands.changeAutoDictionaryEnabledSetting(value as boolean),
+  scrap_that_enabled: (value) =>
+    commands.changeScrapThatEnabledSetting(value as boolean),
   agent_autocopy: (value) =>
     commands.changeAgentAutocopySetting(value as AgentAutocopy),
   agent_quick_enabled: (value) =>

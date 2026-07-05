@@ -738,6 +738,17 @@ pub fn change_auto_dictionary_enabled_setting(app: AppHandle, enabled: bool) -> 
     Ok(())
 }
 
+/// [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
+/// matcher is never invoked for it and the live preview takes its normal path).
+#[tauri::command]
+#[specta::specta]
+pub fn change_scrap_that_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.scrap_that_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Toggle the silent nearby-term hints (reads focused-field unique tokens
 /// via UI Automation). Only effective when context awareness is also on.
 #[tauri::command]

@@ -772,6 +772,13 @@ pub struct AppSettings {
     /// capped raw text). OFF by default.
     #[serde(default)]
     pub agent_context_mode: AgentContextMode,
+    /// [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
+    /// mid-dictation discards everything spoken before it — the transcript starts
+    /// fresh from that point. Reuses the snippet matcher (no new engine), so OFF
+    /// is truly zero-overhead. In live-streaming modes the expanded Studio pill
+    /// resets and collapses back to the compact capsule until the next word.
+    #[serde(default)]
+    pub scrap_that_enabled: bool,
 }
 
 fn default_model() -> String {
@@ -1385,6 +1392,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_autocopy: AgentAutocopy::default(),
         agent_quick_enabled: false,
         agent_context_mode: AgentContextMode::default(),
+        scrap_that_enabled: false,
     }
 }
 
