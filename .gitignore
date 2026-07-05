@@ -27,12 +27,20 @@ dist-ssr
 
 # Agents / IDEs
 .claude/
+.claudeignore
 .cursor/
+.cursorrules
 .gemini/
 .coder/
 .kiro/
 .qoder/
+.mcp.json
+.opencode.json
+.windsurfrules
 QODER.md
+agent_logs.db
+agent_logs.db-journal
+temp_*.rs
 
 /target/
 recording_*
