@@ -394,6 +394,18 @@ async changeAutoDictionaryEnabledSetting(enabled: boolean) : Promise<Result<null
 }
 },
 /**
+ * [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
+ * matcher is never invoked for it and the live preview takes its normal path).
+ */
+async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_scrap_that_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
  * entries missing a name, prompt, or a non-blank matcher value — the UI enforces
  * this too, but this guards direct invoke calls.
@@ -687,7 +699,8 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
 /**
  * Run the conversation against the configured AI and return the assistant reply.
  * Uses the post-processing provider config: a single provider, or the smart
- * rotation pool (round-robin + daily quota + health-ordered failover).
+ * rotation pool (round-robin + daily quota + health-ordered failover). The
+ * focused-field context captured at summon (if any) is injected backend-side.
  */
 async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<string, string>> {
     try {
@@ -1265,7 +1278,7 @@ export type AgentContextMode = "off" | "unique" | "full"
 /**
  * One conversation turn from the frontend.
  */
-export type AgentMessage = {
+export type AgentMessage = { 
 /**
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
@@ -1394,24 +1407,32 @@ auto_dictionary_enabled?: boolean;
  * [GRAIN] Persisted learning counters for auto-add-to-dictionary (see
  * [`DictCandidate`]). Not user-facing; managed by the watcher.
  */
-dictionary_candidates?: DictCandidate[];
+dictionary_candidates?: DictCandidate[]; 
 /**
  * [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
  * reply only / every reply). Default `first` — the original behavior.
  */
-agent_autocopy?: AgentAutocopy;
+agent_autocopy?: AgentAutocopy; 
 /**
  * [GRAIN] Quick Agent: when on, submitting an instruction from the palette
  * runs the AI headlessly and pastes the reply straight at the cursor instead
  * of opening the reply panel. The pill then briefly offers "ask follow-up".
  */
-agent_quick_enabled?: boolean;
+agent_quick_enabled?: boolean; 
 /**
  * [GRAIN] Agent context awareness: read the focused field at summon and pass
  * it to the AI as background (`unique` = high-signal terms only, `full` =
  * capped raw text). OFF by default.
  */
-agent_context_mode?: AgentContextMode }
+agent_context_mode?: AgentContextMode; 
+/**
+ * [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
+ * mid-dictation discards everything spoken before it — the transcript starts
+ * fresh from that point. Reuses the snippet matcher (no new engine), so OFF
+ * is truly zero-overhead. In live-streaming modes the expanded Studio pill
+ * resets and collapses back to the compact capsule until the next word.
+ */
+scrap_that_enabled?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }

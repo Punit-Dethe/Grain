@@ -1772,12 +1772,20 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
     }
 
-    // [GRAIN] First-word expand: the instant a streaming session has any transcript
-    // to show, flip from the small collapsed capsule to the Studio surface. The App
-    // sees the mode change and grows the pill out (width + height) smoothly.
-    if r.streaming && r.mode == PillMode::Collapsed && !r.asr.display_runs().is_empty() {
-        r.mode = PillMode::Studio;
-        eprintln!("event: first transcript word -> expand to Studio");
+    // [GRAIN] First-word expand / "scrap that" collapse. A streaming session flips
+    // to the Studio surface the instant it has any transcript to show, and flips
+    // BACK to the small capsule when the preview empties again — which is exactly
+    // what a "scrap that" reset produces (the scrubbed committed/tentative go
+    // empty). The App sees the mode change and grows/shrinks the pill smoothly.
+    if r.streaming {
+        let empty = r.asr.display_runs().is_empty();
+        if r.mode == PillMode::Collapsed && !empty {
+            r.mode = PillMode::Studio;
+            eprintln!("event: first transcript word -> expand to Studio");
+        } else if r.mode == PillMode::Studio && empty {
+            r.mode = PillMode::Collapsed;
+            eprintln!("event: scrap that -> collapse to compact capsule");
+        }
     }
 }
 

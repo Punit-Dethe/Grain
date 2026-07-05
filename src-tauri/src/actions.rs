@@ -1356,6 +1356,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                         &settings.custom_filler_words,
                         false,
                         &settings.snippets,
+                        settings.scrap_that_enabled,
                     )
                 } else if !samples.is_empty() {
                     warn!("[GRAIN] rolling produced no text — falling back to batch");

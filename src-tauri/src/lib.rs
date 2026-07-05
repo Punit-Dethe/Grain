@@ -651,6 +651,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_agent_quick_enabled_setting,
             shortcut::change_agent_context_mode_setting,
             shortcut::change_auto_dictionary_enabled_setting,
+            shortcut::change_scrap_that_enabled_setting,
             shortcut::update_app_modes,
             shortcut::detect_active_app,
             shortcut::suspend_binding,

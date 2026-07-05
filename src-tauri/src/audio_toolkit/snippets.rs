@@ -172,6 +172,144 @@ pub fn apply_snippets(text: &str, snippets: &[Snippet]) -> String {
     out
 }
 
+// ── [GRAIN] "Scrap that" voice reset ────────────────────────────────────────
+//
+// Reuses this module's tolerant matcher (the same `tokenize` + `match_at` that
+// power snippets) so it survives capitalization drift, chunk-boundary
+// punctuation, and word split/merge exactly like a snippet trigger — no second
+// scanner, no extra allocation beyond the tokenized transcript.
+
+/// The reset phrase flattened to its normalized characters ("scrap that" →
+/// "scrapthat"), matching how `normalize` treats a trigger.
+const SCRAP_FLAT: &str = "scrapthat";
+
+/// Byte offset in `text` just past the LAST spoken "scrap that", or `None` when
+/// the phrase never appears. Scans left-to-right keeping the latest match so a
+/// user who says it twice still resets to the final one.
+fn last_scrap_end(text: &str) -> Option<usize> {
+    let tokens = tokenize(text);
+    let mut end = None;
+    let mut i = 0;
+    while i < tokens.len() {
+        match match_at(&tokens, i, SCRAP_FLAT) {
+            Some(j) => {
+                end = Some(tokens[j - 1].end);
+                i = j;
+            }
+            None => i += 1,
+        }
+    }
+    end
+}
+
+/// Final-transcript reset: drop everything up to and including the last spoken
+/// "scrap that", returning only what follows (leading whitespace trimmed).
+/// Unchanged text when the phrase never appears. Callers gate on the setting.
+pub fn strip_scrapped(text: &str) -> String {
+    match last_scrap_end(text) {
+        Some(end) => text[end..].trim_start().to_string(),
+        None => text.to_string(),
+    }
+}
+
+/// Live-preview reset for the streaming Studio pill: scrub the committed/tentative
+/// snapshot past the last "scrap that" so the expanded pill visibly restarts (and
+/// collapses to the compact capsule when nothing yet follows the phrase).
+/// Idempotent — safe to run on every emit. The phrase is almost always fully
+/// within `committed` (stable text commits quickly); the combined fallback only
+/// covers the brief instant it straddles the commit boundary.
+pub fn scrub_stream_preview(committed: &str, tentative: &str) -> (String, String) {
+    if let Some(end) = last_scrap_end(committed) {
+        return (committed[end..].trim_start().to_string(), tentative.to_string());
+    }
+    if tentative.is_empty() {
+        return (committed.to_string(), tentative.to_string());
+    }
+    let combined = if committed.is_empty() {
+        tentative.to_string()
+    } else {
+        format!("{committed} {tentative}")
+    };
+    match last_scrap_end(&combined) {
+        Some(end) => (String::new(), combined[end..].trim_start().to_string()),
+        None => (committed.to_string(), tentative.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod scrap_tests {
+    use super::*;
+
+    #[test]
+    fn keeps_text_after_phrase() {
+        assert_eq!(strip_scrapped("hello world scrap that new start"), "new start");
+    }
+
+    #[test]
+    fn no_phrase_is_identity() {
+        assert_eq!(strip_scrapped("just a normal sentence"), "just a normal sentence");
+    }
+
+    #[test]
+    fn tolerant_to_case_and_punctuation() {
+        // Chunk-boundary comma / period + capitalization, like a snippet trigger.
+        assert_eq!(strip_scrapped("blah blah Scrap, that. fresh"), "fresh");
+        assert_eq!(strip_scrapped("one two SCRAP THAT three"), "three");
+    }
+
+    #[test]
+    fn resets_to_last_occurrence() {
+        assert_eq!(
+            strip_scrapped("a scrap that b c scrap that d"),
+            "d"
+        );
+    }
+
+    #[test]
+    fn phrase_at_end_yields_empty() {
+        assert_eq!(strip_scrapped("everything before scrap that"), "");
+        assert_eq!(strip_scrapped("scrap that"), "");
+    }
+
+    #[test]
+    fn no_partial_word_match() {
+        // "scrapped that" / "scrap thatch" must NOT trigger (whole-token match).
+        assert_eq!(
+            strip_scrapped("we scrapped that idea"),
+            "we scrapped that idea"
+        );
+    }
+
+    #[test]
+    fn stream_scrub_phrase_in_committed() {
+        let (c, t) = scrub_stream_preview("hello scrap that world", "tail");
+        assert_eq!(c, "world");
+        assert_eq!(t, "tail");
+    }
+
+    #[test]
+    fn stream_scrub_phrase_spans_boundary() {
+        // "scrap" committed, "that" still in the volatile tail.
+        let (c, t) = scrub_stream_preview("hello scrap", "that fresh");
+        assert_eq!(c, "");
+        assert_eq!(t, "fresh");
+    }
+
+    #[test]
+    fn stream_scrub_empty_when_phrase_is_tail() {
+        let (c, t) = scrub_stream_preview("everything scrap that", "");
+        assert_eq!(c, "");
+        assert_eq!(t, "");
+    }
+
+    #[test]
+    fn stream_scrub_no_phrase_passthrough() {
+        let (c, t) = scrub_stream_preview("normal committed", "tentative tail");
+        assert_eq!(c, "normal committed");
+        assert_eq!(t, "tentative tail");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

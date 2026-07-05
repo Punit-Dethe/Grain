@@ -176,6 +176,9 @@ pub fn apply_custom_words(text: &str, custom_words: &[String], threshold: f64) -
 ///   pass `false` so the dictionary is honored.
 /// * `snippets` - the user's voice snippets; expanded LAST so triggers match
 ///   the corrected/filtered text (may be empty).
+/// * `scrap_that` - when `true`, apply the "scrap that" voice reset FIRST: drop
+///   everything up to and including the last spoken reset phrase before any other
+///   correction runs.
 ///
 /// # Returns
 /// The finalized transcript.
@@ -187,7 +190,17 @@ pub fn finalize_transcript(
     custom_filler_words: &Option<Vec<String>>,
     skip_custom_words: bool,
     snippets: &[crate::settings::Snippet],
+    scrap_that: bool,
 ) -> String {
+    // [GRAIN] "Scrap that" runs before every other stage so the rest only sees
+    // the kept remainder (mirrors `post_process_transcription_text`).
+    let scrapped;
+    let text = if scrap_that {
+        scrapped = crate::audio_toolkit::strip_scrapped(text);
+        scrapped.as_str()
+    } else {
+        text
+    };
     let corrected = if skip_custom_words || custom_words.is_empty() {
         text.to_string()
     } else {
@@ -407,6 +420,7 @@ mod tests {
             &None,
             false,
             &[],
+            false,
         );
         assert!(result.contains("ChargeBee"), "got: {result}");
         assert!(!result.contains("um"), "fillers not removed: {result}");
@@ -425,6 +439,7 @@ mod tests {
             &None,
             true,
             &[],
+            false,
         );
         assert!(
             !result.contains("ChargeBee"),
@@ -436,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_finalize_empty_custom_words_is_just_filter() {
-        let result = finalize_transcript("um hello world", &[], 0.5, "en", &None, false, &[]);
+        let result = finalize_transcript("um hello world", &[], 0.5, "en", &None, false, &[], false);
         assert_eq!(result, "hello world");
     }
 

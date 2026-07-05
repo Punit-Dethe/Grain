@@ -28,6 +28,7 @@ export const AdvancedSettings: React.FC = () => {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const experimentalEnabled = getSetting("experimental_enabled") || false;
   const autoDictionary = getSetting("auto_dictionary_enabled") ?? false;
+  const scrapThat = getSetting("scrap_that_enabled") ?? false;
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
@@ -58,6 +59,15 @@ export const AdvancedSettings: React.FC = () => {
           checked={autoDictionary}
           isUpdating={isUpdating("auto_dictionary_enabled")}
           onChange={(v) => updateSetting("auto_dictionary_enabled", v)}
+        />
+        <ToggleSwitch
+          label='"Scrap that" voice reset'
+          description='Say "scrap that" mid-dictation to discard everything before it and start the transcript fresh from that point. Works in every mode; in live-streaming the expanded pill collapses back to the compact capsule until you speak again. Off = zero overhead.'
+          descriptionMode="tooltip"
+          grouped
+          checked={scrapThat}
+          isUpdating={isUpdating("scrap_that_enabled")}
+          onChange={(v) => updateSetting("scrap_that_enabled", v)}
         />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>

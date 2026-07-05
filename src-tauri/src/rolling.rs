@@ -41,16 +41,26 @@ use crate::settings::get_settings;
 struct PreviewSink {
     app: AppHandle,
     session_id: u64,
+    /// [GRAIN] Mirror of `settings.scrap_that_enabled`, captured at session start.
+    /// When set, the live caption is scrubbed past the last "scrap that" so the
+    /// Studio pill restarts + collapses. The final assembled text is scrubbed
+    /// independently in the shortcut action's `finalize_transcript`.
+    scrap_that: bool,
 }
 
 impl PreviewSink {
     fn emit(&self, committed: &str, tentative: &str) {
+        let (committed, tentative) = if self.scrap_that {
+            crate::audio_toolkit::scrub_stream_preview(committed, tentative)
+        } else {
+            (committed.to_string(), tentative.to_string())
+        };
         crate::bridge::emit(
             &self.app,
             DaemonEvent::AsrStreamText {
                 session_id: self.session_id,
-                committed: committed.to_string(),
-                tentative: tentative.to_string(),
+                committed,
+                tentative,
             },
         );
     }
@@ -179,6 +189,9 @@ pub struct RollingTranscriber {
     /// `ensure_loaded`. When set, each rolling chunk gets boost-only AGC before
     /// transcription — the high-pass already ran upstream on the shared frame.
     conditioning: AtomicBool,
+    /// [GRAIN] Mirror of `settings.scrap_that_enabled`, refreshed on each
+    /// `ensure_loaded` and read at `start_session` to configure the preview sink.
+    scrap_that: AtomicBool,
 }
 
 impl RollingTranscriber {
@@ -187,6 +200,7 @@ impl RollingTranscriber {
             tm,
             active: Mutex::new(None),
             conditioning: AtomicBool::new(false),
+            scrap_that: AtomicBool::new(false),
         }
     }
 
@@ -199,6 +213,8 @@ impl RollingTranscriber {
         // can honor the current setting.
         self.conditioning
             .store(settings.audio_conditioning, Ordering::Relaxed);
+        self.scrap_that
+            .store(settings.scrap_that_enabled, Ordering::Relaxed);
         let model_id = settings.selected_model;
         if model_id.is_empty() {
             return Err("no model selected".into());
@@ -214,7 +230,11 @@ impl RollingTranscriber {
     /// extra compute); when `None` the worker takes the exact zero-overhead path
     /// it always did.
     pub fn start_session(self: &Arc<Self>, app: AppHandle, session_id: u64, preview: bool) {
-        let sink = preview.then(|| PreviewSink { app, session_id });
+        let sink = preview.then(|| PreviewSink {
+            app,
+            session_id,
+            scrap_that: self.scrap_that.load(Ordering::Relaxed),
+        });
         let session = Arc::new(RollingSession::start(self.clone(), sink));
         *self.active.lock().unwrap() = Some(session);
         log::info!(
