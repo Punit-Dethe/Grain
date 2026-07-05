@@ -20,7 +20,14 @@
     "autoCopied": "AUTO-COPIED · READY TO PASTE",
     "followupPlaceholder": "Follow up…",
     "followupWaiting": "Waiting for reply…",
-    "error": "Something went wrong"
+    "error": "Something went wrong",
+    "askFollowup": "Ask follow up",
+    "confirm": "Confirm",
+    "confirmHint": "Paste this reply into the app you came from (Enter)",
+    "retry": "Retry — generate another version",
+    "prevVersion": "Previous version",
+    "nextVersion": "Next version",
+    "more": "More"
   },
   "tray": {
     "settings": "Settings...",

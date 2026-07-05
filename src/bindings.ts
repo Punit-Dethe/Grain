@@ -350,6 +350,39 @@ async changeContextNearbyTermsSetting(enabled: boolean) : Promise<Result<null, s
 }
 },
 /**
+ * [GRAIN] Agent auto-copy policy (off / first reply / all replies).
+ */
+async changeAgentAutocopySetting(mode: AgentAutocopy) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_autocopy_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Toggle Quick Agent (palette submit → headless AI run → paste at cursor).
+ */
+async changeAgentQuickEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_quick_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Agent context awareness mode (off / unique terms / full field text).
+ */
+async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_context_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle auto-add-to-dictionary. Off = zero overhead (no watcher spawns).
  */
 async changeAutoDictionaryEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -663,6 +696,41 @@ async agentRun(messages: AgentMessage[], context: string | null) : Promise<Resul
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Resize/reposition the panel between the COMPACT reply card and the EXPANDED
+ * conversation, and swap the global Enter accordingly: compact owns a global
+ * Enter (= Confirm/paste); expanded owns an in-window input, so a registered
+ * global Enter would swallow the user's keystrokes.
+ */
+async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_set_panel_mode", { expanded }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Confirm (⏎ on the reply card): close the panel, refocus the summon target,
+ * and paste `text` — the latest assistant reply — at the cursor. A selection
+ * still held in the target app is replaced by the paste.
+ */
+async agentConfirmPaste(text: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_confirm_paste", { text }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Consume the retained Quick-Agent conversation (the panel calls this on
+ * mount). Non-empty only when the panel is reopening from a follow-up offer —
+ * in that case the panel starts EXPANDED with this history.
+ */
+async agentTakeConversation() : Promise<AgentMessage[]> {
+    return await TAURI_INVOKE("agent_take_conversation");
 },
 async cancelOperation() : Promise<void> {
     await TAURI_INVOKE("cancel_operation");
@@ -1182,9 +1250,22 @@ streamTextEvent: "stream-text-event"
  */
 export type ActionTarget = { kind: "app"; value: string } | { kind: "url"; value: string }
 /**
+ * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
+ * clipboard automatically as they arrive. `First` (default) mirrors the
+ * original behavior — only the first reply of a session is auto-copied.
+ */
+export type AgentAutocopy = "off" | "first" | "all"
+/**
+ * [GRAIN] Agent context awareness: what (if anything) is read from the focused
+ * field at summon and handed to the LLM as background. `Unique` reuses the
+ * nearby-terms extractor (high-signal identifiers/names only); `Full` sends the
+ * capped raw field text. OFF by default — reading field content is opt-in.
+ */
+export type AgentContextMode = "off" | "unique" | "full"
+/**
  * One conversation turn from the frontend.
  */
-export type AgentMessage = { 
+export type AgentMessage = {
 /**
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
@@ -1313,7 +1394,24 @@ auto_dictionary_enabled?: boolean;
  * [GRAIN] Persisted learning counters for auto-add-to-dictionary (see
  * [`DictCandidate`]). Not user-facing; managed by the watcher.
  */
-dictionary_candidates?: DictCandidate[] }
+dictionary_candidates?: DictCandidate[];
+/**
+ * [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
+ * reply only / every reply). Default `first` — the original behavior.
+ */
+agent_autocopy?: AgentAutocopy;
+/**
+ * [GRAIN] Quick Agent: when on, submitting an instruction from the palette
+ * runs the AI headlessly and pastes the reply straight at the cursor instead
+ * of opening the reply panel. The pill then briefly offers "ask follow-up".
+ */
+agent_quick_enabled?: boolean;
+/**
+ * [GRAIN] Agent context awareness: read the focused field at summon and pass
+ * it to the AI as background (`unique` = high-signal terms only, `full` =
+ * capped raw text). OFF by default.
+ */
+agent_context_mode?: AgentContextMode }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }

@@ -144,6 +144,11 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
                 }
             }
         }
+        // [GRAIN] Quick Agent: the user clicked the pill's follow-up offer —
+        // reopen the Agent expanded with the retained conversation.
+        grain_core::PillAction::AgentFollowup => {
+            crate::agent::open_followup(app);
+        }
     }
 }
 

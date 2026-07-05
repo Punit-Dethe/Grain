@@ -164,6 +164,41 @@ pub struct AppMode {
     pub enabled: bool,
 }
 
+/// [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
+/// clipboard automatically as they arrive. `First` (default) mirrors the
+/// original behavior — only the first reply of a session is auto-copied.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentAutocopy {
+    Off,
+    First,
+    All,
+}
+
+impl Default for AgentAutocopy {
+    fn default() -> Self {
+        AgentAutocopy::First
+    }
+}
+
+/// [GRAIN] Agent context awareness: what (if anything) is read from the focused
+/// field at summon and handed to the LLM as background. `Unique` reuses the
+/// nearby-terms extractor (high-signal identifiers/names only); `Full` sends the
+/// capped raw field text. OFF by default — reading field content is opt-in.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentContextMode {
+    Off,
+    Unique,
+    Full,
+}
+
+impl Default for AgentContextMode {
+    fn default() -> Self {
+        AgentContextMode::Off
+    }
+}
+
 /// [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
 /// repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
 /// is suggested (pill), and on accept it moves into `custom_words`. Persisted so
@@ -723,6 +758,20 @@ pub struct AppSettings {
     /// [`DictCandidate`]). Not user-facing; managed by the watcher.
     #[serde(default)]
     pub dictionary_candidates: Vec<DictCandidate>,
+    /// [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
+    /// reply only / every reply). Default `first` — the original behavior.
+    #[serde(default)]
+    pub agent_autocopy: AgentAutocopy,
+    /// [GRAIN] Quick Agent: when on, submitting an instruction from the palette
+    /// runs the AI headlessly and pastes the reply straight at the cursor instead
+    /// of opening the reply panel. The pill then briefly offers "ask follow-up".
+    #[serde(default)]
+    pub agent_quick_enabled: bool,
+    /// [GRAIN] Agent context awareness: read the focused field at summon and pass
+    /// it to the AI as background (`unique` = high-signal terms only, `full` =
+    /// capped raw text). OFF by default.
+    #[serde(default)]
+    pub agent_context_mode: AgentContextMode,
 }
 
 fn default_model() -> String {
@@ -1071,6 +1120,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "prompt_next",
         "prompt_prev",
         "summon_agent",
+        "agent_followup",
         "transcribe_send_to_ai",
         "transcribe_native_asr",
     ] {
@@ -1228,6 +1278,26 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    // [GRAIN] Ask a follow-up on the Agent's latest reply. Only registered as a
+    // GLOBAL shortcut while an Agent surface (reply card / pill offer) is live —
+    // and in that window it OVERRIDES any other Grain binding using the same keys.
+    #[cfg(target_os = "macos")]
+    let default_agent_followup_shortcut = "option+shift+f";
+    #[cfg(not(target_os = "macos"))]
+    let default_agent_followup_shortcut = "ctrl+alt+f";
+    bindings.insert(
+        "agent_followup".to_string(),
+        ShortcutBinding {
+            id: "agent_followup".to_string(),
+            name: "Agent Follow-up".to_string(),
+            description:
+                "Ask a follow-up on the Agent's latest reply. Active only while the Agent is open."
+                    .to_string(),
+            default_binding: default_agent_followup_shortcut.to_string(),
+            current_binding: default_agent_followup_shortcut.to_string(),
+        },
+    );
+
     #[cfg(target_os = "macos")]
     let default_send_to_ai_shortcut = "option+shift+enter";
     #[cfg(not(target_os = "macos"))]
@@ -1312,6 +1382,9 @@ pub fn get_default_settings() -> AppSettings {
         context_nearby_terms: false,
         auto_dictionary_enabled: false,
         dictionary_candidates: Vec::new(),
+        agent_autocopy: AgentAutocopy::default(),
+        agent_quick_enabled: false,
+        agent_context_mode: AgentContextMode::default(),
     }
 }
 

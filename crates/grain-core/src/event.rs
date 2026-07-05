@@ -103,6 +103,17 @@ pub enum DaemonEvent {
     /// superseded).
     DictionarySuggestionClear,
 
+    /// [GRAIN] Quick Agent: a reply was just auto-pasted at the cursor. The pill
+    /// briefly reveals with an "ASK FOLLOW-UP · <shortcut>" affordance; clicking
+    /// it (or pressing the shortcut) reopens the Agent expanded with the
+    /// conversation restored. `shortcut` is the human-readable binding label.
+    AgentFollowupOffer {
+        shortcut: String,
+    },
+    /// [GRAIN] Withdraw the follow-up offer (panel opened, offer expired, or a
+    /// new session started).
+    AgentFollowupClear,
+
     // -- Misc UI signals --
     ShowOverlay,
     HideOverlay,
@@ -180,4 +191,7 @@ pub enum PillAction {
     /// mode. The core marks the current audio position as the content→instruction
     /// split point and echoes back `PromptRecordingChanged { active: true }`.
     PromptRecord,
+    /// [GRAIN] User clicked the pill's Quick-Agent follow-up offer — reopen the
+    /// Agent expanded with the retained conversation.
+    AgentFollowup,
 }

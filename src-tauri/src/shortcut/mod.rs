@@ -162,7 +162,9 @@ pub fn change_binding(
 
     // If this is a dynamic binding, just update the settings and return
     // It's managed dynamically, so we don't register/unregister here
-    if id == "cancel" || id == "transcribe_send_to_ai" {
+    // ("agent_followup" is registered transiently by agent.rs while an Agent
+    // surface is open — it must never be registered globally from here).
+    if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());
@@ -378,7 +380,7 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
     for (id, binding) in bindings {
         // Skip cancel shortcut as it's dynamically registered
         // Skip dynamically registered shortcuts
-        if id == "cancel" || id == "transcribe_send_to_ai" {
+        if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
             continue;
         }
 
@@ -407,7 +409,7 @@ fn register_all_shortcuts_for_implementation(
 
     for (id, default_binding) in &default_bindings {
         // Skip dynamically registered shortcuts
-        if id == "cancel" || id == "transcribe_send_to_ai" {
+        if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
             continue;
         }
 
@@ -743,6 +745,42 @@ pub fn change_auto_dictionary_enabled_setting(app: AppHandle, enabled: bool) -> 
 pub fn change_context_nearby_terms_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.context_nearby_terms = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Agent auto-copy policy (off / first reply / all replies).
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_autocopy_setting(
+    app: AppHandle,
+    mode: settings::AgentAutocopy,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_autocopy = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Toggle Quick Agent (palette submit → headless AI run → paste at cursor).
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_quick_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_quick_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Agent context awareness mode (off / unique terms / full field text).
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_context_mode_setting(
+    app: AppHandle,
+    mode: settings::AgentContextMode,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_context_mode = mode;
     settings::write_settings(&app, settings);
     Ok(())
 }

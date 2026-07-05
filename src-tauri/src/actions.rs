@@ -1132,6 +1132,18 @@ impl ShortcutAction for AgentCloseAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+// [GRAIN] Ask a follow-up on the Agent's latest reply. Registered transiently by
+// agent.rs while an Agent surface (panel / pill offer) is live — never global.
+struct AgentFollowupAction;
+
+impl ShortcutAction for AgentFollowupAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::agent::open_followup(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -1709,6 +1721,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "agent_close".to_string(),
         Arc::new(AgentCloseAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "agent_followup".to_string(),
+        Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

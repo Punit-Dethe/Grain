@@ -1,16 +1,18 @@
 import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Replace, Sparkles, Zap } from "lucide-react";
+import { Bot, Replace, Sparkles, Zap } from "lucide-react";
 import { SnippetsSection } from "./SnippetsSection";
 import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
+import { AgentSection } from "./AgentSection";
 
-type TabKey = "snippets" | "actions" | "context";
+type TabKey = "snippets" | "actions" | "context" | "agent";
 
 /** [GRAIN] Experimentations hub. Each experimental feature is isolated in its own
  * top-bar sub-tab so they never bleed into one another: Snippets (verbatim voice
- * expansions), Actions (spoken trigger → open apps/sites), and Context Aware
- * (adaptive post-processing + user modes). */
+ * expansions), Actions (spoken trigger → open apps/sites), Context Aware
+ * (adaptive post-processing + user modes), and Agent (reply handling, Quick
+ * Agent, the follow-up shortcut, and the Agent's own context awareness). */
 export const ExperimentationsSettings: React.FC = () => {
   const { t } = useTranslation();
   const [tab, setTab] = useState<TabKey>("snippets");
@@ -30,6 +32,11 @@ export const ExperimentationsSettings: React.FC = () => {
       key: "context",
       label: "Context Aware",
       icon: <Sparkles width={15} height={15} />,
+    },
+    {
+      key: "agent",
+      label: "Agent",
+      icon: <Bot width={15} height={15} />,
     },
   ];
 
@@ -61,8 +68,10 @@ export const ExperimentationsSettings: React.FC = () => {
         <SnippetsSection />
       ) : tab === "actions" ? (
         <ActionsSection />
-      ) : (
+      ) : tab === "context" ? (
         <ContextAwareSection />
+      ) : (
+        <AgentSection />
       )}
     </div>
   );
