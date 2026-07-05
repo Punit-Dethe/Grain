@@ -79,7 +79,7 @@ sha2 = "0.10"
 # transcribe-rs (ONNX) was removed entirely: every legacy ONNX family ships as
 # GGUF in the bundled catalog, so keeping the ONNX runtime linked was dead
 # weight. Per-platform backend features in the target tables.
-transcribe-cpp = { version = "0.1.0", default-features = false }
+transcribe-cpp = { version = "0.1.1", default-features = false }
 # [GRAIN] GGUF model downloads for transcribe-cpp (Handy's cancellable fork).
 hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downloads", features = [
   "tokio",
@@ -122,7 +122,7 @@ winreg = "0.55"
 # x86_64 ships the Vulkan GPU backend + the dynamic-backends posture (loadable
 # per-ISA CPU modules); ARM64 stays on the base static CPU-only build.
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
-transcribe-cpp = { version = "0.1.0", default-features = false, features = [
+transcribe-cpp = { version = "0.1.1", default-features = false, features = [
   "dynamic-backends",
   "vulkan",
 ] }
@@ -130,12 +130,12 @@ transcribe-cpp = { version = "0.1.0", default-features = false, features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
 # [GRAIN] macOS links transcribe-cpp statically via Metal (ships no DLLs).
-transcribe-cpp = { version = "0.1.0", default-features = false, features = ["metal"] }
+transcribe-cpp = { version = "0.1.1", default-features = false, features = ["metal"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
-transcribe-cpp = { version = "0.1.0", default-features = false, features = [
+transcribe-cpp = { version = "0.1.1", default-features = false, features = [
   "dynamic-backends",
   "vulkan",
 ] }
