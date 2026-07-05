@@ -7,6 +7,7 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 
 | Date | Upstream Commit / PR | Status / Notes |
 | :--- | :--- | :--- |
+| **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Pending |
 | **Jul 04, 2026** | `Improve Dutch (nl) translation accuracy and consistency (#1594)` | Pending |
 | **Jul 04, 2026** | `Update Japanese translations (#1593)` | Pending |
 | **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Pending |
