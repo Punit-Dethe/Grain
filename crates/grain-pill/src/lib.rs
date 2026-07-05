@@ -936,10 +936,6 @@ fn paint_studio_card(
     dots: &[Rgba],
     // Width-grow 0..1 (collapsed pill width → full card width).
     expand: f32,
-    // [GRAIN] Prompt Record: word index where the AI instruction begins. Transcript
-    // words at/after it are tinted sky blue; words before stay white. `None` = no
-    // Prompt Record (all white). The waveform tint is handled upstream via `dots`.
-    prompt_boundary: Option<usize>,
 ) {
     let (w, h) = studio_pixel_size();
     let (wf, hf) = (w as f32, h as f32);
@@ -1013,7 +1009,6 @@ fn paint_studio_card(
                 fade,
                 at_cap,
                 reveal_alpha,
-                prompt_boundary,
             );
         }
     }
@@ -1082,10 +1077,6 @@ fn draw_transcript(
     // `asr.display_runs()`. Freshly-appeared words ramp 0→1 so text fades in
     // smoothly. Empty slice (or missing index) means fully revealed.
     reveal_alpha: &[f32],
-    // [GRAIN] Prompt Record: word index where the AI instruction begins. Words at
-    // or after it render sky blue (the instruction); words before stay white (the
-    // spoken content). `None` = no Prompt Record, everything white.
-    prompt_boundary: Option<usize>,
 ) {
     let runs = asr.display_runs();
     if runs.is_empty() {
@@ -1133,9 +1124,6 @@ fn draw_transcript(
                     pen += space_w;
                 }
                 let reveal = reveal_alpha.get(gidx).copied().unwrap_or(1.0);
-                // This word is part of the AI instruction if it lands at/after the
-                // Prompt Record boundary.
-                let in_prompt = prompt_boundary.map_or(false, |b| gidx >= b);
                 gidx += 1;
                 // Committed text is stable/pasteable → solid warm white, crisp.
                 // [GRAIN] transcribe-cpp's auto-commit is CONSERVATIVE: it can
@@ -1146,21 +1134,11 @@ fn draw_transcript(
                 // final). So a STABLE tail now renders near-committed white — it
                 // is trustworthy text — and only the genuinely volatile
                 // (unstable) tail is dimmed, marking the live decoding edge.
-                let (mut color, alpha): ([u8; 3], f32) = match style {
+                let (color, alpha): ([u8; 3], f32) = match style {
                     RunStyle::Committed => ([238, 236, 232], 0.97),
                     RunStyle::Partial { stable: true } => ([232, 230, 226], 0.93),
                     RunStyle::Partial { stable: false } => ([196, 200, 208], 0.60),
                 };
-                // [GRAIN] Prompt Record: only the AI-instruction words (at/after the
-                // boundary) shift to a very light sky blue, keeping the
-                // committed/partial alpha tiers. The content before the click stays
-                // white, so the split is visible at a glance.
-                if in_prompt {
-                    color = match style {
-                        RunStyle::Partial { stable: false } => [176, 208, 245],
-                        _ => [206, 228, 255],
-                    };
-                }
                 pen += draw_word(
                     layer,
                     font,
@@ -1650,14 +1628,9 @@ struct Remote {
     /// and only once it has text.
     streaming: bool,
     /// [GRAIN] Prompt Record: the user clicked the pill mid-recording and is now
-    /// dictating an AI instruction. Tints the recording dots / Studio waveform blue.
-    /// Set by `PromptRecordingChanged`; reset at the start/stop of every session.
+    /// dictating an AI instruction. Tints the recording dots / Studio waveform blue
+    /// (the sole visual indicator). Set by `PromptRecordingChanged`; reset per session.
     prompt_recording: bool,
-    /// [GRAIN] Prompt Record boundary: the number of transcript words already
-    /// present when the click landed. In the Studio transcript, words at or after
-    /// this index are the AI instruction (tinted sky blue); words before it are the
-    /// spoken content (kept white). `None` until a click, and per session.
-    prompt_boundary: Option<usize>,
     /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
     /// `Recording` (see `apply_event`) so the preview never changes once the
     /// user releases the shortcut, even though the worker's drain can still
@@ -1676,7 +1649,6 @@ impl Default for Remote {
             mode: PillMode::Collapsed,
             streaming: false,
             prompt_recording: false,
-            prompt_boundary: None,
             asr: AsrDisplay::default(),
         }
     }
@@ -1708,7 +1680,6 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.mode = PillMode::Collapsed;
             r.streaming = mode == SessionMode::NativeAsr;
             r.prompt_recording = false; // fresh session — never carry a prior mark's tint.
-            r.prompt_boundary = None;
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
@@ -1719,19 +1690,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             eprintln!("event: RecordingStopped -> processing");
         }
         // [GRAIN] Prompt Record: the core registered the pill-click split mark.
-        // Only meaningful while recording. Flips the dot field / Studio waveform to
-        // the blue tint, and snapshots the current transcript word count as the
-        // content→instruction boundary so ONLY the words dictated after the click
-        // (the AI instruction) turn blue in the Studio transcript — the content
-        // before it stays white.
+        // Flips the dot field / Studio waveform to the blue tint — the sole visual
+        // indicator that the user is now dictating an AI instruction.
         DaemonEvent::PromptRecordingChanged { active, .. } => {
-            let recording = r.state == PillState::Recording;
-            r.prompt_recording = active && recording;
-            if active && recording {
-                r.prompt_boundary = Some(r.asr.display_runs().len());
-            } else if !active {
-                r.prompt_boundary = None;
-            }
+            r.prompt_recording = active && r.state == PillState::Recording;
             eprintln!("event: PromptRecordingChanged -> {}", r.prompt_recording);
         }
         DaemonEvent::ProcessingComplete { .. } | DaemonEvent::SessionCancelled { .. } => {
@@ -1898,11 +1860,9 @@ struct App {
     aura: Aura,
     state: PillState,
     /// [GRAIN] Prompt Record active for this session (mirrors `Remote`). Drives the
-    /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint.
+    /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint — the
+    /// sole visual indicator of Prompt Record.
     prompt_recording: bool,
-    /// [GRAIN] Word index where the AI instruction begins (mirrors `Remote`). Only
-    /// Studio-transcript words at or after this turn sky blue; content stays white.
-    prompt_boundary: Option<usize>,
     amp: Arc<AtomicU32>,
     _mic: Option<cpal::Stream>,
     sim_target: f32,
@@ -1969,7 +1929,6 @@ impl App {
             aura: Aura::new(),
             state: PillState::Idle,
             prompt_recording: false,
-            prompt_boundary: None,
             amp,
             _mic: None,
             sim_target: 0.5,
@@ -2278,7 +2237,6 @@ impl App {
             &reveal_alpha,
             &self.aura.dots,
             self.studio_expand,
-            self.prompt_boundary,
         );
 
         // [GRAIN] Prompt riser — same mid-speech prompt switcher as the collapsed
@@ -2604,7 +2562,6 @@ impl ApplicationHandler<UserEvent> for App {
             let r = self.remote.lock().unwrap().clone();
             self.state = r.state;
             self.prompt_recording = r.prompt_recording;
-            self.prompt_boundary = r.prompt_boundary;
             self.asr = r.asr.clone();
 
             // [GRAIN] Resize/recreate the OS window the rare times the surface
@@ -2885,7 +2842,6 @@ mod tests {
                 &[],
                 &aura.dots,
                 1.0,
-                None,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -2952,7 +2908,6 @@ mod tests {
                 &[],
                 &aura.dots,
                 1.0,
-                None,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -3021,7 +2976,6 @@ mod tests {
                 &[],
                 &aura.dots,
                 expand,
-                None,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -3040,9 +2994,8 @@ mod tests {
     }
 
     /// [GRAIN] Render the expanded Studio card in PROMPT RECORD mode: the center
-    /// waveform is sky blue, the spoken CONTENT (before the click) stays white, and
-    /// only the AI INSTRUCTION (after the boundary) turns light sky blue. Not an
-    /// assertion test — leaves a PNG artifact to eyeball the split.
+    /// waveform turns sky blue (the mode indicator); the transcript text is left
+    /// plain white (no per-word tint). Not an assertion test — leaves a PNG artifact.
     #[test]
     fn studio_prompt_record_renders_to_png() {
         use tiny_skia::PixmapPaint;
@@ -3051,10 +3004,7 @@ mod tests {
         let (cw, ch) = studio_pixel_size();
 
         let mut asr = AsrDisplay::default();
-        // First 6 words = content (white); the rest = AI instruction (blue).
-        asr.append_commit("Team sync notes from today Monday");
-        let boundary = asr.display_runs().len(); // = 6
-        asr.append_commit("rewrite this as a formal email");
+        asr.append_commit("Team sync notes from today Monday rewrite this as a formal email");
         asr.partial = "and keep it short".into();
         asr.partial_stable = false;
         let n = studio_line_count(&asr, Some(&font));
@@ -3084,7 +3034,6 @@ mod tests {
             &[],
             &aura.dots,
             1.0,
-            Some(boundary), // AI instruction starts here → blue
         );
         bg.draw_pixmap(
             margin,
