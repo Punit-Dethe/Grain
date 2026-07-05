@@ -38,3 +38,7 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 2. Use `detect_changes` for code review.
 3. Use `get_affected_flows` to understand impact.
 4. Use `query_graph` pattern="tests_for" to check coverage.
+
+## Git and Commit Rules
+- Do not include AI attribution, "Co-authored-by" trailers, or any AI signatures in commit messages.
+- Always write clean, standard Git commit messages as a solo human author.
