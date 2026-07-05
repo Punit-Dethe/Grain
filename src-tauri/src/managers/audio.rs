@@ -119,7 +119,7 @@ pub enum MicrophoneMode {
 /* ──────────────────────────────────────────────────────────────── */
 
 fn create_audio_recorder(
-    vad_path: &str,
+    vad_path: &std::path::Path,
     app_handle: &tauri::AppHandle,
     stream_router: Arc<StreamRouter>,
 ) -> Result<AudioRecorder, anyhow::Error> {
@@ -314,7 +314,7 @@ impl AudioRecordingManager {
                 )
                 .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;
             *recorder_opt = Some(create_audio_recorder(
-                vad_path.to_str().unwrap(),
+                &vad_path,
                 &self.app_handle,
                 Arc::clone(&self.stream_router),
             )?);
