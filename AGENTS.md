@@ -42,3 +42,8 @@ When logging via SQLite MCP, you MUST adhere to:
 - `anchor`: Max 5 words defining the fix.
 - `content`: Max 3 concise sentences.
 </handoff_protocol>
+
+<git_protocol>
+1. **Always Commit and Push:** When a task is complete, always commit your changes and push them to GitHub before waiting for the next user request.
+2. **Preserve User Identity:** NEVER change the Git configuration (e.g. `user.name` or `user.email`) to identify yourself as an AI or agent. Always use the machine's existing Git identity so that commits are attributed to the user.
+</git_protocol>
