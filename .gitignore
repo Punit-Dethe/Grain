@@ -30,6 +30,9 @@ dist-ssr
 .cursor/
 .gemini/
 .coder/
+.kiro/
+.qoder/
+QODER.md
 
 /target/
 recording_*
