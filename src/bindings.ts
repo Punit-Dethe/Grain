@@ -1377,10 +1377,12 @@ agent_context_mode?: AgentContextMode;
  * is truly zero-overhead. In live-streaming modes the expanded Studio pill
  * resets and collapses back to the compact capsule until the next word.
  */
-scrap_that_enabled?: boolean;
+scrap_that_enabled?: boolean; 
 /**
- * [GRAIN] Native agent input: when on (default), typing a printable key while
- * the input is listening immediately switches it to the expanded typing card.
+ * [GRAIN] Native agent input: when on (default), typing a printable key
+ * while the input is listening immediately switches it to the expanded
+ * typing card. When off, the input stays in voice mode and typing is
+ * ignored until the user expands it explicitly (Tab / click).
  */
 agent_input_type_to_expand?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }

@@ -1,1 +1,6 @@
 src/** merge=ours
+
+# Font binaries must never be line-ending converted (would corrupt the file).
+*.ttf binary
+*.otf binary
+*.woff2 binary
