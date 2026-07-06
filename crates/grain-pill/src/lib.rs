@@ -15,7 +15,7 @@
 //!   while processing. Click ✓ to confirm, ✗ to cancel.
 //!
 //! Keys (standalone preview): R recording · P processing · I idle · B prompt-record
-//! (blue tint, press after R) · Esc quit.
+//! (blue tint, press after R) · A agent-input card · Esc quit.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -77,13 +77,39 @@ enum PillState {
 /// [GRAIN] Native ASR Studio Window: which surface the single OS window is
 /// currently presenting. `Collapsed` is the classic small capsule (Batch/
 /// Rolling); `Studio` is the larger streaming-text window, driven by
-/// `SessionMode::NativeAsr`. The window is resized + repositioned on the rare
-/// transitions between the two (never per-frame).
+/// `SessionMode::NativeAsr`; `AgentInput` is the native Agent summon card
+/// (recording → type-to-expand). The window is resized + repositioned on the
+/// rare transitions between the surfaces (never per-frame).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PillMode {
     Collapsed,
     Studio,
+    AgentInput,
 }
+
+// ── Agent input geometry (the native summon card, per the reference design) ──
+//
+// The OS window is a fixed canvas sized for the EXPANDED card; the card itself
+// is drawn bottom-anchored and animates its width/height INSIDE the canvas, so
+// expansion never resizes the OS window (a layered window's fully transparent
+// pixels are click-through, so the unused canvas area doesn't eat clicks).
+const AIN_WIN_W: u32 = 580;
+const AIN_WIN_H: u32 = 170;
+/// Margin between the card and the work-area edge it anchors to.
+const AIN_EDGE_MARGIN: i32 = 40;
+/// Expanded card: 520px content + 2×10px horizontal padding (the reference).
+const AIN_EXPANDED_W: f32 = 540.0;
+const AIN_EXPANDED_H: f32 = 136.0;
+/// Compact card paddings (12px vertical, 10px horizontal in the reference).
+const AIN_PAD_X: f32 = 10.0;
+const AIN_PAD_Y_COMPACT: f32 = 12.0;
+const AIN_PAD_Y_EXPANDED: f32 = 16.0;
+const AIN_RADIUS: f32 = 16.0;
+/// Wave grid: 12×4 dots of 3.5px with 3px gaps.
+const AIN_WAVE_COLS: usize = 12;
+const AIN_WAVE_ROWS: usize = 4;
+const AIN_WAVE_DOT: f32 = 3.5;
+const AIN_WAVE_GAP: f32 = 3.0;
 
 // ── Studio Window geometry ──────────────────────────────────────────────────
 //
@@ -381,6 +407,39 @@ fn work_area_bottom(center_x: i32, center_y: i32) -> Option<i32> {
 
 #[cfg(not(windows))]
 fn work_area_bottom(_center_x: i32, _center_y: i32) -> Option<i32> {
+    None
+}
+
+/// [GRAIN] Top edge (physical px) of the monitor's WORK AREA — for the agent
+/// input's optional top anchor (clears a top-docked taskbar).
+#[cfg(windows)]
+fn work_area_top(center_x: i32, center_y: i32) -> Option<i32> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    unsafe {
+        let hmon = MonitorFromPoint(
+            POINT {
+                x: center_x,
+                y: center_y,
+            },
+            MONITOR_DEFAULTTONEAREST,
+        );
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmon, &mut mi).as_bool() {
+            Some(mi.rcWork.top)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn work_area_top(_center_x: i32, _center_y: i32) -> Option<i32> {
     None
 }
 
@@ -734,6 +793,75 @@ fn load_font() -> Option<fontdue::Font> {
         }
     }
     None
+}
+
+/// [GRAIN] Load the system UI face for the agent input card (the reference uses
+/// the platform sans). Semibold for the brand/button, regular for everything
+/// else; falls back down the list, then to `load_font`'s result.
+fn load_ui_font(semibold: bool) -> Option<fontdue::Font> {
+    let paths: &[&str] = if semibold {
+        &[
+            "C:/Windows/Fonts/seguisb.ttf",
+            "C:/Windows/Fonts/segoeuib.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+        ]
+    } else {
+        &["C:/Windows/Fonts/segoeui.ttf"]
+    };
+    for path in paths {
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(font) = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
+                return Some(font);
+            }
+        }
+    }
+    load_font()
+}
+
+/// Draw `text` LEFT-aligned at `(x, cy_center)` (vertical center) into the
+/// pixmap. Returns the advance width. Shared by the agent input card.
+fn draw_text_left(
+    pixmap: &mut Pixmap,
+    font: &fontdue::Font,
+    text: &str,
+    x: f32,
+    cy_center: f32,
+    px: f32,
+    color: [u8; 3],
+    alpha: f32,
+) -> f32 {
+    let baseline = cy_center + px * 0.34;
+    let mut pen = x;
+    let (w, h) = (pixmap.width() as i32, pixmap.height() as i32);
+    let data = pixmap.data_mut();
+    for ch in text.chars() {
+        let (m, bmp) = font.rasterize(ch, px);
+        let gx = pen + m.xmin as f32;
+        let gy = baseline - (m.height as f32 + m.ymin as f32);
+        for yy in 0..m.height {
+            for xx in 0..m.width {
+                let ga = bmp[yy * m.width + xx] as f32 / 255.0 * alpha;
+                if ga <= 0.003 {
+                    continue;
+                }
+                let xi = (gx + xx as f32) as i32;
+                let yi = (gy + yy as f32) as i32;
+                if xi < 0 || yi < 0 || xi >= w || yi >= h {
+                    continue;
+                }
+                let o = ((yi * w + xi) as usize) * 4;
+                let inv = 1.0 - ga;
+                let blend =
+                    |s: u8, d: u8| -> u8 { ((s as f32 * ga) + (d as f32 * inv)).min(255.0) as u8 };
+                data[o] = blend(color[0], data[o]);
+                data[o + 1] = blend(color[1], data[o + 1]);
+                data[o + 2] = blend(color[2], data[o + 2]);
+                data[o + 3] = ((255.0 * ga) + (data[o + 3] as f32 * inv)).min(255.0) as u8;
+            }
+        }
+        pen += m.advance_width;
+    }
+    pen - x
 }
 
 /// Measure a string's advance width at `px` (no rasterization).
@@ -1486,6 +1614,85 @@ mod present {
         }
     }
 
+    /// [GRAIN] Toggle keyboard focusability for the agent input. The pill is
+    /// normally WS_EX_NOACTIVATE (an overlay must never steal focus); the agent
+    /// INPUT is the opposite — it exists to be typed into.
+    pub fn set_focusable(window: &winit::window::Window, focusable: bool) {
+        if let Some(hwnd) = hwnd_of(window) {
+            unsafe {
+                let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+                let flag = WS_EX_NOACTIVATE.0 as isize;
+                let next = if focusable { ex & !flag } else { ex | flag };
+                if next != ex {
+                    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, next);
+                }
+            }
+        }
+    }
+
+    /// [GRAIN] Pull the (shown) window to the foreground and grab keyboard focus.
+    /// A window summoned by a hotkey in ANOTHER process is subject to Windows'
+    /// foreground lock, so we bridge the foreground thread's input queue to ours
+    /// first — the same dance the core app uses for its own summoned surfaces.
+    pub fn force_foreground(window: &winit::window::Window) {
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+            SW_SHOW,
+        };
+        let Some(hwnd) = hwnd_of(window) else { return };
+        unsafe {
+            let fg = GetForegroundWindow();
+            let our_tid = GetCurrentThreadId();
+            let fg_tid = GetWindowThreadProcessId(fg, None);
+            let attached = fg_tid != 0
+                && fg_tid != our_tid
+                && AttachThreadInput(fg_tid, our_tid, true).as_bool();
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = BringWindowToTop(hwnd);
+            let _ = SetForegroundWindow(hwnd);
+            let _ = SetFocus(hwnd);
+            if attached {
+                let _ = AttachThreadInput(fg_tid, our_tid, false);
+            }
+        }
+    }
+
+    /// [GRAIN] Read CF_UNICODETEXT off the clipboard (Ctrl+V in the agent input)
+    /// without pulling in a clipboard crate. Best-effort: `None` on any failure.
+    pub fn read_clipboard_text(window: &winit::window::Window) -> Option<String> {
+        use windows::Win32::Foundation::HGLOBAL;
+        use windows::Win32::System::DataExchange::{
+            CloseClipboard, GetClipboardData, OpenClipboard,
+        };
+        use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+        const CF_UNICODETEXT: u32 = 13;
+        let hwnd = hwnd_of(window)?;
+        unsafe {
+            if OpenClipboard(hwnd).is_err() {
+                return None;
+            }
+            let out = (|| {
+                let handle = GetClipboardData(CF_UNICODETEXT).ok()?;
+                let hglobal = HGLOBAL(handle.0 as _);
+                let ptr = GlobalLock(hglobal) as *const u16;
+                if ptr.is_null() {
+                    return None;
+                }
+                let mut len = 0usize;
+                while *ptr.add(len) != 0 {
+                    len += 1;
+                }
+                let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+                let _ = GlobalUnlock(hglobal);
+                Some(text)
+            })();
+            let _ = CloseClipboard();
+            out
+        }
+    }
+
     /// Caches the GDI memory DC + DIB section for the window's fixed size so each
     /// frame is just a memcpy + `UpdateLayeredWindow` — no per-frame allocation or
     /// GDI handle churn (that churn was the rolling-mode CPU spike).
@@ -1595,6 +1802,11 @@ mod present {
     pub fn make_layered(_w: &winit::window::Window) {}
     pub fn show_window(_w: &winit::window::Window) {}
     pub fn hide_window(_w: &winit::window::Window) {}
+    pub fn set_focusable(_w: &winit::window::Window, _f: bool) {}
+    pub fn force_foreground(_w: &winit::window::Window) {}
+    pub fn read_clipboard_text(_w: &winit::window::Window) -> Option<String> {
+        None
+    }
     pub struct Presenter;
     impl Presenter {
         pub fn new(_w: &winit::window::Window, _w2: i32, _h: i32) -> Option<Self> {
@@ -1637,6 +1849,14 @@ struct Remote {
     agent_offer: Option<String>,
     /// Bumped on every offer/clear so the App detects the transition.
     agent_offer_seq: u64,
+    /// [GRAIN] Native agent input: `Some(selection_chars)` while the summon card
+    /// should be on screen. Overrides every other surface while set.
+    agent_input: Option<u32>,
+    /// Bumped on every show/hide so the App detects the transition.
+    agent_input_seq: u64,
+    /// Bumped when the core's global Enter asks the pill to submit (the pill
+    /// answers with SubmitText or SubmitVoice depending on its state).
+    agent_submit_req_seq: u64,
     /// [GRAIN] Live Studio Window transcript. Frozen the instant `state` leaves
     /// `Recording` (see `apply_event`) so the preview never changes once the
     /// user releases the shortcut, even though the worker's drain can still
@@ -1657,6 +1877,9 @@ impl Default for Remote {
             prompt_recording: false,
             agent_offer: None,
             agent_offer_seq: 0,
+            agent_input: None,
+            agent_input_seq: 0,
+            agent_submit_req_seq: 0,
             asr: AsrDisplay::default(),
         }
     }
@@ -1738,6 +1961,23 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
                 r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
             }
             eprintln!("event: AgentFollowupClear -> withdraw");
+        }
+        // [GRAIN] Native agent input: the summon card. Shown/hidden by the core;
+        // the pill owns the typing state and answers submit requests itself.
+        DaemonEvent::AgentInputShow { selection_chars } => {
+            r.agent_input = Some(selection_chars);
+            r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
+            eprintln!("event: AgentInputShow ({selection_chars} sel chars)");
+        }
+        DaemonEvent::AgentInputHide => {
+            if r.agent_input.take().is_some() {
+                r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
+            }
+            eprintln!("event: AgentInputHide");
+        }
+        DaemonEvent::AgentInputSubmitRequest => {
+            r.agent_submit_req_seq = r.agent_submit_req_seq.wrapping_add(1);
+            eprintln!("event: AgentInputSubmitRequest");
         }
         // [GRAIN] transcribe-cpp streaming: both parts are cumulative snapshots
         // (the full flicker-free prefix + the volatile tail), so set them
@@ -1854,6 +2094,16 @@ fn spawn_event_client(
                                             | DaemonEvent::PasteError { .. }
                                             | DaemonEvent::OverlayConfig { .. }
                                             | DaemonEvent::PromptRecordingChanged { .. }
+                                            // The follow-up offer arrives while the pill is
+                                            // HIDDEN (no session) — without a wake the loop
+                                            // sits in ControlFlow::Wait and the offer never
+                                            // paints. Same for its withdrawal.
+                                            | DaemonEvent::AgentFollowupOffer { .. }
+                                            | DaemonEvent::AgentFollowupClear
+                                            | DaemonEvent::PromptChanged { .. }
+                                            | DaemonEvent::AgentInputShow { .. }
+                                            | DaemonEvent::AgentInputHide
+                                            | DaemonEvent::AgentInputSubmitRequest
                                     );
                                     apply_event(&remote, ev);
                                     if is_session_event {
@@ -1887,6 +2137,43 @@ fn spawn_event_client(
     });
 }
 
+// ── Agent input surface state ───────────────────────────────────────────────
+
+/// [GRAIN] The native agent summon card (per the reference design): records by
+/// default (dot-matrix wave + "Listening..."), expands into a 520px typing card
+/// on the first printable keystroke. Owned entirely by the pill; the core only
+/// shows/hides it and asks it to submit.
+struct AgentInputUi {
+    selection_chars: u32,
+    /// Typing (expanded) vs recording (compact).
+    expanded: bool,
+    /// Eased 0..1 expansion progress (drives width/height/content cross-fade).
+    expand_t: f32,
+    text: String,
+    /// Free-running clock: wave animation + caret blink.
+    phase: f32,
+    /// Confirm-button hit rect from the last rendered frame (x0, y0, x1, y1).
+    confirm_rect: (f32, f32, f32, f32),
+    /// Card hit rect from the last rendered frame.
+    card_rect: (f32, f32, f32, f32),
+    hover_confirm: bool,
+}
+
+impl AgentInputUi {
+    fn new(selection_chars: u32) -> Self {
+        AgentInputUi {
+            selection_chars,
+            expanded: false,
+            expand_t: 0.0,
+            text: String::new(),
+            phase: 0.0,
+            confirm_rect: (0.0, 0.0, 0.0, 0.0),
+            card_rect: (0.0, 0.0, 0.0, 0.0),
+            hover_confirm: false,
+        }
+    }
+}
+
 // ── App ─────────────────────────────────────────────────────────────────────
 
 struct App {
@@ -1914,6 +2201,22 @@ struct App {
     // and a click sends `PillAction::AgentFollowup` instead of Prompt Record.
     agent_offer: Option<String>,
     last_agent_offer_seq: u64,
+    /// True when the pill's next hide is an offer withdrawal — those fade out
+    /// smoothly (reusing `studio_alpha`) instead of vanishing like session ends.
+    offer_fade_close: bool,
+    // [GRAIN] Native agent input (mirrors `Remote::agent_input`). While `Some`,
+    // the window presents the summon card and accepts keyboard focus.
+    agent_input: Option<AgentInputUi>,
+    last_agent_input_seq: u64,
+    last_agent_submit_req_seq: u64,
+    /// Segoe UI (regular + semibold) for the agent input card — the riser keeps
+    /// its mono font; the card matches the reference's system UI face.
+    ui_font: Option<fontdue::Font>,
+    ui_font_semibold: Option<fontdue::Font>,
+    /// Last cursor position (physical px) for card/button hit-testing.
+    cursor_pos: (f32, f32),
+    /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
+    ctrl_down: bool,
     riser_progress: f32,
     riser_hide_at: Option<Instant>,
     next_tick: Instant,
@@ -1984,6 +2287,14 @@ impl App {
             prompt_preview_until: None,
             agent_offer: None,
             last_agent_offer_seq: 0,
+            offer_fade_close: false,
+            agent_input: None,
+            last_agent_input_seq: 0,
+            last_agent_submit_req_seq: 0,
+            ui_font: load_ui_font(false),
+            ui_font_semibold: load_ui_font(true),
+            cursor_pos: (0.0, 0.0),
+            ctrl_down: false,
             riser_progress: 0.0,
             riser_hide_at: None,
             next_tick: Instant::now(),
@@ -2019,6 +2330,7 @@ impl App {
         match mode {
             PillMode::Collapsed => Self::win_size(),
             PillMode::Studio => studio_pixel_size(),
+            PillMode::AgentInput => (AIN_WIN_W, AIN_WIN_H),
         }
     }
 
@@ -2056,6 +2368,129 @@ impl App {
             OverlayPosition::Center => mp.y + ((ms.height.saturating_sub(h)) / 2) as i32,
         };
         window.set_outer_position(PhysicalPosition::new(x, y));
+    }
+
+    /// [GRAIN] Place the agent input canvas: horizontally centered; anchored to
+    /// the BOTTOM work-area edge by default (the card expands upward inside the
+    /// canvas), or to the TOP edge when the user's overlay anchor is Top (the
+    /// card then expands downward).
+    fn position_agent_input(window: &Window, anchor: OverlayPosition) {
+        let Some(mon) = window
+            .current_monitor()
+            .or_else(|| window.primary_monitor())
+        else {
+            return;
+        };
+        let ms = mon.size();
+        let mp = mon.position();
+        let (w, h) = (AIN_WIN_W, AIN_WIN_H);
+        let x = mp.x + ((ms.width.saturating_sub(w)) / 2) as i32;
+        let (cx, cy) = (mp.x + (ms.width / 2) as i32, mp.y + (ms.height / 2) as i32);
+        let y = match anchor {
+            OverlayPosition::Top => work_area_top(cx, cy).unwrap_or(mp.y) + AIN_EDGE_MARGIN,
+            _ => {
+                let bottom = work_area_bottom(cx, cy).unwrap_or(mp.y + ms.height as i32);
+                bottom - h as i32 - AIN_EDGE_MARGIN
+            }
+        };
+        window.set_outer_position(PhysicalPosition::new(x, y));
+    }
+
+    /// True when the agent input card should hug the TOP of its canvas (top
+    /// anchor → expands downward). Mirrors `position_agent_input`.
+    fn agent_input_anchored_top(&self) -> bool {
+        self.remote.lock().unwrap().anchor == OverlayPosition::Top
+    }
+
+    /// [GRAIN] Keystroke routing for the agent input card (the window has real
+    /// focus while the input is up). Enter/Escape are fallbacks — they normally
+    /// arrive via the core's transient global shortcuts instead.
+    fn agent_input_key(&mut self, ev: KeyEvent) {
+        let Some(ui) = &mut self.agent_input else {
+            return;
+        };
+        match ev.logical_key.as_ref() {
+            Key::Named(NamedKey::Escape) => {
+                let _ = self.action_tx.send(PillAction::AgentInputCancel);
+            }
+            Key::Named(NamedKey::Enter) => {
+                let text = ui.text.trim().to_string();
+                let action = if ui.expanded && !text.is_empty() {
+                    PillAction::AgentInputSubmitText { text }
+                } else {
+                    PillAction::AgentInputSubmitVoice
+                };
+                let _ = self.action_tx.send(action);
+            }
+            // Tab shrinks back to the recording state (the reference behavior);
+            // the core restarts dictation on `active: false`.
+            Key::Named(NamedKey::Tab) => {
+                if ui.expanded {
+                    ui.expanded = false;
+                    ui.text.clear();
+                    let _ = self
+                        .action_tx
+                        .send(PillAction::AgentInputTyping { active: false });
+                }
+            }
+            Key::Named(NamedKey::Backspace) => {
+                if ui.expanded {
+                    if self.ctrl_down {
+                        // Ctrl+Backspace: drop the trailing word.
+                        let trimmed = ui.text.trim_end();
+                        let cut = trimmed
+                            .rfind(char::is_whitespace)
+                            .map(|i| i + 1)
+                            .unwrap_or(0);
+                        ui.text.truncate(cut);
+                    } else {
+                        ui.text.pop();
+                    }
+                }
+            }
+            Key::Character("v") | Key::Character("V") if self.ctrl_down => {
+                if let Some(window) = &self.window {
+                    if let Some(pasted) = present::read_clipboard_text(window) {
+                        let clean: String =
+                            pasted.chars().filter(|c| !c.is_control()).collect();
+                        if !clean.is_empty() {
+                            if !ui.expanded {
+                                ui.expanded = true;
+                                let _ = self
+                                    .action_tx
+                                    .send(PillAction::AgentInputTyping { active: true });
+                            }
+                            ui.text.push_str(&clean);
+                            // Char-safe cap (byte-index truncate can split UTF-8).
+                            if ui.text.chars().count() > 2000 {
+                                ui.text = ui.text.chars().take(2000).collect();
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                // Ordinary text entry. The first printable character expands the
+                // card (typing overrides the voice capture, per the reference).
+                if self.ctrl_down {
+                    return; // other Ctrl chords are not text
+                }
+                let Some(t) = ev.text.as_ref() else { return };
+                let printable: String = t.chars().filter(|c| !c.is_control()).collect();
+                if printable.is_empty() {
+                    return;
+                }
+                if !ui.expanded {
+                    ui.expanded = true;
+                    let _ = self
+                        .action_tx
+                        .send(PillAction::AgentInputTyping { active: true });
+                }
+                if ui.text.chars().count() < 2000 {
+                    ui.text.push_str(&printable);
+                }
+            }
+        }
     }
 
     fn update_cached_label(&mut self) {
@@ -2102,7 +2537,363 @@ impl App {
         match self.mode {
             PillMode::Collapsed => self.render_collapsed(),
             PillMode::Studio => self.render_studio(),
+            PillMode::AgentInput => self.render_agent_input(),
         }
+    }
+
+    /// [GRAIN] The native agent summon card, pixel-matched to the reference:
+    /// COMPACT — a content-hugging dark capsule with the 12×4 white→orange
+    /// gradient wave (right-to-left "quantum audio stream") and "Listening...";
+    /// EXPANDED (first printable keystroke) — a 520px card with the GRAIN
+    /// header + selection chip, an 18px input with an orange caret, and a
+    /// footer: "Tab to record" · "Esc to close" · a white "Confirm ↵" button.
+    /// The card is drawn INSIDE the fixed canvas (anchored to the work-area
+    /// edge) so expansion never resizes the OS window.
+    fn render_agent_input(&mut self) {
+        if self.window.is_none() {
+            return;
+        }
+        let (w, h) = (AIN_WIN_W, AIN_WIN_H);
+        let mut pixmap = self
+            .pixmap
+            .take()
+            .unwrap_or_else(|| Pixmap::new(w, h).unwrap());
+        pixmap.fill(Color::TRANSPARENT);
+
+        let anchored_top = self.agent_input_anchored_top();
+        let Some(ui) = &mut self.agent_input else {
+            self.pixmap = Some(pixmap);
+            return;
+        };
+        let t = ui.expand_t.clamp(0.0, 1.0);
+        let phase = ui.phase;
+
+        // ── Card geometry (width/height lerp between the two states) ──────────
+        let ui_font = self.ui_font.as_ref();
+        let sb_font = self.ui_font_semibold.as_ref().or(ui_font);
+
+        // Compact width hugs its content: pad + 2 + wave + 14 + label + pad.
+        let wave_w = AIN_WAVE_COLS as f32 * AIN_WAVE_DOT + (AIN_WAVE_COLS - 1) as f32 * AIN_WAVE_GAP;
+        let wave_h = AIN_WAVE_ROWS as f32 * AIN_WAVE_DOT + (AIN_WAVE_ROWS - 1) as f32 * AIN_WAVE_GAP;
+        let listen_w = ui_font
+            .map(|f| text_width(f, "Listening...", 11.5))
+            .unwrap_or(64.0);
+        let compact_w = AIN_PAD_X + 2.0 + wave_w + 14.0 + listen_w + AIN_PAD_X;
+        let compact_h = AIN_PAD_Y_COMPACT * 2.0 + wave_h.max(16.0) + 2.0;
+
+        let card_w = compact_w + (AIN_EXPANDED_W - compact_w) * t;
+        let card_h = compact_h + (AIN_EXPANDED_H - compact_h) * t;
+        let card_x = (w as f32 - card_w) / 2.0;
+        // Anchored to the canvas edge nearest the screen edge, so the card
+        // grows AWAY from it (upward at the bottom, downward at the top).
+        let card_y = if anchored_top {
+            1.0
+        } else {
+            h as f32 - card_h - 1.0
+        };
+        ui.card_rect = (card_x, card_y, card_x + card_w, card_y + card_h);
+
+        // ── Card body: #1a1a1a fill, #333 border, r16, faint layered shadow ──
+        let rounded = |x: f32, y: f32, ww: f32, hh: f32, r: f32| -> Option<tiny_skia::Path> {
+            let mut pb = PathBuilder::new();
+            let r = r.min(ww / 2.0).min(hh / 2.0);
+            pb.move_to(x + r, y);
+            pb.line_to(x + ww - r, y);
+            pb.quad_to(x + ww, y, x + ww, y + r);
+            pb.line_to(x + ww, y + hh - r);
+            pb.quad_to(x + ww, y + hh, x + ww - r, y + hh);
+            pb.line_to(x + r, y + hh);
+            pb.quad_to(x, y + hh, x, y + hh - r);
+            pb.line_to(x, y + r);
+            pb.quad_to(x, y, x + r, y);
+            pb.close();
+            pb.finish()
+        };
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        // Faint expanding shadow layers (approximates the reference's soft drop).
+        for (grow, alpha) in [(3.0_f32, 26_u8), (6.0, 14), (9.0, 7)] {
+            paint.set_color(Color::from_rgba8(0, 0, 0, alpha));
+            if let Some(p) = rounded(
+                card_x - grow,
+                card_y - grow * 0.4,
+                card_w + grow * 2.0,
+                card_h + grow * 1.4,
+                AIN_RADIUS + grow,
+            ) {
+                pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+        paint.set_color(Color::from_rgba8(0x33, 0x33, 0x33, 255)); // border
+        if let Some(p) = rounded(card_x, card_y, card_w, card_h, AIN_RADIUS) {
+            pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+        paint.set_color(Color::from_rgba8(0x1a, 0x1a, 0x1a, 255)); // surface
+        if let Some(p) = rounded(
+            card_x + 1.0,
+            card_y + 1.0,
+            card_w - 2.0,
+            card_h - 2.0,
+            AIN_RADIUS - 1.0,
+        ) {
+            pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+
+        // Content cross-fade: recording fades out quickly as the card expands,
+        // typing fades in on the back half (mirrors the reference's fadeIn).
+        let rec_alpha = (1.0 - t * 2.2).clamp(0.0, 1.0);
+        let typ_alpha = ((t - 0.45) / 0.55).clamp(0.0, 1.0);
+
+        // ── Recording state (compact) ─────────────────────────────────────────
+        if rec_alpha > 0.01 {
+            let cy = card_y + card_h / 2.0;
+            let wx = card_x + AIN_PAD_X + 2.0;
+            let wy = cy - wave_h / 2.0;
+            for i in 0..(AIN_WAVE_ROWS * AIN_WAVE_COLS) {
+                let r = i / AIN_WAVE_COLS;
+                let c = i % AIN_WAVE_COLS;
+                let corner =
+                    (r == 0 || r == AIN_WAVE_ROWS - 1) && (c == 0 || c == AIN_WAVE_COLS - 1);
+                if corner {
+                    continue;
+                }
+                // White→orange gradient, left to right (the reference's dot color).
+                let ratio = c as f32 / (AIN_WAVE_COLS - 1) as f32;
+                let (rr, gg, bb) = (255.0, 255.0 - 170.0 * ratio, 255.0 - 255.0 * ratio);
+                // "Quantum audio stream": three additive waves travelling left.
+                let (cf, rf) = (c as f32, r as f32);
+                let w1 = (cf * 0.6 + phase * 6.0 + rf * 0.5).sin();
+                let w2 = (cf * 0.3 + phase * 3.0 - rf * 1.2).sin();
+                let w3 = (cf * 0.8 + phase * 4.5 + rf * 2.0).cos();
+                let combined = w1 * 0.5 + w2 * w1 * 0.5 + w3 * 0.3;
+                let normalized = (combined + 1.3) / 2.6;
+                let opacity = (0.05 + normalized * 0.95).clamp(0.05, 1.0) * rec_alpha;
+                let dx = wx + c as f32 * (AIN_WAVE_DOT + AIN_WAVE_GAP) + AIN_WAVE_DOT / 2.0;
+                let dy = wy + r as f32 * (AIN_WAVE_DOT + AIN_WAVE_GAP) + AIN_WAVE_DOT / 2.0;
+                if let Some(circle) = PathBuilder::from_circle(dx, dy, AIN_WAVE_DOT / 2.0) {
+                    paint.set_color(Color::from_rgba8(
+                        rr as u8,
+                        gg as u8,
+                        bb as u8,
+                        (opacity * 255.0) as u8,
+                    ));
+                    pixmap.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+            }
+            if let Some(f) = ui_font {
+                draw_text_left(
+                    &mut pixmap,
+                    f,
+                    "Listening...",
+                    wx + wave_w + 14.0,
+                    cy,
+                    11.5,
+                    [0x8a, 0x8a, 0x8a],
+                    rec_alpha,
+                );
+            }
+        }
+
+        // ── Typing state (expanded) ───────────────────────────────────────────
+        let mut confirm_rect = (0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32);
+        if typ_alpha > 0.01 {
+            let inner_x = card_x + AIN_PAD_X + 8.0; // content inset (reference keeps text off the rounding)
+            let inner_w = card_w - (AIN_PAD_X + 8.0) * 2.0;
+            let head_cy = card_y + AIN_PAD_Y_EXPANDED + 9.0;
+            let input_cy = head_cy + 9.0 + 16.0 + 12.0;
+            let foot_cy = input_cy + 12.0 + 16.0 + 15.0;
+
+            // Header: GRAIN (semibold, letter-spaced) + the selection chip.
+            if let Some(f) = sb_font {
+                let mut x = inner_x;
+                for ch in "GRAIN".chars() {
+                    let s = ch.to_string();
+                    x += draw_text_left(
+                        &mut pixmap,
+                        f,
+                        &s,
+                        x,
+                        head_cy,
+                        13.0,
+                        [0xa0, 0xa0, 0xa0],
+                        typ_alpha,
+                    ) + 0.5;
+                }
+            }
+            if let Some(f) = ui_font {
+                let chip_text = if ui.selection_chars > 0 {
+                    format!("{} chars", ui.selection_chars)
+                } else {
+                    "No selection".to_string()
+                };
+                let tw = text_width(f, &chip_text, 11.0);
+                let chip_w = tw + 20.0;
+                let chip_h = 21.0;
+                let chip_x = inner_x + inner_w - chip_w;
+                let chip_y = head_cy - chip_h / 2.0;
+                paint.set_color(Color::from_rgba8(
+                    0x33,
+                    0x33,
+                    0x33,
+                    (typ_alpha * 255.0) as u8,
+                ));
+                if let Some(p) = rounded(chip_x, chip_y, chip_w, chip_h, 6.0) {
+                    pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+                paint.set_color(Color::from_rgba8(
+                    0x2a,
+                    0x2a,
+                    0x2a,
+                    (typ_alpha * 255.0) as u8,
+                ));
+                if let Some(p) = rounded(chip_x + 1.0, chip_y + 1.0, chip_w - 2.0, chip_h - 2.0, 5.0)
+                {
+                    pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+                draw_text_left(
+                    &mut pixmap,
+                    f,
+                    &chip_text,
+                    chip_x + 10.0,
+                    head_cy,
+                    11.0,
+                    [0xa0, 0xa0, 0xa0],
+                    typ_alpha,
+                );
+            }
+
+            // Input line: typed text (18px white) or the placeholder; caret.
+            if let Some(f) = ui_font {
+                let max_text_w = inner_w - 6.0;
+                let caret_on = (phase % 1.0) < 0.6;
+                if ui.text.is_empty() {
+                    draw_text_left(
+                        &mut pixmap,
+                        f,
+                        "Ask anything...",
+                        inner_x,
+                        input_cy,
+                        18.0,
+                        [0x66, 0x66, 0x66],
+                        typ_alpha,
+                    );
+                    if caret_on {
+                        paint.set_color(Color::from_rgba8(
+                            0xff,
+                            0x55,
+                            0x00,
+                            (typ_alpha * 255.0) as u8,
+                        ));
+                        if let Some(rect) = Rect::from_xywh(inner_x - 1.0, input_cy - 10.0, 1.6, 20.0)
+                        {
+                            pixmap.fill_path(
+                                &PathBuilder::from_rect(rect),
+                                &paint,
+                                FillRule::Winding,
+                                Transform::identity(),
+                                None,
+                            );
+                        }
+                    }
+                } else {
+                    // Show the TAIL when the text overflows (caret always visible).
+                    let mut shown: &str = &ui.text;
+                    while text_width(f, shown, 18.0) > max_text_w && !shown.is_empty() {
+                        let mut it = shown.char_indices();
+                        it.next();
+                        shown = &shown[it.next().map(|(i, _)| i).unwrap_or(shown.len())..];
+                    }
+                    let tw = draw_text_left(
+                        &mut pixmap,
+                        f,
+                        shown,
+                        inner_x,
+                        input_cy,
+                        18.0,
+                        [0xff, 0xff, 0xff],
+                        typ_alpha,
+                    );
+                    if caret_on {
+                        paint.set_color(Color::from_rgba8(
+                            0xff,
+                            0x55,
+                            0x00,
+                            (typ_alpha * 255.0) as u8,
+                        ));
+                        if let Some(rect) =
+                            Rect::from_xywh(inner_x + tw + 1.0, input_cy - 10.0, 1.6, 20.0)
+                        {
+                            pixmap.fill_path(
+                                &PathBuilder::from_rect(rect),
+                                &paint,
+                                FillRule::Winding,
+                                Transform::identity(),
+                                None,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Footer: "Tab to record" · "Esc to close" + the Confirm button.
+            if let Some(f) = ui_font {
+                draw_text_left(
+                    &mut pixmap,
+                    f,
+                    "Tab to record",
+                    inner_x,
+                    foot_cy,
+                    12.0,
+                    [0x66, 0x66, 0x66],
+                    typ_alpha,
+                );
+            }
+            if let (Some(f), Some(fb)) = (ui_font, sb_font) {
+                let btn_label = "Confirm \u{21b5}";
+                let btn_tw = text_width(fb, btn_label, 13.0);
+                let btn_w = btn_tw + 28.0;
+                let btn_h = 29.0;
+                let btn_x = inner_x + inner_w - btn_w;
+                let btn_y = foot_cy - btn_h / 2.0;
+                confirm_rect = (btn_x, btn_y, btn_x + btn_w, btn_y + btn_h);
+                let bg = if ui.hover_confirm { 0xf0 } else { 0xff };
+                paint.set_color(Color::from_rgba8(bg, bg, bg, (typ_alpha * 255.0) as u8));
+                if let Some(p) = rounded(btn_x, btn_y, btn_w, btn_h, 8.0) {
+                    pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
+                }
+                draw_text_left(
+                    &mut pixmap,
+                    fb,
+                    btn_label,
+                    btn_x + 14.0,
+                    foot_cy,
+                    13.0,
+                    [0x00, 0x00, 0x00],
+                    typ_alpha,
+                );
+
+                let esc = "Esc to close";
+                let esc_w = text_width(f, esc, 12.0);
+                draw_text_left(
+                    &mut pixmap,
+                    f,
+                    esc,
+                    btn_x - 12.0 - esc_w,
+                    foot_cy,
+                    12.0,
+                    [0x66, 0x66, 0x66],
+                    typ_alpha,
+                );
+            }
+        }
+        ui.confirm_rect = confirm_rect;
+
+        if let Some(presenter) = &self.presenter {
+            presenter.blit(&pixmap);
+        }
+        self.pixmap = Some(pixmap);
     }
 
     fn render_collapsed(&mut self) {
@@ -2183,6 +2974,17 @@ impl App {
                         None,
                     );
                 }
+            }
+        }
+
+        // [GRAIN] Whole-surface fade for the collapsed capsule (offer reveal /
+        // withdrawal). The pixmap is premultiplied RGBA, so scaling every byte
+        // uniformly preserves the premultiplication invariant. No-op at full
+        // opacity; the pixmap is tiny, so the pass is negligible.
+        if self.studio_alpha < 0.995 {
+            let f = self.studio_alpha.clamp(0.0, 1.0);
+            for b in pixmap.data_mut() {
+                *b = (*b as f32 * f) as u8;
             }
         }
 
@@ -2532,6 +3334,20 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => self.render(),
+            WindowEvent::ModifiersChanged(m) => {
+                self.ctrl_down = m.state().control_key();
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_pos = (position.x as f32, position.y as f32);
+                if let Some(ui) = &mut self.agent_input {
+                    let (x0, y0, x1, y1) = ui.confirm_rect;
+                    ui.hover_confirm = ui.expanded
+                        && self.cursor_pos.0 >= x0
+                        && self.cursor_pos.0 <= x1
+                        && self.cursor_pos.1 >= y0
+                        && self.cursor_pos.1 <= y1;
+                }
+            }
             // [GRAIN] Prompt Record: a left-click on the pill while recording enters
             // AI-instruction mode — everything spoken after this is a prompt for the
             // LLM, not content. Works on the collapsed capsule AND the expanded
@@ -2544,6 +3360,30 @@ impl ApplicationHandler<UserEvent> for App {
                 button: MouseButton::Left,
                 ..
             } => {
+                // [GRAIN] Agent input: click-to-expand (compact) / Confirm (expanded).
+                if let Some(ui) = &mut self.agent_input {
+                    let (cx, cy) = self.cursor_pos;
+                    let (bx0, by0, bx1, by1) = ui.confirm_rect;
+                    if ui.expanded && cx >= bx0 && cx <= bx1 && cy >= by0 && cy <= by1 {
+                        let text = ui.text.trim().to_string();
+                        if !text.is_empty() {
+                            let _ = self
+                                .action_tx
+                                .send(PillAction::AgentInputSubmitText { text });
+                        } else {
+                            let _ = self.action_tx.send(PillAction::AgentInputSubmitVoice);
+                        }
+                    } else if !ui.expanded {
+                        let (kx0, ky0, kx1, ky1) = ui.card_rect;
+                        if cx >= kx0 && cx <= kx1 && cy >= ky0 && cy <= ky1 {
+                            ui.expanded = true;
+                            let _ = self
+                                .action_tx
+                                .send(PillAction::AgentInputTyping { active: true });
+                        }
+                    }
+                    return;
+                }
                 // Works on BOTH surfaces: the collapsed capsule and the expanded
                 // Studio card (whose center waveform is the click affordance).
                 if self.state == PillState::Recording && !self.prompt_recording {
@@ -2553,6 +3393,20 @@ impl ApplicationHandler<UserEvent> for App {
                     // a click reopens the Agent expanded with the conversation.
                     let _ = self.action_tx.send(PillAction::AgentFollowup);
                 }
+            }
+            // [GRAIN] Agent input keyboard: the window has real focus while the
+            // input is up, so keystrokes land here as ordinary window events.
+            // (Enter/Escape usually arrive via the core's transient GLOBAL
+            // shortcuts instead — these are the fallback when those failed to
+            // register.) Handled BEFORE the dev-preview keys below.
+            WindowEvent::KeyboardInput {
+                event: ref key_event @ KeyEvent {
+                    state: ElementState::Pressed,
+                    ..
+                },
+                ..
+            } if self.agent_input.is_some() => {
+                self.agent_input_key(key_event.clone());
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -2581,6 +3435,17 @@ impl ApplicationHandler<UserEvent> for App {
                 Key::Character("b") => {
                     let mut r = self.remote.lock().unwrap();
                     r.prompt_recording = !r.prompt_recording;
+                }
+                // [GRAIN] Dev preview: toggle the native agent input card (A).
+                // Mirrors the real AgentInputShow/Hide events.
+                Key::Character("a") => {
+                    let mut r = self.remote.lock().unwrap();
+                    if r.agent_input.take().is_some() {
+                        r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
+                    } else {
+                        r.agent_input = Some(128);
+                        r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
+                    }
                 }
                 // Preview the prompt riser (← / →). Real trigger = DaemonEvent::PromptChanged.
                 Key::Named(NamedKey::ArrowRight) => {
@@ -2613,20 +3478,77 @@ impl ApplicationHandler<UserEvent> for App {
             self.prompt_recording = r.prompt_recording;
             self.asr = r.asr.clone();
 
+            // [GRAIN] Native agent input shown/hidden by the core. Adopt it
+            // BEFORE the mode computation below so the surface swap happens in
+            // the same tick. The window becomes focusable only while the input
+            // is up (typing needs real keyboard focus); it reverts to the
+            // never-activate overlay the moment the input goes away.
+            if r.agent_input_seq != self.last_agent_input_seq {
+                self.last_agent_input_seq = r.agent_input_seq;
+                match r.agent_input {
+                    Some(chars) => {
+                        // A re-show while already up just refreshes the chip and
+                        // re-grabs focus (the core re-emits on a double summon).
+                        let already = self.agent_input.is_some();
+                        if let Some(ui) = &mut self.agent_input {
+                            ui.selection_chars = chars;
+                        } else {
+                            self.agent_input = Some(AgentInputUi::new(chars));
+                        }
+                        if let Some(window) = &self.window {
+                            present::set_focusable(window, true);
+                            if already {
+                                present::force_foreground(window);
+                            }
+                        }
+                    }
+                    None => {
+                        self.agent_input = None;
+                        if let Some(window) = &self.window {
+                            present::set_focusable(window, false);
+                        }
+                    }
+                }
+            }
+
+            // [GRAIN] The core's global Enter fired — answer with the submit
+            // matching our state (typed text wins; otherwise submit the voice
+            // capture). The core clears the input on receipt.
+            if r.agent_submit_req_seq != self.last_agent_submit_req_seq {
+                self.last_agent_submit_req_seq = r.agent_submit_req_seq;
+                if let Some(ui) = &self.agent_input {
+                    let action = if ui.expanded && !ui.text.trim().is_empty() {
+                        PillAction::AgentInputSubmitText {
+                            text: ui.text.trim().to_string(),
+                        }
+                    } else {
+                        PillAction::AgentInputSubmitVoice
+                    };
+                    let _ = self.action_tx.send(action);
+                }
+            }
+
+            // The agent input overrides every other surface while it is up.
+            let desired_mode = if self.agent_input.is_some() {
+                PillMode::AgentInput
+            } else {
+                r.mode
+            };
+
             // [GRAIN] Resize/recreate the OS window the rare times the surface
-            // actually changes (Collapsed <-> Studio) — never per frame. The
-            // Presenter caches a fixed-size GDI bitmap, so it must be rebuilt
-            // for the new size; the cached pixmap is invalidated too (wrong
-            // dimensions otherwise).
-            if r.mode != self.mode {
+            // actually changes (Collapsed <-> Studio <-> AgentInput) — never per
+            // frame. The Presenter caches a fixed-size GDI bitmap, so it must be
+            // rebuilt for the new size; the cached pixmap is invalidated too
+            // (wrong dimensions otherwise).
+            if desired_mode != self.mode {
                 // [GRAIN] Collapsed→Studio while already on screen is the FIRST-WORD
                 // expand (mid-session): keep it visible at full opacity so it grows
                 // seamlessly instead of fading/flashing. Every other transition
                 // (fresh session, Studio→Collapsed) resets the fade as before.
                 let seamless_expand = self.mode == PillMode::Collapsed
-                    && r.mode == PillMode::Studio
+                    && desired_mode == PillMode::Studio
                     && (self.visible || self.closing);
-                self.mode = r.mode;
+                self.mode = desired_mode;
                 if let Some(window) = &self.window {
                     let (w, h) = Self::win_size_for(self.mode);
                     // [GRAIN] winit 0.30 renamed this `request_inner_size` (the
@@ -2636,9 +3558,13 @@ impl ApplicationHandler<UserEvent> for App {
                     let _ = window.request_inner_size(PhysicalSize::new(w, h));
                     self.presenter = present::Presenter::new(window, w as i32, h as i32);
                     // Re-anchor the resized window so the capsule stays put across
-                    // the swap (both surfaces are bottom-anchored + centered, so the
-                    // small capsule lands exactly where the collapsed pill was).
-                    Self::position_window(window, r.anchor, w, h);
+                    // the swap. The agent input has its own placement (centered on
+                    // the work-area edge, expanding away from it).
+                    if self.mode == PillMode::AgentInput {
+                        Self::position_agent_input(window, r.anchor);
+                    } else {
+                        Self::position_window(window, r.anchor, w, h);
+                    }
                 }
                 self.pixmap = None;
                 // Grow the card from the COLLAPSED (matrix-only) height and the
@@ -2680,18 +3606,28 @@ impl ApplicationHandler<UserEvent> for App {
                         self.prompt_label =
                             format!("ASK FOLLOW-UP \u{b7} {}", shortcut.to_uppercase());
                         self.update_cached_label();
+                        self.offer_fade_close = false;
+                        // Fade the offer IN when it reveals a hidden pill.
+                        if !self.visible && !self.closing {
+                            self.studio_alpha = 0.0;
+                        }
                     }
                     None => {
                         self.riser_hide_at = None;
+                        // The withdrawal fades out instead of vanishing.
+                        self.offer_fade_close = true;
                     }
                 }
             }
 
             // Visible if the core says so, we're inside a transient prompt
-            // preview, or a Quick-Agent follow-up offer is live.
+            // preview, a Quick-Agent follow-up offer is live, or the native
+            // agent input is up (the input ignores the overlay's None anchor —
+            // it is a functional surface, not a status overlay).
             let offer_live = self.agent_offer.is_some();
+            let input_live = self.agent_input.is_some();
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
-            let want_visible = r.visible || preview_visible || offer_live;
+            let want_visible = r.visible || preview_visible || offer_live || input_live;
             // [GRAIN] The Studio Window fades out instead of vanishing: while
             // `closing` is true we keep `self.visible` true (so rendering/mic
             // gating below behave as if still showing) and just ease
@@ -2706,7 +3642,9 @@ impl ApplicationHandler<UserEvent> for App {
                 self.visible = true;
                 self.closing = false;
             } else if starting_close {
-                if self.mode == PillMode::Studio {
+                // Studio always fades; the collapsed capsule fades only when the
+                // hide is an offer withdrawal — session ends keep the instant hide.
+                if self.mode == PillMode::Studio || self.offer_fade_close {
                     self.closing = true;
                 } else {
                     self.visible = false;
@@ -2750,9 +3688,10 @@ impl ApplicationHandler<UserEvent> for App {
                 if self.closing && self.studio_alpha < 0.02 {
                     self.studio_alpha = 0.0;
                     self.closing = false;
+                    self.offer_fade_close = false;
                     self.visible = false;
                     if let Some(window) = &self.window {
-                        eprintln!("window: hide (studio fade complete)");
+                        eprintln!("window: hide (fade complete)");
                         present::hide_window(window);
                     }
                 }
@@ -2796,18 +3735,34 @@ impl ApplicationHandler<UserEvent> for App {
                     self.riser_progress = 0.0;
                     self.riser_hide_at = None;
                 }
+                // [GRAIN] Agent input per-frame motion: the wave/caret clock and
+                // the expand ease (≈ the reference's 300ms ease-out curve).
+                if let Some(ui) = &mut self.agent_input {
+                    ui.phase += TICK.as_secs_f32();
+                    let target = if ui.expanded { 1.0 } else { 0.0 };
+                    ui.expand_t += (target - ui.expand_t) * 0.16;
+                }
                 // Push the layered content FIRST (a layered window shows nothing
                 // until UpdateLayeredWindow runs) …
                 self.render();
-                // … then reveal it without stealing focus.
+                // … then reveal it. Overlay surfaces must never steal focus; the
+                // agent INPUT is the one exception — it exists to be typed into,
+                // so it takes the foreground (bridging Windows' foreground lock).
                 if becoming_visible {
                     if let Some(window) = &self.window {
                         // Re-anchor each show so a changed setting / active monitor
                         // takes effect immediately.
-                        let (w, h) = Self::win_size_for(self.mode);
-                        Self::position_window(window, r.anchor, w, h);
-                        eprintln!("window: show (content primed)");
-                        present::show_window(window);
+                        if self.mode == PillMode::AgentInput {
+                            Self::position_agent_input(window, r.anchor);
+                            eprintln!("window: show agent input (focused)");
+                            present::show_window(window);
+                            present::force_foreground(window);
+                        } else {
+                            let (w, h) = Self::win_size_for(self.mode);
+                            Self::position_window(window, r.anchor, w, h);
+                            eprintln!("window: show (content primed)");
+                            present::show_window(window);
+                        }
                     }
                 }
             }

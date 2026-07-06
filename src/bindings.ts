@@ -607,82 +607,10 @@ async agentGetContext() : Promise<string | null> {
     return await TAURI_INVOKE("agent_get_context");
 },
 /**
- * Palette → panel handoff: store the first instruction the panel will run.
- */
-async agentSetInstruction(text: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_set_instruction", { text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Consume the first instruction (the panel calls this on mount).
  */
 async agentTakeInstruction() : Promise<string | null> {
     return await TAURI_INVOKE("agent_take_instruction");
-},
-/**
- * Open (or focus) the conversation panel — called by the palette on submit.
- */
-async agentShowPanel() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_show_panel") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Atomically hand the palette instruction to the panel and move window work to
- * the main thread. The panel is opened from a detached backend task instead of
- * the palette's IPC call stack: on Windows/WebView2, building a second agent
- * webview while the first one is still resolving its submit invoke can wedge at
- * `WebviewWindowBuilder::build()`, leaving the palette looking frozen.
- */
-async agentSubmitInstruction(text: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_submit_instruction", { text }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Start recording for in-window dictation, warming the local model/VAD when the
- * STT path is local so the transcript is ready quickly on stop.
- */
-async agentStartDictation() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_start_dictation") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Stop dictation and return the transcript (routed through the STT dispatcher —
- * local or cloud rotation per settings). Empty string if nothing was recorded.
- */
-async agentStopDictation() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_stop_dictation") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Cancel an in-progress dictation without transcribing.
- */
-async agentCancelDictation() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("agent_cancel_dictation") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
 },
 /**
  * Copy text to the clipboard (used for the auto-copy of the first reply and the
@@ -715,6 +643,12 @@ async agentRun(messages: AgentMessage[], context: string | null) : Promise<Resul
  * conversation, and swap the global Enter accordingly: compact owns a global
  * Enter (= Confirm/paste); expanded owns an in-window input, so a registered
  * global Enter would swallow the user's keystrokes.
+ * 
+ * ASYNC on purpose: a sync command runs on the MAIN thread, and calling
+ * `set_size` on a visible window from inside a command on the main thread
+ * deadlocks on Windows (tauri#3990 / tao#381) — that was the "panel ghosts a
+ * few seconds after expanding" freeze. On a runtime worker the window ops are
+ * proxied to the event loop safely.
  */
 async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
     try {

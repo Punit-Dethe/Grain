@@ -114,6 +114,19 @@ pub enum DaemonEvent {
     /// new session started).
     AgentFollowupClear,
 
+    /// [GRAIN] Show the NATIVE agent input (the summon surface): a bottom-center
+    /// card that records by default and expands into a typing field the moment
+    /// the user types. `selection_chars` feeds the selection chip.
+    AgentInputShow {
+        selection_chars: u32,
+    },
+    /// [GRAIN] Hide the native agent input (submitted / cancelled / superseded).
+    AgentInputHide,
+    /// [GRAIN] The core's transient global Enter fired while the agent input is
+    /// up. The pill owns the typed text, so it answers with
+    /// `AgentInputSubmitText` (typing) or `AgentInputSubmitVoice` (recording).
+    AgentInputSubmitRequest,
+
     // -- Misc UI signals --
     ShowOverlay,
     HideOverlay,
@@ -194,4 +207,16 @@ pub enum PillAction {
     /// [GRAIN] User clicked the pill's Quick-Agent follow-up offer — reopen the
     /// Agent expanded with the retained conversation.
     AgentFollowup,
+    /// [GRAIN] Agent input: the user submitted TYPED text (expanded card).
+    AgentInputSubmitText { text: String },
+    /// [GRAIN] Agent input: submit the in-progress VOICE capture (compact card) —
+    /// the core stops dictation, transcribes, and runs the instruction.
+    AgentInputSubmitVoice,
+    /// [GRAIN] Agent input: the user cancelled (Esc) — the core cancels dictation
+    /// and destroys the pre-created panel.
+    AgentInputCancel,
+    /// [GRAIN] Agent input mode switch: `active: true` = the user started typing
+    /// (core cancels the voice capture); `false` = the user tabbed back to voice
+    /// (core restarts dictation).
+    AgentInputTyping { active: bool },
 }

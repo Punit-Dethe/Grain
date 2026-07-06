@@ -78,7 +78,9 @@ export function AgentPanel() {
   const [versions, setVersions] = useState<string[]>([]);
   const [versionIdx, setVersionIdx] = useState(0);
   const [expanded, setExpanded] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // The panel is revealed the instant the user submits — BEFORE the transcript
+  // and reply exist — so it opens in the busy (loading) state.
+  const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
   const [quoteOpen, setQuoteOpen] = useState(false);
@@ -97,6 +99,9 @@ export function AgentPanel() {
   const endRef = useRef<HTMLDivElement>(null);
   const flashTimer = useRef<number | undefined>(undefined);
   const startedRef = useRef(false);
+  // Guards the first LLM run so the mount-take and the `agent-instruction`
+  // event (whichever wins the race) only trigger it once.
+  const firstRunStartedRef = useRef(false);
   messagesRef.current = messages;
   versionsRef.current = versions;
   versionIdxRef.current = versionIdx;
@@ -135,6 +140,7 @@ export function AgentPanel() {
   /** Run the FIRST instruction (or a retry of it) — compact stage. */
   const runFirst = useCallback(
     async (instruction: string) => {
+      firstRunStartedRef.current = true;
       setBusy(true);
       setError(null);
       try {
@@ -242,9 +248,56 @@ export function AgentPanel() {
     commands.agentCopy(text).then(flashCopied).catch(() => {});
   }, [flashCopied]);
 
-  // Mount: load settings (autocopy policy + follow-up shortcut), the summon
-  // context, then either a retained Quick-Agent conversation (→ expanded) or
-  // the palette's first instruction (→ compact, run it).
+  /** Take the queued first instruction and run it — guarded so the mount-take
+   * and the `agent-instruction` event fire it at most once. */
+  const startFirstIfQueued = useCallback(async () => {
+    if (firstRunStartedRef.current) return;
+    let instruction: string | null = null;
+    try {
+      instruction = await commands.agentTakeInstruction();
+    } catch {
+      /* nothing queued yet */
+    }
+    if (instruction && instruction.trim() && !firstRunStartedRef.current) {
+      instructionRef.current = instruction.trim();
+      await runFirst(instructionRef.current);
+    }
+  }, [runFirst]);
+
+  /** Seed the EXPANDED conversation from the retained Quick-Agent history
+   * (reopen from a follow-up offer). No-op when there's nothing retained. */
+  const openRetainedConversation = useCallback(async () => {
+    if (firstRunStartedRef.current || expandedRef.current) return false;
+    let retained: AgentMessage[] = [];
+    try {
+      retained = await commands.agentTakeConversation();
+    } catch {
+      return false;
+    }
+    if (retained.length === 0) return false;
+    firstRunStartedRef.current = true;
+    instructionRef.current =
+      retained.find((m) => m.role === "user")?.content ?? "";
+    // Replies already delivered (pasted) count against the "first"-copy policy.
+    firstCopyDoneRef.current = retained.some((m) => m.role === "assistant");
+    setMessages(
+      retained.map((m) => ({
+        id: rid(),
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      })),
+    );
+    setBusy(false);
+    setExpanded(true);
+    void commands.agentSetPanelMode(true).catch(() => {});
+    window.setTimeout(() => followupRef.current?.focus(), 60);
+    return true;
+  }, []);
+
+  // Mount: load settings + the summon context. The panel is pre-created HIDDEN,
+  // so mount runs BEFORE the user submits — the first instruction usually
+  // arrives later via the `agent-instruction` event (below). We still try a
+  // take here in case the instruction beat the webview to the punch.
   useEffect(() => {
     if (startedRef.current) return;
     startedRef.current = true;
@@ -264,45 +317,36 @@ export function AgentPanel() {
       } catch {
         /* no context is fine */
       }
-
-      // Quick-Agent reopen: a retained conversation starts us EXPANDED.
-      try {
-        const retained = await commands.agentTakeConversation();
-        if (retained.length > 0) {
-          instructionRef.current =
-            retained.find((m) => m.role === "user")?.content ?? "";
-          // Replies already delivered (pasted) count against "first"-copy.
-          firstCopyDoneRef.current = retained.some(
-            (m) => m.role === "assistant",
-          );
-          setMessages(
-            retained.map((m) => ({
-              id: rid(),
-              role: m.role === "assistant" ? "assistant" : "user",
-              content: m.content,
-            })),
-          );
-          setExpanded(true);
-          void commands.agentSetPanelMode(true).catch(() => {});
-          window.setTimeout(() => followupRef.current?.focus(), 60);
-          return;
-        }
-      } catch {
-        /* nothing retained */
-      }
-
-      let instruction: string | null = null;
-      try {
-        instruction = await commands.agentTakeInstruction();
-      } catch {
-        /* nothing queued */
-      }
-      if (instruction && instruction.trim()) {
-        instructionRef.current = instruction.trim();
-        await runFirst(instructionRef.current);
-      }
+      // Quick-Agent reopen wins; otherwise pick up an already-queued instruction.
+      if (await openRetainedConversation()) return;
+      await startFirstIfQueued();
     })();
-  }, [runFirst]);
+  }, [openRetainedConversation, startFirstIfQueued]);
+
+  // Backend → panel signals for the pre-created (warm) window lifecycle.
+  useEffect(() => {
+    const uns: Array<() => void> = [];
+    // The core queued the first instruction after we mounted → run it.
+    void win.listen("agent-instruction", () => {
+      void startFirstIfQueued();
+    }).then((fn) => uns.push(fn));
+    // Reveal-in-loading handshake: the window was just shown; keep the loading
+    // state until the first reply (or an error) lands.
+    void win.listen("agent-loading", () => {
+      if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
+    }).then((fn) => uns.push(fn));
+    // A backend-side failure (STT/LLM) with no reply to show.
+    void win.listen<string>("agent-error", (e) => {
+      firstRunStartedRef.current = true;
+      setBusy(false);
+      setError(e.payload || t("agent.error"));
+    }).then((fn) => uns.push(fn));
+    // Follow-up offer opened the warm hidden panel → seed the conversation.
+    void win.listen("agent-followup-open", () => {
+      void openRetainedConversation();
+    }).then((fn) => uns.push(fn));
+    return () => uns.forEach((u) => u());
+  }, [openRetainedConversation, startFirstIfQueued, t, win]);
 
   // Esc closes — global so it works even when no field is focused.
   useEffect(() => {
