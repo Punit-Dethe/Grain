@@ -199,6 +199,22 @@ impl Default for AgentContextMode {
     }
 }
 
+/// [GRAIN] Grain Space voice-first retrieval mode: `List` opens the overlay
+/// with search results (works without any LLM); `AiQa` answers the spoken
+/// question directly via the configured post-process provider (RAG).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum GrainSpaceRetrievalMode {
+    List,
+    AiQa,
+}
+
+impl Default for GrainSpaceRetrievalMode {
+    fn default() -> Self {
+        GrainSpaceRetrievalMode::List
+    }
+}
+
 /// [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
 /// repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
 /// is suggested (pill), and on accept it moves into `custom_words`. Persisted so
@@ -785,10 +801,38 @@ pub struct AppSettings {
     /// ignored until the user expands it explicitly (Tab / click).
     #[serde(default = "default_true")]
     pub agent_input_type_to_expand: bool,
+    /// [GRAIN] Grain Space master gate. OFF by default and OFF is truly
+    /// zero-overhead: no shortcuts register, no directories are created, no
+    /// DB opens, no models load. Disabling never deletes on-disk data.
+    #[serde(default)]
+    pub grain_space_enabled: bool,
+    /// [GRAIN] Grain Space semantic search. OFF = fuzzy/FTS matching only and
+    /// the Candle embedding model must NEVER load into RAM. Turning it ON is
+    /// what triggers the opt-in BGE-small model download (the model is not
+    /// shipped with the app).
+    #[serde(default)]
+    pub grain_space_semantic: bool,
+    /// [GRAIN] When ON (default), reminders extracted from a captured note are
+    /// armed automatically; when OFF the note pane shows a manual "arm" button.
+    #[serde(default = "default_true")]
+    pub grain_space_auto_reminders: bool,
+    /// [GRAIN] Voice-first retrieval behavior (Phase 5): open the results list
+    /// or answer directly with AI. Defaults to `List` — it needs no LLM.
+    #[serde(default)]
+    pub grain_space_retrieval_mode: GrainSpaceRetrievalMode,
+    /// [GRAIN] Half-life (days) for time-decayed semantic ranking:
+    /// `S_final = S_semantic * exp(-ln2/half_life * age_days)`. Pinned notes
+    /// rank as if brand new (age 0).
+    #[serde(default = "default_grain_space_decay_half_life_days")]
+    pub grain_space_decay_half_life_days: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_grain_space_decay_half_life_days() -> u32 {
+    30
 }
 
 fn default_model() -> String {
@@ -1140,6 +1184,8 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "agent_followup",
         "transcribe_send_to_ai",
         "transcribe_native_asr",
+        "grain_space_quick_add",
+        "grain_space_capture",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1331,6 +1377,41 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    // [GRAIN] Grain Space bindings. Only registered while `grain_space_enabled`
+    // is on (init + toggle both gate on it) — the ids existing in the map costs
+    // nothing. Quick Add is ctrl+shift+c per the feature spec (rebindable — it
+    // collides with terminal-copy on Linux and DevTools inspect in browsers).
+    #[cfg(target_os = "macos")]
+    let default_quick_add_shortcut = "cmd+shift+c";
+    #[cfg(not(target_os = "macos"))]
+    let default_quick_add_shortcut = "ctrl+shift+c";
+    bindings.insert(
+        "grain_space_quick_add".to_string(),
+        ShortcutBinding {
+            id: "grain_space_quick_add".to_string(),
+            name: "Quick Add to Space".to_string(),
+            description: "Silently save the highlighted text as a Grain Space note.".to_string(),
+            default_binding: default_quick_add_shortcut.to_string(),
+            current_binding: default_quick_add_shortcut.to_string(),
+        },
+    );
+
+    #[cfg(target_os = "macos")]
+    let default_space_capture_shortcut = "option+shift+n";
+    #[cfg(not(target_os = "macos"))]
+    let default_space_capture_shortcut = "ctrl+alt+n";
+    bindings.insert(
+        "grain_space_capture".to_string(),
+        ShortcutBinding {
+            id: "grain_space_capture".to_string(),
+            name: "Dictate Note".to_string(),
+            description: "Dictate a note into Grain Space (AI title/summary when available)."
+                .to_string(),
+            default_binding: default_space_capture_shortcut.to_string(),
+            current_binding: default_space_capture_shortcut.to_string(),
+        },
+    );
+
     AppSettings {
         bindings,
         // [GRAIN] Push-to-talk defaults OFF — a fresh install uses toggle-style
@@ -1404,6 +1485,11 @@ pub fn get_default_settings() -> AppSettings {
         agent_context_mode: AgentContextMode::default(),
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,
+        grain_space_enabled: false,
+        grain_space_semantic: false,
+        grain_space_auto_reminders: true,
+        grain_space_retrieval_mode: GrainSpaceRetrievalMode::default(),
+        grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),
     }
 }
 

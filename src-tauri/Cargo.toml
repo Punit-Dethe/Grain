@@ -72,6 +72,11 @@ natural = "0.5.0"
 regex = "1"
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
+# [GRAIN] Grain Space: vector index for opt-in semantic note search. The
+# extension is registered once at store init; the vec0 table itself is only
+# created when the user enables semantic search (model is opt-in, not shipped).
+sqlite-vec = "0.1"
+uuid = { version = "1", features = ["v4"] } # [GRAIN] Grain Space note ids
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"

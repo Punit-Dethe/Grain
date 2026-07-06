@@ -27,6 +27,11 @@ pub fn init_shortcuts(app: &AppHandle) {
         if id == "transcribe_with_post_process" && !user_settings.post_process_enabled {
             continue;
         }
+        // [GRAIN] Grain Space shortcuts exist only while the feature is on —
+        // OFF must be truly zero-overhead (no global hooks for the feature).
+        if id.starts_with("grain_space_") && !user_settings.grain_space_enabled {
+            continue;
+        }
         let binding = user_settings
             .bindings
             .get(&id)
