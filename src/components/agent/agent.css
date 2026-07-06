@@ -392,15 +392,18 @@
   height: 34px;
   flex: none;
 }
+/* The follow-up affordance is a self-contained pill: a background one notch
+ * lighter than the card, holding just "Follow up" + the shortcut keycaps. */
 .agc-followup-btn {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 26px;
-  padding: 0 7px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  /* Slightly lighter than --agc-bg (#1c1c1e). */
+  background: #26262a;
   color: var(--agc-muted);
   font-family: var(--agc-body-font);
   font-size: 11px;
@@ -409,7 +412,7 @@
   transition: background 0.12s ease, color 0.12s ease;
 }
 .agc-followup-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.07);
+  background: #2f2f34;
   color: var(--agc-ink);
 }
 .agc-followup-btn:disabled {
@@ -420,14 +423,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   font-family: var(--agc-mono);
-  font-size: 8px;
+  font-size: 7.5px;
+  letter-spacing: 0.3px;
   color: var(--agc-muted);
 }
 .agc-icon-btn {

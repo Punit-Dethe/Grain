@@ -383,6 +383,17 @@ async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<nul
 }
 },
 /**
+ * [GRAIN] Toggle "type to expand" on the native agent input.
+ */
+async changeAgentInputTypeToExpandSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_input_type_to_expand_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle auto-add-to-dictionary. Off = zero overhead (no watcher spawns).
  */
 async changeAutoDictionaryEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -1366,7 +1377,12 @@ agent_context_mode?: AgentContextMode;
  * is truly zero-overhead. In live-streaming modes the expanded Studio pill
  * resets and collapses back to the compact capsule until the next word.
  */
-scrap_that_enabled?: boolean }
+scrap_that_enabled?: boolean;
+/**
+ * [GRAIN] Native agent input: when on (default), typing a printable key while
+ * the input is listening immediately switches it to the expanded typing card.
+ */
+agent_input_type_to_expand?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }

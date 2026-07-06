@@ -63,6 +63,11 @@ const RISER_HOLD: Duration = Duration::from_millis(1600);
 // instead of turning into 60 fps static.
 const TICK: Duration = Duration::from_millis(16);
 const ROLL_INTERVAL: Duration = Duration::from_millis(80);
+/// [GRAIN] After the pill has been continuously hidden this long, its parsed
+/// font and frame buffer are dropped so the always-on process idles at its
+/// floor (winit + a mic-less loop). Both reload lazily on the next show — the
+/// first shown frame re-parses the font (~a few ms), invisible to the user.
+const IDLE_FREE_AFTER: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PillState {
@@ -780,7 +785,15 @@ impl Aura {
 
 // ── Text (prompt riser) ─────────────────────────────────────────────────────
 
-/// Load a system monospace/UI font for the riser label (Windows paths).
+/// Load the single shared pill font. ONE fontdue face serves every surface —
+/// the riser label, the Studio transcript, AND the agent input card. fontdue
+/// parses a font's whole glyph set eagerly (a large sans like Segoe UI is
+/// ~15-20 MB resident), so holding one instead of several is the pill's single
+/// biggest RAM lever — hence one shared face, loaded lazily and freed on idle.
+///
+/// Consolas is preferred: it's a compact face (fewer glyphs → a much smaller
+/// parsed footprint than Segoe UI) and its monospace look is on-brand with the
+/// dot-matrix pill and the mono riser. Segoe UI is only a fallback.
 fn load_font() -> Option<fontdue::Font> {
     for path in [
         "C:/Windows/Fonts/consola.ttf",
@@ -793,29 +806,6 @@ fn load_font() -> Option<fontdue::Font> {
         }
     }
     None
-}
-
-/// [GRAIN] Load the system UI face for the agent input card (the reference uses
-/// the platform sans). Semibold for the brand/button, regular for everything
-/// else; falls back down the list, then to `load_font`'s result.
-fn load_ui_font(semibold: bool) -> Option<fontdue::Font> {
-    let paths: &[&str] = if semibold {
-        &[
-            "C:/Windows/Fonts/seguisb.ttf",
-            "C:/Windows/Fonts/segoeuib.ttf",
-            "C:/Windows/Fonts/segoeui.ttf",
-        ]
-    } else {
-        &["C:/Windows/Fonts/segoeui.ttf"]
-    };
-    for path in paths {
-        if let Ok(bytes) = std::fs::read(path) {
-            if let Ok(font) = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
-                return Some(font);
-            }
-        }
-    }
-    load_font()
 }
 
 /// Draw `text` LEFT-aligned at `(x, cy_center)` (vertical center) into the
@@ -1849,9 +1839,9 @@ struct Remote {
     agent_offer: Option<String>,
     /// Bumped on every offer/clear so the App detects the transition.
     agent_offer_seq: u64,
-    /// [GRAIN] Native agent input: `Some(selection_chars)` while the summon card
-    /// should be on screen. Overrides every other surface while set.
-    agent_input: Option<u32>,
+    /// [GRAIN] Native agent input: `Some((selection_chars, type_to_expand))`
+    /// while the summon card should be on screen. Overrides every other surface.
+    agent_input: Option<(u32, bool)>,
     /// Bumped on every show/hide so the App detects the transition.
     agent_input_seq: u64,
     /// Bumped when the core's global Enter asks the pill to submit (the pill
@@ -1964,10 +1954,13 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         }
         // [GRAIN] Native agent input: the summon card. Shown/hidden by the core;
         // the pill owns the typing state and answers submit requests itself.
-        DaemonEvent::AgentInputShow { selection_chars } => {
-            r.agent_input = Some(selection_chars);
+        DaemonEvent::AgentInputShow {
+            selection_chars,
+            type_to_expand,
+        } => {
+            r.agent_input = Some((selection_chars, type_to_expand));
             r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
-            eprintln!("event: AgentInputShow ({selection_chars} sel chars)");
+            eprintln!("event: AgentInputShow ({selection_chars} sel chars, tte {type_to_expand})");
         }
         DaemonEvent::AgentInputHide => {
             if r.agent_input.take().is_some() {
@@ -2145,6 +2138,9 @@ fn spawn_event_client(
 /// shows/hides it and asks it to submit.
 struct AgentInputUi {
     selection_chars: u32,
+    /// Mirrors the setting: when false, printable keystrokes while listening are
+    /// ignored (the user must Tab / click to reach the typing card).
+    type_to_expand: bool,
     /// Typing (expanded) vs recording (compact).
     expanded: bool,
     /// Eased 0..1 expansion progress (drives width/height/content cross-fade).
@@ -2160,9 +2156,10 @@ struct AgentInputUi {
 }
 
 impl AgentInputUi {
-    fn new(selection_chars: u32) -> Self {
+    fn new(selection_chars: u32, type_to_expand: bool) -> Self {
         AgentInputUi {
             selection_chars,
+            type_to_expand,
             expanded: false,
             expand_t: 0.0,
             text: String::new(),
@@ -2209,14 +2206,14 @@ struct App {
     agent_input: Option<AgentInputUi>,
     last_agent_input_seq: u64,
     last_agent_submit_req_seq: u64,
-    /// Segoe UI (regular + semibold) for the agent input card — the riser keeps
-    /// its mono font; the card matches the reference's system UI face.
-    ui_font: Option<fontdue::Font>,
-    ui_font_semibold: Option<fontdue::Font>,
     /// Last cursor position (physical px) for card/button hit-testing.
     cursor_pos: (f32, f32),
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
+    /// [GRAIN] When the pill has been continuously hidden this long, the font +
+    /// pixmap are freed so the always-on process idles near its floor (the font
+    /// reloads lazily on the next show). `None` = nothing scheduled.
+    free_idle_at: Option<Instant>,
     riser_progress: f32,
     riser_hide_at: Option<Instant>,
     next_tick: Instant,
@@ -2275,7 +2272,10 @@ impl App {
             _mic: None,
             sim_target: 0.5,
             sim_amp: 0.0,
-            font: load_font(),
+            // [GRAIN] The single shared font loads LAZILY (on the first text
+            // render) and is freed after a long idle — so the always-on pill
+            // doesn't hold a parsed font while it sits hidden.
+            font: None,
             prompts: ["General", "Email Format", "Meeting Notes", "Translation"]
                 .iter()
                 .map(|s| s.to_string())
@@ -2291,10 +2291,9 @@ impl App {
             agent_input: None,
             last_agent_input_seq: 0,
             last_agent_submit_req_seq: 0,
-            ui_font: load_ui_font(false),
-            ui_font_semibold: load_ui_font(true),
             cursor_pos: (0.0, 0.0),
             ctrl_down: false,
+            free_idle_at: None,
             riser_progress: 0.0,
             riser_hide_at: None,
             next_tick: Instant::now(),
@@ -2471,9 +2470,14 @@ impl App {
             }
             _ => {
                 // Ordinary text entry. The first printable character expands the
-                // card (typing overrides the voice capture, per the reference).
+                // card (typing overrides the voice capture, per the reference) —
+                // but ONLY when type-to-expand is on. When off, typing while
+                // listening is ignored until the user expands via Tab / click.
                 if self.ctrl_down {
                     return; // other Ctrl chords are not text
+                }
+                if !ui.expanded && !ui.type_to_expand {
+                    return;
                 }
                 let Some(t) = ev.text.as_ref() else { return };
                 let printable: String = t.chars().filter(|c| !c.is_control()).collect();
@@ -2494,6 +2498,9 @@ impl App {
     }
 
     fn update_cached_label(&mut self) {
+        // Runs (from `about_to_wait`) BEFORE the frame's `render`, so make sure
+        // the shared font is resident — it may have been dropped by the idle-free.
+        self.ensure_font();
         if let Some(font) = &self.font {
             let cell_px = Self::cell_px();
             let peek = RISER_PEEK * cell_px;
@@ -2534,10 +2541,22 @@ impl App {
     /// Dispatch to whichever surface is current. The two are independent,
     /// fixed-size renderers (see `win_size_for`) — never mixed in one frame.
     fn render(&mut self) {
+        // Every surface draws text (riser label / transcript / card), so make
+        // sure the single shared font is resident before we render a frame. It
+        // loads once here (lazy) and is dropped again after a long idle.
+        self.ensure_font();
         match self.mode {
             PillMode::Collapsed => self.render_collapsed(),
             PillMode::Studio => self.render_studio(),
             PillMode::AgentInput => self.render_agent_input(),
+        }
+    }
+
+    /// Lazily load the single shared font (idempotent). Called before each
+    /// render; paired with the idle-free in `about_to_wait`.
+    fn ensure_font(&mut self) {
+        if self.font.is_none() {
+            self.font = load_font();
         }
     }
 
@@ -2569,8 +2588,11 @@ impl App {
         let phase = ui.phase;
 
         // ── Card geometry (width/height lerp between the two states) ──────────
-        let ui_font = self.ui_font.as_ref();
-        let sb_font = self.ui_font_semibold.as_ref().or(ui_font);
+        // One shared font for the whole card (the reference's semibold header /
+        // button are rendered in the same face — a separate bold face would be
+        // another ~15-20 MB fontdue parse for no meaningful gain).
+        let ui_font = self.font.as_ref();
+        let sb_font = ui_font;
 
         // Compact width hugs its content: pad + 2 + wave + 14 + label + pad.
         let wave_w = AIN_WAVE_COLS as f32 * AIN_WAVE_DOT + (AIN_WAVE_COLS - 1) as f32 * AIN_WAVE_GAP;
@@ -3443,7 +3465,7 @@ impl ApplicationHandler<UserEvent> for App {
                     if r.agent_input.take().is_some() {
                         r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
                     } else {
-                        r.agent_input = Some(128);
+                        r.agent_input = Some((128, true));
                         r.agent_input_seq = r.agent_input_seq.wrapping_add(1);
                     }
                 }
@@ -3486,14 +3508,15 @@ impl ApplicationHandler<UserEvent> for App {
             if r.agent_input_seq != self.last_agent_input_seq {
                 self.last_agent_input_seq = r.agent_input_seq;
                 match r.agent_input {
-                    Some(chars) => {
+                    Some((chars, tte)) => {
                         // A re-show while already up just refreshes the chip and
                         // re-grabs focus (the core re-emits on a double summon).
                         let already = self.agent_input.is_some();
                         if let Some(ui) = &mut self.agent_input {
                             ui.selection_chars = chars;
+                            ui.type_to_expand = tte;
                         } else {
-                            self.agent_input = Some(AgentInputUi::new(chars));
+                            self.agent_input = Some(AgentInputUi::new(chars, tte));
                         }
                         if let Some(window) = &self.window {
                             present::set_focusable(window, true);
@@ -3766,12 +3789,35 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
             }
-            // 60 fps only while visible; sleep forever when hidden (woken by UserEvent::Wake).
+            // 60 fps only while visible; when hidden, sleep until the idle-free
+            // deadline (then forever), woken early by UserEvent::Wake.
             if self.visible {
+                self.free_idle_at = None; // shown → cancel any pending free
                 self.next_tick = now + TICK;
                 event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
             } else {
-                event_loop.set_control_flow(ControlFlow::Wait);
+                // [GRAIN] Idle-free: the first hidden tick arms the deadline; a
+                // later hidden tick at/after it drops the parsed font + frame
+                // buffer so the always-on pill idles at its floor. Both reload
+                // lazily on the next show (ensure_font + pixmap re-alloc).
+                match self.free_idle_at {
+                    None if self.font.is_some() || self.pixmap.is_some() => {
+                        self.free_idle_at = Some(now + IDLE_FREE_AFTER);
+                        event_loop
+                            .set_control_flow(ControlFlow::WaitUntil(now + IDLE_FREE_AFTER));
+                    }
+                    Some(deadline) if now >= deadline => {
+                        self.font = None;
+                        self.pixmap = None;
+                        self.cached_label = None;
+                        self.free_idle_at = None;
+                        event_loop.set_control_flow(ControlFlow::Wait);
+                    }
+                    Some(deadline) => {
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                    }
+                    None => event_loop.set_control_flow(ControlFlow::Wait),
+                }
             }
         } else {
             // Wait until next tick if we haven't reached it yet

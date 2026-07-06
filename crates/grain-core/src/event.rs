@@ -116,9 +116,13 @@ pub enum DaemonEvent {
 
     /// [GRAIN] Show the NATIVE agent input (the summon surface): a bottom-center
     /// card that records by default and expands into a typing field the moment
-    /// the user types. `selection_chars` feeds the selection chip.
+    /// the user types. `selection_chars` feeds the selection chip;
+    /// `type_to_expand` mirrors the setting (when false, typing while listening
+    /// is ignored until the user expands explicitly).
     AgentInputShow {
         selection_chars: u32,
+        #[serde(default)]
+        type_to_expand: bool,
     },
     /// [GRAIN] Hide the native agent input (submitted / cancelled / superseded).
     AgentInputHide,

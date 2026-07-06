@@ -779,6 +779,16 @@ pub struct AppSettings {
     /// resets and collapses back to the compact capsule until the next word.
     #[serde(default)]
     pub scrap_that_enabled: bool,
+    /// [GRAIN] Native agent input: when on (default), typing a printable key
+    /// while the input is listening immediately switches it to the expanded
+    /// typing card. When off, the input stays in voice mode and typing is
+    /// ignored until the user expands it explicitly (Tab / click).
+    #[serde(default = "default_true")]
+    pub agent_input_type_to_expand: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_model() -> String {
@@ -1393,6 +1403,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_quick_enabled: false,
         agent_context_mode: AgentContextMode::default(),
         scrap_that_enabled: false,
+        agent_input_type_to_expand: true,
     }
 }
 
