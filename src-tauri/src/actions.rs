@@ -940,7 +940,25 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
 
-                            if processed.final_text.is_empty() {
+                            // [GRAIN] Grain Space capture (Inputs A/B): the
+                            // dictated note is stored, never pasted. The intake
+                            // does its own LLM metadata extraction (or degrades
+                            // to a raw save) and emits notes-changed.
+                            if binding_id == "grain_space_capture" {
+                                crate::grain_space::capture::intake_transcript(
+                                    &ah,
+                                    processed.final_text,
+                                )
+                                .await;
+                                crate::bridge::emit(
+                                    &ah,
+                                    DaemonEvent::ProcessingComplete {
+                                        session_id,
+                                        text: String::new(),
+                                    },
+                                );
+                                change_tray_icon(&ah, TrayIconState::Idle);
+                            } else if processed.final_text.is_empty() {
                                 crate::bridge::emit(
                                     &ah,
                                     DaemonEvent::ProcessingComplete {
@@ -1139,6 +1157,19 @@ struct AgentFollowupAction;
 impl ShortcutAction for AgentFollowupAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         crate::agent::open_followup(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+// [GRAIN] Grain Space quick add (Input C) — a tap shortcut that silently saves
+// the current selection as a raw note. All work happens off the input thread
+// inside `grain_space::capture::quick_add` (selection grab polls the clipboard).
+struct GrainSpaceQuickAddAction;
+
+impl ShortcutAction for GrainSpaceQuickAddAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::grain_space::capture::quick_add(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -1726,6 +1757,22 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "agent_followup".to_string(),
         Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
+    );
+    // [GRAIN] Grain Space: silent selection quick-add (Input C) and dictated
+    // note capture (Inputs A/B — an ordinary transcribe session whose
+    // transcript is stored instead of pasted; see the interception in
+    // TranscribeAction::stop). Both bindings only register while
+    // `grain_space_enabled` is on.
+    map.insert(
+        "grain_space_quick_add".to_string(),
+        Arc::new(GrainSpaceQuickAddAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "grain_space_capture".to_string(),
+        Arc::new(TranscribeAction {
+            post_process: false,
+            post_process_override: AtomicBool::new(false),
+        }) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

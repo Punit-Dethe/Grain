@@ -1047,6 +1047,30 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
     Ok(())
 }
 
+/// [GRAIN] Master toggle for Grain Space. Registers/unregisters the feature's
+/// global shortcuts immediately so OFF is zero-overhead without a restart.
+/// Never touches on-disk note data.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_enabled = enabled;
+    settings::write_settings(&app, settings.clone());
+
+    for (id, binding) in settings.bindings.iter() {
+        if !id.starts_with("grain_space_") {
+            continue;
+        }
+        if enabled {
+            let _ = register_shortcut(&app, binding.clone());
+        } else {
+            let _ = unregister_shortcut(&app, binding.clone());
+        }
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {

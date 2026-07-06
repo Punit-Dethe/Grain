@@ -12,6 +12,7 @@ mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
+mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
 mod helpers;
 mod input;
 mod llm_client;
@@ -630,6 +631,15 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_auto_submit_setting,
             shortcut::change_auto_submit_key_setting,
             shortcut::change_post_process_enabled_setting,
+            shortcut::change_grain_space_enabled_setting,
+            grain_space::commands::grain_space_list_notes,
+            grain_space::commands::grain_space_search_notes,
+            grain_space::commands::grain_space_get_note,
+            grain_space::commands::grain_space_save_note,
+            grain_space::commands::grain_space_create_note,
+            grain_space::commands::grain_space_delete_note,
+            grain_space::commands::grain_space_set_pinned,
+            grain_space::commands::grain_space_rebuild_index,
             shortcut::change_experimental_enabled_setting,
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_key_setting,

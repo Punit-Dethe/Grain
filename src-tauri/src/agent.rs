@@ -458,7 +458,8 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
 /// restoring the user's original clipboard afterwards (the capture is invisible).
 /// Returns `None` if nothing usable was selected, input simulation is unavailable,
 /// or the clipboard didn't change.
-fn capture_selection(app: &AppHandle) -> Option<String> {
+// pub(crate): Grain Space quick-add reuses the same invisible selection grab.
+pub(crate) fn capture_selection(app: &AppHandle) -> Option<String> {
     let enigo_state = app.try_state::<EnigoState>()?;
     let clipboard = app.clipboard();
     let saved = clipboard.read_text().ok();
