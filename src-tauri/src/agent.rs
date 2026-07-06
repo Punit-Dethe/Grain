@@ -160,6 +160,7 @@ pub fn summon(app: &AppHandle) {
                 &app,
                 DaemonEvent::AgentInputShow {
                     selection_chars: chars,
+                    type_to_expand: get_settings(&app).agent_input_type_to_expand,
                 },
             );
             return;
@@ -198,6 +199,7 @@ pub fn summon(app: &AppHandle) {
             &app,
             DaemonEvent::AgentInputShow {
                 selection_chars: chars,
+                type_to_expand: get_settings(&app).agent_input_type_to_expand,
             },
         );
         // Global Enter (= submit request routed to the pill) + Escape (cancel)

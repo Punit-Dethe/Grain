@@ -796,6 +796,19 @@ pub fn change_agent_context_mode_setting(
     Ok(())
 }
 
+/// [GRAIN] Toggle "type to expand" on the native agent input.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_input_type_to_expand_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_input_type_to_expand = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
 /// entries missing a name, prompt, or a non-blank matcher value — the UI enforces
 /// this too, but this guards direct invoke calls.

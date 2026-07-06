@@ -27,6 +27,7 @@ export const AgentSection: React.FC = () => {
   const autocopy = getSetting("agent_autocopy") ?? "first";
   const quick = getSetting("agent_quick_enabled") ?? false;
   const contextMode = getSetting("agent_context_mode") ?? "off";
+  const typeToExpand = getSetting("agent_input_type_to_expand") ?? true;
 
   return (
     <div className="space-y-6">
@@ -54,6 +55,21 @@ export const AgentSection: React.FC = () => {
           shortcutId="agent_followup"
           grouped
           descriptionMode="inline"
+        />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Input"
+        description="The native summon card records by default. Type-to-expand switches it to the typing field the moment you start typing; turn it off to keep it voice-first (press Tab or click to type)."
+      >
+        <ToggleSwitch
+          label="Type to expand"
+          description="Start typing while listening to jump straight to the typing card."
+          descriptionMode="inline"
+          grouped
+          checked={typeToExpand}
+          isUpdating={isUpdating("agent_input_type_to_expand")}
+          onChange={(v) => updateSetting("agent_input_type_to_expand", v)}
         />
       </SettingsGroup>
 

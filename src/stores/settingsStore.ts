@@ -137,6 +137,8 @@ const settingUpdaters: {
     commands.changeAgentQuickEnabledSetting(value as boolean),
   agent_context_mode: (value) =>
     commands.changeAgentContextModeSetting(value as AgentContextMode),
+  agent_input_type_to_expand: (value) =>
+    commands.changeAgentInputTypeToExpandSetting(value as boolean),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>
