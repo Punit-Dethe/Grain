@@ -1,22 +1,22 @@
 :root {
     --bg-color: transparent;
-    --surface-color: #1a1a1a;
-    --surface-hover: #2a2a2a;
-    --text-primary: #ffffff;
-    --text-secondary: #a0a0a0;
-    --text-tertiary: #666666;
-    --border-color: #333333;
-    --accent-orange: #ff5500;
+    --surface-color: #fdfbf7;
+    --surface-hover: #f4efe6;
+    --text-primary: #3d3a36;
+    --text-secondary: #7a756d;
+    --text-tertiary: #a8a39a;
+    --border-color: #e8e3da;
+    --accent-orange: #f26622;
     --radius: 16px;
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    --shadow: 0 12px 48px rgba(90, 80, 70, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.04);
     --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 body {
     margin: 0;
     height: 100vh;
-    background-color: #000;
-    background-image: radial-gradient(circle at center, #111 0%, #000 100%);
+    background-color: #f0ebe1;
+    background-image: radial-gradient(circle at center, #f5f0e6 0%, #e6dfd1 100%);
     font-family: var(--font-family);
     color: var(--text-primary);
     overflow: hidden;
@@ -37,22 +37,23 @@ body {
     transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), padding 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     
     /* Default Compact state */
-    width: 240px;
-    padding: 12px 16px;
+    width: max-content; /* Hugs the inner content perfectly */
+    padding: 12px 10px; 
     overflow: hidden;
 }
 
 /* When Expanded */
 .agent-card.is-expanded {
     width: 520px;
-    padding: 16px 20px;
+    padding: 16px 10px;
 }
 
 /* --- Recording State --- */
 .recording-state {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center; 
+    gap: 14px; /* Reduced gap so the text moves left closer to the wave */
     opacity: 1;
     transition: opacity 0.2s;
 }

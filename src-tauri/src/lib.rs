@@ -673,13 +673,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::handy_keys::stop_handy_keys_recording,
             show_main_window_command,
             agent::agent_get_context,
-            agent::agent_set_instruction,
             agent::agent_take_instruction,
-            agent::agent_show_panel,
-            agent::agent_submit_instruction,
-            agent::agent_start_dictation,
-            agent::agent_stop_dictation,
-            agent::agent_cancel_dictation,
             agent::agent_copy,
             agent::agent_run,
             agent::agent_set_panel_mode,
@@ -991,31 +985,12 @@ pub fn run(cli_args: CliArgs) {
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
-                if window.label() == agent::PALETTE_LABEL {
-                    if let Some(rm) = window
-                        .app_handle()
-                        .try_state::<Arc<AudioRecordingManager>>()
-                    {
-                        rm.cancel_recording();
-                    }
-                    if window
-                        .app_handle()
-                        .get_webview_window(agent::PANEL_LABEL)
-                        .is_none()
-                    {
-                        agent::unregister_transient_shortcuts_deferred(&window.app_handle());
-                    }
-                    return;
-                }
-
+                // [GRAIN] The Agent panel is the only Agent webview (the summon
+                // input is native, in the pill process). On its close, release
+                // the transient Enter/Escape shortcuts — unless the native input
+                // phase still owns them (guarded inside the deferred helper).
                 if window.label() == agent::PANEL_LABEL {
-                    if window
-                        .app_handle()
-                        .get_webview_window(agent::PALETTE_LABEL)
-                        .is_none()
-                    {
-                        agent::unregister_transient_shortcuts_deferred(&window.app_handle());
-                    }
+                    agent::unregister_transient_shortcuts_deferred(&window.app_handle());
                     return;
                 }
 

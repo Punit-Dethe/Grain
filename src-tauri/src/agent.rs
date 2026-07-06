@@ -2,16 +2,20 @@
 //! destroyable windows ("if it's not in use, destroy it").
 //!
 //! Two surfaces (faithful to the reference design):
-//!   • PALETTE — a centred summon bar that records by default; type to override,
-//!     Enter to submit. It captures the foreground selection (synthesised copy +
-//!     clipboard diff). On submit it hands the instruction to the panel and closes.
-//!   • PANEL — a bottom-right reply card (COMPACT: pager over retry versions,
-//!     the captured text, the reply, copy / retry / Confirm-⏎-paste) that grows
-//!     into the EXPANDED conversation when the user asks a follow-up.
+//!   • INPUT — NATIVE (it lives in the pill process, shown instantly on summon):
+//!     records by default, expands into a typing card on the first keystroke.
+//!     The core captures the foreground selection at summon, starts dictation,
+//!     and pre-creates the reply panel HIDDEN so it is warm at submit.
+//!   • PANEL — a bottom-right reply card webview (COMPACT: pager over retry
+//!     versions, the captured text, the reply, copy / retry / Confirm-⏎-paste)
+//!     that grows into the EXPANDED conversation when the user asks a follow-up.
+//!     Revealed the instant the user submits (loading state), not when the
+//!     reply lands.
 //!
 //! QUICK AGENT (opt-in): submit runs the AI headlessly and pastes the reply at
-//! the cursor; the pill then briefly offers "ask follow-up", which reopens the
-//! panel expanded with the conversation restored.
+//! the cursor; the pill then briefly offers "ask follow-up" (≈8s, Esc to
+//! dismiss), and the warm hidden panel lives exactly as long as the offer —
+//! reopening it expanded with the conversation restored is instant.
 //!
 //! The conversation is sent to the SAME AI the post-processing layer uses (single
 //! provider, or the smart-rotation pool with failover + daily quota).
@@ -45,13 +49,10 @@ use crate::settings::{
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
-/// Window labels (matched by their capability + the frontend router in
-/// `main.tsx`). The Agent is two faithful surfaces:
-///   • the PALETTE (`agent`) — a centred summon bar that records by default; type
-///     to override, Enter to submit. It vanishes on submit.
-///   • the PANEL (`agent-panel`) — a right-side conversation showing the reply +
-///     a follow-up input.
-pub const PALETTE_LABEL: &str = "agent";
+/// Window label (matched by its capability + the frontend router in
+/// `main.tsx`). The summon INPUT is native (it lives in the pill process); the
+/// PANEL (`agent-panel`) is the only Agent webview — the bottom-right reply
+/// card / conversation.
 pub const PANEL_LABEL: &str = "agent-panel";
 
 /// Recording binding id used for the palette's dictation (kept distinct from the
@@ -66,14 +67,12 @@ const AGENT_CLOSE_BINDING: &str = "agent_close";
 const AGENT_FOLLOWUP_BINDING: &str = "agent_followup";
 const AGENT_LLM_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the Quick-Agent pill offer stays live before it is withdrawn (and
-/// the transient follow-up shortcut released) — "destroy if not in use".
-const FOLLOWUP_OFFER_TTL: Duration = Duration::from_secs(45);
+/// the transient follow-up shortcut released) — "destroy if not in use". Short
+/// on purpose: the offer is a quick escape hatch, not a lingering surface.
+const FOLLOWUP_OFFER_TTL: Duration = Duration::from_secs(8);
 /// Cap on the FULL-mode field context handed to the LLM (chars).
 const FIELD_CONTEXT_MAX_CHARS: usize = 6000;
 
-/// Palette geometry (logical px): a fixed centred bar near the upper third.
-const PALETTE_W: f64 = 620.0;
-const PALETTE_H: f64 = 122.0;
 /// Panel geometry (logical px). The COMPACT reply card sits in the bottom-right
 /// corner (the reference design); the EXPANDED conversation keeps the old
 /// sidebar footprint but stays anchored bottom-right.
@@ -119,6 +118,9 @@ pub struct AgentState {
     pub followup_offer_active: AtomicBool,
     /// Bumped per offer so a stale TTL expiry never clears a newer offer.
     pub followup_offer_gen: AtomicU64,
+    /// True while the NATIVE input (the pill's summon card) is up. Gates the
+    /// transient global Enter/Escape routing and dedups double submits.
+    pub input_active: AtomicBool,
 }
 
 /// One conversation turn from the frontend.
@@ -133,74 +135,124 @@ pub struct AgentMessage {
 // Summon + windows
 // ============================================================================
 
-/// Capture the foreground app's current selection, then open the centred palette.
-/// Runs the capture off the hotkey thread (so it never blocks the input listener)
-/// and creates the window on the main thread (where Tauri wants window ops).
+/// Summon the Agent: capture the foreground context, present the NATIVE input
+/// (the pill's summon card — visible instantly, no webview to spin up), start
+/// dictation, and pre-create the reply panel HIDDEN so it is already warm when
+/// the user submits. Runs off the hotkey thread (the capture must never block
+/// the input listener).
 pub fn summon(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        let palette_open = app.get_webview_window(PALETTE_LABEL).is_some();
-
-        // Only capture for a FRESH summon. If the palette is already up the user is
-        // interacting with the Agent, not a source app, so a synthetic Ctrl+C would
-        // copy nothing useful (and could clobber their selection).
-        if !palette_open {
-            // A fresh summon supersedes any lingering Quick-Agent offer.
-            clear_followup_offer(&app);
-
-            // Snapshot the paste target BEFORE any Agent window can steal focus.
-            let hwnd = foreground_hwnd();
-            let c = capture_selection(&app);
-            // Field context reads the still-focused field via UI Automation —
-            // must run before the palette opens (it grabs focus).
-            let mode = get_settings(&app).agent_context_mode;
-            let fc = capture_field_context(mode);
-            if let Some(state) = app.try_state::<AgentState>() {
-                if let Ok(mut g) = state.context.lock() {
-                    *g = c;
-                }
-                if let Ok(mut g) = state.target_hwnd.lock() {
-                    *g = hwnd;
-                }
-                if let Ok(mut g) = state.field_context.lock() {
-                    *g = fc;
-                }
-                if let Ok(mut g) = state.conversation.lock() {
-                    g.clear();
-                }
-            }
+        // Re-summon while the input is already up: just re-present it (the pill
+        // refreshes the chip and re-grabs keyboard focus). No fresh capture — a
+        // synthetic Ctrl+C now would clobber the user's original selection.
+        let already_open = app
+            .try_state::<AgentState>()
+            .map(|s| s.input_active.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        if already_open {
+            let chars = app
+                .try_state::<AgentState>()
+                .and_then(|s| s.context.lock().ok().and_then(|g| g.clone()))
+                .map(|c| c.chars().count() as u32)
+                .unwrap_or(0);
+            crate::bridge::emit(
+                &app,
+                DaemonEvent::AgentInputShow {
+                    selection_chars: chars,
+                },
+            );
+            return;
         }
 
-        let app2 = app.clone();
+        // A fresh summon supersedes any lingering Quick-Agent offer.
+        clear_followup_offer(&app);
+
+        // Snapshot the paste target BEFORE anything can steal focus.
+        let hwnd = foreground_hwnd();
+        let c = capture_selection(&app);
+        // Field context reads the still-focused field via UI Automation.
+        let mode = get_settings(&app).agent_context_mode;
+        let fc = capture_field_context(mode);
+        let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
+        if let Some(state) = app.try_state::<AgentState>() {
+            if let Ok(mut g) = state.context.lock() {
+                *g = c;
+            }
+            if let Ok(mut g) = state.target_hwnd.lock() {
+                *g = hwnd;
+            }
+            if let Ok(mut g) = state.field_context.lock() {
+                *g = fc;
+            }
+            if let Ok(mut g) = state.conversation.lock() {
+                g.clear();
+            }
+            state.input_active.store(true, Ordering::SeqCst);
+        }
+
+        // Start dictation + present the native input RIGHT AWAY — the panel
+        // work below must never delay the "it's listening" feedback.
+        start_dictation(&app);
+        crate::bridge::emit(
+            &app,
+            DaemonEvent::AgentInputShow {
+                selection_chars: chars,
+            },
+        );
+        // Global Enter (= submit request routed to the pill) + Escape (cancel)
+        // while the input is up. The pill has real focus, but the globals cover
+        // Windows' foreground-lock failures uniformly.
+        register_transient_shortcuts(&app);
+
+        // A new summon starts a fresh session — drop any open reply panel, then
+        // pre-create a hidden one so the webview is loaded (warm) at submit.
+        let app_close = app.clone();
         let _ = app.run_on_main_thread(move || {
-            // A new summon starts a fresh session — close any open conversation.
-            if let Some(panel) = app2.get_webview_window(PANEL_LABEL) {
+            if let Some(panel) = app_close.get_webview_window(PANEL_LABEL) {
                 let _ = panel.close();
             }
-            show_palette(&app2);
+        });
+        std::thread::sleep(Duration::from_millis(120)); // let the close land
+        let app_prep = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Err(e) = prepare_panel(&app_prep) {
+                warn!("[GRAIN] agent: failed to pre-create panel: {e}");
+            }
         });
     });
 }
 
-/// Create the palette window if needed, then show + focus it (destroyed on close,
-/// so this recreates it — mirrors `show_main_window`).
-fn show_palette(app: &AppHandle) {
-    register_transient_shortcuts(app);
+/// Pre-create the reply panel HIDDEN (the webview loads in the background) so
+/// showing it at submit is instant. Main-thread only. No-op if it exists.
+fn prepare_panel(app: &AppHandle) -> Result<(), String> {
+    if app.get_webview_window(PANEL_LABEL).is_some() {
+        return Ok(());
+    }
+    let w = build_window(app, PANEL_LABEL, PANEL_COMPACT_W, PANEL_COMPACT_H)
+        .map_err(|e| format!("failed to build agent panel: {e}"))?;
+    place_panel(&w, false); // placed but NOT shown
+    info!("[GRAIN] agent: panel pre-created (hidden, warming)");
+    Ok(())
+}
 
-    let win = match app.get_webview_window(PALETTE_LABEL) {
-        Some(w) => w,
-        None => match build_window(app, PALETTE_LABEL, PALETTE_W, PALETTE_H) {
-            Ok(w) => {
-                place_palette(&w); // position before first paint
-                w
-            }
-            Err(e) => {
-                log::error!("[GRAIN] failed to build agent palette: {e}");
-                return;
-            }
-        },
-    };
-    show_and_focus(&win);
+/// Start the agent dictation (warm the local model/VAD exactly like the batch
+/// press path would, so the transcript is ready quickly on submit).
+fn start_dictation(app: &AppHandle) {
+    let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+    if !crate::stt_router::will_route_to_cloud(app) {
+        let tm = app.state::<Arc<TranscriptionManager>>();
+        tm.initiate_model_load();
+    }
+    {
+        let rm = Arc::clone(&rm);
+        std::thread::spawn(move || {
+            let _ = rm.preload_vad();
+        });
+    }
+    if let Err(e) = rm.try_start_recording(AGENT_BINDING) {
+        warn!("[GRAIN] agent: failed to start dictation: {e}");
+    }
 }
 
 /// Show + reliably grab keyboard focus. A hotkey-summoned, always-on-top, frameless
@@ -337,9 +389,7 @@ fn build_window(
         let app = app.clone();
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                let palette_gone = app.get_webview_window(PALETTE_LABEL).is_none();
-                let panel_gone = app.get_webview_window(PANEL_LABEL).is_none();
-                if palette_gone && panel_gone {
+                if app.get_webview_window(PANEL_LABEL).is_none() {
                     unregister_transient_shortcuts_deferred(&app);
                 }
             }
@@ -382,15 +432,6 @@ fn monitor_work_logical(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64,
         wa.size.width as f64 / scale,
         wa.size.height as f64 / scale,
     ))
-}
-
-/// Centre the palette horizontally, near the upper third of the screen.
-fn place_palette(window: &tauri::WebviewWindow) {
-    if let Some((ox, oy, sw, sh)) = monitor_logical(window) {
-        let x = ox + (sw - PALETTE_W) / 2.0;
-        let y = oy + sh * 0.32;
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
-    }
 }
 
 /// Anchor the panel to the BOTTOM-RIGHT corner of the work area (the reference
@@ -508,18 +549,6 @@ pub fn agent_get_context(app: AppHandle) -> Option<String> {
         .and_then(|s| s.context.lock().ok().and_then(|g| g.clone()))
 }
 
-/// Palette → panel handoff: store the first instruction the panel will run.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_set_instruction(app: AppHandle, text: String) -> Result<(), String> {
-    if let Some(s) = app.try_state::<AgentState>() {
-        if let Ok(mut g) = s.pending_instruction.lock() {
-            *g = Some(text);
-        }
-    }
-    Ok(())
-}
-
 fn set_pending_instruction(app: &AppHandle, text: String) {
     if let Some(s) = app.try_state::<AgentState>() {
         if let Ok(mut g) = s.pending_instruction.lock() {
@@ -536,32 +565,28 @@ pub fn agent_take_instruction(app: AppHandle) -> Option<String> {
         .and_then(|s| s.pending_instruction.lock().ok().and_then(|mut g| g.take()))
 }
 
-/// Open (or focus) the conversation panel — called by the palette on submit.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_show_panel(app: AppHandle) -> Result<(), String> {
-    show_panel(&app, false)
-}
-
 /// Resize/reposition the panel between the COMPACT reply card and the EXPANDED
 /// conversation, and swap the global Enter accordingly: compact owns a global
 /// Enter (= Confirm/paste); expanded owns an in-window input, so a registered
 /// global Enter would swallow the user's keystrokes.
+///
+/// ASYNC on purpose: a sync command runs on the MAIN thread, and calling
+/// `set_size` on a visible window from inside a command on the main thread
+/// deadlocks on Windows (tauri#3990 / tao#381) — that was the "panel ghosts a
+/// few seconds after expanding" freeze. On a runtime worker the window ops are
+/// proxied to the event loop safely.
 #[tauri::command]
 #[specta::specta]
-pub fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), String> {
-    let app2 = app.clone();
-    app.run_on_main_thread(move || {
-        if let Some(w) = app2.get_webview_window(PANEL_LABEL) {
-            place_panel(&w, expanded);
-        }
-        if expanded {
-            let _ = crate::shortcut::unregister_shortcut(&app2, submit_binding());
-        } else {
-            register_one_transient(&app2, submit_binding());
-        }
-    })
-    .map_err(|e| format!("failed to set agent panel mode: {e:?}"))
+pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window(PANEL_LABEL) {
+        place_panel(&w, expanded);
+    }
+    if expanded {
+        let _ = crate::shortcut::unregister_shortcut(&app, submit_binding());
+    } else {
+        register_one_transient(&app, submit_binding());
+    }
+    Ok(())
 }
 
 fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
@@ -602,81 +627,204 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Atomically hand the palette instruction to the panel and move window work to
-/// the main thread. The panel is opened from a detached backend task instead of
-/// the palette's IPC call stack: on Windows/WebView2, building a second agent
-/// webview while the first one is still resolving its submit invoke can wedge at
-/// `WebviewWindowBuilder::build()`, leaving the palette looking frozen.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_submit_instruction(app: AppHandle, text: String) -> Result<(), String> {
+// ============================================================================
+// Native input → core (the pill's summon card talks back over the WS)
+// ============================================================================
+
+/// Pill → core: the user submitted TYPED text from the expanded input card.
+pub fn input_submit_text(app: &AppHandle, text: String) {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return;
+    };
+    if !state.input_active.swap(false, Ordering::SeqCst) {
+        return; // stale double-submit (global Enter + window Enter, etc.)
+    }
+    // Typed text wins — abandon the voice capture and release the mic.
+    app.state::<Arc<AudioRecordingManager>>().cancel_recording();
+    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+
     let text = text.trim().to_string();
     if text.is_empty() {
-        return Err("Agent instruction is empty".to_string());
+        input_cancel_cleanup(app);
+        return;
     }
-
     info!(
-        "[GRAIN] agent: submitting instruction ({} chars)",
+        "[GRAIN] agent: typed instruction submitted ({} chars)",
         text.chars().count()
     );
-
-    // [GRAIN] Quick Agent: run the AI headlessly and paste the reply straight at
-    // the cursor — no panel. The pill then briefly offers "ask follow-up".
-    if get_settings(&app).agent_quick_enabled {
-        quick_run(app, text);
-        return Ok(());
-    }
-
-    set_pending_instruction(&app, text);
-
-    let app_for_task = app.clone();
-    std::thread::spawn(move || {
-        let app_for_close = app_for_task.clone();
-        let close_handle = app_for_close.clone();
-        if let Err(e) = app_for_close.run_on_main_thread(move || {
-            info!("[GRAIN] agent: closing palette before panel handoff");
-            if let Some(palette) = close_handle.get_webview_window(PALETTE_LABEL) {
-                let _ = palette.close();
-            }
-        }) {
-            error!("[GRAIN] agent: failed to schedule palette close: {e:?}");
-        }
-
-        // Let the palette close event and the submit invoke get off the stack
-        // before creating the panel. This keeps the submit call from being the
-        // thing that also has to create a new webview.
-        std::thread::sleep(Duration::from_millis(90));
-
-        let app_for_panel = app_for_task.clone();
-        let panel_handle = app_for_panel.clone();
-        if let Err(e) = app_for_panel.run_on_main_thread(move || {
-            if let Err(e) = show_panel(&panel_handle, false) {
-                error!("[GRAIN] agent: failed to show panel: {e}");
-                report_submit_failure(&panel_handle, &e);
-            }
-        }) {
-            error!("[GRAIN] agent: failed to schedule agent panel: {e:?}");
-            report_submit_failure(&app_for_task, &format!("{e:?}"));
-        }
-    });
-
-    Ok(())
+    dispatch_instruction(app.clone(), text);
 }
 
-/// The panel handoff failed after the palette was already closed. Bring the
-/// palette back and tell it why, so the user can retry instead of being left
-/// with no Agent window and a wedged submit guard (the palette's
-/// `agent-submit-error` listener resets its state on this event).
-fn report_submit_failure(app: &AppHandle, message: &str) {
+/// Pill → core: submit the in-progress VOICE capture. The panel is revealed
+/// with its loading state IMMEDIATELY (before the transcript exists) so the
+/// surface feels snappy even when STT/LLM are slow.
+pub fn input_submit_voice(app: &AppHandle) {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return;
+    };
+    if !state.input_active.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+
     let app = app.clone();
+    std::thread::spawn(move || {
+        let quick = get_settings(&app).agent_quick_enabled;
+        // Normal mode: show the (pre-warmed) panel right away, loading.
+        if !quick {
+            reveal_panel_loading(&app);
+        }
+
+        let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
+        let samples = match rm.stop_recording(AGENT_BINDING) {
+            Some(s) if !s.is_empty() => s,
+            _ => {
+                deliver_agent_error(&app, "Nothing was heard — try again.");
+                return;
+            }
+        };
+        info!(
+            "[GRAIN] agent: transcribing dictation ({} samples)",
+            samples.len()
+        );
+        // Blocking this detached thread on the shared runtime is fine — it is
+        // not a runtime worker.
+        let text =
+            match tauri::async_runtime::block_on(crate::stt_router::transcribe(&app, samples)) {
+                Ok(t) => t.trim().to_string(),
+                Err(e) => {
+                    warn!("[GRAIN] agent: dictation transcription failed: {e}");
+                    deliver_agent_error(&app, &e);
+                    return;
+                }
+            };
+        if text.is_empty() {
+            deliver_agent_error(&app, "Nothing was heard — try again.");
+            return;
+        }
+        info!(
+            "[GRAIN] agent: dictation transcript ready ({} chars)",
+            text.chars().count()
+        );
+        dispatch_instruction(app, text);
+    });
+}
+
+/// Pill → core: the user cancelled the input (Esc in the card).
+pub fn input_cancel(app: &AppHandle) {
+    let Some(state) = app.try_state::<AgentState>() else {
+        return;
+    };
+    if !state.input_active.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    app.state::<Arc<AudioRecordingManager>>().cancel_recording();
+    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    input_cancel_cleanup(app);
+}
+
+/// Destroy the pre-warmed hidden panel and release the transient shortcuts —
+/// Esc during input means "never mind" ("destroy if not in use").
+fn input_cancel_cleanup(app: &AppHandle) {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(panel) = app2.get_webview_window(PANEL_LABEL) {
+            let _ = panel.close();
+        }
+    });
+    // The Destroyed handler also triggers this, but a failed pre-create means
+    // no window (and no Destroyed) — release explicitly either way.
+    unregister_transient_shortcuts_deferred(app);
+}
+
+/// Pill → core: typing started (`true` → drop the voice capture) or the user
+/// tabbed back to voice (`false` → restart dictation).
+pub fn input_typing(app: &AppHandle, active: bool) {
+    let live = app
+        .try_state::<AgentState>()
+        .map(|s| s.input_active.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    if !live {
+        return;
+    }
+    if active {
+        app.state::<Arc<AudioRecordingManager>>().cancel_recording();
+    } else {
+        start_dictation(app);
+    }
+}
+
+/// Route a submitted instruction: Quick Agent runs headlessly and pastes at the
+/// cursor; the normal path hands it to the (already revealed or revealing)
+/// panel, which runs the LLM itself.
+fn dispatch_instruction(app: AppHandle, text: String) {
+    if get_settings(&app).agent_quick_enabled {
+        quick_run(app, text);
+        return;
+    }
+    // Queue first, then poke: the panel consumes via `agent_take_instruction`
+    // on BOTH the event and its mount, so delivery is race-free and deduped
+    // (take is consuming).
+    set_pending_instruction(&app, text);
+    reveal_panel_loading(&app);
+    let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
+}
+
+/// Show the (pre-created, warm) panel bottom-right in its loading state and arm
+/// the panel-phase transients. Idempotent — safe to call when already visible.
+/// Builds the window on the spot if pre-creation failed.
+fn reveal_panel_loading(app: &AppHandle) {
+    register_one_transient(app, close_binding());
+    register_followup_shortcut(app);
+    register_one_transient(app, submit_binding()); // compact → global Enter = Confirm
+
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let win = match app2.get_webview_window(PANEL_LABEL) {
+            Some(w) => w,
+            None => match build_window(&app2, PANEL_LABEL, PANEL_COMPACT_W, PANEL_COMPACT_H) {
+                Ok(w) => {
+                    place_panel(&w, false);
+                    w
+                }
+                Err(e) => {
+                    error!("[GRAIN] agent: failed to build panel for reveal: {e}");
+                    return;
+                }
+            },
+        };
+        let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
+        show_and_focus(&win);
+    });
+}
+
+/// Surface an Agent failure on the panel (the only remaining Agent webview):
+/// reveal it (building it if needed) and hand it the message. The emit is
+/// slightly deferred so a freshly built webview has mounted its listener.
+fn deliver_agent_error(app: &AppHandle, message: &str) {
+    warn!("[GRAIN] agent: {message}");
+    register_one_transient(app, close_binding());
     let message = message.to_string();
+    let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
-        show_palette(&app);
-        // Let the rebuilt palette webview mount its listener before emitting.
+        let existed = app.get_webview_window(PANEL_LABEL).is_some();
+        if !existed {
+            match build_window(&app, PANEL_LABEL, PANEL_COMPACT_W, PANEL_COMPACT_H) {
+                Ok(w) => place_panel(&w, false),
+                Err(e) => {
+                    error!("[GRAIN] agent: failed to build panel for error: {e}");
+                    return;
+                }
+            }
+        }
+        if let Some(w) = app.get_webview_window(PANEL_LABEL) {
+            show_and_focus(&w);
+        }
+        let delay = if existed { 30 } else { 400 };
         let app_for_emit = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(120));
-            let _ = app_for_emit.emit_to(PALETTE_LABEL, "agent-submit-error", message);
+            std::thread::sleep(Duration::from_millis(delay));
+            let _ = app_for_emit.emit_to(PANEL_LABEL, "agent-error", message);
         });
     });
 }
@@ -798,6 +946,23 @@ pub fn unregister_transient_shortcuts(app: &AppHandle) {
 pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
+        // Let an in-flight handoff settle (close-then-reopen happens within
+        // ~100ms). If a surface is back up by then, IT owns the transients —
+        // tearing down now would race its registration and leave Escape/Enter
+        // dangling (seen as "Hotkey already registered" warnings followed by a
+        // dead Escape).
+        std::thread::sleep(Duration::from_millis(150));
+        if app.get_webview_window(PANEL_LABEL).is_some() {
+            return;
+        }
+        // The native input phase owns Enter/Escape too — never tear down under it.
+        let input_live = app
+            .try_state::<AgentState>()
+            .map(|s| s.input_active.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        if input_live {
+            return;
+        }
         unregister_transient_shortcuts(&app);
         // The follow-up shortcut outlives the windows ONLY while a Quick-Agent
         // pill offer is live; otherwise release it (and restore suppressed keys).
@@ -811,43 +976,58 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
     });
 }
 
-/// Called by the transient global Enter shortcut. The frontend still owns typed
-/// text (palette) / the displayed reply version (panel), so this emits into the
-/// open surface instead of trying to infer state in Rust. On the compact panel
-/// the frontend answers with `agent_confirm_paste`.
+/// Called by the transient global Enter shortcut. During the INPUT phase the
+/// pill owns the typed text, so the core asks it to submit (it answers with
+/// SubmitText/SubmitVoice over the WS). On the compact panel the frontend owns
+/// the displayed reply version and answers with `agent_confirm_paste`.
 pub fn global_submit(app: &AppHandle) {
-    if app.get_webview_window(PALETTE_LABEL).is_some() {
-        let _ = app.emit_to(PALETTE_LABEL, "agent-global-enter", ());
+    let input_live = app
+        .try_state::<AgentState>()
+        .map(|s| s.input_active.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    if input_live {
+        crate::bridge::emit(app, DaemonEvent::AgentInputSubmitRequest);
     } else if app.get_webview_window(PANEL_LABEL).is_some() {
         let _ = app.emit_to(PANEL_LABEL, "agent-global-enter", ());
     }
 }
 
 /// Called by the transient follow-up shortcut (and the pill's offer click):
-/// expand the open panel, or reopen it expanded with the retained Quick-Agent
-/// conversation.
+/// expand the VISIBLE panel in place; hand a HIDDEN (warm, quick-agent) panel
+/// the retained conversation and reveal it expanded; or rebuild from scratch.
 pub fn open_followup(app: &AppHandle) {
     if let Some(panel) = app.get_webview_window(PANEL_LABEL) {
-        // The frontend expands itself (and calls `agent_set_panel_mode`).
-        let _ = app.emit_to(PANEL_LABEL, "agent-followup", ());
+        if panel.is_visible().unwrap_or(false) {
+            // The frontend expands itself (and calls `agent_set_panel_mode`).
+            let _ = app.emit_to(PANEL_LABEL, "agent-followup", ());
+            show_and_focus(&panel);
+            return;
+        }
+
+        // Hidden warm panel (Quick Agent): only meaningful with history.
+        if !has_conversation(app) {
+            return;
+        }
+        clear_followup_offer(app);
+        register_one_transient(app, close_binding());
+        register_followup_shortcut(app);
+        // Expanded → the global Enter must stay unregistered (in-window input).
+        let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
+
+        // Not on the main thread (we're on a shortcut/WS thread), so resizing
+        // the window here is safe (tauri#3990 only bites main-thread resizes).
+        place_panel(&panel, true);
+        // The panel is already mounted: it re-checks the retained conversation
+        // on this event (take is consuming, so double delivery is harmless).
+        let _ = app.emit_to(PANEL_LABEL, "agent-followup-open", ());
         show_and_focus(&panel);
         return;
     }
 
-    // Windowless (pill offer) path: only meaningful with a retained conversation.
-    let has_conversation = app
-        .try_state::<AgentState>()
-        .map(|s| {
-            s.conversation
-                .lock()
-                .map(|g| !g.is_empty())
-                .unwrap_or(false)
-        })
-        .unwrap_or(false);
-    if !has_conversation {
+    // Windowless path (the warm panel died): only meaningful with history.
+    if !has_conversation(app) {
         return;
     }
-
     clear_followup_offer(app);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -857,15 +1037,27 @@ pub fn open_followup(app: &AppHandle) {
     });
 }
 
+fn has_conversation(app: &AppHandle) -> bool {
+    app.try_state::<AgentState>()
+        .map(|s| {
+            s.conversation
+                .lock()
+                .map(|g| !g.is_empty())
+                .unwrap_or(false)
+        })
+        .unwrap_or(false)
+}
+
 // ============================================================================
 // Quick Agent (headless run → paste at cursor → pill follow-up offer)
 // ============================================================================
 
-/// [GRAIN] Quick Agent: close the palette, run the conversation headlessly, then
-/// refocus the summon target and paste the reply at the cursor. A selection
-/// still held in the target app is replaced by the paste — which is exactly the
-/// "rewrite the selected chunk" behavior, with no synthetic select-all/erase.
-/// Ends by offering "ask follow-up" through the pill.
+/// [GRAIN] Quick Agent: run the conversation headlessly, then refocus the
+/// summon target and paste the reply at the cursor. A selection still held in
+/// the target app is replaced by the paste — which is exactly the "rewrite the
+/// selected chunk" behavior, with no synthetic select-all/erase. Ends by
+/// offering "ask follow-up" through the pill; the warm hidden panel stays alive
+/// exactly as long as that offer does.
 fn quick_run(app: AppHandle, instruction: String) {
     std::thread::spawn(move || {
         // Seed the retained conversation with the user's turn.
@@ -878,14 +1070,6 @@ fn quick_run(app: AppHandle, instruction: String) {
                 });
             }
         }
-
-        // Close the palette right away — the instruction was accepted.
-        let close_handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if let Some(palette) = close_handle.get_webview_window(PALETTE_LABEL) {
-                let _ = palette.close();
-            }
-        });
 
         let (context, field) = read_summon_context(&app);
         let messages = vec![AgentMessage {
@@ -929,7 +1113,7 @@ fn quick_run(app: AppHandle, instruction: String) {
             }
             Err(e) => {
                 warn!("[GRAIN] agent: quick run failed: {e}");
-                report_submit_failure(&app, &e);
+                deliver_agent_error(&app, &e);
             }
         }
     });
@@ -970,6 +1154,9 @@ fn offer_followup(app: &AppHandle) {
         return;
     };
     register_followup_shortcut(app);
+    // Escape dismisses the offer (the pill fades out) — registered transiently
+    // for the offer's short lifetime, released by the expiry/teardown paths.
+    register_one_transient(app, close_binding());
     state.followup_offer_active.store(true, Ordering::SeqCst);
     let gen = state.followup_offer_gen.fetch_add(1, Ordering::SeqCst) + 1;
 
@@ -988,10 +1175,22 @@ fn offer_followup(app: &AppHandle) {
             && state.followup_offer_active.load(Ordering::SeqCst)
         {
             clear_followup_offer(&app2);
-            if app2.get_webview_window(PANEL_LABEL).is_none()
-                && app2.get_webview_window(PALETTE_LABEL).is_none()
-            {
+            // The warm panel dies with the offer ("destroy if not in use") —
+            // but only while still hidden; a visible panel belongs to the user.
+            let app3 = app2.clone();
+            let _ = app2.run_on_main_thread(move || {
+                if let Some(panel) = app3.get_webview_window(PANEL_LABEL) {
+                    if !panel.is_visible().unwrap_or(false) {
+                        let _ = panel.close();
+                    }
+                }
+            });
+            // Release the transients (slightly deferred so the close lands; the
+            // Destroyed teardown handles the rest, this covers no-window paths).
+            std::thread::sleep(Duration::from_millis(200));
+            if app2.get_webview_window(PANEL_LABEL).is_none() {
                 unregister_followup_shortcut(&app2);
+                let _ = crate::shortcut::unregister_shortcut(&app2, close_binding());
             }
         }
     });
@@ -1008,87 +1207,38 @@ fn clear_followup_offer(app: &AppHandle) {
 }
 
 /// Called by the transient global Escape shortcut. This is backend-owned so a
-/// wedged webview can still be dismissed without quitting the whole app.
+/// wedged webview can still be dismissed without quitting the whole app. During
+/// the INPUT phase it cancels the whole summon (input + dictation + warm
+/// panel); afterwards it closes the panel and dismisses a live follow-up offer
+/// (the pill fades out).
 pub fn global_close(app: &AppHandle) {
+    let input_live = app
+        .try_state::<AgentState>()
+        .map(|s| s.input_active.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    if input_live {
+        input_cancel(app);
+        return;
+    }
+
     let app_for_main = app.clone();
     let _ = app.run_on_main_thread(move || {
         app_for_main
             .state::<Arc<AudioRecordingManager>>()
             .cancel_recording();
 
-        if let Some(palette) = app_for_main.get_webview_window(PALETTE_LABEL) {
-            let _ = palette.close();
-        } else if let Some(panel) = app_for_main.get_webview_window(PANEL_LABEL) {
+        // Withdrawing the offer FIRST means the window teardown below sees it
+        // inactive and releases the transient follow-up shortcut too.
+        clear_followup_offer(&app_for_main);
+
+        if let Some(panel) = app_for_main.get_webview_window(PANEL_LABEL) {
             let _ = panel.close();
         }
 
-        if app_for_main.get_webview_window(PALETTE_LABEL).is_none()
-            && app_for_main.get_webview_window(PANEL_LABEL).is_none()
-        {
+        if app_for_main.get_webview_window(PANEL_LABEL).is_none() {
             unregister_transient_shortcuts_deferred(&app_for_main);
         }
     });
-}
-
-/// Start recording for in-window dictation, warming the local model/VAD when the
-/// STT path is local so the transcript is ready quickly on stop.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_start_dictation(app: AppHandle) -> Result<(), String> {
-    let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-
-    // Warm the local model only when this dictation will actually be transcribed
-    // locally. `will_route_to_cloud` is the same predicate the batch press path
-    // uses, so the warm-up matches what `agent_stop_dictation` routes to: when
-    // rotation is on AND a cloud provider is eligible we skip the load (the model
-    // would otherwise sit resident in RAM unused); when rotation is off, or on
-    // but with no eligible cloud provider (local fallback), we pre-warm it so the
-    // transcript is ready quickly on stop.
-    if !crate::stt_router::will_route_to_cloud(&app) {
-        let tm = app.state::<Arc<TranscriptionManager>>();
-        tm.initiate_model_load();
-    }
-    {
-        let rm = Arc::clone(&rm);
-        std::thread::spawn(move || {
-            let _ = rm.preload_vad();
-        });
-    }
-
-    rm.try_start_recording(AGENT_BINDING)
-}
-
-/// Stop dictation and return the transcript (routed through the STT dispatcher —
-/// local or cloud rotation per settings). Empty string if nothing was recorded.
-#[tauri::command]
-#[specta::specta]
-pub async fn agent_stop_dictation(app: AppHandle) -> Result<String, String> {
-    let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-    let samples = match rm.stop_recording(AGENT_BINDING) {
-        Some(s) if !s.is_empty() => s,
-        _ => {
-            info!("[GRAIN] agent: stop dictation produced no samples");
-            return Ok(String::new());
-        }
-    };
-    info!(
-        "[GRAIN] agent: transcribing dictation ({} samples)",
-        samples.len()
-    );
-    let text = crate::stt_router::transcribe(&app, samples).await?;
-    info!(
-        "[GRAIN] agent: dictation transcript ready ({} chars)",
-        text.chars().count()
-    );
-    Ok(text)
-}
-
-/// Cancel an in-progress dictation without transcribing.
-#[tauri::command]
-#[specta::specta]
-pub fn agent_cancel_dictation(app: AppHandle) -> Result<(), String> {
-    app.state::<Arc<AudioRecordingManager>>().cancel_recording();
-    Ok(())
 }
 
 /// Copy text to the clipboard (used for the auto-copy of the first reply and the

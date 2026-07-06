@@ -221,7 +221,10 @@ mod tests {
     fn defaults_persisted_on_first_load() {
         let (ctx, dir) = ctx();
         assert!(dir.path().join("data").join(SETTINGS_FILE).exists());
-        assert!(ctx.settings().push_to_talk); // a known default
+        // Known Grain defaults: push-to-talk ships OFF (toggle-style capture),
+        // update checks ship ON.
+        assert!(!ctx.settings().push_to_talk);
+        assert!(ctx.settings().update_checks_enabled);
     }
 
     #[test]

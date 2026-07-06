@@ -149,6 +149,19 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
         grain_core::PillAction::AgentFollowup => {
             crate::agent::open_followup(app);
         }
+        // [GRAIN] Native agent input: the pill's summon card talking back.
+        grain_core::PillAction::AgentInputSubmitText { text } => {
+            crate::agent::input_submit_text(app, text);
+        }
+        grain_core::PillAction::AgentInputSubmitVoice => {
+            crate::agent::input_submit_voice(app);
+        }
+        grain_core::PillAction::AgentInputCancel => {
+            crate::agent::input_cancel(app);
+        }
+        grain_core::PillAction::AgentInputTyping { active } => {
+            crate::agent::input_typing(app, active);
+        }
     }
 }
 

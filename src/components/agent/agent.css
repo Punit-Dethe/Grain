@@ -327,13 +327,13 @@
 /* Quoted source text (the captured selection / instruction) */
 .agc-quote {
   flex: none;
-  max-height: 62px;
+  max-height: 56px;
   overflow: hidden;
-  padding: 8px 11px;
-  border-radius: 12px;
+  padding: 7px 10px;
+  border-radius: 11px;
   background: var(--agc-recess);
   border: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.45;
   color: var(--agc-muted);
   cursor: pointer;
@@ -360,7 +360,7 @@
   padding-left: 14px;
   background: linear-gradient(90deg, transparent, var(--agc-recess) 40%);
   color: var(--agc-ink);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 /* Reply body */
@@ -371,8 +371,8 @@
   padding-right: 4px;
 }
 .agc-reply {
-  font-size: 13.5px;
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.55;
   color: var(--agc-ink);
   white-space: pre-wrap;
   word-break: break-word;
@@ -396,14 +396,14 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
-  padding: 0 8px;
+  height: 26px;
+  padding: 0 7px;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--agc-muted);
   font-family: var(--agc-body-font);
-  font-size: 12px;
+  font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s ease, color 0.12s ease;
@@ -420,14 +420,14 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 4px;
-  border-radius: 5px;
+  border-radius: 4px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.13);
   font-family: var(--agc-mono);
-  font-size: 9px;
+  font-size: 8px;
   color: var(--agc-muted);
 }
 .agc-icon-btn {
@@ -458,16 +458,16 @@
 .agc-confirm {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 30px;
-  padding: 0 13px;
+  gap: 5px;
+  height: 27px;
+  padding: 0 12px;
   flex: none;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.15);
   background: rgba(255, 255, 255, 0.1);
   color: var(--agc-ink);
   font-family: var(--agc-body-font);
-  font-size: 12.5px;
+  font-size: 11.5px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s ease;
@@ -480,7 +480,7 @@
   cursor: default;
 }
 .agc-confirm-glyph {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--agc-muted);
 }
 .agc-cue {
