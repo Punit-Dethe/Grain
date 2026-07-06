@@ -53,11 +53,33 @@ const BTN_COL: usize = 18;
 const BTN_ROW: usize = 2;
 const BTN_SPAN: usize = 4;
 
-// Prompt riser: a second capsule that slides up from behind the pill carrying
-// the active prompt name during a mid-speech prompt switch.
-const RISER_RESERVE: f32 = 5.0; // grid-cells reserved ABOVE the pill for the riser
-const RISER_PEEK: f32 = 4.2; // grid-cells of riser visible when fully shown
+// [GRAIN] Prompt switcher — a SECOND capsule carrying the active post-processing
+// prompt during a mid-speech switch (cycled by the same global shortcut). It is
+// rendered in the SAME OS window as the pill (a single tiny-skia pixmap → NO
+// extra window/webview/surface, zero incremental RAM):
+//   · Collapsed: a sibling capsule that slides in to the RIGHT of the pill.
+//   · Studio:    a full-width capsule that slides in ABOVE the transcript card.
+// The unused canvas the two reserve is fully transparent → click-through on the
+// layered window, so it costs nothing at rest.
+const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collapsed pill
 const RISER_HOLD: Duration = Duration::from_millis(1600);
+/// Shared label/arrow type size for both prompt capsules.
+const PROMPT_LABEL_PX: f32 = 12.5;
+
+// Collapsed sibling capsule (to the right of the pill). Fixed width — the label
+// truncates with an ellipsis rather than resizing the capsule.
+const SIB_GAP: f32 = 12.0; // px between the pill's right edge and the sibling
+const SIB_W: f32 = 152.0; // prompt-switcher capsule width (fixed, arrows on both ends)
+const SIB_MAX_W: f32 = 250.0; // widest the sibling ever gets (the agent follow-up offer)
+const SIB_SLIDE: f32 = 16.0; // px the sibling travels in from the right
+const SIB_ARROW_INSET: f32 = 17.0; // ‹ › inset from each capsule end
+const SIB_TEXT_PAD: f32 = 6.0; // gap kept between the arrows and the label
+
+// Studio top capsule (above the transcript card, spanning the full card width).
+const STUDIO_TOP_PILL_H: f32 = 30.0;
+const STUDIO_TOP_GAP: f32 = 9.0; // gap between the top capsule and the card
+const STUDIO_TOP_RESERVE: f32 = STUDIO_TOP_PILL_H + STUDIO_TOP_GAP + 6.0; // canvas above the card
+const STUDIO_TOP_ARROW_INSET: f32 = 22.0; // ‹ › inset from each capsule end
 // Present (and ease the riser/hover) at ~60 fps so motion is smooth; the dot
 // field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
 // instead of turning into 60 fps static.
@@ -1244,7 +1266,10 @@ fn paint_studio_card(
 fn studio_pixel_size() -> (u32, u32) {
     (
         (STUDIO_W * SCALE).round() as u32,
-        (STUDIO_MAX_CARD_H * SCALE).round() as u32,
+        // [GRAIN] Reserve a transparent band ABOVE the (bottom-anchored) card for
+        // the prompt-switcher top capsule. The card itself is unchanged; the band
+        // stays empty (click-through) until a prompt switch reveals the capsule.
+        ((STUDIO_MAX_CARD_H + STUDIO_TOP_RESERVE) * SCALE).round() as u32,
     )
 }
 
@@ -2323,6 +2348,10 @@ struct App {
     free_idle_at: Option<Instant>,
     riser_progress: f32,
     riser_hide_at: Option<Instant>,
+    /// [GRAIN] The prompt-SWITCHER capsule's rect (physical px) as last drawn, or
+    /// `None` when it isn't showing (or it's the clickable agent follow-up offer).
+    /// A click inside it must NOT be read as a pill action (Prompt Record).
+    prompt_switch_rect: Option<(f32, f32, f32, f32)>,
     next_tick: Instant,
     next_roll: Instant,
     remote: Arc<Mutex<Remote>>,
@@ -2405,6 +2434,7 @@ impl App {
             free_idle_at: None,
             riser_progress: 0.0,
             riser_hide_at: None,
+            prompt_switch_rect: None,
             next_tick: Instant::now(),
             next_roll: Instant::now(),
             remote,
@@ -2423,9 +2453,22 @@ impl App {
         }
     }
 
+    /// The COLLAPSED pill's own footprint width (px) — the dot field + its cell
+    /// insets. The OS window is wider (see `win_size`) to make room for the
+    /// sibling prompt capsule, but the pill body + horizontal centering are keyed
+    /// to this so the pill never moves when the sibling appears.
+    fn collapsed_core_w() -> f32 {
+        COLS as f32 * CELL * SCALE
+    }
+
     fn win_size() -> (u32, u32) {
+        let cell = CELL * SCALE;
+        // Extra width to the RIGHT for the sibling prompt capsule (its widest
+        // form — the agent follow-up offer) plus a matching right inset. Kept
+        // transparent until a switch, so it is click-through at rest.
+        let extra = SIB_GAP + SIB_MAX_W + cell;
         (
-            (COLS as f32 * CELL * SCALE).round() as u32,
+            (Self::collapsed_core_w() + extra).round() as u32,
             ((ROWS as f32 + RISER_RESERVE) * CELL * SCALE).round() as u32,
         )
     }
@@ -2442,10 +2485,20 @@ impl App {
         }
     }
 
+    /// Width to horizontally center the OS window on (see `position_window`). The
+    /// collapsed window is wider than the pill for the sibling capsule, so it is
+    /// centered on the pill's own footprint; the others center on the full window.
+    fn center_w_for(mode: PillMode, w: u32) -> f32 {
+        match mode {
+            PillMode::Collapsed => Self::collapsed_core_w(),
+            _ => w as f32,
+        }
+    }
+
     /// [GRAIN] Place the pill on the monitor under it (or primary) per the user's
     /// `overlay_position`: centered horizontally, near the top or bottom edge.
     /// Recomputed on each show so it follows the active monitor + setting changes.
-    fn position_window(window: &Window, anchor: OverlayPosition, w: u32, h: u32) {
+    fn position_window(window: &Window, anchor: OverlayPosition, h: u32, center_w: f32) {
         let Some(mon) = window
             .current_monitor()
             .or_else(|| window.primary_monitor())
@@ -2455,7 +2508,11 @@ impl App {
         let ms = mon.size();
         let mp = mon.position();
         let margin = (16.0 * SCALE) as i32;
-        let x = mp.x + ((ms.width.saturating_sub(w)) / 2) as i32;
+        // [GRAIN] Horizontally center the CONTENT (`center_w`), not the full window.
+        // The collapsed window is wider than the pill (transparent reserve to the
+        // right for the sibling capsule); centering on the pill's own width keeps
+        // it screen-centered while the reserve simply extends off to the right.
+        let x = mp.x + ((ms.width as f32 - center_w) / 2.0).round() as i32;
         // Full-monitor bottom edge (fallback when the work area is unavailable).
         let screen_bottom = mp.y + ms.height as i32;
         let y = match anchor {
@@ -2614,20 +2671,27 @@ impl App {
         // fallback face; the all-Latin case never loads it.
         let label = self.prompt_label.clone();
         self.ensure_fallback_for(&label);
+        let label_max = self.prompt_label_max();
         if let Some(font) = self.font.as_ref() {
             let font = font_for(font, self.fallback_font.as_ref(), &label);
-            let cell_px = Self::cell_px();
-            let peek = RISER_PEEK * cell_px;
-            let font_px = peek * 0.6;
-            let pad = peek * 0.4;
-            let (w, _) = Self::win_size();
-            let arrow_inset = peek * 0.85;
-            let (px0, px1) = (cell_px, w as f32 - cell_px);
+            let truncated = truncate_to_width(font, &label, PROMPT_LABEL_PX, label_max);
+            self.cached_label = Some(CachedText::new(font, &truncated, PROMPT_LABEL_PX));
+        }
+    }
 
-            let (lx, rx) = (px0 + arrow_inset, px1 - arrow_inset);
-            let label_max = ((rx - lx) - 2.0 * pad).max(0.0);
-            let truncated = truncate_to_width(font, &label, font_px, label_max);
-            self.cached_label = Some(CachedText::new(font, &truncated, font_px));
+    /// The max prompt-label width (px) for the capsule on the CURRENT surface, so
+    /// the label ellipsis-truncates to fit between the arrows (or, for the agent
+    /// follow-up offer, within the arrow-less capsule).
+    fn prompt_label_max(&self) -> f32 {
+        match self.mode {
+            // Studio top capsule: full card width, arrows at a fixed inset.
+            PillMode::Studio => {
+                (STUDIO_W - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0)
+            }
+            // Collapsed sibling: the arrow-less offer fills its max width; the
+            // switcher fits between its arrows in the fixed-width capsule.
+            _ if self.agent_offer.is_some() => (SIB_MAX_W - 4.0 * SIB_TEXT_PAD).max(0.0),
+            _ => (SIB_W - 2.0 * SIB_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0),
         }
     }
 
@@ -3090,14 +3154,13 @@ impl App {
         let y_off = Self::y_offset();
         let pill_h = ROWS as f32 * cell_px;
         let r = pill_h / 2.0;
-        let (x0, x1) = (cell_px, w as f32 - cell_px);
+        // [GRAIN] The pill body is keyed to its OWN footprint (`core_w`), not the
+        // window width — the window is wider to the right to host the sibling
+        // prompt capsule, and the pill must stay put/centered regardless.
+        let core_w = Self::collapsed_core_w();
+        let (x0, x1) = (cell_px, core_w - cell_px);
 
-        // 1) Prompt riser (drawn first, so the pill body hides its lower half).
-        if self.riser_progress > 0.01 {
-            self.draw_riser(&mut pixmap, w as f32, cell_px, y_off);
-        }
-
-        // 2) Floating capsule body (offset below the riser reserve).
+        // 1) Floating capsule body (offset below the transparent top reserve).
         let mut body = Paint {
             anti_alias: true,
             ..Default::default()
@@ -3124,7 +3187,7 @@ impl App {
             }
         }
 
-        // 3) Dots.
+        // 2) Dots.
         let dots = &self.aura.dots;
         let radius = DOT_D * SCALE / 2.0;
         let mut paint = Paint {
@@ -3153,6 +3216,15 @@ impl App {
                     );
                 }
             }
+        }
+
+        // 3) Sibling prompt capsule — slides in to the RIGHT of the pill during a
+        // mid-speech prompt switch (or as the agent follow-up offer). Drawn after
+        // the pill so its slide-in never clips under the body.
+        if self.riser_progress > 0.01 {
+            self.draw_sibling_pill(&mut pixmap, x1, y_off, pill_h);
+        } else {
+            self.prompt_switch_rect = None;
         }
 
         // [GRAIN] Whole-surface fade for the collapsed capsule (offer reveal /
@@ -3270,15 +3342,18 @@ impl App {
             self.studio_expand,
         );
 
-        // [GRAIN] Prompt riser — same mid-speech prompt switcher as the collapsed
-        // pill, here sliding up from behind the (animated-width) capsule's top edge.
+        // [GRAIN] Prompt switcher — the same mid-speech switch as the collapsed
+        // pill, here a full-width capsule that slides UP into the reserved band
+        // above the transcript card. Drawn AFTER the card; the two share the same
+        // near-black fill, so the capsule's lower edge tucking behind the card
+        // during the slide is seamless (identical color over identical color).
         if self.riser_progress > 0.01 {
-            let (wf, hf) = (w as f32, h as f32);
+            let hf = h as f32;
             let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
             let card_top = hf - card_h;
-            let cap_w = STUDIO_MIN_W + (wf - STUDIO_MIN_W) * self.studio_expand.clamp(0.0, 1.0);
-            let cap_left = (wf - cap_w) / 2.0;
-            self.draw_studio_riser(&mut pixmap, cap_left, cap_left + cap_w, card_top, fade);
+            self.draw_studio_top_pill(&mut pixmap, w as f32, card_top, fade);
+        } else {
+            self.prompt_switch_rect = None;
         }
 
         if let Some(presenter) = &self.presenter {
@@ -3287,191 +3362,122 @@ impl App {
         self.pixmap = Some(pixmap);
     }
 
-    /// Draw the prompt riser for the EXPANDED pill: a near-black rounded-top bar
-    /// that slides up from behind the capsule's top edge (`card_top`), spanning the
-    /// capsule's current width (`px0..px1`), carrying the active prompt name with
-    /// `‹`/`›` arrows. Mirrors the collapsed pill's riser so prompt switching feels
-    /// identical in both states.
-    fn draw_studio_riser(&self, pixmap: &mut Pixmap, px0: f32, px1: f32, card_top: f32, fade: f32) {
-        let cell_px = Self::cell_px();
-        let peek = RISER_PEEK * cell_px;
-        let bar_top = card_top - peek * self.riser_progress;
-        let rr = (peek / 2.0).min((px1 - px0) / 2.0).max(0.0);
-        // Extend a little BELOW the capsule top so the bar tucks seamlessly behind
-        // the capsule (which is painted over it).
-        let bar_bottom = card_top + rr;
-        let alpha = (self.riser_progress.clamp(0.0, 1.0) * fade * 244.0) as u8;
-        if alpha == 0 {
+    /// [GRAIN] The collapsed pill's SIBLING prompt capsule — a fixed-width pill
+    /// that slides in to the RIGHT of the pill (`pill_right` = the body's right
+    /// edge), carrying the active prompt name between `‹`/`›` arrows. The agent
+    /// follow-up offer reuses it (no arrows, sized to its text up to `SIB_MAX_W`).
+    /// `riser_progress` drives both the slide-in travel and the fade.
+    fn draw_sibling_pill(&mut self, pixmap: &mut Pixmap, pill_right: f32, y_off: f32, pill_h: f32) {
+        let p = self.riser_progress.clamp(0.0, 1.0);
+        let is_offer = self.agent_offer.is_some();
+        // Fixed width for the switcher; the offer hugs its label up to the max.
+        let cap_w = if is_offer {
+            let label_w = self.cached_label.as_ref().map_or(0.0, |c| c.total_width);
+            (label_w + 4.0 * SIB_TEXT_PAD).clamp(SIB_W, SIB_MAX_W)
+        } else {
+            SIB_W
+        };
+        let slide = SIB_SLIDE * (1.0 - p);
+        let left = pill_right + SIB_GAP + slide;
+        let right = left + cap_w;
+        self.draw_prompt_capsule(pixmap, left, right, y_off, pill_h, SIB_ARROW_INSET, p);
+        // Remember the switcher's rect so a click on it is NOT read as a pill
+        // action (Prompt Record). The offer capsule stays clickable (it IS the
+        // follow-up affordance), so only record the rect for the switcher.
+        self.prompt_switch_rect = if is_offer {
+            None
+        } else {
+            Some((left, y_off, right, y_off + pill_h))
+        };
+    }
+
+    /// [GRAIN] The Studio surface's prompt capsule — a full-width pill (matching
+    /// the transcript card's width) that slides UP into the reserved band above
+    /// the card (`card_top`). Fixed size; the label truncates rather than resizing
+    /// it. `riser_progress` drives the slide; `fade` is the whole-window opacity.
+    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, wf: f32, card_top: f32, fade: f32) {
+        let p = self.riser_progress.clamp(0.0, 1.0);
+        let travel = STUDIO_TOP_GAP + STUDIO_TOP_PILL_H;
+        let top = card_top - travel * p;
+        let bottom = top + STUDIO_TOP_PILL_H;
+        self.draw_prompt_capsule(
+            pixmap,
+            0.0,
+            wf,
+            top,
+            STUDIO_TOP_PILL_H,
+            STUDIO_TOP_ARROW_INSET,
+            p * fade.clamp(0.0, 1.0),
+        );
+        self.prompt_switch_rect = if self.agent_offer.is_some() {
+            None
+        } else {
+            Some((0.0, top, wf, bottom))
+        };
+    }
+
+    /// Draw a prompt capsule into `[px0,px1] × [top, top+ph]`: a near-black
+    /// rounded pill (matching the Studio card's fill), then — unless this is the
+    /// agent follow-up offer — `‹`/`›` arrows at `arrow_inset` from each end and
+    /// the prompt label centered (already ellipsis-truncated in `cached_label`).
+    /// `alpha` (0..1) fades the whole capsule for the slide-in.
+    fn draw_prompt_capsule(
+        &self,
+        pixmap: &mut Pixmap,
+        px0: f32,
+        px1: f32,
+        top: f32,
+        ph: f32,
+        arrow_inset: f32,
+        alpha: f32,
+    ) {
+        let alpha = alpha.clamp(0.0, 1.0);
+        let fill_a = (alpha * 244.0) as u8;
+        if fill_a == 0 || px1 <= px0 {
             return;
         }
-
-        let mut p = Paint {
+        let rr = (ph / 2.0).min((px1 - px0) / 2.0).max(0.0);
+        let mut fill = Paint {
             anti_alias: true,
             ..Default::default()
         };
-        p.set_color(Color::from_rgba8(13, 13, 15, alpha));
-        // Rounded-top capsule bar (square-ish bottom; the capsule hides it).
-        if let Some(rect) = Rect::from_ltrb(px0, bar_top + rr, px1, bar_bottom) {
-            pixmap.fill_path(
-                &PathBuilder::from_rect(rect),
-                &p,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        if let Some(rect) = Rect::from_ltrb(px0 + rr, bar_top, px1 - rr, bar_bottom) {
-            pixmap.fill_path(
-                &PathBuilder::from_rect(rect),
-                &p,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        for cx in [px0 + rr, px1 - rr] {
-            if let Some(circle) = PathBuilder::from_circle(cx, bar_top + rr, rr) {
-                pixmap.fill_path(&circle, &p, FillRule::Winding, Transform::identity(), None);
-            }
+        fill.set_color(Color::from_rgba8(13, 13, 15, fill_a));
+        if let Some(path) = rounded_rect_path(px0, top, px1 - px0, ph, rr) {
+            pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
 
         if let Some(font) = &self.font {
-            let font_px = peek * 0.6;
-            let cy = bar_top + peek / 2.0;
-            let arrow_inset = peek * 0.85;
-            let (lx, rx) = (px0 + arrow_inset, px1 - arrow_inset);
-            let text_a = self.riser_progress.clamp(0.0, 1.0) * fade;
-            let cached_left = CachedText::new(font, "\u{2039}", font_px);
-            let cached_right = CachedText::new(font, "\u{203a}", font_px);
-            draw_cached_text_centered(
-                pixmap,
-                &cached_left,
-                (lx, cy),
-                font_px,
-                [236, 229, 218],
-                text_a,
-            );
-            draw_cached_text_centered(
-                pixmap,
-                &cached_right,
-                (rx, cy),
-                font_px,
-                [236, 229, 218],
-                text_a,
-            );
+            let cy = top + ph / 2.0;
+            let col = [236, 229, 218];
+            // The `‹ ›` arrows belong to the SWITCHER; the follow-up offer is a
+            // single clickable affordance, so it hides them.
+            if self.agent_offer.is_none() {
+                let l = CachedText::new(font, "\u{2039}", PROMPT_LABEL_PX);
+                let r = CachedText::new(font, "\u{203a}", PROMPT_LABEL_PX);
+                draw_cached_text_centered(
+                    pixmap,
+                    &l,
+                    (px0 + arrow_inset, cy),
+                    PROMPT_LABEL_PX,
+                    col,
+                    alpha,
+                );
+                draw_cached_text_centered(
+                    pixmap,
+                    &r,
+                    (px1 - arrow_inset, cy),
+                    PROMPT_LABEL_PX,
+                    col,
+                    alpha,
+                );
+            }
             if let Some(cached_label) = &self.cached_label {
                 draw_cached_text_centered(
                     pixmap,
                     cached_label,
                     ((px0 + px1) / 2.0, cy),
-                    font_px,
-                    [236, 229, 218],
-                    text_a,
-                );
-            }
-        }
-    }
-
-    /// Draw the prompt riser bar (rounded top) and its label in the crescent
-    /// visible above the pill, sliding up by `riser_progress`.
-    ///
-    /// Layout rules (per spec):
-    /// - The bar's width matches the pill body's width EXACTLY (`px0..px1`).
-    /// - The bar's bottom reaches 50% of the pill height (hidden behind the body),
-    ///   giving the rounded-top crescent its full presence.
-    /// - The `‹` / `›` arrows sit at FIXED inner positions; the label is centered
-    ///   and truncated so it never moves the arrows or spills out.
-    fn draw_riser(&self, pixmap: &mut Pixmap, w: f32, cell_px: f32, y_off: f32) {
-        let pill_h = ROWS as f32 * cell_px;
-        let peek = RISER_PEEK * cell_px;
-        let bar_top = y_off - peek * self.riser_progress;
-
-        // [GRAIN] Keep it fully opaque. By matching the corner radii perfectly,
-        // it slides flawlessly behind the pill without any artifacts.
-        let alpha = 1.0;
-
-        let mut p = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        p.set_color(Color::from_rgba8(11, 11, 10, (235.0 * alpha) as u8));
-
-        let (px0, px1) = (cell_px, w - cell_px);
-
-        // Drop the bar bottom to 50% of the pill height (the body hides the rest).
-        let bar_bottom = y_off + pill_h * 0.5;
-        // [GRAIN] Match the pill's corner radius exactly! This ensures that when the
-        // riser slides all the way down, its corners perfectly align with the pill's
-        // corners, completely eliminating the "peeking" artifact without needing to fade!
-        let rr = pill_h / 2.0;
-        // Rounded-top bar = vertical rect + horizontal rect + two top circles.
-        if let Some(rect) = Rect::from_ltrb(px0, bar_top + rr, px1, bar_bottom) {
-            pixmap.fill_path(
-                &PathBuilder::from_rect(rect),
-                &p,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        if let Some(rect) = Rect::from_ltrb(px0 + rr, bar_top, px1 - rr, bar_bottom) {
-            pixmap.fill_path(
-                &PathBuilder::from_rect(rect),
-                &p,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        for cx in [px0 + rr, px1 - rr] {
-            if let Some(circle) = PathBuilder::from_circle(cx, bar_top + rr, rr) {
-                pixmap.fill_path(&circle, &p, FillRule::Winding, Transform::identity(), None);
-            }
-        }
-
-        if let Some(font) = &self.font {
-            let font_px = peek * 0.6;
-            // [GRAIN] Anchor the text rigidly to the top of the bar so it slides WITH the bar
-            // exactly, instead of squishing/lagging as the visible crescent shrinks.
-            let cy = bar_top + peek / 2.0;
-
-            // Fixed arrow positions, anchored a constant inset from the bar edges.
-            // [GRAIN] The ‹ › arrows belong to the prompt SWITCHER; the
-            // follow-up offer is a single clickable affordance, so they hide.
-            if self.agent_offer.is_none() {
-                let arrow_inset = peek * 0.85;
-                let lx = px0 + arrow_inset;
-                let rx = px1 - arrow_inset;
-
-                // Cache arrows and label on the fly if needed
-                let cached_left = CachedText::new(font, "\u{2039}", font_px);
-                let cached_right = CachedText::new(font, "\u{203a}", font_px);
-
-                draw_cached_text_centered(
-                    pixmap,
-                    &cached_left,
-                    (lx, cy),
-                    font_px,
-                    [236, 229, 218],
-                    alpha,
-                );
-                draw_cached_text_centered(
-                    pixmap,
-                    &cached_right,
-                    (rx, cy),
-                    font_px,
-                    [236, 229, 218],
-                    alpha,
-                );
-            }
-
-            if let Some(cached_label) = &self.cached_label {
-                draw_cached_text_centered(
-                    pixmap,
-                    cached_label,
-                    (w / 2.0, cy),
-                    font_px,
-                    [236, 229, 218],
+                    PROMPT_LABEL_PX,
+                    col,
                     alpha,
                 );
             }
@@ -3504,7 +3510,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // Initial placement using the current anchor; repositioned on each show.
         let anchor = self.remote.lock().unwrap().anchor;
-        Self::position_window(&window, anchor, w, h);
+        Self::position_window(&window, anchor, h, Self::collapsed_core_w());
 
         eprintln!("window: created {w}x{h} (hidden until a session starts)");
         self.window = Some(window);
@@ -3571,6 +3577,15 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     return;
+                }
+                // [GRAIN] Ignore clicks that land on the prompt-SWITCHER capsule —
+                // it is a display-only indicator (cycled by the shortcut, not the
+                // mouse), so a click there must not fire a pill action.
+                if let Some((rx0, ry0, rx1, ry1)) = self.prompt_switch_rect {
+                    let (cx, cy) = self.cursor_pos;
+                    if cx >= rx0 && cx <= rx1 && cy >= ry0 && cy <= ry1 {
+                        return;
+                    }
                 }
                 // Works on BOTH surfaces: the collapsed capsule and the expanded
                 // Studio card (whose center waveform is the click affordance).
@@ -3752,7 +3767,12 @@ impl ApplicationHandler<UserEvent> for App {
                     if self.mode == PillMode::AgentInput {
                         Self::position_agent_input(window, r.anchor);
                     } else {
-                        Self::position_window(window, r.anchor, w, h);
+                        Self::position_window(
+                            window,
+                            r.anchor,
+                            h,
+                            Self::center_w_for(self.mode, w),
+                        );
                     }
                 }
                 self.pixmap = None;
@@ -3948,7 +3968,12 @@ impl ApplicationHandler<UserEvent> for App {
                             present::force_foreground(window);
                         } else {
                             let (w, h) = Self::win_size_for(self.mode);
-                            Self::position_window(window, r.anchor, w, h);
+                            Self::position_window(
+                                window,
+                                r.anchor,
+                                h,
+                                Self::center_w_for(self.mode, w),
+                            );
                             eprintln!("window: show (content primed)");
                             present::show_window(window);
                         }
