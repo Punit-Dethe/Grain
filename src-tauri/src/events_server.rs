@@ -133,8 +133,7 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
         // echo `PromptRecordingChanged { active: true }` so the pill turns blue
         // only after the core has actually registered the mark.
         grain_core::PillAction::PromptRecord => {
-            if let Some(rm) =
-                app.try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
+            if let Some(rm) = app.try_state::<Arc<crate::managers::audio::AudioRecordingManager>>()
             {
                 if rm.arm_prompt_record() {
                     ctx.emit(grain_core::DaemonEvent::PromptRecordingChanged {

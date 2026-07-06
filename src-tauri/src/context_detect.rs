@@ -1221,7 +1221,10 @@ mod tests {
         // The spoken instruction must appear ABOVE the app-mode instructions.
         let spoken_pos = out.find("translate it into French").unwrap();
         let mode_pos = out.find("Rewrite as a tweet").unwrap();
-        assert!(spoken_pos < mode_pos, "spoken instruction must precede app mode");
+        assert!(
+            spoken_pos < mode_pos,
+            "spoken instruction must precede app mode"
+        );
     }
 
     #[cfg(windows)]

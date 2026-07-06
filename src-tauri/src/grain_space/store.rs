@@ -255,6 +255,17 @@ pub fn set_pinned(base: &Path, id: &str, pinned: bool) -> Result<Note> {
     Ok(note)
 }
 
+/// Update only the reminder state. Like pin flips, this is not a content
+/// change — the FTS row and embedding stay fresh (reminders aren't indexed).
+pub fn set_reminder(base: &Path, id: &str, state: ReminderState) -> Result<Note> {
+    validate_id(id)?;
+    let _guard = STORE_LOCK.lock().unwrap();
+    let mut note = read_note_file(&note_path(base, id))?;
+    note.reminder_state = state;
+    write_note_file(base, &note)?;
+    Ok(note)
+}
+
 /// Every note, newest first. Reads the JSON files directly (source of truth);
 /// unreadable files are skipped with a log line, never a crash.
 pub fn list_notes(base: &Path) -> Result<Vec<Note>> {
@@ -359,10 +370,8 @@ mod tests {
     use super::*;
 
     fn temp_base(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "grain_space_test_{tag}_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("grain_space_test_{tag}_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

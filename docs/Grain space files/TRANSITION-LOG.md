@@ -5,17 +5,71 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
-## 2026-07-06 — Session 1: plan finalized, Phase 1 backend COMPLETE
+## 2026-07-06 — Session 1 (part 2): Phase 2 COMPLETE (settings tab + reminders)
+
+### Status snapshot
+- [x] FINAL-PLAN.md written (authoritative)
+- [x] Phase 1 — Core storage & capture: DONE
+- [x] **Phase 2 — Settings UI + reminder scheduler: DONE**
+- [ ] Phase 3 — Overlay window (Raycast-style two-pane)  ← **NEXT**
+- [ ] Phase 4 — Semantic search (opt-in BGE-small via Candle)
+- [ ] Phase 5 — Voice-first retrieval
+- [ ] Phase 6 — Hardening/polish
+
+### Phase 2 — what was done
+1. **Reminder scheduler (`src-tauri/src/grain_space/reminders.rs`):**
+   generation-counter design — `sync(app)` bumps `GENERATION`, returns
+   immediately if the feature is off, else scans notes once (blocking hop),
+   marks + notifies anything due (OS notification via NEW dep
+   `tauri-plugin-notification`, registered in `lib.rs`), and parks ONE tokio
+   sleep until the earliest future `Armed` fire_at. A superseded timer wakes,
+   sees a newer generation, and exits. No polling, nothing resident when idle.
+   `sync` call sites: app start (`initialize_core_logic`), the master-toggle
+   command, save/delete note commands, arm/dismiss commands, voice-capture
+   intake. `store::set_reminder` added (like `set_pinned`: no embed-stale).
+2. **New commands:** `grain_space_arm_reminder(id, fire_at)`,
+   `grain_space_dismiss_reminder(id)`, plus per-setting commands
+   `change_grain_space_semantic_setting`, `..._auto_reminders_setting`,
+   `..._retrieval_mode_setting` (in `shortcut/mod.rs`); all specta-registered.
+3. **Settings tab (`src/components/settings/grain-space/GrainSpaceSettings.tsx`):**
+   registered in `Sidebar.tsx` SECTIONS_CONFIG as `grainSpace` (always visible,
+   NotebookPen icon, i18n key `sidebar.grainSpace`). Contents: master toggle →
+   (when on) Capture group (ShortcutInput rows for both bindings + auto-set
+   reminders toggle), Search group (semantic toggle — setting only, download
+   flow is Phase 4), Reminders group (pending/armed/fired rows with Arm/
+   Dismiss), Notes group (pinned first, then Today/Yesterday/date buckets;
+   pin + delete on hover). Refreshes on `grain-space://notes-changed`.
+4. **Store updaters** for the four new settings in `src/stores/settingsStore.ts`.
+5. **bindings.ts regenerated** by briefly running the debug exe
+   (`C:\gt\debug\handy.exe`, killed after ~6 s — the specta export happens at
+   startup before any window matters).
+6. **Verified:** `tsc --noEmit` clean, eslint clean (three JSX literals moved
+   to `settings.grainSpace.*` i18n keys), `cargo test --lib` 154 passed,
+   `cargo fmt` run.
+
+### Next concrete step (Phase 3 — overlay window)
+Read FINAL-PLAN.md §4 Phase 3 first. Key decisions already made:
+- New webview window (label e.g. `grain-space`), route `/grain-space` in the
+  same React bundle, created by a `grain_space_open` tap binding (NOT yet
+  seeded — add the binding to grain-core defaults + migration list + ACTION_MAP
+  the way `grain_space_quick_add` was), destroyed on close/Esc. ALL window
+  create/resize calls async (tauri#3990). Add a `grain-space` entry to
+  `src-tauri/capabilities/` (copy agent.json shape).
+- Two-pane Raycast-style UI (screenshot in chat, described in plan §1):
+  search top, date-grouped list left, full note editor right, bottom-right
+  action row. Reuse Agent Pill workflow components for any voice states
+  (user directive 11).
+- Blank-vs-list rule: 0 notes ⇒ straight into a new blank note.
+- Search in overlay = `grain_space_search_notes` (FTS) until Phase 4.
+- Feature toggled off while open ⇒ close the window (listen to settings or
+  handle in the toggle command).
+
+### Prior session summary (Phase 1, same day)
 
 ### Status snapshot
 - [x] FINAL-PLAN.md written (authoritative; includes user's directive 11: reuse
       the Agent Pill workflow components for voice/typing UI states)
 - [x] **Phase 1 — Core storage & capture: DONE (backend only, no UI yet)**
-- [ ] Phase 2 — Settings UI ("Grain Space" tab)  ← **NEXT**
-- [ ] Phase 3 — Overlay window (Raycast-style two-pane)
-- [ ] Phase 4 — Semantic search (opt-in BGE-small via Candle)
-- [ ] Phase 5 — Voice-first retrieval
-- [ ] Phase 6 — Hardening/polish
 
 ### What was done this session
 1. **Plan:** `docs/Grain space files/FINAL-PLAN.md` — read it in full before

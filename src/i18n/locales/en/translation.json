@@ -44,6 +44,7 @@
     "advanced": "Advanced",
     "postProcessing": "Processing",
     "experimentations": "Experimentations",
+    "grainSpace": "Grain Space",
     "history": "History",
     "debug": "Debug",
     "about": "About"
@@ -773,6 +774,11 @@
           "details": "Grain uses Whisper.cpp for fast, local speech-to-text processing. Thanks to the amazing work by Georgi Gerganov and contributors."
         }
       }
+    },
+    "grainSpace": {
+      "arm": "Arm",
+      "dismiss": "Dismiss",
+      "empty": "No notes yet."
     },
     "experimentations": {
       "snippets": {

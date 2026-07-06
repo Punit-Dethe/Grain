@@ -90,10 +90,13 @@ pub async fn intake_transcript(app: &AppHandle, transcript: String) {
     }
 
     let app2 = app.clone();
-    let result =
-        tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await;
+    let result = tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await;
     match result {
-        Ok(Ok(())) => super::emit_notes_changed(&app2),
+        Ok(Ok(())) => {
+            super::emit_notes_changed(&app2);
+            // Input A may have armed a reminder.
+            super::reminders::sync(&app2);
+        }
         Ok(Err(e)) => log::error!("[GRAIN] space capture: save failed: {e:#}"),
         Err(e) => log::error!("[GRAIN] space capture: save task panicked: {e}"),
     }
@@ -305,10 +308,7 @@ mod tests {
 
     #[test]
     fn code_fences_are_stripped() {
-        assert_eq!(
-            strip_code_fences("```json\n{\"a\":1}\n```"),
-            "{\"a\":1}"
-        );
+        assert_eq!(strip_code_fences("```json\n{\"a\":1}\n```"), "{\"a\":1}");
         assert_eq!(strip_code_fences("{\"a\":1}"), "{\"a\":1}");
     }
 }

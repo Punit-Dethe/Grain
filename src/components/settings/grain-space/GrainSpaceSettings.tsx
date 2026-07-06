@@ -1,0 +1,311 @@
+import React, { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
+import { AlarmClock, Pin, PinOff, Trash2 } from "lucide-react";
+import type { Note, ReminderState } from "@/bindings";
+import { commands } from "@/bindings";
+import { useSettings } from "../../../hooks/useSettings";
+import { SettingsGroup } from "../../ui/SettingsGroup";
+import { ToggleSwitch } from "../../ui/ToggleSwitch";
+import { ShortcutInput } from "../ShortcutInput";
+
+/** `#[serde(default)]` fields come out optional in the generated types; the
+ * backend always serializes them, but normalize anyway. */
+const reminderOf = (note: Note): ReminderState =>
+  note.reminder_state ?? { status: "none", fire_at: null };
+
+/** Backend event fired after any note mutation (save/delete/pin/reminder). */
+const NOTES_CHANGED_EVENT = "grain-space://notes-changed";
+
+const timeFormat = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+});
+const dateFormat = new Intl.DateTimeFormat(undefined, {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+});
+const fireFormat = new Intl.DateTimeFormat(undefined, {
+  day: "numeric",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** Local-day bucket label: Today / Yesterday / formatted date. */
+function dayLabel(ms: number): string {
+  const d = new Date(ms);
+  const today = new Date();
+  const startOf = (x: Date) =>
+    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diffDays = Math.round(
+    (startOf(today) - startOf(d)) / (24 * 60 * 60 * 1000),
+  );
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  return dateFormat.format(d);
+}
+
+function noteDisplayTitle(note: Note): string {
+  if (note.title.trim()) return note.title;
+  const firstLine = note.body.split("\n")[0]?.trim() ?? "";
+  return firstLine.length > 60 ? `${firstLine.slice(0, 57)}…` : firstLine;
+}
+
+/** [GRAIN] Grain Space tab: master toggle, capture shortcuts, search behavior,
+ * reminders (top) and the date-grouped notes list (bottom). The whole feature
+ * is create/destroy — this tab is just a window onto the on-disk notes. */
+export const GrainSpaceSettings: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const enabled = getSetting("grain_space_enabled") ?? false;
+  const semantic = getSetting("grain_space_semantic") ?? false;
+  const autoReminders = getSetting("grain_space_auto_reminders") ?? true;
+
+  const [notes, setNotes] = useState<Note[]>([]);
+
+  const refresh = useCallback(async () => {
+    if (!enabled) {
+      setNotes([]);
+      return;
+    }
+    const result = await commands.grainSpaceListNotes();
+    if (result.status === "ok") setNotes(result.data);
+    else console.error("Grain Space: list failed:", result.error);
+  }, [enabled]);
+
+  useEffect(() => {
+    refresh();
+    if (!enabled) return;
+    const unlisten = listen(NOTES_CHANGED_EVENT, () => refresh());
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [enabled, refresh]);
+
+  const deleteNote = async (id: string) => {
+    await commands.grainSpaceDeleteNote(id);
+    refresh();
+  };
+  const togglePin = async (note: Note) => {
+    await commands.grainSpaceSetPinned(note.id, !note.is_pinned);
+    refresh();
+  };
+  const dismissReminder = async (id: string) => {
+    await commands.grainSpaceDismissReminder(id);
+    refresh();
+  };
+  const armReminder = async (note: Note) => {
+    const fireAt = reminderOf(note).fire_at;
+    if (fireAt == null) return;
+    await commands.grainSpaceArmReminder(note.id, fireAt);
+    refresh();
+  };
+
+  const reminders = notes.filter((n) =>
+    ["pending", "armed", "fired"].includes(reminderOf(n).status),
+  );
+
+  // Pinned first, then newest; grouped by local day.
+  const sorted = [...notes].sort(
+    (a, b) =>
+      Number(b.is_pinned) - Number(a.is_pinned) || b.timestamp - a.timestamp,
+  );
+  const groups: { label: string; items: Note[] }[] = [];
+  for (const note of sorted) {
+    const label = note.is_pinned ? "Pinned" : dayLabel(note.timestamp);
+    const last = groups[groups.length - 1];
+    if (last && last.label === label) last.items.push(note);
+    else groups.push({ label, items: [note] });
+  }
+
+  return (
+    <div className="max-w-4xl w-full mx-auto space-y-6">
+      <SettingsGroup
+        title="Grain Space"
+        description="A local scratch space for spoken and captured notes. Everything stays on this machine as plain files, and the feature holds zero memory while its surfaces are closed. Turning it off unregisters its shortcuts and loads nothing — your notes stay on disk."
+      >
+        <ToggleSwitch
+          label="Enable Grain Space"
+          description="Registers the capture shortcuts and the reminder timer."
+          descriptionMode="inline"
+          grouped
+          checked={enabled}
+          isUpdating={isUpdating("grain_space_enabled")}
+          onChange={(v) => updateSetting("grain_space_enabled", v)}
+        />
+      </SettingsGroup>
+
+      {enabled && (
+        <>
+          <SettingsGroup
+            title="Capture"
+            description="Quick Add silently saves the text you have highlighted in any app. Dictate Note records like a normal dictation but stores the transcript as a note instead of pasting it — with an AI title, summary, and extracted reminders when a processing provider is configured."
+          >
+            <ShortcutInput
+              shortcutId="grain_space_quick_add"
+              grouped
+              descriptionMode="inline"
+            />
+            <ShortcutInput
+              shortcutId="grain_space_capture"
+              grouped
+              descriptionMode="inline"
+            />
+            <ToggleSwitch
+              label="Auto-set reminders"
+              description="Arm reminders extracted from a dictated note automatically. When off, notes keep the suggestion and you arm it manually."
+              descriptionMode="inline"
+              grouped
+              checked={autoReminders}
+              isUpdating={isUpdating("grain_space_auto_reminders")}
+              onChange={(v) => updateSetting("grain_space_auto_reminders", v)}
+            />
+          </SettingsGroup>
+
+          <SettingsGroup
+            title="Search"
+            description="Notes are always searchable with fast exact/fuzzy text matching. Semantic search understands meaning ('that café Anna mentioned') but relies on a small local model (~34 MB) that downloads the first time you use it — nothing is bundled with the app, and with this off the model never loads into memory."
+          >
+            <ToggleSwitch
+              label="Semantic search"
+              description="Meaning-based search with a small local model, downloaded on first use."
+              descriptionMode="inline"
+              grouped
+              checked={semantic}
+              isUpdating={isUpdating("grain_space_semantic")}
+              onChange={(v) => updateSetting("grain_space_semantic", v)}
+            />
+          </SettingsGroup>
+
+          {reminders.length > 0 && (
+            <SettingsGroup
+              title="Reminders"
+              description="Reminders and timers extracted from your notes."
+            >
+              {reminders.map((note) => {
+                const reminder = reminderOf(note);
+                return (
+                  <div
+                    key={note.id}
+                    className="flex items-center gap-3 px-4 py-3"
+                  >
+                    <AlarmClock
+                      width={15}
+                      height={15}
+                      className={
+                        reminder.status === "armed"
+                          ? "text-accent shrink-0"
+                          : "text-ink-faint shrink-0"
+                      }
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm text-ink truncate">
+                        {noteDisplayTitle(note)}
+                      </div>
+                      <div className="text-xs text-ink-soft">
+                        {reminder.status === "pending"
+                          ? "Suggested"
+                          : reminder.status === "fired"
+                            ? "Fired"
+                            : "Armed"}
+                        {reminder.fire_at != null &&
+                          ` · ${fireFormat.format(new Date(reminder.fire_at))}`}
+                      </div>
+                    </div>
+                    {reminder.status === "pending" &&
+                      reminder.fire_at != null && (
+                        <button
+                          type="button"
+                          onClick={() => armReminder(note)}
+                          className="text-xs font-medium text-accent hover:underline shrink-0"
+                        >
+                          {t("settings.grainSpace.arm")}
+                        </button>
+                      )}
+                    <button
+                      type="button"
+                      onClick={() => dismissReminder(note.id)}
+                      className="text-xs text-ink-soft hover:text-ink shrink-0"
+                    >
+                      {t("settings.grainSpace.dismiss")}
+                    </button>
+                  </div>
+                );
+              })}
+            </SettingsGroup>
+          )}
+
+          <SettingsGroup
+            title="Notes"
+            description={
+              notes.length === 0
+                ? "Nothing captured yet — highlight text and press Quick Add, or dictate a note."
+                : undefined
+            }
+          >
+            {groups.length === 0 ? (
+              <div className="px-4 py-6 text-sm text-ink-faint text-center">
+                {t("settings.grainSpace.empty")}
+              </div>
+            ) : (
+              groups.map((group) => (
+                <div key={group.label}>
+                  <div className="px-4 pt-3 pb-1 font-mono text-[0.58rem] tracking-[0.18em] uppercase text-ink-faint">
+                    {group.label}
+                  </div>
+                  {group.items.map((note) => (
+                    <div
+                      key={note.id}
+                      className="group flex items-center gap-3 px-4 py-2.5"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-ink truncate">
+                          {noteDisplayTitle(note) || "(empty note)"}
+                        </div>
+                        {note.tldr.trim() && (
+                          <div className="text-xs text-ink-soft truncate">
+                            {note.tldr}
+                          </div>
+                        )}
+                      </div>
+                      <span className="text-xs text-ink-faint tabular-nums shrink-0">
+                        {timeFormat.format(new Date(note.timestamp))}
+                      </span>
+                      <button
+                        type="button"
+                        title={note.is_pinned ? "Unpin" : "Pin"}
+                        onClick={() => togglePin(note)}
+                        className={`shrink-0 transition-opacity ${
+                          note.is_pinned
+                            ? "text-accent"
+                            : "text-ink-faint opacity-0 group-hover:opacity-100 hover:text-ink"
+                        }`}
+                      >
+                        {note.is_pinned ? (
+                          <Pin width={14} height={14} />
+                        ) : (
+                          <PinOff width={14} height={14} />
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        title="Delete note"
+                        onClick={() => deleteNote(note.id)}
+                        className="shrink-0 text-ink-faint opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                      >
+                        <Trash2 width={14} height={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ))
+            )}
+          </SettingsGroup>
+        </>
+      )}
+    </div>
+  );
+};

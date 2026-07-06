@@ -1068,6 +1068,47 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
         }
     }
 
+    // Arm (or tear down) the reminder timer for the new state.
+    crate::grain_space::reminders::sync(&app);
+
+    Ok(())
+}
+
+/// [GRAIN] Grain Space semantic-search toggle. Only flips the setting — the
+/// model download (opt-in, Phase 4) and any model load are driven elsewhere;
+/// OFF must guarantee the embedding model never loads.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_semantic_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_semantic = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Auto-arm reminders extracted from captured notes (vs. manual arm).
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_auto_reminders_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_auto_reminders = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Voice-first retrieval behavior (Phase 5): results list vs AI Q&A.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_retrieval_mode_setting(
+    app: AppHandle,
+    mode: settings::GrainSpaceRetrievalMode,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_retrieval_mode = mode;
+    settings::write_settings(&app, settings);
     Ok(())
 }
 

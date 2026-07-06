@@ -7,6 +7,7 @@ import type {
   AppMode,
   AppSettings as Settings,
   AudioDevice,
+  GrainSpaceRetrievalMode,
   Snippet,
   TranscribeAcceleratorSetting,
   VoiceAction,
@@ -183,6 +184,18 @@ const settingUpdaters: {
     commands.changeRollingLivePreviewSetting(value as boolean),
   // [GRAIN] Native ASR model selection — separate registry from `selected_model`.
   selected_asr_model: (value) => commands.selectAsrModel(value as string),
+  // [GRAIN] Grain Space (zero-idle-RAM notes). The master toggle also
+  // registers/unregisters the feature's shortcuts backend-side.
+  grain_space_enabled: (value) =>
+    commands.changeGrainSpaceEnabledSetting(value as boolean),
+  grain_space_semantic: (value) =>
+    commands.changeGrainSpaceSemanticSetting(value as boolean),
+  grain_space_auto_reminders: (value) =>
+    commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
+  grain_space_retrieval_mode: (value) =>
+    commands.changeGrainSpaceRetrievalModeSetting(
+      value as GrainSpaceRetrievalMode,
+    ),
 };
 
 export const useSettingsStore = create<SettingsStore>()(
