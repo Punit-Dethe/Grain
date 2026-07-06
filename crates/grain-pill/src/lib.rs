@@ -283,6 +283,17 @@ impl AsrDisplay {
     fn display_runs(&self) -> Vec<(String, RunStyle)> {
         self.runs()
     }
+
+    /// A cheap concatenation of all visible transcript text — used only to test
+    /// whether the caption needs the fallback face (non-Latin dictation).
+    fn probe_text(&self) -> String {
+        let mut s = self.committed.clone();
+        s.push_str(&self.partial);
+        for f in &self.finished {
+            s.push_str(f);
+        }
+        s
+    }
 }
 
 struct LaidLine {
@@ -785,19 +796,36 @@ impl Aura {
 
 // ── Text (prompt riser) ─────────────────────────────────────────────────────
 
-/// Load the single shared pill font. ONE fontdue face serves every surface —
-/// the riser label, the Studio transcript, AND the agent input card. fontdue
-/// parses a font's whole glyph set eagerly (a large sans like Segoe UI is
-/// ~15-20 MB resident), so holding one instead of several is the pill's single
-/// biggest RAM lever — hence one shared face, loaded lazily and freed on idle.
+/// [GRAIN] The bundled primary face: Space Grotesk (Medium 500), subset to
+/// European Latin + the exact punctuation/symbols the pill draws (~388 glyphs,
+/// ~21 KB). Chosen for the "Apple × Teenage Engineering" aesthetic — a
+/// proportional descendant of Space Mono, stylized yet readable next to the
+/// dot-matrix field. SIL OFL (see `assets/SpaceGrotesk-OFL.txt`).
 ///
-/// Consolas is preferred: it's a compact face (fewer glyphs → a much smaller
-/// parsed footprint than Segoe UI) and its monospace look is on-brand with the
-/// dot-matrix pill and the mono riser. Segoe UI is only a fallback.
+/// Bundling + subsetting is the pill's RAM lever: fontdue parses a font's WHOLE
+/// glyph set eagerly (a full system sans is ~15-20 MB resident), so a ~388-glyph
+/// face parses to well under 1 MB. It also makes the pill render identically on
+/// every machine instead of depending on which system font happens to exist.
+/// (Font *compression* — WOFF2/Brotli — would NOT help: rasterizers rebuild the
+/// full uncompressed sfnt in RAM, so only subsetting moves the footprint.)
+const PRIMARY_FONT_TTF: &[u8] = include_bytes!("../assets/SpaceGrotesk-pill.ttf");
+
+/// Parse the bundled primary face. Called lazily (and re-called after the
+/// idle-free drops it).
 fn load_font() -> Option<fontdue::Font> {
+    fontdue::Font::from_bytes(PRIMARY_FONT_TTF, fontdue::FontSettings::default()).ok()
+}
+
+/// [GRAIN] Load a broad-coverage system face for glyphs the subset primary
+/// lacks (Cyrillic, Greek, CJK, …). Loaded ONLY when such a glyph actually needs
+/// drawing (a non-Latin prompt name / caption / typed instruction), and dropped
+/// again on idle — so the common all-Latin case never pays for it. Segoe UI is
+/// preferred for its wide coverage; Arial/Tahoma are fallbacks.
+fn load_fallback_font() -> Option<fontdue::Font> {
     for path in [
-        "C:/Windows/Fonts/consola.ttf",
         "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "C:/Windows/Fonts/tahoma.ttf",
     ] {
         if let Ok(bytes) = std::fs::read(path) {
             if let Ok(font) = fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default()) {
@@ -806,6 +834,35 @@ fn load_font() -> Option<fontdue::Font> {
         }
     }
     None
+}
+
+/// Pick the face to draw `text` with: the bundled primary unless `text` contains
+/// a glyph the primary lacks but the fallback has (then the whole run uses the
+/// fallback, keeping one consistent face per string). The all-Latin path always
+/// returns the primary — the fallback is pure insurance for non-Latin text.
+fn font_for<'a>(
+    primary: &'a fontdue::Font,
+    fallback: Option<&'a fontdue::Font>,
+    text: &str,
+) -> &'a fontdue::Font {
+    if let Some(fb) = fallback {
+        let needs_fallback = text.chars().any(|c| {
+            !c.is_whitespace()
+                && primary.lookup_glyph_index(c) == 0
+                && fb.lookup_glyph_index(c) != 0
+        });
+        if needs_fallback {
+            return fb;
+        }
+    }
+    primary
+}
+
+/// True if the primary face is missing a glyph for any non-space char in `text`
+/// (⇒ the fallback should be loaded before drawing it).
+fn primary_missing_glyph(primary: &fontdue::Font, text: &str) -> bool {
+    text.chars()
+        .any(|c| !c.is_whitespace() && primary.lookup_glyph_index(c) == 0)
 }
 
 /// Draw `text` LEFT-aligned at `(x, cy_center)` (vertical center) into the
@@ -939,6 +996,50 @@ fn draw_cached_text_centered(
             }
         }
         pen += m.advance_width;
+    }
+}
+
+/// [GRAIN] Draw a small "return / enter" arrow (↵) as a vector, centered
+/// vertically at `cy`, spanning `w` px wide. Used on the agent card's Confirm
+/// button because the subset primary font has no U+21B5 glyph. A short right→
+/// left shaft with an up-hook on the left and a small arrowhead.
+fn draw_return_arrow(pixmap: &mut Pixmap, x: f32, cy: f32, w: f32, color: [u8; 3], alpha: f32) {
+    let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+    if a == 0 {
+        return;
+    }
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    paint.set_color(Color::from_rgba8(color[0], color[1], color[2], a));
+    let stroke = tiny_skia::Stroke {
+        width: 1.5,
+        line_cap: tiny_skia::LineCap::Round,
+        line_join: tiny_skia::LineJoin::Round,
+        ..Default::default()
+    };
+    let h = w * 0.72;
+    let (top, bot) = (cy - h * 0.5, cy + h * 0.5);
+    let right = x + w;
+    let left = x + w * 0.18;
+    // Vertical hook down the right side, then the shaft running left along the
+    // bottom to the arrowhead.
+    let mut pb = PathBuilder::new();
+    pb.move_to(right, top);
+    pb.line_to(right, bot);
+    pb.line_to(left, bot);
+    if let Some(path) = pb.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+    }
+    // Arrowhead at the left end of the shaft.
+    let mut head = PathBuilder::new();
+    let hd = w * 0.28;
+    head.move_to(left + hd, bot - hd);
+    head.line_to(left, bot);
+    head.line_to(left + hd, bot + hd);
+    if let Some(path) = head.finish() {
+        pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
     }
 }
 
@@ -2210,9 +2311,15 @@ struct App {
     cursor_pos: (f32, f32),
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
-    /// [GRAIN] When the pill has been continuously hidden this long, the font +
-    /// pixmap are freed so the always-on process idles near its floor (the font
-    /// reloads lazily on the next show). `None` = nothing scheduled.
+    /// [GRAIN] Broad-coverage fallback face for glyphs the bundled subset lacks
+    /// (Cyrillic/Greek/CJK/…). Lazily loaded only when non-Latin text needs
+    /// drawing, and dropped on idle. `fallback_tried` avoids re-probing a
+    /// missing system font every frame.
+    fallback_font: Option<fontdue::Font>,
+    fallback_tried: bool,
+    /// [GRAIN] When the pill has been continuously hidden this long, the fonts +
+    /// pixmap are freed so the always-on process idles near its floor (they
+    /// reload lazily on the next show). `None` = nothing scheduled.
     free_idle_at: Option<Instant>,
     riser_progress: f32,
     riser_hide_at: Option<Instant>,
@@ -2293,6 +2400,8 @@ impl App {
             last_agent_submit_req_seq: 0,
             cursor_pos: (0.0, 0.0),
             ctrl_down: false,
+            fallback_font: None,
+            fallback_tried: false,
             free_idle_at: None,
             riser_progress: 0.0,
             riser_hide_at: None,
@@ -2501,7 +2610,12 @@ impl App {
         // Runs (from `about_to_wait`) BEFORE the frame's `render`, so make sure
         // the shared font is resident — it may have been dropped by the idle-free.
         self.ensure_font();
-        if let Some(font) = &self.font {
+        // A non-Latin prompt name (e.g. a Cyrillic custom prompt) needs the
+        // fallback face; the all-Latin case never loads it.
+        let label = self.prompt_label.clone();
+        self.ensure_fallback_for(&label);
+        if let Some(font) = self.font.as_ref() {
+            let font = font_for(font, self.fallback_font.as_ref(), &label);
             let cell_px = Self::cell_px();
             let peek = RISER_PEEK * cell_px;
             let font_px = peek * 0.6;
@@ -2512,7 +2626,7 @@ impl App {
 
             let (lx, rx) = (px0 + arrow_inset, px1 - arrow_inset);
             let label_max = ((rx - lx) - 2.0 * pad).max(0.0);
-            let truncated = truncate_to_width(font, &self.prompt_label, font_px, label_max);
+            let truncated = truncate_to_width(font, &label, font_px, label_max);
             self.cached_label = Some(CachedText::new(font, &truncated, font_px));
         }
     }
@@ -2552,11 +2666,28 @@ impl App {
         }
     }
 
-    /// Lazily load the single shared font (idempotent). Called before each
+    /// Lazily load the bundled primary font (idempotent). Called before each
     /// render; paired with the idle-free in `about_to_wait`.
     fn ensure_font(&mut self) {
         if self.font.is_none() {
             self.font = load_font();
+        }
+    }
+
+    /// Ensure the broad-coverage fallback is loaded IF `text` has a char the
+    /// primary can't draw (else a no-op — the all-Latin path never loads it).
+    /// `fallback_tried` means "don't keep re-probing a system font we couldn't
+    /// find"; it resets on idle-free so a later show can retry.
+    fn ensure_fallback_for(&mut self, text: &str) {
+        if self.fallback_font.is_some() || self.fallback_tried {
+            return;
+        }
+        let Some(primary) = self.font.as_ref() else {
+            return;
+        };
+        if primary_missing_glyph(primary, text) {
+            self.fallback_tried = true;
+            self.fallback_font = load_fallback_font();
         }
     }
 
@@ -2572,6 +2703,15 @@ impl App {
         if self.window.is_none() {
             return;
         }
+        // The user can type a non-Latin instruction; make sure the fallback is
+        // ready before drawing it (no-op for Latin — the common case).
+        let typed_probe = self
+            .agent_input
+            .as_ref()
+            .map(|u| u.text.clone())
+            .unwrap_or_default();
+        self.ensure_fallback_for(&typed_probe);
+
         let (w, h) = (AIN_WIN_W, AIN_WIN_H);
         let mut pixmap = self
             .pixmap
@@ -2580,6 +2720,7 @@ impl App {
         pixmap.fill(Color::TRANSPARENT);
 
         let anchored_top = self.agent_input_anchored_top();
+        let fallback_ref = self.fallback_font.as_ref();
         let Some(ui) = &mut self.agent_input else {
             self.pixmap = Some(pixmap);
             return;
@@ -2588,11 +2729,13 @@ impl App {
         let phase = ui.phase;
 
         // ── Card geometry (width/height lerp between the two states) ──────────
-        // One shared font for the whole card (the reference's semibold header /
-        // button are rendered in the same face — a separate bold face would be
-        // another ~15-20 MB fontdue parse for no meaningful gain).
+        // One shared font for the whole card's FIXED strings (the reference's
+        // semibold header / button render in the same face — a separate bold
+        // face would be another ~15-20 MB fontdue parse for no real gain). Only
+        // the user's TYPED text may need the fallback face for non-Latin input.
         let ui_font = self.font.as_ref();
         let sb_font = ui_font;
+        let text_font = ui_font.map(|f| font_for(f, fallback_ref, &ui.text));
 
         // Compact width hugs its content: pad + 2 + wave + 14 + label + pad.
         let wave_w = AIN_WAVE_COLS as f32 * AIN_WAVE_DOT + (AIN_WAVE_COLS - 1) as f32 * AIN_WAVE_GAP;
@@ -2820,6 +2963,8 @@ impl App {
                         }
                     }
                 } else {
+                    // Typed text may be non-Latin → use the fallback-aware face.
+                    let f = text_font.unwrap_or(f);
                     // Show the TAIL when the text overflows (caret always visible).
                     let mut shown: &str = &ui.text;
                     while text_width(f, shown, 18.0) > max_text_w && !shown.is_empty() {
@@ -2873,9 +3018,12 @@ impl App {
                 );
             }
             if let (Some(f), Some(fb)) = (ui_font, sb_font) {
-                let btn_label = "Confirm \u{21b5}";
+                // "Confirm" + a hand-drawn return arrow (the subset font has no
+                // U+21B5, and drawing it keeps the glyph crisp and font-agnostic).
+                let btn_label = "Confirm";
                 let btn_tw = text_width(fb, btn_label, 13.0);
-                let btn_w = btn_tw + 28.0;
+                let arrow_w = 11.0;
+                let btn_w = btn_tw + arrow_w + 8.0 + 28.0;
                 let btn_h = 29.0;
                 let btn_x = inner_x + inner_w - btn_w;
                 let btn_y = foot_cy - btn_h / 2.0;
@@ -2892,6 +3040,14 @@ impl App {
                     btn_x + 14.0,
                     foot_cy,
                     13.0,
+                    [0x00, 0x00, 0x00],
+                    typ_alpha,
+                );
+                draw_return_arrow(
+                    &mut pixmap,
+                    btn_x + 14.0 + btn_tw + 8.0,
+                    foot_cy,
+                    arrow_w,
                     [0x00, 0x00, 0x00],
                     typ_alpha,
                 );
@@ -3024,6 +3180,16 @@ impl App {
         if self.window.is_none() {
             return;
         }
+        // A caption dictated in a non-Latin script needs the fallback face; the
+        // choice is per-transcript so the whole caption stays one consistent
+        // face (the common Latin case never loads the fallback).
+        let transcript_probe = self.asr.probe_text();
+        self.ensure_fallback_for(&transcript_probe);
+        let caption_font = self
+            .font
+            .as_ref()
+            .map(|f| font_for(f, self.fallback_font.as_ref(), &transcript_probe));
+
         let (w, h) = Self::win_size_for(PillMode::Studio);
         let mut pixmap = self
             .pixmap
@@ -3038,7 +3204,7 @@ impl App {
         // needs (0 lines = bare dot-matrix → 4-line cap). First frame snaps;
         // afterwards it eases so each new line rises in rather than jumping. Pure
         // compositing inside the fixed max-size window — no OS resize.
-        let n_lines = studio_line_count(&self.asr, self.font.as_ref());
+        let n_lines = studio_line_count(&self.asr, caption_font);
         let target_h = studio_card_height(n_lines);
         if self.studio_grown_h <= 0.0 {
             self.studio_grown_h = target_h;
@@ -3096,7 +3262,7 @@ impl App {
             self.state,
             fade,
             self.studio_phase,
-            self.font.as_ref(),
+            caption_font,
             self.studio_grown_h,
             n_lines,
             &reveal_alpha,
@@ -3801,13 +3967,18 @@ impl ApplicationHandler<UserEvent> for App {
                 // buffer so the always-on pill idles at its floor. Both reload
                 // lazily on the next show (ensure_font + pixmap re-alloc).
                 match self.free_idle_at {
-                    None if self.font.is_some() || self.pixmap.is_some() => {
+                    None if self.font.is_some()
+                        || self.fallback_font.is_some()
+                        || self.pixmap.is_some() =>
+                    {
                         self.free_idle_at = Some(now + IDLE_FREE_AFTER);
                         event_loop
                             .set_control_flow(ControlFlow::WaitUntil(now + IDLE_FREE_AFTER));
                     }
                     Some(deadline) if now >= deadline => {
                         self.font = None;
+                        self.fallback_font = None;
+                        self.fallback_tried = false;
                         self.pixmap = None;
                         self.cached_label = None;
                         self.free_idle_at = None;
@@ -3852,11 +4023,42 @@ mod tests {
     use super::*;
 
     fn font() -> fontdue::Font {
-        // A minimal valid TTF (DejaVu-style placeholder isn't bundled with the
-        // crate); fall back to a system font like `load_font()` does, but fail
-        // loudly in CI rather than silently skipping — these tests only assert
-        // properties that hold for any monospace/UI font.
-        load_font().expect("a system font must be available to test text layout")
+        // The primary face is now bundled (subset Space Grotesk), so this always
+        // succeeds — no system-font dependency in tests or at runtime.
+        load_font().expect("bundled primary font must parse")
+    }
+
+    /// The bundled subset parses and covers everything the pill draws: ASCII,
+    /// European accents, and the riser/card punctuation symbols. (U+21B5 is
+    /// intentionally absent — the Confirm arrow is hand-drawn.)
+    #[test]
+    fn bundled_font_has_pill_glyphs() {
+        let f = load_font().expect("bundled primary font must parse");
+        for ch in ['A', 'z', '0', '9', 'é', 'ñ', 'ł', '\u{2039}', '\u{203a}', '\u{b7}',
+            '\u{2026}', '\u{201c}', '\u{2022}', ' ', '.', '·']
+        {
+            assert_ne!(
+                f.lookup_glyph_index(ch),
+                0,
+                "bundled font missing glyph for {ch:?}"
+            );
+        }
+    }
+
+    /// `font_for` keeps the all-Latin path on the primary and only diverts a
+    /// string with a truly-missing glyph to the fallback.
+    #[test]
+    fn font_for_prefers_primary_for_latin() {
+        let primary = load_font().unwrap();
+        // Use the same face as a stand-in fallback: an all-Latin string must
+        // still resolve to the primary (no missing glyphs).
+        let fb = load_font().unwrap();
+        let chosen = font_for(&primary, Some(&fb), "Hello, world — café");
+        assert!(std::ptr::eq(chosen, &primary));
+        // A char the primary lacks (e.g. Cyrillic Д) has no glyph in this
+        // Latin-only stand-in fallback either, so it still stays on primary
+        // (font_for only diverts when the fallback actually has the glyph).
+        assert!(primary.lookup_glyph_index('\u{0414}') == 0);
     }
 
     /// Render the Studio Window to a PNG for visual inspection. Not an
