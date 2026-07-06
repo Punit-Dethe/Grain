@@ -6,6 +6,7 @@ import {
   FlaskConical,
   History,
   Info,
+  NotebookPen,
   Sparkles,
   AudioLines,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import {
   PostProcessingSettings,
   SpeechToTextSettings,
   ExperimentationsSettings,
+  GrainSpaceSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -72,6 +74,14 @@ export const SECTIONS_CONFIG = {
     icon: Sparkles,
     component: PostProcessingSettings,
     enabled: (settings) => settings?.post_process_enabled ?? false,
+  },
+  // [GRAIN] Grain Space: zero-idle-RAM local notes. Always visible — the tab
+  // itself holds the master toggle (everything below it gates on the setting).
+  grainSpace: {
+    labelKey: "sidebar.grainSpace",
+    icon: NotebookPen,
+    component: GrainSpaceSettings,
+    enabled: () => true,
   },
   // [GRAIN] Home for in-progress features (snippets, …). Always visible — not
   // gated behind debug/experimental flags.

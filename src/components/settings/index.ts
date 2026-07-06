@@ -7,6 +7,7 @@ export { AboutSettings } from "./about/AboutSettings";
 export { PostProcessingSettings } from "./post-processing/PostProcessingSettings";
 export { SpeechToTextSettings } from "./speech-to-text/SpeechToTextSettings";
 export { ExperimentationsSettings } from "./experimentations/ExperimentationsSettings";
+export { GrainSpaceSettings } from "./grain-space/GrainSpaceSettings";
 
 // Individual setting components
 export { MicrophoneSelector } from "./MicrophoneSelector";

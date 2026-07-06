@@ -192,6 +192,150 @@ async changePostProcessEnabledSetting(enabled: boolean) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] Master toggle for Grain Space. Registers/unregisters the feature's
+ * global shortcuts immediately so OFF is zero-overhead without a restart.
+ * Never touches on-disk note data.
+ */
+async changeGrainSpaceEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Grain Space semantic-search toggle. Only flips the setting — the
+ * model download (opt-in, Phase 4) and any model load are driven elsewhere;
+ * OFF must guarantee the embedding model never loads.
+ */
+async changeGrainSpaceSemanticSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_semantic_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Auto-arm reminders extracted from captured notes (vs. manual arm).
+ */
+async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_auto_reminders_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Voice-first retrieval behavior (Phase 5): results list vs AI Q&A.
+ */
+async changeGrainSpaceRetrievalModeSetting(mode: GrainSpaceRetrievalMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_retrieval_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceListNotes() : Promise<Result<Note[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_list_notes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceSearchNotes(query: string) : Promise<Result<Note[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_search_notes", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceGetNote(id: string) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_get_note", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Create or update. The frontend sends the full locked-schema note; for new
+ * notes it uses `grain_space_create_note` instead so ids stay backend-minted.
+ */
+async grainSpaceSaveNote(note: Note) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_save_note", { note }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Mint a new raw note (blank title/tldr) and return it for editing.
+ */
+async grainSpaceCreateNote(body: string) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_create_note", { body }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceDeleteNote(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_delete_note", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceSetPinned(id: string, pinned: boolean) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_set_pinned", { id, pinned }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Arm (or re-arm) a note's reminder at `fire_at` (epoch ms).
+ */
+async grainSpaceArmReminder(id: string, fireAt: number) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_arm_reminder", { id, fireAt }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dismiss/complete a reminder (fired, armed, or pending).
+ */
+async grainSpaceDismissReminder(id: string) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_dismiss_reminder", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Recovery: re-derive the whole index from the JSON files.
+ */
+async grainSpaceRebuildIndex() : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_rebuild_index") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeExperimentalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_experimental_enabled_setting", { enabled }) };
@@ -1384,7 +1528,36 @@ scrap_that_enabled?: boolean;
  * typing card. When off, the input stays in voice mode and typing is
  * ignored until the user expands it explicitly (Tab / click).
  */
-agent_input_type_to_expand?: boolean }
+agent_input_type_to_expand?: boolean; 
+/**
+ * [GRAIN] Grain Space master gate. OFF by default and OFF is truly
+ * zero-overhead: no shortcuts register, no directories are created, no
+ * DB opens, no models load. Disabling never deletes on-disk data.
+ */
+grain_space_enabled?: boolean; 
+/**
+ * [GRAIN] Grain Space semantic search. OFF = fuzzy/FTS matching only and
+ * the Candle embedding model must NEVER load into RAM. Turning it ON is
+ * what triggers the opt-in BGE-small model download (the model is not
+ * shipped with the app).
+ */
+grain_space_semantic?: boolean; 
+/**
+ * [GRAIN] When ON (default), reminders extracted from a captured note are
+ * armed automatically; when OFF the note pane shows a manual "arm" button.
+ */
+grain_space_auto_reminders?: boolean; 
+/**
+ * [GRAIN] Voice-first retrieval behavior (Phase 5): open the results list
+ * or answer directly with AI. Defaults to `List` — it needs no LLM.
+ */
+grain_space_retrieval_mode?: GrainSpaceRetrievalMode; 
+/**
+ * [GRAIN] Half-life (days) for time-decayed semantic ranking:
+ * `S_final = S_semantic * exp(-ln2/half_life * age_days)`. Pinned notes
+ * rank as if brand new (age 0).
+ */
+grain_space_decay_half_life_days?: number }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
@@ -1440,6 +1613,12 @@ export type EngineType =
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+/**
+ * [GRAIN] Grain Space voice-first retrieval mode: `List` opens the overlay
+ * with search results (works without any LLM); `AiQa` answers the spoken
+ * question directly via the configured post-process provider (RAG).
+ */
+export type GrainSpaceRetrievalMode = "list" | "ai_qa"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**
@@ -1480,6 +1659,19 @@ sha256: string | null } } |
  */
 "Local"
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+export type Note = { id: string; 
+/**
+ * 3-word AI title, or "" for raw (no-LLM) captures.
+ */
+title: string; 
+/**
+ * 1-sentence AI summary, or "" for raw captures.
+ */
+tldr: string; body: string; 
+/**
+ * Epoch ms (UTC). Date grouping happens in the UI, in local time.
+ */
+timestamp: number; todo_tags?: TodoTag[]; reminder_state?: ReminderState; is_pinned?: boolean }
 export type OverlayPosition = "none" | "top" | "bottom" | 
 /**
  * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
@@ -1507,6 +1699,32 @@ quota_limit?: number | null; quota_used_today?: number }
  */
 export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvider[]; selected_provider_id: string; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
+export type ReminderState = { status: ReminderStatus; 
+/**
+ * Epoch ms; `None` unless `status` is `Armed`/`Fired`.
+ */
+fire_at: number | null }
+export type ReminderStatus = 
+/**
+ * No reminder on this note.
+ */
+"none" | 
+/**
+ * Extracted/suggested but not armed (auto-reminders off).
+ */
+"pending" | 
+/**
+ * Scheduled to fire at `fire_at`.
+ */
+"armed" | 
+/**
+ * Fired; kept for the settings-tab reminders list.
+ */
+"fired" | 
+/**
+ * User dismissed/completed it.
+ */
+"dismissed"
 /**
  * Map of provider id → API key. Persisted to a SEPARATE credential file by
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
@@ -1564,6 +1782,7 @@ export type SttProviderKind =
  * Generic OpenAI-compatible `/v1/audio/transcriptions`.
  */
 "openai" | "deepgram" | "assemblyai"
+export type TodoTag = { text: string; done: boolean }
 /**
  * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.
  * Renamed from `WhisperAcceleratorSetting` when the batch path moved from

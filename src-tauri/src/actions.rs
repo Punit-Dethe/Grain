@@ -1359,46 +1359,45 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // utterance (content + spoken instruction mixed), so it can't be split.
             // Re-transcribe the two audio slices batch-style instead. This extra
             // pass only happens when the user actually clicked the pill.
-            let (final_text, spoken_prompt, post_process) = if let Some(m) =
-                prompt_mark.filter(|&m| m > 0 && m < samples.len())
-            {
-                let (content_res, spoken) =
-                    crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
-                // `transcribe_split` routes through the STT dispatcher, which
-                // finalizes internally — don't finalize again.
-                (
-                    content_res.unwrap_or_default(),
-                    spoken.clone(),
-                    post_process || spoken.is_some(),
-                )
-            } else {
-                let ft = if !rolling_text.trim().is_empty() {
-                    // [GRAIN] Apply the shared final-text stage (custom-word dictionary
-                    // + filler/stutter filtering) ONCE on the assembled transcript.
-                    // The rolling engine never biases via Whisper `initial_prompt`, so
-                    // the fuzzy custom-word pass must run here. Done once per dictation,
-                    // NOT per 15-20s chunk.
-                    let settings = get_settings(&ah);
-                    crate::audio_toolkit::finalize_transcript(
-                        &rolling_text,
-                        &settings.custom_words,
-                        settings.word_correction_threshold,
-                        &settings.app_language,
-                        &settings.custom_filler_words,
-                        false,
-                        &settings.snippets,
-                        settings.scrap_that_enabled,
+            let (final_text, spoken_prompt, post_process) =
+                if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
+                    let (content_res, spoken) =
+                        crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
+                    // `transcribe_split` routes through the STT dispatcher, which
+                    // finalizes internally — don't finalize again.
+                    (
+                        content_res.unwrap_or_default(),
+                        spoken.clone(),
+                        post_process || spoken.is_some(),
                     )
-                } else if !samples.is_empty() {
-                    warn!("[GRAIN] rolling produced no text — falling back to batch");
-                    // `tm.transcribe` already runs finalize_transcript internally, so
-                    // the fallback text is finalized; don't finalize it again.
-                    tm.transcribe(samples.clone()).unwrap_or_default()
                 } else {
-                    String::new()
+                    let ft = if !rolling_text.trim().is_empty() {
+                        // [GRAIN] Apply the shared final-text stage (custom-word dictionary
+                        // + filler/stutter filtering) ONCE on the assembled transcript.
+                        // The rolling engine never biases via Whisper `initial_prompt`, so
+                        // the fuzzy custom-word pass must run here. Done once per dictation,
+                        // NOT per 15-20s chunk.
+                        let settings = get_settings(&ah);
+                        crate::audio_toolkit::finalize_transcript(
+                            &rolling_text,
+                            &settings.custom_words,
+                            settings.word_correction_threshold,
+                            &settings.app_language,
+                            &settings.custom_filler_words,
+                            false,
+                            &settings.snippets,
+                            settings.scrap_that_enabled,
+                        )
+                    } else if !samples.is_empty() {
+                        warn!("[GRAIN] rolling produced no text — falling back to batch");
+                        // `tm.transcribe` already runs finalize_transcript internally, so
+                        // the fallback text is finalized; don't finalize it again.
+                        tm.transcribe(samples.clone()).unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    (ft, None, post_process)
                 };
-                (ft, None, post_process)
-            };
 
             let processed =
                 process_transcription_output(&ah, &final_text, post_process, spoken_prompt).await;
@@ -1603,7 +1602,9 @@ impl ShortcutAction for NativeAsrAction {
                     // No usable stream → batch-transcribe the captured audio.
                     Ok(_) if !samples_for_fallback.is_empty() => {
                         warn!("Native ASR: stream produced no text — batch fallback");
-                        tm_finalize.transcribe(samples_for_fallback).unwrap_or_default()
+                        tm_finalize
+                            .transcribe(samples_for_fallback)
+                            .unwrap_or_default()
                     }
                     Ok(_) => String::new(),
                     Err(e) => {

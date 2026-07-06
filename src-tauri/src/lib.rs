@@ -318,6 +318,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     }
     events_server::spawn_pill_supervisor();
 
+    // [GRAIN] Grain Space reminders: fire anything that came due while the app
+    // was closed and park a timer for the next one. No-op (no disk touch, no
+    // timer) when the feature is disabled.
+    grain_space::reminders::sync(app_handle);
+
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
     // after permissions are confirmed (on macOS) or after onboarding completes.
@@ -632,6 +637,9 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_auto_submit_key_setting,
             shortcut::change_post_process_enabled_setting,
             shortcut::change_grain_space_enabled_setting,
+            shortcut::change_grain_space_semantic_setting,
+            shortcut::change_grain_space_auto_reminders_setting,
+            shortcut::change_grain_space_retrieval_mode_setting,
             grain_space::commands::grain_space_list_notes,
             grain_space::commands::grain_space_search_notes,
             grain_space::commands::grain_space_get_note,
@@ -639,6 +647,8 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_create_note,
             grain_space::commands::grain_space_delete_note,
             grain_space::commands::grain_space_set_pinned,
+            grain_space::commands::grain_space_arm_reminder,
+            grain_space::commands::grain_space_dismiss_reminder,
             grain_space::commands::grain_space_rebuild_index,
             shortcut::change_experimental_enabled_setting,
             shortcut::change_post_process_base_url_setting,
@@ -780,6 +790,7 @@ pub fn run(cli_args: CliArgs) {
     let mut builder = tauri::Builder::default()
         .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             LogBuilder::new()
                 .level(log::LevelFilter::Trace) // Set to most verbose level globally

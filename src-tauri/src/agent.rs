@@ -45,8 +45,7 @@ use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::rotation_state::{CallOutcome, RotationTrackers};
 use crate::settings::{
-    get_settings, AgentAutocopy, AgentContextMode, ShortcutBinding,
-    APPLE_INTELLIGENCE_PROVIDER_ID,
+    get_settings, AgentAutocopy, AgentContextMode, ShortcutBinding, APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
 /// Window label (matched by its capability + the frontend router in
@@ -445,7 +444,10 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
         let (w, h) = if expanded {
             (PANEL_W, (sh - 90.0).clamp(360.0, 880.0))
         } else {
-            (PANEL_COMPACT_W, PANEL_COMPACT_H.min(sh - 2.0 * PANEL_MARGIN))
+            (
+                PANEL_COMPACT_W,
+                PANEL_COMPACT_H.min(sh - 2.0 * PANEL_MARGIN),
+            )
         };
         let _ = window.set_size(tauri::LogicalSize::new(w, h));
         let x = ox + sw - w - PANEL_MARGIN;
@@ -887,8 +889,7 @@ fn register_followup_shortcut(app: &AppHandle) {
         if let Ok(mut suppressed) = state.suppressed_bindings.lock() {
             for (id, b) in settings.bindings.iter() {
                 // Dynamic bindings are never globally registered — nothing to suppress.
-                if id == AGENT_FOLLOWUP_BINDING || id == "cancel" || id == "transcribe_send_to_ai"
-                {
+                if id == AGENT_FOLLOWUP_BINDING || id == "cancel" || id == "transcribe_send_to_ai" {
                     continue;
                 }
                 if b.current_binding.trim().eq_ignore_ascii_case(&accel)

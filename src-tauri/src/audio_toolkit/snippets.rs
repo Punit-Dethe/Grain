@@ -220,7 +220,10 @@ pub fn strip_scrapped(text: &str) -> String {
 /// covers the brief instant it straddles the commit boundary.
 pub fn scrub_stream_preview(committed: &str, tentative: &str) -> (String, String) {
     if let Some(end) = last_scrap_end(committed) {
-        return (committed[end..].trim_start().to_string(), tentative.to_string());
+        return (
+            committed[end..].trim_start().to_string(),
+            tentative.to_string(),
+        );
     }
     if tentative.is_empty() {
         return (committed.to_string(), tentative.to_string());
@@ -242,12 +245,18 @@ mod scrap_tests {
 
     #[test]
     fn keeps_text_after_phrase() {
-        assert_eq!(strip_scrapped("hello world scrap that new start"), "new start");
+        assert_eq!(
+            strip_scrapped("hello world scrap that new start"),
+            "new start"
+        );
     }
 
     #[test]
     fn no_phrase_is_identity() {
-        assert_eq!(strip_scrapped("just a normal sentence"), "just a normal sentence");
+        assert_eq!(
+            strip_scrapped("just a normal sentence"),
+            "just a normal sentence"
+        );
     }
 
     #[test]
@@ -259,10 +268,7 @@ mod scrap_tests {
 
     #[test]
     fn resets_to_last_occurrence() {
-        assert_eq!(
-            strip_scrapped("a scrap that b c scrap that d"),
-            "d"
-        );
+        assert_eq!(strip_scrapped("a scrap that b c scrap that d"), "d");
     }
 
     #[test]

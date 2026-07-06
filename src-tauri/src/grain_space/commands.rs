@@ -5,7 +5,7 @@
 
 use tauri::AppHandle;
 
-use super::store::{self, Note};
+use super::store::{self, Note, ReminderState, ReminderStatus};
 use super::{base_dir, emit_notes_changed, is_enabled};
 
 fn gate(app: &AppHandle) -> Result<std::path::PathBuf, String> {
@@ -55,6 +55,8 @@ pub async fn grain_space_save_note(app: AppHandle, note: Note) -> Result<(), Str
     let result = blocking(move || store::save_note(&base, &note)).await;
     if result.is_ok() {
         emit_notes_changed(&app);
+        // An edit may have added/changed/removed the reminder.
+        super::reminders::sync(&app);
     }
     result
 }
@@ -83,6 +85,8 @@ pub async fn grain_space_delete_note(app: AppHandle, id: String) -> Result<(), S
     let result = blocking(move || store::delete_note(&base, &id)).await;
     if result.is_ok() {
         emit_notes_changed(&app);
+        // The deleted note may have held the next armed reminder.
+        super::reminders::sync(&app);
     }
     result
 }
@@ -98,6 +102,56 @@ pub async fn grain_space_set_pinned(
     let result = blocking(move || store::set_pinned(&base, &id, pinned)).await;
     if result.is_ok() {
         emit_notes_changed(&app);
+    }
+    result
+}
+
+/// Arm (or re-arm) a note's reminder at `fire_at` (epoch ms).
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_arm_reminder(
+    app: AppHandle,
+    id: String,
+    fire_at: i64,
+) -> Result<Note, String> {
+    let base = gate(&app)?;
+    let result = blocking(move || {
+        store::set_reminder(
+            &base,
+            &id,
+            ReminderState {
+                status: ReminderStatus::Armed,
+                fire_at: Some(fire_at),
+            },
+        )
+    })
+    .await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+        super::reminders::sync(&app);
+    }
+    result
+}
+
+/// Dismiss/complete a reminder (fired, armed, or pending).
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_dismiss_reminder(app: AppHandle, id: String) -> Result<Note, String> {
+    let base = gate(&app)?;
+    let result = blocking(move || {
+        store::set_reminder(
+            &base,
+            &id,
+            ReminderState {
+                status: ReminderStatus::Dismissed,
+                fire_at: None,
+            },
+        )
+    })
+    .await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+        super::reminders::sync(&app);
     }
     result
 }
