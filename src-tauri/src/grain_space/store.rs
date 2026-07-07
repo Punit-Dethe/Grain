@@ -125,6 +125,31 @@ fn note_path(base: &Path, id: &str) -> PathBuf {
     notes_dir(base).join(format!("{id}.json"))
 }
 
+/// Where genuinely-corrupt note files are moved so they stop polluting every
+/// scan/rebuild while staying recoverable (RECALL-PLAN §8). A subdir of
+/// `notes/`; it has no `.json` extension itself, so the (non-recursive) scan
+/// never re-reads what's inside it.
+fn corrupt_dir(base: &Path) -> PathBuf {
+    notes_dir(base).join("corrupt")
+}
+
+/// Move a file that failed to PARSE (not merely a transient read) into
+/// `notes/corrupt/`. Never clobbers a prior quarantine of the same id.
+fn quarantine_corrupt(base: &Path, path: &Path) -> Result<()> {
+    let dir = corrupt_dir(base);
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("corrupt note has no file name: {}", path.display()))?;
+    let mut dest = dir.join(name);
+    if dest.exists() {
+        let ts = chrono::Utc::now().timestamp_millis();
+        dest = dir.join(format!("{}.{ts}", name.to_string_lossy()));
+    }
+    fs::rename(path, &dest).with_context(|| format!("quarantine {}", path.display()))?;
+    Ok(())
+}
+
 /// Reject ids that could escape the notes dir (defense in depth — ids are
 /// always uuids we minted, but they round-trip through the frontend).
 fn validate_id(id: &str) -> Result<()> {
@@ -311,9 +336,20 @@ fn list_notes_unlocked(base: &Path) -> Result<Vec<Note>> {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        match read_note_file(&path) {
-            Ok(note) => notes.push(note),
-            Err(e) => log::warn!("[GRAIN] skipping unreadable note {}: {e:#}", path.display()),
+        // Classify read vs parse: a transient I/O error (lock, permissions) is
+        // skipped and retried next scan; genuinely corrupt JSON is quarantined
+        // so it stops breaking every scan/rebuild.
+        match fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Note>(&bytes) {
+                Ok(note) => notes.push(note),
+                Err(e) => {
+                    log::warn!("[GRAIN] quarantining corrupt note {}: {e}", path.display());
+                    if let Err(qe) = quarantine_corrupt(base, &path) {
+                        log::error!("[GRAIN] quarantine failed for {}: {qe:#}", path.display());
+                    }
+                }
+            },
+            Err(e) => log::warn!("[GRAIN] skipping unreadable note {}: {e}", path.display()),
         }
     }
     notes.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
@@ -604,6 +640,24 @@ mod tests {
         let count = rebuild_index(&base).unwrap();
         assert_eq!(count, 1);
         assert_eq!(search_notes(&base, "rebuild").unwrap().len(), 1);
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn corrupt_note_is_quarantined_on_scan() {
+        let base = temp_base("corrupt");
+        let good = Note::raw("i am fine".into());
+        save_note(&base, &good).unwrap();
+        // A garbage .json file lands in the notes dir (partial write, bad edit).
+        let bad = notes_dir(&base).join("deadbeef-bad.json");
+        fs::write(&bad, b"{ this is not valid json ").unwrap();
+
+        let notes = list_notes(&base).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, good.id);
+        // The bad file was moved out of the scan path into corrupt/.
+        assert!(!bad.exists());
+        assert!(corrupt_dir(&base).join("deadbeef-bad.json").exists());
         fs::remove_dir_all(&base).unwrap();
     }
 
