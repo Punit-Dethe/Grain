@@ -206,9 +206,10 @@ async changeGrainSpaceEnabledSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
- * [GRAIN] Grain Space semantic-search toggle. Only flips the setting — the
- * model download (opt-in, Phase 4) and any model load are driven elsewhere;
- * OFF must guarantee the embedding model never loads.
+ * [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
+ * download (opt-in consent flow) is driven by the frontend before it turns
+ * this on. OFF must guarantee the embedding model never loads — any resident
+ * engine is dropped immediately.
  */
 async changeGrainSpaceSemanticSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -331,6 +332,73 @@ async grainSpaceDismissReminder(id: string) : Promise<Result<Note, string>> {
 async grainSpaceRebuildIndex() : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_rebuild_index") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the overlay (or refocus it), optionally landing on a note. Used by the
+ * settings tab's note rows; the global shortcut uses the toggle action.
+ */
+async grainSpaceOpenWindow(noteId: string | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_open_window", { noteId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Close (destroy) the overlay. Deliberately NOT gated: the window must be
+ * closable even if the feature was just disabled underneath it.
+ */
+async grainSpaceCloseWindow() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_close_window") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * One-shot: the note id the overlay should select on mount, if any.
+ */
+async grainSpaceTakeFocusNote() : Promise<string | null> {
+    return await TAURI_INVOKE("grain_space_take_focus_note");
+},
+async grainSpaceEmbedModelStatus() : Promise<EmbedModelStatus> {
+    return await TAURI_INVOKE("grain_space_embed_model_status");
+},
+/**
+ * Consent-gated model download (the frontend shows the consent dialog BEFORE
+ * calling this). Progress/completion/error arrive as events; resolves when
+ * the transfer ends either way.
+ */
+async grainSpaceDownloadEmbedModel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_download_embed_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceCancelEmbedModelDownload() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_cancel_embed_model_download") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Semantic (meaning-based) search. Spawns the engine lazily on first use —
+ * allowed only while the overlay window exists, so the weights can never
+ * outlive it. Re-embeds stale notes before serving so results stay truthful.
+ */
+async grainSpaceSemanticSearch(query: string) : Promise<Result<Note[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_semantic_search", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1605,6 +1673,7 @@ word: string;
  * How many distinct paste-sessions this correction has been observed in.
  */
 count: number }
+export type EmbedModelStatus = "ready" | "downloading" | "absent"
 export type EngineType = 
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,

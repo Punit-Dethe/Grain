@@ -185,6 +185,33 @@ fn index_note(conn: &Connection, note: &Note) -> Result<()> {
 fn unindex_note(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM notes_meta WHERE id = ?1", params![id])?;
     conn.execute("DELETE FROM notes_fts WHERE id = ?1", params![id])?;
+    if vec_table_exists(conn) {
+        conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id])?;
+    }
+    Ok(())
+}
+
+// -- vector index (Phase 4, created only once semantic search is used) ---------
+
+/// The vec0 table is NOT part of `open_index` on purpose: it only comes into
+/// existence on the first semantic operation, so non-semantic users never
+/// carry it.
+fn vec_table_exists(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes_vec'",
+        [],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
+fn ensure_vec_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS notes_vec USING vec0(
+            id TEXT PRIMARY KEY,
+            embedding float[384]
+        );",
+    )?;
     Ok(())
 }
 
@@ -357,12 +384,127 @@ pub fn rebuild_index(base: &Path) -> Result<u32> {
     let notes = list_notes_unlocked(base)?;
     let conn = open_index(base)?;
     conn.execute_batch("DELETE FROM notes_meta; DELETE FROM notes_fts;")?;
+    // Vectors are derived too: wipe them so stale rows for vanished notes can't
+    // survive the rebuild (everything re-embeds via embed_stale = 1).
+    if vec_table_exists(&conn) {
+        conn.execute("DELETE FROM notes_vec", [])?;
+    }
     let mut count = 0u32;
     for note in &notes {
         index_note(&conn, note)?;
         count += 1;
     }
     Ok(count)
+}
+
+// -- semantic search (Phase 4) --------------------------------------------------
+
+/// Notes whose embedding is stale (new/edited since the last embed), as
+/// `(id, embed_text)` pairs ready for the engine. Creates the vec table on
+/// first use.
+pub fn stale_embed_texts(base: &Path) -> Result<Vec<(String, String)>> {
+    let _guard = STORE_LOCK.lock().unwrap();
+    let conn = open_index(base)?;
+    ensure_vec_table(&conn)?;
+    let ids: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM notes_meta WHERE embed_stale = 1")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        match read_note_file(&note_path(base, &id)) {
+            Ok(note) => out.push((
+                id,
+                super::embed::note_embed_text(&note.title, &note.tldr, &note.body),
+            )),
+            // Index ahead of disk — drop the meta row so it stops re-surfacing.
+            Err(e) => {
+                log::warn!("[GRAIN] stale-embed note {id} unreadable: {e:#}");
+                unindex_note(&conn, &id)?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Store freshly computed embeddings and clear their stale flags.
+pub fn store_embeddings(base: &Path, items: &[(String, Vec<f32>)]) -> Result<()> {
+    use zerocopy::IntoBytes;
+    let _guard = STORE_LOCK.lock().unwrap();
+    let conn = open_index(base)?;
+    ensure_vec_table(&conn)?;
+    for (id, embedding) in items {
+        validate_id(id)?;
+        // vec0 has no upsert — replace by delete + insert.
+        conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id])?;
+        conn.execute(
+            "INSERT INTO notes_vec (id, embedding) VALUES (?1, ?2)",
+            params![id, embedding.as_slice().as_bytes()],
+        )?;
+        conn.execute(
+            "UPDATE notes_meta SET embed_stale = 0 WHERE id = ?1",
+            params![id],
+        )?;
+    }
+    Ok(())
+}
+
+/// KNN over the vec index, re-ranked with recency decay:
+/// `S_final = S_semantic · exp(-λ·Δt)` where λ = ln2 / half-life and pinned
+/// notes get Δt = 0. Query vector must be L2-normalized (as the engine
+/// guarantees) so L2 distance is monotonic with cosine:
+/// `cos = 1 − d²/2`.
+pub fn semantic_search(
+    base: &Path,
+    query_embedding: &[f32],
+    half_life_days: u32,
+) -> Result<Vec<Note>> {
+    use zerocopy::IntoBytes;
+    let _guard = STORE_LOCK.lock().unwrap();
+    let conn = open_index(base)?;
+    ensure_vec_table(&conn)?;
+
+    let hits: Vec<(String, f64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, distance FROM notes_vec
+             WHERE embedding MATCH ?1
+             ORDER BY distance
+             LIMIT 24",
+        )?;
+        let rows = stmt.query_map(params![query_embedding.as_bytes()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let lambda_per_ms = if half_life_days == 0 {
+        0.0
+    } else {
+        std::f64::consts::LN_2 / (half_life_days as f64 * 24.0 * 60.0 * 60.0 * 1000.0)
+    };
+
+    let mut scored: Vec<(f64, Note)> = Vec::with_capacity(hits.len());
+    for (id, distance) in hits {
+        let note = match read_note_file(&note_path(base, &id)) {
+            Ok(n) => n,
+            Err(e) => {
+                log::warn!("[GRAIN] semantic hit {id} unreadable: {e:#}");
+                continue;
+            }
+        };
+        let similarity = 1.0 - (distance * distance) / 2.0;
+        let age_ms = if note.is_pinned {
+            0.0
+        } else {
+            (now - note.timestamp).max(0) as f64
+        };
+        let score = similarity * (-lambda_per_ms * age_ms).exp();
+        scored.push((score, note));
+    }
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(scored.into_iter().map(|(_, note)| note).collect())
 }
 
 #[cfg(test)]
@@ -470,6 +612,48 @@ mod tests {
         let base = temp_base("ids");
         assert!(get_note(&base, "../../etc/passwd").is_err());
         assert!(get_note(&base, "").is_err());
+        fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn semantic_index_roundtrip_ranking_and_delete() {
+        let base = temp_base("vec");
+        let a = Note::raw("apples and oranges".into());
+        let b = Note::raw("quarterly report".into());
+        save_note(&base, &a).unwrap();
+        save_note(&base, &b).unwrap();
+
+        // Fresh notes are stale (need embedding).
+        let stale = stale_embed_texts(&base).unwrap();
+        assert_eq!(stale.len(), 2);
+        assert!(stale
+            .iter()
+            .any(|(id, text)| id == &a.id && text.contains("apples")));
+
+        // Fake orthogonal unit vectors: a → e0, b → e1.
+        let mut va = vec![0.0f32; 384];
+        va[0] = 1.0;
+        let mut vb = vec![0.0f32; 384];
+        vb[1] = 1.0;
+        store_embeddings(&base, &[(a.id.clone(), va.clone()), (b.id.clone(), vb)]).unwrap();
+        assert!(stale_embed_texts(&base).unwrap().is_empty());
+
+        // Querying with a's vector ranks a first (cosine 1.0 vs 0.0).
+        let hits = semantic_search(&base, &va, 30).unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, a.id);
+
+        // Editing a note marks it stale again.
+        let mut edited = a.clone();
+        edited.body = "apples oranges and pears".into();
+        save_note(&base, &edited).unwrap();
+        assert_eq!(stale_embed_texts(&base).unwrap().len(), 1);
+
+        // Deleting removes the vector row too.
+        delete_note(&base, &a.id).unwrap();
+        let hits = semantic_search(&base, &va, 30).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, b.id);
         fs::remove_dir_all(&base).unwrap();
     }
 

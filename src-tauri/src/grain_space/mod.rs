@@ -13,8 +13,10 @@
 
 pub mod capture;
 pub mod commands;
+pub mod embed;
 pub mod reminders;
 pub mod store;
+pub mod window;
 
 use tauri::AppHandle;
 

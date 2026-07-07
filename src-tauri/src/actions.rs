@@ -1175,6 +1175,19 @@ impl ShortcutAction for GrainSpaceQuickAddAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+// [GRAIN] Grain Space overlay toggle (Phase 3) — tap creates the notes window,
+// tap again destroys it. All window work hops to the async runtime inside
+// `window::toggle` (tauri#3990), so this returns instantly.
+struct GrainSpaceOpenAction;
+
+impl ShortcutAction for GrainSpaceOpenAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::grain_space::window::toggle(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -1774,6 +1787,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
             post_process: false,
             post_process_override: AtomicBool::new(false),
         }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "grain_space_open".to_string(),
+        Arc::new(GrainSpaceOpenAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

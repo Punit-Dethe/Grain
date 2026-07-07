@@ -778,7 +778,14 @@
     "grainSpace": {
       "arm": "Arm",
       "dismiss": "Dismiss",
-      "empty": "No notes yet."
+      "empty": "No notes yet.",
+      "consentTitle": "Download the semantic model?",
+      "consentBody": "Semantic search runs BGE-small-en-v1.5 locally (MIT license, ~130 MB one-time download from Hugging Face into your model cache). Notes and searches never leave this machine.",
+      "consentConfirm": "Download & enable",
+      "consentCancel": "Not now",
+      "downloading": "Downloading model…",
+      "cancelDownload": "Cancel",
+      "downloadFailed": "Model download failed: {{message}}"
     },
     "experimentations": {
       "snippets": {
@@ -864,6 +871,30 @@
   "appLanguage": {
     "title": "Application Language",
     "description": "Change the language of the Handy interface"
+  },
+  "grainSpaceOverlay": {
+    "brand": "GRAIN SPACE",
+    "searchPlaceholder": "Search notes…",
+    "exact": "Exact",
+    "semantic": "Semantic",
+    "results": "Results",
+    "pinned": "Pinned",
+    "untitled": "Untitled",
+    "emptyList": "No notes yet — start typing.",
+    "noMatches": "No matches.",
+    "noSelection": "Select a note, or press Ctrl+N for a new one.",
+    "titlePlaceholder": "Title",
+    "bodyPlaceholder": "Write, or dictate with your capture shortcut…",
+    "todos": "To-dos",
+    "armReminder": "Arm reminder",
+    "dismiss": "Dismiss",
+    "consent": "Semantic search downloads BGE-small-en-v1.5 (MIT, ~130 MB) into your local model cache. Nothing leaves this machine.",
+    "download": "Download",
+    "notNow": "Not now",
+    "downloading": "Downloading model…",
+    "cancel": "Cancel",
+    "retry": "Retry",
+    "downloadFailed": "Download failed: {{message}}"
   },
   "overlay": {
     "transcribing": "Transcribing...",

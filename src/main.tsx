@@ -4,6 +4,7 @@ import { platform } from "@tauri-apps/plugin-os";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { AgentPanel } from "./components/agent/AgentPanel";
+import { GrainSpaceOverlay } from "./components/grain-space/GrainSpaceOverlay";
 import { initUiScale } from "./lib/utils/uiScale";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
@@ -30,6 +31,18 @@ if (winLabel === "agent-panel") {
   root.render(
     <React.StrictMode>
       <AgentPanel />
+    </React.StrictMode>,
+  );
+} else if (winLabel === "grain-space") {
+  // [GRAIN] Grain Space overlay: frameless, transparent, created on summon and
+  // DESTROYED on close — like the Agent panel it skips the main app's heavy
+  // init (UI scaling, model store) so the window costs nothing while closed.
+  document.documentElement.dataset.window = winLabel;
+  document.documentElement.style.background = "transparent";
+  document.body.style.background = "transparent";
+  root.render(
+    <React.StrictMode>
+      <GrainSpaceOverlay />
     </React.StrictMode>,
   );
 } else {
