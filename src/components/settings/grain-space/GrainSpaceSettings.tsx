@@ -219,7 +219,7 @@ export const GrainSpaceSettings: React.FC = () => {
         <>
           <SettingsGroup
             title="Capture"
-            description="Quick Add silently saves the text you have highlighted in any app. Dictate Note records like a normal dictation but stores the transcript as a note instead of pasting it — with an AI title, summary, and extracted reminders when a processing provider is configured."
+            description="Quick Add silently saves the text you have highlighted in any app. Create Note opens the Grain pill so you can speak OR type a note — and if you have text selected, that becomes the note (say what it's for). Each note gets an AI title, summary, and extracted reminders when a processing provider is configured."
           >
             <ShortcutInput
               shortcutId="grain_space_quick_add"
@@ -398,7 +398,7 @@ export const GrainSpaceSettings: React.FC = () => {
             title="Notes"
             description={
               notes.length === 0
-                ? "Nothing captured yet — highlight text and press Quick Add, or dictate a note."
+                ? "Nothing captured yet — highlight text and press Quick Add, or press Create Note to speak or type one."
                 : undefined
             }
           >

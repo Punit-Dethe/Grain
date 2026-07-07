@@ -2951,12 +2951,11 @@ impl App {
                     ) + 0.5;
                 }
             }
-            if let Some(f) = ui_font {
-                let chip_text = if ui.selection_chars > 0 {
-                    format!("{} chars", ui.selection_chars)
-                } else {
-                    "No selection".to_string()
-                };
+            // Selection chip (top-right). Shown ONLY when there is actually a
+            // selection; an empty state shows nothing (Recall never selects;
+            // Capture/Assist with nothing highlighted stay clean).
+            if let (Some(f), true) = (ui_font, ui.selection_chars > 0) {
+                let chip_text = format!("{} chars", ui.selection_chars);
                 let tw = text_width(f, &chip_text, 11.0);
                 let chip_w = tw + 20.0;
                 let chip_h = 21.0;

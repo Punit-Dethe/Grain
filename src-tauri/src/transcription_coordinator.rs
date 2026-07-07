@@ -43,11 +43,10 @@ pub fn is_transcribe_binding(id: &str) -> bool {
         || id == "transcribe_realtime"
         || id == "transcribe_send_to_ai"
         || id == "transcribe_native_asr"
-        || id == "grain_space_capture"
     // ^ [GRAIN] real-time + Native ASR bindings share the serialized
     // record/transcribe lifecycle, so they can never overlap each other or
-    // Batch. `grain_space_capture` is an ordinary batch dictation whose
-    // transcript is stored as a note instead of pasted.
+    // Batch. (Grain Space note capture is no longer here — it summons the Agent
+    // pill in Capture mode and uses the agent dictation lease instead.)
 }
 
 impl TranscriptionCoordinator {

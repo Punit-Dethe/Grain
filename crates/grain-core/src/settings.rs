@@ -1386,8 +1386,8 @@ pub fn get_default_settings() -> AppSettings {
         "grain_space_capture".to_string(),
         ShortcutBinding {
             id: "grain_space_capture".to_string(),
-            name: "Dictate Note".to_string(),
-            description: "Dictate a note into Grain Space (AI title/summary when available)."
+            name: "Create Note".to_string(),
+            description: "Open the Grain pill to speak or type a note; any selected text becomes the note (AI title/summary when available)."
                 .to_string(),
             default_binding: default_space_capture_shortcut.to_string(),
             current_binding: default_space_capture_shortcut.to_string(),
