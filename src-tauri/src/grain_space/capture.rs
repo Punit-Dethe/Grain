@@ -15,7 +15,6 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
 use super::store::{self, Note, ReminderState, ReminderStatus, TodoTag};
-use crate::agent::{AgentMessage, AgentReply};
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 
 /// Input C debounce: OS key-repeat / double taps within this window are one add.
@@ -60,27 +59,22 @@ pub fn quick_add(app: &AppHandle) {
 }
 
 /// Inputs A/B (note capture): the user summoned the Agent pill in Capture mode,
-/// then spoke or typed. This turns that into a saved note. The `selection`
-/// (captured at summon) is the note body when present — the user selected some
-/// text and their spoken/typed words FRAME it; otherwise the spoken/typed text
-/// IS the note. The body is always verbatim (never rewritten); the LLM only
-/// supplies metadata, and any failure degrades to a raw save. One-shot: returns
-/// a short confirmation the panel displays.
-pub async fn run_capture_turn(
+/// then spoke or typed. This turns that into a saved note, HEADLESS — no panel,
+/// no confirmation surface (the app confirms the save a different way). The
+/// `selection` (captured at summon) is the note body when present — the user
+/// selected some text and their spoken/typed words FRAME it; otherwise the
+/// spoken/typed text IS the note. The body is always verbatim (never rewritten);
+/// the LLM only supplies metadata, and any failure degrades to a raw save.
+pub async fn capture_and_save(
     app: &AppHandle,
-    messages: &[AgentMessage],
+    instruction: &str,
     selection: Option<&str>,
-) -> Result<AgentReply, String> {
+) -> Result<(), String> {
     if !super::is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
     }
 
-    let instruction = messages
-        .iter()
-        .rev()
-        .find(|m| m.role != "assistant")
-        .map(|m| m.content.trim().to_string())
-        .unwrap_or_default();
+    let instruction = instruction.trim();
     let selection = selection.map(str::trim).filter(|s| !s.is_empty());
 
     // Selection present → it's the note body, the instruction frames it.
@@ -91,18 +85,19 @@ pub async fn run_capture_turn(
             if instruction.is_empty() {
                 None
             } else {
-                Some(instruction.as_str())
+                Some(instruction)
             },
         ),
-        None => (instruction.clone(), None),
+        None => (instruction.to_string(), None),
     };
     if body.trim().is_empty() {
-        return Err("Nothing to save — speak or type your note.".to_string());
+        // Nothing was heard/typed and nothing selected — silent no-op.
+        return Ok(());
     }
 
     let base = super::base_dir(app).map_err(|e| e.to_string())?;
     let note = compose_note(app, &body, framing).await;
-    let title = note.title.trim().to_string();
+    let id = note.id.clone();
 
     let app2 = app.clone();
     let saved = tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await;
@@ -111,23 +106,18 @@ pub async fn run_capture_turn(
             super::emit_notes_changed(&app2);
             // Capture may have armed a reminder.
             super::reminders::sync(&app2);
+            log::info!("[GRAIN] space capture: saved note {id}");
+            Ok(())
         }
         Ok(Err(e)) => {
             log::error!("[GRAIN] space capture: save failed: {e:#}");
-            return Err("Couldn't save the note.".to_string());
+            Err("Couldn't save the note.".to_string())
         }
         Err(e) => {
             log::error!("[GRAIN] space capture: save task panicked: {e}");
-            return Err("Couldn't save the note.".to_string());
+            Err("Couldn't save the note.".to_string())
         }
     }
-
-    let confirm = if title.is_empty() {
-        "Saved to your memories.".to_string()
-    } else {
-        format!("Saved — \u{201c}{title}\u{201d}.")
-    };
-    Ok(AgentReply::plain(confirm))
 }
 
 /// Input A is available iff post-processing has an HTTP provider with a model.
