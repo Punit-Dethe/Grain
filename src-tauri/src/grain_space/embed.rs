@@ -233,10 +233,25 @@ impl Drop for Engine {
 
 static ENGINE: Mutex<Option<Engine>> = Mutex::new(None);
 
-/// Drop the engine (thread joined, weights freed). Called on overlay-window
-/// destroy, feature disable, and semantic-toggle off. No-op when not running.
+/// Drop the engine (thread joined, weights freed). Called on feature disable
+/// and semantic-toggle off. No-op when not running.
 pub fn shutdown_engine() {
     *ENGINE.lock().unwrap() = None;
+}
+
+/// Drop the engine only if NEITHER surface that may use it is still alive — the
+/// overlay browser OR the Recall agent panel (RECALL-PLAN §3.4). Called from
+/// both windows' Destroyed hooks. A no-op when the engine isn't resident, so
+/// Assist-only agent sessions (which never spawn it) pay nothing.
+pub fn shutdown_engine_if_idle(app: &AppHandle) {
+    use tauri::Manager;
+    let overlay_open = app
+        .get_webview_window(super::window::WINDOW_LABEL)
+        .is_some();
+    let panel_open = app.get_webview_window(crate::agent::PANEL_LABEL).is_some();
+    if !overlay_open && !panel_open {
+        shutdown_engine();
+    }
 }
 
 /// Embed a batch of texts (mean-pooled, L2-normalized, `EMBED_DIM` floats

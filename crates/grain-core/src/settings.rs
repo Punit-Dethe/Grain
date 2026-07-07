@@ -1187,6 +1187,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "grain_space_quick_add",
         "grain_space_capture",
         "grain_space_open",
+        "grain_space_recall",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1427,6 +1428,26 @@ pub fn get_default_settings() -> AppSettings {
             description: "Open or close the Grain Space notes window.".to_string(),
             default_binding: default_space_open_shortcut.to_string(),
             current_binding: default_space_open_shortcut.to_string(),
+        },
+    );
+
+    // [GRAIN] Grain Recall — conversational memory retrieval. Its OWN shortcut,
+    // distinct from summon_agent: pressing this summons the Agent surfaces in
+    // memory mode (ask your notes, get an answer). The mode is fixed by which
+    // key fired — the AI never decides whether a request is assist vs recall.
+    #[cfg(target_os = "macos")]
+    let default_space_recall_shortcut = "option+shift+m";
+    #[cfg(not(target_os = "macos"))]
+    let default_space_recall_shortcut = "ctrl+shift+m";
+    bindings.insert(
+        "grain_space_recall".to_string(),
+        ShortcutBinding {
+            id: "grain_space_recall".to_string(),
+            name: "Recall Memory".to_string(),
+            description: "Ask Grain about your saved notes and get a spoken-style answer."
+                .to_string(),
+            default_binding: default_space_recall_shortcut.to_string(),
+            current_binding: default_space_recall_shortcut.to_string(),
         },
     );
 

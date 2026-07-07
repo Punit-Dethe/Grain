@@ -120,6 +120,13 @@ pub struct AgentState {
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
+    /// Which brain drives this session — set at summon by the binding that
+    /// fired (assist vs Grain Recall), never re-derived from the request.
+    pub mode: Mutex<AgentMode>,
+    /// Grain Recall session state: the ordered memory registry so `SOURCES: Mn`
+    /// numbering is stable and additive across follow-up turns. Index `i` holds
+    /// the note id for memory `M(i+1)`. Cleared on each fresh summon.
+    pub recall: Mutex<crate::grain_space::recall::RecallSession>,
 }
 
 /// One conversation turn from the frontend.
@@ -130,16 +137,41 @@ pub struct AgentMessage {
     pub content: String,
 }
 
+/// Which brain drives the summoned surfaces. Fixed at summon by the binding
+/// that fired — never re-derived from the request text (two doors, not one
+/// door with a bouncer). See `RECALL-PLAN.md` §3.1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentMode {
+    /// The generic assistant: operates on the selection / focused field.
+    #[default]
+    Assist,
+    /// Grain Recall: answers the user's question from their saved memories.
+    Recall,
+}
+
 // ============================================================================
 // Summon + windows
 // ============================================================================
 
-/// Summon the Agent: capture the foreground context, present the NATIVE input
-/// (the pill's summon card — visible instantly, no webview to spin up), start
-/// dictation, and pre-create the reply panel HIDDEN so it is already warm when
-/// the user submits. Runs off the hotkey thread (the capture must never block
-/// the input listener).
+/// Summon the Agent (Assist mode): capture the foreground selection + field
+/// context, present the NATIVE input, start dictation, and pre-warm the reply
+/// panel. See [`summon_inner`].
 pub fn summon(app: &AppHandle) {
+    summon_inner(app, AgentMode::Assist);
+}
+
+/// Summon Grain Recall (memory mode): the SAME surfaces, but no selection /
+/// field / paste-target capture — a memory question operates on the user's
+/// saved notes, not on whatever they had highlighted. Distinct binding, so the
+/// mode is fixed here, never guessed by the AI.
+pub fn summon_memory(app: &AppHandle) {
+    summon_inner(app, AgentMode::Recall);
+}
+
+/// Shared summon body. `agent_mode` selects what context is captured and which
+/// brain the panel will use. Runs off the hotkey thread (the capture must
+/// never block the input listener).
+fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
     let app = app.clone();
     std::thread::spawn(move || {
         // Re-summon while the input is already up: just re-present it (the pill
@@ -168,12 +200,21 @@ pub fn summon(app: &AppHandle) {
         // A fresh summon supersedes any lingering Quick-Agent offer.
         clear_followup_offer(&app);
 
-        // Snapshot the paste target BEFORE anything can steal focus.
-        let hwnd = foreground_hwnd();
-        let c = capture_selection(&app);
-        // Field context reads the still-focused field via UI Automation.
-        let mode = get_settings(&app).agent_context_mode;
-        let fc = capture_field_context(mode);
+        // Recall operates on saved memories, not the foreground selection — skip
+        // the synthetic-copy grab, the field-context UIA read, and the
+        // paste-target snapshot entirely (also shaves ~300ms off summon).
+        let recall = agent_mode == AgentMode::Recall;
+        let hwnd = if recall { None } else { foreground_hwnd() };
+        let c = if recall {
+            None
+        } else {
+            capture_selection(&app)
+        };
+        let fc = if recall {
+            None
+        } else {
+            capture_field_context(get_settings(&app).agent_context_mode)
+        };
         let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
         if let Some(state) = app.try_state::<AgentState>() {
             if let Ok(mut g) = state.context.lock() {
@@ -186,6 +227,12 @@ pub fn summon(app: &AppHandle) {
                 *g = fc;
             }
             if let Ok(mut g) = state.conversation.lock() {
+                g.clear();
+            }
+            if let Ok(mut g) = state.mode.lock() {
+                *g = agent_mode;
+            }
+            if let Ok(mut g) = state.recall.lock() {
                 g.clear();
             }
             state.input_active.store(true, Ordering::SeqCst);
@@ -222,6 +269,13 @@ pub fn summon(app: &AppHandle) {
             }
         });
     });
+}
+
+/// The current agent mode (defaults to Assist if state is somehow unavailable).
+fn current_mode(app: &AppHandle) -> AgentMode {
+    app.try_state::<AgentState>()
+        .and_then(|s| s.mode.lock().ok().map(|g| *g))
+        .unwrap_or_default()
 }
 
 /// Pre-create the reply panel HIDDEN (the webview loads in the background) so
@@ -393,6 +447,10 @@ fn build_window(
                 if app.get_webview_window(PANEL_LABEL).is_none() {
                     unregister_transient_shortcuts_deferred(&app);
                 }
+                // A Recall session may have spawned the embedding engine; drop
+                // it unless the overlay browser is still using it (RECALL-PLAN
+                // §3.4). No-op for Assist sessions, which never spawn it.
+                crate::grain_space::embed::shutdown_engine_if_idle(&app);
             }
         });
     }
@@ -763,7 +821,9 @@ pub fn input_typing(app: &AppHandle, active: bool) {
 /// cursor; the normal path hands it to the (already revealed or revealing)
 /// panel, which runs the LLM itself.
 fn dispatch_instruction(app: AppHandle, text: String) {
-    if get_settings(&app).agent_quick_enabled {
+    // Quick Agent pastes the reply at the cursor — meaningless for a memory
+    // answer, so Recall always opens the panel regardless of the setting.
+    if current_mode(&app) == AgentMode::Assist && get_settings(&app).agent_quick_enabled {
         quick_run(app, text);
         return;
     }
@@ -1310,6 +1370,13 @@ pub async fn agent_run(
     messages: Vec<AgentMessage>,
     context: Option<String>,
 ) -> Result<String, String> {
+    // Grain Recall drives a different brain: retrieve from the user's saved
+    // memories, then synthesize an answer. R1 returns a plain display string
+    // (SOURCES/NOT_FOUND already stripped); the typed {text, sources} return
+    // is R2. The mode is whatever the summoning binding fixed — never guessed.
+    if current_mode(&app) == AgentMode::Recall {
+        return crate::grain_space::recall::run_turn(&app, &messages).await;
+    }
     let field = app
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
@@ -1337,9 +1404,19 @@ pub async fn run_conversation(
             None => "no",
         }
     );
-    let settings = get_settings(app);
-
     let full = build_messages(messages, context, field);
+    run_messages(app, full).await
+}
+
+/// Run an ALREADY-BUILT `(role, content)` message list through the configured
+/// AI (single provider or the smart-rotation pool). Shared by the assistant
+/// (`run_conversation`, which prepends its selection/field framing) and Grain
+/// Recall (`recall.rs`, which builds its own system prompt + memories block).
+pub(crate) async fn run_messages(
+    app: &AppHandle,
+    full: Vec<(String, String)>,
+) -> Result<String, String> {
+    let settings = get_settings(app);
 
     if settings.post_process_smart_rotation {
         return agent_run_rotated(app, &full).await;

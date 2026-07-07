@@ -236,6 +236,11 @@ export const GrainSpaceSettings: React.FC = () => {
               grouped
               descriptionMode="inline"
             />
+            <ShortcutInput
+              shortcutId="grain_space_recall"
+              grouped
+              descriptionMode="inline"
+            />
             <ToggleSwitch
               label="Auto-set reminders"
               description="Arm reminders extracted from a dictated note automatically. When off, notes keep the suggestion and you arm it manually."
