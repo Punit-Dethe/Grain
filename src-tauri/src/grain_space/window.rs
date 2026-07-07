@@ -30,18 +30,29 @@ pub fn take_focus_note() -> Option<String> {
     FOCUS_NOTE.lock().unwrap().take()
 }
 
-/// Toggle the overlay: destroy it if open, create it otherwise. Tap-shortcut
-/// entry point — must return immediately (work hops to the async runtime).
+/// Toggle the overlay. Tap-shortcut entry point — returns immediately (work
+/// hops to the async runtime). Semantics that keep the window reachable:
+/// - not open        → create it,
+/// - open but behind → bring it forward (never destroy — don't lose the user's
+///                     place just because they clicked away),
+/// - open + focused  → close (destroy).
 pub fn toggle(app: &AppHandle) {
     if !super::is_enabled(app) {
         return;
     }
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if app.get_webview_window(WINDOW_LABEL).is_some() {
-            close(&app);
-        } else {
-            open(&app, None);
+        match app.get_webview_window(WINDOW_LABEL) {
+            Some(win) => {
+                if win.is_focused().unwrap_or(false) {
+                    close(&app);
+                } else {
+                    let _ = win.unminimize();
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                }
+            }
+            None => open(&app, None),
         }
     });
 }
@@ -92,7 +103,10 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
             .resizable(true)
             .decorations(false)
             .transparent(true)
-            .skip_taskbar(true)
+            // Reachable like a normal window: shows in the taskbar / Alt-Tab so
+            // it can be returned to after losing focus (and closed to free the
+            // embedding engine). It is NOT always-on-top by design.
+            .skip_taskbar(false)
             .focused(true)
             .shadow(false)
             .center()

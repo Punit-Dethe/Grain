@@ -308,21 +308,24 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
         // Windows' foreground-lock failures uniformly.
         register_transient_shortcuts(&app);
 
-        // A new summon starts a fresh session — drop any open reply panel, then
-        // pre-create a hidden one so the webview is loaded (warm) at submit.
+        // A new summon starts a fresh session — drop any open reply panel.
         let app_close = app.clone();
         let _ = app.run_on_main_thread(move || {
             if let Some(panel) = app_close.get_webview_window(PANEL_LABEL) {
                 let _ = panel.close();
             }
         });
-        std::thread::sleep(Duration::from_millis(120)); // let the close land
-        let app_prep = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            if let Err(e) = prepare_panel(&app_prep) {
-                warn!("[GRAIN] agent: failed to pre-create panel: {e}");
-            }
-        });
+        // Capture saves headless (no panel), so don't pre-create one. Assist and
+        // Recall pre-create a hidden panel so it's warm at submit.
+        if agent_mode != AgentMode::Capture {
+            std::thread::sleep(Duration::from_millis(120)); // let the close land
+            let app_prep = app.clone();
+            let _ = app.run_on_main_thread(move || {
+                if let Err(e) = prepare_panel(&app_prep) {
+                    warn!("[GRAIN] agent: failed to pre-create panel: {e}");
+                }
+            });
+        }
     });
 }
 
@@ -787,17 +790,27 @@ pub fn input_submit_voice(app: &AppHandle) {
 
     let app = app.clone();
     std::thread::spawn(move || {
+        // Capture is headless — never reveal or error a panel; on a bad
+        // transcript it just cleans up the input-phase shortcuts silently.
+        let capture = current_mode(&app) == AgentMode::Capture;
         let quick = get_settings(&app).agent_quick_enabled;
         // Normal mode: show the (pre-warmed) panel right away, loading.
-        if !quick {
+        if !quick && !capture {
             reveal_panel_loading(&app);
         }
+        let no_speech = |app: &AppHandle, msg: &str| {
+            if capture {
+                unregister_transient_shortcuts_deferred(app);
+            } else {
+                deliver_agent_error(app, msg);
+            }
+        };
 
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let samples = match rm.stop_recording(AGENT_BINDING) {
             Some(s) if !s.is_empty() => s,
             _ => {
-                deliver_agent_error(&app, "Nothing was heard — try again.");
+                no_speech(&app, "Nothing was heard — try again.");
                 return;
             }
         };
@@ -812,12 +825,12 @@ pub fn input_submit_voice(app: &AppHandle) {
                 Ok(t) => t.trim().to_string(),
                 Err(e) => {
                     warn!("[GRAIN] agent: dictation transcription failed: {e}");
-                    deliver_agent_error(&app, &e);
+                    no_speech(&app, &e);
                     return;
                 }
             };
         if text.is_empty() {
-            deliver_agent_error(&app, "Nothing was heard — try again.");
+            no_speech(&app, "Nothing was heard — try again.");
             return;
         }
         info!(
@@ -876,6 +889,12 @@ pub fn input_typing(app: &AppHandle, active: bool) {
 /// cursor; the normal path hands it to the (already revealed or revealing)
 /// panel, which runs the LLM itself.
 fn dispatch_instruction(app: AppHandle, text: String) {
+    // Grain Space capture runs HEADLESS — structure + save the note with no
+    // panel and no confirmation surface (the app confirms the save elsewhere).
+    if current_mode(&app) == AgentMode::Capture {
+        capture_run(app, text);
+        return;
+    }
     // Quick Agent pastes the reply at the cursor — meaningless for a memory
     // answer, so Recall always opens the panel regardless of the setting.
     if current_mode(&app) == AgentMode::Assist && get_settings(&app).agent_quick_enabled {
@@ -1238,6 +1257,23 @@ fn quick_run(app: AppHandle, instruction: String) {
     });
 }
 
+/// Grain Space capture, HEADLESS: structure the spoken/typed text (+ the
+/// selection captured at summon) into a note and save it silently — no panel, no
+/// paste, no reply surface. The save is confirmed elsewhere in the app, not by
+/// the agent surfaces (user directive). Mirrors `quick_run`'s off-thread shape.
+fn capture_run(app: AppHandle, text: String) {
+    std::thread::spawn(move || {
+        let (selection, _field) = read_summon_context(&app);
+        if let Err(e) = tauri::async_runtime::block_on(
+            crate::grain_space::capture::capture_and_save(&app, &text, selection.as_deref()),
+        ) {
+            warn!("[GRAIN] agent: capture failed: {e}");
+        }
+        // No panel took over the input-phase Enter/Esc — release them.
+        unregister_transient_shortcuts_deferred(&app);
+    });
+}
+
 /// Selection + field context captured at summon (cloned out of the state).
 fn read_summon_context(app: &AppHandle) -> (Option<String>, Option<FieldContext>) {
     let Some(state) = app.try_state::<AgentState>() else {
@@ -1425,24 +1461,12 @@ pub async fn agent_run(
     messages: Vec<AgentMessage>,
     context: Option<String>,
 ) -> Result<AgentReply, String> {
-    // The mode is whatever the summoning binding fixed — never guessed. Recall
-    // and Capture each drive a different brain behind the SAME surfaces; Assist
-    // is the default assistant. `context` is the selection captured at summon.
-    match current_mode(&app) {
-        AgentMode::Recall => {
-            // Retrieve from saved memories, synthesize an answer with evidence.
-            return crate::grain_space::recall::run_turn(&app, &messages).await;
-        }
-        AgentMode::Capture => {
-            // Structure the spoken/typed text (+ selection) into a saved note.
-            return crate::grain_space::capture::run_capture_turn(
-                &app,
-                &messages,
-                context.as_deref(),
-            )
-            .await;
-        }
-        AgentMode::Assist => {}
+    // Grain Recall drives a different brain behind the panel: retrieve from
+    // saved memories, synthesize an answer with evidence. (Capture never reaches
+    // here — it runs headless from `dispatch_instruction`, no panel.) The mode is
+    // whatever the summoning binding fixed — never guessed.
+    if current_mode(&app) == AgentMode::Recall {
+        return crate::grain_space::recall::run_turn(&app, &messages).await;
     }
     let field = app
         .try_state::<AgentState>()
