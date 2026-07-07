@@ -239,6 +239,27 @@ pub fn shutdown_engine() {
     *ENGINE.lock().unwrap() = None;
 }
 
+/// Uninstall the model from the shared HF cache (R4 — reclaim the ~130 MB).
+/// Drops the engine first: `model.safetensors` is mmap'd, and an mmap'd file
+/// can't be deleted on Windows. Removes the whole `models--…` repo dir
+/// (snapshots + blobs). A no-op when the files are already gone.
+pub fn uninstall_model() -> Result<()> {
+    shutdown_engine();
+    // Derive the cache repo dir from any present file:
+    // `<cache>/models--BAAI--bge-small-en-v1.5/snapshots/<rev>/<file>` → up 3.
+    let repo_dir = MODEL_FILES
+        .iter()
+        .find_map(|f| cached_file(f).and_then(|p| p.ancestors().nth(3).map(PathBuf::from)));
+    if let Some(dir) = repo_dir {
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)
+                .with_context(|| format!("remove model dir {}", dir.display()))?;
+            log::info!("[GRAIN] embed model uninstalled ({})", dir.display());
+        }
+    }
+    Ok(())
+}
+
 /// Drop the engine only if NEITHER surface that may use it is still alive — the
 /// overlay browser OR the Recall agent panel (RECALL-PLAN §3.4). Called from
 /// both windows' Destroyed hooks. A no-op when the engine isn't resident, so

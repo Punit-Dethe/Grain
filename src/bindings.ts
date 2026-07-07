@@ -374,6 +374,19 @@ async grainSpaceEmbedModelStatus() : Promise<EmbedModelStatus> {
     return await TAURI_INVOKE("grain_space_embed_model_status");
 },
 /**
+ * Uninstall the semantic model from the HF cache (R4 — reclaim ~130 MB). Drops
+ * the engine and deletes the files. Refuses mid-download. The frontend turns
+ * the semantic setting off afterward so nothing tries to load a missing model.
+ */
+async grainSpaceUninstallEmbedModel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_uninstall_embed_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Consent-gated model download (the frontend shows the consent dialog BEFORE
  * calling this). Progress/completion/error arrive as events; resolves when
  * the transfer ends either way.

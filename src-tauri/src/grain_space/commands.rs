@@ -77,7 +77,10 @@ pub async fn grain_space_export_notes(app: AppHandle) -> Result<Option<String>, 
         return Ok(None); // user cancelled
     };
     std::fs::write(&path, json).map_err(|e| format!("write export: {e}"))?;
-    log::info!("[GRAIN] space: exported {count} note(s) to {}", path.display());
+    log::info!(
+        "[GRAIN] space: exported {count} note(s) to {}",
+        path.display()
+    );
     Ok(Some(path.to_string_lossy().to_string()))
 }
 
@@ -257,6 +260,24 @@ pub fn grain_space_embed_model_status() -> EmbedModelStatus {
     } else {
         EmbedModelStatus::Absent
     }
+}
+
+/// Uninstall the semantic model from the HF cache (R4 — reclaim ~130 MB). Drops
+/// the engine and deletes the files. Refuses mid-download. The frontend turns
+/// the semantic setting off afterward so nothing tries to load a missing model.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_uninstall_embed_model(app: AppHandle) -> Result<(), String> {
+    if !is_enabled(&app) {
+        return Err("Grain Space is disabled".to_string());
+    }
+    if super::embed::is_downloading() {
+        return Err("A model download is in progress.".to_string());
+    }
+    tauri::async_runtime::spawn_blocking(super::embed::uninstall_model)
+        .await
+        .map_err(|e| format!("task join error: {e}"))?
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Consent-gated model download (the frontend shows the consent dialog BEFORE

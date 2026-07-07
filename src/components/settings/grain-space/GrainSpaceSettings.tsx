@@ -75,6 +75,7 @@ export const GrainSpaceSettings: React.FC = () => {
 
   const [notes, setNotes] = useState<Note[]>([]);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
+  const [uninstallMsg, setUninstallMsg] = useState<string | null>(null);
   // Consent → download → verify flow for the semantic model. The toggle stays
   // OFF until the model is verified on disk (edge-case rule in the plan).
   const [modelFlow, setModelFlow] = useState<ModelFlow | null>(null);
@@ -179,6 +180,17 @@ export const GrainSpaceSettings: React.FC = () => {
       if (res.data) setExportMsg(`Exported to ${res.data}`);
     } else {
       setExportMsg(res.error);
+    }
+  };
+  const uninstallModel = async () => {
+    setUninstallMsg(null);
+    const res = await commands.grainSpaceUninstallEmbedModel();
+    if (res.status === "ok") {
+      // Model gone ⇒ semantic can't run; turn it off (also hides this button,
+      // which is the visible confirmation).
+      await updateSetting("grain_space_semantic", false);
+    } else {
+      setUninstallMsg(res.error);
     }
   };
   const dismissReminder = async (id: string) => {
@@ -343,6 +355,21 @@ export const GrainSpaceSettings: React.FC = () => {
                 >
                   {t("settings.grainSpace.dismiss")}
                 </button>
+              </div>
+            )}
+            {/* Semantic on ⇒ the model is on disk; offer to reclaim its ~130 MB. */}
+            {semantic && !modelFlow && (
+              <div className="px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => void uninstallModel()}
+                  className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-ink-soft hover:text-red-500 transition-colors"
+                >
+                  {t("settings.grainSpace.uninstallModel")}
+                </button>
+                {uninstallMsg && (
+                  <div className="mt-1.5 text-xs text-red-500">{uninstallMsg}</div>
+                )}
               </div>
             )}
           </SettingsGroup>
