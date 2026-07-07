@@ -1188,6 +1188,19 @@ impl ShortcutAction for GrainSpaceOpenAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
+// [GRAIN] Grain Recall (RECALL-PLAN R1) — summons the Agent surfaces in memory
+// mode (ask your notes, get an answer). Its OWN binding, distinct from
+// summon_agent: the mode is fixed by which key fired, never guessed.
+struct GrainSpaceRecallAction;
+
+impl ShortcutAction for GrainSpaceRecallAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::agent::summon_memory(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
 // Test Action
 struct TestAction;
 
@@ -1791,6 +1804,10 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "grain_space_open".to_string(),
         Arc::new(GrainSpaceOpenAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "grain_space_recall".to_string(),
+        Arc::new(GrainSpaceRecallAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "test".to_string(),

@@ -104,16 +104,19 @@ fn build(app: &AppHandle) -> tauri::Result<()> {
 
     let window = builder.build()?;
 
-    // The embedding engine's lifetime is bound to this window (strict
-    // directive 7): loaded lazily by the first semantic search while the
-    // overlay is open, dropped the instant the window is destroyed.
-    window.on_window_event(|event| {
-        if matches!(event, tauri::WindowEvent::Destroyed) {
-            super::embed::shutdown_engine();
-            // A stale focus target must not leak into the next open.
-            stash_focus_note(None);
-        }
-    });
+    // The embedding engine may be resident while EITHER this overlay or the
+    // Recall agent panel is alive (RECALL-PLAN §3.4). Drop it only if neither
+    // remains once this window is gone.
+    {
+        let app = app.clone();
+        window.on_window_event(move |event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                super::embed::shutdown_engine_if_idle(&app);
+                // A stale focus target must not leak into the next open.
+                stash_focus_note(None);
+            }
+        });
+    }
 
     Ok(())
 }

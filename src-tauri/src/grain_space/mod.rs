@@ -14,6 +14,7 @@
 pub mod capture;
 pub mod commands;
 pub mod embed;
+pub mod recall;
 pub mod reminders;
 pub mod store;
 pub mod window;

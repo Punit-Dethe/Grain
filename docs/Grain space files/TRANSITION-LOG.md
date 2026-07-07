@@ -5,6 +5,61 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2 (part 3): Grain Recall R1 COMPLETE (conversational retrieval)
+
+Read `RECALL-PLAN.md` + `PRODUCT-VISION.md` first. R1 = the memory conversation
+works end to end, reusing the Agent ecosystem. What was built:
+
+1. **Binding:** `grain_space_recall` (ctrl+shift+m / option+shift+m), seeded in
+   grain-core defaults + migration, gated by the `grain_space_` prefix (registers
+   only while enabled; toggle-off unregisters it). `GrainSpaceRecallAction` in
+   `actions.rs` ACTION_MAP → `agent::summon_memory`. **Distinct from
+   summon_agent — the mode is fixed by the key, the AI never routes.**
+2. **agent.rs:** `AgentMode { Assist, Recall }` + `RecallSession` added to
+   `AgentState` (mode set at summon, recall registry cleared each summon).
+   `summon` refactored into `summon_inner(app, mode)`; `summon_memory` is the
+   Recall wrapper that SKIPS selection/field/paste-target capture. Recall
+   ignores quick-agent in `dispatch_instruction`. `agent_run` branches on mode
+   → `recall::run_turn`. Extracted `pub(crate) run_messages(app, full)` from
+   `run_conversation` so recall can supply its own system prompt + memories
+   block through the SAME provider/rotation driver.
+3. **`grain_space/recall.rs` (new):** hybrid retrieval — FTS (`search_notes`) ∪
+   semantic (`semantic_search`, only if `grain_space_semantic` && model on disk,
+   silent FTS-only degrade), fused with Reciprocal Rank Fusion (k=60). Re-embeds
+   stale rows first. Memories block with stable M-ids unioned across turns
+   (`RecallSession`, cap 10, never renumbered), human relative-age lines,
+   head-biased body truncation, inline todo state. System prompt v1 (8 rules
+   incl. NOT_FOUND terminal). `parse_tail` splits the trailing
+   `SOURCES:`/`NOT_FOUND` line off the display text (tolerant — malformed =
+   whole reply, never errors). Empty-corpus fast path. `resolve_sources` +
+   `ParsedTail` ready for R2 (parsed now, surfaced later).
+4. **Engine lifetime amended (RECALL-PLAN §3.4):** `embed::shutdown_engine()` →
+   `shutdown_engine_if_idle(app)` on BOTH the overlay window AND the agent panel
+   Destroyed hooks — engine survives while EITHER surface is open, drops when
+   neither is. No-op for Assist sessions (never spawn it).
+5. **Settings tab:** `grain_space_recall` ShortcutInput row added.
+
+**Verified:** src-tauri `cargo test --lib` **166 passed** (10 new recall tests:
+RRF fusion/dedup, SOURCES/NOT_FOUND/missing-line parsing, stable-M-id session +
+cap, relative-age, truncation). grain-core 4. `cargo fmt`, `tsc` clean, eslint
+clean. No new tauri commands ⇒ bindings.ts unchanged (recall reuses `agent_run`).
+
+### Next concrete step (R2 — evidence + escape hatch, panel UI)
+RECALL-PLAN §6. Change `agent_run`'s recall path to return
+`{ text, sources: [{note_id,title,saved_at}], not_found }` (specta type; Assist
+returns empty/false) — currently returns a plain String. Then AgentPanel.tsx
+footer: source chips (click → `grain_space_open_window(note_id)`) and the
+not-found button (click → `grain_space_open_window(null)`). Regenerate
+bindings.ts. `recall::run_turn` already computes `ParsedTail` + `resolve_sources`
+— wire them into a struct return.
+
+### Gotchas
+- `recall.rs` needs `use tauri::Manager` for `try_state` on `&AppHandle`.
+- Recall must NOT capture selection (a synthetic Ctrl+C would be wrong AND slow);
+  `summon_inner` gates all three captures on `mode == Recall`.
+
+---
+
 ## 2026-07-07 — Session 2 (part 2): PIVOT — Phases 5/6 scrapped, Grain Recall planned
 
 **FINAL-PLAN.md Phases 5 and 6 are DEAD as written.** The product vision was
