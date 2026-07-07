@@ -189,6 +189,8 @@ const settingUpdaters: {
     commands.changeGrainSpaceEnabledSetting(value as boolean),
   grain_space_semantic: (value) =>
     commands.changeGrainSpaceSemanticSetting(value as boolean),
+  grain_space_embed_f16: (value) =>
+    commands.changeGrainSpaceEmbedF16Setting(value as boolean),
   grain_space_auto_reminders: (value) =>
     commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
 };

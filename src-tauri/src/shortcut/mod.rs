@@ -1097,6 +1097,19 @@ pub fn change_grain_space_semantic_setting(app: AppHandle, enabled: bool) -> Res
     Ok(())
 }
 
+/// [GRAIN] Load the embedding model in f16 (half RAM) vs f32. Drops any resident
+/// engine so the next embed re-loads at the chosen precision.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_embed_f16_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_embed_f16 = enabled;
+    settings::write_settings(&app, settings);
+    crate::grain_space::embed::set_use_f16(enabled);
+    crate::grain_space::embed::shutdown_engine();
+    Ok(())
+}
+
 /// [GRAIN] Auto-arm reminders extracted from captured notes (vs. manual arm).
 #[tauri::command]
 #[specta::specta]
