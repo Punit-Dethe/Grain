@@ -199,22 +199,6 @@ impl Default for AgentContextMode {
     }
 }
 
-/// [GRAIN] Grain Space voice-first retrieval mode: `List` opens the overlay
-/// with search results (works without any LLM); `AiQa` answers the spoken
-/// question directly via the configured post-process provider (RAG).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum GrainSpaceRetrievalMode {
-    List,
-    AiQa,
-}
-
-impl Default for GrainSpaceRetrievalMode {
-    fn default() -> Self {
-        GrainSpaceRetrievalMode::List
-    }
-}
-
 /// [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
 /// repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
 /// is suggested (pill), and on accept it moves into `custom_words`. Persisted so
@@ -816,10 +800,6 @@ pub struct AppSettings {
     /// armed automatically; when OFF the note pane shows a manual "arm" button.
     #[serde(default = "default_true")]
     pub grain_space_auto_reminders: bool,
-    /// [GRAIN] Voice-first retrieval behavior (Phase 5): open the results list
-    /// or answer directly with AI. Defaults to `List` — it needs no LLM.
-    #[serde(default)]
-    pub grain_space_retrieval_mode: GrainSpaceRetrievalMode,
     /// [GRAIN] Half-life (days) for time-decayed semantic ranking:
     /// `S_final = S_semantic * exp(-ln2/half_life * age_days)`. Pinned notes
     /// rank as if brand new (age 0).
@@ -1527,7 +1507,6 @@ pub fn get_default_settings() -> AppSettings {
         grain_space_enabled: false,
         grain_space_semantic: false,
         grain_space_auto_reminders: true,
-        grain_space_retrieval_mode: GrainSpaceRetrievalMode::default(),
         grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),
     }
 }

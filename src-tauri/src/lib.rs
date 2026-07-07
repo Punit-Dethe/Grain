@@ -639,7 +639,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_grain_space_enabled_setting,
             shortcut::change_grain_space_semantic_setting,
             shortcut::change_grain_space_auto_reminders_setting,
-            shortcut::change_grain_space_retrieval_mode_setting,
             grain_space::commands::grain_space_list_notes,
             grain_space::commands::grain_space_search_notes,
             grain_space::commands::grain_space_get_note,

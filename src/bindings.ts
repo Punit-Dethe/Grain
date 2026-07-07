@@ -230,17 +230,6 @@ async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
-/**
- * [GRAIN] Voice-first retrieval behavior (Phase 5): results list vs AI Q&A.
- */
-async changeGrainSpaceRetrievalModeSetting(mode: GrainSpaceRetrievalMode) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_retrieval_mode_setting", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async grainSpaceListNotes() : Promise<Result<Note[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_list_notes") };
@@ -1635,11 +1624,6 @@ grain_space_semantic?: boolean;
  */
 grain_space_auto_reminders?: boolean; 
 /**
- * [GRAIN] Voice-first retrieval behavior (Phase 5): open the results list
- * or answer directly with AI. Defaults to `List` — it needs no LLM.
- */
-grain_space_retrieval_mode?: GrainSpaceRetrievalMode; 
-/**
  * [GRAIN] Half-life (days) for time-decayed semantic ranking:
  * `S_final = S_semantic * exp(-ln2/half_life * age_days)`. Pinned notes
  * rank as if brand new (age 0).
@@ -1701,12 +1685,6 @@ export type EngineType =
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
-/**
- * [GRAIN] Grain Space voice-first retrieval mode: `List` opens the overlay
- * with search results (works without any LLM); `AiQa` answers the spoken
- * question directly via the configured post-process provider (RAG).
- */
-export type GrainSpaceRetrievalMode = "list" | "ai_qa"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**

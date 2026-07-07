@@ -7,7 +7,6 @@ import type {
   AppMode,
   AppSettings as Settings,
   AudioDevice,
-  GrainSpaceRetrievalMode,
   Snippet,
   TranscribeAcceleratorSetting,
   VoiceAction,
@@ -192,10 +191,6 @@ const settingUpdaters: {
     commands.changeGrainSpaceSemanticSetting(value as boolean),
   grain_space_auto_reminders: (value) =>
     commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
-  grain_space_retrieval_mode: (value) =>
-    commands.changeGrainSpaceRetrievalModeSetting(
-      value as GrainSpaceRetrievalMode,
-    ),
 };
 
 export const useSettingsStore = create<SettingsStore>()(
