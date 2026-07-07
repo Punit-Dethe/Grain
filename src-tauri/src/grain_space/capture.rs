@@ -15,6 +15,7 @@ use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
 use super::store::{self, Note, ReminderState, ReminderStatus, TodoTag};
+use crate::agent::{AgentMessage, AgentReply};
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 
 /// Input C debounce: OS key-repeat / double taps within this window are one add.
@@ -58,48 +59,75 @@ pub fn quick_add(app: &AppHandle) {
     });
 }
 
-/// Inputs A/B: store a finished dictation transcript as a note. Called from the
-/// `grain_space_capture` interception point in `actions.rs` (already off the
-/// input thread, inside the transcription task).
-pub async fn intake_transcript(app: &AppHandle, transcript: String) {
-    let text = transcript.trim();
-    if text.is_empty() {
-        return;
+/// Inputs A/B (note capture): the user summoned the Agent pill in Capture mode,
+/// then spoke or typed. This turns that into a saved note. The `selection`
+/// (captured at summon) is the note body when present — the user selected some
+/// text and their spoken/typed words FRAME it; otherwise the spoken/typed text
+/// IS the note. The body is always verbatim (never rewritten); the LLM only
+/// supplies metadata, and any failure degrades to a raw save. One-shot: returns
+/// a short confirmation the panel displays.
+pub async fn run_capture_turn(
+    app: &AppHandle,
+    messages: &[AgentMessage],
+    selection: Option<&str>,
+) -> Result<AgentReply, String> {
+    if !super::is_enabled(app) {
+        return Err("Grain Space is disabled".to_string());
     }
-    let base = match super::base_dir(app) {
-        Ok(b) => b,
-        Err(e) => {
-            log::error!("[GRAIN] space capture: {e}");
-            return;
-        }
+
+    let instruction = messages
+        .iter()
+        .rev()
+        .find(|m| m.role != "assistant")
+        .map(|m| m.content.trim().to_string())
+        .unwrap_or_default();
+    let selection = selection.map(str::trim).filter(|s| !s.is_empty());
+
+    // Selection present → it's the note body, the instruction frames it.
+    // No selection → the spoken/typed text is the note.
+    let (body, framing) = match selection {
+        Some(sel) => (
+            sel.to_string(),
+            if instruction.is_empty() {
+                None
+            } else {
+                Some(instruction.as_str())
+            },
+        ),
+        None => (instruction.clone(), None),
     };
-
-    let mut note = Note::raw(text.to_string());
-
-    // Input A: one structured extraction call when a usable provider exists.
-    // The body always stays the verbatim transcript — the LLM only supplies
-    // metadata, so a bad completion can't corrupt what the user said.
-    let settings = get_settings(app);
-    if llm_usable(&settings) {
-        match extract_metadata(app, &settings, text).await {
-            Ok(meta) => meta.apply(&mut note, settings.grain_space_auto_reminders),
-            Err(e) => {
-                log::warn!("[GRAIN] space capture: extraction failed ({e}); saving raw (Input B)")
-            }
-        }
+    if body.trim().is_empty() {
+        return Err("Nothing to save — speak or type your note.".to_string());
     }
+
+    let base = super::base_dir(app).map_err(|e| e.to_string())?;
+    let note = compose_note(app, &body, framing).await;
+    let title = note.title.trim().to_string();
 
     let app2 = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await;
-    match result {
+    let saved = tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await;
+    match saved {
         Ok(Ok(())) => {
             super::emit_notes_changed(&app2);
-            // Input A may have armed a reminder.
+            // Capture may have armed a reminder.
             super::reminders::sync(&app2);
         }
-        Ok(Err(e)) => log::error!("[GRAIN] space capture: save failed: {e:#}"),
-        Err(e) => log::error!("[GRAIN] space capture: save task panicked: {e}"),
+        Ok(Err(e)) => {
+            log::error!("[GRAIN] space capture: save failed: {e:#}");
+            return Err("Couldn't save the note.".to_string());
+        }
+        Err(e) => {
+            log::error!("[GRAIN] space capture: save task panicked: {e}");
+            return Err("Couldn't save the note.".to_string());
+        }
     }
+
+    let confirm = if title.is_empty() {
+        "Saved to your memories.".to_string()
+    } else {
+        format!("Saved — \u{201c}{title}\u{201d}.")
+    };
+    Ok(AgentReply::plain(confirm))
 }
 
 /// Input A is available iff post-processing has an HTTP provider with a model.
@@ -181,10 +209,14 @@ fn parse_local_datetime_ms(s: &str) -> Option<i64> {
 }
 
 /// One structured chat-completion against the active post-process provider.
+/// `body` is the verbatim note text (never rewritten). `framing`, when present,
+/// is the user's spoken/typed instruction about a SELECTION they're saving
+/// (e.g. "reference for my essay") — it shapes the title/summary only.
 async fn extract_metadata(
     app: &AppHandle,
     settings: &AppSettings,
-    transcript: &str,
+    body: &str,
+    framing: Option<&str>,
 ) -> Result<ExtractedMeta, String> {
     let provider = settings
         .active_post_process_provider()
@@ -206,9 +238,21 @@ async fn extract_metadata(
         .ok_or("shared HTTP client unavailable")?;
 
     let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
+    // When the note body is a SELECTION the user is saving, their spoken/typed
+    // instruction frames what it's for — use it for the title/summary only, and
+    // NEVER fold it into the note text.
+    let framing_line = match framing {
+        Some(f) if !f.trim().is_empty() => format!(
+            "\nThe user selected the note text and, to say what it is for, added: \"{}\". Use that \
+             to shape the title and summary (what the note is FOR), but do NOT add it to the note \
+             text.",
+            f.trim()
+        ),
+        _ => String::new(),
+    };
     let system_prompt = format!(
-        "You extract metadata from a spoken personal note. Generate a 3-word title, \
-         a 1-sentence TLDR, and extract reminders/timers. Reply with JSON only.\n\
+        "You extract metadata from a personal note the user is saving. Generate a 3-word title, \
+         a 1-sentence TLDR, and extract reminders/timers. Reply with JSON only.{framing_line}\n\
          Rules:\n\
          - title: at most 3 words, plain text.\n\
          - tldr: exactly one short sentence.\n\
@@ -236,7 +280,7 @@ async fn extract_metadata(
         &provider,
         api_key,
         &model,
-        transcript.to_string(),
+        body.to_string(),
         Some(system_prompt),
         Some(schema),
         None,
@@ -357,16 +401,18 @@ fn raw_append(current: &Note, change: &str) -> Note {
     note
 }
 
-/// Build a note from freshly-spoken text (the `remember` action): verbatim body
-/// + one metadata extraction, mirroring [`intake_transcript`] but returning the
-/// note instead of saving. Degrades to a raw note on any extraction failure.
-pub(crate) async fn compose_note(app: &AppHandle, text: &str) -> Note {
-    let mut note = Note::raw(text.trim().to_string());
+/// Build a note from freshly-captured text: verbatim `body` + one metadata
+/// extraction. `framing` (a spoken/typed instruction about a saved selection)
+/// shapes the title/summary only. Degrades to a raw note on any extraction
+/// failure — the body is always preserved. Shared by the `remember` action and
+/// note capture; does NOT save.
+pub(crate) async fn compose_note(app: &AppHandle, body: &str, framing: Option<&str>) -> Note {
+    let mut note = Note::raw(body.trim().to_string());
     let settings = get_settings(app);
     if llm_usable(&settings) {
-        match extract_metadata(app, &settings, text.trim()).await {
+        match extract_metadata(app, &settings, body.trim(), framing).await {
             Ok(meta) => meta.apply(&mut note, settings.grain_space_auto_reminders),
-            Err(e) => log::warn!("[GRAIN] space remember: extraction failed ({e}); raw note"),
+            Err(e) => log::warn!("[GRAIN] space compose: extraction failed ({e}); raw note"),
         }
     }
     note

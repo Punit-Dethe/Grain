@@ -185,6 +185,10 @@ pub enum AgentMode {
     Assist,
     /// Grain Recall: answers the user's question from their saved memories.
     Recall,
+    /// Grain Space capture: structures the spoken/typed text (plus any current
+    /// selection, saved verbatim as the note body) into a note and saves it.
+    /// Same surfaces as Assist/Recall, its own brain. Never pastes.
+    Capture,
 }
 
 // ============================================================================
@@ -204,6 +208,14 @@ pub fn summon(app: &AppHandle) {
 /// mode is fixed here, never guessed by the AI.
 pub fn summon_memory(app: &AppHandle) {
     summon_inner(app, AgentMode::Recall);
+}
+
+/// Summon Grain Space capture (note mode): the SAME surfaces as Assist, and it
+/// DOES grab the foreground selection (so the user can select text and save it
+/// without retyping) — but no field-context read and no paste-target snapshot,
+/// because capture never pastes back. Distinct binding, mode fixed here.
+pub fn summon_capture(app: &AppHandle) {
+    summon_inner(app, AgentMode::Capture);
 }
 
 /// Shared summon body. `agent_mode` selects what context is captured and which
@@ -238,20 +250,25 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
         // A fresh summon supersedes any lingering Quick-Agent offer.
         clear_followup_offer(&app);
 
-        // Recall operates on saved memories, not the foreground selection — skip
-        // the synthetic-copy grab, the field-context UIA read, and the
-        // paste-target snapshot entirely (also shaves ~300ms off summon).
-        let recall = agent_mode == AgentMode::Recall;
-        let hwnd = if recall { None } else { foreground_hwnd() };
-        let c = if recall {
-            None
-        } else {
+        // What each mode captures at summon:
+        // - Assist:  selection + field context + paste-target (it operates on
+        //            the field and pastes back).
+        // - Capture: selection ONLY (the selection becomes the note body); no
+        //            field read, no paste-target — capture never pastes.
+        // - Recall:  nothing — a memory question operates on saved notes, not on
+        //            whatever is highlighted (also shaves ~300ms off summon).
+        let assist = agent_mode == AgentMode::Assist;
+        let want_selection = agent_mode != AgentMode::Recall;
+        let hwnd = if assist { foreground_hwnd() } else { None };
+        let c = if want_selection {
             capture_selection(&app)
-        };
-        let fc = if recall {
-            None
         } else {
+            None
+        };
+        let fc = if assist {
             capture_field_context(get_settings(&app).agent_context_mode)
+        } else {
+            None
         };
         let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
         if let Some(state) = app.try_state::<AgentState>() {
@@ -1408,13 +1425,24 @@ pub async fn agent_run(
     messages: Vec<AgentMessage>,
     context: Option<String>,
 ) -> Result<AgentReply, String> {
-    // Grain Recall drives a different brain: retrieve from the user's saved
-    // memories, then synthesize an answer with evidence sources + a not-found
-    // signal (RECALL-PLAN §6). Assist wraps its plain string into the same
-    // shape (empty sources). The mode is whatever the summoning binding fixed —
-    // never guessed.
-    if current_mode(&app) == AgentMode::Recall {
-        return crate::grain_space::recall::run_turn(&app, &messages).await;
+    // The mode is whatever the summoning binding fixed — never guessed. Recall
+    // and Capture each drive a different brain behind the SAME surfaces; Assist
+    // is the default assistant. `context` is the selection captured at summon.
+    match current_mode(&app) {
+        AgentMode::Recall => {
+            // Retrieve from saved memories, synthesize an answer with evidence.
+            return crate::grain_space::recall::run_turn(&app, &messages).await;
+        }
+        AgentMode::Capture => {
+            // Structure the spoken/typed text (+ selection) into a saved note.
+            return crate::grain_space::capture::run_capture_turn(
+                &app,
+                &messages,
+                context.as_deref(),
+            )
+            .await;
+        }
+        AgentMode::Assist => {}
     }
     let field = app
         .try_state::<AgentState>()

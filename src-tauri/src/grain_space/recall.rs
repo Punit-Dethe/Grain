@@ -568,7 +568,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
             .unwrap_or_default();
         match action {
             RecallAction::Remember => {
-                let note = capture::compose_note(app, &latest).await;
+                let note = capture::compose_note(app, &latest, None).await;
                 persist(app, &base, note).await;
             }
             RecallAction::Reconcile { m } => {

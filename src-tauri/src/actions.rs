@@ -940,25 +940,7 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             }
 
-                            // [GRAIN] Grain Space capture (Inputs A/B): the
-                            // dictated note is stored, never pasted. The intake
-                            // does its own LLM metadata extraction (or degrades
-                            // to a raw save) and emits notes-changed.
-                            if binding_id == "grain_space_capture" {
-                                crate::grain_space::capture::intake_transcript(
-                                    &ah,
-                                    processed.final_text,
-                                )
-                                .await;
-                                crate::bridge::emit(
-                                    &ah,
-                                    DaemonEvent::ProcessingComplete {
-                                        session_id,
-                                        text: String::new(),
-                                    },
-                                );
-                                change_tray_icon(&ah, TrayIconState::Idle);
-                            } else if processed.final_text.is_empty() {
+                            if processed.final_text.is_empty() {
                                 crate::bridge::emit(
                                     &ah,
                                     DaemonEvent::ProcessingComplete {
@@ -1196,6 +1178,20 @@ struct GrainSpaceRecallAction;
 impl ShortcutAction for GrainSpaceRecallAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         crate::agent::summon_memory(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+// [GRAIN] Grain Space note capture — summons the Agent surfaces in Capture mode:
+// speak OR type a note (and any selected text comes along as the body), then it
+// is structured and saved. Replaces the old transcribe-pipeline capture so the
+// user gets the pill's text input for free. Its OWN binding; mode fixed here.
+struct GrainSpaceCaptureAction;
+
+impl ShortcutAction for GrainSpaceCaptureAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::agent::summon_capture(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -1785,21 +1781,17 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
         "agent_followup".to_string(),
         Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
     );
-    // [GRAIN] Grain Space: silent selection quick-add (Input C) and dictated
-    // note capture (Inputs A/B — an ordinary transcribe session whose
-    // transcript is stored instead of pasted; see the interception in
-    // TranscribeAction::stop). Both bindings only register while
-    // `grain_space_enabled` is on.
+    // [GRAIN] Grain Space: silent selection quick-add (Input C) and note capture
+    // (Inputs A/B — summons the Agent pill in Capture mode: speak or type, any
+    // selection becomes the body, then it's structured and saved). Both bindings
+    // only register while `grain_space_enabled` is on.
     map.insert(
         "grain_space_quick_add".to_string(),
         Arc::new(GrainSpaceQuickAddAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "grain_space_capture".to_string(),
-        Arc::new(TranscribeAction {
-            post_process: false,
-            post_process_override: AtomicBool::new(false),
-        }) as Arc<dyn ShortcutAction>,
+        Arc::new(GrainSpaceCaptureAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "grain_space_open".to_string(),
