@@ -5,6 +5,50 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2 (part 6): Grain Recall R4 STARTED (hardening — 2 items done)
+
+Read `RECALL-PLAN.md` §8. R4 is a grab-bag of hardening/cleanup/polish. Two
+fully-verifiable items landed this session; the rest are scoped below.
+
+**Done:**
+1. **Corrupt-JSON quarantine** (`store.rs`). The full-scan chokepoint
+   `list_notes_unlocked` (backs listing + `rebuild_index`) now CLASSIFIES a bad
+   file: a transient I/O error is skipped and retried; a genuine JSON PARSE
+   failure moves the file to `notes/corrupt/` (new `quarantine_corrupt` +
+   `corrupt_dir`, non-clobbering) so one bad file stops breaking every scan.
+   `get_note`/`set_pinned` etc. still surface a read error for a single-note
+   read — quarantine happens on the next scan. Test:
+   `corrupt_note_is_quarantined_on_scan`.
+2. **Removed dead `grain_space_retrieval_mode`** (the List/AiQa toggle that died
+   with the recall pivot). Gone from grain-core `settings.rs` (enum + field +
+   default-constructor line), `shortcut/mod.rs` (the change command),
+   `lib.rs` (specta reg), `settingsStore.ts` (+ the `GrainSpaceRetrievalMode`
+   import), and regenerated `bindings.ts`. Old configs load fine — AppSettings
+   has no `deny_unknown_fields`, so the stale key is ignored.
+
+**Verified:** `cargo test --lib` **172 passed**, `cargo fmt`, `tsc`, eslint clean;
+`bindings.ts` regenerated. Two commits (`814cfdc`, `b32fb06`).
+
+### Remaining R4 (next), split by why it's not done yet
+- **Needs model artifacts / semantic e2e (defer to a session that can download +
+  run the model):** INT8/quantized embedding model (also fixes the ~130 MB f32
+  download); long-note chunked embedding. Don't ship these blind — they can
+  regress the working semantic path and there's no way to verify KNN quality
+  from here.
+- **Needs real-usage data:** recall system-prompt v1 iteration (rules live in
+  `recall.rs::system_prompt`) and reconcile-prompt tuning — wait for actual
+  transcripts before touching wording.
+- **Small polish, best done where the running-app UI can be seen (settings tab):**
+  export-all-notes (command + button), embed-model uninstall button (delete from
+  HF cache + status), decay-λ slider for the existing
+  `grain_space_decay_half_life_days` (needs a `change_..._decay...` command —
+  none exists yet), overlay multi-monitor placement.
+- **Likely already satisfied:** "append while another capture is running" — every
+  store op takes `STORE_LOCK`, so concurrent captures already serialize; confirm
+  with a targeted test before claiming it.
+
+---
+
 ## 2026-07-07 — Session 2 (part 5): Grain Recall R3 COMPLETE (conversational writing)
 
 Read `RECALL-PLAN.md` §7 first. R3 = CRUD-by-conversation. Inside a recall chat
