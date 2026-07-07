@@ -55,6 +55,7 @@ explicitly rejected it.** The old "3D carousel" idea from the basic plan is
 10. **Git:** commit + push when a task completes. No AI attribution, no
     Co-authored-by. Never touch git identity.
 11. **UI Component Reuse (Agent Pill):** For voice recording and text input states, explicitly REUSE the existing frontend Agent Pill workflow components (which perfectly handle the transitions between recording, transcribing, and writing). Adapt and reuse these components instead of building new voice UI states from scratch.
+12. **Phase 3 & 4 SCRAP LIST:** When building the manual Overlay Browser, completely SCRAP the "Append via Voice" feature and SCRAP the "Ask AI" feature from the search box. The manual overlay is strictly for fuzzy/semantic searching and manual note editing.
 
 ---
 
@@ -229,16 +230,13 @@ the feature makes every entry point inert; `cargo test` green.
    All window ops async. Feature toggled off while open ⇒ close immediately.
 2. **Layout:** search input top-left with back button; left column = results/
    date-grouped list; right pane = the full note (editable title + body). No
-   metadata panel. Bottom-right action row: pin, reminder, delete, mic (append).
+   metadata panel. Bottom-right action row: pin, reminder, delete.
 3. **Editing:** debounced save-on-change to JSON via commands; `<todo>` spans
    render as live checkboxes; toggling writes `todo_tags` + body back to disk.
 4. **Blank-vs-list UX rule:** no notes at all ⇒ open straight into a new blank
    note; otherwise open the list with the newest note selected. Explicit "New
    note" action (button + `ctrl+n`) always available.
-5. **Append via voice:** mic button records, transcribes, appends to body.
-   Title/TLDR regenerated ONLY if LLM is available AND the prompt decides core
-   context drastically changed (prompt rule baked into the append prompt).
-6. **Reminder auto-toggle:** `grain_space_auto_reminders` ON ⇒ Input A arms
+5. **Reminder auto-toggle:** `grain_space_auto_reminders` ON ⇒ Input A arms
    extracted reminders automatically; OFF ⇒ note pane shows an "arm reminder"
    button instead.
 7. Search box in this phase = FTS/fuzzy only.
