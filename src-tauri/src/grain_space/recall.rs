@@ -18,7 +18,7 @@ use anyhow::Result;
 use tauri::{AppHandle, Manager};
 
 use super::store::{self, Note};
-use crate::agent::AgentMessage;
+use crate::agent::{AgentMessage, AgentReply, AgentSource};
 
 /// Memories fed to the model per turn (post-fusion). Recall over precision —
 /// the model does the final filtering; an extra note costs a few hundred
@@ -63,7 +63,9 @@ impl RecallSession {
         Some(self.ids.len())
     }
 
-    /// The note id behind memory `Mn` (1-based), if any.
+    /// The note id behind memory `Mn` (1-based), if any. Source resolution now
+    /// happens inline in `run_turn` (with title/date), so this is test-only.
+    #[cfg(test)]
     fn note_id_of(&self, m: usize) -> Option<&str> {
         self.ids.get(m.wrapping_sub(1)).map(String::as_str)
     }
@@ -367,9 +369,9 @@ pub fn parse_tail(reply: &str) -> (String, ParsedTail) {
 // -- the turn -------------------------------------------------------------------
 
 /// Run one Grain Recall turn: retrieve, synthesize, parse. Returns the display
-/// answer (convention line stripped). R1 returns a plain string; R2 will return
-/// `{ text, sources, not_found }` for the panel's evidence footer.
-pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<String, String> {
+/// answer (convention line stripped) plus its evidence sources and the
+/// not-found signal (RECALL-PLAN §6) — the panel renders a footer from these.
+pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<AgentReply, String> {
     if !super::is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
     }
@@ -393,10 +395,10 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Stri
         .map_err(|e| format!("{e:#}"))?
         .len();
     if total == 0 {
-        return Ok(
+        return Ok(AgentReply::plain(
             "You haven't saved any memories yet — capture one with your Grain Space shortcut, then ask me again."
                 .to_string(),
-        );
+        ));
     }
 
     // Retrieve this turn's hits and fold them into the session registry (stable
@@ -419,17 +421,39 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Stri
         .and_then(|s| s.recall.lock().ok().map(|g| g.ordered()))
         .unwrap_or_default();
 
+    // Build the block AND a M-id → source-meta map in one pass: SOURCES on the
+    // model's reply cite M-numbers, and resolving them to note titles/dates here
+    // avoids a second DB read after the LLM call. Keyed by M-number so an
+    // unreadable (skipped) note never renumbers the rest.
     let base_block = base.clone();
-    let block = tauri::async_runtime::spawn_blocking(move || {
+    let (block, source_meta) = tauri::async_runtime::spawn_blocking(move || {
+        use std::collections::HashMap;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut entries: Vec<String> = Vec::new();
+        let mut meta: HashMap<usize, AgentSource> = HashMap::new();
         for (i, id) in registry.iter().enumerate() {
             match store::get_note(&base_block, id) {
-                Ok(note) => entries.push(render_memory(i + 1, &note, now_ms)),
+                Ok(note) => {
+                    let m = i + 1;
+                    entries.push(render_memory(m, &note, now_ms));
+                    let title = if note.title.trim().is_empty() {
+                        note.tldr.trim().to_string()
+                    } else {
+                        note.title.trim().to_string()
+                    };
+                    meta.insert(
+                        m,
+                        AgentSource {
+                            note_id: note.id.clone(),
+                            title,
+                            saved_at: note.timestamp,
+                        },
+                    );
+                }
                 Err(e) => log::warn!("[GRAIN] recall: memory {id} unreadable: {e:#}"),
             }
         }
-        entries.join("\n\n")
+        (entries.join("\n\n"), meta)
     })
     .await
     .map_err(|e| format!("recall block join error: {e}"))?;
@@ -452,14 +476,29 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Stri
         tail.not_found
     );
 
-    // R1: return the display text only. The convention line is stripped so the
-    // user never sees `SOURCES:`/`NOT_FOUND`. (R2 renders sources + the
-    // not-found escape-hatch button from `tail`.)
+    // Resolve the cited M-numbers to evidence sources; unknown ids are dropped
+    // (RECALL-PLAN §10) so a stray citation never fails the turn. The convention
+    // line is already stripped from `display`, so the user never sees it.
+    let sources: Vec<AgentSource> = tail
+        .sources
+        .iter()
+        .filter_map(|m| source_meta.get(m).cloned())
+        .collect();
+
     if display.trim().is_empty() {
-        // A bare NOT_FOUND with no prose — give the user a sentence anyway.
-        return Ok("I don't have a memory about that.".to_string());
+        // A bare NOT_FOUND with no prose — give the user a sentence anyway, and
+        // keep the not-found signal so the panel still offers the escape hatch.
+        return Ok(AgentReply {
+            text: "I don't have a memory about that.".to_string(),
+            sources,
+            not_found: tail.not_found,
+        });
     }
-    Ok(display)
+    Ok(AgentReply {
+        text: display,
+        sources,
+        not_found: tail.not_found,
+    })
 }
 
 /// System prompt + memories block (as a system message) + the conversation
@@ -488,22 +527,6 @@ fn build_full(
         full.push((role.to_string(), m.content.clone()));
     }
     full
-}
-
-/// Resolve a parsed `SOURCES` M-id list to note ids via the session registry
-/// (used by R2's evidence footer; R1 parses but doesn't surface it).
-#[allow(dead_code)]
-pub fn resolve_sources(app: &AppHandle, tail: &ParsedTail) -> Vec<String> {
-    app.try_state::<crate::agent::AgentState>()
-        .and_then(|s| {
-            s.recall.lock().ok().map(|session| {
-                tail.sources
-                    .iter()
-                    .filter_map(|m| session.note_id_of(*m).map(String::from))
-                    .collect()
-            })
-        })
-        .unwrap_or_default()
 }
 
 #[cfg(test)]

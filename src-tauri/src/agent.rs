@@ -137,6 +137,39 @@ pub struct AgentMessage {
     pub content: String,
 }
 
+/// One evidence source behind a Grain Recall answer (RECALL-PLAN §6.2). `title`
+/// is the note's title (falling back to its summary); `saved_at` is a Unix-
+/// millis timestamp for the chip's relative-age label. Empty for Assist.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AgentSource {
+    pub note_id: String,
+    pub title: String,
+    pub saved_at: i64,
+}
+
+/// The panel's per-turn reply. `text` is the display answer (any Recall
+/// convention line already stripped). `sources` + `not_found` drive Recall's
+/// evidence footer / escape hatch (RECALL-PLAN §6); Assist always returns an
+/// empty `sources` and `not_found = false`, so the panel renders no footer.
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct AgentReply {
+    pub text: String,
+    pub sources: Vec<AgentSource>,
+    pub not_found: bool,
+}
+
+impl AgentReply {
+    /// A plain answer with no evidence footer (Assist, empty-corpus, errors
+    /// that still produce prose).
+    pub fn plain(text: String) -> Self {
+        Self {
+            text,
+            sources: Vec::new(),
+            not_found: false,
+        }
+    }
+}
+
 /// Which brain drives the summoned surfaces. Fixed at summon by the binding
 /// that fired — never re-derived from the request text (two doors, not one
 /// door with a bouncer). See `RECALL-PLAN.md` §3.1.
@@ -1369,18 +1402,20 @@ pub async fn agent_run(
     app: AppHandle,
     messages: Vec<AgentMessage>,
     context: Option<String>,
-) -> Result<String, String> {
+) -> Result<AgentReply, String> {
     // Grain Recall drives a different brain: retrieve from the user's saved
-    // memories, then synthesize an answer. R1 returns a plain display string
-    // (SOURCES/NOT_FOUND already stripped); the typed {text, sources} return
-    // is R2. The mode is whatever the summoning binding fixed — never guessed.
+    // memories, then synthesize an answer with evidence sources + a not-found
+    // signal (RECALL-PLAN §6). Assist wraps its plain string into the same
+    // shape (empty sources). The mode is whatever the summoning binding fixed —
+    // never guessed.
     if current_mode(&app) == AgentMode::Recall {
         return crate::grain_space::recall::run_turn(&app, &messages).await;
     }
     let field = app
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
-    run_conversation(&app, &messages, context.as_deref(), field.as_ref()).await
+    let text = run_conversation(&app, &messages, context.as_deref(), field.as_ref()).await?;
+    Ok(AgentReply::plain(text))
 }
 
 /// The Agent's LLM driver, shared by the panel (`agent_run`) and Quick Agent.

@@ -27,7 +27,11 @@
     "retry": "Retry — generate another version",
     "prevVersion": "Previous version",
     "nextVersion": "Next version",
-    "more": "More"
+    "more": "More",
+    "basedOn_one": "Based on {{count}} memory",
+    "basedOn_other": "Based on {{count}} memories",
+    "untitledNote": "Untitled",
+    "notFoundOpen": "Couldn't find that memory — open your notes"
   },
   "tray": {
     "settings": "Settings...",
