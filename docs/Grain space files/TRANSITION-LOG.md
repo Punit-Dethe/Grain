@@ -5,6 +5,106 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2: Phases 3 + 4 COMPLETE (overlay window + semantic search)
+
+### Status snapshot
+- [x] FINAL-PLAN.md written (authoritative)
+- [x] Phase 1 — Core storage & capture: DONE
+- [x] Phase 2 — Settings UI + reminder scheduler: DONE
+- [x] **Phase 3 — Overlay window (Raycast-style two-pane): DONE**
+- [x] **Phase 4 — Semantic search (opt-in BGE-small via Candle): DONE**
+- [ ] Phase 5 — Voice-first retrieval  ← **NEXT**
+- [ ] Phase 6 — Hardening/polish
+
+### Phase 3 — what was done
+1. **Binding:** `grain_space_open` (ctrl+shift+g / option+shift+g) seeded in
+   grain-core defaults + the missing-bindings migration; `GrainSpaceOpenAction`
+   in `ACTION_MAP` (actions.rs) toggles the window. Registered only while the
+   feature is on (existing `grain_space_` prefix gating covers it).
+2. **Window (`src-tauri/src/grain_space/window.rs`):** label `grain-space`,
+   840×560 frameless/transparent/centered, create-on-summon destroy-on-close,
+   ALL ops on the async runtime (tauri#3990). Focus-note stash + take pattern
+   (like AgentState) so the settings tab can open the overlay onto a note;
+   `grain-space://focus-note` event handles the already-open case. The
+   Destroyed hook drops the embed engine and clears the stash. New capability
+   `src-tauri/capabilities/grain-space.json` (close/focus/drag only).
+   `change_grain_space_enabled_setting(false)` closes the window + engine.
+3. **Commands:** `grain_space_open_window(note_id?)`, `grain_space_close_window`
+   (NOT gated — must close after disable), `grain_space_take_focus_note`.
+4. **UI (`src/components/grain-space/GrainSpaceOverlay.tsx` + grain-space.css,
+   branch on window label in main.tsx like agent-panel):** search top (clear
+   button, Esc clears then closes), date-grouped list left (Pinned bucket
+   first), full editor right (title + body textarea, tldr shown read-only,
+   todo_tags as live checkboxes BELOW the body — the `<todo>` spans stay as
+   raw text in the textarea; inline rendering deferred), bottom-right action
+   row = reminder (pending ⇒ Arm button per auto-reminders directive; armed/
+   fired ⇒ Dismiss) · pin · delete. Debounced 600 ms save with flush on
+   blur/switch/close; draft notes persist on first content via
+   `grain_space_create_note` (id-adoption guard prevents duplicate creation if
+   keystrokes land mid-create). Blank-vs-list rule: 0 notes ⇒ straight into a
+   blank draft; Ctrl+N + header button for new note. Refreshes on
+   `grain-space://notes-changed`. Append-via-voice and Ask-AI deliberately
+   ABSENT (scrap directive 12).
+
+### Phase 4 — what was done
+1. **Deps:** candle-core/nn/transformers 0.9, tokenizers 0.21 (onig only),
+   zerocopy 0.8 (f32→blob for sqlite-vec).
+2. **Engine (`grain_space/embed.rs`):** one OS thread owning
+   tokenizer+BertModel (BGE-small-en-v1.5, f32, CPU, mmap'd safetensors) behind
+   an mpsc channel; per-text encode → mean-pool → L2-normalize. Spawned lazily
+   by the first semantic search (command refuses if the overlay window is not
+   open), dropped by `shutdown_engine()` on window-destroy / feature-off /
+   semantic-off. Load failure answers queued requests with the error.
+3. **Download:** consent is FRONTEND-side; `grain_space_download_embed_model`
+   pulls config/tokenizer/model.safetensors into the shared HF cache via the
+   cancellable hf-hub fork with `grain-space://embed-model-{progress,complete,
+   error}` events; `..._cancel_embed_model_download` + status command
+   (`ready|downloading|absent`). NOTE: real download is ~130 MB (f32 export),
+   not the ~34 MB in the old plan copy — UI copy says ~130 MB.
+4. **Store:** `notes_vec` vec0 table created ONLY on first semantic use
+   (`ensure_vec_table`); `stale_embed_texts` / `store_embeddings` /
+   `semantic_search` (KNN LIMIT 24, cos = 1 − d²/2 on normalized vectors,
+   decay `exp(-λΔt)` with λ = ln2/half-life, pinned ⇒ Δt=0). unindex/rebuild
+   clean the vec table too (guarded by sqlite_master existence check so
+   non-semantic users never create it).
+5. **Command:** `grain_space_semantic_search` — gates: feature on → semantic
+   setting on → overlay window open → model on disk (`model-not-downloaded`
+   error string is the frontend's consent trigger) → re-embed stale batch →
+   embed query → ranked KNN.
+6. **Settings tab:** semantic toggle now runs consent → download (progress bar
+   + cancel) → only flips the setting on the complete event (toggle stays off
+   until verified on disk). `grain_space_open` ShortcutInput row added; note
+   rows are clickable and open the overlay focused on that note.
+7. **Overlay:** Exact/Semantic mode capsule (shown only when the setting is
+   on), semantic falls back to FTS on any error, consent/progress/error banner
+   for the model-missing recovery path.
+
+### Verified
+`cargo test --lib` (src-tauri): **156 passed** (2 new: vec roundtrip/ranking/
+delete, embed-text composer). grain-core: 4 passed. `tsc --noEmit` clean.
+eslint clean on all touched files (repo has PRE-EXISTING eslint errors in
+ModuleC.tsx/ModelSelector.tsx — not from this work). `cargo fmt` run.
+bindings.ts regenerated by running `C:\gt\debug\handy.exe` ~8 s.
+
+### Next concrete step (Phase 5 — voice-first retrieval)
+Read FINAL-PLAN.md §4 Phase 5. Register `grain_space_voice_search` binding
+(defaults + migration + ACTION_MAP, gated like the others), record+transcribe
+the query, then Mode A (RAG answer in a destroyable surface — reuse the agent
+reply-panel pattern) vs Mode B (open overlay with results via
+`window::open` + a results handoff) per `grain_space_retrieval_mode`.
+
+### Gotchas discovered
+- eslint here has no `react-hooks/exhaustive-deps` rule — referencing it in a
+  disable comment is itself an error.
+- `tsc` must be invoked as `./node_modules/.bin/tsc.exe` (bun install; naked
+  `npx tsc` resolves to the wrong package).
+- hf-hub `Progress` trait needs `init`/`update`/`finish` (async fns).
+- vec0 has no UPSERT — delete+insert. KNN needs `ORDER BY distance LIMIT k`.
+- BGE f32 `model.safetensors` is ~130 MB on disk (not 34 MB); RAM after mmap
+  load is smaller but budget the download copy accordingly.
+
+---
+
 ## 2026-07-06 — Session 1 (part 2): Phase 2 COMPLETE (settings tab + reminders)
 
 ### Status snapshot

@@ -1071,18 +1071,29 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     // Arm (or tear down) the reminder timer for the new state.
     crate::grain_space::reminders::sync(&app);
 
+    // Feature off while the overlay is open ⇒ destroy the window (which also
+    // drops the embedding engine via its Destroyed hook).
+    if !enabled {
+        crate::grain_space::window::close(&app);
+        crate::grain_space::embed::shutdown_engine();
+    }
+
     Ok(())
 }
 
-/// [GRAIN] Grain Space semantic-search toggle. Only flips the setting — the
-/// model download (opt-in, Phase 4) and any model load are driven elsewhere;
-/// OFF must guarantee the embedding model never loads.
+/// [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
+/// download (opt-in consent flow) is driven by the frontend before it turns
+/// this on. OFF must guarantee the embedding model never loads — any resident
+/// engine is dropped immediately.
 #[tauri::command]
 #[specta::specta]
 pub fn change_grain_space_semantic_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.grain_space_semantic = enabled;
     settings::write_settings(&app, settings);
+    if !enabled {
+        crate::grain_space::embed::shutdown_engine();
+    }
     Ok(())
 }
 

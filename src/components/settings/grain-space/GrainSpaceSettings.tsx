@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { AlarmClock, Pin, PinOff, Trash2 } from "lucide-react";
@@ -16,6 +16,15 @@ const reminderOf = (note: Note): ReminderState =>
 
 /** Backend event fired after any note mutation (save/delete/pin/reminder). */
 const NOTES_CHANGED_EVENT = "grain-space://notes-changed";
+/** Semantic-model download events (see grain_space/embed.rs). */
+const MODEL_PROGRESS_EVENT = "grain-space://embed-model-progress";
+const MODEL_COMPLETE_EVENT = "grain-space://embed-model-complete";
+const MODEL_ERROR_EVENT = "grain-space://embed-model-error";
+
+type ModelFlow =
+  | { state: "consent" }
+  | { state: "downloading"; percentage: number }
+  | { state: "error"; message: string };
 
 const timeFormat = new Intl.DateTimeFormat(undefined, {
   hour: "2-digit",
@@ -65,6 +74,11 @@ export const GrainSpaceSettings: React.FC = () => {
   const autoReminders = getSetting("grain_space_auto_reminders") ?? true;
 
   const [notes, setNotes] = useState<Note[]>([]);
+  // Consent → download → verify flow for the semantic model. The toggle stays
+  // OFF until the model is verified on disk (edge-case rule in the plan).
+  const [modelFlow, setModelFlow] = useState<ModelFlow | null>(null);
+  const modelFlowRef = useRef<ModelFlow | null>(null);
+  modelFlowRef.current = modelFlow;
 
   const refresh = useCallback(async () => {
     if (!enabled) {
@@ -84,6 +98,69 @@ export const GrainSpaceSettings: React.FC = () => {
       unlisten.then((fn) => fn());
     };
   }, [enabled, refresh]);
+
+  // Watch the download while this tab drives it (flow active).
+  useEffect(() => {
+    const unlistens = [
+      listen<{ percentage: number }>(MODEL_PROGRESS_EVENT, (event) => {
+        if (modelFlowRef.current)
+          setModelFlow({
+            state: "downloading",
+            percentage: event.payload.percentage,
+          });
+      }),
+      listen(MODEL_COMPLETE_EVENT, () => {
+        if (modelFlowRef.current) {
+          setModelFlow(null);
+          // Verified on disk — NOW the setting may turn on.
+          updateSetting("grain_space_semantic", true);
+        }
+      }),
+      listen<string>(MODEL_ERROR_EVENT, (event) => {
+        if (modelFlowRef.current)
+          setModelFlow({ state: "error", message: event.payload });
+      }),
+    ];
+    return () => {
+      unlistens.forEach((p) => p.then((fn) => fn()));
+    };
+  }, []);
+
+  const onSemanticToggle = async (value: boolean) => {
+    if (!value) {
+      setModelFlow(null);
+      updateSetting("grain_space_semantic", false);
+      return;
+    }
+    const status = await commands.grainSpaceEmbedModelStatus();
+    if (status === "ready") {
+      updateSetting("grain_space_semantic", true);
+    } else if (status === "downloading") {
+      setModelFlow({ state: "downloading", percentage: 0 });
+    } else {
+      setModelFlow({ state: "consent" });
+    }
+  };
+
+  const startModelDownload = () => {
+    setModelFlow({ state: "downloading", percentage: 0 });
+    commands.grainSpaceDownloadEmbedModel().then((result) => {
+      if (result.status === "error" && modelFlowRef.current) {
+        setModelFlow((f) =>
+          f?.state === "error" ? f : { state: "error", message: result.error },
+        );
+      }
+    });
+  };
+
+  const cancelModelDownload = () => {
+    void commands.grainSpaceCancelEmbedModelDownload();
+    setModelFlow(null);
+  };
+
+  const openInOverlay = (note: Note) => {
+    void commands.grainSpaceOpenWindow(note.id);
+  };
 
   const deleteNote = async (id: string) => {
     await commands.grainSpaceDeleteNote(id);
@@ -154,6 +231,11 @@ export const GrainSpaceSettings: React.FC = () => {
               grouped
               descriptionMode="inline"
             />
+            <ShortcutInput
+              shortcutId="grain_space_open"
+              grouped
+              descriptionMode="inline"
+            />
             <ToggleSwitch
               label="Auto-set reminders"
               description="Arm reminders extracted from a dictated note automatically. When off, notes keep the suggestion and you arm it manually."
@@ -176,8 +258,77 @@ export const GrainSpaceSettings: React.FC = () => {
               grouped
               checked={semantic}
               isUpdating={isUpdating("grain_space_semantic")}
-              onChange={(v) => updateSetting("grain_space_semantic", v)}
+              onChange={(v) => void onSemanticToggle(v)}
             />
+            {modelFlow?.state === "consent" && (
+              <div className="px-4 py-3 space-y-2">
+                <div className="text-sm text-ink font-medium">
+                  {t("settings.grainSpace.consentTitle")}
+                </div>
+                <div className="text-xs text-ink-soft">
+                  {t("settings.grainSpace.consentBody")}
+                </div>
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={startModelDownload}
+                    className="text-xs font-medium text-accent hover:underline"
+                  >
+                    {t("settings.grainSpace.consentConfirm")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setModelFlow(null)}
+                    className="text-xs text-ink-soft hover:text-ink"
+                  >
+                    {t("settings.grainSpace.consentCancel")}
+                  </button>
+                </div>
+              </div>
+            )}
+            {modelFlow?.state === "downloading" && (
+              <div className="px-4 py-3 flex items-center gap-3">
+                <span className="text-xs text-ink-soft shrink-0">
+                  {t("settings.grainSpace.downloading")}
+                </span>
+                <div className="flex-1 h-1 rounded bg-line overflow-hidden">
+                  <div
+                    className="h-full bg-accent transition-all"
+                    style={{ width: `${modelFlow.percentage.toFixed(1)}%` }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelModelDownload}
+                  className="text-xs text-ink-soft hover:text-ink shrink-0"
+                >
+                  {t("settings.grainSpace.cancelDownload")}
+                </button>
+              </div>
+            )}
+            {modelFlow?.state === "error" && (
+              <div className="px-4 py-3 flex items-center gap-3">
+                <span className="text-xs text-red-500 flex-1 min-w-0 truncate">
+                  {t("settings.grainSpace.downloadFailed", {
+                    message: modelFlow.message,
+                  })}
+                </span>
+                <button
+                  type="button"
+                  onClick={startModelDownload}
+                  className="text-xs font-medium text-accent hover:underline shrink-0"
+                >
+                  {t("settings.grainSpace.consentConfirm")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setModelFlow(null)}
+                  className="text-xs text-ink-soft hover:text-ink shrink-0"
+                >
+                  {t("settings.grainSpace.dismiss")}
+                </button>
+              </div>
+            )}
           </SettingsGroup>
 
           {reminders.length > 0 && (
@@ -261,7 +412,13 @@ export const GrainSpaceSettings: React.FC = () => {
                       key={note.id}
                       className="group flex items-center gap-3 px-4 py-2.5"
                     >
-                      <div className="flex-1 min-w-0">
+                      {/* Click opens the overlay focused on this note. */}
+                      <button
+                        type="button"
+                        onClick={() => openInOverlay(note)}
+                        className="flex-1 min-w-0 text-left cursor-pointer"
+                        title="Open in Grain Space"
+                      >
                         <div className="text-sm text-ink truncate">
                           {noteDisplayTitle(note) || "(empty note)"}
                         </div>
@@ -270,7 +427,7 @@ export const GrainSpaceSettings: React.FC = () => {
                             {note.tldr}
                           </div>
                         )}
-                      </div>
+                      </button>
                       <span className="text-xs text-ink-faint tabular-nums shrink-0">
                         {timeFormat.format(new Date(note.timestamp))}
                       </span>

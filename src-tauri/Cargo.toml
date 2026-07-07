@@ -77,6 +77,14 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 # created when the user enables semantic search (model is opt-in, not shipped).
 sqlite-vec = "0.1"
 uuid = { version = "1", features = ["v4"] } # [GRAIN] Grain Space note ids
+# [GRAIN] Grain Space semantic search (Phase 4): CPU-only Candle running the
+# opt-in BGE-small embedding model, plus zerocopy to hand &[f32] to sqlite-vec
+# without copies. The model itself is downloaded on consent, never bundled.
+zerocopy = "0.8"
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"

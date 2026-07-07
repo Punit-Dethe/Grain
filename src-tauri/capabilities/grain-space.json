@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "grain-space",
+  "description": "Capabilities for the Grain Space overlay window (Raycast-style notes browser). Created on summon, destroyed on close. The JS surface is minimal: invoke the grain_space_* commands, listen to grain-space:// events, drag the frameless window, and close (destroy) on Escape.",
+  "windows": ["grain-space"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-start-dragging"
+  ]
+}

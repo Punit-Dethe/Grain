@@ -1,0 +1,368 @@
+/* [GRAIN] Grain Space overlay — Raycast-style two-pane notes browser, in the
+ * same beige/mechanical language as the Agent surfaces (see agent.css). The
+ * window is transparent and exactly card-sized, so the rounded corners read as
+ * a floating panel. Self-contained: this window loads no other app CSS. */
+
+.gs-root {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.gs-card {
+  --surface: #e8e1d4;
+  --recess: #ddd5c8;
+  --input-bg: #f2ece1;
+  --ink: #141312;
+  --orange: #ff5d1e;
+  --error: #c0392f;
+  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
+
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 14px;
+  border: 1px solid rgba(20, 19, 18, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  color: var(--ink);
+  font-family: var(--body);
+  overflow: hidden;
+}
+.gs-card *,
+.gs-card *::before,
+.gs-card *::after {
+  box-sizing: border-box;
+}
+
+/* ── HEADER ──────────────────────────────────────────────────────────────── */
+.gs-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(20, 19, 18, 0.12);
+}
+.gs-brand {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+  color: rgba(20, 19, 18, 0.55);
+  white-space: nowrap;
+}
+.gs-search {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--input-bg);
+  border: 1px solid rgba(20, 19, 18, 0.16);
+  border-radius: 8px;
+  padding: 5px 8px;
+}
+.gs-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--body);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.gs-search input::placeholder {
+  color: rgba(20, 19, 18, 0.38);
+}
+.gs-iconbtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: rgba(20, 19, 18, 0.55);
+  cursor: pointer;
+  padding: 0;
+}
+.gs-iconbtn:hover {
+  background: rgba(20, 19, 18, 0.08);
+  color: var(--ink);
+}
+.gs-iconbtn--active {
+  color: var(--orange);
+}
+.gs-iconbtn--danger:hover {
+  color: var(--error);
+}
+
+/* Exact / Semantic mode switch. */
+.gs-mode {
+  flex: none;
+  display: flex;
+  border: 1px solid rgba(20, 19, 18, 0.16);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.gs-mode button {
+  border: none;
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  color: rgba(20, 19, 18, 0.5);
+  cursor: pointer;
+}
+.gs-mode button.gs-mode--on {
+  background: var(--ink);
+  color: var(--surface);
+}
+
+/* ── MODEL BANNER (semantic consent / download progress) ─────────────────── */
+.gs-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--recess);
+  border-bottom: 1px solid rgba(20, 19, 18, 0.12);
+  font-size: 11.5px;
+}
+.gs-banner-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: rgba(20, 19, 18, 0.75);
+}
+.gs-banner-error {
+  color: var(--error);
+}
+.gs-btn {
+  flex: none;
+  border: 1px solid rgba(20, 19, 18, 0.25);
+  background: var(--input-bg);
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  color: var(--ink);
+  cursor: pointer;
+}
+.gs-btn:hover {
+  background: var(--ink);
+  color: var(--surface);
+}
+.gs-btn--quiet {
+  border-color: transparent;
+  background: transparent;
+  color: rgba(20, 19, 18, 0.55);
+}
+.gs-btn--quiet:hover {
+  background: rgba(20, 19, 18, 0.08);
+  color: var(--ink);
+}
+.gs-progress {
+  flex: 1 1 auto;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(20, 19, 18, 0.12);
+  overflow: hidden;
+}
+.gs-progress span {
+  display: block;
+  height: 100%;
+  background: var(--orange);
+  transition: width 160ms linear;
+}
+
+/* ── BODY: list + editor ─────────────────────────────────────────────────── */
+.gs-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+.gs-list {
+  flex: none;
+  width: 236px;
+  min-width: 0;
+  overflow-y: auto;
+  background: var(--recess);
+  border-right: 1px solid rgba(20, 19, 18, 0.12);
+  padding: 6px 0 10px;
+}
+.gs-list::-webkit-scrollbar {
+  width: 8px;
+}
+.gs-list::-webkit-scrollbar-thumb {
+  background: rgba(20, 19, 18, 0.18);
+  border-radius: 4px;
+}
+.gs-group {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(20, 19, 18, 0.45);
+  padding: 10px 12px 4px;
+}
+.gs-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.gs-item:hover {
+  background: rgba(20, 19, 18, 0.05);
+}
+.gs-item--on {
+  background: rgba(20, 19, 18, 0.08);
+  border-left-color: var(--orange);
+}
+.gs-item-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-item-title svg {
+  flex: none;
+  color: var(--orange);
+}
+.gs-item-sub {
+  font-size: 10.5px;
+  color: rgba(20, 19, 18, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.gs-list-empty {
+  padding: 18px 12px;
+  font-size: 11.5px;
+  color: rgba(20, 19, 18, 0.45);
+  text-align: center;
+}
+
+/* ── EDITOR ──────────────────────────────────────────────────────────────── */
+.gs-editor {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gs-title {
+  flex: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--body);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 14px 16px 4px;
+}
+.gs-title::placeholder {
+  color: rgba(20, 19, 18, 0.3);
+}
+.gs-tldr {
+  flex: none;
+  font-size: 11.5px;
+  color: rgba(20, 19, 18, 0.55);
+  padding: 0 16px 6px;
+}
+.gs-bodytext {
+  flex: 1 1 auto;
+  min-height: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  resize: none;
+  font-family: var(--body);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  padding: 6px 16px 10px;
+}
+.gs-bodytext::placeholder {
+  color: rgba(20, 19, 18, 0.3);
+}
+.gs-todos {
+  flex: none;
+  padding: 4px 16px 8px;
+  border-top: 1px dashed rgba(20, 19, 18, 0.14);
+}
+.gs-todos-label {
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: rgba(20, 19, 18, 0.45);
+  padding: 6px 0 2px;
+}
+.gs-todo {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 0;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.gs-todo input {
+  accent-color: var(--orange);
+  cursor: pointer;
+}
+.gs-todo--done span {
+  text-decoration: line-through;
+  color: rgba(20, 19, 18, 0.45);
+}
+
+/* Bottom-right action row: reminder · pin · delete. */
+.gs-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(20, 19, 18, 0.12);
+}
+.gs-reminder {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(20, 19, 18, 0.6);
+}
+.gs-editor-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: rgba(20, 19, 18, 0.4);
+}

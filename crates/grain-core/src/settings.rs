@@ -1186,6 +1186,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "transcribe_native_asr",
         "grain_space_quick_add",
         "grain_space_capture",
+        "grain_space_open",
     ] {
         if !settings.bindings.contains_key(id) {
             if let Some(binding) = defaults.bindings.get(id) {
@@ -1409,6 +1410,23 @@ pub fn get_default_settings() -> AppSettings {
                 .to_string(),
             default_binding: default_space_capture_shortcut.to_string(),
             current_binding: default_space_capture_shortcut.to_string(),
+        },
+    );
+
+    // Tap toggle for the Grain Space overlay browser (Phase 3): create the
+    // window if absent, destroy it if open.
+    #[cfg(target_os = "macos")]
+    let default_space_open_shortcut = "option+shift+g";
+    #[cfg(not(target_os = "macos"))]
+    let default_space_open_shortcut = "ctrl+shift+g";
+    bindings.insert(
+        "grain_space_open".to_string(),
+        ShortcutBinding {
+            id: "grain_space_open".to_string(),
+            name: "Open Space".to_string(),
+            description: "Open or close the Grain Space notes window.".to_string(),
+            default_binding: default_space_open_shortcut.to_string(),
+            current_binding: default_space_open_shortcut.to_string(),
         },
     );
 

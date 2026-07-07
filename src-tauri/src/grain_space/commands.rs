@@ -3,7 +3,7 @@
 //! runtime, emit the changed event after mutations. No state is managed —
 //! every call opens and drops its own resources (zero idle RAM).
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use super::store::{self, Note, ReminderState, ReminderStatus};
 use super::{base_dir, emit_notes_changed, is_enabled};
@@ -162,4 +162,122 @@ pub async fn grain_space_dismiss_reminder(app: AppHandle, id: String) -> Result<
 pub async fn grain_space_rebuild_index(app: AppHandle) -> Result<u32, String> {
     let base = gate(&app)?;
     blocking(move || store::rebuild_index(&base)).await
+}
+
+// -- overlay window (Phase 3) ----------------------------------------------------
+
+/// Open the overlay (or refocus it), optionally landing on a note. Used by the
+/// settings tab's note rows; the global shortcut uses the toggle action.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_open_window(
+    app: AppHandle,
+    note_id: Option<String>,
+) -> Result<(), String> {
+    gate(&app)?;
+    super::window::open(&app, note_id);
+    Ok(())
+}
+
+/// Close (destroy) the overlay. Deliberately NOT gated: the window must be
+/// closable even if the feature was just disabled underneath it.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_close_window(app: AppHandle) -> Result<(), String> {
+    super::window::close(&app);
+    Ok(())
+}
+
+/// One-shot: the note id the overlay should select on mount, if any.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_take_focus_note() -> Option<String> {
+    super::window::take_focus_note()
+}
+
+// -- semantic search (Phase 4) ---------------------------------------------------
+
+#[derive(serde::Serialize, specta::Type, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbedModelStatus {
+    Ready,
+    Downloading,
+    Absent,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_embed_model_status() -> EmbedModelStatus {
+    if super::embed::is_downloading() {
+        EmbedModelStatus::Downloading
+    } else if super::embed::model_on_disk() {
+        EmbedModelStatus::Ready
+    } else {
+        EmbedModelStatus::Absent
+    }
+}
+
+/// Consent-gated model download (the frontend shows the consent dialog BEFORE
+/// calling this). Progress/completion/error arrive as events; resolves when
+/// the transfer ends either way.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_download_embed_model(app: AppHandle) -> Result<(), String> {
+    gate(&app)?;
+    super::embed::download_model(app).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_cancel_embed_model_download() -> Result<(), String> {
+    super::embed::cancel_download();
+    Ok(())
+}
+
+/// Semantic (meaning-based) search. Spawns the engine lazily on first use —
+/// allowed only while the overlay window exists, so the weights can never
+/// outlive it. Re-embeds stale notes before serving so results stay truthful.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_semantic_search(
+    app: AppHandle,
+    query: String,
+) -> Result<Vec<Note>, String> {
+    let base = gate(&app)?;
+    let settings = crate::settings::get_settings(&app);
+    if !settings.grain_space_semantic {
+        return Err("semantic search is disabled".to_string());
+    }
+    // Directive 7: the engine's lifetime is bound to the overlay window.
+    if app
+        .get_webview_window(super::window::WINDOW_LABEL)
+        .is_none()
+    {
+        return Err("Grain Space window is not open".to_string());
+    }
+    if !super::embed::model_on_disk() {
+        return Err("model-not-downloaded".to_string());
+    }
+    let half_life_days = settings.grain_space_decay_half_life_days;
+    blocking(move || {
+        let trimmed = query.trim().to_string();
+        if trimmed.is_empty() {
+            return store::list_notes(&base);
+        }
+        // Batch re-embed everything stale (covers engine spawn + edits made
+        // while the engine was resident — save marks stale, search refreshes).
+        let stale = store::stale_embed_texts(&base)?;
+        if !stale.is_empty() {
+            let texts: Vec<String> = stale.iter().map(|(_, t)| t.clone()).collect();
+            let vectors = super::embed::embed(texts)?;
+            let items: Vec<(String, Vec<f32>)> =
+                stale.into_iter().map(|(id, _)| id).zip(vectors).collect();
+            store::store_embeddings(&base, &items)?;
+        }
+        let query_vec = super::embed::embed(vec![trimmed])?
+            .pop()
+            .ok_or_else(|| anyhow::anyhow!("empty query embedding"))?;
+        store::semantic_search(&base, &query_vec, half_life_days)
+    })
+    .await
 }
