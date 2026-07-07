@@ -642,6 +642,7 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_list_notes,
             grain_space::commands::grain_space_search_notes,
             grain_space::commands::grain_space_get_note,
+            grain_space::commands::grain_space_export_notes,
             grain_space::commands::grain_space_save_note,
             grain_space::commands::grain_space_create_note,
             grain_space::commands::grain_space_delete_note,

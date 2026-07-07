@@ -278,6 +278,13 @@ pub fn get_note(base: &Path, id: &str) -> Result<Note> {
     read_note_file(&note_path(base, id))
 }
 
+/// Serialize notes to a stable, human-readable JSON array for export
+/// (RECALL-PLAN §8 — data portability). Notes are already the source of truth,
+/// so this is a straight pretty dump of the locked schema.
+pub fn export_json(notes: &[Note]) -> Result<String> {
+    Ok(serde_json::to_string_pretty(notes)?)
+}
+
 /// Delete the JSON file and its index rows. (The "never delete data" rule is
 /// about the feature toggle — explicit per-note delete is a user action.)
 pub fn delete_note(base: &Path, id: &str) -> Result<()> {
@@ -641,6 +648,20 @@ mod tests {
         assert_eq!(count, 1);
         assert_eq!(search_notes(&base, "rebuild").unwrap().len(), 1);
         fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn export_json_roundtrips_notes() {
+        let mut a = Note::raw("first".into());
+        a.title = "One".into();
+        let b = Note::raw("second".into());
+        let json = export_json(&[a.clone(), b.clone()]).unwrap();
+        let back: Vec<Note> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0], a);
+        assert_eq!(back[1], b);
+        // Empty corpus is a valid (empty) export.
+        assert_eq!(export_json(&[]).unwrap(), "[]");
     }
 
     #[test]
