@@ -23,6 +23,7 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 7. **Refactoring:** For refactors (renames, dead code), use `refactor_tool` first to plan changes; only modify files after reviewing its suggestions.
 8. **Fallback:** Fall back to Grep/Glob/Read ONLY if the graph tools cannot answer the question or the code area is not yet indexed.
 </code_review_graph_protocol>
+
 <boundaries>
 1. **Upstream Compatibility:** Maintain compatibility with the upstream "Handy" project. Prefer extending over modifying shared code.
 2. **Frontend/Backend Decoupling:** All frontend→backend communication uses Tauri commands. Backend→frontend uses Tauri events. Do not blur this boundary.
