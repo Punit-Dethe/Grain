@@ -39,6 +39,48 @@ pub async fn grain_space_search_notes(app: AppHandle, query: String) -> Result<V
     blocking(move || store::search_notes(&base, &query)).await
 }
 
+/// Export every note as one pretty JSON array to a user-chosen file
+/// (RECALL-PLAN §8 — data portability/backup). Returns the written path, or
+/// `None` if the user cancelled the save dialog. Serializes BEFORE prompting so
+/// an empty corpus (or a read failure) never opens a pointless dialog.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_export_notes(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let base = gate(&app)?;
+    let (count, json) = blocking(move || {
+        let notes = store::list_notes(&base)?;
+        let json = store::export_json(&notes)?;
+        Ok((notes.len(), json))
+    })
+    .await?;
+    if count == 0 {
+        return Err("No notes to export yet.".to_string());
+    }
+
+    let default_name = format!(
+        "grain-space-notes-{}.json",
+        chrono::Local::now().format("%Y%m%d")
+    );
+    let app2 = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        app2.dialog()
+            .file()
+            .set_file_name(&default_name)
+            .add_filter("JSON", &["json"])
+            .blocking_save_file()
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let Some(path) = picked.and_then(|f| f.into_path().ok()) else {
+        return Ok(None); // user cancelled
+    };
+    std::fs::write(&path, json).map_err(|e| format!("write export: {e}"))?;
+    log::info!("[GRAIN] space: exported {count} note(s) to {}", path.display());
+    Ok(Some(path.to_string_lossy().to_string()))
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_get_note(app: AppHandle, id: String) -> Result<Note, String> {

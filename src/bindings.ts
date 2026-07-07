@@ -255,6 +255,20 @@ async grainSpaceGetNote(id: string) : Promise<Result<Note, string>> {
 }
 },
 /**
+ * Export every note as one pretty JSON array to a user-chosen file
+ * (RECALL-PLAN §8 — data portability/backup). Returns the written path, or
+ * `None` if the user cancelled the save dialog. Serializes BEFORE prompting so
+ * an empty corpus (or a read failure) never opens a pointless dialog.
+ */
+async grainSpaceExportNotes() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_export_notes") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Create or update. The frontend sends the full locked-schema note; for new
  * notes it uses `grain_space_create_note` instead so ids stay backend-minted.
  */

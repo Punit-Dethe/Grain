@@ -74,6 +74,7 @@ export const GrainSpaceSettings: React.FC = () => {
   const autoReminders = getSetting("grain_space_auto_reminders") ?? true;
 
   const [notes, setNotes] = useState<Note[]>([]);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
   // Consent → download → verify flow for the semantic model. The toggle stays
   // OFF until the model is verified on disk (edge-case rule in the plan).
   const [modelFlow, setModelFlow] = useState<ModelFlow | null>(null);
@@ -169,6 +170,16 @@ export const GrainSpaceSettings: React.FC = () => {
   const togglePin = async (note: Note) => {
     await commands.grainSpaceSetPinned(note.id, !note.is_pinned);
     refresh();
+  };
+  const exportNotes = async () => {
+    setExportMsg(null);
+    const res = await commands.grainSpaceExportNotes();
+    if (res.status === "ok") {
+      // null = the user cancelled the save dialog → stay quiet.
+      if (res.data) setExportMsg(`Exported to ${res.data}`);
+    } else {
+      setExportMsg(res.error);
+    }
   };
   const dismissReminder = async (id: string) => {
     await commands.grainSpaceDismissReminder(id);
@@ -464,6 +475,22 @@ export const GrainSpaceSettings: React.FC = () => {
                   ))}
                 </div>
               ))
+            )}
+            {notes.length > 0 && (
+              <div className="px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => void exportNotes()}
+                  className="font-mono text-[0.6rem] uppercase tracking-[0.18em] text-ink-soft hover:text-ink transition-colors"
+                >
+                  {t("settings.grainSpace.exportNotes")}
+                </button>
+                {exportMsg && (
+                  <div className="mt-1.5 text-xs text-ink-faint break-all">
+                    {exportMsg}
+                  </div>
+                )}
+              </div>
             )}
           </SettingsGroup>
         </>
