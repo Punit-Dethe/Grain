@@ -384,6 +384,82 @@
   white-space: pre-wrap;
 }
 
+/* Grain Recall evidence footer (RECALL-PLAN §6): a quiet strip under an
+ * answer — source chips or the not-found escape hatch. Absent for Assist. */
+.agc-evidence {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--agc-line);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.agc-evidence-label {
+  font-family: var(--agc-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--agc-muted);
+}
+.agc-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.agc-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: var(--agc-recess);
+  color: var(--agc-ink);
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.agc-chip:hover {
+  background: #34343a;
+  border-color: var(--orange);
+}
+.agc-chip-title {
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.agc-chip-date {
+  flex: none;
+  font-family: var(--agc-mono);
+  font-size: 9px;
+  color: var(--agc-muted);
+}
+/* Not-found escape hatch: the one manual action when Grain genuinely doesn't
+ * remember — one click to the full memory browser. */
+.agc-notfound-btn {
+  align-self: flex-start;
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: var(--agc-recess);
+  color: var(--agc-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.agc-notfound-btn:hover {
+  background: #34343a;
+  color: var(--agc-ink);
+  border-color: var(--orange);
+}
+
 /* Bottom control bar */
 .agc-foot {
   display: flex;

@@ -9,7 +9,13 @@ import {
   X,
   Check,
 } from "lucide-react";
-import { commands, type AgentMessage, type AgentAutocopy } from "@/bindings";
+import {
+  commands,
+  type AgentMessage,
+  type AgentAutocopy,
+  type AgentReply,
+  type AgentSource,
+} from "@/bindings";
 import "./agent.css";
 
 type Role = "user" | "assistant";
@@ -17,12 +23,32 @@ interface ChatMessage {
   id: string;
   role: Role;
   content: string;
+  // Grain Recall evidence footer (RECALL-PLAN §6): empty/false for Assist.
+  sources?: AgentSource[];
+  notFound?: boolean;
 }
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 // Glyph constants (kept out of JSX so the i18n lint doesn't treat them as copy).
 const SEND_ARROW = "↵";
 const ENTER_GLYPH = "⏎";
+
+/** Compact relative age for a source chip ("3d ago", "yesterday"). Symbols
+ * only, so no i18n copy — matches the hardcoded keycap glyphs above. */
+function relDate(ms: number): string {
+  const diff = Math.max(0, Date.now() - ms);
+  const mins = Math.floor(diff / 60_000);
+  const hours = Math.floor(diff / 3_600_000);
+  const days = Math.floor(diff / 86_400_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
 
 /** Pretty-print one part of a shortcut binding for the keycap chips. */
 function keycapLabel(part: string): string {
@@ -75,7 +101,9 @@ export function AgentPanel() {
   // first user turn; the assistant replies live in `versions`.
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Retry versions of the FIRST reply (compact stage), and which one is shown.
-  const [versions, setVersions] = useState<string[]>([]);
+  // Each version carries its Recall evidence (sources / not-found) alongside
+  // the text; Assist versions have empty sources so no footer renders.
+  const [versions, setVersions] = useState<AgentReply[]>([]);
   const [versionIdx, setVersionIdx] = useState(0);
   const [expanded, setExpanded] = useState(false);
   // The panel is revealed the instant the user submits — BEFORE the transcript
@@ -91,7 +119,7 @@ export function AgentPanel() {
   const autocopyRef = useRef<AgentAutocopy>("first");
   const firstCopyDoneRef = useRef(false);
   const messagesRef = useRef<ChatMessage[]>([]);
-  const versionsRef = useRef<string[]>([]);
+  const versionsRef = useRef<AgentReply[]>([]);
   const versionIdxRef = useRef(0);
   const expandedRef = useRef(false);
   const busyRef = useRef(false);
@@ -114,7 +142,11 @@ export function AgentPanel() {
   /** The reply the surface currently presents (pager-aware in compact). */
   const displayedReply = expanded
     ? lastReplyOf(messages)
-    : (versions[versionIdx] ?? "");
+    : (versions[versionIdx]?.text ?? "");
+  /** Evidence footer for the compact card's paged version (empty for Assist).
+   * Expanded renders a footer per assistant turn instead. */
+  const compactSources = versions[versionIdx]?.sources ?? [];
+  const compactNotFound = versions[versionIdx]?.not_found ?? false;
 
   const flashCopied = useCallback(() => {
     setCopyFlash(true);
@@ -155,7 +187,7 @@ export function AgentPanel() {
             setVersionIdx(next.length - 1);
             return next;
           });
-          maybeAutoCopy(reply);
+          maybeAutoCopy(reply.text);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -183,9 +215,15 @@ export function AgentPanel() {
           const reply = res.data;
           setMessages((prev) => [
             ...prev,
-            { id: rid(), role: "assistant", content: reply },
+            {
+              id: rid(),
+              role: "assistant",
+              content: reply.text,
+              sources: reply.sources,
+              notFound: reply.not_found,
+            },
           ]);
-          maybeAutoCopy(reply);
+          maybeAutoCopy(reply.text);
         } else {
           setError(res.error || t("agent.error"));
         }
@@ -209,14 +247,21 @@ export function AgentPanel() {
     // in the (hidden) version list. The button is disabled; this also covers
     // the global follow-up shortcut.
     if (busyRef.current || versionsRef.current.length === 0) return;
-    // Freeze the displayed version into the conversation history.
-    const reply = versionsRef.current[versionIdxRef.current] ?? "";
+    // Freeze the displayed version into the conversation history (evidence and
+    // not-found carried through so the footer persists after expanding).
+    const reply = versionsRef.current[versionIdxRef.current];
     const seed: ChatMessage[] = [];
     if (instructionRef.current) {
       seed.push({ id: rid(), role: "user", content: instructionRef.current });
     }
-    if (reply) {
-      seed.push({ id: rid(), role: "assistant", content: reply });
+    if (reply && reply.text) {
+      seed.push({
+        id: rid(),
+        role: "assistant",
+        content: reply.text,
+        sources: reply.sources,
+        notFound: reply.not_found,
+      });
     }
     setMessages(seed);
     setExpanded(true);
@@ -229,7 +274,7 @@ export function AgentPanel() {
   const confirm = useCallback(() => {
     const text = expandedRef.current
       ? lastReplyOf(messagesRef.current)
-      : (versionsRef.current[versionIdxRef.current] ?? "");
+      : (versionsRef.current[versionIdxRef.current]?.text ?? "");
     if (!text.trim() || busyRef.current) return;
     void commands.agentConfirmPaste(text).catch(() => {});
   }, []);
@@ -243,7 +288,7 @@ export function AgentPanel() {
   const copyReply = useCallback(() => {
     const text = expandedRef.current
       ? lastReplyOf(messagesRef.current)
-      : (versionsRef.current[versionIdxRef.current] ?? "");
+      : (versionsRef.current[versionIdxRef.current]?.text ?? "");
     if (!text) return;
     commands.agentCopy(text).then(flashCopied).catch(() => {});
   }, [flashCopied]);
@@ -402,6 +447,55 @@ export function AgentPanel() {
     await runConversation(next);
   }, [runConversation]);
 
+  /** Open the memory browser — on a specific note (source chip) or unfocused
+   * (the not-found escape hatch). Both go through the existing overlay command. */
+  const openNote = useCallback((noteId: string | null) => {
+    void commands.grainSpaceOpenWindow(noteId).catch(() => {});
+  }, []);
+
+  /** The Grain Recall evidence strip under an answer: source chips (click →
+   * overlay focus) or the not-found escape-hatch button. Renders nothing for
+   * Assist replies (empty sources, not_found = false). RECALL-PLAN §6. */
+  const renderEvidence = (sources: AgentSource[], notFound: boolean) => {
+    if (notFound) {
+      return (
+        <div className="agc-evidence">
+          <button
+            type="button"
+            className="agc-notfound-btn"
+            onClick={() => openNote(null)}
+          >
+            {t("agent.notFoundOpen")}
+          </button>
+        </div>
+      );
+    }
+    if (sources.length === 0) return null;
+    return (
+      <div className="agc-evidence">
+        <div className="agc-evidence-label">
+          {t("agent.basedOn", { count: sources.length })}
+        </div>
+        <div className="agc-chips">
+          {sources.map((s) => (
+            <button
+              key={s.note_id}
+              type="button"
+              className="agc-chip"
+              title={relDate(s.saved_at)}
+              onClick={() => openNote(s.note_id)}
+            >
+              <span className="agc-chip-title">
+                {s.title.trim() || t("agent.untitledNote")}
+              </span>
+              <span className="agc-chip-date">{relDate(s.saved_at)}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
   const quoteText = contextRef.current?.trim() || instructionRef.current;
   const shortcutParts = followupShortcut
     ? followupShortcut.split("+").map(keycapLabel)
@@ -478,7 +572,10 @@ export function AgentPanel() {
             ) : error ? (
               <div className="agc-error">{error}</div>
             ) : (
-              <div className="agc-reply">{displayedReply}</div>
+              <>
+                <div className="agc-reply">{displayedReply}</div>
+                {renderEvidence(compactSources, compactNotFound)}
+              </>
             )}
             <div ref={endRef} />
           </div>
@@ -566,6 +663,8 @@ export function AgentPanel() {
               <div className={`agc-turn-body agc-turn-body--${m.role}`}>
                 {m.content}
               </div>
+              {m.role === "assistant" &&
+                renderEvidence(m.sources ?? [], m.notFound ?? false)}
             </div>
           ))}
 

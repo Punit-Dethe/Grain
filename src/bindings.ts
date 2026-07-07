@@ -853,7 +853,7 @@ async agentCopy(text: string) : Promise<Result<null, string>> {
  * rotation pool (round-robin + daily quota + health-ordered failover). The
  * focused-field context captured at summon (if any) is injected backend-side.
  */
-async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<string, string>> {
+async agentRun(messages: AgentMessage[], context: string | null) : Promise<Result<AgentReply, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("agent_run", { messages, context }) };
 } catch (e) {
@@ -1440,6 +1440,19 @@ export type AgentMessage = {
  * `"user"` or `"assistant"` (anything else is treated as `"user"`).
  */
 role: string; content: string }
+/**
+ * The panel's per-turn reply. `text` is the display answer (any Recall
+ * convention line already stripped). `sources` + `not_found` drive Recall's
+ * evidence footer / escape hatch (RECALL-PLAN §6); Assist always returns an
+ * empty `sources` and `not_found = false`, so the panel renders no footer.
+ */
+export type AgentReply = { text: string; sources: AgentSource[]; not_found: boolean }
+/**
+ * One evidence source behind a Grain Recall answer (RECALL-PLAN §6.2). `title`
+ * is the note's title (falling back to its summary); `saved_at` is a Unix-
+ * millis timestamp for the chip's relative-age label. Empty for Assist.
+ */
+export type AgentSource = { note_id: string; title: string; saved_at: number }
 /**
  * [GRAIN] How an [`AppMode`] is bound to the active target. A mode fires when the
  * foreground app (or, in a browser, the current site) matches. `Process` matches
