@@ -788,6 +788,7 @@
       "dismiss": "Dismiss",
       "empty": "No notes yet.",
       "exportNotes": "Export all notes…",
+      "uninstallModel": "Uninstall model (~130 MB)",
       "consentTitle": "Download the semantic model?",
       "consentBody": "Semantic search runs BGE-small-en-v1.5 locally (MIT license, ~130 MB one-time download from Hugging Face into your model cache). Notes and searches never leave this machine.",
       "consentConfirm": "Download & enable",

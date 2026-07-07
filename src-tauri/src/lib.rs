@@ -654,6 +654,7 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_close_window,
             grain_space::commands::grain_space_take_focus_note,
             grain_space::commands::grain_space_embed_model_status,
+            grain_space::commands::grain_space_uninstall_embed_model,
             grain_space::commands::grain_space_download_embed_model,
             grain_space::commands::grain_space_cancel_embed_model_download,
             grain_space::commands::grain_space_semantic_search,
