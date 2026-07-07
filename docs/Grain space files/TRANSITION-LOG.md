@@ -5,6 +5,66 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2 (part 7): Note capture moved onto the Agent pill (voice OR type + selection)
+
+User-requested change (mid-R4), NOT part of RECALL-PLAN. Note CREATION used to be
+an ordinary transcribe session on the MAIN recording pill (`grain_space_capture`
+→ `is_transcribe_binding` → `TranscribeAction::stop` intake → `intake_transcript`).
+Now it summons the **Agent pill** in a new **`AgentMode::Capture`**, exactly the
+way Recall added a mode. This buys text input for free (type a note — good for
+passwords/case-sensitive text) alongside voice, AND folds in the selection.
+
+**Decisions (from the user, this session):**
+- Selection = the note **body, verbatim** (never rewritten); the spoken/typed
+  words **frame** it (title/summary only). No selection → the spoken/typed text
+  IS the note. (Preserves the locked "body is verbatim" invariant.)
+- **One-shot**: submit → structure → save → panel shows `Saved — "<title>"`.
+  Nothing else changes functionally.
+- Pill **selection chip** shows only when there IS a selection; empty = blank
+  (was "No selection"). Applies to all modes (also de-noises Recall).
+
+**What changed:**
+1. `agent.rs`: `AgentMode::Capture` + `summon_capture` (= `summon_inner` with the
+   mode). `summon_inner` gating refined — Assist: selection+field+paste-target;
+   Capture: selection ONLY (never pastes); Recall: none. `agent_run` now
+   `match`es the mode → `capture::run_capture_turn`.
+2. `capture.rs`: new `run_capture_turn(app, messages, selection)` — picks body
+   (selection else instruction) + framing, builds the note via the shared
+   `compose_note` (renamed/extended with a `framing: Option<&str>` arg), saves,
+   returns a one-shot `AgentReply::plain("Saved — …")`. `extract_metadata` took
+   the same `framing` arg (a `framing_line` in the system prompt; body stays
+   verbatim). Removed the now-dead `intake_transcript`.
+3. `actions.rs`: new `GrainSpaceCaptureAction` (tap → `summon_capture`); ACTION_MAP
+   entry swapped off `TranscribeAction`; removed the `grain_space_capture` branch
+   in `TranscribeAction::stop`.
+4. `transcription_coordinator.rs`: `grain_space_capture` removed from
+   `is_transcribe_binding` (it no longer uses the batch record/transcribe path —
+   the agent dictation lease handles STT).
+5. `grain-pill/src/lib.rs`: selection chip rendered only when `selection_chars > 0`.
+6. `grain-core/settings.rs`: binding display name `Dictate Note` → `Create Note`
+   (+ description). `GrainSpaceSettings.tsx`: capture-group + empty-state copy.
+
+**Verified:** `cargo build` clean (incl. grain-pill), `cargo test --lib` **172
+passed**, `cargo fmt`, `tsc`, eslint clean. **Boot smoke test**: app starts, pill
+supervisor + window come up, no panic. No new commands/types ⇒ `bindings.ts`
+unchanged. Commit `ed59aed`.
+
+### NEEDS USER TESTING (GUI, can't drive headlessly)
+Press the Create Note shortcut (default ctrl+alt+n) with Grain Space enabled:
+(a) speak → Enter → note saved; (b) type → Enter → note saved (no STT);
+(c) select text elsewhere, summon, say "save this as X" → selection saved as body,
+framed by the instruction; (d) pill shows the char chip only when text is
+selected. Ctrl+Shift+C quick-add is unchanged.
+
+### Gotchas
+- Capture reuses the panel's paste-`Confirm` button (an Assist affordance) — it'd
+  paste the "Saved" text if clicked. Left as-is (same as Recall); not wired for a
+  per-mode hide. Revisit only if it confuses in testing.
+- The pill placeholder still says "Ask anything…" for every mode (visual
+  differentiation deferred, per the Recall precedent).
+
+---
+
 ## 2026-07-07 — Session 2 (part 6): Grain Recall R4 STARTED (hardening — 2 items done)
 
 Read `RECALL-PLAN.md` §8. R4 is a grab-bag of hardening/cleanup/polish. Two
