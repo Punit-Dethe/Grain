@@ -31,7 +31,11 @@
     "basedOn_one": "Based on {{count}} memory",
     "basedOn_other": "Based on {{count}} memories",
     "untitledNote": "Untitled",
-    "notFoundOpen": "Couldn't find that memory — open your notes"
+    "notFoundOpen": "Couldn't find that memory — open your notes",
+    "forgetConfirm": "Delete “{{title}}”? This can't be undone.",
+    "forgetDelete": "Delete",
+    "forgetCancel": "Keep it",
+    "forgetDone": "Deleted “{{title}}”."
   },
   "tray": {
     "settings": "Settings...",

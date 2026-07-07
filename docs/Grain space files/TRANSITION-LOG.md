@@ -5,6 +5,75 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2 (part 5): Grain Recall R3 COMPLETE (conversational writing)
+
+Read `RECALL-PLAN.md` §7 first. R3 = CRUD-by-conversation. Inside a recall chat
+the user can say "add the parser refactor", "the first two are done", "actually
+the password is X now", "remember that…", or "forget the Rust note" and Grain
+folds it into the note the same structured way capture created it.
+
+1. **`capture::reconcile_note(app, current, change, convo_context)` (new, §7.1).**
+   The MERGE sibling of `extract_metadata`, reusing the SAME infra
+   (`send_chat_completion_with_schema` + `strip_code_fences` + `record_usage` +
+   `llm_usable` gate). Structured schema = capture's fields plus `body` and
+   per-todo `done`. `MergedMeta::apply_to` is CONSERVATIVE: a blank field keeps
+   the current value (a weak completion can never erase the note); todos are the
+   model's full merged list, kept as-is only when it returns none; the reminder
+   is touched only when the change mentions timing; id/timestamp/pin preserved.
+   **Degrade-safe:** no usable provider or any LLM/parse failure →
+   `raw_append` (change appended to body verbatim, rest untouched — never lose
+   the user's words). Also added `compose_note` (verbatim body + one extraction)
+   for the `remember` path, mirroring `intake_transcript` without saving.
+2. **ACTION convention (§7.2).** New `RecallAction { Reconcile{m} | Remember |
+   Complete{m,todos} | Forget{m} }`; `ParsedTail` gained `action`. `parse_tail`
+   recognizes an `ACTION:` last line (mutually exclusive with SOURCES/NOT_FOUND);
+   `parse_action` is tolerant of synonyms and reads todo indices ONLY from the
+   substring after "todo" so an `Mn` number never leaks in. Prompt gained rules
+   9–11 (action verbs + "confirm forget in words, don't delete" + "plain Q always
+   uses SOURCES").
+3. **Execution in `run_turn`.** After parse: `remember` → `compose_note` + save;
+   `update/append` → `reconcile_note` + save; `complete Mn todos …` → direct
+   todo-flip by index + save (no LLM); `forget` → NON-destructive: returns
+   `confirm_delete = Some(AgentSource)` for in-panel confirmation. Writes go
+   through new `persist()` (save off-runtime + `emit_notes_changed` +
+   `reminders::sync`), so overlay + settings refresh live. `convo_context` = the
+   previous Grain answer, so "the first two" resolves. Added `read_note` helper.
+4. **`AgentReply.confirm_delete: Option<AgentSource>`** (specta; `None` for Assist
+   and every non-forget turn).
+5. **Panel forget-confirm (frontend).** `renderConfirmDelete(src)` shows
+   "Delete "<title>"? This can't be undone." + **Delete** / **Keep it** buttons
+   under the answer (compact + per-turn expanded). Delete → existing
+   `grainSpaceDeleteNote(note_id)` then "Deleted "<title>."; Keep → dismiss.
+   Resolution tracked per note-id in `deleteResolved` state. **Deviation from
+   §7.2:** explicit buttons instead of hijacking global Enter/Esc (those already
+   mean paste/close in the panel) — deletion still requires an explicit click,
+   which is the safety property that matters. i18n: `agent.forget{Confirm,Delete,
+   Cancel,Done}`. CSS: `.agc-confirm-delete/-q/-actions/.agc-forget-btn/
+   .agc-cancel-btn/.agc-forget-done`.
+
+**Verified:** `cargo test --lib` **171 passed** (5 new: raw_append, MergedMeta
+conservative-on-blanks + todo-replace, parse_tail actions, parse_action todo/
+synonym). `cargo fmt`, `tsc`, eslint(AgentPanel) clean. `bindings.ts` regenerated
+(ran `handy.exe` ~10 s; `AgentReply` now carries `confirm_delete`).
+
+### Next concrete step (R4 — hardening)
+RECALL-PLAN §8 "adopted Phase-6 list" + §4.36 removal: corrupt-JSON quarantine
+(`notes/corrupt/`), INT8/quantized embed model (also fixes the ~130 MB f32
+download), long-note chunked embedding, export-all-notes, model-uninstall button,
+decay-λ setting UI, overlay multi-monitor placement, append-while-capture; PLUS
+remove the dormant `grain_space_retrieval_mode` setting field + command; PLUS
+prompt iteration from real usage. Pick these off one at a time.
+
+### Gotchas
+- `reconcile_note` NEVER errors out — it always returns a `Note` (merged or
+  raw-appended). Callers just save whatever it returns.
+- An ACTION citing an unknown M-number is a silent no-op (model may still have
+  said "Done"). Rare; acceptable. Don't turn it into a hard error.
+- Forget is the ONLY deferred action; everything else executes before `run_turn`
+  returns, so the spoken confirmation and the actual write land together.
+
+---
+
 ## 2026-07-07 — Session 2 (part 4): Grain Recall R2 COMPLETE (evidence + escape hatch)
 
 Read `RECALL-PLAN.md` §6 first. R2 = the panel now surfaces WHERE an answer came

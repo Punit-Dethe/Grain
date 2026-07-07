@@ -156,6 +156,10 @@ pub struct AgentReply {
     pub text: String,
     pub sources: Vec<AgentSource>,
     pub not_found: bool,
+    /// Set only by a Grain Recall `forget` turn (RECALL-PLAN §7.2): the memory
+    /// the user asked to delete. Destructive, so the panel confirms in-place
+    /// before calling `grain_space_delete_note`. `None` on every other turn.
+    pub confirm_delete: Option<AgentSource>,
 }
 
 impl AgentReply {
@@ -166,6 +170,7 @@ impl AgentReply {
             text,
             sources: Vec::new(),
             not_found: false,
+            confirm_delete: None,
         }
     }
 }

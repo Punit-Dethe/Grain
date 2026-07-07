@@ -26,6 +26,8 @@ interface ChatMessage {
   // Grain Recall evidence footer (RECALL-PLAN §6): empty/false for Assist.
   sources?: AgentSource[];
   notFound?: boolean;
+  // A `forget` turn hands us the memory to confirm before deletion (§7.2).
+  confirmDelete?: AgentSource | null;
 }
 
 const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -147,6 +149,7 @@ export function AgentPanel() {
    * Expanded renders a footer per assistant turn instead. */
   const compactSources = versions[versionIdx]?.sources ?? [];
   const compactNotFound = versions[versionIdx]?.not_found ?? false;
+  const compactConfirmDelete = versions[versionIdx]?.confirm_delete ?? null;
 
   const flashCopied = useCallback(() => {
     setCopyFlash(true);
@@ -221,6 +224,7 @@ export function AgentPanel() {
               content: reply.text,
               sources: reply.sources,
               notFound: reply.not_found,
+              confirmDelete: reply.confirm_delete,
             },
           ]);
           maybeAutoCopy(reply.text);
@@ -261,6 +265,7 @@ export function AgentPanel() {
         content: reply.text,
         sources: reply.sources,
         notFound: reply.not_found,
+        confirmDelete: reply.confirm_delete,
       });
     }
     setMessages(seed);
@@ -453,6 +458,61 @@ export function AgentPanel() {
     void commands.grainSpaceOpenWindow(noteId).catch(() => {});
   }, []);
 
+  // Resolution of each `forget` confirmation, keyed by note id — a forget for a
+  // given memory surfaces at most once per conversation.
+  const [deleteResolved, setDeleteResolved] = useState<
+    Record<string, "deleted" | "cancelled">
+  >({});
+  const confirmForget = useCallback((noteId: string) => {
+    void commands
+      .grainSpaceDeleteNote(noteId)
+      .then(() => setDeleteResolved((p) => ({ ...p, [noteId]: "deleted" })))
+      .catch(() => {});
+  }, []);
+  const cancelForget = useCallback((noteId: string) => {
+    setDeleteResolved((p) => ({ ...p, [noteId]: "cancelled" }));
+  }, []);
+
+  /** The in-panel delete confirmation for a `forget` turn (RECALL-PLAN §7.2):
+   * an explicit Delete / Keep choice — deletion never happens without a click. */
+  const renderConfirmDelete = (src: AgentSource) => {
+    const title = src.title.trim() || t("agent.untitledNote");
+    const state = deleteResolved[src.note_id];
+    if (state === "cancelled") return null;
+    if (state === "deleted") {
+      return (
+        <div className="agc-evidence">
+          <span className="agc-forget-done">
+            {t("agent.forgetDone", { title })}
+          </span>
+        </div>
+      );
+    }
+    return (
+      <div className="agc-evidence agc-confirm-delete">
+        <span className="agc-confirm-q">
+          {t("agent.forgetConfirm", { title })}
+        </span>
+        <div className="agc-confirm-actions">
+          <button
+            type="button"
+            className="agc-forget-btn"
+            onClick={() => confirmForget(src.note_id)}
+          >
+            {t("agent.forgetDelete")}
+          </button>
+          <button
+            type="button"
+            className="agc-cancel-btn"
+            onClick={() => cancelForget(src.note_id)}
+          >
+            {t("agent.forgetCancel")}
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   /** The Grain Recall evidence strip under an answer: source chips (click →
    * overlay focus) or the not-found escape-hatch button. Renders nothing for
    * Assist replies (empty sources, not_found = false). RECALL-PLAN §6. */
@@ -575,6 +635,8 @@ export function AgentPanel() {
               <>
                 <div className="agc-reply">{displayedReply}</div>
                 {renderEvidence(compactSources, compactNotFound)}
+                {compactConfirmDelete &&
+                  renderConfirmDelete(compactConfirmDelete)}
               </>
             )}
             <div ref={endRef} />
@@ -665,6 +727,9 @@ export function AgentPanel() {
               </div>
               {m.role === "assistant" &&
                 renderEvidence(m.sources ?? [], m.notFound ?? false)}
+              {m.role === "assistant" &&
+                m.confirmDelete &&
+                renderConfirmDelete(m.confirmDelete)}
             </div>
           ))}
 

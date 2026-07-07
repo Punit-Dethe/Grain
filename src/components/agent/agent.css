@@ -459,6 +459,55 @@
   color: var(--agc-ink);
   border-color: var(--orange);
 }
+/* Forget confirmation (RECALL-PLAN §7.2): destructive, so an explicit choice. */
+.agc-confirm-delete {
+  gap: 7px;
+}
+.agc-confirm-q {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--agc-ink);
+}
+.agc-confirm-actions {
+  display: flex;
+  gap: 6px;
+}
+.agc-forget-btn,
+.agc-cancel-btn {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.agc-forget-btn {
+  border: 1px solid #c0392f;
+  background: transparent;
+  color: #ff6b5e;
+}
+.agc-forget-btn:hover {
+  background: #c0392f;
+  color: #fff;
+}
+.agc-cancel-btn {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--agc-recess);
+  color: var(--agc-muted);
+}
+.agc-cancel-btn:hover {
+  background: #34343a;
+  color: var(--agc-ink);
+}
+.agc-forget-done {
+  font-family: var(--agc-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--agc-muted);
+}
 
 /* Bottom control bar */
 .agc-foot {
