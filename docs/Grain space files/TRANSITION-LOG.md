@@ -5,7 +5,28 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
-## 2026-07-07 — Session 2: Phases 3 + 4 COMPLETE (overlay window + semantic search)
+## 2026-07-07 — Session 2 (part 2): PIVOT — Phases 5/6 scrapped, Grain Recall planned
+
+**FINAL-PLAN.md Phases 5 and 6 are DEAD as written.** The product vision was
+rewritten (`docs/PRODUCT-VISION.md`): Grain Space is an AI memory companion —
+answer-first conversational retrieval, notes are evidence, not the interface.
+The replacement plan is **`RECALL-PLAN.md` in this folder** — read it (and
+PRODUCT-VISION.md) before doing ANY retrieval work. Summary of the pivot:
+- Retrieval reuses the ENTIRE Agent ecosystem (native pill input voice+type,
+  bottom-right panel, expanded conversation, follow-up shortcut) via a new
+  `AgentMode::Recall` — no new surfaces. Visual differentiation deferred.
+- Pipeline: hybrid FTS+semantic retrieval with RRF fusion → memories block
+  with stable M-ids → tight system prompt → answer + tolerant trailing
+  `SOURCES:` line. Sources click-through to the overlay is phase R2.
+- Old Phase 5's "results list mode" and `grain_space_retrieval_mode` are dead;
+  old Phase 6's hardening list survives as phase R4.
+- **Next concrete step: RECALL-PLAN.md phase R1** (binding + `summon_memory`
+  via a `summon_inner(app, mode)` extraction in agent.rs + `recall.rs`).
+No code was written for this pivot in this session — planning only.
+
+---
+
+## 2026-07-07 — Session 2 (part 1): Phases 3 + 4 COMPLETE (overlay window + semantic search)
 
 ### Status snapshot
 - [x] FINAL-PLAN.md written (authoritative)
