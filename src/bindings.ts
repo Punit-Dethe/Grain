@@ -1446,7 +1446,13 @@ role: string; content: string }
  * evidence footer / escape hatch (RECALL-PLAN §6); Assist always returns an
  * empty `sources` and `not_found = false`, so the panel renders no footer.
  */
-export type AgentReply = { text: string; sources: AgentSource[]; not_found: boolean }
+export type AgentReply = { text: string; sources: AgentSource[]; not_found: boolean; 
+/**
+ * Set only by a Grain Recall `forget` turn (RECALL-PLAN §7.2): the memory
+ * the user asked to delete. Destructive, so the panel confirms in-place
+ * before calling `grain_space_delete_note`. `None` on every other turn.
+ */
+confirm_delete: AgentSource | null }
 /**
  * One evidence source behind a Grain Recall answer (RECALL-PLAN §6.2). `title`
  * is the note's title (falling back to its summary); `saved_at` is a Unix-

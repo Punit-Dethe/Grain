@@ -252,6 +252,232 @@ async fn extract_metadata(
     Ok(meta)
 }
 
+// -- conversational writing (RECALL-PLAN §7) -----------------------------------
+
+/// The structured-output shape for a reconcile (merge) call. Same fields as
+/// [`ExtractedMeta`] plus the merged `body` and per-todo `done` state.
+#[derive(Deserialize, Debug)]
+struct MergedMeta {
+    body: String,
+    title: String,
+    tldr: String,
+    #[serde(default)]
+    todos: Vec<MergedTodo>,
+    #[serde(default)]
+    reminder_at: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct MergedTodo {
+    text: String,
+    #[serde(default)]
+    done: bool,
+}
+
+impl MergedMeta {
+    /// Fold the merge onto a clone of `current`, preserving id/timestamp/pin.
+    /// Conservative: a blank field from the model keeps the current value, so a
+    /// weak completion can never erase the note.
+    fn apply_to(self, current: &Note, auto_arm: bool) -> Note {
+        let mut note = current.clone();
+        if !self.body.trim().is_empty() {
+            note.body = self.body.trim().to_string();
+        }
+        if !self.title.trim().is_empty() {
+            note.title = self.title.trim().to_string();
+        }
+        if !self.tldr.trim().is_empty() {
+            note.tldr = self.tldr.trim().to_string();
+        }
+        // Trust the model's FULL merged todo list; keep the current list only
+        // when it returned none (never silently drop todos).
+        let todos: Vec<TodoTag> = self
+            .todos
+            .into_iter()
+            .map(|t| TodoTag {
+                text: t.text.trim().to_string(),
+                done: t.done,
+            })
+            .filter(|t| !t.text.is_empty())
+            .collect();
+        if !todos.is_empty() {
+            note.todo_tags = todos;
+        }
+        // Only touch the reminder when the change actually specified timing.
+        if let Some(ms) = parse_local_datetime_ms(self.reminder_at.trim()) {
+            note.reminder_state = ReminderState {
+                status: if auto_arm {
+                    ReminderStatus::Armed
+                } else {
+                    ReminderStatus::Pending
+                },
+                fire_at: Some(ms),
+            };
+        }
+        note
+    }
+}
+
+/// Conservatively merge a spoken change into an existing note (RECALL-PLAN §7.1)
+/// — the reconcile sibling of [`extract_metadata`], reusing the same structured
+/// LLM infra. NEVER loses the user's words: with no usable provider, or on any
+/// LLM/parse failure, it falls back to appending the raw change to the body and
+/// leaving the rest untouched. Returns the merged note ready to save; id,
+/// timestamp, and pin state are preserved.
+pub(crate) async fn reconcile_note(
+    app: &AppHandle,
+    current: &Note,
+    change: &str,
+    convo_context: &str,
+) -> Note {
+    let settings = get_settings(app);
+    if llm_usable(&settings) {
+        match reconcile_call(app, &settings, current, change, convo_context).await {
+            Ok(merged) => return merged.apply_to(current, settings.grain_space_auto_reminders),
+            Err(e) => {
+                log::warn!("[GRAIN] space reconcile: merge failed ({e}); raw-appending change")
+            }
+        }
+    }
+    raw_append(current, change)
+}
+
+/// Degrade path: append the change to the body verbatim, keep everything else.
+fn raw_append(current: &Note, change: &str) -> Note {
+    let mut note = current.clone();
+    let change = change.trim();
+    if change.is_empty() {
+        return note;
+    }
+    note.body = if note.body.trim().is_empty() {
+        change.to_string()
+    } else {
+        format!("{}\n{}", note.body.trim_end(), change)
+    };
+    note
+}
+
+/// Build a note from freshly-spoken text (the `remember` action): verbatim body
+/// + one metadata extraction, mirroring [`intake_transcript`] but returning the
+/// note instead of saving. Degrades to a raw note on any extraction failure.
+pub(crate) async fn compose_note(app: &AppHandle, text: &str) -> Note {
+    let mut note = Note::raw(text.trim().to_string());
+    let settings = get_settings(app);
+    if llm_usable(&settings) {
+        match extract_metadata(app, &settings, text.trim()).await {
+            Ok(meta) => meta.apply(&mut note, settings.grain_space_auto_reminders),
+            Err(e) => log::warn!("[GRAIN] space remember: extraction failed ({e}); raw note"),
+        }
+    }
+    note
+}
+
+/// One structured merge call against the active post-process provider.
+async fn reconcile_call(
+    app: &AppHandle,
+    settings: &AppSettings,
+    current: &Note,
+    change: &str,
+    convo_context: &str,
+) -> Result<MergedMeta, String> {
+    let provider = settings
+        .active_post_process_provider()
+        .cloned()
+        .ok_or("no active provider")?;
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    let client = app
+        .try_state::<reqwest::Client>()
+        .map(|s| s.inner().clone())
+        .ok_or("shared HTTP client unavailable")?;
+
+    let note_json = serde_json::json!({
+        "title": current.title,
+        "tldr": current.tldr,
+        "body": current.body,
+        "todos": current.todo_tags.iter().map(|t| serde_json::json!({ "text": t.text, "done": t.done })).collect::<Vec<_>>(),
+    })
+    .to_string();
+    let context_block = if convo_context.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\nRecent conversation (resolve references like \"the first two\" against this):\n{}\n",
+            convo_context.trim()
+        )
+    };
+    let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
+    let system_prompt = format!(
+        "You are updating one of the user's saved memories from something they just said. Merge \
+         their change into the memory CONSERVATIVELY and reply with JSON only.\n\
+         Current memory (JSON): {note_json}{context_block}\n\
+         Rules:\n\
+         - body: incorporate the new information. APPEND by default; only rewrite existing wording \
+         when the change genuinely supersedes it (e.g. a changed password replaces the old value, \
+         keeping the rest). NEVER drop content the user did not ask to remove.\n\
+         - title: at most 3 words. Keep the existing title unless the memory is now about something \
+         different.\n\
+         - tldr: one short sentence describing the merged memory.\n\
+         - todos: the FULL merged list of items as {{text, done}} objects. Add new ones, mark named \
+         ones done, drop only ones the user says to remove; preserve existing done states and order \
+         otherwise.\n\
+         - reminder_at: only if the change mentions a time/reminder — the local datetime \
+         YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}."
+    );
+
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "body": { "type": "string" },
+            "title": { "type": "string" },
+            "tldr": { "type": "string" },
+            "todos": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": { "type": "string" },
+                        "done": { "type": "boolean" }
+                    },
+                    "required": ["text", "done"],
+                    "additionalProperties": false
+                }
+            },
+            "reminder_at": { "type": "string" }
+        },
+        "required": ["body", "title", "tldr", "todos", "reminder_at"],
+        "additionalProperties": false
+    });
+
+    let success = crate::llm_client::send_chat_completion_with_schema(
+        &client,
+        &provider,
+        api_key,
+        &model,
+        change.to_string(),
+        Some(system_prompt),
+        Some(schema),
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let content = success.content.ok_or("empty completion")?;
+    let meta: MergedMeta =
+        serde_json::from_str(strip_code_fences(&content)).map_err(|e| e.to_string())?;
+    crate::post_process_router::record_usage(app, &provider.id);
+    Ok(meta)
+}
+
 /// Some models fence JSON in ```json blocks even under structured output.
 fn strip_code_fences(s: &str) -> &str {
     let t = s.trim();
@@ -310,5 +536,67 @@ mod tests {
     fn code_fences_are_stripped() {
         assert_eq!(strip_code_fences("```json\n{\"a\":1}\n```"), "{\"a\":1}");
         assert_eq!(strip_code_fences("{\"a\":1}"), "{\"a\":1}");
+    }
+
+    #[test]
+    fn raw_append_preserves_and_appends() {
+        let mut cur = Note::raw("original".into());
+        cur.title = "Keep Me".into();
+        let out = raw_append(&cur, "  more info  ");
+        assert_eq!(out.body, "original\nmore info");
+        assert_eq!(out.title, "Keep Me"); // untouched
+        assert_eq!(out.id, cur.id); // identity preserved
+
+        let empty = Note::raw("".into());
+        assert_eq!(raw_append(&empty, "first").body, "first");
+    }
+
+    #[test]
+    fn merged_meta_is_conservative_on_blanks() {
+        let mut cur = Note::raw("body".into());
+        cur.title = "Old Title".into();
+        cur.tldr = "old summary".into();
+        cur.todo_tags = vec![TodoTag {
+            text: "task".into(),
+            done: false,
+        }];
+        // Model returned blank title/tldr/body and no todos → keep everything.
+        let merged = MergedMeta {
+            body: "  ".into(),
+            title: "".into(),
+            tldr: "".into(),
+            todos: vec![],
+            reminder_at: "".into(),
+        }
+        .apply_to(&cur, true);
+        assert_eq!(merged.body, "body");
+        assert_eq!(merged.title, "Old Title");
+        assert_eq!(merged.tldr, "old summary");
+        assert_eq!(merged.todo_tags.len(), 1);
+        assert_eq!(merged.reminder_state.status, ReminderStatus::None);
+    }
+
+    #[test]
+    fn merged_meta_replaces_todos_when_provided() {
+        let cur = Note::raw("b".into());
+        let merged = MergedMeta {
+            body: "b".into(),
+            title: "T".into(),
+            tldr: "s".into(),
+            todos: vec![
+                MergedTodo {
+                    text: "one".into(),
+                    done: true,
+                },
+                MergedTodo {
+                    text: " ".into(),
+                    done: false,
+                },
+            ],
+            reminder_at: "".into(),
+        }
+        .apply_to(&cur, false);
+        assert_eq!(merged.todo_tags.len(), 1); // blank dropped
+        assert!(merged.todo_tags[0].done);
     }
 }

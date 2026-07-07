@@ -17,6 +17,7 @@ use std::path::Path;
 use anyhow::Result;
 use tauri::{AppHandle, Manager};
 
+use super::capture;
 use super::store::{self, Note};
 use crate::agent::{AgentMessage, AgentReply, AgentSource};
 
@@ -100,7 +101,19 @@ fn system_prompt(now: &str, weekday: &str) -> String {
          8. If the thing the user is asking about is genuinely NOT among the memories (absent, \
          not merely thin), do not keep asking questions to fish for it. Give one honest sentence \
          and make your LAST line exactly `NOT_FOUND` (instead of the SOURCES line). Use this only \
-         when you are confident the memory does not exist."
+         when you are confident the memory does not exist.\n\
+         9. If the user asks you to CHANGE their memories, do it instead of just answering: reply \
+         with a short confirmation and end with ONE action line IN PLACE OF the SOURCES line —\n\
+         - add to or update a memory: `ACTION: update Mn`\n\
+         - save something brand-new: `ACTION: remember`\n\
+         - mark todos done in a memory: `ACTION: complete Mn todos 1,2`\n\
+         - delete a memory: `ACTION: forget Mn`\n\
+         10. For update/remember/complete, word your answer as a done-confirmation (\"Done — added \
+         the parser refactor and marked the first two off.\"). For forget, do NOT confirm deletion; \
+         instead ASK them to confirm it (\"Delete the 'Rust tasks' note?\") — the app will ask for a \
+         final click.\n\
+         11. Use an action line ONLY when the user clearly asks to change something; a plain \
+         question always ends with SOURCES, never ACTION."
     )
 }
 
@@ -304,11 +317,27 @@ fn plural(n: i64) -> &'static str {
 
 // -- final-line parsing ---------------------------------------------------------
 
-/// What the model's trailing convention line told us.
+/// A conversational-write action the model requested via the `ACTION:` line
+/// (RECALL-PLAN §7.2). The M-numbers reference memories in the current block.
+#[derive(Debug, PartialEq)]
+pub enum RecallAction {
+    /// Merge the turn text into memory Mn (append/update → reconcile LLM pass).
+    Reconcile { m: usize },
+    /// Save the turn text as a brand-new memory.
+    Remember,
+    /// Mark todos (1-based indices) done in memory Mn — no LLM merge needed.
+    Complete { m: usize, todos: Vec<usize> },
+    /// Delete memory Mn — destructive, confirmed in-panel before it runs.
+    Forget { m: usize },
+}
+
+/// What the model's trailing convention line told us. `sources`/`not_found` and
+/// `action` are mutually exclusive per turn (a turn either answers or acts).
 #[derive(Debug, Default, PartialEq)]
 pub struct ParsedTail {
     pub sources: Vec<usize>,
     pub not_found: bool,
+    pub action: Option<RecallAction>,
 }
 
 /// Split the answer's trailing `SOURCES:` / `NOT_FOUND` line off the display
@@ -323,8 +352,8 @@ pub fn parse_tail(reply: &str) -> (String, ParsedTail) {
             return (
                 String::new(),
                 ParsedTail {
-                    sources: Vec::new(),
                     not_found: true,
+                    ..Default::default()
                 },
             );
         }
@@ -338,8 +367,18 @@ pub fn parse_tail(reply: &str) -> (String, ParsedTail) {
         return (
             body,
             ParsedTail {
-                sources: Vec::new(),
                 not_found: true,
+                ..Default::default()
+            },
+        );
+    }
+    if let Some(rest) = lower.strip_prefix("action:") {
+        let body = trimmed[..last_break].trim_end().to_string();
+        return (
+            body,
+            ParsedTail {
+                action: parse_action(rest),
+                ..Default::default()
             },
         );
     }
@@ -358,12 +397,49 @@ pub fn parse_tail(reply: &str) -> (String, ParsedTail) {
             body,
             ParsedTail {
                 sources,
-                not_found: false,
+                ..Default::default()
             },
         );
     }
     // No recognized convention line — show the whole reply as-is.
     (trimmed.to_string(), ParsedTail::default())
+}
+
+/// Parse the payload after `ACTION:` (already lowercased) into a [`RecallAction`].
+/// Tolerant of synonyms and phrasing; an unrecognized verb yields `None` (the
+/// turn is then treated as a plain answer). Todo indices are read only from the
+/// substring after the word "todo(s)" so an `Mn` number is never mistaken for one.
+fn parse_action(rest: &str) -> Option<RecallAction> {
+    let s = rest.trim();
+    let verb = s.split_whitespace().next()?;
+    let find_m = |s: &str| -> Option<usize> {
+        s.split(|c: char| !c.is_ascii_alphanumeric())
+            .find_map(|tok| tok.strip_prefix('m').and_then(|n| n.parse::<usize>().ok()))
+    };
+    match verb {
+        "remember" | "save" | "create" | "new" => Some(RecallAction::Remember),
+        "update" | "append" | "edit" | "change" | "add" | "merge" => {
+            find_m(s).map(|m| RecallAction::Reconcile { m })
+        }
+        "forget" | "delete" | "remove" | "drop" => find_m(s).map(|m| RecallAction::Forget { m }),
+        "complete" | "done" | "check" | "finish" => {
+            let m = find_m(s)?;
+            let todos: Vec<usize> = s
+                .split("todo")
+                .nth(1)
+                .unwrap_or("")
+                .split(|c: char| !c.is_ascii_digit())
+                .filter_map(|t| t.parse::<usize>().ok())
+                .collect();
+            // No explicit indices → let the reconcile pass decide which todos.
+            if todos.is_empty() {
+                Some(RecallAction::Reconcile { m })
+            } else {
+                Some(RecallAction::Complete { m, todos })
+            }
+        }
+        _ => None,
+    }
 }
 
 // -- the turn -------------------------------------------------------------------
@@ -470,35 +546,114 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
     let raw = crate::agent::run_messages(app, full).await?;
     let (display, tail) = parse_tail(&raw);
     log::info!(
-        "[GRAIN] recall: answered ({} memories in block, sources={:?}, not_found={})",
+        "[GRAIN] recall: answered ({} memories in block, sources={:?}, not_found={}, action={:?})",
         total.min(MAX_SESSION_MEMORIES),
         tail.sources,
-        tail.not_found
+        tail.not_found,
+        tail.action
     );
 
-    // Resolve the cited M-numbers to evidence sources; unknown ids are dropped
-    // (RECALL-PLAN §10) so a stray citation never fails the turn. The convention
-    // line is already stripped from `display`, so the user never sees it.
-    let sources: Vec<AgentSource> = tail
-        .sources
-        .iter()
-        .filter_map(|m| source_meta.get(m).cloned())
-        .collect();
-
-    if display.trim().is_empty() {
-        // A bare NOT_FOUND with no prose — give the user a sentence anyway, and
-        // keep the not-found signal so the panel still offers the escape hatch.
-        return Ok(AgentReply {
-            text: "I don't have a memory about that.".to_string(),
-            sources,
-            not_found: tail.not_found,
-        });
+    // An ACTION turn edits memory instead of answering; SOURCES and ACTION are
+    // mutually exclusive, so we resolve one or the other. `forget` is the only
+    // deferred case: it hands the panel a note to confirm before deletion.
+    let mut sources: Vec<AgentSource> = Vec::new();
+    let mut confirm_delete: Option<AgentSource> = None;
+    if let Some(action) = &tail.action {
+        // The previous Grain answer is context for anaphora ("the first two").
+        let convo_context = messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        match action {
+            RecallAction::Remember => {
+                let note = capture::compose_note(app, &latest).await;
+                persist(app, &base, note).await;
+            }
+            RecallAction::Reconcile { m } => {
+                if let Some(src) = source_meta.get(m) {
+                    if let Some(current) = read_note(&base, &src.note_id).await {
+                        let merged =
+                            capture::reconcile_note(app, &current, &latest, &convo_context).await;
+                        persist(app, &base, merged).await;
+                    }
+                }
+            }
+            RecallAction::Complete { m, todos } => {
+                if let Some(src) = source_meta.get(m) {
+                    if let Some(mut current) = read_note(&base, &src.note_id).await {
+                        for i in todos {
+                            if *i >= 1 {
+                                if let Some(t) = current.todo_tags.get_mut(i - 1) {
+                                    t.done = true;
+                                }
+                            }
+                        }
+                        persist(app, &base, current).await;
+                    }
+                }
+            }
+            RecallAction::Forget { m } => {
+                // Destructive — do NOT delete here. Hand the memory to the panel
+                // for an explicit in-place confirmation (RECALL-PLAN §7.2).
+                confirm_delete = source_meta.get(m).cloned();
+            }
+        }
+    } else {
+        // Resolve cited M-numbers to evidence sources; unknown ids are dropped
+        // (RECALL-PLAN §10) so a stray citation never fails the turn.
+        sources = tail
+            .sources
+            .iter()
+            .filter_map(|m| source_meta.get(m).cloned())
+            .collect();
     }
+
+    let text = if display.trim().is_empty() {
+        // A bare NOT_FOUND (or empty action confirmation) — give a sentence.
+        "I don't have a memory about that.".to_string()
+    } else {
+        display
+    };
     Ok(AgentReply {
-        text: display,
+        text,
         sources,
         not_found: tail.not_found,
+        confirm_delete,
     })
+}
+
+/// Read one note off the async runtime; `None` (logged) if it's gone/unreadable.
+async fn read_note(base: &Path, id: &str) -> Option<Note> {
+    let base = base.to_path_buf();
+    let id = id.to_string();
+    match tauri::async_runtime::spawn_blocking(move || store::get_note(&base, &id)).await {
+        Ok(Ok(note)) => Some(note),
+        Ok(Err(e)) => {
+            log::warn!("[GRAIN] recall: note read failed: {e:#}");
+            None
+        }
+        Err(e) => {
+            log::warn!("[GRAIN] recall: note read join error: {e}");
+            None
+        }
+    }
+}
+
+/// Save a note produced by a conversational write, then refresh the surfaces
+/// (overlay + settings tab re-render on `notes-changed`; reminders re-sync in
+/// case timing changed).
+async fn persist(app: &AppHandle, base: &Path, note: Note) {
+    let base = base.to_path_buf();
+    match tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await {
+        Ok(Ok(())) => {
+            super::emit_notes_changed(app);
+            super::reminders::sync(app);
+        }
+        Ok(Err(e)) => log::error!("[GRAIN] recall: write save failed: {e:#}"),
+        Err(e) => log::error!("[GRAIN] recall: write save join error: {e}"),
+    }
 }
 
 /// System prompt + memories block (as a system message) + the conversation
@@ -589,6 +744,43 @@ mod tests {
         let (body, tail) = parse_tail("Just an answer with no convention line.");
         assert_eq!(body, "Just an answer with no convention line.");
         assert_eq!(tail, ParsedTail::default());
+    }
+
+    #[test]
+    fn parse_tail_extracts_actions() {
+        let (body, tail) = parse_tail("Done — added the refactor.\nACTION: update M2");
+        assert_eq!(body, "Done — added the refactor.");
+        assert_eq!(tail.action, Some(RecallAction::Reconcile { m: 2 }));
+        assert!(tail.sources.is_empty());
+
+        let (_, tail) = parse_tail("Saved that.\naction: remember");
+        assert_eq!(tail.action, Some(RecallAction::Remember));
+
+        let (_, tail) = parse_tail("Delete the Rust note?\nACTION: forget M3");
+        assert_eq!(tail.action, Some(RecallAction::Forget { m: 3 }));
+    }
+
+    #[test]
+    fn parse_action_reads_todo_indices_not_the_m_number() {
+        // "M2" must not leak its 2 into the todo list.
+        assert_eq!(
+            parse_action(" complete m2 todos 1,3 "),
+            Some(RecallAction::Complete {
+                m: 2,
+                todos: vec![1, 3],
+            })
+        );
+        // No explicit indices → defer to the reconcile pass.
+        assert_eq!(
+            parse_action("complete m2"),
+            Some(RecallAction::Reconcile { m: 2 })
+        );
+        // Synonyms + unknown verbs.
+        assert_eq!(
+            parse_action("append m5"),
+            Some(RecallAction::Reconcile { m: 5 })
+        );
+        assert_eq!(parse_action("frobnicate m1"), None);
     }
 
     #[test]
