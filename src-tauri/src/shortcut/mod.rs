@@ -1110,19 +1110,6 @@ pub fn change_grain_space_auto_reminders_setting(
     Ok(())
 }
 
-/// [GRAIN] Voice-first retrieval behavior (Phase 5): results list vs AI Q&A.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_retrieval_mode_setting(
-    app: AppHandle,
-    mode: settings::GrainSpaceRetrievalMode,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_retrieval_mode = mode;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 #[tauri::command]
 #[specta::specta]
 pub fn change_experimental_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
