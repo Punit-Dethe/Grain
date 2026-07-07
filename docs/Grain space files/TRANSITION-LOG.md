@@ -5,6 +5,37 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2 (part 8): Grain Recall R4 — export + model uninstall
+
+Two more R4 items landed (both settings-tab, both fully compile/test-verified;
+GUI look pending user QA).
+
+1. **Export all notes** — `grain_space_export_notes` command serializes every
+   note to a pretty JSON array (new pure `store::export_json`, tested) and writes
+   it via the native save dialog (`tauri-plugin-dialog`, already a dep). Serializes
+   BEFORE prompting (empty corpus / read failure never opens a dialog); returns
+   the path or `None` on cancel. "Export all notes…" action in the Notes group.
+2. **Uninstall embedding model** — `grain_space_uninstall_embed_model` drops the
+   engine (mmap'd safetensors can't be deleted on Windows) then removes the whole
+   `models--BAAI--bge-small-en-v1.5` HF-cache dir (`embed::uninstall_model`,
+   derives the repo dir from a cached file `.ancestors().nth(3)`). Refuses
+   mid-download. Quiet action under the semantic toggle, shown only when
+   `semantic` is on (⇒ model present); on success the frontend flips
+   `grain_space_semantic` off (visible confirmation). Commits `5673923`, `fa0298d`.
+
+**R4 scoreboard:** DONE = corrupt-JSON quarantine, `retrieval_mode` removal,
+export, model uninstall. REMAINING (unchanged reasons):
+- INT8/quantized + long-note chunked embedding — need model artifacts + semantic
+  KNN e2e; don't ship blind.
+- Recall prompt v1 / reconcile-prompt iteration — need real usage transcripts.
+- decay-λ half-life slider — small, but niche (semantic-only) and needs a new
+  `change_grain_space_decay…` command; not yet built.
+- overlay multi-monitor placement — needs visual verification in the running app.
+- "append while another capture runs" — `STORE_LOCK` already serializes every op;
+  believed satisfied, wants a targeted test to claim it.
+
+---
+
 ## 2026-07-07 — Session 2 (part 7): Note capture moved onto the Agent pill (voice OR type + selection)
 
 User-requested change (mid-R4), NOT part of RECALL-PLAN. Note CREATION used to be
