@@ -1,9 +1,11 @@
 //! [GRAIN] Grain Space semantic embedding engine (Phase 4).
 //!
-//! Opt-in, never shipped: BGE-small-en-v1.5 (~34 MB, MIT) is downloaded into
-//! the shared HF cache only after explicit user consent. The engine is one
-//! dedicated OS thread that owns the tokenizer + Candle BERT weights behind an
-//! mpsc channel — 100% independent from the audio/ASR threads.
+//! Opt-in, never shipped: BGE-small-en-v1.5 (f32 `model.safetensors` ≈ 130 MB,
+//! MIT) is downloaded into the shared HF cache only after explicit user consent.
+//! The engine is one dedicated OS thread that owns the tokenizer + Candle BERT
+//! weights behind an mpsc channel — 100% independent from the audio/ASR threads.
+//! The weights can be loaded in f16 (half the resident RAM) via the
+//! `grain_space_embed_f16` setting; see [`set_use_f16`].
 //!
 //! Lifecycle (strict directive 7, overrides modelinfo.md's "never unload"):
 //! spawned lazily by the FIRST semantic search while the overlay window is
@@ -24,7 +26,8 @@ use tauri::{AppHandle, Emitter};
 pub const MODEL_REPO: &str = "BAAI/bge-small-en-v1.5";
 pub const MODEL_REVISION: &str = "main";
 /// Everything the engine needs. `model.safetensors` is the f32 export
-/// (33.4M params × 4 B ≈ 130 MB on disk); INT8 is a Phase 6 optimization.
+/// (33.4M params × 4 B ≈ 130 MB on disk); f16 is a load-time cast of this same
+/// file (no separate download), see [`set_use_f16`].
 const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 pub const EMBED_DIM: usize = 384;
 const MAX_TOKENS: usize = 512;
@@ -49,6 +52,19 @@ fn cached_file(filename: &str) -> Option<PathBuf> {
 /// True when every model file is present in the shared HF cache.
 pub fn model_on_disk() -> bool {
     MODEL_FILES.iter().all(|f| cached_file(f).is_some())
+}
+
+/// Load the model in half precision (f16) when set — ~half the resident RAM,
+/// near-identical embeddings. Read at engine spawn; the setting command drops
+/// the engine so a live one re-loads at the new precision. Mirrors the
+/// `grain_space_embed_f16` setting; kept as an atomic because the engine layer
+/// has no `AppHandle`.
+static USE_F16: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Point the (next) engine load at f16 or f32. Call from a place that has the
+/// setting; pair with [`shutdown_engine`] to re-load a resident engine.
+pub fn set_use_f16(enabled: bool) {
+    USE_F16.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 // -- download (consent-gated by the frontend) -----------------------------------
@@ -357,12 +373,16 @@ fn load_model(
     candle_transformers::models::bert::BertModel,
     candle_core::Device,
 )> {
-    use candle_core::Device;
+    use candle_core::{DType, Device};
     use candle_nn::VarBuilder;
     use candle_transformers::models::bert::{BertModel, Config, DTYPE};
 
     let start = std::time::Instant::now();
     let device = Device::Cpu;
+    // f16 halves the resident weights; the safetensors on disk is f32, so Candle
+    // casts on load. Final embeddings are cast back to f32 (the vec index dtype).
+    let f16 = USE_F16.load(std::sync::atomic::Ordering::Relaxed);
+    let dtype = if f16 { DType::F16 } else { DTYPE };
 
     let config: Config = serde_json::from_str(
         &std::fs::read_to_string(config_path).context("read model config.json")?,
@@ -380,13 +400,14 @@ fn load_model(
 
     // mmap keeps the resident cost close to the pages actually touched.
     let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DTYPE, &device)
+        VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], dtype, &device)
             .context("map model.safetensors")?
     };
     let model = BertModel::load(vb, &config).context("build BERT graph")?;
     log::info!(
-        "[GRAIN] embed model loaded in {} ms",
-        start.elapsed().as_millis()
+        "[GRAIN] embed model loaded in {} ms ({})",
+        start.elapsed().as_millis(),
+        if f16 { "f16" } else { "f32" }
     );
     Ok((tokenizer, model, device))
 }
@@ -417,6 +438,9 @@ fn embed_batch(
         let type_ids = Tensor::new(encoding.get_type_ids(), device)?.unsqueeze(0)?;
         // No padding → no mask needed (every position is a real token).
         let hidden = model.forward(&input_ids, &type_ids, None)?; // [1, seq, dim]
+                                                                  // Pool/normalize in f32 so an f16 model doesn't lose precision here and
+                                                                  // the stored vector is always f32 (the vec index dtype).
+        let hidden = hidden.to_dtype(candle_core::DType::F32)?;
         let pooled = (hidden.sum(1)? / seq_len as f64)?; // [1, dim]
         let norm = pooled.sqr()?.sum_keepdim(1)?.sqrt()?;
         let normalized = pooled.broadcast_div(&norm)?;
