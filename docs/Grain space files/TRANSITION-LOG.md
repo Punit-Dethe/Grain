@@ -5,6 +5,61 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-07 — Session 2 (part 7): Capture-via-agent-pill + note-window fix + f16 option
+
+Three user-requested changes (not from RECALL-PLAN — direct product feedback).
+
+**1. Note CREATION now uses the Agent pill, not the main recording pill.** New
+`AgentMode::Capture` (third mode alongside Assist/Recall). The `grain_space_capture`
+binding no longer runs the transcribe pipeline (`intake_transcript` deleted, removed
+from `is_transcribe_binding` + the `TranscribeAction::stop` interception); it now
+`summon_capture` → summons the SAME agent pill. Gains **text input for free** (type
+instead of speak) and shows the **selected-char chip** (the pill's chip now renders
+ONLY when a selection exists — empty state shows nothing, cleaning up Recall too,
+`grain-pill/src/lib.rs`). `summon_inner` gating refined: selection captured for
+Assist+Capture, field-context/paste-target for Assist only.
+  - **Selection = note body (verbatim), spoken/typed words = FRAMING** (shape
+    title/summary only, never rewritten). `extract_metadata` + `compose_note` gained
+    a `framing: Option<&str>` param.
+  - **HEADLESS save, no panel** (user: confirmation handled elsewhere). `dispatch_
+    instruction` routes Capture → new `agent::capture_run` (mirrors `quick_run`):
+    reads the summon selection, calls `capture::capture_and_save` (was
+    `run_capture_turn`, now returns unit), releases the input shortcuts. summon skips
+    pre-creating the panel; `input_submit_voice` skips the loading reveal and, on a
+    bad/empty transcript, cleans up silently instead of a panel error. The Capture
+    branch is NOT in `agent_run` (capture never touches the panel).
+  - `Ctrl+Shift+C` quick-add UNCHANGED. Settings label "Dictate Note" → "Create Note".
+
+**2. Note overlay window is now reachable + frees memory.** It was `skip_taskbar` +
+frameless + not-on-top, so losing focus dropped it behind everything with no way
+back, and it stayed resident (holding the embed engine) because it was never
+destroyed. Now `skip_taskbar(false)` (taskbar/Alt-Tab), and `window::toggle`
+brings it forward when it's behind (only closes when already focused) — so it can
+always be returned to and closed to free the engine. Backend-only (no capability
+change).
+
+**3. Optional f16 embedding model (side-by-side lighter option).** User chose f16
+over INT8 (INT8 would need the heavy `ort`/ONNX dep + can't verify here; no fp16
+safetensors exists upstream anyway). New `grain_space_embed_f16` setting →
+`embed.rs` loads the SAME f32 file cast to F16 (≈half resident RAM, ~identical
+results, download unchanged). `USE_F16` atomic (engine layer has no AppHandle),
+seeded at startup + by `change_grain_space_embed_f16_setting` (which drops the
+engine to force a precision re-load). Pooling/output cast to f32. Toggle under
+Search (shown when semantic is on).
+
+**Verified:** `cargo test --lib` **173 passed**, `cargo fmt`, `tsc`, eslint clean;
+`bindings.ts` regenerated (new `changeGrainSpaceEmbedF16Setting`); boot smoke-tested.
+Commits `d600235` (capture+window), `f2ceeaa` (f16).
+
+### Gotchas
+- Capture is headless — it must NEVER reveal the panel. If you touch
+  `input_submit_voice`/`dispatch_instruction`, keep the `mode == Capture` guards.
+- The pill selection chip renders only for `selection_chars > 0` now (all modes).
+- f16 on CPU mainly saves RAM (CPUs lack native f16 compute; speed ≈ same). The
+  setting command MUST `shutdown_engine()` or a live engine keeps the old precision.
+
+---
+
 ## 2026-07-07 — Session 2 (part 8): Grain Recall R4 — export + model uninstall
 
 Two more R4 items landed (both settings-tab, both fully compile/test-verified;
