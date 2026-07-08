@@ -510,10 +510,10 @@ pub fn semantic_search(
 
     let hits: Vec<(String, f64)> = {
         let mut stmt = conn.prepare(
-            "SELECT id, distance FROM notes_vec
+            "SELECT id, vec_distance_L2(embedding, ?1) as distance FROM notes_vec
              WHERE embedding MATCH ?1
-             ORDER BY distance
-             LIMIT 24",
+               AND k = 24
+             ORDER BY distance",
         )?;
         let rows = stmt.query_map(params![query_embedding.as_bytes()], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
