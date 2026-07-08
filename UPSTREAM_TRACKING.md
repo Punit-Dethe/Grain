@@ -10,8 +10,6 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | **Jul 08, 2026** | `salvage valid settings instead of resetting store on parse failure (#1631)` | Pending |
 | **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Pending |
 | **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Pending |
-| **Jul 08, 2026** | `fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)` | Pending |
-| **Jul 08, 2026** | `fix: reset resampler state between recordings to prevent audio crosstalk (#1344)` | Pending |
 | **Jul 08, 2026** | `fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)` | Pending |
 | **Jul 07, 2026** | `fix: preserve ampersands in custom words (#1569)` | Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes) |
 | **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.) |
@@ -26,6 +24,8 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 08, 2026** | `fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)` | Manually ported. Throttled `emit_levels` to 30 FPS in `overlay.rs`. Huge perf win for our native Rust pill which receives these levels. |
+| **Jul 08, 2026** | `fix: reset resampler state between recordings to prevent audio crosstalk (#1344)` | Manually ported. Added `reset()` to `FrameResampler` and called it on `Cmd::Start`. |
 | **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Added dual paste delays: before (after copy) and after (before clipboard restore). Increased slider max from 200ms to 500ms. Updated all 29 translation files. Backend: added `paste_delay_after_ms` field and Tauri command. Frontend: made PasteDelay component configurable with props. |
 | **Jul 08, 2026** | `Add Nepali translation (#1632)` | Cherry-picked exact upstream diff to add `src/i18n/locales/ne/translation.json` and update `languages.ts`. |
 | **Jul 08, 2026** | `bump version (#1634)` | Bumped `transcribe-cpp` from 0.1.1 to 0.1.2 across all platform targets in `Cargo.toml`. |
