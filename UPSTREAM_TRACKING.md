@@ -7,13 +7,11 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 
 | Date | Upstream Commit / PR | Status / Notes |
 | :--- | :--- | :--- |
-| **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Ignored (Linux-only CI packaging, irrelevant to Windows/macOS builds) |
 | **Jul 07, 2026** | `fix: preserve ampersands in custom words (#1569)` | Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes) |
 | **Jul 07, 2026** | `fix: preserve active overlay during post-processing (#1597)` | Ignored (depends on `OverlayStyle` enum that Grain does not have; Grain's overlay model is different) |
-| **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Pending |
+| **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.) |
 | **Jul 03, 2026** | `faster mic initialization (#1582)` | Pending |
 | **Jul 02, 2026** | `ship vsredist directly with the app (#1577)` | Pending |
-| **Jul 01, 2026** | `edit model recs` | Pending (Grain uses a custom catalog, requires manual evaluation) |
 
 
 ---
@@ -23,6 +21,8 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Added OpenBLAS dependency checks to CI and Tauri Linux packaging config. |
+| **Jul 01, 2026** | `edit model recs` | Skipped. Upstream replaced Qwen3 with Parakeet TDT-CTC. Grain already manages its own custom catalog without the 'recommended' field structure. |
 | **Jul 07, 2026** | `Update Italian translations (#1604)` | Updated Italian translation file with latest upstream changes. Added new keys for model management and improved existing translations. |
 | **Jul 06, 2026** | `Fix GigaAM v3 description. (#1613)` | Corrected GigaAM v3 model descriptions from "English speech-to-text" to "Russian speech-to-text" for all 4 variants (CTC, E2E-CTC, RNN-T, E2E-RNN-T). |
 | **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
