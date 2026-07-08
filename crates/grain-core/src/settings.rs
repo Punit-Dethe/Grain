@@ -593,7 +593,13 @@ impl std::ops::DerefMut for SecretMap {
     }
 }
 
+/// The container-level `serde(default)` (backed by the `Default` impl below)
+/// guarantees every field — including ones added in the future — falls back to
+/// its `get_default_settings()` value when missing from a stored settings
+/// object, so a partial store can never fail the whole load (upstream #1619).
+/// Field-level defaults below take precedence where present.
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
+#[serde(default)]
 pub struct AppSettings {
     pub bindings: HashMap<String, ShortcutBinding>,
     pub push_to_talk: bool,

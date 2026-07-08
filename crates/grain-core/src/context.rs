@@ -119,10 +119,23 @@ fn secrets_path(data_dir: &Path) -> PathBuf {
 /// migrations. Returns defaults (persisted) when no settings file exists yet.
 fn load_settings(data_dir: &Path) -> Result<AppSettings> {
     let path = settings_path(data_dir);
+    let mut salvaged = false;
     let mut settings = if path.exists() {
         let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-        serde_json::from_str::<AppSettings>(&raw)
-            .with_context(|| format!("parse {}", path.display()))?
+        match serde_json::from_str::<AppSettings>(&raw) {
+            Ok(settings) => settings,
+            Err(e) => {
+                // One bad field must not reset the user's whole configuration
+                // (upstream #1619). Rebuild from the raw JSON, keeping every
+                // individually-valid field. If the file isn't even JSON, err
+                // out to the caller's defaults fallback.
+                log::warn!("Failed to parse stored settings ({e}); salvaging valid fields");
+                let value: serde_json::Value = serde_json::from_str(&raw)
+                    .with_context(|| format!("parse {}", path.display()))?;
+                salvaged = true;
+                salvage_settings(&value)
+            }
+        }
     } else {
         let defaults = AppSettings::default();
         save_settings(data_dir, &defaults)?;
@@ -138,11 +151,51 @@ fn load_settings(data_dir: &Path) -> Result<AppSettings> {
         settings.stt_api_keys.insert(id, key);
     }
 
-    // Provider/key migrations.
-    if ensure_post_process_defaults(&mut settings) {
+    // Provider/key migrations. A salvaged store is persisted here too — only
+    // after the secrets merge, since save_settings rewrites the credential
+    // file from the in-memory settings.
+    if ensure_post_process_defaults(&mut settings) || salvaged {
         save_settings(data_dir, &settings)?;
     }
     Ok(settings)
+}
+
+/// Rebuilds settings from a store value that failed to deserialize as a whole.
+/// Every stored field that is individually valid is kept; only broken values
+/// (e.g. an enum variant written by a newer or older version) fall back to
+/// their default. This means one bad field can never reset the rest of the
+/// user's configuration (upstream #1619).
+fn salvage_settings(stored: &serde_json::Value) -> AppSettings {
+    let Some(stored_map) = stored.as_object() else {
+        log::warn!("Stored settings are not a JSON object; falling back to defaults");
+        return AppSettings::default();
+    };
+
+    let mut merged = serde_json::to_value(AppSettings::default())
+        .expect("default settings serialize to a JSON object");
+
+    for (key, value) in stored_map {
+        let previous = merged
+            .as_object_mut()
+            .expect("merged settings stay an object")
+            .insert(key.clone(), value.clone());
+        if serde_json::from_value::<AppSettings>(merged.clone()).is_err() {
+            // Log only the key: values may hold secrets (e.g. API keys).
+            log::warn!("Dropping invalid settings field '{key}', keeping its default");
+            let map = merged
+                .as_object_mut()
+                .expect("merged settings stay an object");
+            match previous {
+                Some(previous) => map.insert(key.clone(), previous),
+                None => map.remove(key),
+            };
+        }
+    }
+
+    serde_json::from_value(merged).unwrap_or_else(|e| {
+        log::warn!("Failed to reassemble salvaged settings ({e}); falling back to defaults");
+        AppSettings::default()
+    })
 }
 
 /// On-disk shape of `grain.secrets.json`: one named sub-map per key-bearing
@@ -225,6 +278,90 @@ mod tests {
         // update checks ship ON.
         assert!(!ctx.settings().push_to_talk);
         assert!(ctx.settings().update_checks_enabled);
+    }
+
+    /// Every field must survive a partial store: a missing key must never fail
+    /// the whole-settings parse (upstream #1619). `{}` is the extreme case.
+    #[test]
+    fn empty_settings_object_parses_with_defaults() {
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({}))
+            .expect("all AppSettings fields need serde defaults");
+        assert_eq!(settings.selected_model, AppSettings::default().selected_model);
+    }
+
+    #[test]
+    fn salvage_preserves_valid_fields_when_one_value_is_invalid() {
+        let mut stored = serde_json::to_value(AppSettings::default()).unwrap();
+        let map = stored.as_object_mut().unwrap();
+        map.insert(
+            "selected_model".into(),
+            serde_json::json!("parakeet-tdt-0.6b-v3"),
+        );
+        map.insert("custom_words".into(), serde_json::json!(["grain"]));
+        // An enum variant this build doesn't know, e.g. written by a newer
+        // version before a downgrade.
+        map.insert("sound_theme".into(), serde_json::json!("theremin"));
+
+        // Precondition: exactly the whole-store parse failure that used to
+        // reset everything to defaults.
+        assert!(serde_json::from_value::<AppSettings>(stored.clone()).is_err());
+
+        let salvaged = salvage_settings(&stored);
+        assert_eq!(salvaged.selected_model, "parakeet-tdt-0.6b-v3");
+        assert_eq!(salvaged.custom_words, vec!["grain".to_string()]);
+    }
+
+    #[test]
+    fn salvage_drops_only_wrong_typed_fields() {
+        let mut stored = serde_json::to_value(AppSettings::default()).unwrap();
+        let map = stored.as_object_mut().unwrap();
+        map.insert("paste_delay_ms".into(), serde_json::json!("sixty"));
+        map.insert("custom_words".into(), serde_json::json!(["grain"]));
+
+        assert!(serde_json::from_value::<AppSettings>(stored.clone()).is_err());
+
+        let salvaged = salvage_settings(&stored);
+        assert_eq!(salvaged.paste_delay_ms, AppSettings::default().paste_delay_ms);
+        assert_eq!(salvaged.custom_words, vec!["grain".to_string()]);
+    }
+
+    /// A corrupt settings file must not take the credential file down with it:
+    /// the salvage-triggered persist runs only after the secrets merge.
+    #[test]
+    fn corrupt_settings_salvage_keeps_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+
+        let mut stored = serde_json::to_value(AppSettings::default()).unwrap();
+        stored
+            .as_object_mut()
+            .unwrap()
+            .insert("sound_theme".into(), serde_json::json!(42));
+        fs::write(
+            data.join(SETTINGS_FILE),
+            serde_json::to_string(&stored).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            data.join(SECRETS_FILE),
+            r#"{"post_process_api_keys":{"openai":"sk-keepme"},"stt_api_keys":{}}"#,
+        )
+        .unwrap();
+
+        let ctx = AppContext::new(dir.path().join("res"), &data);
+        assert_eq!(
+            ctx.settings()
+                .post_process_api_keys
+                .get("openai")
+                .map(String::as_str),
+            Some("sk-keepme")
+        );
+        let secrets_raw = fs::read_to_string(data.join(SECRETS_FILE)).unwrap();
+        assert!(
+            secrets_raw.contains("sk-keepme"),
+            "salvage persist wiped the credential file"
+        );
     }
 
     #[test]
