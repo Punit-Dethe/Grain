@@ -8,7 +8,6 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | Date | Upstream Commit / PR | Status / Notes |
 | :--- | :--- | :--- |
 | **Jul 08, 2026** | `salvage valid settings instead of resetting store on parse failure (#1631)` | Pending |
-| **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Pending |
 | **Jul 07, 2026** | `fix: preserve ampersands in custom words (#1569)` | Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes) |
 | **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.) |
 | **Jul 03, 2026** | `faster mic initialization (#1582)` | Pending |
@@ -22,6 +21,7 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Manually ported. Exactly matched upstream logic in `build.rs` to detect Command Line Tools environment. |
 | **Jul 08, 2026** | `fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)` | Manually ported. Also included upstream commit `07637ea9` to log warnings when recovering poisoned mutexes during `Drop`. |
 | **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Bumped in `Cargo.toml`. No structural API changes needed as upstream's commit was just the version bump. |
 | **Jul 08, 2026** | `fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)` | Manually ported. Throttled `emit_levels` to 30 FPS in `overlay.rs`. Huge perf win for our native Rust pill which receives these levels. |
