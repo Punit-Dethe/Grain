@@ -479,6 +479,17 @@ pub fn store_embeddings(base: &Path, items: &[(String, Vec<f32>)]) -> Result<()>
     ensure_vec_table(&conn)?;
     for (id, embedding) in items {
         validate_id(id)?;
+        // Never poison the vec index: a non-finite (NaN/Inf) or all-zero
+        // embedding makes KNN return NULL distance and crash recall. Skip it
+        // and leave embed_stale=1 so it retries instead of being stored.
+        if !embedding.iter().all(|x| x.is_finite())
+            || embedding.iter().all(|&x| x == 0.0)
+        {
+            log::error!(
+                "[GRAIN] refusing to store non-finite/zero embedding for note {id}; leaving stale"
+            );
+            continue;
+        }
         // vec0 has no upsert — replace by delete + insert.
         conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id])?;
         conn.execute(
@@ -508,7 +519,7 @@ pub fn semantic_search(
     let conn = open_index(base)?;
     ensure_vec_table(&conn)?;
 
-    let hits: Vec<(String, f64)> = {
+    let hits: Vec<(String, Option<f64>)> = {
         let mut stmt = conn.prepare(
             "SELECT id, distance FROM notes_vec
              WHERE embedding MATCH ?1
@@ -516,7 +527,10 @@ pub fn semantic_search(
              LIMIT 24",
         )?;
         let rows = stmt.query_map(params![query_embedding.as_bytes()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, f64>(1)?))
+            // distance is NULL when a stored vector is corrupt (NaN/zero) —
+            // sqlite-vec can't compute a distance against it. Skip those rows
+            // instead of letting row.get::<_,f64> error out and crash recall.
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
@@ -530,6 +544,17 @@ pub fn semantic_search(
 
     let mut scored: Vec<(f64, Note)> = Vec::with_capacity(hits.len());
     for (id, distance) in hits {
+        let Some(distance) = distance else {
+            // Self-heal: a NULL-distance row is poison — drop it and mark the
+            // note stale so the next search re-embeds it cleanly.
+            log::warn!("[GRAIN] NULL distance for {id}; marking stale");
+            let _ = conn.execute(
+                "UPDATE notes_meta SET embed_stale = 1 WHERE id = ?1",
+                params![id],
+            );
+            let _ = conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id]);
+            continue;
+        };
         let note = match read_note_file(&note_path(base, &id)) {
             Ok(n) => n,
             Err(e) => {
