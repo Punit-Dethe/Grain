@@ -599,6 +599,7 @@ fn run_consumer(
                     recording = true;
                     highpass.reset(); // [GRAIN] fresh filter state per session
                     visualizer.reset();
+                    frame_resampler.reset();
                     if let Some(v) = &vad {
                         v.lock().unwrap().reset();
                     }

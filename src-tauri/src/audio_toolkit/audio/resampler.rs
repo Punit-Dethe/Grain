@@ -128,6 +128,18 @@ impl FrameResampler {
         }
     }
 
+    /// Clear all internal buffers so the next `push()` starts from a clean state.
+    ///
+    /// Call this between recordings to prevent stale audio from the previous
+    /// session leaking into the start of the next one via the FFT overlap buffers.
+    pub fn reset(&mut self) {
+        self.in_buf.clear();
+        self.pending.clear();
+        if let Some(ref mut resampler) = self.resampler {
+            resampler.reset();
+        }
+    }
+
     fn emit_frames(&mut self, data: &[f32], emit: &mut impl FnMut(&[f32])) {
         Self::emit_frames_into(self.frame_samples, &mut self.pending, data, emit);
     }
