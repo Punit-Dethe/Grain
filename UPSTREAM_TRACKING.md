@@ -7,6 +7,7 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 
 | Date | Upstream Commit / PR | Status / Notes |
 | :--- | :--- | :--- |
+| **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Pending |
 | **Jul 08, 2026** | `salvage valid settings instead of resetting store on parse failure (#1631)` | Pending |
 | **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Pending |
 | **Jul 08, 2026** | `Add Nepali translation (#1632)` | Pending |
