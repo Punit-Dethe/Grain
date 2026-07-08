@@ -10,7 +10,6 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Pending |
 | **Jul 08, 2026** | `salvage valid settings instead of resetting store on parse failure (#1631)` | Pending |
 | **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Pending |
-| **Jul 08, 2026** | `Add Nepali translation (#1632)` | Pending |
 | **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Pending |
 | **Jul 08, 2026** | `fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)` | Pending |
 | **Jul 08, 2026** | `fix: reset resampler state between recordings to prevent audio crosstalk (#1344)` | Pending |
@@ -30,6 +29,8 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 08, 2026** | `Add Nepali translation (#1632)` | Cherry-picked exact upstream diff to add `src/i18n/locales/ne/translation.json` and update `languages.ts`. |
+| **Jul 08, 2026** | `bump version (#1634)` | Bumped `transcribe-cpp` from 0.1.1 to 0.1.2 across all platform targets in `Cargo.toml`. |
 | **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Added OpenBLAS dependency checks to CI and Tauri Linux packaging config. |
 | **Jul 01, 2026** | `edit model recs` | Skipped. Upstream replaced Qwen3 with Parakeet TDT-CTC. Grain already manages its own custom catalog without the 'recommended' field structure. |
 | **Jul 07, 2026** | `Update Italian translations (#1604)` | Updated Italian translation file with latest upstream changes. Added new keys for model management and improved existing translations. |

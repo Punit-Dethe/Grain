@@ -697,6 +697,8 @@ pub struct AppSettings {
     pub show_tray_icon: bool,
     #[serde(default = "default_paste_delay_ms")]
     pub paste_delay_ms: u64,
+    #[serde(default = "default_paste_delay_after_ms")]
+    pub paste_delay_after_ms: u64,
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
     pub external_script_path: Option<String>,
@@ -879,6 +881,10 @@ fn default_custom_words() -> Vec<String> {
     ]
 }
 fn default_paste_delay_ms() -> u64 {
+    60
+}
+
+fn default_paste_delay_after_ms() -> u64 {
     60
 }
 fn default_auto_submit() -> bool {
@@ -1491,6 +1497,7 @@ pub fn get_default_settings() -> AppSettings {
         keyboard_implementation: KeyboardImplementation::default(),
         show_tray_icon: default_show_tray_icon(),
         paste_delay_ms: default_paste_delay_ms(),
+        paste_delay_after_ms: default_paste_delay_after_ms(),
         typing_tool: default_typing_tool(),
         external_script_path: None,
         custom_filler_words: None,

@@ -501,8 +501,12 @@
         "settings": "Inställningar:"
       },
       "pasteDelay": {
-        "title": "Fördröjning vid klistra in",
-        "description": "Fördröjning innan klistra in-tangenttryckning skickas (i millisekunder). Öka om fel text klistras in."
+        "title": "Fördröjning vid klistra in (före)",
+        "description": "Fördröjning (i millisekunder) efter kopiering av text, innan klistra in-tangenttryckning skickas. Öka om ingenting klistras in."
+      },
+      "pasteDelayAfter": {
+        "title": "Fördröjning vid klistra in (efter)",
+        "description": "Fördröjning (i millisekunder) efter klistra in-tangenttryckning, innan ditt tidigare urklipp återställs. Öka om ditt gamla urklippsinnehåll klistras in istället för transkriptionen."
       },
       "recordingBuffer": {
         "title": "Extra inspelningsbuffert",
