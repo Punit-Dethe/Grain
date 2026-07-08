@@ -3,18 +3,24 @@ import { useTranslation } from "react-i18next";
 import { SettingContainer } from "../ui/SettingContainer";
 import { ResetButton } from "../ui/ResetButton";
 import { useSettings } from "../../hooks/useSettings";
-import { LANGUAGES } from "../../lib/constants/languages";
+import {
+  LANGUAGES,
+  SELECTABLE_LANGUAGES,
+  supportsLanguageCode,
+} from "../../lib/constants/languages";
 
 interface LanguageSelectorProps {
   descriptionMode?: "inline" | "tooltip";
   grouped?: boolean;
   supportedLanguages?: string[];
+  supportsLanguageDetection?: boolean;
 }
 
 export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
   descriptionMode = "tooltip",
   grouped = false,
   supportedLanguages,
+  supportsLanguageDetection = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, resetSetting, isUpdating } = useSettings();
@@ -50,12 +56,14 @@ export const LanguageSelector: React.FC<LanguageSelectorProps> = ({
 
   const availableLanguages = useMemo(() => {
     if (!supportedLanguages || supportedLanguages.length === 0)
-      return LANGUAGES;
-    return LANGUAGES.filter(
+      return SELECTABLE_LANGUAGES;
+    return SELECTABLE_LANGUAGES.filter(
       (lang) =>
-        lang.value === "auto" || supportedLanguages.includes(lang.value),
+        lang.value === "auto"
+          ? (supportsLanguageDetection ?? false)
+          : supportsLanguageCode(supportedLanguages, lang.value),
     );
-  }, [supportedLanguages]);
+  }, [supportedLanguages, supportsLanguageDetection]);
 
   const filteredLanguages = useMemo(
     () =>

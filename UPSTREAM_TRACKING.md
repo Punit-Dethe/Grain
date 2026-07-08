@@ -18,7 +18,7 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Pending |
 | **Jul 03, 2026** | `faster mic initialization (#1582)` | Pending |
 | **Jul 02, 2026** | `ship vsredist directly with the app (#1577)` | Pending |
-| **Jul 01, 2026** | `update language selector` | Partially Merged (Frontend logic missing) |
+| **Jul 01, 2026** | `update language selector` | Merged |
 | **Jul 01, 2026** | `edit model recs` | Pending (Grain uses a custom catalog, requires manual evaluation) |
 
 
