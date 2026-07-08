@@ -14,6 +14,7 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | **Jul 08, 2026** | `fix: reset resampler state between recordings to prevent audio crosstalk (#1344)` | Pending |
 | **Jul 08, 2026** | `fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)` | Pending |
 | **Jul 07, 2026** | `fix: preserve ampersands in custom words (#1569)` | Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes) |
+| **Jul 07, 2026** | `fix: preserve active overlay during post-processing (#1597)` | Pending (needs investigation - uses OverlayStyle enum; check if Grain's overlay architecture is compatible) |
 | **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.) |
 | **Jul 03, 2026** | `faster mic initialization (#1582)` | Pending |
 | **Jul 02, 2026** | `ship vsredist directly with the app (#1577)` | Pending |
@@ -62,6 +63,5 @@ Updates from upstream that we have evaluated and explicitly decided NOT to merge
 | Date | Upstream Commit / PR | Reason for Ignoring |
 | :--- | :--- | :--- |
 | **Jul 07, 2026** | `fix: add prompt injection defense to default post-processing prompt (#1310)` | Text-only default prompt update. Grain manages its own post-processing prompts independently with custom system and workflows. |
-| **Jul 07, 2026** | `fix: preserve active overlay during post-processing (#1597)` | Depends on `OverlayStyle` enum that Grain does not have. Grain's overlay model is architecturally different. |
 | **Jun 23, 2026** | `Clarified branding and redistribution terms for Handy` | Irrelevant to Grain (we are an independent fork with our own branding and license terms). |
 
