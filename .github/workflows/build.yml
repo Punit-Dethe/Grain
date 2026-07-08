@@ -133,6 +133,11 @@ jobs:
           dpkg-query -W -f='${Status}\n' libgtk-layer-shell0 | grep -q "install ok installed"
           ldconfig -p | grep -q "libgtk-layer-shell.so.0"
 
+      - name: Verify OpenBLAS runtime dependency (Ubuntu)
+        if: contains(inputs.platform, 'ubuntu')
+        run: |
+          ldconfig -p | grep -q "libopenblas.so.0"
+
       - name: Install Vulkan SDK (Windows x64)
         if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
         uses: humbletim/install-vulkan-sdk@v1.2
