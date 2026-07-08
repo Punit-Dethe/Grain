@@ -1076,11 +1076,14 @@ impl TranscriptionManager {
                     model_languages
                 );
 
-                // Custom words become the initial prompt ONLY for models that
-                // accept one (whisper family). Attaching the whisper run
-                // extension to a non-whisper arch is rejected with INVALID_ARG,
-                // so skip it there and let the fuzzy post-correction handle it.
-                let family = if settings.custom_words.is_empty() || !takes_prompt {
+                // Custom words become the initial prompt ONLY for whisper-family
+                // models. Non-whisper archs (e.g. Voxtral Small 24B) can advertise
+                // Feature::InitialPrompt but still reject the WhisperRunOptions
+                // extension with INVALID_ARG (see upstream #1601/#1603). Gate on
+                // the arch string, not the feature flag, so they fall through to
+                // the fuzzy post-correction path instead.
+                let model_is_whisper = model.arch() == "whisper";
+                let family = if settings.custom_words.is_empty() || !model_is_whisper {
                     None
                 } else {
                     Some(RunExtension::Whisper(WhisperRunOptions {
