@@ -10,12 +10,8 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Ignored (Linux-only CI packaging, irrelevant to Windows/macOS builds) |
 | **Jul 07, 2026** | `fix: preserve ampersands in custom words (#1569)` | Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes) |
 | **Jul 07, 2026** | `fix: preserve active overlay during post-processing (#1597)` | Ignored (depends on `OverlayStyle` enum that Grain does not have; Grain's overlay model is different) |
-| **Jul 07, 2026** | `Update Italian translations (#1604)` | Pending |
 | **Jul 06, 2026** | `Fix GigaAM v3 description. (#1613)` | Pending (Grain uses a custom catalog, requires manual evaluation) |
 | **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Pending |
-| **Jul 04, 2026** | `Improve Dutch (nl) translation accuracy and consistency (#1594)` | Pending |
-| **Jul 04, 2026** | `Update Japanese translations (#1593)` | Pending |
-| **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Pending |
 | **Jul 03, 2026** | `faster mic initialization (#1582)` | Pending |
 | **Jul 02, 2026** | `ship vsredist directly with the app (#1577)` | Pending |
 | **Jul 01, 2026** | `edit model recs` | Pending (Grain uses a custom catalog, requires manual evaluation) |
@@ -28,6 +24,10 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 07, 2026** | `Update Italian translations (#1604)` | Updated Italian translation file with latest upstream changes. Added new keys for model management and improved existing translations. |
+| **Jul 04, 2026** | `Improve Dutch (nl) translation accuracy and consistency (#1594)` | Improved Dutch translation accuracy and consistency after initial addition. |
+| **Jul 04, 2026** | `Update Japanese translations (#1593)` | Fixed character encoding issues and translated remaining English strings in Japanese translation. |
+| **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Added complete Dutch (nl) translation with priority 21 in language metadata. |
 | **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
 | **Jul 03, 2026** | `fix cyrillic (unicode) path problems (#1187)` | Fixed VAD initialization crash on paths with Cyrillic characters. |
 | **Jul 03, 2026** | `bump to transcribe-cpp-0.1.1 (#1589)` | Bumped transcribe-cpp version across all targets. |
