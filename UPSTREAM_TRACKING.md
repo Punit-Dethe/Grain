@@ -21,25 +21,25 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
-| **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Added logic in `build.rs` to detect Command Line Tools environment and fall back to Apple Intelligence stubs. |
-| **Jul 08, 2026** | `fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)` | Recover poisoned mutexes inside Drop impls using `match` to prevent app aborts. Includes upstream commit `07637ea9` to log warnings. |
-| **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Bumped in `Cargo.toml`. No structural API changes needed. |
-| **Jul 08, 2026** | `fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)` | Throttled `emit_levels` to 30 FPS in `overlay.rs`. Huge perf win for our native Rust pill which receives these levels. |
-| **Jul 08, 2026** | `fix: reset resampler state between recordings to prevent audio crosstalk (#1344)` | Added `reset()` to `FrameResampler` and called it on `Cmd::Start`. |
-| **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Added dual paste delays: before (after copy) and after (before clipboard restore). Increased slider max from 200ms to 500ms. Updated all 29 translation files. Backend: added `paste_delay_after_ms` field and Tauri command. Frontend: made PasteDelay component configurable with props. |
-| **Jul 08, 2026** | `Add Nepali translation (#1632)` | Added `src/i18n/locales/ne/translation.json` and updated `languages.ts`. |
-| **Jul 08, 2026** | `bump version (#1634)` | Bumped `transcribe-cpp` from 0.1.1 to 0.1.2 across all platform targets in `Cargo.toml`. |
-| **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Added OpenBLAS dependency checks to CI and Tauri Linux packaging config. |
-| **Jul 01, 2026** | `edit model recs` | Skipped. Upstream replaced Qwen3 with Parakeet TDT-CTC. Grain already manages its own custom catalog without the 'recommended' field structure. |
-| **Jul 07, 2026** | `Update Italian translations (#1604)` | Updated Italian translation file with latest upstream changes. Added new keys for model management and improved existing translations. |
-| **Jul 06, 2026** | `Fix GigaAM v3 description. (#1613)` | Corrected GigaAM v3 model descriptions from "English speech-to-text" to "Russian speech-to-text" for all 4 variants (CTC, E2E-CTC, RNN-T, E2E-RNN-T). |
-| **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
-| **Jul 04, 2026** | `Improve Dutch (nl) translation accuracy and consistency (#1594)` | Improved Dutch translation accuracy and consistency after initial addition. |
-| **Jul 04, 2026** | `Update Japanese translations (#1593)` | Fixed character encoding issues and translated remaining English strings in Japanese translation. |
-| **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Added complete Dutch (nl) translation with priority 21 in language metadata. |
-| **Jul 03, 2026** | `fix cyrillic (unicode) path problems (#1187)` | Fixed VAD initialization crash on paths with Cyrillic characters. |
-| **Jul 03, 2026** | `bump to transcribe-cpp-0.1.1 (#1589)` | Bumped transcribe-cpp version across all targets. |
-| **Jul 01, 2026** | `update language selector` | Ported the frontend and backend language selector improvements. |
+| **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Added CLT fallback logic in `build.rs`. |
+| **Jul 08, 2026** | `fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)` | Recover poisoned mutexes inside Drop impls using `match` + logged warnings. |
+| **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Bumped in `Cargo.toml`. |
+| **Jul 08, 2026** | `fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)` | Throttled `emit_levels` to 30 FPS in `overlay.rs`. |
+| **Jul 08, 2026** | `fix: reset resampler state between recordings to prevent audio crosstalk (#1344)` | Added `reset()` to `FrameResampler` on `Cmd::Start`. |
+| **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Added dual paste delays (before/after), bumped slider to 500ms, and updated translations. |
+| **Jul 08, 2026** | `Add Nepali translation (#1632)` | Added `ne` translation. |
+| **Jul 08, 2026** | `bump version (#1634)` | Bumped `transcribe-cpp` to 0.1.2. |
+| **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Added OpenBLAS checks to Linux CI/packaging. |
+| **Jul 01, 2026** | `edit model recs` | Skipped (Grain manages custom catalog). |
+| **Jul 07, 2026** | `Update Italian translations (#1604)` | Updated `it` translations. |
+| **Jul 06, 2026** | `Fix GigaAM v3 description. (#1613)` | Corrected descriptions to "Russian speech-to-text". |
+| **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Gated family extension on `model.arch() == "whisper"`. |
+| **Jul 04, 2026** | `Improve Dutch (nl) translation accuracy and consistency (#1594)` | Improved `nl` translations. |
+| **Jul 04, 2026** | `Update Japanese translations (#1593)` | Fixed encoding and translated English strings in `ja`. |
+| **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Added `nl` translation. |
+| **Jul 03, 2026** | `fix cyrillic (unicode) path problems (#1187)` | Fixed VAD crash on Cyrillic paths. |
+| **Jul 03, 2026** | `bump to transcribe-cpp-0.1.1 (#1589)` | Bumped transcribe-cpp to 0.1.1. |
+| **Jul 01, 2026** | `update language selector` | Ported language selector improvements. |
 | **Jun 25, 2026** | `debug + perf transcribe cli (#1541)` | Ported live log viewer and perf cli. |
 | **Jun 24, 2026** | `fix: stop overlay mic-level events leaking memory... (#1447)` | Fixed Tauri memory leak from overlay. |
 | **Jun 24, 2026** | `fix: skip post-processing when transcription is empty (#1537)` | Applied upstream check. |
@@ -61,7 +61,7 @@ Updates from upstream that we have evaluated and explicitly decided NOT to merge
 
 | Date | Upstream Commit / PR | Reason for Ignoring |
 | :--- | :--- | :--- |
-| **Jul 07, 2026** | `fix: preserve active overlay during post-processing (#1597)` | Grain uses its own native overlay/pill architecture and does not use upstream's `OverlayStyle` window spawning. The bug (mismatching UI states when transitioning to post-processing) is impossible here, but the core lesson (ensuring frontend states remain consistent across async phases) will be kept in mind for our custom Pill UI. |
-| **Jul 07, 2026** | `fix: add prompt injection defense to default post-processing prompt (#1310)` | Text-only default prompt update. Grain manages its own post-processing prompts independently with custom system and workflows. |
-| **Jun 23, 2026** | `Clarified branding and redistribution terms for Handy` | Irrelevant to Grain (we are an independent fork with our own branding and license terms). |
+| **Jul 07, 2026** | `fix: preserve active overlay during post-processing (#1597)` | Irrelevant (Grain uses a native Rust pill architecture). |
+| **Jul 07, 2026** | `fix: add prompt injection defense to default post-processing prompt (#1310)` | Irrelevant (Grain manages its own custom prompts). |
+| **Jun 23, 2026** | `Clarified branding and redistribution terms for Handy` | Irrelevant (Grain is an independent fork). |
 
