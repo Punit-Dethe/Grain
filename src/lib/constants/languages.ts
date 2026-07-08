@@ -3,6 +3,12 @@ export interface Language {
   label: string;
 }
 
+// The bare recognition code for Chinese — used to collapse zh-Hans/zh-Hant to
+// the single code the engine sees. Kept as a constant so LanguageSelector.tsx
+// can filter it out of the picker (all three recognize identically; showing the
+// plain entry would only add ambiguity about which script you get).
+export const CHINESE_LANGUAGE_CODE = "zh";
+
 export const LANGUAGES: Language[] = [
   { value: "auto", label: "Auto Detect" },
   { value: "en", label: "English" },
@@ -107,3 +113,34 @@ export const LANGUAGES: Language[] = [
   { value: "jw", label: "Javanese" },
   { value: "su", label: "Sundanese" },
 ];
+
+// Languages offered in the transcription-language picker. Filters out the bare
+// CHINESE_LANGUAGE_CODE ("zh") — Grain's list doesn't have a bare "zh" entry
+// anyway, but keeping this export in sync with upstream so LanguageSelector.tsx
+// always uses a named, stable constant rather than raw LANGUAGES.
+export const SELECTABLE_LANGUAGES: Language[] = LANGUAGES.filter(
+  (language) => language.value !== CHINESE_LANGUAGE_CODE,
+);
+
+// Collapse a BCP-47 language tag to its base subtag, dropping any region or
+// script suffix: "en-US" → "en", "zh-CN" → "zh", "zh-Hant" → "zh".
+// Bare codes ("haw") and three-letter codes pass through unchanged. Lets the
+// picker match a model's real codes (full locales like "en-US" for models like
+// Nemotron Streaming) against Grain's canonical bare-code LANGUAGES list.
+export const recognitionLanguage = (languageCode: string): string => {
+  const separatorIndex = languageCode.indexOf("-");
+  return separatorIndex === -1
+    ? languageCode
+    : languageCode.slice(0, separatorIndex);
+};
+
+// Base-aware check: returns true if `supported` contains at least one entry
+// whose base code matches the base code of `languageCode`. A model advertising
+// "en-US" will correctly match a bare intent of "en", and vice versa.
+export const supportsLanguageCode = (
+  supported: string[],
+  languageCode: string,
+): boolean =>
+  supported.some(
+    (lang) => recognitionLanguage(lang) === recognitionLanguage(languageCode),
+  );
