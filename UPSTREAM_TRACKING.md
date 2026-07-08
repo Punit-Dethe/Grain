@@ -18,7 +18,6 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 | **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Pending |
 | **Jul 03, 2026** | `faster mic initialization (#1582)` | Pending |
 | **Jul 02, 2026** | `ship vsredist directly with the app (#1577)` | Pending |
-| **Jul 01, 2026** | `update language selector` | Merged |
 | **Jul 01, 2026** | `edit model recs` | Pending (Grain uses a custom catalog, requires manual evaluation) |
 
 
@@ -27,18 +26,19 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 ## Completed / Merged
 Updates from upstream that have been successfully ported, refactored, and merged into Grain.
 
-| Date | Upstream Commit / PR | Grain Commit | Notes |
-| :--- | :--- | :--- | :--- |
-| **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | `pending` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
-| **Jul 03, 2026** | `fix cyrillic (unicode) path problems (#1187)` | `pending` | Fixed VAD initialization crash on paths with Cyrillic characters. |
-| **Jul 03, 2026** | `bump to transcribe-cpp-0.1.1 (#1589)` | `pending` | Bumped transcribe-cpp version across all targets. |
-| **Jun 25, 2026** | `debug + perf transcribe cli (#1541)` | `7400a9b` | Ported live log viewer and perf cli. |
-| **Jun 24, 2026** | `fix: stop overlay mic-level events leaking memory... (#1447)` | `8e761c3` | Fixed Tauri memory leak from overlay. |
-| **Jun 24, 2026** | `fix: skip post-processing when transcription is empty (#1537)` | `8e761c3` | Applied upstream check. |
-| **Jun 23, 2026** | `live debug log viewer in app (#1535)` | `7400a9b` | Ported live log viewer and CLI tool. |
-| **Jun 18, 2026** | `fix: dropdown overflow in post-processing settings (#1402)` | `db42a12`* | Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix. |
-| **Jun 11, 2026** | `fix(models): show size for downloaded models (#1484)` | `db42a12`* | Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul). |
-| **Jun 11, 2026** | `fix(visualizer): scale FFT window to device sample rate (#1491)` | `353b37c`* | FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite). |
+| Date | Upstream Commit / PR | Notes |
+| :--- | :--- | :--- |
+| **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
+| **Jul 03, 2026** | `fix cyrillic (unicode) path problems (#1187)` | Fixed VAD initialization crash on paths with Cyrillic characters. |
+| **Jul 03, 2026** | `bump to transcribe-cpp-0.1.1 (#1589)` | Bumped transcribe-cpp version across all targets. |
+| **Jul 01, 2026** | `update language selector` | Ported the frontend and backend language selector improvements. |
+| **Jun 25, 2026** | `debug + perf transcribe cli (#1541)` | Ported live log viewer and perf cli. |
+| **Jun 24, 2026** | `fix: stop overlay mic-level events leaking memory... (#1447)` | Fixed Tauri memory leak from overlay. |
+| **Jun 24, 2026** | `fix: skip post-processing when transcription is empty (#1537)` | Applied upstream check. |
+| **Jun 23, 2026** | `live debug log viewer in app (#1535)` | Ported live log viewer and CLI tool. |
+| **Jun 18, 2026** | `fix: dropdown overflow in post-processing settings (#1402)` | Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix. |
+| **Jun 11, 2026** | `fix(models): show size for downloaded models (#1484)` | Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul). |
+| **Jun 11, 2026** | `fix(visualizer): scale FFT window to device sample rate (#1491)` | FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite). |
 
 ---
 
