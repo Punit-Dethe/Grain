@@ -18,6 +18,10 @@ const EMIT_THROTTLE_MS: u64 = 33; // ~30 FPS
 /// (the `"mic-level"` webview event) and (2) the headless event bus, where the
 /// pill picks them up over the WS to drive its Aura animation.
 pub fn emit_levels(app_handle: &AppHandle, levels: &Vec<f32>) {
+    // Throttle to ~30 FPS. Even with the overlay enabled, the raw audio
+    // callback fires far faster than the UI needs; capping emission rate
+    // cuts the per-frame `eval_script`/IPC volume that drives the wry
+    // memory growth in issue #1279 (upstream tauri-apps/wry#1489).
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
