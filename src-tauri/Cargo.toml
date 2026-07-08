@@ -97,7 +97,7 @@ transcribe-cpp = { version = "0.1.2", default-features = false }
 hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downloads", features = [
   "tokio",
 ] }
-handy-keys = "0.2.4"
+handy-keys = "0.3.0"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
 specta = "=2.0.0-rc.22"
