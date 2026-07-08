@@ -23,12 +23,12 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
-| **Jul 06, 2026** | `Fix GigaAM v3 description. (#1613)` | Corrected GigaAM v3 model descriptions from "English speech-to-text" to "Russian speech-to-text" for all 4 variants (CTC, E2E-CTC, RNN-T, E2E-RNN-T). |
 | **Jul 07, 2026** | `Update Italian translations (#1604)` | Updated Italian translation file with latest upstream changes. Added new keys for model management and improved existing translations. |
+| **Jul 06, 2026** | `Fix GigaAM v3 description. (#1613)` | Corrected GigaAM v3 model descriptions from "English speech-to-text" to "Russian speech-to-text" for all 4 variants (CTC, E2E-CTC, RNN-T, E2E-RNN-T). |
+| **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
 | **Jul 04, 2026** | `Improve Dutch (nl) translation accuracy and consistency (#1594)` | Improved Dutch translation accuracy and consistency after initial addition. |
 | **Jul 04, 2026** | `Update Japanese translations (#1593)` | Fixed character encoding issues and translated remaining English strings in Japanese translation. |
 | **Jul 04, 2026** | `Add Dutch (Nederlands) translation (#1590)` | Added complete Dutch (nl) translation with priority 21 in language metadata. |
-| **Jul 05, 2026** | `fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)` | Non-whisper models (e.g. Voxtral Small 24B) advertise `Feature::InitialPrompt` but reject `WhisperRunOptions` with `INVALID_ARG`. Gated the `family` extension on `model.arch() == "whisper"` instead of the feature flag. |
 | **Jul 03, 2026** | `fix cyrillic (unicode) path problems (#1187)` | Fixed VAD initialization crash on paths with Cyrillic characters. |
 | **Jul 03, 2026** | `bump to transcribe-cpp-0.1.1 (#1589)` | Bumped transcribe-cpp version across all targets. |
 | **Jul 01, 2026** | `update language selector` | Ported the frontend and backend language selector improvements. |
