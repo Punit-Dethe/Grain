@@ -444,7 +444,18 @@ fn embed_batch(
         let pooled = (hidden.sum(1)? / seq_len as f64)?; // [1, dim]
         let norm = pooled.sqr()?.sum_keepdim(1)?.sqrt()?;
         let normalized = pooled.broadcast_div(&norm)?;
-        out.push(normalized.squeeze(0)?.to_vec1::<f32>()?);
+        let vec = normalized.squeeze(0)?.to_vec1::<f32>()?;
+        // Reject poison at the source: a non-finite (NaN/Inf) or all-zero
+        // embedding means the forward pass was corrupt (e.g. a half-loaded /
+        // mmap-raced model). Returning Err keeps the caller from storing it,
+        // which would otherwise make every later KNN return NULL distance and
+        // crash recall. The note stays embed_stale=1 and retries next time.
+        if !vec.iter().all(|x| x.is_finite()) || vec.iter().all(|&x| x == 0.0) {
+            return Err(anyhow!(
+                "embed produced non-finite/zero vector (model forward corrupt?)"
+            ));
+        }
+        out.push(vec);
     }
     Ok(out)
 }
