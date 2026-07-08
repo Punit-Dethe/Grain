@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grain Space Note Prototype</title>
+    <style>
+        :root {
+            --bg-color: transparent;
+            --surface-color: #FCFAf5;
+            --surface-hover: #F2ECE0;
+            --text-primary: #1A1A1A;
+            --text-secondary: #5A5A5A;
+            --text-tertiary: #8A8A8A;
+            --border-color: #E4DCD0;
+            --accent-orange: #ff5500;
+            --radius: 16px;
+            --shadow: 0 12px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            margin: 0;
+            height: 100vh;
+            background-color: #0a0a0a;
+            background-image: radial-gradient(circle at center, #1a1a1a 0%, #050505 100%);
+            font-family: var(--font-family);
+            color: var(--text-primary);
+            overflow: hidden;
+        }
+
+        .agent-card {
+            background-color: var(--surface-color);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
+            /* Positioned Top Center */
+            position: absolute;
+            top: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+
+            /* Smooth transition for width/padding ensures symmetric expansion */
+            transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), padding 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+
+            /* Default Compact state */
+            width: max-content;
+            /* Hugs the inner content perfectly */
+            padding: 12px 10px;
+            overflow: hidden;
+        }
+
+        /* When Expanded */
+        .agent-card.is-expanded {
+            width: 520px;
+            padding: 16px 10px;
+        }
+
+        /* --- Recording State --- */
+        .recording-state {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            /* Reduced gap so the text moves left closer to the wave */
+            opacity: 1;
+            transition: opacity 0.2s;
+        }
+
+        .agent-card.is-expanded .recording-state {
+            display: none;
+        }
+
+        .recording-indicator {
+            display: flex;
+            align-items: center;
+            /* Pushed to the left edge */
+            margin-left: 2px;
+        }
+
+        /* Dot Matrix Wave Grid */
+        .agent-wave {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            grid-template-rows: repeat(4, 1fr);
+            gap: 3px;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .agent-wave-dot {
+            width: 3.5px;
+            height: 3.5px;
+            border-radius: 50%;
+            /* Background color is now injected dynamically via JS for the gradient */
+        }
+
+        .agent-cue-small {
+            font-size: 11.5px;
+            color: var(--text-secondary);
+            letter-spacing: 0.2px;
+        }
+
+        .typing-state {
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+            opacity: 0;
+        }
+
+        .agent-card.is-expanded .typing-state {
+            display: flex;
+            opacity: 1;
+            animation: fadeIn 0.3s forwards;
+        }
+
+        /* Search Mode Overrides */
+        .agent-card.mode-search .note-title-container,
+        .agent-card.mode-search .toolbar-btn {
+            display: none;
+        }
+        
+        .agent-card.mode-search .note-body-field {
+            min-height: auto;
+            max-height: 40px;
+            white-space: nowrap;
+            overflow: hidden;
+            font-size: 18px;
+        }
+
+        .search-cue { display: none; }
+        .note-cue { display: inline; }
+        
+        .agent-card.mode-search .search-cue { display: inline; }
+        .agent-card.mode-search .note-cue { display: none; }
+
+        .note-title-container {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .note-title-field {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 20px;
+            font-weight: 700;
+            font-family: var(--font-family);
+            outline: none;
+            padding: 0;
+            caret-color: var(--accent-orange);
+        }
+
+        .note-title-field::placeholder {
+            color: var(--text-tertiary);
+            font-weight: 600;
+        }
+
+
+        .toolbar-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-tertiary);
+            border-radius: 6px;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font-family);
+        }
+
+        .toolbar-btn:hover {
+            background: var(--surface-hover);
+            color: var(--text-primary);
+        }
+
+        .agent-spacer {
+            flex-grow: 1;
+        }
+
+        .agent-sel-chip {
+            background-color: var(--surface-hover);
+            color: var(--text-secondary);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            border: 1px solid var(--border-color);
+        }
+
+        .agent-pal-input {
+            position: relative;
+        }
+
+        .note-body-field {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            font-size: 16px;
+            line-height: 1.5;
+            font-family: var(--font-family);
+            outline: none;
+            padding: 0;
+            caret-color: var(--accent-orange);
+            resize: none;
+            min-height: 80px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .note-body-field::placeholder {
+            color: var(--text-tertiary);
+        }
+
+        .agent-pal-foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 4px;
+        }
+
+        .agent-esc-text {
+            font-size: 12px;
+            color: var(--text-tertiary);
+        }
+
+        .agent-foot-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-left: auto;
+        }
+
+        .agent-send-btn {
+            background-color: #1A1A1A;
+            color: #FFFFFF;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            font-family: var(--font-family);
+            transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .agent-send-btn:hover {
+            background-color: #000000;
+        }
+
+        .agent-send-btn:active {
+            transform: scale(0.96);
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+
+            50% {
+                transform: scale(1.3);
+                opacity: 0.6;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 1;
+            }
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+    <!-- Mode Toggle Button (For Prototyping) -->
+    <button id="mode-toggle" style="position: absolute; top: 16px; left: 16px; padding: 8px 14px; background: #E4DCD0; border: none; border-radius: 8px; cursor: pointer; font-family: var(--font-family); font-weight: 600; color: var(--text-primary); box-shadow: 0 2px 8px rgba(0,0,0,0.2);">
+        Switch to Search Mode
+    </button>
+
+    <!-- The card toggles an .is-expanded class -->
+    <div class="agent-card" id="agent-card">
+
+        <!-- Recording State (Compact) -->
+        <div class="recording-state" id="recording-state">
+            <div class="recording-indicator">
+                <!-- Dot Matrix Wave Grid -->
+                <div class="agent-wave" id="wave-grid"></div>
+            </div>
+            <span class="agent-cue-small">
+                <span class="note-cue">Noting...</span>
+                <span class="search-cue">Searching...</span>
+            </span>
+        </div>
+
+        <!-- Typing State (Expanded) -->
+        <div class="typing-state" id="typing-state">
+            <div class="note-title-container">
+                <input type="text" id="note-title" class="note-title-field" placeholder="Title (optional)" autocomplete="off">
+            </div>
+
+            <div class="agent-pal-input">
+                <textarea id="agent-input" class="note-body-field" placeholder="Write your note here..."></textarea>
+            </div>
+
+            <div class="agent-pal-foot">
+                <div class="agent-foot-left">
+                    <span class="agent-esc-text">Tab to record</span>
+                </div>
+                <div class="agent-foot-right">
+                    <button class="toolbar-btn" id="btn-todo" title="To-do list">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    </button>
+                    <button class="toolbar-btn" id="btn-ul" title="Bulleted list">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/></svg>
+                    </button>
+                    <button class="toolbar-btn" id="btn-ol" title="Numbered list">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="10" x2="21" y1="6" y2="6"/><line x1="10" x2="21" y1="12" y2="12"/><line x1="10" x2="21" y1="18" y2="18"/><path d="M4 6h1v4"/><path d="M4 10h2"/><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"/></svg>
+                    </button>
+                    <button class="agent-send-btn" id="send-btn">
+                        Confirm ↵
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const card = document.getElementById('agent-card');
+        const input = document.getElementById('agent-input');
+        const titleInput = document.getElementById('note-title');
+        const sendBtn = document.getElementById('send-btn');
+        const waveGrid = document.getElementById('wave-grid');
+        const modeToggleBtn = document.getElementById('mode-toggle');
+
+        let isExpanded = false;
+        let isSearchMode = false;
+
+        // Toggle Modes
+        modeToggleBtn.addEventListener('click', () => {
+            isSearchMode = !isSearchMode;
+            if (isSearchMode) {
+                card.classList.add('mode-search');
+                modeToggleBtn.textContent = 'Switch to Note Mode';
+                input.placeholder = 'Search your notes...';
+                input.style.height = 'auto'; // Reset height for single line
+            } else {
+                card.classList.remove('mode-search');
+                modeToggleBtn.textContent = 'Switch to Search Mode';
+                input.placeholder = 'Write your note here...';
+                input.dispatchEvent(new Event('input')); // Auto-resize back
+            }
+        });
+
+        // Initialize Wave Grid
+        const WAVE_ROWS = 4;
+        const WAVE_COLS = 12;
+        const dots = [];
+
+        for (let i = 0; i < WAVE_ROWS * WAVE_COLS; i++) {
+            const r = Math.floor(i / WAVE_COLS);
+            const c = i % WAVE_COLS;
+            const isCorner = (r === 0 || r === WAVE_ROWS - 1) && (c === 0 || c === WAVE_COLS - 1);
+
+            const dot = document.createElement('span');
+            dot.className = 'agent-wave-dot';
+
+            // Dynamic Gray to Orange Gradient
+            // Left (Medium Dark Gray): rgb(120, 120, 120)
+            // Right (Orange): rgb(255, 85, 0)
+            // Using a power curve to make the orange section larger and gray shorter
+            const linearRatio = c / (WAVE_COLS - 1); // 0 at left, 1 at right
+            const ratio = Math.pow(linearRatio, 0.5); // Approaches 1 (orange) much faster
+
+            const r_val = Math.round(120 + (135 * ratio)); // 120 to 255
+            const g_val = Math.round(120 - (35 * ratio));  // 120 to 85
+            const b_val = Math.round(120 - (120 * ratio)); // 120 to 0
+            dot.style.backgroundColor = `rgb(${r_val}, ${g_val}, ${b_val})`;
+
+            if (isCorner) {
+                dot.style.visibility = 'hidden';
+            }
+            waveGrid.appendChild(dot);
+            dots.push(dot);
+        }
+
+        // Start Wave Animation
+        const start = performance.now();
+        function tick(now) {
+            const time = (now - start) / 1000; // Use seconds for easier math
+
+            for (let i = 0; i < dots.length; i++) {
+                const c = i % WAVE_COLS;
+                const r = Math.floor(i / WAVE_COLS);
+                const isCorner = (r === 0 || r === WAVE_ROWS - 1) && (c === 0 || c === WAVE_COLS - 1);
+
+                if (!isCorner) {
+                    // "Quantum Audio Stream" Animation (Right to Left)
+                    // Using time * positive_speed + c * positive_freq forces the wave to travel LEFT.
+
+                    // Wave 1: Fast, tight ripples carrying the high frequencies
+                    const w1 = Math.sin(c * 0.6 + time * 6.0 + r * 0.5);
+
+                    // Wave 2: Slower, wider swells that modulate the fast ripples (creates organic "beats")
+                    const w2 = Math.sin(c * 0.3 + time * 3.0 - r * 1.2);
+
+                    // Wave 3: A pulsing energy that shifts vertically across the rows
+                    const w3 = Math.cos(c * 0.8 + time * 4.5 + r * 2.0);
+
+                    // Additive and Amplitude synthesis (literally how real audio works)
+                    const combined = (w1 * 0.5) + (w2 * w1 * 0.5) + (w3 * 0.3);
+
+                    // Map the complex signal to opacity (0.05 to 1.0)
+                    const normalized = (combined + 1.3) / 2.6; // Maps roughly -1.3..1.3 to 0..1
+                    const opacity = 0.05 + (normalized * 0.95);
+
+                    dots[i].style.opacity = Math.max(0.05, Math.min(1.0, opacity));
+                }
+            }
+            requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+
+        // Keyboard interactions
+        window.addEventListener('keydown', (e) => {
+            // If already expanded
+            if (isExpanded) {
+                if (e.key === 'Tab') {
+                    e.preventDefault(); // Prevent tab from moving focus off page
+                    // Shrink back to recording
+                    isExpanded = false;
+                    card.classList.remove('is-expanded');
+                    input.value = '';
+                    titleInput.value = '';
+                    input.style.height = 'auto'; // Reset height
+                    input.blur();
+                    titleInput.blur();
+                } else if (e.key === 'Escape') {
+                    console.log("Close agent entirely");
+                } else if (isSearchMode && e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    console.log("Submit Search:", input.value);
+                } else if (!isSearchMode && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    console.log("Submit Note:", titleInput.value, input.value);
+                }
+                return;
+            }
+
+            // If not expanded, and user types a printable character (ignore tab/esc/modifiers here)
+            if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                isExpanded = true;
+                card.classList.add('is-expanded');
+
+                setTimeout(() => {
+                    input.focus();
+                }, 50);
+            } else if (e.key === 'Escape') {
+                console.log("Cancelled recording");
+            }
+        });
+
+        // Click to expand manually
+        card.addEventListener('click', () => {
+            if (!isExpanded) {
+                isExpanded = true;
+                card.classList.add('is-expanded');
+                setTimeout(() => {
+                    input.focus();
+                }, 50);
+            }
+        });
+
+        // Handle Send button click
+        sendBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (isSearchMode) {
+                console.log("Submit Search:", input.value);
+            } else {
+                console.log("Submit Note:", titleInput.value, input.value);
+            }
+        });
+
+        // Auto-resize textarea
+        input.addEventListener('input', () => {
+            input.style.height = 'auto';
+            input.style.height = input.scrollHeight + 'px';
+        });
+
+        // Toolbar functionality
+        function insertAtCursor(textPrefix) {
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            const text = input.value;
+            
+            // Check if we are at the start of a line
+            const isStartOfLine = start === 0 || text.charAt(start - 1) === '\n';
+            const prefix = isStartOfLine ? textPrefix : '\n' + textPrefix;
+
+            input.value = text.substring(0, start) + prefix + text.substring(end);
+            input.selectionStart = input.selectionEnd = start + prefix.length;
+            input.focus();
+            input.dispatchEvent(new Event('input')); // trigger resize
+        }
+
+        document.getElementById('btn-todo').addEventListener('click', (e) => {
+            e.stopPropagation();
+            insertAtCursor('- [ ] ');
+        });
+
+        document.getElementById('btn-ul').addEventListener('click', (e) => {
+            e.stopPropagation();
+            insertAtCursor('- ');
+        });
+
+        document.getElementById('btn-ol').addEventListener('click', (e) => {
+            e.stopPropagation();
+            insertAtCursor('1. ');
+        });
+
+
+    </script>
+</body>
+
+</html>

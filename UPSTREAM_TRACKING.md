@@ -51,6 +51,12 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 ---
 
+## Technical Debt & Future Architectural Fixes
+* **Remove `candle 0.9.2` f16 CPU probe workaround:** The current upstream fix for the f16 NaN bug uses a "probe" that loads the model, tests it, and falls back to f32 if it fails. This violates lazy-loading principles and wastes initialization time. 
+  * **The Proper Fix:** Replace the standard f32/f16 models with a properly quantized `int8` (or similar) model. A structurally quantized model will natively use integer matrix multiplication (bypassing the broken f16 float math on CPU), load significantly faster, and allow us to rip out the hacky probe/fallback logic completely.
+
+---
+
 ## Intentionally Ignored
 Updates from upstream that we have evaluated and explicitly decided NOT to merge (e.g., conflicts with Grain's architecture, UI philosophy, or native implementations).
 
