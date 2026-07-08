@@ -7,7 +7,6 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 
 | Date | Upstream Commit / PR | Status / Notes |
 | :--- | :--- | :--- |
-| **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Pending |
 | **Jul 08, 2026** | `salvage valid settings instead of resetting store on parse failure (#1631)` | Pending |
 | **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Pending |
 | **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Pending |
@@ -29,6 +28,7 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 08, 2026** | `Apply paste delay after key press and increase slider range (#1465)` | Added dual paste delays: before (after copy) and after (before clipboard restore). Increased slider max from 200ms to 500ms. Updated all 29 translation files. Backend: added `paste_delay_after_ms` field and Tauri command. Frontend: made PasteDelay component configurable with props. |
 | **Jul 08, 2026** | `Add Nepali translation (#1632)` | Cherry-picked exact upstream diff to add `src/i18n/locales/ne/translation.json` and update `languages.ts`. |
 | **Jul 08, 2026** | `bump version (#1634)` | Bumped `transcribe-cpp` from 0.1.1 to 0.1.2 across all platform targets in `Cargo.toml`. |
 | **Jul 08, 2026** | `add openblas to ci and packaging for linux (#1621)` | Added OpenBLAS dependency checks to CI and Tauri Linux packaging config. |
