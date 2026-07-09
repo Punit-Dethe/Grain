@@ -1,0 +1,268 @@
+[
+  {
+    "date": "Jul 09, 2026",
+    "commit": "`fix: tray icon invisible on Windows with dark taskbar + light apps (#1423)`",
+    "status": "Pending",
+    "notes": "Pending (Grain's native architecture heavily modified `tray.rs` and `lib.rs` for the Pill UI. Requires manual analysis and integration.)",
+    "pr": "1423"
+  },
+  {
+    "date": "Jul 09, 2026",
+    "commit": "`fix: cancel stalled output processing (#1614)`",
+    "status": "Pending",
+    "notes": "Pending (Grain's ASR adaptation stripped the `cancel_generation` token in `actions.rs`. Needs manual rebuild using Grain's `SESSION_ID` architecture.)",
+    "pr": "1614"
+  },
+  {
+    "date": "Jul 09, 2026",
+    "commit": "`[bugfix] keep track of current tray icon state (#1158)`",
+    "status": "Pending",
+    "notes": "Pending (Grain's native architecture modified this part of the code for the Pill UI. Kept pending for manual analysis and merge.)",
+    "pr": "1158"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`salvage valid settings instead of resetting store on parse failure (#1631)`",
+    "status": "Pending",
+    "notes": "Pending",
+    "pr": "1631"
+  },
+  {
+    "date": "Jul 07, 2026",
+    "commit": "`fix: preserve ampersands in custom words (#1569)`",
+    "status": "Pending",
+    "notes": "Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes)",
+    "pr": "1569"
+  },
+  {
+    "date": "Jul 05, 2026",
+    "commit": "`move to auto timestamps for all models (#1602)`",
+    "status": "Pending",
+    "notes": "Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.)",
+    "pr": "1602"
+  },
+  {
+    "date": "Jul 03, 2026",
+    "commit": "`faster mic initialization (#1582)`",
+    "status": "Pending",
+    "notes": "Pending",
+    "pr": "1582"
+  },
+  {
+    "date": "Jul 02, 2026",
+    "commit": "`ship vsredist directly with the app (#1577)`",
+    "status": "Pending",
+    "notes": "Pending",
+    "pr": "1577"
+  },
+  {
+    "date": "Jul 09, 2026",
+    "commit": "`fix(tray): log tray icon failures instead of panicking (#1355)`",
+    "status": "Merged",
+    "notes": "Safely merged into `tray.rs`",
+    "pr": "1355"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)`",
+    "status": "Merged",
+    "notes": "Added CLT fallback logic in `build.rs`.",
+    "pr": "1510"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)`",
+    "status": "Merged",
+    "notes": "Recover poisoned mutexes inside Drop impls using `match` + logged warnings.",
+    "pr": "1354"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`handy keys 0.3.0 (#1623)`",
+    "status": "Merged",
+    "notes": "Bumped in `Cargo.toml`.",
+    "pr": "1623"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`fix: throttle mic-level IPC to mitigate WebKitWebProcess memory leak (#1444)`",
+    "status": "Merged",
+    "notes": "Throttled `emit_levels` to 30 FPS in `overlay.rs`.",
+    "pr": "1444"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`fix: reset resampler state between recordings to prevent audio crosstalk (#1344)`",
+    "status": "Merged",
+    "notes": "Added `reset()` to `FrameResampler` on `Cmd::Start`.",
+    "pr": "1344"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`Apply paste delay after key press and increase slider range (#1465)`",
+    "status": "Merged",
+    "notes": "Added dual paste delays (before/after), bumped slider to 500ms, and updated translations.",
+    "pr": "1465"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`Add Nepali translation (#1632)`",
+    "status": "Merged",
+    "notes": "Added `ne` translation.",
+    "pr": "1632"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`bump version (#1634)`",
+    "status": "Merged",
+    "notes": "Bumped `transcribe-cpp` to 0.1.2.",
+    "pr": "1634"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`add openblas to ci and packaging for linux (#1621)`",
+    "status": "Merged",
+    "notes": "Added OpenBLAS checks to Linux CI/packaging.",
+    "pr": "1621"
+  },
+  {
+    "date": "Jul 01, 2026",
+    "commit": "`edit model recs`",
+    "status": "Merged",
+    "notes": "Skipped (Grain manages custom catalog).",
+    "pr": ""
+  },
+  {
+    "date": "Jul 07, 2026",
+    "commit": "`Update Italian translations (#1604)`",
+    "status": "Merged",
+    "notes": "Updated `it` translations.",
+    "pr": "1604"
+  },
+  {
+    "date": "Jul 06, 2026",
+    "commit": "`Fix GigaAM v3 description. (#1613)`",
+    "status": "Merged",
+    "notes": "Corrected descriptions to \"Russian speech-to-text\".",
+    "pr": "1613"
+  },
+  {
+    "date": "Jul 05, 2026",
+    "commit": "`fix: gate whisper run extension on model arch, not Feature::InitialPrompt (#1603)`",
+    "status": "Merged",
+    "notes": "Gated family extension on `model.arch() == \"whisper\"`.",
+    "pr": "1603"
+  },
+  {
+    "date": "Jul 04, 2026",
+    "commit": "`Improve Dutch (nl) translation accuracy and consistency (#1594)`",
+    "status": "Merged",
+    "notes": "Improved `nl` translations.",
+    "pr": "1594"
+  },
+  {
+    "date": "Jul 04, 2026",
+    "commit": "`Update Japanese translations (#1593)`",
+    "status": "Merged",
+    "notes": "Fixed encoding and translated English strings in `ja`.",
+    "pr": "1593"
+  },
+  {
+    "date": "Jul 04, 2026",
+    "commit": "`Add Dutch (Nederlands) translation (#1590)`",
+    "status": "Merged",
+    "notes": "Added `nl` translation.",
+    "pr": "1590"
+  },
+  {
+    "date": "Jul 03, 2026",
+    "commit": "`fix cyrillic (unicode) path problems (#1187)`",
+    "status": "Merged",
+    "notes": "Fixed VAD crash on Cyrillic paths.",
+    "pr": "1187"
+  },
+  {
+    "date": "Jul 03, 2026",
+    "commit": "`bump to transcribe-cpp-0.1.1 (#1589)`",
+    "status": "Merged",
+    "notes": "Bumped transcribe-cpp to 0.1.1.",
+    "pr": "1589"
+  },
+  {
+    "date": "Jul 01, 2026",
+    "commit": "`update language selector`",
+    "status": "Merged",
+    "notes": "Ported language selector improvements.",
+    "pr": ""
+  },
+  {
+    "date": "Jun 25, 2026",
+    "commit": "`debug + perf transcribe cli (#1541)`",
+    "status": "Merged",
+    "notes": "Ported live log viewer and perf cli.",
+    "pr": "1541"
+  },
+  {
+    "date": "Jun 24, 2026",
+    "commit": "`fix: stop overlay mic-level events leaking memory... (#1447)`",
+    "status": "Merged",
+    "notes": "Fixed Tauri memory leak from overlay.",
+    "pr": "1447"
+  },
+  {
+    "date": "Jun 24, 2026",
+    "commit": "`fix: skip post-processing when transcription is empty (#1537)`",
+    "status": "Merged",
+    "notes": "Applied upstream check.",
+    "pr": "1537"
+  },
+  {
+    "date": "Jun 23, 2026",
+    "commit": "`live debug log viewer in app (#1535)`",
+    "status": "Merged",
+    "notes": "Ported live log viewer and CLI tool.",
+    "pr": "1535"
+  },
+  {
+    "date": "Jun 18, 2026",
+    "commit": "`fix: dropdown overflow in post-processing settings (#1402)`",
+    "status": "Merged",
+    "notes": "Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix.",
+    "pr": "1402"
+  },
+  {
+    "date": "Jun 11, 2026",
+    "commit": "`fix(models): show size for downloaded models (#1484)`",
+    "status": "Merged",
+    "notes": "Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul).",
+    "pr": "1484"
+  },
+  {
+    "date": "Jun 11, 2026",
+    "commit": "`fix(visualizer): scale FFT window to device sample rate (#1491)`",
+    "status": "Merged",
+    "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite).",
+    "pr": "1491"
+  },
+  {
+    "date": "Jul 07, 2026",
+    "commit": "`fix: preserve active overlay during post-processing (#1597)`",
+    "status": "Ignored",
+    "notes": "Irrelevant (Grain uses a native Rust pill architecture).",
+    "pr": "1597"
+  },
+  {
+    "date": "Jul 07, 2026",
+    "commit": "`fix: add prompt injection defense to default post-processing prompt (#1310)`",
+    "status": "Ignored",
+    "notes": "Irrelevant (Grain manages its own custom prompts).",
+    "pr": "1310"
+  },
+  {
+    "date": "Jun 23, 2026",
+    "commit": "`Clarified branding and redistribution terms for Handy`",
+    "status": "Ignored",
+    "notes": "Irrelevant (Grain is an independent fork).",
+    "pr": ""
+  }
+]

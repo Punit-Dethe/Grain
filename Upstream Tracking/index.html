@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upstream Tracking - Grain</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">Grain <span class="accent">Upstream</span></div>
+                <div class="search-container">
+                    <input type="text" id="searchInput" placeholder="Search commits, PRs, notes..." class="search-input">
+                </div>
+                <div class="filter-container">
+                    <select id="statusFilter" class="status-filter">
+                        <option value="All">All Statuses</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Merged">Merged</option>
+                        <option value="Ignored">Ignored</option>
+                    </select>
+                </div>
+            </div>
+        </header>
+
+        <main class="content">
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <span class="stat-label">Total</span>
+                    <span class="stat-value" id="totalCount">0</span>
+                </div>
+                <div class="stat-card pending">
+                    <span class="stat-label">Pending</span>
+                    <span class="stat-value" id="pendingCount">0</span>
+                </div>
+                <div class="stat-card merged">
+                    <span class="stat-label">Merged</span>
+                    <span class="stat-value" id="mergedCount">0</span>
+                </div>
+            </div>
+
+            <div class="list-container" id="commitList">
+                <!-- Items will be injected here via JS -->
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
