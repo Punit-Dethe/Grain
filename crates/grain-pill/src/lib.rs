@@ -2054,8 +2054,13 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             eprintln!("event: PromptRecordingChanged -> {}", r.prompt_recording);
         }
         DaemonEvent::ProcessingComplete { .. } | DaemonEvent::SessionCancelled { .. } => {
+            // [GRAIN] Session over → back to idle. Resetting the state (not just
+            // visibility) so a later idle prompt-switch preview is detected as
+            // idle (see `is_idle_prompt_preview`) instead of leaking the stale
+            // `Processing` body beside the capsule.
+            r.state = PillState::Idle;
             r.visible = false;
-            eprintln!("event: ProcessingComplete/Cancelled -> hide");
+            eprintln!("event: ProcessingComplete/Cancelled -> hide (idle)");
         }
         // [GRAIN] B4: surface failures in the placeholder fallback state.
         DaemonEvent::ModelError { .. } | DaemonEvent::PasteError { .. } => {
@@ -3806,7 +3811,28 @@ impl ApplicationHandler<UserEvent> for App {
         if now >= self.next_tick {
             // Pull authoritative state/visibility from the core (or dev keys).
             let r = self.remote.lock().unwrap().clone();
+            // [GRAIN] Capture the pre-tick state so we can detect a session
+            // starting out of an idle prompt-switch preview (the riser + window
+            // centering from the preview must be cancelled the instant a real
+            // session begins, or the capsule flashes beside the recording body
+            // and the body renders off-center).
+            let prev_state = self.state;
             self.state = r.state;
+            let session_started_from_preview = matches!(
+                self.state,
+                PillState::Recording | PillState::Processing
+            ) && !matches!(
+                prev_state,
+                PillState::Recording | PillState::Processing
+            ) && self.prompt_preview_until.is_some();
+            if session_started_from_preview {
+                // Drop the riser immediately so no capsule renders beside the
+                // recording body, and clear the preview so it stops driving
+                // visibility/centering.
+                self.riser_progress = 0.0;
+                self.riser_hide_at = None;
+                self.prompt_preview_until = None;
+            }
             self.prompt_recording = r.prompt_recording;
             self.asr = r.asr.clone();
 
@@ -4123,6 +4149,23 @@ impl ApplicationHandler<UserEvent> for App {
                             Self::position_window(window, r.anchor, h, center_w);
                             eprintln!("window: show (content primed)");
                             present::show_window(window);
+                        }
+                    }
+                } else if session_started_from_preview && self.visible {
+                    // [GRAIN] A session just started out of an idle prompt-switch
+                    // preview: the window was centered on the capsule (`SIB_W`)
+                    // and is still visible (so `becoming_visible` is false). Re-
+                    // center it on the pill body so the recording pill is screen-
+                    // centered instead of offset to the left.
+                    if let Some(window) = &self.window {
+                        if self.mode != PillMode::AgentInput {
+                            let (w, h) = Self::win_size_for(self.mode);
+                            Self::position_window(
+                                window,
+                                r.anchor,
+                                h,
+                                Self::center_w_for(self.mode, w),
+                            );
                         }
                     }
                 }
