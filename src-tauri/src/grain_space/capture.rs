@@ -21,6 +21,38 @@ use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID}
 const QUICK_ADD_DEBOUNCE_MS: i64 = 500;
 static LAST_QUICK_ADD_MS: AtomicI64 = AtomicI64::new(0);
 
+/// Metadata extraction only needs a REPRESENTATIVE sample of the body, not the
+/// whole thing — an "astronomically huge" pasted selection would otherwise blow
+/// the token budget / latency of the title-TLDR call. The full body is always
+/// stored verbatim; only the LLM's metadata input is capped.
+const META_SAMPLE_CHARS: usize = 4000;
+
+/// A plain-code title from the first few words of the body. Used when there is
+/// no usable LLM (Input B / quick-add) or extraction fails, so a note — and the
+/// Recall source chip that cites it — is never blank. No network, no model.
+pub(crate) fn fallback_title(body: &str) -> String {
+    let title: String = body
+        .split_whitespace()
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" ");
+    // Trim trailing punctuation so "Buy milk," → "Buy milk".
+    let title = title
+        .trim_end_matches(|c: char| c.is_ascii_punctuation())
+        .trim();
+    // Guard against a single pathological word (e.g. a giant URL/token).
+    title.chars().take(48).collect()
+}
+
+/// A capped, representative slice of the body for the metadata LLM call.
+fn sample_for_meta(body: &str) -> String {
+    if body.chars().count() <= META_SAMPLE_CHARS {
+        body.to_string()
+    } else {
+        body.chars().take(META_SAMPLE_CHARS).collect()
+    }
+}
+
 /// Input C: capture the highlighted text and save it silently as a raw note.
 /// Runs the whole capture off the input thread (the selection grab sleeps/polls
 /// the clipboard). Empty selection ⇒ silent no-op — never an empty note.
@@ -47,7 +79,10 @@ pub fn quick_add(app: &AppHandle) {
                 return;
             }
         };
-        let note = Note::raw(selection);
+        let mut note = Note::raw(selection);
+        // No LLM on the quick-add path — give it a plain-code title so the note
+        // and its future source chip aren't blank.
+        note.title = fallback_title(&note.body);
         match store::save_note(&base, &note) {
             Ok(()) => {
                 log::info!("[GRAIN] space quick-add: saved note {}", note.id);
@@ -367,13 +402,35 @@ pub(crate) async fn reconcile_note(
     let settings = get_settings(app);
     if llm_usable(&settings) {
         match reconcile_call(app, &settings, current, change, convo_context).await {
-            Ok(merged) => return merged.apply_to(current, settings.grain_space_auto_reminders),
+            Ok(merged) => {
+                let candidate = merged.apply_to(current, settings.grain_space_auto_reminders);
+                // Confidence guard: a merge that silently drops most of a
+                // non-trivial body is almost always a bad merge, not a genuine
+                // supersede. A wrong overwrite is worse than a plain append, so
+                // fall back to appending the raw change instead.
+                if merge_lost_content(current, &candidate) {
+                    log::warn!(
+                        "[GRAIN] space reconcile: merge dropped too much body; raw-appending change"
+                    );
+                    return raw_append(current, change);
+                }
+                return candidate;
+            }
             Err(e) => {
                 log::warn!("[GRAIN] space reconcile: merge failed ({e}); raw-appending change")
             }
         }
     }
     raw_append(current, change)
+}
+
+/// True when a reconcile merge lost more than half of a non-trivial body — the
+/// signal we use to distrust the merge and fall back to a safe append. Short
+/// bodies (< 40 chars) are exempt: replacing a tiny note wholesale is normal.
+fn merge_lost_content(current: &Note, candidate: &Note) -> bool {
+    let cur = current.body.trim().chars().count();
+    let new = candidate.body.trim().chars().count();
+    cur >= 40 && new.saturating_mul(2) < cur
 }
 
 /// Degrade path: append the change to the body verbatim, keep everything else.
@@ -400,10 +457,17 @@ pub(crate) async fn compose_note(app: &AppHandle, body: &str, framing: Option<&s
     let mut note = Note::raw(body.trim().to_string());
     let settings = get_settings(app);
     if llm_usable(&settings) {
-        match extract_metadata(app, &settings, body.trim(), framing).await {
+        // Only a capped sample of a huge body is sent for metadata; the note
+        // body itself (set above) stays complete.
+        match extract_metadata(app, &settings, &sample_for_meta(body.trim()), framing).await {
             Ok(meta) => meta.apply(&mut note, settings.grain_space_auto_reminders),
             Err(e) => log::warn!("[GRAIN] space compose: extraction failed ({e}); raw note"),
         }
+    }
+    // Metadata off, unavailable, or a weak completion that left the title blank:
+    // fall back to a plain-code title so the note is never untitled.
+    if note.title.trim().is_empty() {
+        note.title = fallback_title(&note.body);
     }
     note
 }
@@ -458,7 +522,9 @@ async fn reconcile_call(
          Rules:\n\
          - body: incorporate the new information. APPEND by default; only rewrite existing wording \
          when the change genuinely supersedes it (e.g. a changed password replaces the old value, \
-         keeping the rest). NEVER drop content the user did not ask to remove.\n\
+         keeping the rest). NEVER drop content the user did not ask to remove. When unsure whether \
+         to rewrite or append, APPEND — return the current body with the new information added, \
+         never a shorter body than you started with unless the user explicitly removed something.\n\
          - title: at most 3 words. Keep the existing title unless the memory is now about something \
          different.\n\
          - tldr: one short sentence describing the merged memory.\n\
@@ -610,6 +676,40 @@ mod tests {
         assert_eq!(merged.tldr, "old summary");
         assert_eq!(merged.todo_tags.len(), 1);
         assert_eq!(merged.reminder_state.status, ReminderStatus::None);
+    }
+
+    #[test]
+    fn fallback_title_uses_first_words() {
+        assert_eq!(fallback_title("buy milk, eggs and bread"), "buy milk, eggs");
+        assert_eq!(fallback_title("done."), "done");
+        assert_eq!(fallback_title("  wifi password is hunter2 "), "wifi password is");
+        assert_eq!(fallback_title(""), "");
+        // A single pathological token is capped, never unbounded.
+        assert!(fallback_title(&"x".repeat(500)).chars().count() <= 48);
+    }
+
+    #[test]
+    fn sample_for_meta_caps_huge_bodies() {
+        let huge = "y".repeat(META_SAMPLE_CHARS * 3);
+        assert_eq!(sample_for_meta(&huge).chars().count(), META_SAMPLE_CHARS);
+        let small = "short body";
+        assert_eq!(sample_for_meta(small), small);
+    }
+
+    #[test]
+    fn merge_lost_content_flags_big_drops_only() {
+        let mut cur = Note::raw("a".repeat(100));
+        let mut cand = cur.clone();
+        // Kept most of it → fine.
+        cand.body = "a".repeat(60);
+        assert!(!merge_lost_content(&cur, &cand));
+        // Dropped more than half of a long body → distrust.
+        cand.body = "a".repeat(30);
+        assert!(merge_lost_content(&cur, &cand));
+        // Short bodies are exempt (wholesale replace is normal).
+        cur.body = "tiny".into();
+        cand.body = "x".into();
+        assert!(!merge_lost_content(&cur, &cand));
     }
 
     #[test]
