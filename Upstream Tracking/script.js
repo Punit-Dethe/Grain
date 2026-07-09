@@ -1,10 +1,35 @@
 let allData = [];
+let currentView = 'Overview'; // Overview, Pending, Merged, Ignored
 
 document.addEventListener('DOMContentLoaded', () => {
     fetchData();
     
+    // Search handler
     document.getElementById('searchInput').addEventListener('input', renderList);
-    document.getElementById('statusFilter').addEventListener('change', renderList);
+    
+    // Navigation handlers
+    document.querySelectorAll('.nav-item').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+            const target = e.currentTarget;
+            target.classList.add('active');
+            
+            currentView = target.dataset.view;
+            document.getElementById('viewTitle').innerText = currentView;
+            
+            if (currentView === 'Overview') {
+                document.getElementById('overviewStats').style.display = 'grid';
+                document.getElementById('listTitle').innerText = 'Recent Commits';
+            } else {
+                document.getElementById('overviewStats').style.display = 'none';
+                document.getElementById('listTitle').innerText = `All ${currentView}`;
+            }
+            
+            // Clear search when changing views
+            document.getElementById('searchInput').value = '';
+            renderList();
+        });
+    });
 });
 
 async function fetchData() {
@@ -12,7 +37,6 @@ async function fetchData() {
         const response = await fetch('data.json');
         allData = await response.json();
         
-        // Sort by date descending
         allData.sort((a, b) => new Date(b.date) - new Date(a.date));
         
         updateStats();
@@ -20,29 +44,48 @@ async function fetchData() {
     } catch (error) {
         console.error('Error fetching data:', error);
         document.getElementById('commitList').innerHTML = `
-            <div class="empty-state">
-                Failed to load tracking data. Make sure data.json exists and is valid.
-            </div>
+            <div class="empty-state">Failed to load tracking data.</div>
         `;
     }
 }
 
 function updateStats() {
-    document.getElementById('totalCount').innerText = allData.length;
-    document.getElementById('pendingCount').innerText = allData.filter(d => d.status === 'Pending').length;
-    document.getElementById('mergedCount').innerText = allData.filter(d => d.status === 'Merged').length;
+    const pending = allData.filter(d => d.status === 'Pending').length;
+    const merged = allData.filter(d => d.status === 'Merged').length;
+    const ignored = allData.filter(d => d.status === 'Ignored').length;
+    
+    document.getElementById('stat-total').innerText = allData.length;
+    document.getElementById('stat-pending').innerText = pending;
+    document.getElementById('stat-merged').innerText = merged;
+    
+    document.getElementById('count-pending').innerText = pending;
+    document.getElementById('count-merged').innerText = merged;
+    document.getElementById('count-ignored').innerText = ignored;
+    
+    if (allData.length > 0) {
+        document.getElementById('lastUpdated').innerText = `Last update: ${allData[0].date}`;
+    }
 }
 
 function renderList() {
     const searchQuery = document.getElementById('searchInput').value.toLowerCase();
-    const statusFilter = document.getElementById('statusFilter').value;
     
-    const filtered = allData.filter(item => {
+    let filtered = allData.filter(item => {
         const matchesSearch = item.commit.toLowerCase().includes(searchQuery) || 
                               (item.notes && item.notes.toLowerCase().includes(searchQuery));
-        const matchesStatus = statusFilter === 'All' || item.status === statusFilter;
+        
+        let matchesStatus = true;
+        if (currentView !== 'Overview') {
+            matchesStatus = item.status === currentView;
+        }
+        
         return matchesSearch && matchesStatus;
     });
+    
+    // In Overview, if not searching, limit to 15 recent items
+    if (currentView === 'Overview' && searchQuery === '') {
+        filtered = filtered.slice(0, 15);
+    }
     
     const container = document.getElementById('commitList');
     container.innerHTML = '';
@@ -50,7 +93,7 @@ function renderList() {
     if (filtered.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
-                No updates found matching your filters.
+                No commits found in this view.
             </div>
         `;
         return;
@@ -64,13 +107,11 @@ function renderList() {
         
         let notesHtml = '';
         if (item.notes && item.notes.trim() !== 'Pending' && item.notes.trim() !== '') {
-            // Avoid just printing "Pending" or "Safely merged into tray.rs" if it's redundant, but usually we want to print it
             if (item.notes !== item.status) {
                 notesHtml = `<div class="commit-notes">${item.notes}</div>`;
             }
         }
         
-        // Format commit text to bold PR numbers if they exist
         let commitText = item.commit;
         if (item.pr) {
             commitText = commitText.replace(`(#${item.pr})`, `<strong>(#${item.pr})</strong>`);
@@ -78,13 +119,11 @@ function renderList() {
         
         el.innerHTML = `
             <div class="commit-header">
-                <div>
+                <div class="status-dot ${badgeClass}"></div>
+                <div class="commit-main">
                     <div class="commit-title">${commitText}</div>
-                    <div class="commit-meta">
-                        <span>${item.date}</span>
-                    </div>
+                    <div class="commit-meta">${item.date} • Status: ${item.status}</div>
                 </div>
-                <div class="badge ${badgeClass}">${item.status}</div>
             </div>
             ${notesHtml}
         `;

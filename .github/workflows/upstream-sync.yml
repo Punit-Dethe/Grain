@@ -2,7 +2,7 @@ name: Upstream Sync
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Runs every 6 hours
+    - cron: '0 */2 * * *' # Runs every 2 hours
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 permissions:

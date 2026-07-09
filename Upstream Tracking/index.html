@@ -3,47 +3,76 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Upstream Tracking - Grain</title>
+    <title>Grain Upstream Tracker</title>
     <link rel="stylesheet" href="styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="app-container">
-        <header class="header">
-            <div class="header-content">
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
                 <div class="logo">Grain <span class="accent">Upstream</span></div>
-                <div class="search-container">
-                    <input type="text" id="searchInput" placeholder="Search commits, PRs, notes..." class="search-input">
-                </div>
-                <div class="filter-container">
-                    <select id="statusFilter" class="status-filter">
-                        <option value="All">All Statuses</option>
-                        <option value="Pending">Pending</option>
-                        <option value="Merged">Merged</option>
-                        <option value="Ignored">Ignored</option>
-                    </select>
-                </div>
             </div>
-        </header>
-
-        <main class="content">
-            <div class="stats-bar">
-                <div class="stat-card">
-                    <span class="stat-label">Total</span>
-                    <span class="stat-value" id="totalCount">0</span>
-                </div>
-                <div class="stat-card pending">
-                    <span class="stat-label">Pending</span>
-                    <span class="stat-value" id="pendingCount">0</span>
-                </div>
-                <div class="stat-card merged">
-                    <span class="stat-label">Merged</span>
-                    <span class="stat-value" id="mergedCount">0</span>
-                </div>
+            
+            <div class="search-container">
+                <svg class="search-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="searchInput" placeholder="Search commits..." class="search-input">
             </div>
 
-            <div class="list-container" id="commitList">
-                <!-- Items will be injected here via JS -->
+            <nav class="nav-menu">
+                <div class="nav-group-label">VIEWS</div>
+                <button class="nav-item active" data-view="Overview">
+                    <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                    Overview
+                </button>
+                <button class="nav-item" data-view="Pending">
+                    <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff9f0a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                    Pending <span class="badge-count" id="count-pending">0</span>
+                </button>
+                <button class="nav-item" data-view="Merged">
+                    <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#30d158" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    Merged <span class="badge-count" id="count-merged">0</span>
+                </button>
+                <button class="nav-item" data-view="Ignored">
+                    <svg class="nav-icon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff453a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>
+                    Ignored <span class="badge-count" id="count-ignored">0</span>
+                </button>
+            </nav>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <header class="content-header">
+                <h1 id="viewTitle">Overview</h1>
+                <div class="header-actions" id="headerActions">
+                    <span class="last-updated" id="lastUpdated">Loading...</span>
+                </div>
+            </header>
+
+            <div class="scroll-area">
+                <!-- Overview Stats (Only visible in Overview) -->
+                <div class="overview-grid" id="overviewStats">
+                    <div class="stat-card">
+                        <div class="stat-label">Total Tracked</div>
+                        <div class="stat-value" id="stat-total">0</div>
+                    </div>
+                    <div class="stat-card pending">
+                        <div class="stat-label">Action Required</div>
+                        <div class="stat-value" id="stat-pending">0</div>
+                    </div>
+                    <div class="stat-card merged">
+                        <div class="stat-label">Successfully Merged</div>
+                        <div class="stat-value" id="stat-merged">0</div>
+                    </div>
+                </div>
+
+                <div class="list-section">
+                    <h2 class="section-title" id="listTitle">Recent Commits</h2>
+                    <div class="commit-list" id="commitList">
+                        <!-- Items injected by JS -->
+                    </div>
+                </div>
             </div>
         </main>
     </div>
