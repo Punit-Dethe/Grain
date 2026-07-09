@@ -7,6 +7,9 @@ Updates from upstream that need to be evaluated and either merged or ignored.
 
 | Date | Upstream Commit / PR | Status / Notes |
 | :--- | :--- | :--- |
+| **Jul 09, 2026** | `fix: tray icon invisible on Windows with dark taskbar + light apps (#1423)` | Pending (Grain's native architecture heavily modified `tray.rs` and `lib.rs` for the Pill UI. Requires manual analysis and integration.) |
+| **Jul 09, 2026** | `fix: cancel stalled output processing (#1614)` | Pending (Grain's ASR adaptation stripped the `cancel_generation` token in `actions.rs`. Needs manual rebuild using Grain's `SESSION_ID` architecture.) |
+| **Jul 09, 2026** | `[bugfix] keep track of current tray icon state (#1158)` | Pending (Grain's native architecture modified this part of the code for the Pill UI. Kept pending for manual analysis and merge.) |
 | **Jul 08, 2026** | `salvage valid settings instead of resetting store on parse failure (#1631)` | Pending |
 | **Jul 07, 2026** | `fix: preserve ampersands in custom words (#1569)` | Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes) |
 | **Jul 05, 2026** | `move to auto timestamps for all models (#1602)` | Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.) |
@@ -21,6 +24,7 @@ Updates from upstream that have been successfully ported, refactored, and merged
 
 | Date | Upstream Commit / PR | Notes |
 | :--- | :--- | :--- |
+| **Jul 09, 2026** | `fix(tray): log tray icon failures instead of panicking (#1355)` | Safely merged into `tray.rs` |
 | **Jul 08, 2026** | `fix(build): auto-fall-back to AI stub on Command Line Tools-only macOS (#1510)` | Added CLT fallback logic in `build.rs`. |
 | **Jul 08, 2026** | `fix: prevent abort on quit by handling poisoned mutexes in Drop impls (#1354)` | Recover poisoned mutexes inside Drop impls using `match` + logged warnings. |
 | **Jul 08, 2026** | `handy keys 0.3.0 (#1623)` | Bumped in `Cargo.toml`. |
