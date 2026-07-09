@@ -554,7 +554,9 @@ pub fn semantic_search(
     query_embedding: &[f32],
     half_life_days: u32,
 ) -> Result<Vec<Note>> {
-    semantic_search_ranged(base, query_embedding, half_life_days, None)
+    // No relevance floor for the overlay browser search (it shows whatever is
+    // nearest); Recall passes a floor via `semantic_search_ranged`.
+    semantic_search_ranged(base, query_embedding, half_life_days, None, 0.0)
 }
 
 /// [GRAIN] KNN semantic search with an optional inclusive `(min_ms, max_ms)`
@@ -562,11 +564,17 @@ pub fn semantic_search(
 /// has no cheap metadata prefilter); for date-scoped recall the FTS leg
 /// (`search_notes_ranged`) is the reliable workhorse, so a few semantic hits
 /// falling outside the window is acceptable.
+///
+/// `min_similarity` is a raw cosine floor (0.0 = keep every KNN neighbor): hits
+/// below it are dropped so an UNRELATED note is never returned just to fill the
+/// K nearest (KNN always returns *something*). Applied to the pre-decay cosine
+/// so recency never demotes a genuinely-related note below the floor.
 pub fn semantic_search_ranged(
     base: &Path,
     query_embedding: &[f32],
     half_life_days: u32,
     range: Option<(i64, i64)>,
+    min_similarity: f64,
 ) -> Result<Vec<Note>> {
     use zerocopy::IntoBytes;
     let _guard = STORE_LOCK.lock().unwrap();
@@ -624,6 +632,11 @@ pub fn semantic_search_ranged(
             }
         }
         let similarity = 1.0 - (distance * distance) / 2.0;
+        // Relevance floor: drop notes the query isn't actually close to (KNN
+        // otherwise returns the nearest even when nothing is related).
+        if similarity < min_similarity {
+            continue;
+        }
         let age_ms = if note.is_pinned {
             0.0
         } else {
@@ -809,6 +822,13 @@ mod tests {
         edited.body = "apples oranges and pears".into();
         save_note(&base, &edited).unwrap();
         assert_eq!(stale_embed_texts(&base).unwrap().len(), 1);
+
+        // A relevance floor drops the orthogonal (cosine 0.0) note: querying
+        // with a's vector at min_similarity 0.5 returns ONLY a, never b — the
+        // fix for unrelated notes leaking into a tiny corpus.
+        let floored = semantic_search_ranged(&base, &va, 30, None, 0.5).unwrap();
+        assert_eq!(floored.len(), 1);
+        assert_eq!(floored[0].id, a.id);
 
         // Deleting removes the vector row too.
         delete_note(&base, &a.id).unwrap();

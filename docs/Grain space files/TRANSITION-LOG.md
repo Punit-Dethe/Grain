@@ -5,6 +5,41 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-09 — Recall precision + prompt efficiency (semantic floor, create-vs-edit, prompt slim)
+
+Three user-reported edge cases:
+
+**1. Unrelated notes leaked into the block (tiny corpus).** KNN always returns
+the nearest notes even when nothing is related, so a 4-note corpus sent an
+off-topic note just to fill the top-K. Fix: `store::semantic_search_ranged`
+gained a `min_similarity` cosine floor (applied pre-decay). Recall passes
+`SEMANTIC_MIN_SIMILARITY = 0.45` (BGE-small baseline is high — tuning knob,
+documented); the overlay browser search still passes 0.0 (unchanged). FTS
+(exact keyword) is unaffected, and the fuse/rerank never pads with non-matches —
+so only FTS- or semantically-matched notes reach the model. Test added.
+
+**2. "Create a new note" wrongly appended to a related memory.** The model
+confused CREATE with EDIT: e.g. "save my new wifi password" folded into the old
+wifi note instead of making a new one. Capability existed (`ACTION: remember` →
+`compose_note` → new note); the prompt was the problem. Prompt now leads with an
+explicit split: SAVE/CREATE/REMEMBER → `ACTION: remember` (ALWAYS a new memory,
+even if a related one exists — never merge); CHANGE/ADD-TO existing → search then
+`ACTION: update Mn` (1 match) or clarify (0/2+).
+
+**3. Malformed trailing line ("clickable button" broke) + prompt bloat.** The
+previous prompt had grown to 13 rules + an examples block that embedded LITERAL
+`\n` ("…hunter2.\\nSOURCES: M2") — the small model learned to emit a literal
+`\n` as text, so `parse_tail` couldn't find the trailing SOURCES/ACTION line and
+the panel rendered no chip/action. Rewrote `system_prompt` tight (identity →
+tool → answer contract → change contract), removed the literal-`\n` examples,
+kept one inline done-confirmation phrasing. Shorter = less drift, correct line
+format restored.
+
+Verified: `cargo check --workspace` clean; 37 grain_space tests pass. Files:
+`src-tauri/src/grain_space/{store,recall}.rs`.
+
+---
+
 ## 2026-07-09 — Grain Space native card: separate memory surface + edge-case hardening
 
 Two-part session. Part A hardened the Recall/capture backend; Part B gave Grain
