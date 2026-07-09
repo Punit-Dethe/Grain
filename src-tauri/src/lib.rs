@@ -284,6 +284,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(model_manager.clone());
     app_handle.manage(transcription_manager.clone());
     app_handle.manage(history_manager.clone());
+    app_handle.manage(tray::CurrentTrayIconState::new());
     // [GRAIN] Register the transcribe-cpp compute backends ONCE before any model
     // load — with `dynamic-backends` this dlopens the ggml modules next to the
     // exe; skipping it leaves ZERO compute devices and every GGUF load fails.
@@ -409,7 +410,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
                             log::error!("Failed to switch model via tray: {}", e);
                         }
                     }
-                    tray::update_tray_menu(&app_clone, &tray::TrayIconState::Idle, None);
+                    tray::update_tray_menu(&app_clone, None);
                 });
             }
             _ => {}
@@ -419,7 +420,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     app_handle.manage(tray);
 
     // Initialize tray menu with idle state
-    utils::update_tray_menu(app_handle, &utils::TrayIconState::Idle, None);
+    utils::update_tray_menu(app_handle, None);
 
     // Apply show_tray_icon setting
     let settings = settings::get_settings(app_handle);
@@ -430,7 +431,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // Refresh tray menu when model state changes
     let app_handle_for_listener = app_handle.clone();
     app_handle.listen("model-state-changed", move |_| {
-        tray::update_tray_menu(&app_handle_for_listener, &tray::TrayIconState::Idle, None);
+        tray::update_tray_menu(&app_handle_for_listener, None);
     });
 
     // Get the autostart manager and configure based on user setting
