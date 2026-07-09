@@ -267,14 +267,57 @@
             white-space: nowrap;
         }
 
-        .sort-select {
+        /* Custom sort dropdown (replaces native <select>) */
+        .custom-select { position: relative; }
+        .custom-select-trigger {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             background: rgba(255, 255, 255, 0.06);
             border: 1px solid var(--card-border);
             border-radius: var(--radius-sm);
-            padding: 6px 10px;
+            padding: 7px 10px 7px 12px;
             font-size: 13px;
             cursor: pointer;
+            transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
         }
+        .custom-select-trigger:hover { background: rgba(255, 255, 255, 0.1); }
+        .custom-select-trigger .chevron { color: var(--text-tertiary); transition: transform 0.15s var(--ease); flex-shrink: 0; }
+        .custom-select.open .custom-select-trigger { border-color: var(--accent); background: rgba(255, 255, 255, 0.1); }
+        .custom-select.open .custom-select-trigger .chevron { transform: rotate(180deg); color: var(--accent-strong); }
+
+        .custom-select-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 170px;
+            background: #18150f;
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-sm);
+            padding: 4px;
+            margin: 0;
+            list-style: none;
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.5);
+            z-index: 30;
+        }
+        .custom-select-menu[hidden] { display: none; }
+        .custom-select-menu li {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 8px 10px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: background 0.1s var(--ease), color 0.1s var(--ease);
+        }
+        .custom-select-menu li:hover,
+        .custom-select-menu li.highlighted { background: rgba(255, 255, 255, 0.07); color: var(--text-primary); }
+        .custom-select-menu li.selected { color: var(--accent-strong); }
+        .custom-select-menu li .check { display: none; color: var(--accent-strong); flex-shrink: 0; }
+        .custom-select-menu li.selected .check { display: inline-flex; }
 
         .icon-btn {
             width: 32px; height: 32px;
@@ -409,61 +452,80 @@
             font-family: var(--font-mono);
         }
 
-        .month-heading {
-            font-size: 12px;
+        /* ============ Commit table ============ */
+        .commit-table-wrap {
+            display: flex;
+            flex-direction: column;
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.012);
+        }
+
+        .commit-table-header {
+            display: grid;
+            grid-template-columns: 100px minmax(0, 1fr) 96px 64px;
+            column-gap: 16px;
+            align-items: center;
+            padding: 11px 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid var(--divider);
+            font-size: 11px;
             font-weight: 600;
             color: var(--text-tertiary);
-            padding: 18px 4px 8px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.6px;
         }
-        .month-heading:first-child { padding-top: 0; }
+        .commit-table-header span:last-child { text-align: right; }
 
-        .commit-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .commit-card {
-            position: relative;
-            background: transparent;
-            border: 1px solid var(--card-border);
-            border-left: 3px solid transparent;
-            border-radius: var(--radius-md);
-            padding: 14px 18px;
-            transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-        .commit-card.pending { border-left-color: var(--status-pending); }
-        .commit-card.merged { border-left-color: var(--status-merged); }
-        .commit-card.ignored { border-left-color: var(--status-ignored); }
-
-        .commit-card:hover { background: var(--card-bg); border-color: rgba(255, 255, 255, 0.12); }
-        .commit-card:hover .copy-btn { opacity: 1; }
-
-        .commit-header {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
+        .month-row {
+            padding: 9px 16px;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-tertiary);
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            background: rgba(255, 255, 255, 0.045);
+            border-bottom: 1px solid var(--divider);
         }
 
-        .status-icon { flex-shrink: 0; margin-top: 2px; }
-        .status-icon.pending { color: var(--status-pending); }
-        .status-icon.merged { color: var(--status-merged); }
-        .status-icon.ignored { color: var(--status-ignored); }
+        .commit-row {
+            display: grid;
+            grid-template-columns: 100px minmax(0, 1fr) 96px 64px;
+            grid-template-areas: "status title date actions";
+            column-gap: 16px;
+            align-items: center;
+            padding: 13px 16px;
+            border-bottom: 1px solid var(--divider);
+            transition: background 0.12s var(--ease);
+        }
+        .commit-row:hover { background: var(--card-bg-hover); }
+        .commit-row:hover .copy-btn { opacity: 1; }
 
-        .commit-main { flex-grow: 1; min-width: 0; }
+        .status-pill {
+            grid-area: status;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            width: fit-content;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 999px;
+            white-space: nowrap;
+        }
+        .status-pill.pending { background: var(--status-pending-dim); color: var(--status-pending); }
+        .status-pill.merged { background: var(--status-merged-dim); color: var(--status-merged); }
+        .status-pill.ignored { background: var(--status-ignored-dim); color: var(--status-ignored); }
+        .pill-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 
+        .commit-cell { grid-area: title; min-width: 0; }
         .commit-title {
-            font-size: 14.5px;
+            font-size: 14px;
             font-weight: 500;
             color: var(--text-primary);
-            line-height: 1.4;
-            margin-bottom: 4px;
-            word-break: break-word;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
         }
         .commit-title mark {
             background: var(--accent-dim);
@@ -479,53 +541,69 @@
         }
         .pr-link:hover { text-decoration: underline; }
 
-        .commit-meta {
+        .date-cell {
+            grid-area: date;
+            font-family: var(--font-mono);
             font-size: 12.5px;
             color: var(--text-tertiary);
+            text-align: right;
+            white-space: nowrap;
+            cursor: default;
+        }
+
+        .actions-cell {
+            grid-area: actions;
             display: flex;
             align-items: center;
-            gap: 6px;
-        }
-        .commit-meta .dot-sep::before { content: "·"; margin: 0 2px; }
-        .commit-meta time { font-family: var(--font-mono); }
-
-        .commit-notes {
-            margin-left: 30px;
-            font-size: 13px;
-            color: var(--text-secondary);
-            background: rgba(255, 255, 255, 0.035);
-            padding: 10px 14px;
-            border-radius: var(--radius-sm);
-            line-height: 1.5;
+            justify-content: flex-end;
+            gap: 4px;
         }
 
-        .copy-btn {
-            position: absolute;
-            top: 12px;
-            right: 14px;
-            opacity: 0;
+        .row-icon-btn {
             width: 26px; height: 26px;
             border-radius: 6px;
-            border: 1px solid var(--card-border);
-            background: rgba(20, 19, 17, 0.9);
-            color: var(--text-secondary);
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--text-tertiary);
             display: flex; align-items: center; justify-content: center;
             cursor: pointer;
-            transition: opacity 0.15s var(--ease), color 0.15s var(--ease);
+            flex-shrink: 0;
+            transition: background 0.15s var(--ease), color 0.15s var(--ease), opacity 0.15s var(--ease);
         }
-        .copy-btn:hover { color: var(--text-primary); }
+        .row-icon-btn:hover { background: rgba(255, 255, 255, 0.09); color: var(--text-primary); }
+        .copy-btn { opacity: 0; }
         .copy-btn:focus-visible { opacity: 1; }
         .copy-btn.copied { opacity: 1; color: var(--status-merged); }
+        .note-toggle-btn { opacity: 0.55; }
+        .note-toggle-btn:hover { opacity: 1; }
+        .note-toggle-btn.expanded { opacity: 1; color: var(--accent-strong); background: var(--accent-dim); }
+
+        .note-panel {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.22s var(--ease);
+            border-bottom: 1px solid var(--divider);
+            background: rgba(255, 255, 255, 0.018);
+        }
+        .note-panel.expanded { grid-template-rows: 1fr; }
+        .note-panel-body {
+            overflow: hidden;
+            font-size: 13px;
+            color: var(--text-secondary);
+            line-height: 1.55;
+            padding: 0 16px 0 116px;
+        }
+        .note-panel.expanded .note-panel-body { padding: 2px 16px 14px 116px; }
 
         /* ============ States: loading / error / empty ============ */
-        .skeleton-card {
-            height: 66px;
-            border-radius: var(--radius-md);
-            background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 37%, rgba(255,255,255,0.03) 63%);
+        .skeleton-row {
+            height: 54px;
+            border-bottom: 1px solid var(--divider);
+            background: linear-gradient(90deg, rgba(255,255,255,0.02) 25%, rgba(255,255,255,0.05) 37%, rgba(255,255,255,0.02) 63%);
             background-size: 400% 100%;
             animation: shimmer 1.4s ease infinite;
-            margin-bottom: 8px;
         }
+        .skeleton-row:last-child { border-bottom: none; }
         @keyframes shimmer { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
 
         .state-panel {
@@ -575,6 +653,22 @@
             .sync-panel { padding: 20px 18px; }
             .sync-header { flex-direction: column; align-items: flex-start; }
             .header-actions { flex-wrap: wrap; justify-content: flex-end; }
+        }
+
+        @media (max-width: 640px) {
+            .commit-table-header { display: none; }
+            .commit-row {
+                grid-template-columns: 1fr auto;
+                grid-template-areas:
+                    "status actions"
+                    "title title"
+                    "date date";
+                row-gap: 8px;
+                padding: 14px 16px;
+            }
+            .date-cell { text-align: left; }
+            .note-panel-body { padding-left: 16px; }
+            .note-panel.expanded .note-panel-body { padding-left: 16px; }
         }
     </style>
 </head>
@@ -630,11 +724,26 @@
                 </div>
                 <div class="header-actions">
                     <span class="last-updated" id="lastUpdated">Loading…</span>
-                    <select class="sort-select" id="sortSelect" aria-label="Sort commits">
-                        <option value="date-desc">Newest first</option>
-                        <option value="date-asc">Oldest first</option>
-                        <option value="pr">PR number</option>
-                    </select>
+                    <div class="custom-select" id="sortSelect">
+                        <button type="button" class="custom-select-trigger" id="sortTrigger" aria-haspopup="listbox" aria-expanded="false">
+                            <span id="sortSelectLabel">Newest first</span>
+                            <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                        </button>
+                        <ul class="custom-select-menu" id="sortMenu" role="listbox" aria-label="Sort commits" tabindex="-1" hidden>
+                            <li role="option" data-value="date-desc" aria-selected="true" class="selected">
+                                <span class="option-label">Newest first</span>
+                                <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            </li>
+                            <li role="option" data-value="date-asc" aria-selected="false">
+                                <span class="option-label">Oldest first</span>
+                                <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            </li>
+                            <li role="option" data-value="pr" aria-selected="false">
+                                <span class="option-label">PR number</span>
+                                <svg class="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            </li>
+                        </ul>
+                    </div>
                     <button class="icon-btn" id="refreshBtn" title="Refresh" aria-label="Refresh data">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
@@ -702,15 +811,73 @@
         let currentView = 'Overview';
         let currentSort = 'date-desc';
         let hasLoaded = false;
+        const expandedNotes = new Set();
 
         const el = (id) => document.getElementById(id);
+
+        // ---------- Custom sort dropdown ----------
+        function initCustomSelect() {
+            const wrap = el('sortSelect');
+            const trigger = el('sortTrigger');
+            const menu = el('sortMenu');
+            const label = el('sortSelectLabel');
+            const options = Array.from(menu.querySelectorAll('li'));
+            let highlightedIndex = options.findIndex(o => o.classList.contains('selected'));
+
+            function updateHighlight() {
+                options.forEach((o, i) => o.classList.toggle('highlighted', i === highlightedIndex));
+            }
+            function openMenu() {
+                menu.hidden = false;
+                wrap.classList.add('open');
+                trigger.setAttribute('aria-expanded', 'true');
+                highlightedIndex = options.findIndex(o => o.dataset.value === currentSort);
+                updateHighlight();
+                menu.focus();
+            }
+            function closeMenu() {
+                menu.hidden = true;
+                wrap.classList.remove('open');
+                trigger.setAttribute('aria-expanded', 'false');
+            }
+            function selectOption(opt) {
+                options.forEach(o => { o.classList.remove('selected'); o.setAttribute('aria-selected', 'false'); });
+                opt.classList.add('selected');
+                opt.setAttribute('aria-selected', 'true');
+                label.textContent = opt.querySelector('.option-label').textContent;
+                currentSort = opt.dataset.value;
+                closeMenu();
+                trigger.focus();
+                renderList();
+            }
+
+            trigger.addEventListener('click', () => { menu.hidden ? openMenu() : closeMenu(); });
+            trigger.addEventListener('keydown', (e) => {
+                if ((e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') && menu.hidden) {
+                    e.preventDefault();
+                    openMenu();
+                }
+            });
+
+            options.forEach(opt => opt.addEventListener('click', () => selectOption(opt)));
+
+            menu.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown') { e.preventDefault(); highlightedIndex = Math.min(highlightedIndex + 1, options.length - 1); updateHighlight(); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); highlightedIndex = Math.max(highlightedIndex - 1, 0); updateHighlight(); }
+                else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectOption(options[highlightedIndex]); }
+                else if (e.key === 'Escape') { closeMenu(); trigger.focus(); }
+                else if (e.key === 'Tab') { closeMenu(); }
+            });
+
+            document.addEventListener('click', (e) => { if (!wrap.contains(e.target)) closeMenu(); });
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
             fetchData();
 
             el('searchInput').addEventListener('input', renderList);
-            el('sortSelect').addEventListener('change', (e) => { currentSort = e.target.value; renderList(); });
             el('refreshBtn').addEventListener('click', () => fetchData(true));
+            initCustomSelect();
 
             document.querySelectorAll('.nav-item').forEach(btn => {
                 btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -720,17 +887,32 @@
             });
 
             el('commitList').addEventListener('click', (e) => {
-                const btn = e.target.closest('.copy-btn');
-                if (!btn) return;
-                const text = btn.dataset.copyText || '';
-                navigator.clipboard.writeText(text).then(() => {
-                    btn.classList.add('copied');
-                    btn.innerHTML = checkIconSvg();
-                    setTimeout(() => {
-                        btn.classList.remove('copied');
-                        btn.innerHTML = copyIconSvg();
-                    }, 1400);
-                }).catch(() => {});
+                const copyBtn = e.target.closest('.copy-btn');
+                if (copyBtn) {
+                    const text = copyBtn.dataset.copyText || '';
+                    navigator.clipboard.writeText(text).then(() => {
+                        copyBtn.classList.add('copied');
+                        copyBtn.innerHTML = checkIconSvg();
+                        setTimeout(() => {
+                            copyBtn.classList.remove('copied');
+                            copyBtn.innerHTML = copyIconSvg();
+                        }, 1400);
+                    }).catch(() => {});
+                    return;
+                }
+
+                const noteBtn = e.target.closest('.note-toggle-btn');
+                if (noteBtn) {
+                    const row = noteBtn.closest('.commit-row');
+                    const panel = row && row.nextElementSibling;
+                    if (panel && panel.classList.contains('note-panel')) {
+                        const nowExpanded = panel.classList.toggle('expanded');
+                        noteBtn.classList.toggle('expanded', nowExpanded);
+                        noteBtn.title = nowExpanded ? 'Hide note' : 'Show note';
+                        const key = noteBtn.dataset.key;
+                        if (nowExpanded) expandedNotes.add(key); else expandedNotes.delete(key);
+                    }
+                }
             });
 
             document.addEventListener('keydown', (e) => {
@@ -792,12 +974,15 @@
 
         function renderSkeleton() {
             const container = el('commitList');
-            container.innerHTML = '';
-            for (let i = 0; i < 5; i++) {
+            const wrap = document.createElement('div');
+            wrap.className = 'commit-table-wrap';
+            for (let i = 0; i < 6; i++) {
                 const s = document.createElement('div');
-                s.className = 'skeleton-card';
-                container.appendChild(s);
+                s.className = 'skeleton-row';
+                wrap.appendChild(s);
             }
+            container.innerHTML = '';
+            container.appendChild(wrap);
         }
 
         function renderErrorState() {
@@ -918,6 +1103,14 @@
                 return;
             }
 
+            const wrap = document.createElement('div');
+            wrap.className = 'commit-table-wrap';
+
+            const header = document.createElement('div');
+            header.className = 'commit-table-header';
+            header.innerHTML = '<span>Status</span><span>Commit</span><span>Date</span><span></span>';
+            wrap.appendChild(header);
+
             const grouped = currentView !== 'Overview' && !searchQuery;
             let lastMonth = null;
 
@@ -925,15 +1118,20 @@
                 if (grouped) {
                     const monthLabel = formatMonth(item.date);
                     if (monthLabel !== lastMonth) {
-                        const heading = document.createElement('div');
-                        heading.className = 'month-heading';
-                        heading.innerText = monthLabel;
-                        container.appendChild(heading);
+                        const monthRow = document.createElement('div');
+                        monthRow.className = 'month-row';
+                        monthRow.innerText = monthLabel;
+                        wrap.appendChild(monthRow);
+                  
                         lastMonth = monthLabel;
                     }
                 }
-                container.appendChild(buildCommitCard(item, searchQuery));
+                const { row, panel } = buildCommitRow(item, searchQuery);
+                wrap.appendChild(row);
+                if (panel) wrap.appendChild(panel);
             });
+            
+            container.appendChild(wrap);
         }
 
         function sortItems(items, sort) {
@@ -944,10 +1142,10 @@
             return copy;
         }
 
-        function buildCommitCard(item, searchQuery) {
-            const card = document.createElement('div');
-            card.className = `commit-card ${item.status.toLowerCase()}`;
-
+        function buildCommitRow(item, searchQuery) {
+            const row = document.createElement('div');
+            row.className = 'commit-row';
+            
             let commitHtml = escapeHtml(item.commit);
             if (item.pr) {
                 const prPattern = new RegExp('\\(#' + item.pr + '\\)');
@@ -956,26 +1154,32 @@
             }
             if (searchQuery) commitHtml = highlightMatch(commitHtml, searchQuery);
 
-            let notesHtml = '';
-            if (item.notes && item.notes.trim() !== '' && item.notes.trim() !== item.status) {
-                notesHtml = `<div class="commit-notes">${escapeHtml(item.notes)}</div>`;
+            const hasNote = item.notes && item.notes.trim() !== '' && item.notes.trim() !== item.status;
+            const noteKey = item.pr || item.commit;
+            const isExpanded = expandedNotes.has(noteKey);
+
+            row.innerHTML = `
+                <div class="status-pill ${item.status.toLowerCase()}"><span class="pill-dot"></span>${item.status}</div>
+                <div class="commit-cell">
+                    <div class="commit-title">${commitHtml}</div>
+                </div>
+                <div class="date-cell" title="${formatAbsolute(item.date)}">
+                    ${formatRelative(item.date)}
+                </div>
+                <div class="actions-cell">
+                    ${hasNote ? `<button class="row-icon-btn note-toggle-btn ${isExpanded ? 'expanded' : ''}" data-key="${escapeHtml(noteKey)}" title="${isExpanded ? 'Hide note' : 'Show note'}">${noteIconSvg()}</button>` : ''}
+                    <button class="row-icon-btn copy-btn" title="Copy commit title" data-copy-text="${escapeHtml(item.commit)}">${copyIconSvg()}</button>
+                </div>
+            `;
+
+            let panel = null;
+            if (hasNote) {
+                panel = document.createElement('div');
+                panel.className = `note-panel ${isExpanded ? 'expanded' : ''}`;
+                panel.innerHTML = `<div class="note-panel-body">${escapeHtml(item.notes)}</div>`;
             }
 
-            card.innerHTML = `
-                <button class="copy-btn" title="Copy commit title" data-copy-text="${escapeHtml(item.commit)}">${copyIconSvg()}</button>
-                <div class="commit-header">
-                    <span class="status-icon ${item.status.toLowerCase()}">${statusIconSvg(item.status)}</span>
-                    <div class="commit-main">
-                        <div class="commit-title">${commitHtml}</div>
-                        <div class="commit-meta">
-                            <time datetime="${item.date}">${formatRelative(item.date)}</time>
-                            <span class="dot-sep">${formatAbsolute(item.date)}</span>
-                        </div>
-                    </div>
-                </div>
-                ${notesHtml}
-            `;
-            return card;
+            return { row, panel };
         }
 
         // ---------- Formatting helpers ----------
@@ -989,7 +1193,7 @@
 
         function highlightMatch(html, query) {
             if (!query) return html;
-            const escaped = query.replace(/[.*+?^$!()|[\\]\\]/g, '\\$&');
+            const escaped = query.replace(/[.*+?^$!()|[\]\\]/g, '\\$&');
             const re = new RegExp('(' + escaped + ')', 'ig');
             return html.replace(re, '<mark>$1</mark>');
         }
@@ -1021,10 +1225,10 @@
 
         // ---------- Icons ----------
         function copyIconSvg() {
-            return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
+            return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
         }
         function checkIconSvg() {
-            return '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+            return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>';
         }
         function statusIconSvg(status) {
             if (status === 'Pending') return '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>';
@@ -1042,6 +1246,9 @@
         }
         function searchIconSvg() {
             return '<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+        }
+        function noteIconSvg() {
+            return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
         }
     </script>
 </body>
