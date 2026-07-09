@@ -6,7 +6,7 @@ use enigo::{Direction, Enigo, Key, Keyboard};
 use log::info;
 use std::process::Command;
 use std::time::Duration;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[cfg(target_os = "linux")]
@@ -590,6 +590,20 @@ fn should_send_auto_submit(auto_submit: bool, paste_method: PasteMethod) -> bool
 }
 
 pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
+    // [GRAIN] Dictation INTO the Agent conversation window: if that panel is the
+    // focused window, the user is dictating into its follow-up box — hand the
+    // transcript to it as an event instead of an OS paste. An OS paste there
+    // would emit Ctrl+V and paste the CLIPBOARD (e.g. an auto-copied AI reply),
+    // not the transcript. Scoped strictly to that one window; every other paste
+    // path keeps the upstream (Handy) behavior untouched.
+    if crate::agent::panel_dictation_target(&app_handle) {
+        if let Some(panel) = app_handle.get_webview_window(crate::agent::PANEL_LABEL) {
+            info!("[GRAIN] agent panel focused — routing dictation into it (no OS paste)");
+            let _ = panel.emit("agent-panel-dictation", text);
+            return Ok(());
+        }
+    }
+
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;

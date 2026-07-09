@@ -238,10 +238,23 @@ pub enum PillAction {
     /// Agent expanded with the retained conversation.
     AgentFollowup,
     /// [GRAIN] Agent input: the user submitted TYPED text (expanded card).
-    AgentInputSubmitText { text: String },
+    /// `title` is the optional Grain Space note title (Capture only; empty
+    /// otherwise). `quick` = the user held Shift → Quick Agent (paste in place)
+    /// instead of opening the panel (Assist only).
+    AgentInputSubmitText {
+        text: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        quick: bool,
+    },
     /// [GRAIN] Agent input: submit the in-progress VOICE capture (compact card) —
-    /// the core stops dictation, transcribes, and runs the instruction.
-    AgentInputSubmitVoice,
+    /// the core stops dictation, transcribes, and runs the instruction. `quick`
+    /// as above (Shift held → Quick Agent).
+    AgentInputSubmitVoice {
+        #[serde(default)]
+        quick: bool,
+    },
     /// [GRAIN] Agent input: the user cancelled (Esc) — the core cancels dictation
     /// and destroys the pre-created panel.
     AgentInputCancel,

@@ -395,6 +395,18 @@ export function AgentPanel() {
     void win.listen("agent-followup-open", () => {
       void openRetainedConversation();
     }).then((fn) => uns.push(fn));
+    // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
+    // the expanded conversation was focused). Append the transcript to the
+    // follow-up field instead of it being OS-pasted (which would paste the
+    // auto-copied AI reply). Handled here, not by the OS clipboard.
+    void win.listen<string>("agent-panel-dictation", (e) => {
+      const el = followupRef.current;
+      const dictated = (e.payload || "").trim();
+      if (!el || !dictated || busyRef.current) return;
+      const sep = el.value && !el.value.endsWith(" ") ? " " : "";
+      el.value = el.value + sep + dictated;
+      el.focus();
+    }).then((fn) => uns.push(fn));
     return () => uns.forEach((u) => u());
   }, [openRetainedConversation, startFirstIfQueued, t, win]);
 

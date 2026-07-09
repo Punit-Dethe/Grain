@@ -103,10 +103,14 @@ pub fn quick_add(app: &AppHandle) {
 ///
 /// Returns `Ok(true)` when a note was actually saved (the caller shows the
 /// in-card "Saved" confirmation), `Ok(false)` when there was nothing to save.
+///
+/// `title_override` is an explicit user-typed note title (the two-field note
+/// card); when present and non-empty it wins over the auto-generated title.
 pub async fn capture_and_save(
     app: &AppHandle,
     instruction: &str,
     selection: Option<&str>,
+    title_override: Option<&str>,
 ) -> Result<bool, String> {
     if !super::is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
@@ -134,7 +138,11 @@ pub async fn capture_and_save(
     }
 
     let base = super::base_dir(app).map_err(|e| e.to_string())?;
-    let note = compose_note(app, &body, framing).await;
+    let mut note = compose_note(app, &body, framing).await;
+    // An explicit typed title wins over the auto-generated one (kept short).
+    if let Some(t) = title_override.map(str::trim).filter(|t| !t.is_empty()) {
+        note.title = t.chars().take(80).collect();
+    }
     let id = note.id.clone();
 
     let app2 = app.clone();

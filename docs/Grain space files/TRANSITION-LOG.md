@@ -5,6 +5,45 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-09 — Note card two-field UI, dictation-into-panel, Quick-Agent Enter/Shift+Enter
+
+Three user-reported bugs.
+
+**1. Typed note card is now two-field (title + body), matching the prototype.**
+`AgentInputUi` gained `title` + `focus_title` (body/query stays in `text`).
+Capture expanded renders a top TITLE field + a wrapping, growing BODY (capped at
+`CAP_MAX_BODY_LINES`, tail-scrolled, so it stays inside the fixed 170px canvas —
+no window/RAM growth). New `wrap_plain` + `draw_caret` helpers. Focus starts on
+the BODY; click either field to focus it (matches the prototype). Plain Enter =
+newline (note formatting); **Shift/Ctrl+Enter = save** (the pill's focused
+handler; the core's global-Enter fallback is suppressed for a capture newline so
+it can't submit). Title typed → kept; empty → auto-generated (`fallback_title`/
+LLM). `capture_and_save` gained `title_override`. The green-dots-fill "Saved"
+confirmation now mirrors the prototype (wave fills green + "Saved", `phase`
+reset on save) for the voice path too.
+
+**2. Dictating into the Agent panel pasted the auto-copied AI reply.** The STT
+paste chokepoint (`clipboard::paste`) now checks `agent::panel_dictation_target`
+— when the panel is EXPANDED (owns a follow-up field, tracked via new
+`AgentState.panel_expanded`) AND focused, it emits `agent-panel-dictation` to the
+panel (AgentPanel appends it to the follow-up input) and SKIPS the OS paste. Any
+other window → upstream Handy paste behavior untouched (per the fork constraint).
+
+**3. Quick Agent had no paste target when nothing was selected.** Quick vs panel
+is now a per-submit choice, not the `agent_quick_enabled` setting: plain **Enter
+→ panel** (bottom-right), **Shift+Enter → Quick Agent** (paste in place). Threaded
+via new `quick` field on `PillAction::AgentInputSubmit{Text,Voice}` →
+`input_submit_text/voice` → `dispatch_instruction(quick)`. So "just ask a
+question" (Enter) always shows the reply instead of silently copying to nothing.
+
+Schema: `PillAction::AgentInputSubmitText { text, title, quick }`,
+`AgentInputSubmitVoice { quick }` (serde-default → back-compat). Verified:
+`cargo check --workspace` + `tsc` clean; 37 grain_space tests pass. Files:
+`grain-core/event.rs`, `events_server.rs`, `agent.rs`, `grain_space/capture.rs`,
+`clipboard.rs`, `grain-pill/lib.rs`, `AgentPanel.tsx`.
+
+---
+
 ## 2026-07-09 — Recall precision + prompt efficiency (semantic floor, create-vs-edit, prompt slim)
 
 Three user-reported edge cases:

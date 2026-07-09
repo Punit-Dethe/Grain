@@ -120,6 +120,11 @@ pub struct AgentState {
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
+    /// [GRAIN] True while the reply panel is in its EXPANDED conversation stage
+    /// (it owns a follow-up text field). Dictation is routed INTO that field
+    /// only when the panel is expanded AND focused — never over the compact
+    /// reply card. Set by `agent_set_panel_mode` / `show_panel`.
+    pub panel_expanded: AtomicBool,
     /// Which brain drives this session — set at summon by the binding that
     /// fired (assist vs Grain Recall), never re-derived from the request.
     pub mode: Mutex<AgentMode>,
@@ -292,6 +297,9 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
                 g.clear();
             }
             state.input_active.store(true, Ordering::SeqCst);
+            // Fresh session starts compact — dictation won't route to the panel
+            // until it actually expands into the conversation stage.
+            state.panel_expanded.store(false, Ordering::SeqCst);
         }
 
         // Start dictation + present the native input RIGHT AWAY — the panel
@@ -340,6 +348,24 @@ fn input_kind(mode: AgentMode) -> AgentInputKind {
         AgentMode::Capture => AgentInputKind::Capture,
         AgentMode::Recall => AgentInputKind::Recall,
     }
+}
+
+/// [GRAIN] True when a dictation transcript should be routed INTO the Agent
+/// conversation window instead of OS-pasted: the panel must be in its EXPANDED
+/// (follow-up field) stage AND be the focused window. Used by `clipboard::paste`
+/// to fix "dictating into the panel pastes the auto-copied AI reply" — scoped
+/// strictly to this window so upstream paste behavior is otherwise untouched.
+pub fn panel_dictation_target(app: &AppHandle) -> bool {
+    let expanded = app
+        .try_state::<AgentState>()
+        .map(|s| s.panel_expanded.load(Ordering::SeqCst))
+        .unwrap_or(false);
+    if !expanded {
+        return false;
+    }
+    app.get_webview_window(PANEL_LABEL)
+        .and_then(|w| w.is_focused().ok())
+        .unwrap_or(false)
 }
 
 /// The current agent mode (defaults to Assist if state is somehow unavailable).
@@ -712,6 +738,9 @@ pub fn agent_take_instruction(app: AppHandle) -> Option<String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), String> {
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.panel_expanded.store(expanded, Ordering::SeqCst);
+    }
     if let Some(w) = app.get_webview_window(PANEL_LABEL) {
         place_panel(&w, expanded);
     }
@@ -729,6 +758,9 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
     // only — the expanded panel owns its own input field.
     register_one_transient(app, close_binding());
     register_followup_shortcut(app);
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.panel_expanded.store(expanded, Ordering::SeqCst);
+    }
     if expanded {
         let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
     } else {
@@ -766,7 +798,9 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
 // ============================================================================
 
 /// Pill → core: the user submitted TYPED text from the expanded input card.
-pub fn input_submit_text(app: &AppHandle, text: String) {
+/// `title` is the optional Grain Space note title (Capture only); `quick`
+/// means the user held Shift → Quick Agent paste-in-place (Assist only).
+pub fn input_submit_text(app: &AppHandle, text: String, title: String, quick: bool) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
     };
@@ -776,28 +810,39 @@ pub fn input_submit_text(app: &AppHandle, text: String) {
     // Typed text wins — abandon the voice capture and release the mic.
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
 
+    let mode = current_mode(app);
     let text = text.trim().to_string();
     if text.is_empty() {
         crate::bridge::emit(app, DaemonEvent::AgentInputHide);
         input_cancel_cleanup(app);
         return;
     }
-    // Capture keeps its card on screen so it can confirm the save in place
-    // (Saved → hide, driven by `capture_run`); every other mode hides now.
-    if current_mode(app) != AgentMode::Capture {
-        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    // Capture (a typed note) keeps its card on screen so it can confirm the save
+    // in place (Saved → hide, driven by `capture_run`) and carries the typed
+    // title (empty → auto-generated). Every other mode hides now.
+    if mode == AgentMode::Capture {
+        let title = title.trim().to_string();
+        let title = (!title.is_empty()).then_some(title);
+        info!(
+            "[GRAIN] agent: typed note submitted ({} body chars, title: {})",
+            text.chars().count(),
+            title.is_some()
+        );
+        capture_run(app.clone(), text, title, false);
+        return;
     }
+    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
     info!(
-        "[GRAIN] agent: typed instruction submitted ({} chars)",
+        "[GRAIN] agent: typed instruction submitted ({} chars, quick: {quick})",
         text.chars().count()
     );
-    dispatch_instruction(app.clone(), text);
+    dispatch_instruction(app.clone(), text, quick);
 }
 
 /// Pill → core: submit the in-progress VOICE capture. The panel is revealed
 /// with its loading state IMMEDIATELY (before the transcript exists) so the
 /// surface feels snappy even when STT/LLM are slow.
-pub fn input_submit_voice(app: &AppHandle) {
+pub fn input_submit_voice(app: &AppHandle, quick: bool) {
     let Some(state) = app.try_state::<AgentState>() else {
         return;
     };
@@ -814,8 +859,8 @@ pub fn input_submit_voice(app: &AppHandle) {
         // Capture is headless — never reveal or error a panel; on a bad
         // transcript it hides its still-open card and cleans up silently.
         let capture = current_mode(&app) == AgentMode::Capture;
-        let quick = get_settings(&app).agent_quick_enabled;
-        // Normal mode: show the (pre-warmed) panel right away, loading.
+        // Quick (paste-in-place) vs panel is now the user's per-submit choice
+        // (Shift held → quick); no panel is pre-revealed for the quick path.
         if !quick && !capture {
             reveal_panel_loading(&app);
         }
@@ -859,7 +904,7 @@ pub fn input_submit_voice(app: &AppHandle) {
             "[GRAIN] agent: dictation transcript ready ({} chars)",
             text.chars().count()
         );
-        dispatch_instruction(app, text);
+        dispatch_instruction(app, text, quick);
     });
 }
 
@@ -910,16 +955,18 @@ pub fn input_typing(app: &AppHandle, active: bool) {
 /// Route a submitted instruction: Quick Agent runs headlessly and pastes at the
 /// cursor; the normal path hands it to the (already revealed or revealing)
 /// panel, which runs the LLM itself.
-fn dispatch_instruction(app: AppHandle, text: String) {
+fn dispatch_instruction(app: AppHandle, text: String, quick: bool) {
     // Grain Space capture runs HEADLESS — structure + save the note with no
     // panel and no confirmation surface (the app confirms the save elsewhere).
     if current_mode(&app) == AgentMode::Capture {
-        capture_run(app, text);
+        capture_run(app, text, None, true);
         return;
     }
-    // Quick Agent pastes the reply at the cursor — meaningless for a memory
-    // answer, so Recall always opens the panel regardless of the setting.
-    if current_mode(&app) == AgentMode::Assist && get_settings(&app).agent_quick_enabled {
+    // Quick Agent pastes the reply at the cursor. It is now the user's
+    // per-submit choice (Shift held → quick), not a global setting — so a plain
+    // Enter always opens the panel (fixing "nothing to paste into" when the
+    // user just wants to ask). Recall never pastes, so it ignores `quick`.
+    if current_mode(&app) == AgentMode::Assist && quick {
         quick_run(app, text);
         return;
     }
@@ -1286,14 +1333,22 @@ fn quick_run(app: AppHandle, instruction: String) {
 /// How long the in-card "Saved" confirmation stays up before the card hides.
 const CAPTURE_SAVED_HOLD: Duration = Duration::from_millis(1100);
 
-fn capture_run(app: AppHandle, text: String) {
+/// `title` is an explicit note title (typed note; `None` → auto-generate).
+/// `use_selection` grabs the summon selection as the note body (voice capture of
+/// a highlighted passage); a typed note authored in the card passes `false`.
+fn capture_run(app: AppHandle, body: String, title: Option<String>, use_selection: bool) {
     std::thread::spawn(move || {
-        let (selection, _field) = read_summon_context(&app);
+        let selection = if use_selection {
+            read_summon_context(&app).0
+        } else {
+            None
+        };
         let saved = matches!(
             tauri::async_runtime::block_on(crate::grain_space::capture::capture_and_save(
                 &app,
-                &text,
+                &body,
                 selection.as_deref(),
+                title.as_deref(),
             )),
             Ok(true)
         );
