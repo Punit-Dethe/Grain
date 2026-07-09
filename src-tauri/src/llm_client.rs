@@ -14,7 +14,103 @@ const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Debug, Serialize)]
 struct ChatMessage {
     role: String,
-    content: String,
+    /// Optional so tool-call assistant turns can serialize `content: null` and
+    /// so a `tool` result message is a plain string. For system/user/assistant
+    /// text turns this is always `Some(_)` → byte-identical to the old wire
+    /// format (the field is only skipped when genuinely `None`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
+    /// Present only on an assistant turn that requested tool calls.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<WireToolCall>>,
+    /// Present only on a `tool` result message (echoes the call id).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+}
+
+impl ChatMessage {
+    /// A plain text turn (system / user / assistant) — the only shape the
+    /// non-tool paths (`send_chat`, post-process) ever build.
+    fn text(role: impl Into<String>, content: String) -> Self {
+        Self {
+            role: role.into(),
+            content: Some(content),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+}
+
+/// OpenAI tool-calling wire types. Kept separate from the public
+/// [`ToolCallOut`] so the transport format never leaks into callers.
+#[derive(Debug, Serialize)]
+struct WireTool {
+    #[serde(rename = "type")]
+    kind: String,
+    function: WireToolSpec,
+}
+
+#[derive(Debug, Serialize)]
+struct WireToolSpec {
+    name: String,
+    description: String,
+    parameters: Value,
+}
+
+#[derive(Debug, Serialize)]
+struct WireToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    kind: String,
+    function: WireToolCallFn,
+}
+
+#[derive(Debug, Serialize)]
+struct WireToolCallFn {
+    name: String,
+    arguments: String,
+}
+
+/// One function the model may call, as handed in by a caller (Grain Recall's
+/// `search_memory`). `parameters` is a JSON-Schema object.
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+/// One tool call the model asked for (or that we echo back on the next turn).
+/// `arguments` is a raw JSON string exactly as the model emitted it.
+#[derive(Debug, Clone)]
+pub struct ToolCallOut {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// One entry in a tool-enabled conversation. Richer than `(role, content)`
+/// because assistant turns can carry tool calls and `tool` results reference a
+/// call id.
+#[derive(Debug, Clone)]
+pub enum ChatEntry {
+    System(String),
+    User(String),
+    Assistant(String),
+    /// The assistant asked to call one or more tools (content is null).
+    AssistantToolCalls(Vec<ToolCallOut>),
+    /// A tool's result fed back to the model.
+    ToolResult { call_id: String, content: String },
+}
+
+/// A tool-enabled chat completion result: either free-text `content`, or one or
+/// more `tool_calls` the caller must execute and feed back — plus the same
+/// rate-limit signal the plain path returns.
+pub struct LlmChatResult {
+    pub content: Option<String>,
+    pub tool_calls: Vec<ToolCallOut>,
+    pub remaining_requests: Option<i64>,
+    pub remaining_tokens: Option<i64>,
+    pub total_tokens: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,6 +145,12 @@ struct ChatCompletionRequest {
     reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning: Option<ReasoningConfig>,
+    /// Native tool-calling: present only for the tool-enabled Recall path, so
+    /// every existing caller serializes exactly as before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<WireTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,6 +168,23 @@ struct ChatChoice {
 #[derive(Debug, Deserialize)]
 struct ChatMessageResponse {
     content: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<RespToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RespToolCall {
+    #[serde(default)]
+    id: String,
+    function: RespToolCallFn,
+}
+
+#[derive(Debug, Deserialize)]
+struct RespToolCallFn {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    arguments: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,17 +277,11 @@ pub async fn send_chat_completion_with_schema(
 
     // Add system prompt if provided
     if let Some(system) = system_prompt {
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: system,
-        });
+        messages.push(ChatMessage::text("system", system));
     }
 
     // Add user message
-    messages.push(ChatMessage {
-        role: "user".to_string(),
-        content: user_content,
-    });
+    messages.push(ChatMessage::text("user", user_content));
 
     // Build response_format if schema is provided
     let response_format = json_schema.map(|schema| ResponseFormat {
@@ -186,6 +299,8 @@ pub async fn send_chat_completion_with_schema(
         response_format,
         reasoning_effort,
         reasoning,
+        tools: None,
+        tool_choice: None,
     };
 
     send_request(client, &url, headers, &request_body).await
@@ -212,7 +327,7 @@ pub async fn send_chat(
 
     let messages = messages
         .into_iter()
-        .map(|(role, content)| ChatMessage { role, content })
+        .map(|(role, content)| ChatMessage::text(role, content))
         .collect();
 
     let request_body = ChatCompletionRequest {
@@ -221,9 +336,90 @@ pub async fn send_chat(
         response_format: None,
         reasoning_effort,
         reasoning,
+        tools: None,
+        tool_choice: None,
     };
 
     send_request(client, &url, headers, &request_body).await
+}
+
+/// [GRAIN] Send a tool-enabled multi-turn chat completion (Grain Recall's
+/// native `search_memory`). Same OpenAI-compatible endpoint as [`send_chat`],
+/// but the request advertises `tools` and the response may come back as one or
+/// more `tool_calls` instead of prose. The agentic loop (bounded hops) lives in
+/// the caller (`recall.rs`); this function is a single stateless round-trip.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_chat_with_tools(
+    client: &reqwest::Client,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    entries: Vec<ChatEntry>,
+    tools: Vec<ToolSpec>,
+    reasoning_effort: Option<String>,
+    reasoning: Option<ReasoningConfig>,
+) -> Result<LlmChatResult, LlmError> {
+    let base_url = provider.base_url.trim_end_matches('/');
+    let url = format!("{}/chat/completions", base_url);
+
+    let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
+
+    let messages: Vec<ChatMessage> = entries
+        .into_iter()
+        .map(|e| match e {
+            ChatEntry::System(c) => ChatMessage::text("system", c),
+            ChatEntry::User(c) => ChatMessage::text("user", c),
+            ChatEntry::Assistant(c) => ChatMessage::text("assistant", c),
+            ChatEntry::AssistantToolCalls(calls) => ChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_calls: Some(
+                    calls
+                        .into_iter()
+                        .map(|tc| WireToolCall {
+                            id: tc.id,
+                            kind: "function".to_string(),
+                            function: WireToolCallFn {
+                                name: tc.name,
+                                arguments: tc.arguments,
+                            },
+                        })
+                        .collect(),
+                ),
+                tool_call_id: None,
+            },
+            ChatEntry::ToolResult { call_id, content } => ChatMessage {
+                role: "tool".to_string(),
+                content: Some(content),
+                tool_calls: None,
+                tool_call_id: Some(call_id),
+            },
+        })
+        .collect();
+
+    let wire_tools: Vec<WireTool> = tools
+        .into_iter()
+        .map(|t| WireTool {
+            kind: "function".to_string(),
+            function: WireToolSpec {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+            },
+        })
+        .collect();
+
+    let request_body = ChatCompletionRequest {
+        model: model.to_string(),
+        messages,
+        response_format: None,
+        reasoning_effort,
+        reasoning,
+        tools: (!wire_tools.is_empty()).then_some(wire_tools),
+        tool_choice: Some("auto".to_string()),
+    };
+
+    send_request_with_tools(client, &url, headers, &request_body).await
 }
 
 /// Build the common + provider-specific auth headers for one request.
@@ -281,6 +477,62 @@ async fn send_request(
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
 ) -> Result<LlmSuccess, LlmError> {
+    let (completion, rem_req, rem_tok) = post_chat(client, url, headers, request_body).await?;
+    Ok(LlmSuccess {
+        content: completion
+            .choices
+            .first()
+            .and_then(|choice| choice.message.content.clone()),
+        remaining_requests: rem_req,
+        remaining_tokens: rem_tok,
+        total_tokens: completion.usage.and_then(|u| u.total_tokens),
+    })
+}
+
+/// Tool-aware sibling of [`send_request`]: same HTTP/429/header handling, but
+/// surfaces any `tool_calls` alongside the content.
+async fn send_request_with_tools(
+    client: &reqwest::Client,
+    url: &str,
+    headers: HeaderMap,
+    request_body: &ChatCompletionRequest,
+) -> Result<LlmChatResult, LlmError> {
+    let (completion, rem_req, rem_tok) = post_chat(client, url, headers, request_body).await?;
+    let message = completion.choices.into_iter().next().map(|c| c.message);
+    let (content, tool_calls) = match message {
+        Some(m) => {
+            let calls = m
+                .tool_calls
+                .unwrap_or_default()
+                .into_iter()
+                .map(|tc| ToolCallOut {
+                    id: tc.id,
+                    name: tc.function.name,
+                    arguments: tc.function.arguments,
+                })
+                .collect();
+            (m.content, calls)
+        }
+        None => (None, Vec::new()),
+    };
+    Ok(LlmChatResult {
+        content,
+        tool_calls,
+        remaining_requests: rem_req,
+        remaining_tokens: rem_tok,
+        total_tokens: completion.usage.and_then(|u| u.total_tokens),
+    })
+}
+
+/// POST a built request to `{base}/chat/completions`, apply shared 429 /
+/// rate-limit-header / error handling, and decode the JSON body. The two
+/// `send_request*` wrappers project the parsed response into their result type.
+async fn post_chat(
+    client: &reqwest::Client,
+    url: &str,
+    headers: HeaderMap,
+    request_body: &ChatCompletionRequest,
+) -> Result<(ChatCompletionResponse, Option<i64>, Option<i64>), LlmError> {
     let response = client
         .post(url)
         .headers(headers)
@@ -316,16 +568,7 @@ async fn send_request(
 
     let completion: ChatCompletionResponse = serde_json::from_str(&body)
         .map_err(|e| LlmError::Other(format!("Failed to parse API response: {}", e)))?;
-
-    Ok(LlmSuccess {
-        content: completion
-            .choices
-            .first()
-            .and_then(|choice| choice.message.content.clone()),
-        remaining_requests: rem_req,
-        remaining_tokens: rem_tok,
-        total_tokens: completion.usage.and_then(|u| u.total_tokens),
-    })
+    Ok((completion, rem_req, rem_tok))
 }
 
 /// Fetch available models from an OpenAI-compatible API

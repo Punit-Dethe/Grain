@@ -1780,6 +1780,334 @@ async fn run_agent_once(
     }
 }
 
+// ============================================================================
+// Native tool-calling path (Grain Recall's search_memory)
+// ============================================================================
+
+/// One tool-enabled turn's reply: the model's free-text answer (may be empty
+/// when it only wants tools) plus any tool calls the caller must execute and
+/// feed back. Grain Recall drives the bounded agentic loop in `recall.rs`.
+pub(crate) struct LlmToolReply {
+    pub content: String,
+    pub tool_calls: Vec<crate::llm_client::ToolCallOut>,
+}
+
+/// Run ONE tool-enabled turn through the configured AI (single provider or the
+/// smart-rotation pool). Mirrors [`run_messages`] but carries `tools` and can
+/// return `tool_calls`. tool-call ids are opaque strings we echo back, so a
+/// different rotation provider answering a later hop is harmless.
+///
+/// Providers that don't support tools (or the local Apple Intelligence path)
+/// simply never return a tool call → the model answers from the context already
+/// injected into the conversation. That silent degrade is intentional: native
+/// tools are a refinement, never a hard dependency (RECALL retrieval always
+/// pre-injects a strong first pass).
+pub(crate) async fn run_messages_with_tools(
+    app: &AppHandle,
+    entries: Vec<crate::llm_client::ChatEntry>,
+    tools: Vec<crate::llm_client::ToolSpec>,
+) -> Result<LlmToolReply, String> {
+    let settings = get_settings(app);
+
+    let http_client = app
+        .try_state::<reqwest::Client>()
+        .map(|s| s.inner().clone())
+        .ok_or("Agent: shared HTTP client unavailable")?;
+
+    if settings.post_process_smart_rotation {
+        return agent_run_rotated_tools(app, &http_client, entries, tools).await;
+    }
+
+    let provider = settings
+        .active_post_process_provider()
+        .cloned()
+        .ok_or("No AI provider is configured. Choose one in Post-Processing settings.")?;
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    if model.trim().is_empty() {
+        return Err(format!(
+            "{} has no model configured. Set one in Post-Processing settings.",
+            provider.label
+        ));
+    }
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+
+    let (outcome, reply) =
+        run_agent_once_tools(&http_client, &provider, model, api_key, &entries, &tools).await;
+    match outcome {
+        CallOutcome::Ok { .. } => Ok(reply),
+        CallOutcome::RateLimited { .. } => Err(format!(
+            "{} is rate-limited right now — try again shortly.",
+            provider.label
+        )),
+        CallOutcome::Failed => Err(format!("{} could not produce a response.", provider.label)),
+    }
+}
+
+/// Smart-rotation failover for the tool path. Reuses the shared health-ordered
+/// driver ([`run_with_rotation`]) for provider selection + tracker learning; the
+/// structured reply is captured out-of-band (the driver's text return is unused
+/// here) so `CallOutcome` stays a text-only contract for every other caller.
+async fn agent_run_rotated_tools(
+    app: &AppHandle,
+    http_client: &reqwest::Client,
+    entries: Vec<crate::llm_client::ChatEntry>,
+    tools: Vec<crate::llm_client::ToolSpec>,
+) -> Result<LlmToolReply, String> {
+    crate::post_process_router::reset_quota_if_new_day(app);
+    let settings = get_settings(app);
+
+    let eligible: Vec<PostProcessProvider> = crate::post_process_router::rotation_pool(&settings)
+        .into_iter()
+        .filter(|p| {
+            settings
+                .post_process_models
+                .get(&p.id)
+                .map(|m| !m.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .collect();
+    if eligible.is_empty() {
+        return Err(
+            "Smart rotation is on, but no eligible AI providers have a model configured.".into(),
+        );
+    }
+
+    let trackers = app
+        .try_state::<Arc<RotationTrackers>>()
+        .ok_or("RotationTrackers unavailable")?;
+
+    let est_text: String = entries
+        .iter()
+        .map(|e| match e {
+            crate::llm_client::ChatEntry::System(c)
+            | crate::llm_client::ChatEntry::User(c)
+            | crate::llm_client::ChatEntry::Assistant(c)
+            | crate::llm_client::ChatEntry::ToolResult { content: c, .. } => c.as_str(),
+            crate::llm_client::ChatEntry::AssistantToolCalls(_) => "",
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let est_tokens = provider_router::estimate_tokens(&est_text);
+    let candidates: Vec<(String, String)> = eligible
+        .iter()
+        .map(|p| (p.id.clone(), p.base_url.clone()))
+        .collect();
+
+    // Captured out-of-band: the winning provider's structured reply. The driver
+    // only knows about the (unused) text projection in `CallOutcome::Ok`.
+    let captured: Arc<Mutex<Option<LlmToolReply>>> = Arc::new(Mutex::new(None));
+
+    crate::rotation_state::run_with_rotation(
+        &trackers.llm,
+        &candidates,
+        est_tokens,
+        |id| {
+            let http_client = http_client.clone();
+            let eligible = &eligible;
+            let settings = &settings;
+            let entries = &entries;
+            let tools = &tools;
+            let captured = Arc::clone(&captured);
+            async move {
+                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
+                    return CallOutcome::Failed;
+                };
+                let model = settings
+                    .post_process_models
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let api_key = settings
+                    .post_process_api_keys
+                    .get(&provider.id)
+                    .cloned()
+                    .unwrap_or_default();
+                let (outcome, reply) =
+                    run_agent_once_tools(&http_client, provider, model, api_key, entries, tools)
+                        .await;
+                if matches!(outcome, CallOutcome::Ok { .. }) {
+                    if let Ok(mut g) = captured.lock() {
+                        *g = Some(reply);
+                    }
+                }
+                outcome
+            }
+        },
+        |id| {
+            crate::post_process_router::record_usage(app, id);
+            log::info!("[GRAIN] agent (tools) routed to '{id}'");
+        },
+    )
+    .await?;
+
+    captured
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take())
+        .ok_or_else(|| "tool turn produced no reply".to_string())
+}
+
+/// Run ONE tool-enabled provider call with already-resolved model/key. Returns
+/// a [`CallOutcome`] for the rotation tracker plus the structured reply. A
+/// response that carries ONLY tool calls (empty content) is still a success.
+async fn run_agent_once_tools(
+    client: &reqwest::Client,
+    provider: &PostProcessProvider,
+    model: String,
+    api_key: String,
+    entries: &[crate::llm_client::ChatEntry],
+    tools: &[crate::llm_client::ToolSpec],
+) -> (CallOutcome, LlmToolReply) {
+    let empty_reply = || LlmToolReply {
+        content: String::new(),
+        tool_calls: Vec::new(),
+    };
+
+    let (reasoning_effort, reasoning) = match provider.id.as_str() {
+        "custom" => (Some("none".to_string()), None),
+        "openrouter" => (
+            None,
+            Some(crate::llm_client::ReasoningConfig {
+                effort: Some("none".to_string()),
+                exclude: Some(true),
+            }),
+        ),
+        _ => (None, None),
+    };
+
+    // Apple Intelligence (local, no HTTP, no tool support): flatten and answer
+    // from the injected context. It never emits tool calls — that's fine.
+    if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            if !crate::apple_intelligence::check_apple_intelligence_availability() {
+                return (CallOutcome::Failed, empty_reply());
+            }
+            let pairs = tool_entries_to_pairs(entries);
+            let (system, user) = flatten_for_single_prompt(&pairs);
+            let token_limit = model.trim().parse::<i32>().unwrap_or(0);
+            return match crate::apple_intelligence::process_text_with_system_prompt(
+                &system,
+                &user,
+                token_limit,
+            ) {
+                Ok(result) if !result.trim().is_empty() => (
+                    CallOutcome::Ok {
+                        text: result.clone(),
+                        remaining_requests: None,
+                        remaining_tokens: None,
+                        total_tokens: None,
+                    },
+                    LlmToolReply {
+                        content: result,
+                        tool_calls: Vec::new(),
+                    },
+                ),
+                _ => (CallOutcome::Failed, empty_reply()),
+            };
+        }
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        {
+            return (CallOutcome::Failed, empty_reply());
+        }
+    }
+
+    let response = tokio::time::timeout(
+        AGENT_LLM_TIMEOUT,
+        crate::llm_client::send_chat_with_tools(
+            client,
+            provider,
+            api_key,
+            &model,
+            entries.to_vec(),
+            tools_cloned(tools),
+            reasoning_effort,
+            reasoning,
+        ),
+    )
+    .await;
+
+    match response {
+        Err(_) => {
+            warn!(
+                "[GRAIN] agent (tools) provider '{}' timed out after {}s",
+                provider.id,
+                AGENT_LLM_TIMEOUT.as_secs()
+            );
+            (CallOutcome::Failed, empty_reply())
+        }
+        Ok(Ok(result)) => {
+            let content = result.content.unwrap_or_default();
+            let has_output = !content.trim().is_empty() || !result.tool_calls.is_empty();
+            if has_output {
+                (
+                    CallOutcome::Ok {
+                        text: content.clone(),
+                        remaining_requests: result.remaining_requests,
+                        remaining_tokens: result.remaining_tokens,
+                        total_tokens: result.total_tokens,
+                    },
+                    LlmToolReply {
+                        content,
+                        tool_calls: result.tool_calls,
+                    },
+                )
+            } else {
+                (CallOutcome::Failed, empty_reply())
+            }
+        }
+        Ok(Err(LlmError::RateLimited { retry_after_s })) => {
+            (CallOutcome::RateLimited { retry_after_s }, empty_reply())
+        }
+        Ok(Err(LlmError::Other(e))) => {
+            warn!("[GRAIN] agent (tools) provider '{}' failed: {e}", provider.id);
+            (CallOutcome::Failed, empty_reply())
+        }
+    }
+}
+
+/// Clone tool specs for a retry/round-trip (the JSON schema is small and this
+/// path is active-turn-only, so the copy is negligible).
+fn tools_cloned(tools: &[crate::llm_client::ToolSpec]) -> Vec<crate::llm_client::ToolSpec> {
+    tools
+        .iter()
+        .map(|t| crate::llm_client::ToolSpec {
+            name: t.name.clone(),
+            description: t.description.clone(),
+            parameters: t.parameters.clone(),
+        })
+        .collect()
+}
+
+/// Flatten tool-path entries into `(role, content)` pairs for the local
+/// single-prompt backend (Apple Intelligence). Tool-call assistant turns are
+/// dropped (that backend never produces them) and tool results are folded in as
+/// user context.
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn tool_entries_to_pairs(entries: &[crate::llm_client::ChatEntry]) -> Vec<(String, String)> {
+    use crate::llm_client::ChatEntry;
+    entries
+        .iter()
+        .filter_map(|e| match e {
+            ChatEntry::System(c) => Some(("system".to_string(), c.clone())),
+            ChatEntry::User(c) => Some(("user".to_string(), c.clone())),
+            ChatEntry::Assistant(c) => Some(("assistant".to_string(), c.clone())),
+            ChatEntry::ToolResult { content, .. } => {
+                Some(("user".to_string(), format!("Memory search results:\n{content}")))
+            }
+            ChatEntry::AssistantToolCalls(_) => None,
+        })
+        .collect()
+}
+
 /// Flatten a multi-turn conversation into a single (system, user) pair for local
 /// backends that don't take a message array (Apple Intelligence).
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

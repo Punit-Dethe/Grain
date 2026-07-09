@@ -5,6 +5,53 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-09 — Recall LLM-interaction overhaul: native tool calling + dual-stage retrieval
+
+Overhauls `recall.rs` retrieval + LLM interaction. Supersedes the planned text
+`SEARCH:` convention (SEARCH-OVERHAUL S2) with **native tool calling**; also
+lands S1 dual-stage, strict no-truncation, and context-in-user-message.
+
+**1. Native tool calling (`search_memory`).** New transport in `llm_client.rs`:
+`send_chat_with_tools` + `ChatEntry` (system/user/assistant/assistant-tool-calls/
+tool-result), `ToolSpec`, `ToolCallOut`, `LlmChatResult`. Request gains optional
+`tools`/`tool_choice`; response parses `tool_calls`. All new fields are `Option`
++ `skip_serializing_if none`, so `send_chat` / post-process wire bytes are
+UNCHANGED. `agent.rs` gains `run_messages_with_tools` (single + rotation via the
+existing health-ordered driver, structured reply captured out-of-band so
+`CallOutcome` stays text-only for every other caller). `recall::run_tool_loop`
+drives the bounded agentic loop (`MAX_TOOL_HOPS = 3`, then a no-tools forced
+answer). One tool only: `search_memory(query, minDate?, maxDate?)`. Writes keep
+the `ACTION:` trailing-line convention.
+
+**2. Tool calling is an ENHANCEMENT, not a dependency (deviation from the naive
+"model calls the tool for everything").** Grain runs arbitrary OpenAI-compatible
+providers and the local Apple Intelligence path (NO tool support). So we STILL
+pre-inject the dual-stage top-6 as a first pass; tool-incapable models answer
+from it, tool-capable models refine via `search_memory`. Zero idle RAM — every
+hop is active-turn only.
+
+**3. Dual-stage 20→6 (S1).** `retrieve` now fuses to `CANDIDATE_POOL = 20`
+(`fuse_scored` keeps RRF scores) then `rerank` = weighted (0.5 RRF-norm + 0.3
+title/tldr term-overlap + 0.2 recency decay) → top 6. Deterministic, unit-tested.
+
+**4. Strict no-truncation.** Removed `truncate_body` / `BODY_*` consts —
+`render_memory` sends the FULL note body. `MAX_SESSION_MEMORIES` (now 12) is the
+RAM/context safety bound.
+
+**5. Context in the user message (lost-in-the-middle).** Memories are no longer a
+system message; `build_entries` prepends the `[Mn]` block to the LATEST user turn.
+
+**6. Date pre-filter (`store.rs`).** `search_notes_ranged` adds a SQL
+`timestamp BETWEEN` join (works FTS-only, no embed model);
+`semantic_search_ranged` filters the KNN pool by the same window. The tool's
+minDate/maxDate map to local day bounds via `parse_date_ms`.
+
+Verified: `cargo check` clean; 34 grain_space unit tests pass (added rerank,
+term-overlap, date-bound, full-body-render tests). Files: `llm_client.rs`,
+`agent.rs`, `grain_space/store.rs`, `grain_space/recall.rs`.
+
+---
+
 ## 2026-07-07 — Session 2 (part 7): Capture-via-agent-pill + note-window fix + f16 option
 
 Three user-requested changes (not from RECALL-PLAN — direct product feedback).

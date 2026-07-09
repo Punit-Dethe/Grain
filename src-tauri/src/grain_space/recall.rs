@@ -25,16 +25,32 @@ use crate::agent::{AgentMessage, AgentReply, AgentSource};
 /// the model does the final filtering; an extra note costs a few hundred
 /// tokens, a missing one costs the answer.
 const TOP_K_PER_TURN: usize = 6;
+/// Dual-stage retrieval: fuse to a WIDE candidate pool, then rerank down to
+/// `TOP_K_PER_TURN`. The semantic leg already returns ~24 and FTS is cheap, so
+/// widening to 20 candidates is effectively free (one pass), and the CPU
+/// reranker (RRF + term overlap + recency) picks the *relevant* 6, not just the
+/// top-6 by raw fused rank.
+const CANDIDATE_POOL: usize = 20;
 /// Cap on the session's stable memory registry. M-ids never move within a
 /// session, so we never evict (that would renumber): once full, new hits for
 /// later turns simply aren't added to the block. Personal-scale, short
-/// sessions — 10 distinct memories is ample and bounds the block ~4k tokens.
-const MAX_SESSION_MEMORIES: usize = 10;
-/// Per-memory body budget in the block (head-biased truncation).
-const BODY_HEAD_CHARS: usize = 1200;
-const BODY_TAIL_CHARS: usize = 300;
+/// sessions — a handful of distinct memories is ample. This is the RAM/context
+/// safety bound now that note bodies are sent in full (no truncation).
+const MAX_SESSION_MEMORIES: usize = 12;
+/// Max native `search_memory` tool round-trips per turn. Bounds the added
+/// latency/embedding work to the minority of turns that actually need to look
+/// again; after the cap we force a direct answer. Active-turn only — no idle
+/// cost ever.
+const MAX_TOOL_HOPS: usize = 3;
 /// RRF constant (standard).
 const RRF_K: f64 = 60.0;
+/// Reranker weights (must sum to 1.0): fused RRF rank, query-term overlap in
+/// title/tldr, and recency decay. RRF leads (it already blends lexical +
+/// semantic); overlap sharpens exact-topic hits; recency breaks near-ties
+/// toward fresher memories.
+const RERANK_W_RRF: f64 = 0.5;
+const RERANK_W_OVERLAP: f64 = 0.3;
+const RERANK_W_RECENCY: f64 = 0.2;
 
 /// Grain Recall session state, held in `AgentState` and cleared on each fresh
 /// summon. `ids[i]` is the note id shown as memory `M(i+1)`; the ordering is
@@ -82,12 +98,21 @@ impl RecallSession {
 fn system_prompt(now: &str, weekday: &str) -> String {
     format!(
         "You are Grain, the user's personal memory. You answer their questions using ONLY \
-         their saved memories, listed in the next message. Current date/time: {now} ({weekday}).\n\
+         their saved memories. Relevant memories are prepended to the user's message, each \
+         tagged [Mn]. Current date/time: {now} ({weekday}).\n\
          Rules:\n\
          1. Answer directly in the first sentence — short, natural, conversational. The user is \
          mid-flow; no preamble, no headers, no markdown lists unless they ask for structure.\n\
-         2. Use only the memories provided. If they don't contain the answer, say so plainly — \
-         NEVER guess or invent details.\n\
+         2. Use only the memories you have. If they don't contain the answer, DO NOT guess — first \
+         use the search_memory tool (rule 2a); only after searching, if it's still absent, say so \
+         plainly.\n\
+         2a. You have a tool: search_memory(query, minDate, maxDate). The memories prepended to \
+         the message are a FIRST PASS for the user's latest words — they can be wrong when the \
+         user changes topic mid-conversation, refers to something not shown, or asks about a \
+         specific time. When that happens, CALL search_memory with a focused query (the key \
+         nouns). For time references (\"last week\", \"back in June\"), also pass minDate/maxDate \
+         as YYYY-MM-DD, computed from the current date above. Prefer ONE focused search over many; \
+         search results come back tagged [Mn] just like the prepended memories.\n\
          3. When memories conflict, trust the most recent one; mention the older value only if \
          the difference matters.\n\
          4. If more than one memory could be the answer, lead with the most likely and offer the \
@@ -113,7 +138,14 @@ fn system_prompt(now: &str, weekday: &str) -> String {
          instead ASK them to confirm it (\"Delete the 'Rust tasks' note?\") — the app will ask for a \
          final click.\n\
          11. Use an action line ONLY when the user clearly asks to change something; a plain \
-         question always ends with SOURCES, never ACTION."
+         question always ends with SOURCES, never ACTION.\n\
+         12. WRITES MUST TARGET THE RIGHT MEMORY. When the user asks to change something they \
+         refer to indirectly (\"update the wifi password\", \"mark that done\") and the exact \
+         memory isn't already shown, CALL search_memory FIRST. Then: if EXACTLY ONE memory \
+         matches, act on it (`ACTION: update Mn` etc.); if ZERO or TWO-OR-MORE match, DO NOT \
+         guess — ask ONE clarifying question instead (end with SOURCES, no ACTION). A wrong \
+         silent edit is worse than a wrong answer. If the user already named it unambiguously \
+         (\"change my HOME wifi password\"), act without asking."
     )
 }
 
@@ -124,7 +156,19 @@ fn system_prompt(now: &str, weekday: &str) -> String {
 /// model is on disk; otherwise it degrades to FTS-only SILENTLY (recall must
 /// work for users who never opted into the model). All store/embed work runs
 /// off the async runtime.
-async fn retrieve(app: &AppHandle, base: &Path, query: &str) -> Result<Vec<Note>> {
+/// Dual-stage hybrid retrieve for one query (RECALL SEARCH-OVERHAUL S1): FTS ∪
+/// semantic fused with Reciprocal Rank Fusion to a WIDE `CANDIDATE_POOL`, then a
+/// CPU reranker narrows to `TOP_K_PER_TURN` the *relevant* memories. `range` is
+/// an optional inclusive `(min_ms, max_ms)` timestamp pre-filter (the tool's
+/// minDate/maxDate). Semantic is used only when enabled AND on disk; otherwise
+/// it degrades to FTS-only SILENTLY. All store/embed work runs off the async
+/// runtime.
+async fn retrieve(
+    app: &AppHandle,
+    base: &Path,
+    query: &str,
+    range: Option<(i64, i64)>,
+) -> Result<Vec<Note>> {
     let semantic_on = {
         let s = crate::settings::get_settings(app);
         s.grain_space_semantic && super::embed::model_on_disk()
@@ -135,7 +179,7 @@ async fn retrieve(app: &AppHandle, base: &Path, query: &str) -> Result<Vec<Note>
     let query_owned = query.to_string();
 
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Note>> {
-        let fts = store::search_notes(&base_owned, &query_owned)?;
+        let fts = store::search_notes_ranged(&base_owned, &query_owned, range)?;
 
         let semantic = if semantic_on {
             // Re-embed anything stale so semantic results reflect current
@@ -153,13 +197,14 @@ async fn retrieve(app: &AppHandle, base: &Path, query: &str) -> Result<Vec<Note>
                         // Embedding failed (e.g. model load error): fall back to
                         // FTS-only for this turn rather than failing the answer.
                         log::warn!("[GRAIN] recall: embed failed ({e:#}); FTS-only this turn");
-                        return Ok(fts.into_iter().take(TOP_K_PER_TURN).collect());
+                        let pool = fuse_scored(fts, Vec::new(), CANDIDATE_POOL);
+                        return Ok(rerank(&query_owned, pool, half_life_days, TOP_K_PER_TURN));
                     }
                 }
             }
             match super::embed::embed(vec![query_owned.clone()]) {
                 Ok(mut v) => match v.pop() {
-                    Some(q) => store::semantic_search(&base_owned, &q, half_life_days)?,
+                    Some(q) => store::semantic_search_ranged(&base_owned, &q, half_life_days, range)?,
                     None => Vec::new(),
                 },
                 Err(e) => {
@@ -171,16 +216,17 @@ async fn retrieve(app: &AppHandle, base: &Path, query: &str) -> Result<Vec<Note>
             Vec::new()
         };
 
-        Ok(fuse(fts, semantic, TOP_K_PER_TURN))
+        let pool = fuse_scored(fts, semantic, CANDIDATE_POOL);
+        Ok(rerank(&query_owned, pool, half_life_days, TOP_K_PER_TURN))
     })
     .await?
 }
 
 /// Reciprocal Rank Fusion of two ranked note lists: `score(id) = Σ 1/(k+rank)`
-/// (0-based rank, k=60). No score normalization needed. Returns the top `k`
-/// notes; the semantic side already carries recency decay + pin exemption, so
-/// we don't re-apply decay after fusion.
-fn fuse(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<Note> {
+/// (0-based rank, k=60). Returns the top `k` notes PAIRED WITH their fused
+/// score (the reranker needs the raw score). Deterministic: ties break by
+/// newest timestamp (HashMap iteration is not ordered).
+fn fuse_scored(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<(Note, f64)> {
     use std::collections::HashMap;
     let mut score: HashMap<String, f64> = HashMap::new();
     let mut notes: HashMap<String, Note> = HashMap::new();
@@ -195,8 +241,6 @@ fn fuse(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<Note> {
     }
 
     let mut ranked: Vec<(String, f64)> = score.into_iter().collect();
-    // Sort by fused score desc; break ties by newest timestamp so the order is
-    // deterministic (HashMap iteration is not).
     ranked.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -209,8 +253,88 @@ fn fuse(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<Note> {
     ranked
         .into_iter()
         .take(k)
-        .filter_map(|(id, _)| notes.remove(&id))
+        .filter_map(|(id, s)| notes.remove(&id).map(|n| (n, s)))
         .collect()
+}
+
+/// Back-compat thin wrapper: RRF fuse to top `k` notes without the scores. Kept
+/// for tests / callers that only want the ranked notes.
+#[cfg(test)]
+fn fuse(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<Note> {
+    fuse_scored(fts, semantic, k)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect()
+}
+
+/// Stage-2 reranker (SEARCH-OVERHAUL S1, heuristic — no second model). Re-scores
+/// the fused candidate pool by a weighted blend of: normalized RRF score,
+/// query-term overlap in title/tldr, and recency decay (`exp(-λΔt)`, pinned
+/// notes treated as fresh). Deterministic and testable; ties break toward the
+/// newer memory. Returns the top `k` notes.
+fn rerank(query: &str, pool: Vec<(Note, f64)>, half_life_days: u32, k: usize) -> Vec<Note> {
+    if pool.is_empty() {
+        return Vec::new();
+    }
+    let max_rrf = pool
+        .iter()
+        .map(|(_, s)| *s)
+        .fold(0.0_f64, f64::max)
+        .max(f64::MIN_POSITIVE);
+
+    let terms = query_terms(query);
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let lambda_per_ms = if half_life_days == 0 {
+        0.0
+    } else {
+        std::f64::consts::LN_2 / (half_life_days as f64 * 24.0 * 60.0 * 60.0 * 1000.0)
+    };
+
+    let mut scored: Vec<(f64, Note)> = pool
+        .into_iter()
+        .map(|(note, rrf)| {
+            let norm_rrf = rrf / max_rrf;
+            let overlap = term_overlap(&terms, &note);
+            let age_ms = if note.is_pinned {
+                0.0
+            } else {
+                (now_ms - note.timestamp).max(0) as f64
+            };
+            let recency = (-lambda_per_ms * age_ms).exp();
+            let final_score = RERANK_W_RRF * norm_rrf
+                + RERANK_W_OVERLAP * overlap
+                + RERANK_W_RECENCY * recency;
+            (final_score, note)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| {
+        b.0.partial_cmp(&a.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.1.timestamp.cmp(&a.1.timestamp))
+    });
+    scored.into_iter().take(k).map(|(_, n)| n).collect()
+}
+
+/// Lowercased alphanumeric query tokens (length ≥ 2) for term-overlap scoring.
+fn query_terms(query: &str) -> Vec<String> {
+    query
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.chars().count() >= 2)
+        .map(|t| t.to_lowercase())
+        .collect()
+}
+
+/// Fraction of query terms that appear in the note's title + tldr (the
+/// high-signal metadata). 0.0 when there are no query terms. Reor-style lexical
+/// emphasis without their post-hoc keyword re-score architecture.
+fn term_overlap(terms: &[String], note: &Note) -> f64 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let hay = format!("{} {}", note.title, note.tldr).to_lowercase();
+    let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
+    hits as f64 / terms.len() as f64
 }
 
 // -- memories block -------------------------------------------------------------
@@ -251,21 +375,11 @@ fn render_memory(m: usize, note: &Note, now_ms: i64) -> String {
         out.push_str(&format!("Todos: {}\n", todos.join(", ")));
     }
 
-    out.push_str(&truncate_body(&note.body));
+    // Strict no-truncation policy: the FULL body goes to the model. Truncating
+    // risks cutting the exact fact the user is asking about; we trust the
+    // context window. The registry cap (`MAX_SESSION_MEMORIES`) is the bound.
+    out.push_str(note.body.trim());
     out
-}
-
-/// Head-biased body truncation — dictated notes put the point up front, so keep
-/// the head and a little tail with an elision marker.
-fn truncate_body(body: &str) -> String {
-    let body = body.trim();
-    let len = body.chars().count();
-    if len <= BODY_HEAD_CHARS + BODY_TAIL_CHARS {
-        return body.to_string();
-    }
-    let head: String = body.chars().take(BODY_HEAD_CHARS).collect();
-    let tail: String = body.chars().skip(len - BODY_TAIL_CHARS).collect::<String>();
-    format!("{head} […] {tail}")
 }
 
 /// "2026-07-06 14:32 (yesterday)" — absolute plus a relative hint small models
@@ -477,77 +591,41 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
         ));
     }
 
-    // Retrieve this turn's hits and fold them into the session registry (stable
-    // M-ids, unioned across follow-up turns).
-    let hits = retrieve(app, &base, &latest)
+    // Initial (first-pass) retrieve — dual-stage 20→6, no date filter — folded
+    // into the session registry (stable M-ids, unioned across follow-up turns).
+    let hits = retrieve(app, &base, &latest, None)
         .await
         .map_err(|e| format!("{e:#}"))?;
-    if let Some(state) = app.try_state::<crate::agent::AgentState>() {
-        if let Ok(mut session) = state.recall.lock() {
-            for note in &hits {
-                let _ = session.register(&note.id);
-            }
-        }
-    }
+    register_hits(app, &hits);
 
-    // Build the memories block from the FULL session registry (re-read fresh so
-    // conversational edits, later, are reflected). Missing notes are skipped.
-    let registry = app
-        .try_state::<crate::agent::AgentState>()
-        .and_then(|s| s.recall.lock().ok().map(|g| g.ordered()))
-        .unwrap_or_default();
+    // Build the first-pass memories block from the FULL session registry (fresh
+    // read so earlier conversational edits are reflected).
+    let registry = session_registry(app);
+    let (block, _) = build_block_and_meta(&base, registry).await?;
 
-    // Build the block AND a M-id → source-meta map in one pass: SOURCES on the
-    // model's reply cite M-numbers, and resolving them to note titles/dates here
-    // avoids a second DB read after the LLM call. Keyed by M-number so an
-    // unreadable (skipped) note never renumbers the rest.
-    let base_block = base.clone();
-    let (block, source_meta) = tauri::async_runtime::spawn_blocking(move || {
-        use std::collections::HashMap;
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        let mut entries: Vec<String> = Vec::new();
-        let mut meta: HashMap<usize, AgentSource> = HashMap::new();
-        for (i, id) in registry.iter().enumerate() {
-            match store::get_note(&base_block, id) {
-                Ok(note) => {
-                    let m = i + 1;
-                    entries.push(render_memory(m, &note, now_ms));
-                    let title = if note.title.trim().is_empty() {
-                        note.tldr.trim().to_string()
-                    } else {
-                        note.title.trim().to_string()
-                    };
-                    meta.insert(
-                        m,
-                        AgentSource {
-                            note_id: note.id.clone(),
-                            title,
-                            saved_at: note.timestamp,
-                        },
-                    );
-                }
-                Err(e) => log::warn!("[GRAIN] recall: memory {id} unreadable: {e:#}"),
-            }
-        }
-        (entries.join("\n\n"), meta)
-    })
-    .await
-    .map_err(|e| format!("recall block join error: {e}"))?;
-
-    // Assemble the LLM message list: system prompt + memories block + turns.
+    // Assemble the tool-enabled conversation: the memories are prepended to the
+    // LATEST user message (NOT the system prompt) so the model attends to them
+    // directly ("lost in the middle" mitigation). search_memory lets it look
+    // again mid-turn if this first pass is wrong.
     let now = chrono::Local::now();
-    let full = build_full(
+    let entries = build_entries(
         &now.format("%Y-%m-%d %H:%M").to_string(),
         &now.format("%A").to_string(),
         &block,
         messages,
     );
 
-    let raw = crate::agent::run_messages(app, full).await?;
+    let raw = run_tool_loop(app, &base, entries).await?;
     let (display, tail) = parse_tail(&raw);
+
+    // Rebuild the source map from the FINAL registry (search_memory hops may
+    // have added memories) so SOURCES / ACTION M-numbers resolve to notes.
+    let final_registry = session_registry(app);
+    let (_, source_meta) = build_block_and_meta(&base, final_registry).await?;
+
     log::info!(
-        "[GRAIN] recall: answered ({} memories in block, sources={:?}, not_found={}, action={:?})",
-        total.min(MAX_SESSION_MEMORIES),
+        "[GRAIN] recall: answered ({} memories registered, sources={:?}, not_found={}, action={:?})",
+        source_meta.len(),
         tail.sources,
         tail.not_found,
         tail.action
@@ -657,31 +735,295 @@ async fn persist(app: &AppHandle, base: &Path, note: Note) {
 }
 
 /// System prompt + memories block (as a system message) + the conversation
-/// turns (roles normalized). The memories block is re-sent fresh each turn so
-/// the model always sees current content.
-fn build_full(
+/// Assemble the tool-enabled conversation: system prompt, the conversation
+/// turns (roles normalized), and the memories block PREPENDED to the latest
+/// user turn (not a system message — "lost in the middle" mitigation). The
+/// block is folded into the user's own message so the model treats the facts as
+/// part of what it's being asked about.
+fn build_entries(
     now: &str,
     weekday: &str,
     block: &str,
     messages: &[AgentMessage],
-) -> Vec<(String, String)> {
-    let mut full: Vec<(String, String)> = Vec::with_capacity(messages.len() + 2);
-    full.push(("system".to_string(), system_prompt(now, weekday)));
-    let block_msg = if block.trim().is_empty() {
-        "MEMORIES:\n(none matched this query)".to_string()
-    } else {
-        format!("MEMORIES:\n{block}")
-    };
-    full.push(("system".to_string(), block_msg));
-    for m in messages {
-        let role = if m.role == "assistant" {
-            "assistant"
+) -> Vec<crate::llm_client::ChatEntry> {
+    use crate::llm_client::ChatEntry;
+    let mut entries: Vec<ChatEntry> = Vec::with_capacity(messages.len() + 1);
+    entries.push(ChatEntry::System(system_prompt(now, weekday)));
+
+    // Index of the last non-assistant (user) turn — the one we augment.
+    let last_user = messages.iter().rposition(|m| m.role != "assistant");
+
+    for (i, m) in messages.iter().enumerate() {
+        let is_user = m.role != "assistant";
+        if is_user {
+            let content = if Some(i) == last_user {
+                prepend_memories(block, &m.content)
+            } else {
+                m.content.clone()
+            };
+            entries.push(ChatEntry::User(content));
         } else {
-            "user"
-        };
-        full.push((role.to_string(), m.content.clone()));
+            entries.push(ChatEntry::Assistant(m.content.clone()));
+        }
     }
-    full
+    entries
+}
+
+/// Prepend the retrieved memories to the user's message text.
+fn prepend_memories(block: &str, user_msg: &str) -> String {
+    let ctx = if block.trim().is_empty() {
+        "Relevant saved memories: (none matched yet — call search_memory with different words \
+         or a date range if you need to look further)."
+            .to_string()
+    } else {
+        format!("Relevant saved memories (each tagged [Mn] for citation):\n\n{block}")
+    };
+    format!("{ctx}\n\n---\n\nMy message: {user_msg}")
+}
+
+/// The single tool Grain Recall exposes: `search_memory(query, minDate?,
+/// maxDate?)`. One simple, well-described function keeps small edge models
+/// consistent and token-efficient.
+fn search_memory_spec() -> crate::llm_client::ToolSpec {
+    crate::llm_client::ToolSpec {
+        name: "search_memory".to_string(),
+        description:
+            "Search the user's saved memories for facts not already shown. Use this when the \
+             memories prepended to the message don't contain what you need — the user changed \
+             topic, referred to something not shown, or asked about a specific time. Returns \
+             matching memories tagged [Mn] that you can then cite in SOURCES."
+                .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Focused search terms — the key nouns/topic to look up."
+                },
+                "minDate": {
+                    "type": "string",
+                    "description": "Earliest saved date to include, as YYYY-MM-DD. Optional."
+                },
+                "maxDate": {
+                    "type": "string",
+                    "description": "Latest saved date to include, as YYYY-MM-DD. Optional."
+                }
+            },
+            "required": ["query"]
+        }),
+    }
+}
+
+/// The bounded agentic loop (SEARCH-OVERHAUL S2/S3, native-tool form). Calls the
+/// LLM with `search_memory` available; while it asks for tool calls (up to
+/// `MAX_TOOL_HOPS`), execute each search, fold hits into the session registry,
+/// feed results back, and re-ask. After the cap, force a direct answer with no
+/// tools so the turn always terminates. Returns the final raw text.
+async fn run_tool_loop(
+    app: &AppHandle,
+    base: &Path,
+    mut entries: Vec<crate::llm_client::ChatEntry>,
+) -> Result<String, String> {
+    use crate::llm_client::ChatEntry;
+
+    let tools = vec![search_memory_spec()];
+    let mut reply = crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools))
+        .await?;
+
+    let mut hops = 0usize;
+    while !reply.tool_calls.is_empty() && hops < MAX_TOOL_HOPS {
+        hops += 1;
+        entries.push(ChatEntry::AssistantToolCalls(reply.tool_calls.clone()));
+        for tc in &reply.tool_calls {
+            let result = execute_search_memory(app, base, tc).await;
+            entries.push(ChatEntry::ToolResult {
+                call_id: tc.id.clone(),
+                content: result,
+            });
+        }
+        reply =
+            crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools)).await?;
+    }
+
+    // Still wanting tools after the cap: `entries` ends cleanly on a tool
+    // result, so nudge for a direct answer WITH NO TOOLS advertised (avoids a
+    // dangling assistant tool-call the API would reject).
+    if !reply.tool_calls.is_empty() {
+        log::info!("[GRAIN] recall: tool hop cap ({MAX_TOOL_HOPS}) reached; forcing answer");
+        entries.push(ChatEntry::User(
+            "You've searched enough. Answer now using only the memories already provided; if the \
+             fact genuinely isn't there, say so honestly."
+                .to_string(),
+        ));
+        reply = crate::agent::run_messages_with_tools(app, entries, Vec::new()).await?;
+    }
+
+    Ok(reply.content)
+}
+
+/// Clone tool specs for a repeated round-trip (schema is tiny; active-turn only).
+fn clone_tools(tools: &[crate::llm_client::ToolSpec]) -> Vec<crate::llm_client::ToolSpec> {
+    tools
+        .iter()
+        .map(|t| crate::llm_client::ToolSpec {
+            name: t.name.clone(),
+            description: t.description.clone(),
+            parameters: t.parameters.clone(),
+        })
+        .collect()
+}
+
+/// Execute one `search_memory` tool call: parse args, apply the optional date
+/// pre-filter, dual-stage retrieve, fold hits into the session registry (stable
+/// M-ids), and render them as `[Mn]` entries for the tool result. Never errors
+/// — a bad-args or empty result just returns a short note the model can read.
+async fn execute_search_memory(
+    app: &AppHandle,
+    base: &Path,
+    tc: &crate::llm_client::ToolCallOut,
+) -> String {
+    let args: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
+    let query = args
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let min_ms = args
+        .get("minDate")
+        .and_then(|v| v.as_str())
+        .and_then(|s| parse_date_ms(s, false));
+    let max_ms = args
+        .get("maxDate")
+        .and_then(|v| v.as_str())
+        .and_then(|s| parse_date_ms(s, true));
+    let range = match (min_ms, max_ms) {
+        (None, None) => None,
+        (lo, hi) => Some((lo.unwrap_or(0), hi.unwrap_or(i64::MAX))),
+    };
+
+    if query.is_empty() && range.is_none() {
+        return "No search terms were given.".to_string();
+    }
+
+    log::info!("[GRAIN] recall: search_memory(query={query:?}, range={range:?})");
+
+    let hits = match retrieve(app, base, &query, range).await {
+        Ok(h) => h,
+        Err(e) => {
+            log::warn!("[GRAIN] recall: search_memory failed: {e:#}");
+            return "The search could not be completed.".to_string();
+        }
+    };
+    if hits.is_empty() {
+        return "No saved memories matched that search.".to_string();
+    }
+
+    // Register (stable M-ids) and render with the assigned M-numbers so the
+    // model can cite them exactly like the prepended block.
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let mut rendered: Vec<String> = Vec::with_capacity(hits.len());
+    if let Some(state) = app.try_state::<crate::agent::AgentState>() {
+        if let Ok(mut session) = state.recall.lock() {
+            for note in &hits {
+                if let Some(m) = session.register(&note.id) {
+                    rendered.push(render_memory(m, note, now_ms));
+                }
+            }
+        }
+    }
+    if rendered.is_empty() {
+        return "No additional memories could be added this turn.".to_string();
+    }
+    format!("Found these memories:\n\n{}", rendered.join("\n\n"))
+}
+
+/// Parse a `YYYY-MM-DD` (or RFC3339) date into epoch ms in LOCAL time. When
+/// `end_of_day`, snap to 23:59:59.999 so a `maxDate` window is inclusive.
+fn parse_date_ms(s: &str, end_of_day: bool) -> Option<i64> {
+    use chrono::{Local, NaiveDate, NaiveTime, TimeZone};
+    let s = s.trim();
+    if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        let time = if end_of_day {
+            NaiveTime::from_hms_milli_opt(23, 59, 59, 999)?
+        } else {
+            NaiveTime::from_hms_opt(0, 0, 0)?
+        };
+        let naive = date.and_time(time);
+        return match Local.from_local_datetime(&naive).single() {
+            Some(dt) => Some(dt.timestamp_millis()),
+            None => Local
+                .from_local_datetime(&naive)
+                .earliest()
+                .map(|dt| dt.timestamp_millis()),
+        };
+    }
+    // Fallback: full RFC3339 timestamp.
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis())
+}
+
+/// Register a batch of retrieved notes into the session registry (stable
+/// M-ids). No-op if the agent state or lock is unavailable.
+fn register_hits(app: &AppHandle, hits: &[Note]) {
+    if let Some(state) = app.try_state::<crate::agent::AgentState>() {
+        if let Ok(mut session) = state.recall.lock() {
+            for note in hits {
+                let _ = session.register(&note.id);
+            }
+        }
+    }
+}
+
+/// The session's ordered memory registry (note ids in M-order), or empty if
+/// unavailable.
+fn session_registry(app: &AppHandle) -> Vec<String> {
+    app.try_state::<crate::agent::AgentState>()
+        .and_then(|s| s.recall.lock().ok().map(|g| g.ordered()))
+        .unwrap_or_default()
+}
+
+/// Build the memories block AND the M-number → source-meta map from a session
+/// registry, in one off-runtime pass. SOURCES/ACTION cite M-numbers, so keying
+/// by M-number (not list position) means an unreadable/skipped note never
+/// renumbers the rest.
+async fn build_block_and_meta(
+    base: &Path,
+    registry: Vec<String>,
+) -> Result<(String, std::collections::HashMap<usize, AgentSource>), String> {
+    let base_block = base.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::collections::HashMap;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut blocks: Vec<String> = Vec::new();
+        let mut meta: HashMap<usize, AgentSource> = HashMap::new();
+        for (i, id) in registry.iter().enumerate() {
+            match store::get_note(&base_block, id) {
+                Ok(note) => {
+                    let m = i + 1;
+                    blocks.push(render_memory(m, &note, now_ms));
+                    let title = if note.title.trim().is_empty() {
+                        note.tldr.trim().to_string()
+                    } else {
+                        note.title.trim().to_string()
+                    };
+                    meta.insert(
+                        m,
+                        AgentSource {
+                            note_id: note.id.clone(),
+                            title,
+                            saved_at: note.timestamp,
+                        },
+                    );
+                }
+                Err(e) => log::warn!("[GRAIN] recall: memory {id} unreadable: {e:#}"),
+            }
+        }
+        (blocks.join("\n\n"), meta)
+    })
+    .await
+    .map_err(|e| format!("recall block join error: {e}"))
 }
 
 #[cfg(test)]
@@ -815,10 +1157,57 @@ mod tests {
     }
 
     #[test]
-    fn truncate_body_keeps_head_and_tail() {
-        let long = "x".repeat(2000);
-        let out = truncate_body(&long);
-        assert!(out.contains("[…]"));
-        assert!(out.chars().count() < 2000);
+    fn render_memory_keeps_full_body() {
+        // Strict no-truncation: the entire body must reach the block.
+        let mut n = note("big", 1);
+        n.body = "y".repeat(5000);
+        let out = render_memory(1, &n, 2);
+        assert!(out.contains(&"y".repeat(5000)));
+        assert!(!out.contains("[…]"));
+    }
+
+    #[test]
+    fn rerank_favours_term_overlap_over_raw_rrf() {
+        // Two candidates, equal recency (no decay). `hit` has the query term in
+        // its title; `miss` has a slightly higher raw RRF. Overlap should lift
+        // `hit` to the top.
+        let mut hit = note("hit", 100);
+        hit.title = "Wifi password".into();
+        let miss = note("miss", 100);
+        let pool = vec![(miss, 0.02_f64), (hit, 0.019_f64)];
+        let out = rerank("what is the wifi password", pool, 0, 6);
+        assert_eq!(out[0].id, "hit");
+    }
+
+    #[test]
+    fn rerank_recency_breaks_ties() {
+        // Identical RRF + no term overlap → newer note wins on recency.
+        let older = note("older", 1_000);
+        let newer = note("newer", 5_000_000_000_000);
+        let pool = vec![(older, 0.01_f64), (newer, 0.01_f64)];
+        let out = rerank("unrelated terms", pool, 30, 6);
+        assert_eq!(out[0].id, "newer");
+    }
+
+    #[test]
+    fn term_overlap_fraction() {
+        let mut n = note("x", 1);
+        n.title = "Home wifi".into();
+        n.tldr = "network details".into();
+        let terms = query_terms("home wifi password");
+        // "home" + "wifi" present, "password" absent → 2/3.
+        let frac = term_overlap(&terms, &n);
+        assert!((frac - 2.0 / 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn parse_date_ms_day_bounds() {
+        let start = parse_date_ms("2026-06-15", false).unwrap();
+        let end = parse_date_ms("2026-06-15", true).unwrap();
+        assert!(end > start);
+        // End-of-day is within the same 24h window as start.
+        assert!(end - start < 86_400_000);
+        assert!(end - start > 86_000_000);
+        assert_eq!(parse_date_ms("not-a-date", false), None);
     }
 }
