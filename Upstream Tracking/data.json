@@ -7,46 +7,32 @@
     "pr": "1158"
   },
   {
-    "date": "Jul 08, 2026",
-    "commit": "`salvage valid settings instead of resetting store on parse failure (#1631)`",
-    "status": "Pending",
-    "notes": "Pending",
-    "pr": "1631"
-  },
-  {
-    "date": "Jul 07, 2026",
-    "commit": "`fix: preserve ampersands in custom words (#1569)`",
-    "status": "Pending",
-    "notes": "Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes)",
-    "pr": "1569"
-  },
-  {
-    "date": "Jul 05, 2026",
-    "commit": "`move to auto timestamps for all models (#1602)`",
-    "status": "Pending",
-    "notes": "Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.)",
-    "pr": "1602"
-  },
-  {
-    "date": "Jul 03, 2026",
-    "commit": "`faster mic initialization (#1582)`",
-    "status": "Pending",
-    "notes": "Pending",
-    "pr": "1582"
-  },
-  {
-    "date": "Jul 02, 2026",
-    "commit": "`ship vsredist directly with the app (#1577)`",
-    "status": "Pending",
-    "notes": "Pending",
-    "pr": "1577"
-  },
-  {
     "date": "Jul 09, 2026",
     "commit": "`fix(tray): log tray icon failures instead of panicking (#1355)`",
     "status": "Merged",
     "notes": "Safely merged into `tray.rs`",
     "pr": "1355"
+  },
+  {
+    "date": "Jul 09, 2026",
+    "commit": "fix: cancel stalled output processing (#1614)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1614"
+  },
+  {
+    "date": "Jul 09, 2026",
+    "commit": "fix: tray icon invisible on Windows with dark taskbar + light apps (#1423) (#1636)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1423"
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "`salvage valid settings instead of resetting store on parse failure (#1631)`",
+    "status": "Pending",
+    "notes": "Pending",
+    "pr": "1631"
   },
   {
     "date": "Jul 08, 2026",
@@ -112,11 +98,25 @@
     "pr": "1621"
   },
   {
-    "date": "Jul 01, 2026",
-    "commit": "`edit model recs`",
-    "status": "Merged",
-    "notes": "Skipped (Grain manages custom catalog).",
+    "date": "Jul 08, 2026",
+    "commit": "fix build",
+    "status": "Pending",
+    "notes": "",
     "pr": ""
+  },
+  {
+    "date": "Jul 08, 2026",
+    "commit": "logging",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 07, 2026",
+    "commit": "`fix: preserve ampersands in custom words (#1569)`",
+    "status": "Pending",
+    "notes": "Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes)",
+    "pr": "1569"
   },
   {
     "date": "Jul 07, 2026",
@@ -126,11 +126,32 @@
     "pr": "1604"
   },
   {
+    "date": "Jul 07, 2026",
+    "commit": "`fix: preserve active overlay during post-processing (#1597)`",
+    "status": "Ignored",
+    "notes": "Irrelevant (Grain uses a native Rust pill architecture).",
+    "pr": "1597"
+  },
+  {
+    "date": "Jul 07, 2026",
+    "commit": "`fix: add prompt injection defense to default post-processing prompt (#1310)`",
+    "status": "Ignored",
+    "notes": "Irrelevant (Grain manages its own custom prompts).",
+    "pr": "1310"
+  },
+  {
     "date": "Jul 06, 2026",
     "commit": "`Fix GigaAM v3 description. (#1613)`",
     "status": "Merged",
     "notes": "Corrected descriptions to \"Russian speech-to-text\".",
     "pr": "1613"
+  },
+  {
+    "date": "Jul 05, 2026",
+    "commit": "`move to auto timestamps for all models (#1602)`",
+    "status": "Pending",
+    "notes": "Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.)",
+    "pr": "1602"
   },
   {
     "date": "Jul 05, 2026",
@@ -162,6 +183,13 @@
   },
   {
     "date": "Jul 03, 2026",
+    "commit": "`faster mic initialization (#1582)`",
+    "status": "Pending",
+    "notes": "Pending",
+    "pr": "1582"
+  },
+  {
+    "date": "Jul 03, 2026",
     "commit": "`fix cyrillic (unicode) path problems (#1187)`",
     "status": "Merged",
     "notes": "Fixed VAD crash on Cyrillic paths.",
@@ -173,6 +201,20 @@
     "status": "Merged",
     "notes": "Bumped transcribe-cpp to 0.1.1.",
     "pr": "1589"
+  },
+  {
+    "date": "Jul 02, 2026",
+    "commit": "`ship vsredist directly with the app (#1577)`",
+    "status": "Pending",
+    "notes": "Pending",
+    "pr": "1577"
+  },
+  {
+    "date": "Jul 01, 2026",
+    "commit": "`edit model recs`",
+    "status": "Merged",
+    "notes": "Skipped (Grain manages custom catalog).",
+    "pr": ""
   },
   {
     "date": "Jul 01, 2026",
@@ -210,6 +252,13 @@
     "pr": "1535"
   },
   {
+    "date": "Jun 23, 2026",
+    "commit": "`Clarified branding and redistribution terms for Handy`",
+    "status": "Ignored",
+    "notes": "Irrelevant (Grain is an independent fork).",
+    "pr": ""
+  },
+  {
     "date": "Jun 18, 2026",
     "commit": "`fix: dropdown overflow in post-processing settings (#1402)`",
     "status": "Merged",
@@ -229,26 +278,5 @@
     "status": "Merged",
     "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite).",
     "pr": "1491"
-  },
-  {
-    "date": "Jul 07, 2026",
-    "commit": "`fix: preserve active overlay during post-processing (#1597)`",
-    "status": "Ignored",
-    "notes": "Irrelevant (Grain uses a native Rust pill architecture).",
-    "pr": "1597"
-  },
-  {
-    "date": "Jul 07, 2026",
-    "commit": "`fix: add prompt injection defense to default post-processing prompt (#1310)`",
-    "status": "Ignored",
-    "notes": "Irrelevant (Grain manages its own custom prompts).",
-    "pr": "1310"
-  },
-  {
-    "date": "Jun 23, 2026",
-    "commit": "`Clarified branding and redistribution terms for Handy`",
-    "status": "Ignored",
-    "notes": "Irrelevant (Grain is an independent fork).",
-    "pr": ""
   }
 ]
