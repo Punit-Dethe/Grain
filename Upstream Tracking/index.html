@@ -631,6 +631,45 @@
         }
         .retry-btn:hover { background: rgba(214, 164, 76, 0.22); }
 
+        
+        /* ============ Toast Notifications ============ */
+        #toastContainer {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 1000;
+        }
+        .toast {
+            background: var(--bg-sidebar);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-sm);
+            padding: 12px 16px;
+            color: var(--text-primary);
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+            transform: translateY(20px);
+            opacity: 0;
+            transition: transform 0.3s var(--ease), opacity 0.3s var(--ease);
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        .toast-icon {
+            color: var(--accent-strong);
+            flex-shrink: 0;
+        }
+        .toast-icon.error { color: var(--status-pending); }
+        .toast-icon.success { color: var(--status-merged); }
+
         /* ============ Responsive ============ */
         @media (max-width: 880px) {
             .app-layout { flex-direction: column; }
@@ -744,9 +783,9 @@
                             </li>
                         </ul>
                     </div>
-                    <a class="icon-btn" title="Run GitHub Action Sync" aria-label="Run Sync Action" href="https://github.com/Punit-Dethe/Grain/actions/workflows/upstream-sync.yml" target="_blank" rel="noopener" style="text-decoration:none;">
+                    <button class="icon-btn" id="actionBtn" title="Run GitHub Action Sync" aria-label="Run Sync Action">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                    </a>
+                    </button>
                     <button class="icon-btn" id="refreshBtn" title="Refresh" aria-label="Refresh data">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
@@ -881,6 +920,7 @@
             el('searchInput').addEventListener('input', renderList);
             el('refreshBtn').addEventListener('click', () => fetchData(true));
             initCustomSelect();
+            if (el('actionBtn')) el('actionBtn').addEventListener('click', triggerGitHubAction);
 
             document.querySelectorAll('.nav-item').forEach(btn => {
                 btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -935,6 +975,81 @@
                 }
             });
         });
+
+        
+        function showToast(message, type = 'info') {
+            const container = el('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            
+            let icon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>';
+            if (type === 'success') {
+                icon = checkCircleIconSvg();
+            } else if (type === 'error') {
+                icon = warningIconSvg();
+            }
+            
+            toast.innerHTML = `<span class="toast-icon ${type}">${icon}</span><span>${escapeHtml(message)}</span>`;
+            container.appendChild(toast);
+            
+            // Trigger animation
+            requestAnimationFrame(() => toast.classList.add('show'));
+            
+            // Remove after 5 seconds
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 5000);
+        }
+
+        async function triggerGitHubAction() {
+            let token = localStorage.getItem('grain_gh_token');
+            if (!token) {
+                token = prompt("To trigger GitHub Actions securely from your browser, please enter a GitHub Personal Access Token (PAT) with 'repo' permissions.\n\nThis is stored locally in your browser and never shared.");
+                if (!token) return;
+                localStorage.setItem('grain_gh_token', token.trim());
+            }
+
+            const btn = el('actionBtn');
+            if (btn.classList.contains('spinning')) return;
+            btn.classList.add('spinning');
+            
+            showToast('Triggering GitHub Action...', 'info');
+
+            try {
+                const response = await fetch('https://api.github.com/repos/Punit-Dethe/Grain/actions/workflows/upstream-sync.yml/dispatches', {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'application/vnd.github.v3+json',
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ ref: 'main' })
+                });
+
+                if (response.status === 401 || response.status === 403) {
+                    localStorage.removeItem('grain_gh_token');
+                    throw new Error('Unauthorized. Your token might be invalid or missing permissions.');
+                }
+                if (!response.ok) {
+                    throw new Error(`Failed to trigger action (${response.status}).`);
+                }
+
+                showToast('Sync triggered! Waiting 30 seconds for it to complete...', 'info');
+                
+                // Wait 30 seconds
+                setTimeout(() => {
+                    showToast('Sync complete! Refreshing data...', 'success');
+                    fetchData(true);
+                    btn.classList.remove('spinning');
+                }, 30000);
+                
+            } catch (err) {
+                console.error(err);
+                showToast(err.message, 'error');
+                btn.classList.remove('spinning');
+            }
+        }
 
         function switchView(view) {
             currentView = view;
@@ -1254,5 +1369,7 @@
             return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>';
         }
     </script>
+
+    <div id="toastContainer"></div>
 </body>
 </html>
