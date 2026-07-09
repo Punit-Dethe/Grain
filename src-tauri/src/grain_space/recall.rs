@@ -145,7 +145,15 @@ fn system_prompt(now: &str, weekday: &str) -> String {
          matches, act on it (`ACTION: update Mn` etc.); if ZERO or TWO-OR-MORE match, DO NOT \
          guess — ask ONE clarifying question instead (end with SOURCES, no ACTION). A wrong \
          silent edit is worse than a wrong answer. If the user already named it unambiguously \
-         (\"change my HOME wifi password\"), act without asking."
+         (\"change my HOME wifi password\"), act without asking.\n\
+         13. If the memories only WEAKLY relate to the question (nothing actually answers it), do \
+         not interrogate the user with repeated questions — after at most one search, give one \
+         honest sentence and end with `NOT_FOUND`.\n\
+         Always end EVERY reply with exactly one trailing line — `SOURCES: …`, `NOT_FOUND`, or \
+         `ACTION: …` — and nothing after it. Examples of the last two lines of a reply:\n\
+         • answered: \"Your wifi password is hunter2.\\nSOURCES: M2\"\n\
+         • not saved: \"I don't have anything saved about that.\\nNOT_FOUND\"\n\
+         • changed:  \"Done — updated the wifi password.\\nACTION: update M3\""
     )
 }
 
@@ -964,6 +972,19 @@ fn parse_date_ms(s: &str, end_of_day: bool) -> Option<i64> {
         .map(|dt| dt.timestamp_millis())
 }
 
+/// The best human label for a note's source chip: its title, else its summary,
+/// else a plain-code title from the first words of the body (so raw/quick-add
+/// notes with no metadata still get a readable chip instead of a blank one).
+fn display_title(note: &Note) -> String {
+    if !note.title.trim().is_empty() {
+        note.title.trim().to_string()
+    } else if !note.tldr.trim().is_empty() {
+        note.tldr.trim().to_string()
+    } else {
+        capture::fallback_title(&note.body)
+    }
+}
+
 /// Register a batch of retrieved notes into the session registry (stable
 /// M-ids). No-op if the agent state or lock is unavailable.
 fn register_hits(app: &AppHandle, hits: &[Note]) {
@@ -1003,11 +1024,7 @@ async fn build_block_and_meta(
                 Ok(note) => {
                     let m = i + 1;
                     blocks.push(render_memory(m, &note, now_ms));
-                    let title = if note.title.trim().is_empty() {
-                        note.tldr.trim().to_string()
-                    } else {
-                        note.title.trim().to_string()
-                    };
+                    let title = display_title(&note);
                     meta.insert(
                         m,
                         AgentSource {

@@ -15,7 +15,7 @@ pub mod event;
 pub mod settings;
 
 pub use context::AppContext;
-pub use event::{DaemonEvent, PillAction, SessionMode};
+pub use event::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
 pub use settings::{
     ActionTarget, AppMatch, AppMode, AppSettings, DictCandidate, PostProcessProvider, SecretMap,
     SttProvider, SttProviderKind, VoiceAction, STT_LOCAL_PROVIDER_ID,

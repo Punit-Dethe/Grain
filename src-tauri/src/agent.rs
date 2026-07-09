@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 
-use grain_core::{DaemonEvent, PostProcessProvider};
+use grain_core::{AgentInputKind, DaemonEvent, PostProcessProvider};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -242,6 +242,7 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
                 DaemonEvent::AgentInputShow {
                     selection_chars: chars,
                     type_to_expand: get_settings(&app).agent_input_type_to_expand,
+                    kind: input_kind(agent_mode),
                 },
             );
             return;
@@ -301,6 +302,7 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             DaemonEvent::AgentInputShow {
                 selection_chars: chars,
                 type_to_expand: get_settings(&app).agent_input_type_to_expand,
+                kind: input_kind(agent_mode),
             },
         );
         // Global Enter (= submit request routed to the pill) + Escape (cancel)
@@ -327,6 +329,17 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             });
         }
     });
+}
+
+/// Map the summon mode to the native card's presentational kind (anchor +
+/// labels). Assist keeps the original bottom card; the Grain Space kinds render
+/// the top-anchored memory variants.
+fn input_kind(mode: AgentMode) -> AgentInputKind {
+    match mode {
+        AgentMode::Assist => AgentInputKind::Assist,
+        AgentMode::Capture => AgentInputKind::Capture,
+        AgentMode::Recall => AgentInputKind::Recall,
+    }
 }
 
 /// The current agent mode (defaults to Assist if state is somehow unavailable).
@@ -762,12 +775,17 @@ pub fn input_submit_text(app: &AppHandle, text: String) {
     }
     // Typed text wins — abandon the voice capture and release the mic.
     app.state::<Arc<AudioRecordingManager>>().cancel_recording();
-    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
 
     let text = text.trim().to_string();
     if text.is_empty() {
+        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
         input_cancel_cleanup(app);
         return;
+    }
+    // Capture keeps its card on screen so it can confirm the save in place
+    // (Saved → hide, driven by `capture_run`); every other mode hides now.
+    if current_mode(app) != AgentMode::Capture {
+        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
     }
     info!(
         "[GRAIN] agent: typed instruction submitted ({} chars)",
@@ -786,12 +804,15 @@ pub fn input_submit_voice(app: &AppHandle) {
     if !state.input_active.swap(false, Ordering::SeqCst) {
         return;
     }
-    crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    // Capture keeps its card up to confirm the save in place; others hide now.
+    if current_mode(app) != AgentMode::Capture {
+        crate::bridge::emit(app, DaemonEvent::AgentInputHide);
+    }
 
     let app = app.clone();
     std::thread::spawn(move || {
         // Capture is headless — never reveal or error a panel; on a bad
-        // transcript it just cleans up the input-phase shortcuts silently.
+        // transcript it hides its still-open card and cleans up silently.
         let capture = current_mode(&app) == AgentMode::Capture;
         let quick = get_settings(&app).agent_quick_enabled;
         // Normal mode: show the (pre-warmed) panel right away, loading.
@@ -800,6 +821,7 @@ pub fn input_submit_voice(app: &AppHandle) {
         }
         let no_speech = |app: &AppHandle, msg: &str| {
             if capture {
+                crate::bridge::emit(app, DaemonEvent::AgentInputHide);
                 unregister_transient_shortcuts_deferred(app);
             } else {
                 deliver_agent_error(app, msg);
@@ -1261,14 +1283,27 @@ fn quick_run(app: AppHandle, instruction: String) {
 /// selection captured at summon) into a note and save it silently — no panel, no
 /// paste, no reply surface. The save is confirmed elsewhere in the app, not by
 /// the agent surfaces (user directive). Mirrors `quick_run`'s off-thread shape.
+/// How long the in-card "Saved" confirmation stays up before the card hides.
+const CAPTURE_SAVED_HOLD: Duration = Duration::from_millis(1100);
+
 fn capture_run(app: AppHandle, text: String) {
     std::thread::spawn(move || {
         let (selection, _field) = read_summon_context(&app);
-        if let Err(e) = tauri::async_runtime::block_on(
-            crate::grain_space::capture::capture_and_save(&app, &text, selection.as_deref()),
-        ) {
-            warn!("[GRAIN] agent: capture failed: {e}");
+        let saved = matches!(
+            tauri::async_runtime::block_on(crate::grain_space::capture::capture_and_save(
+                &app,
+                &text,
+                selection.as_deref(),
+            )),
+            Ok(true)
+        );
+        if saved {
+            // Confirm the save on the SAME summon card (green "Saved"), hold
+            // briefly, then hide it — no new pill/surface.
+            crate::bridge::emit(&app, DaemonEvent::AgentInputSaved);
+            std::thread::sleep(CAPTURE_SAVED_HOLD);
         }
+        crate::bridge::emit(&app, DaemonEvent::AgentInputHide);
         // No panel took over the input-phase Enter/Esc — release them.
         unregister_transient_shortcuts_deferred(&app);
     });
