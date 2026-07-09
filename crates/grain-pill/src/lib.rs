@@ -75,6 +75,16 @@ const SIB_SLIDE: f32 = 16.0; // px the sibling travels in from the right
 const SIB_ARROW_INSET: f32 = 17.0; // ‹ › inset from each capsule end
 const SIB_TEXT_PAD: f32 = 6.0; // gap kept between the arrows and the label
 
+// [GRAIN] Agent follow-up offer capsule — centered alone (no pill body) when
+// idle. A muted "Ask follow-up" label on the left + a key-cap (rounded rect
+// with a lighter rim) carrying the shortcut on the right. All dimensions are
+// compile-time `f32` consts — zero runtime allocation, same font + primitives
+// already in use.
+const OFFER_CAPSULE_PAD: f32 = 13.0; // internal padding at each end
+const OFFER_KEY_PAD_X: f32 = 8.0; // key-cap horizontal text padding
+const OFFER_KEY_PAD_Y: f32 = 6.0; // key-cap inset from the capsule top/bottom
+const OFFER_LABEL_KEY_GAP: f32 = 10.0; // gap between the label and the key-cap
+
 // Studio top capsule (above the transcript card, spanning the full card width).
 const STUDIO_TOP_PILL_H: f32 = 30.0;
 const STUDIO_TOP_GAP: f32 = 9.0; // gap between the top capsule and the card
@@ -2135,7 +2145,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         DaemonEvent::ProcessingComplete { .. } | DaemonEvent::SessionCancelled { .. } => {
             // [GRAIN] Session over → back to idle. Resetting the state (not just
             // visibility) so a later idle prompt-switch preview is detected as
-            // idle (see `is_idle_prompt_preview`) instead of leaking the stale
+            // idle (see `is_centered_overlay_only`) instead of leaking the stale
             // `Processing` body beside the capsule.
             r.state = PillState::Idle;
             r.visible = false;
@@ -3489,17 +3499,16 @@ impl App {
         self.pixmap = Some(pixmap);
     }
 
-    /// [GRAIN] True when the overlay is visible ONLY for a transient idle
-    /// prompt-switch preview: no recording/processing session is active, the
-    /// riser is up, and it is the prompt switcher (not the agent follow-up
-    /// offer). In this state the body + dot aura are suppressed and the capsule
-    /// is drawn alone, centered on screen.
-    fn is_idle_prompt_preview(&self) -> bool {
+    /// [GRAIN] True when the overlay is visible ONLY for a transient centered
+    /// capsule — an idle prompt-switch preview OR the agent follow-up offer —
+    /// with no recording/processing session active. In this state the body +
+    /// dot aura are suppressed and the capsule is drawn alone, centered.
+    fn is_centered_overlay_only(&self) -> bool {
         matches!(self.state, PillState::Idle | PillState::Fallback)
-            && self.agent_offer.is_none()
-            && self
-                .prompt_preview_until
-                .is_some_and(|t| t > Instant::now())
+            && (self.agent_offer.is_some()
+                || self
+                    .prompt_preview_until
+                    .is_some_and(|t| t > Instant::now()))
     }
 
     fn render_collapsed(&mut self) {
@@ -3524,14 +3533,15 @@ impl App {
         let core_w = Self::collapsed_core_w();
         let (x0, x1) = (cell_px, core_w - cell_px);
 
-        // [GRAIN] Idle prompt-switch preview: the pill is visible ONLY to show
-        // the transient riser (no session, no agent offer). Drop the body + dot
-        // aura and render the capsule alone, centered. Mid-speech switches keep
-        // the full pill beside the capsule as before.
-        let idle_preview = self.is_idle_prompt_preview();
+        // [GRAIN] Centered overlay-only: the pill is visible ONLY to show a
+        // transient capsule (idle prompt-switch preview or agent follow-up
+        // offer), no session. Drop the body + dot aura and render the capsule
+        // alone, centered. Mid-speech switches keep the full pill beside the
+        // capsule as before.
+        let overlay_only = self.is_centered_overlay_only();
 
         // 1) Floating capsule body (offset below the transparent top reserve).
-        if !idle_preview {
+        if !overlay_only {
             let mut body = Paint {
                 anti_alias: true,
                 ..Default::default()
@@ -3593,11 +3603,15 @@ impl App {
         // 3) Prompt capsule — slides in to the RIGHT of the pill during a
         // mid-speech prompt switch (or as the agent follow-up offer). Drawn after
         // the pill so its slide-in never clips under the body. When the pill is
-        // visible ONLY for an idle prompt-switch preview, the capsule is drawn
-        // alone and centered (see `draw_centered_prompt_capsule`).
+        // visible ONLY for a centered overlay (idle prompt-switch preview or
+        // agent follow-up offer), the capsule is drawn alone and centered.
         if self.riser_progress > 0.01 {
-            if idle_preview {
-                self.draw_centered_prompt_capsule(&mut pixmap, y_off, pill_h);
+            if overlay_only {
+                if self.agent_offer.is_some() {
+                    self.draw_offer_capsule(&mut pixmap, y_off, pill_h);
+                } else {
+                    self.draw_centered_prompt_capsule(&mut pixmap, y_off, pill_h);
+                }
             } else {
                 self.draw_sibling_pill(&mut pixmap, x1, y_off, pill_h);
             }
@@ -3781,6 +3795,146 @@ impl App {
         let right = SIB_W;
         self.draw_prompt_capsule(pixmap, left, right, y_off, pill_h, SIB_ARROW_INSET, p);
         self.prompt_switch_rect = Some((left, y_off, right, y_off + pill_h));
+    }
+
+    /// [GRAIN] Width of the agent follow-up offer capsule — measured from the
+    /// existing font so the show-path can center the window on it. No
+    /// allocation: `text_width` only calls `font.metrics`.
+    fn offer_capsule_w(&self) -> f32 {
+        let Some(font) = &self.font else {
+            return SIB_W;
+        };
+        let font = font_for(font, self.fallback_font.as_ref(), "Ask follow-up");
+        let shortcut = self
+            .agent_offer
+            .as_deref()
+            .unwrap_or("")
+            .to_uppercase();
+        let label = "Ask follow-up";
+        let label_w = text_width(font, label, PROMPT_LABEL_PX);
+        let key_w =
+            text_width(font, &shortcut, PROMPT_LABEL_PX) + 2.0 * OFFER_KEY_PAD_X;
+        OFFER_CAPSULE_PAD + label_w + OFFER_LABEL_KEY_GAP + key_w + OFFER_CAPSULE_PAD
+    }
+
+    /// [GRAIN] The agent follow-up offer capsule — centered alone (no pill body)
+    /// when the pill is visible ONLY for the offer. A wider, lower-contrast pill
+    /// with a muted "Ask follow-up" label on the left and a key-cap (rounded rect
+    /// with a lighter rim + inset fill) carrying the shortcut on the right. The
+    /// key-cap is drawn as two stacked rounded rects (rim then inset fill) so no
+    /// stroke pipeline is needed — only `rounded_rect_path` + `fill_path`, the
+    /// same primitives already in use. Zero new fonts, icons, or persistent
+    /// allocations: all text is rasterized on the fly by `draw_text_left` and the
+    /// temp `String` from `.to_uppercase()` is dropped before the method returns.
+    fn draw_offer_capsule(&mut self, pixmap: &mut Pixmap, y_off: f32, pill_h: f32) {
+        let alpha = self.riser_progress.clamp(0.0, 1.0);
+        if alpha < 0.01 {
+            self.prompt_switch_rect = None;
+            return;
+        }
+        let Some(font) = &self.font else {
+            self.prompt_switch_rect = None;
+            return;
+        };
+        let font = font_for(font, self.fallback_font.as_ref(), "Ask follow-up");
+        let shortcut = self
+            .agent_offer
+            .as_deref()
+            .unwrap_or("")
+            .to_uppercase();
+        let label = "Ask follow-up";
+
+        let label_w = text_width(font, label, PROMPT_LABEL_PX);
+        let key_w =
+            text_width(font, &shortcut, PROMPT_LABEL_PX) + 2.0 * OFFER_KEY_PAD_X;
+        let cap_w =
+            OFFER_CAPSULE_PAD + label_w + OFFER_LABEL_KEY_GAP + key_w + OFFER_CAPSULE_PAD;
+        let left = 0.0_f32;
+
+        let fill_a = (alpha * 244.0) as u8;
+        if fill_a == 0 {
+            self.prompt_switch_rect = None;
+            return;
+        }
+
+        // 1) Capsule background (near-black, same fill as the pill body).
+        let rr = (pill_h / 2.0).min(cap_w / 2.0).max(0.0);
+        let mut fill = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        fill.set_color(Color::from_rgba8(13, 13, 15, fill_a));
+        if let Some(path) = rounded_rect_path(left, y_off, cap_w, pill_h, rr) {
+            pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+        }
+
+        let cy = y_off + pill_h / 2.0;
+
+        // 2) "Ask follow-up" label — muted, left-aligned at the capsule's left
+        //    padding. Lower contrast than the shortcut so the key-cap reads as
+        //    the actionable element.
+        let label_col = [0x8a, 0x87, 0x80];
+        let label_x = left + OFFER_CAPSULE_PAD;
+        draw_text_left(
+            pixmap,
+            font,
+            label,
+            label_x,
+            cy,
+            PROMPT_LABEL_PX,
+            label_col,
+            alpha,
+        );
+
+        // 3) Key-cap — a rounded rect with a lighter rim drawn as two stacked
+        //    fills (rim rect, then a 1-px-inset darker fill on top). No stroke.
+        let key_left = label_x + label_w + OFFER_LABEL_KEY_GAP;
+        let key_top = y_off + OFFER_KEY_PAD_Y;
+        let key_h = pill_h - 2.0 * OFFER_KEY_PAD_Y;
+        let key_rr = (key_h / 2.0).min(6.0).max(0.0);
+
+        let rim_a = (alpha * 255.0) as u8;
+        let mut rim = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        rim.set_color(Color::from_rgba8(0x3c, 0x3c, 0x42, rim_a));
+        if let Some(path) = rounded_rect_path(key_left, key_top, key_w, key_h, key_rr) {
+            pixmap.fill_path(&path, &rim, FillRule::Winding, Transform::identity(), None);
+        }
+        let mut key_fill = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        key_fill.set_color(Color::from_rgba8(0x20, 0x20, 0x24, fill_a));
+        if let Some(path) = rounded_rect_path(
+            key_left + 1.0,
+            key_top + 1.0,
+            key_w - 2.0,
+            key_h - 2.0,
+            (key_rr - 1.0).max(0.0),
+        ) {
+            pixmap.fill_path(&path, &key_fill, FillRule::Winding, Transform::identity(), None);
+        }
+
+        // 4) Shortcut text — bright cream, centered inside the key-cap.
+        let key_col = [236, 229, 218];
+        let shortcut_w = text_width(font, &shortcut, PROMPT_LABEL_PX);
+        let shortcut_x = key_left + (key_w - shortcut_w) / 2.0;
+        draw_text_left(
+            pixmap,
+            font,
+            &shortcut,
+            shortcut_x,
+            cy,
+            PROMPT_LABEL_PX,
+            key_col,
+            alpha,
+        );
+
+        // The offer is clickable — leave `prompt_switch_rect` as None so clicks
+        // pass through to the general handler which fires `AgentFollowup`.
+        self.prompt_switch_rect = None;
     }
 
     /// [GRAIN] The Studio surface's prompt capsule — a full-width pill (matching
@@ -4069,26 +4223,31 @@ impl ApplicationHandler<UserEvent> for App {
             // Pull authoritative state/visibility from the core (or dev keys).
             let r = self.remote.lock().unwrap().clone();
             // [GRAIN] Capture the pre-tick state so we can detect a session
-            // starting out of an idle prompt-switch preview (the riser + window
-            // centering from the preview must be cancelled the instant a real
+            // starting out of a centered overlay (the riser + window centering
+            // from the preview/offer must be cancelled the instant a real
             // session begins, or the capsule flashes beside the recording body
             // and the body renders off-center).
             let prev_state = self.state;
             self.state = r.state;
-            let session_started_from_preview = matches!(
+            let session_started_from_overlay = matches!(
                 self.state,
                 PillState::Recording | PillState::Processing
             ) && !matches!(
                 prev_state,
                 PillState::Recording | PillState::Processing
-            ) && self.prompt_preview_until.is_some();
-            if session_started_from_preview {
+            ) && (self.prompt_preview_until.is_some()
+                || self.agent_offer.is_some()
+                || self.riser_progress > 0.01);
+            if session_started_from_overlay {
                 // Drop the riser immediately so no capsule renders beside the
                 // recording body, and clear the preview so it stops driving
-                // visibility/centering.
+                // visibility/centering. The offer itself is already cleared by
+                // the remote `RecordingStarted` handler; reset the fade flag so
+                // the upcoming session's close uses the normal instant hide.
                 self.riser_progress = 0.0;
                 self.riser_hide_at = None;
                 self.prompt_preview_until = None;
+                self.offer_fade_close = false;
             }
             self.prompt_recording = r.prompt_recording;
             self.asr = r.asr.clone();
@@ -4395,14 +4554,19 @@ impl ApplicationHandler<UserEvent> for App {
                             present::force_foreground(window);
                         } else {
                             let (w, h) = Self::win_size_for(self.mode);
-                            // [GRAIN] An idle prompt-switch preview shows ONLY the
-                            // centered capsule (no body), so center the window on
-                            // the capsule's width (`SIB_W`) — not the pill body —
-                            // so the capsule lands screen-centered.
+                            // [GRAIN] A centered overlay (idle prompt-switch
+                            // preview or agent follow-up offer) shows ONLY the
+                            // capsule, so center the window on the capsule's
+                            // width — not the pill body — so the capsule lands
+                            // screen-centered.
                             let center_w = if self.mode == PillMode::Collapsed
-                                && self.is_idle_prompt_preview()
+                                && self.is_centered_overlay_only()
                             {
-                                SIB_W
+                                if self.agent_offer.is_some() {
+                                    self.offer_capsule_w()
+                                } else {
+                                    SIB_W
+                                }
                             } else {
                                 Self::center_w_for(self.mode, w)
                             };
@@ -4411,12 +4575,13 @@ impl ApplicationHandler<UserEvent> for App {
                             present::show_window(window);
                         }
                     }
-                } else if session_started_from_preview && self.visible {
-                    // [GRAIN] A session just started out of an idle prompt-switch
-                    // preview: the window was centered on the capsule (`SIB_W`)
-                    // and is still visible (so `becoming_visible` is false). Re-
-                    // center it on the pill body so the recording pill is screen-
-                    // centered instead of offset to the left.
+                } else if session_started_from_overlay && self.visible {
+                    // [GRAIN] A session just started out of a centered overlay
+                    // (idle prompt-switch preview or agent follow-up offer): the
+                    // window was centered on the capsule width and is still
+                    // visible (so `becoming_visible` is false). Re-center it on
+                    // the pill body so the recording pill is screen-centered
+                    // instead of offset to the left.
                     if let Some(window) = &self.window {
                         if self.mode != PillMode::AgentInput {
                             let (w, h) = Self::win_size_for(self.mode);
