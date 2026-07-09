@@ -100,11 +100,14 @@ pub fn quick_add(app: &AppHandle) {
 /// selected some text and their spoken/typed words FRAME it; otherwise the
 /// spoken/typed text IS the note. The body is always verbatim (never rewritten);
 /// the LLM only supplies metadata, and any failure degrades to a raw save.
+///
+/// Returns `Ok(true)` when a note was actually saved (the caller shows the
+/// in-card "Saved" confirmation), `Ok(false)` when there was nothing to save.
 pub async fn capture_and_save(
     app: &AppHandle,
     instruction: &str,
     selection: Option<&str>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if !super::is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
     }
@@ -127,7 +130,7 @@ pub async fn capture_and_save(
     };
     if body.trim().is_empty() {
         // Nothing was heard/typed and nothing selected — silent no-op.
-        return Ok(());
+        return Ok(false);
     }
 
     let base = super::base_dir(app).map_err(|e| e.to_string())?;
@@ -142,7 +145,7 @@ pub async fn capture_and_save(
             // Capture may have armed a reminder.
             super::reminders::sync(&app2);
             log::info!("[GRAIN] space capture: saved note {id}");
-            Ok(())
+            Ok(true)
         }
         Ok(Err(e)) => {
             log::error!("[GRAIN] space capture: save failed: {e:#}");
