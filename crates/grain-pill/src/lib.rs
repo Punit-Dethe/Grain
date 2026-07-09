@@ -3226,6 +3226,19 @@ impl App {
         self.pixmap = Some(pixmap);
     }
 
+    /// [GRAIN] True when the overlay is visible ONLY for a transient idle
+    /// prompt-switch preview: no recording/processing session is active, the
+    /// riser is up, and it is the prompt switcher (not the agent follow-up
+    /// offer). In this state the body + dot aura are suppressed and the capsule
+    /// is drawn alone, centered on screen.
+    fn is_idle_prompt_preview(&self) -> bool {
+        matches!(self.state, PillState::Idle | PillState::Fallback)
+            && self.agent_offer.is_none()
+            && self
+                .prompt_preview_until
+                .is_some_and(|t| t > Instant::now())
+    }
+
     fn render_collapsed(&mut self) {
         if self.window.is_none() {
             return;
@@ -3248,69 +3261,83 @@ impl App {
         let core_w = Self::collapsed_core_w();
         let (x0, x1) = (cell_px, core_w - cell_px);
 
+        // [GRAIN] Idle prompt-switch preview: the pill is visible ONLY to show
+        // the transient riser (no session, no agent offer). Drop the body + dot
+        // aura and render the capsule alone, centered. Mid-speech switches keep
+        // the full pill beside the capsule as before.
+        let idle_preview = self.is_idle_prompt_preview();
+
         // 1) Floating capsule body (offset below the transparent top reserve).
-        let mut body = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        body.set_color(Color::from_rgba8(0, 0, 0, 240));
-        if let Some(rect) = Rect::from_ltrb(x0 + r, y_off, x1 - r, y_off + pill_h) {
-            pixmap.fill_path(
-                &PathBuilder::from_rect(rect),
-                &body,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        for cx in [x0 + r, x1 - r] {
-            if let Some(circle) = PathBuilder::from_circle(cx, y_off + r, r) {
+        if !idle_preview {
+            let mut body = Paint {
+                anti_alias: true,
+                ..Default::default()
+            };
+            body.set_color(Color::from_rgba8(0, 0, 0, 240));
+            if let Some(rect) = Rect::from_ltrb(x0 + r, y_off, x1 - r, y_off + pill_h) {
                 pixmap.fill_path(
-                    &circle,
+                    &PathBuilder::from_rect(rect),
                     &body,
                     FillRule::Winding,
                     Transform::identity(),
                     None,
                 );
             }
-        }
-
-        // 2) Dots.
-        let dots = &self.aura.dots;
-        let radius = DOT_D * SCALE / 2.0;
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        for row in 0..ROWS {
-            for col in 0..COLS {
-                if is_edge(col, row) {
-                    continue;
-                }
-                let c = dots[row * COLS + col];
-                if c[3] == 0 {
-                    continue;
-                }
-                let dx = col as f32 * cell_px + cell_px / 2.0;
-                let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
-                if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
-                    paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
+            for cx in [x0 + r, x1 - r] {
+                if let Some(circle) = PathBuilder::from_circle(cx, y_off + r, r) {
                     pixmap.fill_path(
                         &circle,
-                        &paint,
+                        &body,
                         FillRule::Winding,
                         Transform::identity(),
                         None,
                     );
                 }
             }
+
+            // 2) Dots.
+            let dots = &self.aura.dots;
+            let radius = DOT_D * SCALE / 2.0;
+            let mut paint = Paint {
+                anti_alias: true,
+                ..Default::default()
+            };
+            for row in 0..ROWS {
+                for col in 0..COLS {
+                    if is_edge(col, row) {
+                        continue;
+                    }
+                    let c = dots[row * COLS + col];
+                    if c[3] == 0 {
+                        continue;
+                    }
+                    let dx = col as f32 * cell_px + cell_px / 2.0;
+                    let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
+                    if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
+                        paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
+                        pixmap.fill_path(
+                            &circle,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                    }
+                }
+            }
         }
 
-        // 3) Sibling prompt capsule — slides in to the RIGHT of the pill during a
+        // 3) Prompt capsule — slides in to the RIGHT of the pill during a
         // mid-speech prompt switch (or as the agent follow-up offer). Drawn after
-        // the pill so its slide-in never clips under the body.
+        // the pill so its slide-in never clips under the body. When the pill is
+        // visible ONLY for an idle prompt-switch preview, the capsule is drawn
+        // alone and centered (see `draw_centered_prompt_capsule`).
         if self.riser_progress > 0.01 {
-            self.draw_sibling_pill(&mut pixmap, x1, y_off, pill_h);
+            if idle_preview {
+                self.draw_centered_prompt_capsule(&mut pixmap, y_off, pill_h);
+            } else {
+                self.draw_sibling_pill(&mut pixmap, x1, y_off, pill_h);
+            }
         } else {
             self.prompt_switch_rect = None;
         }
@@ -3477,6 +3504,20 @@ impl App {
         } else {
             Some((left, y_off, right, y_off + pill_h))
         };
+    }
+
+    /// [GRAIN] Centered prompt-switch capsule — used when the overlay is visible
+    /// ONLY for a transient idle prompt-switch preview (no session, no agent
+    /// offer). Draws the capsule alone at the LEFT of the window (`0..SIB_W`);
+    /// the window is positioned (see the `becoming_visible` show path) centered
+    /// on `SIB_W`, so the capsule lands screen-centered. Fades in place rather
+    /// than sliding. Reuses `draw_prompt_capsule` for the look.
+    fn draw_centered_prompt_capsule(&mut self, pixmap: &mut Pixmap, y_off: f32, pill_h: f32) {
+        let p = self.riser_progress.clamp(0.0, 1.0);
+        let left = 0.0;
+        let right = SIB_W;
+        self.draw_prompt_capsule(pixmap, left, right, y_off, pill_h, SIB_ARROW_INSET, p);
+        self.prompt_switch_rect = Some((left, y_off, right, y_off + pill_h));
     }
 
     /// [GRAIN] The Studio surface's prompt capsule — a full-width pill (matching
@@ -4068,12 +4109,18 @@ impl ApplicationHandler<UserEvent> for App {
                             present::force_foreground(window);
                         } else {
                             let (w, h) = Self::win_size_for(self.mode);
-                            Self::position_window(
-                                window,
-                                r.anchor,
-                                h,
-                                Self::center_w_for(self.mode, w),
-                            );
+                            // [GRAIN] An idle prompt-switch preview shows ONLY the
+                            // centered capsule (no body), so center the window on
+                            // the capsule's width (`SIB_W`) — not the pill body —
+                            // so the capsule lands screen-centered.
+                            let center_w = if self.mode == PillMode::Collapsed
+                                && self.is_idle_prompt_preview()
+                            {
+                                SIB_W
+                            } else {
+                                Self::center_w_for(self.mode, w)
+                            };
+                            Self::position_window(window, r.anchor, h, center_w);
                             eprintln!("window: show (content primed)");
                             present::show_window(window);
                         }
