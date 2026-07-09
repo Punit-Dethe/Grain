@@ -1,20 +1,6 @@
 [
   {
     "date": "Jul 09, 2026",
-    "commit": "`fix: tray icon invisible on Windows with dark taskbar + light apps (#1423)`",
-    "status": "Pending",
-    "notes": "Pending (Grain's native architecture heavily modified `tray.rs` and `lib.rs` for the Pill UI. Requires manual analysis and integration.)",
-    "pr": "1423"
-  },
-  {
-    "date": "Jul 09, 2026",
-    "commit": "`fix: cancel stalled output processing (#1614)`",
-    "status": "Pending",
-    "notes": "Pending (Grain's ASR adaptation stripped the `cancel_generation` token in `actions.rs`. Needs manual rebuild using Grain's `SESSION_ID` architecture.)",
-    "pr": "1614"
-  },
-  {
-    "date": "Jul 09, 2026",
     "commit": "`[bugfix] keep track of current tray icon state (#1158)`",
     "status": "Pending",
     "notes": "Pending (Grain's native architecture modified this part of the code for the Pill UI. Kept pending for manual analysis and merge.)",

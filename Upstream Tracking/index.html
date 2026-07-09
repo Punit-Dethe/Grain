@@ -744,6 +744,9 @@
                             </li>
                         </ul>
                     </div>
+                    <a class="icon-btn" title="Run GitHub Action Sync" aria-label="Run Sync Action" href="https://github.com/Punit-Dethe/Grain/actions/workflows/upstream-sync.yml" target="_blank" rel="noopener" style="text-decoration:none;">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    </a>
                     <button class="icon-btn" id="refreshBtn" title="Refresh" aria-label="Refresh data">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
                     </button>
@@ -1163,8 +1166,8 @@
                 <div class="commit-cell">
                     <div class="commit-title">${commitHtml}</div>
                 </div>
-                <div class="date-cell" title="${formatAbsolute(item.date)}">
-                    ${formatRelative(item.date)}
+                <div class="date-cell">
+                    ${formatAbsolute(item.date)}
                 </div>
                 <div class="actions-cell">
                     ${hasNote ? `<button class="row-icon-btn note-toggle-btn ${isExpanded ? 'expanded' : ''}" data-key="${escapeHtml(noteKey)}" title="${isExpanded ? 'Hide note' : 'Show note'}">${noteIconSvg()}</button>` : ''}
