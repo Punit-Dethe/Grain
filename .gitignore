@@ -73,3 +73,6 @@ src-tauri/.cargo/
 *.updater.key.pub
 *.updater.key.password
 grain.updater.key*
+
+# Reference projects
+Refrence/
