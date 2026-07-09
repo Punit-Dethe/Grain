@@ -760,7 +760,7 @@
             });
             el('viewTitle').innerText = view;
             el('viewSubtitle').innerText = VIEW_SUBTITLES[view] || '';
-            el('listTitle').innerText = view === 'Overview' ? 'Recent Commits' : \`All \${view}\`;
+            el('listTitle').innerText = view === 'Overview' ? 'Recent Commits' : `All ${view}`;
             el('searchInput').value = '';
             renderList();
         }
@@ -780,7 +780,7 @@
                 el('stateContainer').innerHTML = '';
                 updateSyncPanel();
                 renderList();
-                el('lastUpdated').innerText = allData.length ? \`Synced · \${formatAbsolute(allData[0].date)}\` : 'Synced';
+                el('lastUpdated').innerText = allData.length ? `Synced · ${formatAbsolute(allData[0].date)}` : 'Synced';
             } catch (error) {
                 console.error('Error fetching data:', error);
                 if (!hasLoaded) renderErrorState();
@@ -802,13 +802,13 @@
 
         function renderErrorState() {
             el('commitList').innerHTML = '';
-            el('stateContainer').innerHTML = \`
+            el('stateContainer').innerHTML = `
                 <div class="state-panel">
-                    <div class="state-icon">\${warningIconSvg()}</div>
+                    <div class="state-icon">${warningIconSvg()}</div>
                     <div class="state-title">Couldn't reach data.json</div>
                     <div class="state-desc">Check that data.json exists alongside this page and is valid JSON.</div>
                     <button class="retry-btn" onclick="fetchData(true)">Retry</button>
-                </div>\`;
+                </div>`;
         }
 
         // ---------- Sync panel ----------
@@ -839,7 +839,7 @@
                 callout.innerText = "You're fully caught up with upstream.";
                 callout.classList.add('all-clear');
             } else {
-                callout.innerText = \`\${pending} commit\${pending === 1 ? '' : 's'} waiting on review.\`;
+                callout.innerText = `${pending} commit${pending === 1 ? '' : 's'} waiting on review.`;
                 callout.classList.remove('all-clear');
             }
 
@@ -869,7 +869,7 @@
                 const x = i * barWidth;
                 const y = 40 - h;
                 const opacity = 0.35 + (i / weeks) * 0.65;
-                bars += \`<rect x="\${x}" y="\${y}" width="\${barWidth - gap}" height="\${h}" rx="2" fill="var(--accent)" opacity="\${opacity.toFixed(2)}"><title>\${count} commit\${count === 1 ? '' : 's'}</title></rect>\`;
+                bars += `<rect x="${x}" y="${y}" width="${barWidth - gap}" height="${h}" rx="2" fill="var(--accent)" opacity="${opacity.toFixed(2)}"><title>${count} commit${count === 1 ? '' : 's'}</title></rect>`;
             });
             svg.innerHTML = bars;
         }
@@ -891,7 +891,7 @@
             const isLimited = currentView === 'Overview' && !searchQuery;
             if (isLimited) filtered = filtered.slice(0, 15);
 
-            el('resultCount').innerText = filtered.length ? \`\${filtered.length} shown\` : '';
+            el('resultCount').innerText = filtered.length ? `${filtered.length} shown` : '';
 
             const container = el('commitList');
             container.innerHTML = '';
@@ -900,20 +900,20 @@
 
             if (filtered.length === 0) {
                 if (searchQuery) {
-                    container.innerHTML = \`
+                    container.innerHTML = `
                         <div class="state-panel">
-                            <div class="state-icon">\${searchIconSvg()}</div>
-                            <div class="state-title">No matches for "\${escapeHtml(el('searchInput').value)}"</div>
+                            <div class="state-icon">${searchIconSvg()}</div>
+                            <div class="state-title">No matches for "${escapeHtml(el('searchInput').value)}"</div>
                             <div class="state-desc">Try a different term, or clear the search to see everything in this view.</div>
-                        </div>\`;
+                        </div>`;
                 } else {
                     const s = EMPTY_STATES[currentView] || EMPTY_STATES.Overview;
-                    container.innerHTML = \`
-                        <div class="state-panel \${s.clear ? 'all-clear' : ''}">
-                            <div class="state-icon">\${s.clear ? checkCircleIconSvg() : trayIconSvg()}</div>
-                            <div class="state-title">\${s.title}</div>
-                            <div class="state-desc">\${s.desc}</div>
-                        </div>\`;
+                    container.innerHTML = `
+                        <div class="state-panel ${s.clear ? 'all-clear' : ''}">
+                            <div class="state-icon">${s.clear ? checkCircleIconSvg() : trayIconSvg()}</div>
+                            <div class="state-title">${s.title}</div>
+                            <div class="state-desc">${s.desc}</div>
+                        </div>`;
                 }
                 return;
             }
@@ -946,35 +946,35 @@
 
         function buildCommitCard(item, searchQuery) {
             const card = document.createElement('div');
-            card.className = \`commit-card \${item.status.toLowerCase()}\`;
+            card.className = `commit-card ${item.status.toLowerCase()}`;
 
             let commitHtml = escapeHtml(item.commit);
             if (item.pr) {
-                const prPattern = new RegExp('\\\\(#' + item.pr + '\\\\)');
-                const link = \`(<a class="pr-link" href="\${UPSTREAM_REPO}/pull/\${item.pr}" target="_blank" rel="noopener">#\${item.pr}</a>)\`;
+                const prPattern = new RegExp('\\(#' + item.pr + '\\)');
+                const link = `(<a class="pr-link" href="${UPSTREAM_REPO}/pull/${item.pr}" target="_blank" rel="noopener">#${item.pr}</a>)`;
                 commitHtml = commitHtml.replace(prPattern, link);
             }
             if (searchQuery) commitHtml = highlightMatch(commitHtml, searchQuery);
 
             let notesHtml = '';
             if (item.notes && item.notes.trim() !== '' && item.notes.trim() !== item.status) {
-                notesHtml = \`<div class="commit-notes">\${escapeHtml(item.notes)}</div>\`;
+                notesHtml = `<div class="commit-notes">${escapeHtml(item.notes)}</div>`;
             }
 
-            card.innerHTML = \`
-                <button class="copy-btn" title="Copy commit title" data-copy-text="\${escapeHtml(item.commit)}">\${copyIconSvg()}</button>
+            card.innerHTML = `
+                <button class="copy-btn" title="Copy commit title" data-copy-text="${escapeHtml(item.commit)}">${copyIconSvg()}</button>
                 <div class="commit-header">
-                    <span class="status-icon \${item.status.toLowerCase()}">\${statusIconSvg(item.status)}</span>
+                    <span class="status-icon ${item.status.toLowerCase()}">${statusIconSvg(item.status)}</span>
                     <div class="commit-main">
-                        <div class="commit-title">\${commitHtml}</div>
+                        <div class="commit-title">${commitHtml}</div>
                         <div class="commit-meta">
-                            <time datetime="\${item.date}">\${formatRelative(item.date)}</time>
-                            <span class="dot-sep">\${formatAbsolute(item.date)}</span>
+                            <time datetime="${item.date}">${formatRelative(item.date)}</time>
+                            <span class="dot-sep">${formatAbsolute(item.date)}</span>
                         </div>
                     </div>
                 </div>
-                \${notesHtml}
-            \`;
+                ${notesHtml}
+            `;
             return card;
         }
 
@@ -989,7 +989,7 @@
 
         function highlightMatch(html, query) {
             if (!query) return html;
-            const escaped = query.replace(/[.*+?^$!()|[\\]\\\\]/g, '\\\\$&');
+            const escaped = query.replace(/[.*+?^$!()|[\\]\\]/g, '\\$&');
             const re = new RegExp('(' + escaped + ')', 'ig');
             return html.replace(re, '<mark>$1</mark>');
         }
@@ -1013,10 +1013,10 @@
             const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
             if (diffDays <= 0) return 'Today';
             if (diffDays === 1) return 'Yesterday';
-            if (diffDays < 7) return \`\${diffDays}d ago\`;
-            if (diffDays < 30) return \`\${Math.floor(diffDays / 7)}w ago\`;
-            if (diffDays < 365) return \`\${Math.floor(diffDays / 30)}mo ago\`;
-            return \`\${Math.floor(diffDays / 365)}y ago\`;
+            if (diffDays < 7) return `${diffDays}d ago`;
+            if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+            if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+            return `${Math.floor(diffDays / 365)}y ago`;
         }
 
         // ---------- Icons ----------
