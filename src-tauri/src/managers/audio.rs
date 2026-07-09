@@ -187,6 +187,12 @@ pub struct AudioRecordingManager {
     /// Snapshotted from the recorder's live length so it indexes the buffer
     /// `stop_recording` returns. Reset at the start of every recording.
     prompt_mark: Arc<Mutex<Option<usize>>>,
+    /// Bumped on every cancellation. Output-processing tasks snapshot it when
+    /// the recording stops and compare later, so a cancel that lands while the
+    /// transcript is in the LLM/paste pipeline still takes effect (upstream
+    /// #1614) — `cancel_recording` alone can't help there, the recording is
+    /// already over.
+    cancel_generation: Arc<AtomicU64>,
     /// Resolution of a *named* microphone (selected or clamshell) to its cpal
     /// device, cached so on-demand recording starts skip the full device
     /// enumeration (~40-110ms). Keyed by the resolved name, so a settings
@@ -222,6 +228,7 @@ impl AudioRecordingManager {
             close_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             prompt_mark: Arc::new(Mutex::new(None)),
+            cancel_generation: Arc::new(AtomicU64::new(0)),
             cached_device: Arc::new(Mutex::new(None)),
         };
 
@@ -631,8 +638,22 @@ impl AudioRecordingManager {
         self.prompt_mark.lock().unwrap().take()
     }
 
+    /// The current cancellation generation. Snapshot when output processing
+    /// begins; compare with [`was_cancelled_since`](Self::was_cancelled_since).
+    pub fn cancel_generation(&self) -> u64 {
+        self.cancel_generation.load(Ordering::Acquire)
+    }
+
+    pub fn was_cancelled_since(&self, generation: u64) -> bool {
+        self.cancel_generation.load(Ordering::Acquire) != generation
+    }
+
     /// Cancel any ongoing recording without returning audio samples
     pub fn cancel_recording(&self) {
+        // Bump unconditionally (not just while recording): a cancel that
+        // arrives during transcription/post-processing must still be seen by
+        // the in-flight output task.
+        self.cancel_generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Recording { .. } = *state {

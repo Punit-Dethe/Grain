@@ -19,9 +19,10 @@ use grain_core::{DaemonEvent, SessionMode}; // [GRAIN] pill lifecycle events
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// [GRAIN] Monotonic id for the current recording session (pill events).
 static SESSION_ID: AtomicU64 = AtomicU64::new(0);
@@ -33,6 +34,8 @@ pub(crate) fn current_session_id() -> u64 {
 }
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
+
+const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone, serde::Serialize)]
 struct RecordingErrorEvent {
@@ -88,6 +91,28 @@ const ROLLING_SEAM_PROMPT: &str = "\n[Live dictation]\nThe text was assembled \
 from sequential speech segments. Repair segment-join artifacts: wrong \
 capitalization, stray or missing periods/commas, doubled words, extra spaces. \
 Never reword, reorder, or drop content.";
+
+/// Poll `is_cancelled` while awaiting `operation`; returns `None` the moment a
+/// cancellation is observed, abandoning the (possibly stalled) operation.
+async fn complete_unless_cancelled<F, C>(operation: F, is_cancelled: C) -> Option<F::Output>
+where
+    F: Future,
+    C: Fn() -> bool,
+{
+    tokio::pin!(operation);
+
+    loop {
+        if is_cancelled() {
+            return None;
+        }
+
+        if let Ok(result) =
+            tokio::time::timeout(CANCELLATION_POLL_INTERVAL, operation.as_mut()).await
+        {
+            return Some(result);
+        }
+    }
+}
 
 async fn post_process_transcription(
     app: &AppHandle,
@@ -872,6 +897,11 @@ impl ShortcutAction for TranscribeAction {
         let binding_id = binding_id.to_string(); // Clone binding_id for the async task
         let post_process = self.post_process || self.post_process_override.load(Ordering::Relaxed);
 
+        // Snapshot NOW (before transcription starts): any cancel_recording()
+        // after this point — including one landing mid-LLM — bumps the
+        // generation and is observed by the output-processing task below.
+        let cancel_generation = rm.cancel_generation();
+
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
             debug!(
@@ -958,14 +988,30 @@ impl ShortcutAction for TranscribeAction {
 
                             // [GRAIN] pill is already in "processing" from the
                             // RecordingStopped above — no extra overlay call needed.
-                            let processed = process_transcription_output(
-                                &ah,
-                                &transcription,
-                                post_process,
-                                spoken_prompt,
-                                false,
+                            // A cancel during the LLM/paste stage is observed via
+                            // the generation snapshot; the cancel initiator
+                            // already hid the pill and reset the tray, so on
+                            // cancellation we just stop before history/paste.
+                            let Some(processed) = complete_unless_cancelled(
+                                process_transcription_output(
+                                    &ah,
+                                    &transcription,
+                                    post_process,
+                                    spoken_prompt,
+                                    false,
+                                ),
+                                || rm.was_cancelled_since(cancel_generation),
                             )
-                            .await;
+                            .await
+                            else {
+                                debug!("Transcription operation cancelled during output handling");
+                                return;
+                            };
+
+                            if rm.was_cancelled_since(cancel_generation) {
+                                debug!("Transcription operation cancelled before paste");
+                                return;
+                            }
 
                             // Save to history if WAV was saved
                             if wav_saved {
@@ -1857,3 +1903,41 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     );
     map
 });
+
+#[cfg(test)]
+mod tests {
+    use super::complete_unless_cancelled;
+    use std::future;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn completed_operation_returns_its_output() {
+        let result = tauri::async_runtime::block_on(complete_unless_cancelled(
+            future::ready("done"),
+            || false,
+        ));
+
+        assert_eq!(result, Some("done"));
+    }
+
+    #[test]
+    fn pending_operation_stops_after_cancellation() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let cancelled_for_thread = Arc::clone(&cancelled);
+        let cancel_thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            cancelled_for_thread.store(true, Ordering::Release);
+        });
+
+        let result = tauri::async_runtime::block_on(complete_unless_cancelled(
+            future::pending::<()>(),
+            || cancelled.load(Ordering::Acquire),
+        ));
+
+        cancel_thread.join().unwrap();
+        assert_eq!(result, None);
+    }
+}
