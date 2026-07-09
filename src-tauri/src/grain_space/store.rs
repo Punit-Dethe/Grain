@@ -367,10 +367,27 @@ fn list_notes_unlocked(base: &Path) -> Result<Vec<Note>> {
 /// first via bm25. Falls back to a plain substring scan if the FTS query is
 /// unusable. Semantic search is a separate Phase-4 path.
 pub fn search_notes(base: &Path, query: &str) -> Result<Vec<Note>> {
+    search_notes_ranged(base, query, None)
+}
+
+/// [GRAIN] FTS search with an optional inclusive `(min_ms, max_ms)` timestamp
+/// pre-filter (Grain Recall's `search_memory` date scoping). The filter is a SQL
+/// `timestamp BETWEEN` on `notes_meta` — it works with FTS alone (no embed
+/// model), so date-scoped recall degrades gracefully. An empty query with a
+/// range returns every note in that window (e.g. "what did I save in June?").
+pub fn search_notes_ranged(
+    base: &Path,
+    query: &str,
+    range: Option<(i64, i64)>,
+) -> Result<Vec<Note>> {
     let _guard = STORE_LOCK.lock().unwrap();
     let trimmed = query.trim();
     if trimmed.is_empty() {
-        return list_notes_unlocked(base);
+        let mut notes = list_notes_unlocked(base)?;
+        if let Some((lo, hi)) = range {
+            notes.retain(|n| n.timestamp >= lo && n.timestamp <= hi);
+        }
+        return Ok(notes);
     }
 
     let conn = open_index(base)?;
@@ -385,11 +402,30 @@ pub fn search_notes(base: &Path, query: &str) -> Result<Vec<Note>> {
         .join(" ");
 
     let ids: Result<Vec<String>> = (|| {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM notes_fts WHERE notes_fts MATCH ?1 ORDER BY bm25(notes_fts)",
-        )?;
-        let rows = stmt.query_map(params![fts_query], |row| row.get::<_, String>(0))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        // The date pre-filter joins notes_meta and constrains its timestamp;
+        // without a range it's the plain FTS query (identical plan to before).
+        // Each branch owns its statement + closure to keep the row-mapper types
+        // monomorphic.
+        let ids = match range {
+            Some((lo, hi)) => {
+                let mut stmt = conn.prepare(
+                    "SELECT f.id FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
+                     WHERE notes_fts MATCH ?1 AND m.timestamp BETWEEN ?2 AND ?3 \
+                     ORDER BY bm25(notes_fts)",
+                )?;
+                let rows =
+                    stmt.query_map(params![fts_query, lo, hi], |row| row.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            None => {
+                let mut stmt = conn.prepare(
+                    "SELECT id FROM notes_fts WHERE notes_fts MATCH ?1 ORDER BY bm25(notes_fts)",
+                )?;
+                let rows = stmt.query_map(params![fts_query], |row| row.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            }
+        };
+        Ok(ids)
     })();
 
     match ids {
@@ -410,6 +446,10 @@ pub fn search_notes(base: &Path, query: &str) -> Result<Vec<Note>> {
             let needle = trimmed.to_lowercase();
             Ok(list_notes_unlocked(base)?
                 .into_iter()
+                .filter(|n| match range {
+                    Some((lo, hi)) => n.timestamp >= lo && n.timestamp <= hi,
+                    None => true,
+                })
                 .filter(|n| {
                     n.title.to_lowercase().contains(&needle)
                         || n.tldr.to_lowercase().contains(&needle)
@@ -514,6 +554,20 @@ pub fn semantic_search(
     query_embedding: &[f32],
     half_life_days: u32,
 ) -> Result<Vec<Note>> {
+    semantic_search_ranged(base, query_embedding, half_life_days, None)
+}
+
+/// [GRAIN] KNN semantic search with an optional inclusive `(min_ms, max_ms)`
+/// timestamp filter. The filter is applied to the KNN result set (the vec index
+/// has no cheap metadata prefilter); for date-scoped recall the FTS leg
+/// (`search_notes_ranged`) is the reliable workhorse, so a few semantic hits
+/// falling outside the window is acceptable.
+pub fn semantic_search_ranged(
+    base: &Path,
+    query_embedding: &[f32],
+    half_life_days: u32,
+    range: Option<(i64, i64)>,
+) -> Result<Vec<Note>> {
     use zerocopy::IntoBytes;
     let _guard = STORE_LOCK.lock().unwrap();
     let conn = open_index(base)?;
@@ -562,6 +616,13 @@ pub fn semantic_search(
                 continue;
             }
         };
+        // Date pre-filter (Recall's search_memory min/maxDate): drop hits
+        // outside the requested window before scoring.
+        if let Some((lo, hi)) = range {
+            if note.timestamp < lo || note.timestamp > hi {
+                continue;
+            }
+        }
         let similarity = 1.0 - (distance * distance) / 2.0;
         let age_ms = if note.is_pinned {
             0.0
