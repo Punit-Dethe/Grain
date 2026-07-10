@@ -3,9 +3,9 @@ use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings;
 use crate::tray_i18n::get_tray_translations;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIcon;
@@ -65,7 +65,7 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     {
         error!("Failed to update tray icon '{icon_path}': {err}");
     }
-    let icon_elapsed = icon_started.elapsed();
+    let _icon_elapsed = icon_started.elapsed();
 
     // Update menu based on state
     update_tray_menu(app, &icon, None);
