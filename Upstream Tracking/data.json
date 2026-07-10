@@ -1,5 +1,12 @@
 [
   {
+    "date": "Jul 10, 2026",
+    "commit": "fix: push-to-talk rapidly toggles recording under X11 auto-repeat (defer synthesized releases) (#1605)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1605"
+  },
+  {
     "date": "Jul 09, 2026",
     "commit": "`[bugfix] keep track of current tray icon state (#1158)`",
     "status": "Pending",
