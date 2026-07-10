@@ -5,7 +5,64 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
-## 2026-07-11 (later) — grain-editor UI shell (Mem-inspired three panes)
+## 2026-07-11 (latest) — PIVOT: Floem abandoned (330 MB), back to the Tauri overlay
+
+**Decision: Floem is dead. `crates/grain-editor` is removed.** The user
+measured the Floem editor process at a **~330 MB peak RAM** (verified across
+multiple sources) — *worse* than the Tauri webview it was meant to replace,
+and a direct violation of Grain's edge-device low-RAM mandate. Floem's entire
+reason for existing here was "lighter than a webview"; it wasn't. So the whole
+native-multi-process experiment (the two prior 2026-07-11 log entries below)
+is reverted.
+
+**What was removed:** the `crates/grain-editor` crate in full (main/ui/theme/
+vault/markdown), dropping floem + its dep tree (cosmic-text, vger,
+lapce-xi-rope, …) — **2371 lines out of `Cargo.lock`**, zero floem references
+left, `cargo check --workspace` green. `floem-getting-started.md` is left in
+the folder as a dead reference (the user's original drop) but is obsolete.
+
+**What we keep:** everything backend from the format-unification session
+(note.rs / vault.rs / migration / chunked embeddings / rename detection — all
+still shipping and green). The RAM problem was ONLY the Floem UI, not the
+store.
+
+**New direction (planned, NOT implemented this session):** enhance the
+**existing Tauri Grain Space overlay** — which is already create-on-summon /
+destroy-on-close, i.e. **zero idle RAM**, the exact property Floem failed to
+deliver — into the Mem/Obsidian three-pane workspace. Full plan in the new
+**`TAURI-OVERLAY-PLAN.md`**; roadmap Phase 3 + EXECUTION-PLAN P4 rewritten to
+match. Summary of the planned work:
+- **Phase A (backend, the only non-cosmetic change):** a listing-only
+  `NoteCard { note, collection }` specta type + `grain_space_list_cards` so
+  the sidebar can show Collections. Locked `Note` schema untouched; collection
+  is DERIVED from the note's path at list time (recommended rule: immediate
+  parent folder name unless it's the vault root or Grain's home folder →
+  `None`). Native backend is flat → always `None`.
+- **Phase B:** split `GrainSpaceOverlay.tsx` into sidebar / editor / chat-rail,
+  window → ~1120×740, relocate the existing save/search/pin logic (no
+  behavior rewrite).
+- **Phase C:** chat rail = non-functional slide-in scaffold (skeleton bubbles,
+  disabled input) — by explicit user instruction.
+- **Phase D:** warm-paper design language across the three panes (evolve the
+  existing `grain-space.css`, don't restart).
+- **Phase E:** tsc/eslint/bindings/cargo-test + real-vault visual pass (user).
+
+**Three decisions flagged for the user in `TAURI-OVERLAY-PLAN.md`:** the
+collection-mapping rule, window size/feel, and search placement.
+
+### Lesson (don't repeat)
+Do NOT reach for a "lighter native" GUI toolkit on a RAM claim without
+measuring the resident set on the target OS FIRST. The Tauri webview shares
+the OS WebView2 and, destroyed-on-close, costs nothing at idle — which beats a
+resident GPU-accelerated Floem process for this app's usage pattern (a note
+window opened occasionally, not kept alive).
+
+---
+
+## 2026-07-11 (later) — grain-editor UI shell (Mem-inspired three panes) — SUPERSEDED, REMOVED
+> The two entries below are HISTORICAL. The Floem `grain-editor` they describe
+> was removed the same day (330 MB RAM — see the entry above). Kept for the
+> record; do not treat as current.
 
 User verified the milestone-1 scaffold (typing/erasing works) AND that overlay
 edits two-way-sync with Obsidian. Then, per the Mem screenshot inspiration

@@ -6,6 +6,12 @@
 > implementation-owned steps. Where the roadmap pitched a solution, it was
 > treated as a suggestion only — deviations are called out and justified
 > inline.
+>
+> **⚠ 2026-07-11 course-correction:** the roadmap's Phase 3 (a **Floem**
+> native editor process) is CANCELLED — Floem peaked at ~330 MB RAM, worse
+> than the Tauri webview. `crates/grain-editor` is removed. Phase 3 is now
+> "enhance the existing Tauri overlay" — see P4 below and the dedicated
+> **`TAURI-OVERLAY-PLAN.md`**.
 
 ## Status legend
 - `[x]` shipped and test-verified
@@ -109,28 +115,30 @@ Steps:
   re-key `notes_vec` rows old-id→new-id (chunk-aware) and carry
   `embed_stale` over instead of re-embedding.
 
-## P4 — Roadmap Phase 3: The Native UI (Floem editor process)
+## P4 — Roadmap Phase 3: The Native UI — ~~Floem editor process~~ CANCELLED → Tauri overlay
 
-**Intent:** an Obsidian-style live-preview markdown editor as a separate
-process; the pill stays tiny; the legacy Tauri note overlay gets sunset.
+**PIVOT (2026-07-11): Floem is abandoned.** The `crates/grain-editor` Floem
+process peaked at **~330 MB RAM** — worse than the Tauri webview and a
+violation of Grain's low-RAM mandate. The crate is REMOVED. The whole
+"native multi-process editor" idea is dropped.
 
-Milestones (per `floem-getting-started.md` §11, build-verify early):
-1. `[x]` Scaffold `crates/grain-editor` (root workspace): pinned `floem`
-   (0.2.0), blank window + `text_editor` buffer. Proven building AND
-   running on Windows (2026-07-11) — the riskiest dependency in the
-   roadmap is de-risked.
-2. `[ ]` `pulldown-cmark` parse-on-change producing span lists; log-only.
-3. `[ ]` Decoration layer: spans → text-layout attributes (bold/heading/
-   dim-marker styling).
-4. `[ ]` Cursor-gating (raw markup on the active line only).
-5. `[ ]` Targeted `notify` watcher for THE ACTIVE NOTE only + reuse the
-   existing `safe_write`/`diffy` merge (deviation: the roadmap suggested
-   `similar`; `diffy::merge` already shipped in V3 and is the
-   purpose-built 3-way tool — no second diff dep).
-6. `[ ]` IPC bridge pill-daemon ↔ editor process; pin/dock affordance.
+**Replacement:** enhance the **existing Tauri Grain Space overlay** (which is
+already create-on-summon / destroy-on-close = zero idle RAM) into the
+Mem/Obsidian-style three-pane workspace. That work is planned in full in
+**`TAURI-OVERLAY-PLAN.md`** (read it) — summary:
 
-Milestone 1 is scheduled THIS session if the P1–P3 verification is green;
-2–6 need visual iteration and are a natural user-evaluation checkpoint.
+- `[x]` ~~Scaffold `crates/grain-editor`~~ built + then removed (330 MB).
+- `[ ]` **Phase A** — backend: `NoteCard { note, collection }` listing type
+  + `grain_space_list_cards` so the sidebar can show collections (the ONLY
+  non-cosmetic change; locked `Note` untouched).
+- `[ ]` **Phase B** — restructure `GrainSpaceOverlay` into
+  sidebar / editor / chat-rail; window → ~1120×740; relocate existing
+  save/search/pin logic, no behavior rewrite.
+- `[ ]` **Phase C** — chat rail: non-functional slide-in scaffold.
+- `[ ]` **Phase D** — warm-paper design language across the three panes.
+- `[ ]` **Phase E** — tsc/eslint/bindings/cargo-test + real-vault visual pass.
+
+All deferred to a future session (this session = plan + Floem removal only).
 
 ## P5 — Roadmap Phase 4: Advanced editing & categorization
 

@@ -14,14 +14,15 @@ This document serves as the master roadmap for the transition of Grain Space int
 - [x] **One-Time Data Migration:** Write a script to automatically convert existing user `.json` notes into the new `.md` format. *(Implemented in-app: idempotent lazy migration on first resolve; originals preserved in `notes-json-backup/`.)*
 - [x] **Unified Codebase:** Remove all JSON parsing logic from the frontend and backend. Both backends now just point to different folders of `.md` files. *(The frontend never parsed note JSON — the `Note` wire type over Tauri commands is unchanged; JSON survives only as the export/backup format.)*
 
-## Phase 3: The Native UI (Floem Multi-Process Architecture)
-*(Note: We deliberately skip updating the legacy Tauri Note UI here to save time, as it will be sunset by this phase).*
-- [~] **Architecture Setup:** Create a new separate executable (`crates/grain-editor`) using **Floem**. The background Pill remains purely Native/Slint (~4MB), and the Floem editor process is spawned on demand via IPC. *(Milestone 1 done 2026-07-11: crate scaffolded, floem 0.2.0 pinned, window + text_editor buffer builds and runs on Windows, pulldown-cmark parse step proven. IPC spawn still open.)*
-- [ ] **Live Preview Editor:** Drop in `floem::views::text_editor` and integrate `pulldown-cmark` for AST parsing.
-- [ ] **Decoration Layer:** Map the Markdown parser's AST to Floem's text-layout attributes (spans) for live syntax highlighting.
-- [ ] **Cursor-Gating:** Implement logic to collapse markdown syntax (hide `**` or `#`) unless the user's cursor is on that specific line.
-- [ ] **Real-time Two-Way Sync:** Implement the targeted `notify` file watcher for the active note, and integrate a `diff-match-patch` library (like `similar`) to handle exact-millisecond write conflicts.
-- [ ] **Pinning & Docking:** Allow users to pin a note overlay to their screen for quick reference without keeping Obsidian open.
+## Phase 3: The Native UI — ~~Floem Multi-Process~~ CANCELLED → enhance the Tauri overlay
+**PIVOT (2026-07-11): Floem abandoned — it peaked at ~330 MB RAM, worse than the Tauri webview and against Grain's low-RAM mandate. `crates/grain-editor` removed.** Instead we keep and enhance the EXISTING Tauri Grain Space overlay (already create-on-summon / destroy-on-close = zero idle RAM) into the Mem/Obsidian three-pane workspace. Full plan: **`TAURI-OVERLAY-PLAN.md`**. The legacy Tauri Note UI is NOT sunset — it becomes the product.
+- [x] ~~**Architecture Setup:** Floem `crates/grain-editor`.~~ Built and removed (330 MB RAM — the reason Floem existed, gone).
+- [ ] **Three-pane shell:** sidebar (Pinned / Notes / Collections) · editor · toggleable chat rail — in the existing Tauri overlay.
+- [ ] **Collections:** backend `NoteCard { note, collection }` listing so the sidebar can group notes by their vault subfolder (locked `Note` untouched).
+- [ ] **Live Preview Editor:** markdown live-preview in the webview editor (`pulldown-cmark`/a JS markdown lib) — deferred, additive.
+- [ ] **Real-time Two-Way Sync:** already shipped for grain-owned notes (`safe_write` + `diffy` 3-way merge, V3). Foreign-note editing is Phase 4.
+- [ ] **Chat rail:** scaffold now (slides in/out, non-functional); wire to Recall later.
+- [ ] **Pinning & Docking:** pin a note overlay on screen — deferred, additive.
 
 ## Phase 4: Advanced Editing & Categorization
 - [ ] **AI Prompting Upgrade:** Update the AI system prompts so it understands the YAML frontmatter schema and generates perfectly formatted Obsidian notes natively.
