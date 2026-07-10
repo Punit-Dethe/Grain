@@ -23,8 +23,8 @@
   {
     "date": "Jul 10, 2026",
     "commit": "Merge branch 'main' of github.com:cjpais/Handy",
-    "status": "Pending",
-    "notes": "",
+    "status": "Skipped",
+    "notes": "Upstream branch merge. No code to port.",
     "pr": ""
   },
   {
@@ -37,8 +37,8 @@
   {
     "date": "Jul 10, 2026",
     "commit": "release v0.9.1",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Bumped version to 0.9.1 in Cargo.toml, tauri.conf.json, and package.json.",
     "pr": ""
   },
   {
