@@ -236,6 +236,39 @@ pub async fn grain_space_pick_vault(app: AppHandle) -> Result<Option<String>, St
     Ok(Some(path))
 }
 
+/// Open a note's file in Obsidian via its `obsidian://open?path=…` deep link
+/// (vault backend only). Returns `true` when a link was opened, `false` for the
+/// grain store (its notes have no external file). Opened backend-side so no
+/// custom-scheme frontend capability is needed.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_open_in_obsidian(app: AppHandle, id: String) -> Result<bool, String> {
+    use tauri_plugin_opener::OpenerExt;
+    let be = gate(&app)?;
+    let path = blocking(move || {
+        Ok(backend::note_abs_path(&be, &id)?.map(|p| p.to_string_lossy().to_string()))
+    })
+    .await?;
+    let Some(path) = path else {
+        return Ok(false); // grain store — nothing external to open
+    };
+    // Percent-encode the path so spaces/#/? in filenames survive the deep link.
+    let encoded: String = path
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    let uri = format!("obsidian://open?path={encoded}");
+    app.opener()
+        .open_url(uri, None::<String>)
+        .map_err(|e| format!("open in Obsidian failed: {e}"))?;
+    Ok(true)
+}
+
 // -- overlay window (Phase 3) ----------------------------------------------------
 
 /// Open the overlay (or refocus it), optionally landing on a note. Used by the

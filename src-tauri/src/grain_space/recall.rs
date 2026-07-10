@@ -572,14 +572,15 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
         return Err("Nothing was asked.".to_string());
     }
 
-    // Empty-corpus fast path: no LLM call when there's nothing to recall.
+    // Empty-corpus fast path: no LLM call when there's nothing to recall. Uses
+    // the WHOLE corpus (for the vault backend this includes the user's own
+    // Obsidian notes, not just Grain-owned captures).
     let be_check = be.clone();
-    let total = tauri::async_runtime::spawn_blocking(move || backend::list_notes(&be_check))
+    let has_notes = tauri::async_runtime::spawn_blocking(move || backend::has_any_notes(&be_check))
         .await
         .map_err(|e| format!("recall scan join error: {e}"))?
-        .map_err(|e| format!("{e:#}"))?
-        .len();
-    if total == 0 {
+        .map_err(|e| format!("{e:#}"))?;
+    if !has_notes {
         return Ok(AgentReply::plain(
             "You haven't saved any memories yet — capture one with your Grain Space shortcut, then ask me again."
                 .to_string(),

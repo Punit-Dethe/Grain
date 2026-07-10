@@ -88,6 +88,10 @@ tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 tar = "0.4.44"
 flate2 = "1.0"
 sha2 = "0.10"
+# [GRAIN] Line-based 3-way merge for the Obsidian vault write path
+# (OBSIDIAN-PLAN.md): a Grain save merges into a concurrent Obsidian edit
+# instead of clobbering it (diff-match-patch equivalent).
+diffy = "0.4"
 # [GRAIN] transcribe-cpp — the ONLY inference engine (batch + streaming).
 # transcribe-rs (ONNX) was removed entirely: every legacy ONNX family ships as
 # GGUF in the bundled catalog, so keeping the ONNX runtime linked was dead

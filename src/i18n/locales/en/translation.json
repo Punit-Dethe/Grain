@@ -804,7 +804,8 @@
       "vaultUnset": "No vault selected",
       "chooseVault": "Choose vault…",
       "subfolderLabel": "Grain folder",
-      "subfolderHint": "Subfolder of the vault where captures are saved."
+      "subfolderHint": "Subfolder of the vault where captures are saved.",
+      "openInObsidian": "Open in Obsidian"
     },
     "experimentations": {
       "snippets": {

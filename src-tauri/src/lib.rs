@@ -659,6 +659,7 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_dismiss_reminder,
             grain_space::commands::grain_space_rebuild_index,
             grain_space::commands::grain_space_pick_vault,
+            grain_space::commands::grain_space_open_in_obsidian,
             grain_space::commands::grain_space_open_window,
             grain_space::commands::grain_space_close_window,
             grain_space::commands::grain_space_take_focus_note,

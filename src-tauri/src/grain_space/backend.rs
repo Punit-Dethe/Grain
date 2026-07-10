@@ -76,6 +76,26 @@ pub fn get_note(b: &Backend, id: &str) -> Result<Note> {
     }
 }
 
+/// The on-disk file path of a note, when the backend is file-per-note (vault).
+/// `None` for the grain store (its notes are opaque JSON, no meaningful
+/// external location).
+pub fn note_abs_path(b: &Backend, id: &str) -> Result<Option<std::path::PathBuf>> {
+    match b {
+        Backend::Grain(_) => Ok(None),
+        Backend::Vault(v) => vault::note_abs_path(v, id).map(Some),
+    }
+}
+
+/// Whether the corpus has ANY notes (grain-owned or foreign) — the recall
+/// empty-corpus fast path. For the vault this includes foreign notes, so a
+/// vault with only the user's own Obsidian notes is still recall-able.
+pub fn has_any_notes(b: &Backend) -> Result<bool> {
+    match b {
+        Backend::Grain(base) => Ok(!store::list_notes(base)?.is_empty()),
+        Backend::Vault(v) => vault::has_any_notes(v),
+    }
+}
+
 pub fn save_note(b: &Backend, note: &Note) -> Result<()> {
     match b {
         Backend::Grain(base) => store::save_note(base, note),

@@ -413,6 +413,20 @@ async grainSpacePickVault() : Promise<Result<string | null, string>> {
 }
 },
 /**
+ * Open a note's file in Obsidian via its `obsidian://open?path=…` deep link
+ * (vault backend only). Returns `true` when a link was opened, `false` for the
+ * grain store (its notes have no external file). Opened backend-side so no
+ * custom-scheme frontend capability is needed.
+ */
+async grainSpaceOpenInObsidian(id: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_open_in_obsidian", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Open the overlay (or refocus it), optionally landing on a note. Used by the
  * settings tab's note rows; the global shortcut uses the toggle action.
  */

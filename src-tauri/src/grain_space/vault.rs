@@ -402,6 +402,69 @@ fn read_note_at(v: &Vault, rel: &str) -> Result<Note> {
     Ok(read_md_note(rel, &text, mtime).0)
 }
 
+/// Atomic tmp+rename write of `text` to `abs`.
+fn atomic_write(abs: &Path, text: &str) -> Result<()> {
+    let tmp = abs.with_extension("md.tmp");
+    fs::write(&tmp, text).with_context(|| format!("write {}", tmp.display()))?;
+    fs::rename(&tmp, abs).with_context(|| format!("rename into {}", abs.display()))?;
+    Ok(())
+}
+
+/// Two-way-sync-safe write (OBSIDIAN-PLAN.md §6). Grain never blindly clobbers
+/// a file an external editor (Obsidian) may have changed since Grain last saw
+/// it. `base` is the common ancestor Grain last synced (the merge base); `ours`
+/// is the new text Grain wants to write. If the file on disk still equals
+/// `base` (or there's no base / no file), we just write `ours`. Otherwise a
+/// line-based 3-way merge folds BOTH edits together (diff-match-patch
+/// equivalent): a clean merge is written to the file; an irreconcilable
+/// conflict writes `ours` to the live file but preserves the on-disk version
+/// in a `<stem>.grain-conflict-<ts>.md` sidecar so NOTHING is ever lost.
+/// Returns the text actually written to the live file (the new merge base).
+fn safe_write(abs: &Path, base: Option<&str>, ours: &str) -> Result<String> {
+    let theirs = fs::read_to_string(abs).ok();
+    let (Some(theirs), Some(base)) = (theirs.as_deref(), base) else {
+        // New file, or Grain has no ancestor to merge against: plain write.
+        atomic_write(abs, ours)?;
+        return Ok(ours.to_string());
+    };
+    if theirs == base || theirs == ours {
+        atomic_write(abs, ours)?;
+        return Ok(ours.to_string());
+    }
+    match diffy::merge(base, ours, theirs) {
+        Ok(merged) => {
+            log::info!(
+                "[GRAIN] vault: {} changed under us; merged Grain + external edits cleanly",
+                abs.display()
+            );
+            atomic_write(abs, &merged)?;
+            Ok(merged)
+        }
+        Err(_conflicted) => {
+            // Overlapping edits on the same lines. Keep the live file as Grain's
+            // version, but stash the external version beside it so the user can
+            // reconcile — never silently drop their words.
+            let ts = chrono::Utc::now().timestamp_millis();
+            let stem = abs
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "note".to_string());
+            let sidecar = abs.with_file_name(format!("{stem}.grain-conflict-{ts}.md"));
+            if let Err(e) = fs::write(&sidecar, theirs) {
+                log::error!("[GRAIN] vault: conflict sidecar write failed: {e:#}");
+            } else {
+                log::warn!(
+                    "[GRAIN] vault: {} had a conflicting external edit; saved Grain's version, preserved theirs in {}",
+                    abs.display(),
+                    sidecar.display()
+                );
+            }
+            atomic_write(abs, ours)?;
+            Ok(ours.to_string())
+        }
+    }
+}
+
 fn file_mtime_ms(path: &Path) -> Option<i64> {
     let meta = fs::metadata(path).ok()?;
     let mtime = meta.modified().ok()?;
@@ -427,12 +490,20 @@ fn open_index(v: &Vault) -> Result<Connection> {
             embed_stale  INTEGER NOT NULL DEFAULT 1,
             mtime        INTEGER NOT NULL DEFAULT 0,
             size         INTEGER NOT NULL DEFAULT 0,
-            foreign_note INTEGER NOT NULL DEFAULT 0
+            foreign_note INTEGER NOT NULL DEFAULT 0,
+            content      TEXT NOT NULL DEFAULT ''
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
             id UNINDEXED, title, tldr, body
         );",
     )?;
+    // Migrate an index created before the merge-base column existed. `content`
+    // holds the last file text Grain synced — the common ancestor a 3-way
+    // merge needs so a save never clobbers a concurrent Obsidian edit.
+    let _ = conn.execute(
+        "ALTER TABLE notes_meta ADD COLUMN content TEXT NOT NULL DEFAULT ''",
+        [],
+    );
     Ok(conn)
 }
 
@@ -455,6 +526,7 @@ fn ensure_vec_table(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn index_upsert(
     conn: &Connection,
     note: &Note,
@@ -462,6 +534,7 @@ fn index_upsert(
     mtime: i64,
     size: i64,
     foreign: bool,
+    content: &str,
 ) -> Result<()> {
     // A different note may have previously held this path (rename/replace) —
     // clear it so the UNIQUE(path) constraint can't fail the upsert.
@@ -470,8 +543,8 @@ fn index_upsert(
         params![rel, note.id],
     )?;
     conn.execute(
-        "INSERT INTO notes_meta (id, path, timestamp, is_pinned, embed_stale, mtime, size, foreign_note)
-         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7)
+        "INSERT INTO notes_meta (id, path, timestamp, is_pinned, embed_stale, mtime, size, foreign_note, content)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8)
          ON CONFLICT(id) DO UPDATE SET
             path = excluded.path,
             timestamp = excluded.timestamp,
@@ -479,8 +552,9 @@ fn index_upsert(
             embed_stale = 1,
             mtime = excluded.mtime,
             size = excluded.size,
-            foreign_note = excluded.foreign_note",
-        params![note.id, rel, note.timestamp, note.is_pinned as i64, mtime, size, foreign as i64],
+            foreign_note = excluded.foreign_note,
+            content = excluded.content",
+        params![note.id, rel, note.timestamp, note.is_pinned as i64, mtime, size, foreign as i64, content],
     )?;
     conn.execute("DELETE FROM notes_fts WHERE id = ?1", params![note.id])?;
     conn.execute(
@@ -488,6 +562,18 @@ fn index_upsert(
         params![note.id, note.title, note.tldr, note.body],
     )?;
     Ok(())
+}
+
+/// The last file text Grain synced for `id` (the 3-way-merge ancestor), or
+/// `None` when there's no row / it predates the content column.
+fn indexed_content(conn: &Connection, id: &str) -> Option<String> {
+    conn.query_row(
+        "SELECT content FROM notes_meta WHERE id = ?1",
+        params![id],
+        |r| r.get::<_, String>(0),
+    )
+    .ok()
+    .filter(|s| !s.is_empty())
 }
 
 fn index_remove(conn: &Connection, id: &str) -> Result<()> {
@@ -608,7 +694,7 @@ fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
             }
         };
         let (note, grain_owned) = read_md_note(rel, &text, *mtime);
-        index_upsert(conn, &note, rel, *mtime, *size, !grain_owned)?;
+        index_upsert(conn, &note, rel, *mtime, *size, !grain_owned, &text)?;
         indexed.remove(rel);
         // A moved/renamed grain note keeps its id: the upsert re-pathed the
         // row, so its OLD path entry must not survive into the vanished sweep
@@ -708,7 +794,7 @@ pub fn search_notes_ranged(v: &Vault, query: &str, range: Option<(i64, i64)>) ->
                 let mut stmt = conn.prepare(
                     "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
                      WHERE notes_fts MATCH ?1 AND m.timestamp BETWEEN ?2 AND ?3 \
-                     ORDER BY bm25(notes_fts)",
+                     ORDER BY bm25(notes_fts, 1.0, 10.0, 5.0, 1.0)",
                 )?;
                 let rows = stmt.query_map(params![fts_query, lo, hi], |r| r.get::<_, String>(0))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -716,7 +802,7 @@ pub fn search_notes_ranged(v: &Vault, query: &str, range: Option<(i64, i64)>) ->
             None => {
                 let mut stmt = conn.prepare(
                     "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
-                     WHERE notes_fts MATCH ?1 ORDER BY bm25(notes_fts)",
+                     WHERE notes_fts MATCH ?1 ORDER BY bm25(notes_fts, 1.0, 10.0, 5.0, 1.0)",
                 )?;
                 let rows = stmt.query_map(params![fts_query], |r| r.get::<_, String>(0))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -765,6 +851,35 @@ pub fn search_notes_ranged(v: &Vault, query: &str, range: Option<(i64, i64)>) ->
     }
 }
 
+/// True when the vault has any indexed note at all (grain-owned OR foreign) —
+/// so recall over a vault of purely foreign Obsidian notes still runs.
+pub fn has_any_notes(v: &Vault) -> Result<bool> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM notes_meta", [], |r| r.get(0))?;
+    Ok(count > 0)
+}
+
+/// The absolute path of a note's file on disk (for an "Open in Obsidian"
+/// deep link). Reconciles once on a stale/missing index entry.
+pub fn note_abs_path(v: &Vault, id: &str) -> Result<PathBuf> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    let rel = match path_of(&conn, id)? {
+        Some((rel, _)) if v.abs(&rel).exists() => rel,
+        _ => {
+            reconcile_locked(v, &conn)?;
+            path_of(&conn, id)?
+                .map(|(rel, _)| rel)
+                .ok_or_else(|| anyhow!("note not found: {id}"))?
+        }
+    };
+    Ok(v.abs(&rel))
+}
+
 pub fn get_note(v: &Vault, id: &str) -> Result<Note> {
     ensure_vault(v)?;
     let _guard = VAULT_LOCK.lock().unwrap();
@@ -799,21 +914,14 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
         ));
     }
 
+    // Merge base: the file text Grain last synced for this note (None for a
+    // brand-new note → plain write).
+    let base = existing
+        .as_ref()
+        .and_then(|_| indexed_content(&conn, &note.id));
     let abs = match &existing {
         Some((rel, _)) => {
             let current = v.abs(rel);
-            // Guard: warn when the file moved under us since it was indexed.
-            let indexed_mtime: i64 = conn.query_row(
-                "SELECT mtime FROM notes_meta WHERE id = ?1",
-                params![note.id],
-                |r| r.get(0),
-            )?;
-            if file_mtime_ms(&current).map(|m| m != indexed_mtime) == Some(true) {
-                log::warn!(
-                    "[GRAIN] vault: {} changed on disk since last index; overwriting with the latest Grain edit",
-                    current.display()
-                );
-            }
             let stem = sanitize_filename(&note.title);
             let current_stem = current
                 .file_stem()
@@ -838,20 +946,24 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
         }
     };
 
-    let tmp = abs.with_extension("md.tmp");
-    fs::write(&tmp, emit_markdown(note)).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, &abs).with_context(|| format!("rename into {}", abs.display()))?;
+    // Two-way-sync-safe write: merge into any concurrent external edit rather
+    // than overwrite it. The written text (clean-merge result or ours) becomes
+    // the new merge base.
+    let written = safe_write(&abs, base.as_deref(), &emit_markdown(note))?;
 
     let rel = rel_key(&v.root, &abs)?;
     let mtime = file_mtime_ms(&abs).unwrap_or(0);
     let size = fs::metadata(&abs).map(|m| m.len() as i64).unwrap_or(0);
-    // The filename may have been sanitized/suffixed — index the real title.
-    let mut indexed = note.clone();
-    indexed.title = abs
+    // Re-parse the written text so the index reflects what actually landed on
+    // disk (a merge may have folded in external body edits), and keep the real
+    // sanitized/suffixed filename as the title.
+    let stem = abs
         .file_stem()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| note.title.clone());
-    index_upsert(&conn, &indexed, &rel, mtime, size, false)?;
+    let (mut indexed, _) = read_md_note(&rel, &written, mtime);
+    indexed.title = stem;
+    index_upsert(&conn, &indexed, &rel, mtime, size, false, &written)?;
     Ok(())
 }
 
@@ -910,19 +1022,36 @@ fn mutate_grain_note(v: &Vault, id: &str, apply: impl FnOnce(&mut Note)) -> Resu
             "This note lives outside Grain's folder and is read-only here."
         ));
     }
-    let mut note = read_note_at(v, &rel)?;
-    apply(&mut note);
     let abs = v.abs(&rel);
-    let tmp = abs.with_extension("md.tmp");
-    fs::write(&tmp, emit_markdown(&note)).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, &abs).with_context(|| format!("rename into {}", abs.display()))?;
+    // Read the current file text — it is both the note we mutate AND the merge
+    // base, so an external edit landing between this read and the write is
+    // folded in rather than lost.
+    let base = fs::read_to_string(&abs).with_context(|| format!("read {}", abs.display()))?;
+    let base_mtime = file_mtime_ms(&abs).unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
+    let mut note = read_md_note(&rel, &base, base_mtime).0;
+    apply(&mut note);
+
+    let ours = emit_markdown(&note);
+    let written = safe_write(&abs, Some(&base), &ours)?;
     let mtime = file_mtime_ms(&abs).unwrap_or(0);
     let size = fs::metadata(&abs).map(|m| m.len() as i64).unwrap_or(0);
-    conn.execute(
-        "UPDATE notes_meta SET is_pinned = ?2, mtime = ?3, size = ?4 WHERE id = ?1",
-        params![id, note.is_pinned as i64, mtime, size],
-    )?;
-    Ok(note)
+    if written == ours {
+        // No external edit merged in: this was a pure frontmatter change
+        // (pin/reminder), so the searchable content and embedding are still
+        // valid — update only the flags + fingerprint + merge base, leaving
+        // embed_stale untouched (no needless re-embed).
+        conn.execute(
+            "UPDATE notes_meta SET is_pinned = ?2, mtime = ?3, size = ?4, content = ?5 WHERE id = ?1",
+            params![id, note.is_pinned as i64, mtime, size, written],
+        )?;
+        Ok(note)
+    } else {
+        // A merge folded in an external body edit — re-index from what actually
+        // landed so FTS/content/embedding stay truthful.
+        let (indexed, _) = read_md_note(&rel, &written, mtime);
+        index_upsert(&conn, &indexed, &rel, mtime, size, false, &written)?;
+        Ok(indexed)
+    }
 }
 
 /// Recovery: wipe the derived index and re-scan the vault from scratch.
@@ -1319,6 +1448,75 @@ mod tests {
                 .unwrap();
             assert_eq!(stale, 0);
         }
+        cleanup(&v);
+    }
+
+    #[test]
+    fn concurrent_edit_merges_cleanly_not_clobbers() {
+        // Two-way sync: Grain changes the frontmatter while Obsidian appends a
+        // body line. The disjoint edits must BOTH survive (no clobber).
+        let v = temp_vault("merge_clean");
+        let mut note = grain_note("Merge Note", "line one\nline two\nline three");
+        save_note(&v, &note).unwrap();
+        let abs = v.grain_dir().join("Merge Note.md");
+
+        // External (Obsidian) edit: append a body line, bump mtime.
+        let disk = fs::read_to_string(&abs).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(
+            &abs,
+            format!("{}\nline four from obsidian\n", disk.trim_end()),
+        )
+        .unwrap();
+
+        // Grain edits the summary and saves — unaware of "line four".
+        note.tldr = "updated grain summary".into();
+        save_note(&v, &note).unwrap();
+
+        let merged = fs::read_to_string(&abs).unwrap();
+        assert!(
+            merged.contains("line four from obsidian"),
+            "external edit lost"
+        );
+        assert!(merged.contains("updated grain summary"), "grain edit lost");
+        assert!(merged.contains("line one"));
+        // The merged body is searchable (index re-parsed from what landed).
+        assert_eq!(search_notes(&v, "obsidian").unwrap().len(), 1);
+        cleanup(&v);
+    }
+
+    #[test]
+    fn conflicting_edit_preserves_both_via_sidecar() {
+        // Overlapping edits on the same line can't auto-merge: Grain's version
+        // wins the live file, the external version is preserved beside it.
+        let v = temp_vault("merge_conflict");
+        let mut note = grain_note("Clash", "the value is alpha");
+        save_note(&v, &note).unwrap();
+        let abs = v.grain_dir().join("Clash.md");
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let disk = fs::read_to_string(&abs).unwrap();
+        fs::write(&abs, disk.replace("alpha", "BETA from obsidian")).unwrap();
+
+        note.body = "the value is gamma".into();
+        save_note(&v, &note).unwrap();
+
+        let live = fs::read_to_string(&abs).unwrap();
+        assert!(
+            live.contains("gamma"),
+            "grain's version should win the live file"
+        );
+        // The external version is stashed in a sidecar — never dropped.
+        let sidecar = fs::read_dir(v.grain_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().contains(".grain-conflict-"));
+        let sidecar = sidecar.expect("conflict sidecar should exist");
+        let stashed = fs::read_to_string(sidecar.path()).unwrap();
+        assert!(
+            stashed.contains("BETA from obsidian"),
+            "external words lost"
+        );
         cleanup(&v);
     }
 

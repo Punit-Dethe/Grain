@@ -411,7 +411,7 @@ pub fn search_notes_ranged(
                 let mut stmt = conn.prepare(
                     "SELECT f.id FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
                      WHERE notes_fts MATCH ?1 AND m.timestamp BETWEEN ?2 AND ?3 \
-                     ORDER BY bm25(notes_fts)",
+                     ORDER BY bm25(notes_fts, 1.0, 10.0, 5.0, 1.0)",
                 )?;
                 let rows =
                     stmt.query_map(params![fts_query, lo, hi], |row| row.get::<_, String>(0))?;
@@ -419,7 +419,8 @@ pub fn search_notes_ranged(
             }
             None => {
                 let mut stmt = conn.prepare(
-                    "SELECT id FROM notes_fts WHERE notes_fts MATCH ?1 ORDER BY bm25(notes_fts)",
+                    "SELECT id FROM notes_fts WHERE notes_fts MATCH ?1 \
+                     ORDER BY bm25(notes_fts, 1.0, 10.0, 5.0, 1.0)",
                 )?;
                 let rows = stmt.query_map(params![fts_query], |row| row.get::<_, String>(0))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?

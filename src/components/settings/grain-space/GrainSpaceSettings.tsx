@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { AlarmClock, Pin, PinOff, Trash2 } from "lucide-react";
+import { AlarmClock, ExternalLink, Pin, PinOff, Trash2 } from "lucide-react";
 import type { Note, ReminderState } from "@/bindings";
 import { commands } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
@@ -169,6 +169,13 @@ export const GrainSpaceSettings: React.FC = () => {
 
   const openInOverlay = (note: Note) => {
     void commands.grainSpaceOpenWindow(note.id);
+  };
+
+  // Open the note's file in Obsidian via its deep link (vault backend only;
+  // the backend builds + opens the URI so no custom-scheme capability is
+  // needed). No-op result on the grain store.
+  const openInObsidian = (note: Note) => {
+    void commands.grainSpaceOpenInObsidian(note.id);
   };
 
   // Backend switch: turning the vault ON without a chosen vault first opens
@@ -595,6 +602,16 @@ export const GrainSpaceSettings: React.FC = () => {
                       <span className="text-xs text-ink-faint tabular-nums shrink-0">
                         {timeFormat.format(new Date(note.timestamp))}
                       </span>
+                      {backend === "obsidian" && (
+                        <button
+                          type="button"
+                          title={t("settings.grainSpace.openInObsidian")}
+                          onClick={() => openInObsidian(note)}
+                          className="shrink-0 text-ink-faint opacity-0 group-hover:opacity-100 hover:text-ink transition-opacity"
+                        >
+                          <ExternalLink width={14} height={14} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         title={note.is_pinned ? "Unpin" : "Pin"}

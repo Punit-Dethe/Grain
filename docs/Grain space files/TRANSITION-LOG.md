@@ -74,21 +74,63 @@ settings. bindings.ts regenerated (exports `GrainSpaceBackend`,
 `settings.grainSpace.{vaultFolderLabel,vaultUnset,chooseVault,subfolderLabel,
 subfolderHint}`. Verified: tsc clean, eslint clean, 199 tests pass.
 
-### Next concrete step (V3 — remaining wiring, plan §7)
-1. **NEEDS USER GUI TESTING first** (can't drive headlessly): flip to a real
-   vault, capture a note (voice + typed + quick-add), search foreign notes in
-   the overlay, Recall over the vault, edit/pin/delete a grain note, promote a
-   note out of Grain/ in Obsidian and re-edit it in Grain.
-2. Overlay: read-only badge on foreign notes (save errors cleanly today, but
-   the editor should disable itself); "Open in Obsidian" action
-   (`obsidian://open?vault=<name>&file=<relpath>` — needs the note's relpath;
-   add a small `grain_space_note_location(id)` command, keep the Note schema
-   locked).
-3. Empty-vault copy in recall (run_turn's zero-notes fast path counts
-   grain-owned only — for the vault backend it should probably still allow
-   whole-vault search; revisit).
-4. bm25 title>tldr>body column weights (both backends). Then V3 chunked
-   embedding for long vault notes (plan §7 V3) and V4 auto-categorization.
+**V3 shipped same session (two-way sync + wiring; NOT categorization, NOT the
+AST editor — user deferred both):**
+
+**A. Two-way-sync-safe write path (`vault.rs`) — the headline.** Grain never
+clobbers a concurrent Obsidian edit. New `content` column on `notes_meta`
+stores the last file text Grain synced = the 3-way-merge ancestor (migrated
+via `ALTER TABLE … ADD COLUMN`, ignored-if-exists). New dep **`diffy = "0.4"`**
+(line-based 3-way merge; diff-match-patch equivalent — user named `similar` as
+an example, `diffy::merge` is the purpose-built tool). New `safe_write(abs,
+base, ours)`: if disk still == base (or no base/file) → plain atomic write;
+else `diffy::merge(base, ours, theirs)` — clean merge is written; a CONFLICT
+writes Grain's version to the live file but preserves the external version in a
+`<stem>.grain-conflict-<ts>.md` sidecar (never drops the user's words). Both
+`save_note` and `mutate_grain_note` route through it. `mutate` keeps its
+no-re-embed fast path when nothing merged (written == ours → light UPDATE,
+embed_stale untouched); only a merge that folds external body edits triggers a
+full re-index. Tests: `concurrent_edit_merges_cleanly_not_clobbers`,
+`conflicting_edit_preserves_both_via_sidecar`.
+
+**B. Open in Obsidian.** `grain_space_open_in_obsidian(id)` command — resolves
+the note's abs path (`vault::note_abs_path`, vault only; `None` for grain
+store), builds `obsidian://open?path=<percent-encoded>`, opens it BACKEND-side
+via `app.opener().open_url` (no custom-scheme frontend capability needed).
+`ExternalLink` icon button on note rows, shown only when backend = obsidian.
+
+**C. Recall empty-corpus fix.** `run_turn`'s zero-notes fast path now calls
+`backend::has_any_notes` (vault counts foreign notes too) instead of
+`list_notes().is_empty()` — so Recall runs over a vault of purely the user's
+own Obsidian notes.
+
+**D. bm25 title weighting.** All four FTS `ORDER BY bm25(notes_fts)` sites
+(both stores, ranged + plain) → `bm25(notes_fts, 1.0, 10.0, 5.0, 1.0)`
+(id/title/tldr/body): title matches now outrank body (Omnisearch lesson).
+
+Verified: 201 src-tauri tests pass (2 new merge tests), tsc + eslint clean,
+bindings.ts regenerated (`grainSpaceOpenInObsidian`).
+
+### IMPORTANT — foreign notes are still READ-ONLY, by design for now
+The user wants two-way sync for NON-Grain files too (editable foreign notes),
+but deferred it with the AST/Obsidian-format overlay editor ("don't do writing
+now, just don't make conflicting decisions"). The merge machinery (`safe_write`)
+is deliberately GENERIC — enabling foreign writes later is: (1) drop the
+`foreign` guard in `save_note`/`mutate`, (2) preserve the foreign file's
+original frontmatter block on write (currently we strip it for body/FTS — a
+foreign write must round-trip it untouched; store the raw block or re-read +
+splice). Do NOT inject `grain_id` into a foreign file. The overlay must also
+stop calling the plain save for foreign notes until then.
+
+### Next concrete step (V4+, all deferred by the user for now)
+1. **NEEDS USER GUI TESTING** (can't drive headlessly): flip to a real vault,
+   capture (voice/type/quick-add), search foreign notes, Recall over the vault,
+   pin/delete/edit a grain note, promote a note out of Grain/ and re-edit,
+   Open-in-Obsidian, and force a concurrent edit to see the merge/sidecar.
+2. Foreign-note editing + the Obsidian-AST overlay editor (see the read-only
+   note above) — the big two-way-sync + WYSIWYG piece.
+3. Chunked embedding for long vault notes (plan §7 V3).
+4. Auto-categorization (plan §7 V4) — explicitly NOT now.
 
 ### Gotchas
 - The vault backend REFUSES to run when `grain_space_vault_path` is unset/
