@@ -7,6 +7,34 @@
     "pr": "1605"
   },
   {
+    "date": "Jul 10, 2026",
+    "commit": "fix: surface download errors during onboarding (#1522)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1522"
+  },
+  {
+    "date": "Jul 10, 2026",
+    "commit": "update windows build instruction",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 10, 2026",
+    "commit": "Merge branch 'main' of github.com:cjpais/Handy",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 10, 2026",
+    "commit": "feat: add Light / Dark / System appearance selector (#1599)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1599"
+  },
+  {
     "date": "Jul 09, 2026",
     "commit": "`[bugfix] keep track of current tray icon state (#1158)`",
     "status": "Pending",
