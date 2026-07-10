@@ -1,0 +1,23 @@
+# [GRAIN] The Obsidian-style live-preview markdown editor process
+# (EXECUTION-PLAN.md P4 / OBSIDIAN_ROADMAP.md Phase 3).
+#
+# Two-process architecture: the always-on pill stays tiny (winit + tiny-skia);
+# THIS crate is the heavy on-demand editor window, spawned only when the user
+# opens a note and exiting when closed (zero idle RAM). Floem is pre-1.0 —
+# the version is PINNED and updated deliberately, never floated.
+
+[package]
+name = "grain-editor"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Grain's on-demand markdown editor: a Floem window with an Obsidian-style live-preview decoration layer over a plain-markdown buffer."
+
+[[bin]]
+name = "grain-editor"
+path = "src/main.rs"
+
+[dependencies]
+floem = "0.2"
+pulldown-cmark = { version = "0.12", default-features = false }
