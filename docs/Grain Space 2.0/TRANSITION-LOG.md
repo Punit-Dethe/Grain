@@ -5,6 +5,99 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-11 — Format unification (roadmap Phase 2) + V3 leftovers + grain-editor scaffold
+
+New master docs in this folder: `OBSIDIAN_ROADMAP.md` (the intent list) and
+`EXECUTION-PLAN.md` (the implementation-owned plan — read it first). This
+session shipped the roadmap's Phase 2 completely, both remaining
+OBSIDIAN-PLAN §7 V3 items, and roadmap Phase 3 milestone 1.
+
+**1. Format unification — the JSON store is GONE (roadmap Phase 2).**
+`vault.rs` is now the ONLY store implementation. The native backend is a
+Grain-managed vault: `Vault::native(base)` → root `{app_data}/grain_space/
+notes/`, notes land FLAT in the root (`folder = ""`), auto-created
+(`ensure_vault` creates it for native so an empty corpus is an empty store,
+never an error). Per-backend index files so switching never mixes corpora:
+`native_index.sqlite` vs `vault_index.sqlite`. `backend.rs`: `pub type
+Backend = Vault` + one-line delegation (the dispatch surface every caller
+uses is UNCHANGED — capture/recall/reminders/commands untouched);
+`note_abs_path` still `None` for native (no "Open in Obsidian" leak).
+`store.rs` → `note.rs`: just the locked `Note` schema, `validate_id`,
+`ensure_vec_extension`, `export_json` (JSON survives ONLY as export format).
+Frontend/bindings unchanged (the wire type never changed — no regen needed).
+
+**2. Legacy migration — lazy, idempotent, non-destructive.**
+`vault::migrate_legacy_json_once` runs on native resolve behind an
+AtomicBool (one atomic load steady-state). Each `notes/*.json` is parsed
+and re-saved through `vault::save_note` (same id + timestamp ⇒ identity/
+ordering survive; blank titles get `capture::fallback_title` since filename
+= title), then the original moves to `{app_data}/grain_space/
+notes-json-backup/` — unparseable files too (logged, never deleted). The
+flag only latches when a pass converges, so a partial failure retries next
+resolve; re-runs cannot duplicate (save keyed on preserved id). The stale
+legacy `index.sqlite` is removed after a successful pass. Embeddings are
+NOT copied — notes come back `embed_stale=1` and re-embed lazily.
+
+**3. Chunked embedding (OBSIDIAN-PLAN §7 V3 leftover).** Long bodies split
+on markdown structure (heading starts a block, blank line ends one), greedy-
+packed to ~1200 chars, walls-of-text hard-split. Vec rows keyed
+`"{note_id}#{n}"` (`#` is outside the id charset — no collision; every
+caller already treats the id as an opaque token, so `commands.rs`/recall
+needed ZERO changes). Short notes stay one chunk = pre-chunking behavior.
+KNN widened to LIMIT 48 and deduped to note level (best chunk speaks for
+its note) before the decay/floor scoring. `store_embeddings` is
+all-or-nothing per note (one bad chunk leaves the whole note stale, no
+half-embedded notes). Prefix ops use `substr`, not LIKE (`_` in ids would
+wildcard). `purge_note_vectors` handles legacy plain-keyed rows too.
+
+**4. Foreign-note rename detection (the other V3 leftover).** Foreign ids
+are path hashes, so a rename was remove+add and lost the embedding.
+`reconcile_locked` now collects (new_id, sha256(content)) for foreign files
+first seen in a pass; the vanished sweep content-matches each vanished
+foreign row (via its stored merge-base `content`) and, on a hit,
+`adopt_renamed_foreign` moves the vec rows old→new (chunk-suffix-aware) and
+clears `embed_stale` — a rename keeps its embedding, no re-embed. (Title =
+filename did change, but body dominates the vector; documented trade.)
+
+**5. grain-editor scaffold (roadmap Phase 3 milestone 1).** New
+`crates/grain-editor` bin crate in the ROOT workspace (target `C:\t`):
+floem PINNED at 0.2 + `pulldown-cmark` 0.12 (no default features).
+Window = header label + `floem::views::text_editor` buffer; the
+`markdown_spans` helper proves the parse→span step (offset_iter over
+Start events). **Verified running on Windows**: launched, parsed 8 sample
+spans, window alive 5 s, clean kill. Floem's whole dep tree (cosmic-text,
+vger, lapce-xi-rope) checks clean — the roadmap's riskiest bet is de-risked.
+
+**Verified:** src-tauri `cargo test --lib` **199 passed** (deleted ~10
+JSON-store tests; new: native-vault empty-corpus/flat-layout, migration
+idempotence, chunk packing + KNN dedupe + chunk cleanup on delete, rename
+keeps embedding). grain-editor 1 test + smoke run. `cargo fmt` both
+workspaces.
+
+### Next concrete step
+Roadmap Phase 3 milestones 2–5 (EXECUTION-PLAN.md P4): parse-on-change
+wired to the editor's own doc signal, decoration spans → text-layout
+attributes, cursor-gated marker hiding — then the `notify` watcher for the
+active note + IPC spawn from the pill daemon. These need visual iteration:
+run `cargo run -p grain-editor` and look at it. Carried forward: user GUI
+testing of the vault backend (list in EXECUTION-PLAN P0.3).
+
+### Gotchas
+- `migrate_legacy_json_once` latches ONLY on a converged pass — don't
+  "optimize" it into set-before-run or partial failures stop retrying.
+- Native vault root == the OLD JSON notes dir on purpose (files convert in
+  place); the backup dir lives OUTSIDE the vault root so backups are never
+  indexed.
+- vec keys: always match by `id = ?` OR `substr(id, 1, length(?)+1) = ?||'#'`
+  — LIKE would let `_` in uuids wildcard-match.
+- The old `search_notes_ranged("", range)` per-backend semantics note is
+  now moot: native vaults have no foreign notes, so "grain-owned only"
+  equals "all" there.
+- floem is pre-1.0: `text_editor` styling goes through `.editor_style()`
+  (its own style type), `.style()` for layout. Don't `cargo update` it.
+
+---
+
 ## 2026-07-10 — PIVOT: Obsidian vault backend (OBSIDIAN-PLAN.md) — V1 COMPLETE
 
 **Grain is a friction-reduction utility, not a note app.** New plan file
