@@ -35,6 +35,13 @@
     "pr": "1599"
   },
   {
+    "date": "Jul 10, 2026",
+    "commit": "release v0.9.1",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 09, 2026",
     "commit": "`[bugfix] keep track of current tray icon state (#1158)`",
     "status": "Pending",
