@@ -21,7 +21,7 @@ static STORE_LOCK: Mutex<()> = Mutex::new(());
 /// Register sqlite-vec on every future connection (process-wide, once). The
 /// vec0 virtual-table module becomes available; no vec table is created until
 /// the user opts into semantic search (Phase 4).
-fn ensure_vec_extension() {
+pub(crate) fn ensure_vec_extension() {
     use std::sync::Once;
     static VEC_INIT: Once = Once::new();
     #[allow(clippy::missing_transmute_annotations)]
@@ -152,7 +152,7 @@ fn quarantine_corrupt(base: &Path, path: &Path) -> Result<()> {
 
 /// Reject ids that could escape the notes dir (defense in depth — ids are
 /// always uuids we minted, but they round-trip through the frontend).
-fn validate_id(id: &str) -> Result<()> {
+pub(crate) fn validate_id(id: &str) -> Result<()> {
     if !id.is_empty()
         && id
             .chars()
@@ -522,9 +522,7 @@ pub fn store_embeddings(base: &Path, items: &[(String, Vec<f32>)]) -> Result<()>
         // Never poison the vec index: a non-finite (NaN/Inf) or all-zero
         // embedding makes KNN return NULL distance and crash recall. Skip it
         // and leave embed_stale=1 so it retries instead of being stored.
-        if !embedding.iter().all(|x| x.is_finite())
-            || embedding.iter().all(|&x| x == 0.0)
-        {
+        if !embedding.iter().all(|x| x.is_finite()) || embedding.iter().all(|&x| x == 0.0) {
             log::error!(
                 "[GRAIN] refusing to store non-finite/zero embedding for note {id}; leaving stale"
             );

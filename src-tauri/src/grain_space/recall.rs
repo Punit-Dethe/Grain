@@ -12,13 +12,12 @@
 //! answer + a tolerant trailing `SOURCES:` / `NOT_FOUND` line that we parse and
 //! strip before display.
 
-use std::path::Path;
-
 use anyhow::Result;
 use tauri::{AppHandle, Manager};
 
+use super::backend::{self, Backend};
 use super::capture;
-use super::store::{self, Note};
+use super::store::Note;
 use crate::agent::{AgentMessage, AgentReply, AgentSource};
 
 /// Memories fed to the model per turn (post-fusion). Recall over precision —
@@ -156,7 +155,7 @@ fn system_prompt(now: &str, weekday: &str) -> String {
 /// runtime.
 async fn retrieve(
     app: &AppHandle,
-    base: &Path,
+    be: &Backend,
     query: &str,
     range: Option<(i64, i64)>,
 ) -> Result<Vec<Note>> {
@@ -166,23 +165,23 @@ async fn retrieve(
     };
     let half_life_days = crate::settings::get_settings(app).grain_space_decay_half_life_days;
 
-    let base_owned = base.to_path_buf();
+    let be_owned = be.clone();
     let query_owned = query.to_string();
 
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Note>> {
-        let fts = store::search_notes_ranged(&base_owned, &query_owned, range)?;
+        let fts = backend::search_notes_ranged(&be_owned, &query_owned, range)?;
 
         let semantic = if semantic_on {
             // Re-embed anything stale so semantic results reflect current
             // content (same batch the overlay's search path uses).
-            let stale = store::stale_embed_texts(&base_owned)?;
+            let stale = backend::stale_embed_texts(&be_owned)?;
             if !stale.is_empty() {
                 let texts: Vec<String> = stale.iter().map(|(_, t)| t.clone()).collect();
                 match super::embed::embed(texts) {
                     Ok(vectors) => {
                         let items: Vec<(String, Vec<f32>)> =
                             stale.into_iter().map(|(id, _)| id).zip(vectors).collect();
-                        store::store_embeddings(&base_owned, &items)?;
+                        backend::store_embeddings(&be_owned, &items)?;
                     }
                     Err(e) => {
                         // Embedding failed (e.g. model load error): fall back to
@@ -195,8 +194,8 @@ async fn retrieve(
             }
             match super::embed::embed(vec![query_owned.clone()]) {
                 Ok(mut v) => match v.pop() {
-                    Some(q) => store::semantic_search_ranged(
-                        &base_owned,
+                    Some(q) => backend::semantic_search_ranged(
+                        &be_owned,
                         &q,
                         half_life_days,
                         range,
@@ -298,9 +297,8 @@ fn rerank(query: &str, pool: Vec<(Note, f64)>, half_life_days: u32, k: usize) ->
                 (now_ms - note.timestamp).max(0) as f64
             };
             let recency = (-lambda_per_ms * age_ms).exp();
-            let final_score = RERANK_W_RRF * norm_rrf
-                + RERANK_W_OVERLAP * overlap
-                + RERANK_W_RECENCY * recency;
+            let final_score =
+                RERANK_W_RRF * norm_rrf + RERANK_W_OVERLAP * overlap + RERANK_W_RECENCY * recency;
             (final_score, note)
         })
         .collect();
@@ -562,7 +560,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
     if !super::is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
     }
-    let base = super::base_dir(app).map_err(|e| e.to_string())?;
+    let be = backend::resolve(app)?;
 
     let latest = messages
         .iter()
@@ -575,8 +573,8 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
     }
 
     // Empty-corpus fast path: no LLM call when there's nothing to recall.
-    let base_check = base.clone();
-    let total = tauri::async_runtime::spawn_blocking(move || store::list_notes(&base_check))
+    let be_check = be.clone();
+    let total = tauri::async_runtime::spawn_blocking(move || backend::list_notes(&be_check))
         .await
         .map_err(|e| format!("recall scan join error: {e}"))?
         .map_err(|e| format!("{e:#}"))?
@@ -590,7 +588,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
 
     // Initial (first-pass) retrieve — dual-stage 20→6, no date filter — folded
     // into the session registry (stable M-ids, unioned across follow-up turns).
-    let hits = retrieve(app, &base, &latest, None)
+    let hits = retrieve(app, &be, &latest, None)
         .await
         .map_err(|e| format!("{e:#}"))?;
     register_hits(app, &hits);
@@ -598,7 +596,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
     // Build the first-pass memories block from the FULL session registry (fresh
     // read so earlier conversational edits are reflected).
     let registry = session_registry(app);
-    let (block, _) = build_block_and_meta(&base, registry).await?;
+    let (block, _) = build_block_and_meta(&be, registry).await?;
 
     // Assemble the tool-enabled conversation: the memories are prepended to the
     // LATEST user message (NOT the system prompt) so the model attends to them
@@ -612,13 +610,13 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
         messages,
     );
 
-    let raw = run_tool_loop(app, &base, entries).await?;
+    let raw = run_tool_loop(app, &be, entries).await?;
     let (display, tail) = parse_tail(&raw);
 
     // Rebuild the source map from the FINAL registry (search_memory hops may
     // have added memories) so SOURCES / ACTION M-numbers resolve to notes.
     let final_registry = session_registry(app);
-    let (_, source_meta) = build_block_and_meta(&base, final_registry).await?;
+    let (_, source_meta) = build_block_and_meta(&be, final_registry).await?;
 
     log::info!(
         "[GRAIN] recall: answered ({} memories registered, sources={:?}, not_found={}, action={:?})",
@@ -644,20 +642,20 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
         match action {
             RecallAction::Remember => {
                 let note = capture::compose_note(app, &latest, None).await;
-                persist(app, &base, note).await;
+                persist(app, &be, note).await;
             }
             RecallAction::Reconcile { m } => {
                 if let Some(src) = source_meta.get(m) {
-                    if let Some(current) = read_note(&base, &src.note_id).await {
+                    if let Some(current) = read_note(&be, &src.note_id).await {
                         let merged =
                             capture::reconcile_note(app, &current, &latest, &convo_context).await;
-                        persist(app, &base, merged).await;
+                        persist(app, &be, merged).await;
                     }
                 }
             }
             RecallAction::Complete { m, todos } => {
                 if let Some(src) = source_meta.get(m) {
-                    if let Some(mut current) = read_note(&base, &src.note_id).await {
+                    if let Some(mut current) = read_note(&be, &src.note_id).await {
                         for i in todos {
                             if *i >= 1 {
                                 if let Some(t) = current.todo_tags.get_mut(i - 1) {
@@ -665,7 +663,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
                                 }
                             }
                         }
-                        persist(app, &base, current).await;
+                        persist(app, &be, current).await;
                     }
                 }
             }
@@ -700,10 +698,10 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
 }
 
 /// Read one note off the async runtime; `None` (logged) if it's gone/unreadable.
-async fn read_note(base: &Path, id: &str) -> Option<Note> {
-    let base = base.to_path_buf();
+async fn read_note(be: &Backend, id: &str) -> Option<Note> {
+    let be = be.clone();
     let id = id.to_string();
-    match tauri::async_runtime::spawn_blocking(move || store::get_note(&base, &id)).await {
+    match tauri::async_runtime::spawn_blocking(move || backend::get_note(&be, &id)).await {
         Ok(Ok(note)) => Some(note),
         Ok(Err(e)) => {
             log::warn!("[GRAIN] recall: note read failed: {e:#}");
@@ -719,9 +717,9 @@ async fn read_note(base: &Path, id: &str) -> Option<Note> {
 /// Save a note produced by a conversational write, then refresh the surfaces
 /// (overlay + settings tab re-render on `notes-changed`; reminders re-sync in
 /// case timing changed).
-async fn persist(app: &AppHandle, base: &Path, note: Note) {
-    let base = base.to_path_buf();
-    match tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await {
+async fn persist(app: &AppHandle, be: &Backend, note: Note) {
+    let be = be.clone();
+    match tauri::async_runtime::spawn_blocking(move || backend::save_note(&be, &note)).await {
         Ok(Ok(())) => {
             super::emit_notes_changed(app);
             super::reminders::sync(app);
@@ -818,28 +816,28 @@ fn search_memory_spec() -> crate::llm_client::ToolSpec {
 /// tools so the turn always terminates. Returns the final raw text.
 async fn run_tool_loop(
     app: &AppHandle,
-    base: &Path,
+    be: &Backend,
     mut entries: Vec<crate::llm_client::ChatEntry>,
 ) -> Result<String, String> {
     use crate::llm_client::ChatEntry;
 
     let tools = vec![search_memory_spec()];
-    let mut reply = crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools))
-        .await?;
+    let mut reply =
+        crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools)).await?;
 
     let mut hops = 0usize;
     while !reply.tool_calls.is_empty() && hops < MAX_TOOL_HOPS {
         hops += 1;
         entries.push(ChatEntry::AssistantToolCalls(reply.tool_calls.clone()));
         for tc in &reply.tool_calls {
-            let result = execute_search_memory(app, base, tc).await;
+            let result = execute_search_memory(app, be, tc).await;
             entries.push(ChatEntry::ToolResult {
                 call_id: tc.id.clone(),
                 content: result,
             });
         }
-        reply =
-            crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools)).await?;
+        reply = crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools))
+            .await?;
     }
 
     // Still wanting tools after the cap: `entries` ends cleanly on a tool
@@ -876,10 +874,11 @@ fn clone_tools(tools: &[crate::llm_client::ToolSpec]) -> Vec<crate::llm_client::
 /// — a bad-args or empty result just returns a short note the model can read.
 async fn execute_search_memory(
     app: &AppHandle,
-    base: &Path,
+    be: &Backend,
     tc: &crate::llm_client::ToolCallOut,
 ) -> String {
-    let args: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
+    let args: serde_json::Value =
+        serde_json::from_str(&tc.arguments).unwrap_or(serde_json::Value::Null);
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
@@ -905,7 +904,7 @@ async fn execute_search_memory(
 
     log::info!("[GRAIN] recall: search_memory(query={query:?}, range={range:?})");
 
-    let hits = match retrieve(app, base, &query, range).await {
+    let hits = match retrieve(app, be, &query, range).await {
         Ok(h) => h,
         Err(e) => {
             log::warn!("[GRAIN] recall: search_memory failed: {e:#}");
@@ -999,17 +998,17 @@ fn session_registry(app: &AppHandle) -> Vec<String> {
 /// by M-number (not list position) means an unreadable/skipped note never
 /// renumbers the rest.
 async fn build_block_and_meta(
-    base: &Path,
+    be: &Backend,
     registry: Vec<String>,
 ) -> Result<(String, std::collections::HashMap<usize, AgentSource>), String> {
-    let base_block = base.to_path_buf();
+    let be_block = be.clone();
     tauri::async_runtime::spawn_blocking(move || {
         use std::collections::HashMap;
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut blocks: Vec<String> = Vec::new();
         let mut meta: HashMap<usize, AgentSource> = HashMap::new();
         for (i, id) in registry.iter().enumerate() {
-            match store::get_note(&base_block, id) {
+            match backend::get_note(&be_block, id) {
                 Ok(note) => {
                     let m = i + 1;
                     blocks.push(render_memory(m, &note, now_ms));

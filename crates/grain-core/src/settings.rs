@@ -812,6 +812,30 @@ pub struct AppSettings {
     /// rank as if brand new (age 0).
     #[serde(default = "default_grain_space_decay_half_life_days")]
     pub grain_space_decay_half_life_days: u32,
+    /// [GRAIN] Which store backs Grain Space (OBSIDIAN-PLAN.md). A hard switch:
+    /// flipping it swaps the corpus every surface sees; nothing is migrated.
+    #[serde(default)]
+    pub grain_space_backend: GrainSpaceBackend,
+    /// [GRAIN] Absolute path of the Obsidian vault (a plain folder of .md
+    /// files). Empty = not configured; the vault backend refuses to run.
+    #[serde(default)]
+    pub grain_space_vault_path: String,
+    /// [GRAIN] Subfolder inside the vault where Grain writes its captures.
+    /// Grain only ever creates/edits files under this folder; the rest of the
+    /// vault is read-only (searchable, never written).
+    #[serde(default = "default_grain_space_vault_folder")]
+    pub grain_space_vault_folder: String,
+}
+
+/// [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum GrainSpaceBackend {
+    /// Flat JSON notes under `{app_data}/grain_space/notes/` (the original store).
+    #[default]
+    Grain,
+    /// Markdown + YAML frontmatter files in a user-chosen Obsidian vault.
+    Obsidian,
 }
 
 fn default_true() -> bool {
@@ -820,6 +844,10 @@ fn default_true() -> bool {
 
 fn default_grain_space_decay_half_life_days() -> u32 {
     30
+}
+
+fn default_grain_space_vault_folder() -> String {
+    "Grain".to_string()
 }
 
 fn default_model() -> String {
@@ -1521,6 +1549,9 @@ pub fn get_default_settings() -> AppSettings {
         grain_space_embed_f16: false,
         grain_space_auto_reminders: true,
         grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),
+        grain_space_backend: GrainSpaceBackend::default(),
+        grain_space_vault_path: String::new(),
+        grain_space_vault_folder: default_grain_space_vault_folder(),
     }
 }
 

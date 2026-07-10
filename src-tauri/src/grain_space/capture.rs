@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-use super::store::{self, Note, ReminderState, ReminderStatus, TodoTag};
+use super::store::{Note, ReminderState, ReminderStatus, TodoTag};
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 
 /// Input C debounce: OS key-repeat / double taps within this window are one add.
@@ -72,7 +72,7 @@ pub fn quick_add(app: &AppHandle) {
             log::debug!("[GRAIN] space quick-add: no selection captured; ignoring");
             return;
         };
-        let base = match super::base_dir(&app) {
+        let backend = match super::backend::resolve(&app) {
             Ok(b) => b,
             Err(e) => {
                 log::error!("[GRAIN] space quick-add: {e}");
@@ -83,7 +83,7 @@ pub fn quick_add(app: &AppHandle) {
         // No LLM on the quick-add path — give it a plain-code title so the note
         // and its future source chip aren't blank.
         note.title = fallback_title(&note.body);
-        match store::save_note(&base, &note) {
+        match super::backend::save_note(&backend, &note) {
             Ok(()) => {
                 log::info!("[GRAIN] space quick-add: saved note {}", note.id);
                 super::emit_notes_changed(&app);
@@ -137,7 +137,7 @@ pub async fn capture_and_save(
         return Ok(false);
     }
 
-    let base = super::base_dir(app).map_err(|e| e.to_string())?;
+    let backend = super::backend::resolve(app)?;
     let mut note = compose_note(app, &body, framing).await;
     // An explicit typed title wins over the auto-generated one (kept short).
     if let Some(t) = title_override.map(str::trim).filter(|t| !t.is_empty()) {
@@ -146,7 +146,9 @@ pub async fn capture_and_save(
     let id = note.id.clone();
 
     let app2 = app.clone();
-    let saved = tauri::async_runtime::spawn_blocking(move || store::save_note(&base, &note)).await;
+    let saved =
+        tauri::async_runtime::spawn_blocking(move || super::backend::save_note(&backend, &note))
+            .await;
     match saved {
         Ok(Ok(())) => {
             super::emit_notes_changed(&app2);
@@ -693,7 +695,10 @@ mod tests {
     fn fallback_title_uses_first_words() {
         assert_eq!(fallback_title("buy milk, eggs and bread"), "buy milk, eggs");
         assert_eq!(fallback_title("done."), "done");
-        assert_eq!(fallback_title("  wifi password is hunter2 "), "wifi password is");
+        assert_eq!(
+            fallback_title("  wifi password is hunter2 "),
+            "wifi password is"
+        );
         assert_eq!(fallback_title(""), "");
         // A single pathological token is capped, never unbounded.
         assert!(fallback_title(&"x".repeat(500)).chars().count() <= 48);

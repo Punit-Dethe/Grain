@@ -5,6 +5,91 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-10 — PIVOT: Obsidian vault backend (OBSIDIAN-PLAN.md) — V1 COMPLETE
+
+**Grain is a friction-reduction utility, not a note app.** New plan file
+`OBSIDIAN-PLAN.md` (read it + `PRODUCT-VISION.md` first): the whole pipeline
+(capture, structuring, hybrid FTS+semantic retrieval, Recall, conversational
+writes) can now run on top of an **Obsidian vault** — plain `.md` files the
+user owns, synced by whatever they already use. Two HARD-SWITCHED backends
+(`grain` JSON store — default, unchanged — vs `obsidian` vault), no sync
+between them in v1. Research digested in the plan §2 (Smart Connections =
+block embeddings outside notes; Omnisearch = full rescan is cheap, weight
+title>body; Obsidian auto-merges external disk writes via diff-match-patch).
+
+**V1 shipped this session (all backend, zero frontend change):**
+1. **Settings (grain-core):** `grain_space_backend` (`GrainSpaceBackend::
+   {Grain, Obsidian}`, serde default Grain), `grain_space_vault_path`,
+   `grain_space_vault_folder` (default "Grain"). Three change-commands in
+   `shortcut/mod.rs` (backend switch closes overlay + drops engine + resyncs
+   reminders; vault path validated `is_dir`; folder name rejects separators/
+   dot-prefix), specta-registered. bindings.ts NOT yet regenerated (no
+   frontend consumer yet — regen with the V2 settings UI).
+2. **`grain_space/vault.rs` (new, ~700 lines + 13 tests):** frontmatter codec
+   (flat YAML we emit/parse ourselves — NO serde_yaml dep; foreign frontmatter
+   treated as an opaque block, stripped for body/FTS); filename = title
+   (sanitized, collision-suffixed, rename-on-title-edit); identity =
+   `grain_id` uuid frontmatter (grain notes, survives moves) / sha256(relpath)
+   (foreign notes, zero writes into user files); `vault_index.sqlite` in
+   app-data (path/mtime/size/foreign_note columns), NEVER in the vault;
+   **lazy `reconcile()` stat-scan** at every retrieval entry point instead of
+   a resident watcher (zero idle RAM — deviation from the advisory notes,
+   justified in plan §5); atomic tmp+rename writes; **foreign notes are
+   read-only** (save/delete/pin/reminder refuse) — the v1 stale-buffer
+   defense; `list_notes`/empty-query browse = grain-owned only, real
+   search/semantic = whole vault.
+3. **`grain_space/backend.rs` (new):** `Backend::{Grain(PathBuf),
+   Vault(Vault)}` resolved from settings (`backend::resolve(app)`), Clone,
+   dispatching the full store surface. `store.rs` untouched as the grain
+   implementation (only `ensure_vec_extension`/`validate_id` went pub(crate)).
+4. **All ~28 call sites swapped** (commands.rs gate() now returns Backend;
+   capture.rs quick_add + capture_and_save; recall.rs retrieve/run_turn/
+   read_note/persist/run_tool_loop/execute_search_memory/build_block_and_meta
+   — all `&Path base` params became `&Backend`; reminders.rs run_cycle).
+   Behavior with backend = grain is byte-identical.
+
+**Bugs the new tests caught (fixed):** (a) reconcile's vanished-sweep deleted
+a renamed/moved grain note right after re-indexing it — now `indexed.retain`
+drops the old-path entry by id after every upsert; (b) `created` frontmatter
+was second-precision so timestamps drifted ±999 ms on re-parse — now emits
+`%.3f` ms; (c) `get_note`/`mutate_grain_note` now reconcile-and-retry once on
+a stale indexed path (user moved the file in Obsidian mid-session).
+
+**Verified:** src-tauri `cargo test --lib` **199 passed** (13 new vault
+tests: codec roundtrip, foreign mapping/read-only, sanitize/collision,
+save-rename identity, external add/change/remove reconcile, promote-out-of-
+folder keeps identity+writability, pin-not-stale, delete/rebuild, semantic
+roundtrip+floor, browse-vs-search scoping). grain-core 4 + root workspace all
+green. `cargo fmt` clean.
+
+### Next concrete step (V2 — full wiring + UI, plan §7)
+1. Settings tab: backend hard-switch UI + native folder picker (dialog plugin
+   already a dep) + Grain-subfolder field; regenerate bindings.ts (run the
+   debug exe ~10 s) — exports `GrainSpaceBackend` + the three new commands.
+2. Overlay: read-only badge on foreign notes (save will error cleanly today,
+   but the editor should disable itself); "Open in Obsidian" action
+   (`obsidian://open?vault=<name>&file=<relpath>` — needs the note's relpath,
+   add a small command or extend Note→frontend metadata OUTSIDE the locked
+   schema, e.g. a separate `grain_space_note_location(id)` command).
+3. Empty-vault/empty-corpus copy paths in recall (run_turn's zero-notes fast
+   path now counts grain-owned only — for the vault backend "no notes yet"
+   should probably still allow whole-vault search; revisit the fast path).
+4. bm25 title>tldr>body column weights (both backends).
+
+### Gotchas
+- The vault backend REFUSES to run when `grain_space_vault_path` is unset/
+  missing (`backend::resolve` errors) — reminders::run_cycle silently returns
+  in that case; every command surfaces the message.
+- `search_notes_ranged("", Some(range))` semantics differ per backend by
+  design: grain = all notes in window, vault = grain-owned in window (a
+  foreign-notes browse would ship thousands of files to the frontend).
+- Never quarantine/move vault files on parse errors — log and skip only
+  (store.rs quarantine is for OUR JSON dir only).
+- vault.rs `unique_path` excludes `current` so re-saving a note keeps its
+  filename; pass `None` for new notes.
+
+---
+
 ## 2026-07-09 — Note card two-field UI, dictation-into-panel, Quick-Agent Enter/Shift+Enter
 
 Three user-reported bugs.

@@ -385,9 +385,7 @@ fn load_with_probe(
     let tried_f16 = USE_F16.load(std::sync::atomic::Ordering::Relaxed)
         && !F16_DISABLED.load(std::sync::atomic::Ordering::Relaxed);
     let (tok, model, device) = load_model(config, tokenizer, weights)?;
-    if tried_f16
-        && embed_batch(&tok, &model, &device, &["probe".to_string()]).is_err()
-    {
+    if tried_f16 && embed_batch(&tok, &model, &device, &["probe".to_string()]).is_err() {
         log::warn!(
             "[GRAIN] embed f16 forward produced invalid output on this CPU; reloading in f32 for this session"
         );

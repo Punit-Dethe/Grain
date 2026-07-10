@@ -11,12 +11,14 @@
 //!   skipped at registration (see `shortcut::tauri_impl` / `handy_keys`) and
 //!   every command below early-returns. Disabling never deletes data files.
 
+pub mod backend;
 pub mod capture;
 pub mod commands;
 pub mod embed;
 pub mod recall;
 pub mod reminders;
 pub mod store;
+pub mod vault;
 pub mod window;
 
 use tauri::AppHandle;

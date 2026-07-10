@@ -14,7 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
-use super::store::{self, Note, ReminderStatus};
+use super::backend;
+use super::store::{Note, ReminderStatus};
 
 /// Bumped on every sync; a parked timer only acts if it still holds the
 /// latest generation.
@@ -35,14 +36,15 @@ pub fn sync(app: &AppHandle) {
 }
 
 async fn run_cycle(app: AppHandle, generation: u64) {
-    let Ok(base) = super::base_dir(&app) else {
+    let Ok(be) = backend::resolve(&app) else {
+        // Vault backend not configured yet — nothing to schedule.
         return;
     };
 
     // Scan + fire-due in one blocking hop (store I/O off the async runtime).
     let scan = tauri::async_runtime::spawn_blocking(move || -> anyhow::Result<ScanOutcome> {
         let now = chrono::Utc::now().timestamp_millis();
-        let notes = store::list_notes(&base)?;
+        let notes = backend::list_notes(&be)?;
         let mut due: Vec<Note> = Vec::new();
         let mut next_fire: Option<i64> = None;
         for note in notes {
@@ -55,7 +57,7 @@ async fn run_cycle(app: AppHandle, generation: u64) {
             if fire_at <= now {
                 let mut state = note.reminder_state.clone();
                 state.status = ReminderStatus::Fired;
-                let updated = store::set_reminder(&base, &note.id, state)?;
+                let updated = backend::set_reminder(&be, &note.id, state)?;
                 due.push(updated);
             } else {
                 next_fire = Some(next_fire.map_or(fire_at, |n: i64| n.min(fire_at)));

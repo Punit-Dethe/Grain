@@ -1119,6 +1119,68 @@ pub fn change_grain_space_embed_f16_setting(app: AppHandle, enabled: bool) -> Re
     Ok(())
 }
 
+/// [GRAIN] Grain Space backend hard switch (OBSIDIAN-PLAN.md §1). Swapping the
+/// backend changes which corpus every surface sees; the overlay is closed and
+/// the embedding engine dropped so nothing keeps serving the old corpus.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_backend_setting(
+    app: AppHandle,
+    backend: settings::GrainSpaceBackend,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    if settings.grain_space_backend == backend {
+        return Ok(());
+    }
+    settings.grain_space_backend = backend;
+    settings::write_settings(&app, settings);
+    crate::grain_space::window::close(&app);
+    crate::grain_space::embed::shutdown_engine();
+    crate::grain_space::reminders::sync(&app);
+    Ok(())
+}
+
+/// [GRAIN] Set the Obsidian vault path (an existing folder). Validated here so
+/// the vault backend never runs against a bogus path.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_vault_path_setting(app: AppHandle, path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
+    if !trimmed.is_empty() && !std::path::Path::new(&trimmed).is_dir() {
+        return Err("That folder does not exist.".to_string());
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_vault_path = trimmed;
+    settings::write_settings(&app, settings);
+    crate::grain_space::window::close(&app);
+    crate::grain_space::embed::shutdown_engine();
+    crate::grain_space::reminders::sync(&app);
+    Ok(())
+}
+
+/// [GRAIN] Subfolder of the vault where Grain writes captures ("Grain" by
+/// default). Kept a simple relative name — path separators and dot-segments
+/// are rejected so it can never escape the vault.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_vault_folder_setting(
+    app: AppHandle,
+    folder: String,
+) -> Result<(), String> {
+    let trimmed = folder
+        .trim()
+        .trim_matches('/')
+        .trim_matches('\\')
+        .to_string();
+    if trimmed.is_empty() || trimmed.contains(['/', '\\', ':']) || trimmed.starts_with('.') {
+        return Err("Folder must be a plain name like \"Grain\".".to_string());
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_vault_folder = trimmed;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Auto-arm reminders extracted from captured notes (vs. manual arm).
 #[tauri::command]
 #[specta::specta]

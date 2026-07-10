@@ -5,14 +5,17 @@
 
 use tauri::{AppHandle, Manager};
 
+use super::backend::{self, Backend};
 use super::store::{self, Note, ReminderState, ReminderStatus};
-use super::{base_dir, emit_notes_changed, is_enabled};
+use super::{emit_notes_changed, is_enabled};
 
-fn gate(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+/// Gate on the master toggle, then resolve which store backs the feature
+/// (grain JSON files or an Obsidian vault — OBSIDIAN-PLAN.md §1).
+fn gate(app: &AppHandle) -> Result<Backend, String> {
     if !is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
     }
-    base_dir(app)
+    backend::resolve(app)
 }
 
 /// Run blocking store work off the async runtime (file + SQLite I/O).
@@ -28,15 +31,15 @@ async fn blocking<T: Send + 'static>(
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_list_notes(app: AppHandle) -> Result<Vec<Note>, String> {
-    let base = gate(&app)?;
-    blocking(move || store::list_notes(&base)).await
+    let be = gate(&app)?;
+    blocking(move || backend::list_notes(&be)).await
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_search_notes(app: AppHandle, query: String) -> Result<Vec<Note>, String> {
-    let base = gate(&app)?;
-    blocking(move || store::search_notes(&base, &query)).await
+    let be = gate(&app)?;
+    blocking(move || backend::search_notes(&be, &query)).await
 }
 
 /// Export every note as one pretty JSON array to a user-chosen file
@@ -47,9 +50,9 @@ pub async fn grain_space_search_notes(app: AppHandle, query: String) -> Result<V
 #[specta::specta]
 pub async fn grain_space_export_notes(app: AppHandle) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
-    let base = gate(&app)?;
+    let be = gate(&app)?;
     let (count, json) = blocking(move || {
-        let notes = store::list_notes(&base)?;
+        let notes = backend::list_notes(&be)?;
         let json = store::export_json(&notes)?;
         Ok((notes.len(), json))
     })
@@ -87,8 +90,8 @@ pub async fn grain_space_export_notes(app: AppHandle) -> Result<Option<String>, 
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_get_note(app: AppHandle, id: String) -> Result<Note, String> {
-    let base = gate(&app)?;
-    blocking(move || store::get_note(&base, &id)).await
+    let be = gate(&app)?;
+    blocking(move || backend::get_note(&be, &id)).await
 }
 
 /// Create or update. The frontend sends the full locked-schema note; for new
@@ -96,8 +99,8 @@ pub async fn grain_space_get_note(app: AppHandle, id: String) -> Result<Note, St
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_save_note(app: AppHandle, note: Note) -> Result<(), String> {
-    let base = gate(&app)?;
-    let result = blocking(move || store::save_note(&base, &note)).await;
+    let be = gate(&app)?;
+    let result = blocking(move || backend::save_note(&be, &note)).await;
     if result.is_ok() {
         emit_notes_changed(&app);
         // An edit may have added/changed/removed the reminder.
@@ -110,10 +113,10 @@ pub async fn grain_space_save_note(app: AppHandle, note: Note) -> Result<(), Str
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_create_note(app: AppHandle, body: String) -> Result<Note, String> {
-    let base = gate(&app)?;
+    let be = gate(&app)?;
     let result = blocking(move || {
         let note = Note::raw(body);
-        store::save_note(&base, &note)?;
+        backend::save_note(&be, &note)?;
         Ok(note)
     })
     .await;
@@ -126,8 +129,8 @@ pub async fn grain_space_create_note(app: AppHandle, body: String) -> Result<Not
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_delete_note(app: AppHandle, id: String) -> Result<(), String> {
-    let base = gate(&app)?;
-    let result = blocking(move || store::delete_note(&base, &id)).await;
+    let be = gate(&app)?;
+    let result = blocking(move || backend::delete_note(&be, &id)).await;
     if result.is_ok() {
         emit_notes_changed(&app);
         // The deleted note may have held the next armed reminder.
@@ -143,8 +146,8 @@ pub async fn grain_space_set_pinned(
     id: String,
     pinned: bool,
 ) -> Result<Note, String> {
-    let base = gate(&app)?;
-    let result = blocking(move || store::set_pinned(&base, &id, pinned)).await;
+    let be = gate(&app)?;
+    let result = blocking(move || backend::set_pinned(&be, &id, pinned)).await;
     if result.is_ok() {
         emit_notes_changed(&app);
     }
@@ -159,10 +162,10 @@ pub async fn grain_space_arm_reminder(
     id: String,
     fire_at: i64,
 ) -> Result<Note, String> {
-    let base = gate(&app)?;
+    let be = gate(&app)?;
     let result = blocking(move || {
-        store::set_reminder(
-            &base,
+        backend::set_reminder(
+            &be,
             &id,
             ReminderState {
                 status: ReminderStatus::Armed,
@@ -182,10 +185,10 @@ pub async fn grain_space_arm_reminder(
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_dismiss_reminder(app: AppHandle, id: String) -> Result<Note, String> {
-    let base = gate(&app)?;
+    let be = gate(&app)?;
     let result = blocking(move || {
-        store::set_reminder(
-            &base,
+        backend::set_reminder(
+            &be,
             &id,
             ReminderState {
                 status: ReminderStatus::Dismissed,
@@ -205,8 +208,8 @@ pub async fn grain_space_dismiss_reminder(app: AppHandle, id: String) -> Result<
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_rebuild_index(app: AppHandle) -> Result<u32, String> {
-    let base = gate(&app)?;
-    blocking(move || store::rebuild_index(&base)).await
+    let be = gate(&app)?;
+    blocking(move || backend::rebuild_index(&be)).await
 }
 
 // -- overlay window (Phase 3) ----------------------------------------------------
@@ -306,7 +309,7 @@ pub async fn grain_space_semantic_search(
     app: AppHandle,
     query: String,
 ) -> Result<Vec<Note>, String> {
-    let base = gate(&app)?;
+    let be = gate(&app)?;
     let settings = crate::settings::get_settings(&app);
     if !settings.grain_space_semantic {
         return Err("semantic search is disabled".to_string());
@@ -325,22 +328,22 @@ pub async fn grain_space_semantic_search(
     blocking(move || {
         let trimmed = query.trim().to_string();
         if trimmed.is_empty() {
-            return store::list_notes(&base);
+            return backend::list_notes(&be);
         }
         // Batch re-embed everything stale (covers engine spawn + edits made
         // while the engine was resident — save marks stale, search refreshes).
-        let stale = store::stale_embed_texts(&base)?;
+        let stale = backend::stale_embed_texts(&be)?;
         if !stale.is_empty() {
             let texts: Vec<String> = stale.iter().map(|(_, t)| t.clone()).collect();
             let vectors = super::embed::embed(texts)?;
             let items: Vec<(String, Vec<f32>)> =
                 stale.into_iter().map(|(id, _)| id).zip(vectors).collect();
-            store::store_embeddings(&base, &items)?;
+            backend::store_embeddings(&be, &items)?;
         }
         let query_vec = super::embed::embed(vec![trimmed])?
             .pop()
             .ok_or_else(|| anyhow::anyhow!("empty query embedding"))?;
-        store::semantic_search(&base, &query_vec, half_life_days)
+        backend::semantic_search(&be, &query_vec, half_life_days)
     })
     .await
 }
