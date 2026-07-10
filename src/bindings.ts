@@ -250,6 +250,44 @@ async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] Grain Space backend hard switch (OBSIDIAN-PLAN.md §1). Swapping the
+ * backend changes which corpus every surface sees; the overlay is closed and
+ * the embedding engine dropped so nothing keeps serving the old corpus.
+ */
+async changeGrainSpaceBackendSetting(backend: GrainSpaceBackend) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_backend_setting", { backend }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Set the Obsidian vault path (an existing folder). Validated here so
+ * the vault backend never runs against a bogus path.
+ */
+async changeGrainSpaceVaultPathSetting(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_vault_path_setting", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Subfolder of the vault where Grain writes captures ("Grain" by
+ * default). Kept a simple relative name — path separators and dot-segments
+ * are rejected so it can never escape the vault.
+ */
+async changeGrainSpaceVaultFolderSetting(folder: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_vault_folder_setting", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async grainSpaceListNotes() : Promise<Result<Note[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_list_notes") };
@@ -355,6 +393,20 @@ async grainSpaceDismissReminder(id: string) : Promise<Result<Note, string>> {
 async grainSpaceRebuildIndex() : Promise<Result<number, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_rebuild_index") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Native folder picker for the Obsidian vault (OBSIDIAN-PLAN.md). Runs the
+ * dialog backend-side (same pattern as export) so no new webview capability is
+ * needed. On pick, persists the path via the validated setting command and
+ * returns it; `None` = user cancelled.
+ */
+async grainSpacePickVault() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_pick_vault") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1681,7 +1733,23 @@ grain_space_auto_reminders?: boolean;
  * `S_final = S_semantic * exp(-ln2/half_life * age_days)`. Pinned notes
  * rank as if brand new (age 0).
  */
-grain_space_decay_half_life_days?: number }
+grain_space_decay_half_life_days?: number; 
+/**
+ * [GRAIN] Which store backs Grain Space (OBSIDIAN-PLAN.md). A hard switch:
+ * flipping it swaps the corpus every surface sees; nothing is migrated.
+ */
+grain_space_backend?: GrainSpaceBackend; 
+/**
+ * [GRAIN] Absolute path of the Obsidian vault (a plain folder of .md
+ * files). Empty = not configured; the vault backend refuses to run.
+ */
+grain_space_vault_path?: string; 
+/**
+ * [GRAIN] Subfolder inside the vault where Grain writes its captures.
+ * Grain only ever creates/edits files under this folder; the rest of the
+ * vault is read-only (searchable, never written).
+ */
+grain_space_vault_folder?: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
@@ -1738,6 +1806,18 @@ export type EngineType =
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+/**
+ * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
+ */
+export type GrainSpaceBackend = 
+/**
+ * Flat JSON notes under `{app_data}/grain_space/notes/` (the original store).
+ */
+"grain" | 
+/**
+ * Markdown + YAML frontmatter files in a user-chosen Obsidian vault.
+ */
+"obsidian"
 export type HistoryEntry = { id: number; file_name: string; timestamp: number; saved: boolean; title: string; transcription_text: string; post_processed_text: string | null; post_process_prompt: string | null; post_process_requested: boolean }
 export type HistoryUpdatePayload = { action: "added"; entry: HistoryEntry } | { action: "updated"; entry: HistoryEntry } | { action: "deleted"; id: number } | { action: "toggled"; id: number }
 /**

@@ -62,19 +62,33 @@ folder keeps identity+writability, pin-not-stale, delete/rebuild, semantic
 roundtrip+floor, browse-vs-search scoping). grain-core 4 + root workspace all
 green. `cargo fmt` clean.
 
-### Next concrete step (V2 — full wiring + UI, plan §7)
-1. Settings tab: backend hard-switch UI + native folder picker (dialog plugin
-   already a dep) + Grain-subfolder field; regenerate bindings.ts (run the
-   debug exe ~10 s) — exports `GrainSpaceBackend` + the three new commands.
-2. Overlay: read-only badge on foreign notes (save will error cleanly today,
-   but the editor should disable itself); "Open in Obsidian" action
-   (`obsidian://open?vault=<name>&file=<relpath>` — needs the note's relpath,
-   add a small command or extend Note→frontend metadata OUTSIDE the locked
-   schema, e.g. a separate `grain_space_note_location(id)` command).
-3. Empty-vault/empty-corpus copy paths in recall (run_turn's zero-notes fast
-   path now counts grain-owned only — for the vault backend "no notes yet"
-   should probably still allow whole-vault search; revisit the fast path).
-4. bm25 title>tldr>body column weights (both backends).
+**V2 (settings UI) shipped same session:** "Storage" group in
+`GrainSpaceSettings.tsx` — vault hard-switch toggle (turning it ON without a
+vault opens the native picker first and only flips once a folder is chosen),
+vault-path row + "Choose vault…", Grain-subfolder text field (commit on
+blur/Enter through the validated command). New backend command
+`grain_space_pick_vault` (backend-side `blocking_pick_folder`, same pattern as
+export — no new webview capability). `settingsStore.ts` updaters for the three
+settings. bindings.ts regenerated (exports `GrainSpaceBackend`,
+`grainSpacePickVault`, the three change-commands). i18n keys
+`settings.grainSpace.{vaultFolderLabel,vaultUnset,chooseVault,subfolderLabel,
+subfolderHint}`. Verified: tsc clean, eslint clean, 199 tests pass.
+
+### Next concrete step (V3 — remaining wiring, plan §7)
+1. **NEEDS USER GUI TESTING first** (can't drive headlessly): flip to a real
+   vault, capture a note (voice + typed + quick-add), search foreign notes in
+   the overlay, Recall over the vault, edit/pin/delete a grain note, promote a
+   note out of Grain/ in Obsidian and re-edit it in Grain.
+2. Overlay: read-only badge on foreign notes (save errors cleanly today, but
+   the editor should disable itself); "Open in Obsidian" action
+   (`obsidian://open?vault=<name>&file=<relpath>` — needs the note's relpath;
+   add a small `grain_space_note_location(id)` command, keep the Note schema
+   locked).
+3. Empty-vault copy in recall (run_turn's zero-notes fast path counts
+   grain-owned only — for the vault backend it should probably still allow
+   whole-vault search; revisit).
+4. bm25 title>tldr>body column weights (both backends). Then V3 chunked
+   embedding for long vault notes (plan §7 V3) and V4 auto-categorization.
 
 ### Gotchas
 - The vault backend REFUSES to run when `grain_space_vault_path` is unset/

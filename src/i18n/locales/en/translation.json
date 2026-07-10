@@ -799,7 +799,12 @@
       "consentCancel": "Not now",
       "downloading": "Downloading model…",
       "cancelDownload": "Cancel",
-      "downloadFailed": "Model download failed: {{message}}"
+      "downloadFailed": "Model download failed: {{message}}",
+      "vaultFolderLabel": "Obsidian vault",
+      "vaultUnset": "No vault selected",
+      "chooseVault": "Choose vault…",
+      "subfolderLabel": "Grain folder",
+      "subfolderHint": "Subfolder of the vault where captures are saved."
     },
     "experimentations": {
       "snippets": {

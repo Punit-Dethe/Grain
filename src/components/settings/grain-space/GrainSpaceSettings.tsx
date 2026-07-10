@@ -73,8 +73,14 @@ export const GrainSpaceSettings: React.FC = () => {
   const semantic = getSetting("grain_space_semantic") ?? false;
   const embedF16 = getSetting("grain_space_embed_f16") ?? false;
   const autoReminders = getSetting("grain_space_auto_reminders") ?? true;
+  // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md) — a hard switch.
+  const backend = getSetting("grain_space_backend") ?? "grain";
+  const vaultPath = getSetting("grain_space_vault_path") ?? "";
+  const vaultFolder = getSetting("grain_space_vault_folder") ?? "Grain";
 
   const [notes, setNotes] = useState<Note[]>([]);
+  const [vaultMsg, setVaultMsg] = useState<string | null>(null);
+  const [folderDraft, setFolderDraft] = useState<string | null>(null);
   const [exportMsg, setExportMsg] = useState<string | null>(null);
   const [uninstallMsg, setUninstallMsg] = useState<string | null>(null);
   // Consent → download → verify flow for the semantic model. The toggle stays
@@ -165,6 +171,45 @@ export const GrainSpaceSettings: React.FC = () => {
     void commands.grainSpaceOpenWindow(note.id);
   };
 
+  // Backend switch: turning the vault ON without a chosen vault first opens
+  // the picker; the switch only flips once a valid folder is set.
+  const onBackendToggle = async (useVault: boolean) => {
+    setVaultMsg(null);
+    if (!useVault) {
+      await updateSetting("grain_space_backend", "grain");
+      refresh();
+      return;
+    }
+    if (!vaultPath) {
+      const picked = await commands.grainSpacePickVault();
+      if (picked.status !== "ok" || !picked.data) {
+        if (picked.status === "error") setVaultMsg(picked.error);
+        return; // cancelled — stay on the grain store
+      }
+    }
+    await updateSetting("grain_space_backend", "obsidian");
+    refresh();
+  };
+
+  const pickVault = async () => {
+    setVaultMsg(null);
+    const picked = await commands.grainSpacePickVault();
+    if (picked.status === "error") setVaultMsg(picked.error);
+    else if (picked.data) refresh();
+  };
+
+  const commitFolder = async () => {
+    const draft = folderDraft?.trim();
+    setFolderDraft(null);
+    if (!draft || draft === vaultFolder) return;
+    setVaultMsg(null);
+    try {
+      await updateSetting("grain_space_vault_folder", draft);
+    } catch (e) {
+      setVaultMsg(String(e));
+    }
+  };
+
   const deleteNote = async (id: string) => {
     await commands.grainSpaceDeleteNote(id);
     refresh();
@@ -241,6 +286,69 @@ export const GrainSpaceSettings: React.FC = () => {
 
       {enabled && (
         <>
+          <SettingsGroup
+            title="Storage"
+            description="Where your notes live. The built-in Grain store keeps them as plain files in the app's data folder. Or point Grain at an Obsidian vault: notes become ordinary Markdown files you own — searchable here, editable in Obsidian, synced by whatever your vault already uses. Switching is a hard swap between the two stores; nothing is migrated or deleted."
+          >
+            <ToggleSwitch
+              label="Store notes in an Obsidian vault"
+              description="Capture writes Markdown into your vault; search and Recall cover the whole vault."
+              descriptionMode="inline"
+              grouped
+              checked={backend === "obsidian"}
+              isUpdating={isUpdating("grain_space_backend")}
+              onChange={(v) => void onBackendToggle(v)}
+            />
+            {backend === "obsidian" && (
+              <>
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-ink">
+                      {t("settings.grainSpace.vaultFolderLabel")}
+                    </div>
+                    <div
+                      className="text-xs text-ink-soft truncate"
+                      title={vaultPath}
+                    >
+                      {vaultPath || t("settings.grainSpace.vaultUnset")}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void pickVault()}
+                    className="text-xs font-medium text-accent hover:underline shrink-0"
+                  >
+                    {t("settings.grainSpace.chooseVault")}
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 px-4 py-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-ink">
+                      {t("settings.grainSpace.subfolderLabel")}
+                    </div>
+                    <div className="text-xs text-ink-soft">
+                      {t("settings.grainSpace.subfolderHint")}
+                    </div>
+                  </div>
+                  <input
+                    type="text"
+                    value={folderDraft ?? vaultFolder}
+                    onChange={(e) => setFolderDraft(e.target.value)}
+                    onBlur={() => void commitFolder()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                    }}
+                    spellCheck={false}
+                    className="w-36 shrink-0 rounded border border-line bg-transparent px-2 py-1 text-sm text-ink focus:border-accent focus:outline-none"
+                  />
+                </div>
+                {vaultMsg && (
+                  <div className="px-4 pb-3 text-xs text-red-500">{vaultMsg}</div>
+                )}
+              </>
+            )}
+          </SettingsGroup>
+
           <SettingsGroup
             title="Capture"
             description="Quick Add silently saves the text you have highlighted in any app. Create Note opens the Grain pill so you can speak OR type a note — and if you have text selected, that becomes the note (say what it's for). Each note gets an AI title, summary, and extracted reminders when a processing provider is configured."

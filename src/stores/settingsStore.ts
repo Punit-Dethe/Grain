@@ -7,6 +7,7 @@ import type {
   AppMode,
   AppSettings as Settings,
   AudioDevice,
+  GrainSpaceBackend,
   Snippet,
   TranscribeAcceleratorSetting,
   VoiceAction,
@@ -195,6 +196,14 @@ const settingUpdaters: {
     commands.changeGrainSpaceEmbedF16Setting(value as boolean),
   grain_space_auto_reminders: (value) =>
     commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
+  // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md): a hard switch between
+  // the grain store and a vault, plus where the vault lives.
+  grain_space_backend: (value) =>
+    commands.changeGrainSpaceBackendSetting(value as GrainSpaceBackend),
+  grain_space_vault_path: (value) =>
+    commands.changeGrainSpaceVaultPathSetting(value as string),
+  grain_space_vault_folder: (value) =>
+    commands.changeGrainSpaceVaultFolderSetting(value as string),
 };
 
 export const useSettingsStore = create<SettingsStore>()(

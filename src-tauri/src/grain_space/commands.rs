@@ -212,6 +212,30 @@ pub async fn grain_space_rebuild_index(app: AppHandle) -> Result<u32, String> {
     blocking(move || backend::rebuild_index(&be)).await
 }
 
+/// Native folder picker for the Obsidian vault (OBSIDIAN-PLAN.md). Runs the
+/// dialog backend-side (same pattern as export) so no new webview capability is
+/// needed. On pick, persists the path via the validated setting command and
+/// returns it; `None` = user cancelled.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_pick_vault(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if !is_enabled(&app) {
+        return Err("Grain Space is disabled".to_string());
+    }
+    let app2 = app.clone();
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || app2.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| e.to_string())?;
+    let Some(folder) = picked.and_then(|f| f.into_path().ok()) else {
+        return Ok(None); // user cancelled
+    };
+    let path = folder.to_string_lossy().to_string();
+    crate::shortcut::change_grain_space_vault_path_setting(app, path.clone())?;
+    Ok(Some(path))
+}
+
 // -- overlay window (Phase 3) ----------------------------------------------------
 
 /// Open the overlay (or refocus it), optionally landing on a note. Used by the
