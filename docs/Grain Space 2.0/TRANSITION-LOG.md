@@ -5,6 +5,66 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
+## 2026-07-11 (later) — grain-editor UI shell (Mem-inspired three panes)
+
+User verified the milestone-1 scaffold (typing/erasing works) AND that overlay
+edits two-way-sync with Obsidian. Then, per the Mem screenshot inspiration
+(design language only — timers/calendars/reminders explicitly deferred), the
+scaffold became a real shell:
+
+**Files:** `crates/grain-editor/src/{theme,vault,ui,markdown,main}.rs`.
+
+1. **`theme.rs` — the design language.** Warm paper (`BG` cream) / deeper
+   sidebar wash / white `SURFACE` sheets / `INK` text / one `ACCENT` orange +
+   `ACCENT_SOFT` wash / `HAIRLINE` borders / `SKELETON` blocks. All view code
+   pulls ONLY from here.
+2. **`vault.rs` — editor-side vault access, deliberately dumb.** No index/
+   embeddings: stat-walk scan per refresh (`NoteMeta {title, rel, abs,
+   pinned, collection, mtime}`), `pinned` from a 2 KB frontmatter head-peek,
+   collection = first-level subfolder. Vault resolution: CLI arg → the main
+   app's `grain.settings.json` (obsidian backend + path → SAME vault both
+   UIs) → native `{app_data}/grain_space/notes`. Atomic tmp+rename saves.
+3. **`ui.rs` — the three panes.** LEFT sidebar: vault-name header, Create
+   note (lands in the configured Grain subfolder, collision-suffixed
+   `Untitled n.md`, auto-selected), Pinned / Notes (root-level) /
+   Collections (expandable, count badges, indented member rows). CENTER: top
+   bar (title + orange `#collection` chip + chat toggle) over the editor
+   sheet — the note's FULL file text (frontmatter visible, no hidden
+   mutations) in `text_editor`, auto-saved via `debounce_action` 600 ms
+   after typing pauses (guarded: the updater's setup-run must not save).
+   RIGHT: chat panel — PURE SCAFFOLD by user instruction: header +
+   "scaffold" tag, alternating skeleton bubbles, fake input; slides via
+   `transition_width` on a `clip` shell (inner pane fixed-width so content
+   never reflows mid-slide).
+4. **Selection is reactive per-row** (style closures read the signal), so
+   clicking notes never rebuilds the sidebar; the list rebuilds only on
+   scan/expand changes. `dyn_container` re-creates the editor per selection.
+
+**Verified visually** (screenshotted the real window against the user's real
+Obsidian vault): sidebar sections + ages + counts, note open with chip,
+chat panel open, empty state. `GRAIN_EDITOR_SMOKE=1` env hook opens newest
+note + chat at startup for one-shot screenshot verification.
+
+### Gotchas
+- Taffy: `width_full` + horizontal margins OVERFLOWS the parent — wrap in a
+  padded `container` instead (bit the Create button AND the chat input).
+- `hide_gutter`/`cursor_color`/`selection_color` live on `EditorCustomStyle`
+  → `.editor_style(|s| …)`, not on `TextEditor`.
+- `dyn_container` branches must unify types via `.into_any()` (Box<dyn View>
+  only works for concrete `View` impls, not `impl IntoView` returns).
+- grain-editor is a console-subsystem exe: `Start-Process` pops a console
+  window whose handle masquerades as MainWindowHandle — launch with
+  `-WindowStyle Hidden` when driving it from scripts.
+- `debounce_action` runs its updater once at setup — guard the save with an
+  edit-count check or every note open rewrites (and re-mtimes) the file.
+
+### Next
+Milestones 2–5 (decoration layer: parse-on-change → spans → cursor gating),
+then wire the chat scaffold to the real Agent pipeline, tabs for multiple
+open notes, and the pill-daemon IPC spawn.
+
+---
+
 ## 2026-07-11 — Format unification (roadmap Phase 2) + V3 leftovers + grain-editor scaffold
 
 New master docs in this folder: `OBSIDIAN_ROADMAP.md` (the intent list) and
