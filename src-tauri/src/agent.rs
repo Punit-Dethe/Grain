@@ -2158,7 +2158,10 @@ async fn run_agent_once_tools(
             (CallOutcome::RateLimited { retry_after_s }, empty_reply())
         }
         Ok(Err(LlmError::Other(e))) => {
-            warn!("[GRAIN] agent (tools) provider '{}' failed: {e}", provider.id);
+            warn!(
+                "[GRAIN] agent (tools) provider '{}' failed: {e}",
+                provider.id
+            );
             (CallOutcome::Failed, empty_reply())
         }
     }
@@ -2190,9 +2193,10 @@ fn tool_entries_to_pairs(entries: &[crate::llm_client::ChatEntry]) -> Vec<(Strin
             ChatEntry::System(c) => Some(("system".to_string(), c.clone())),
             ChatEntry::User(c) => Some(("user".to_string(), c.clone())),
             ChatEntry::Assistant(c) => Some(("assistant".to_string(), c.clone())),
-            ChatEntry::ToolResult { content, .. } => {
-                Some(("user".to_string(), format!("Memory search results:\n{content}")))
-            }
+            ChatEntry::ToolResult { content, .. } => Some((
+                "user".to_string(),
+                format!("Memory search results:\n{content}"),
+            )),
             ChatEntry::AssistantToolCalls(_) => None,
         })
         .collect()

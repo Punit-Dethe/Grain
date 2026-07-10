@@ -99,7 +99,10 @@ pub enum ChatEntry {
     /// The assistant asked to call one or more tools (content is null).
     AssistantToolCalls(Vec<ToolCallOut>),
     /// A tool's result fed back to the model.
-    ToolResult { call_id: String, content: String },
+    ToolResult {
+        call_id: String,
+        content: String,
+    },
 }
 
 /// A tool-enabled chat completion result: either free-text `content`, or one or
