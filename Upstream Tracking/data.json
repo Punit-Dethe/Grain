@@ -9,8 +9,8 @@
   {
     "date": "Jul 10, 2026",
     "commit": "fix: surface download errors during onboarding (#1522)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding.",
     "pr": "1522"
   },
   {

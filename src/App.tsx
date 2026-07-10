@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
@@ -258,40 +258,40 @@ function AppInner() {
     setOnboardingStep("done");
   };
 
+  const toaster = (
+    <Toaster
+      theme="system"
+      toastOptions={{
+        unstyled: true,
+        classNames: {
+          toast:
+            "bg-paper-raised border border-line rounded-lg px-4 py-3 flex items-center gap-3 text-sm text-ink",
+          title: "font-medium",
+          description: "text-ink-soft",
+        },
+      }}
+    />
+  );
+
   // Still checking onboarding status
   if (onboardingStep === null) {
     return null;
   }
 
+  let content: ReactNode;
+
   if (onboardingStep === "accessibility") {
-    return <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />;
-  }
-
-  if (onboardingStep === "model") {
-    return <Onboarding onModelSelected={handleModelSelected} />;
-  }
-
-  return (
-    <div
-      dir={direction}
-      className="relative h-screen w-screen overflow-hidden select-none cursor-default"
-      style={{ backgroundColor: "#0c0b0a" }}
-    >
-      {/* Toasts always on top, outside both animated layers. */}
-      <Toaster
-        theme="system"
-        toastOptions={{
-          unstyled: true,
-          classNames: {
-            toast:
-              "bg-paper-raised border border-line rounded-lg px-4 py-3 flex items-center gap-3 text-sm text-ink",
-            title: "font-medium",
-            description: "text-ink-soft",
-          },
-        }}
-      />
-
-      {/* ── LAYER 1: Settings (always mounted, sits underneath) ── */}
+    content = <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />;
+  } else if (onboardingStep === "model") {
+    content = <Onboarding onModelSelected={handleModelSelected} />;
+  } else {
+    content = (
+      <div
+        dir={direction}
+        className="relative h-screen w-screen overflow-hidden select-none cursor-default"
+        style={{ backgroundColor: "#0c0b0a" }}
+      >
+        {/* ── LAYER 1: Settings (always mounted, sits underneath) ── */}
       {/* Chassis fill — no rounded corners. */}
       <div
         className="absolute inset-0 overflow-hidden"
@@ -353,6 +353,14 @@ function AppInner() {
         <QuickPanel onOpenAdvanced={() => setIsQuickOpen(false)} />
       </div>
     </div>
+    );
+  }
+
+  return (
+    <>
+      {toaster}
+      {content}
+    </>
   );
 }
 
