@@ -30,8 +30,8 @@
   {
     "date": "Jul 10, 2026",
     "commit": "feat: add Light / Dark / System appearance selector (#1599)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Ignored. Grain has a highly custom, split-theme architecture via ThemeContext.tsx (allowing dark Quick Panel with light Settings). Upstream's implementation is a global document.documentElement override, which is incompatible with Grain's per-panel toggles.",
     "pr": "1599"
   },
   {
