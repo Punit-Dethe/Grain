@@ -16,8 +16,8 @@
   {
     "date": "Jul 10, 2026",
     "commit": "update windows build instruction",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Added Windows prerequisites, MAX_PATH fixes, and code-signing bypass instructions to BUILD.md.",
     "pr": ""
   },
   {
