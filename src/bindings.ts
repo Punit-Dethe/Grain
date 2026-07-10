@@ -388,7 +388,7 @@ async grainSpaceDismissReminder(id: string) : Promise<Result<Note, string>> {
 }
 },
 /**
- * Recovery: re-derive the whole index from the JSON files.
+ * Recovery: re-derive the whole index from the note files.
  */
 async grainSpaceRebuildIndex() : Promise<Result<number, string>> {
     try {
