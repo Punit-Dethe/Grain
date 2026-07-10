@@ -6,11 +6,11 @@
 use tauri::{AppHandle, Manager};
 
 use super::backend::{self, Backend};
-use super::store::{self, Note, ReminderState, ReminderStatus};
+use super::note::{self, Note, ReminderState, ReminderStatus};
 use super::{emit_notes_changed, is_enabled};
 
-/// Gate on the master toggle, then resolve which store backs the feature
-/// (grain JSON files or an Obsidian vault — OBSIDIAN-PLAN.md §1).
+/// Gate on the master toggle, then resolve which vault backs the feature
+/// (the Grain-managed native folder or a user-chosen Obsidian vault).
 fn gate(app: &AppHandle) -> Result<Backend, String> {
     if !is_enabled(app) {
         return Err("Grain Space is disabled".to_string());
@@ -53,7 +53,7 @@ pub async fn grain_space_export_notes(app: AppHandle) -> Result<Option<String>, 
     let be = gate(&app)?;
     let (count, json) = blocking(move || {
         let notes = backend::list_notes(&be)?;
-        let json = store::export_json(&notes)?;
+        let json = note::export_json(&notes)?;
         Ok((notes.len(), json))
     })
     .await?;
@@ -204,7 +204,7 @@ pub async fn grain_space_dismiss_reminder(app: AppHandle, id: String) -> Result<
     result
 }
 
-/// Recovery: re-derive the whole index from the JSON files.
+/// Recovery: re-derive the whole index from the note files.
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_rebuild_index(app: AppHandle) -> Result<u32, String> {

@@ -1,9 +1,11 @@
 //! [GRAIN] Grain Space — local, zero-idle-RAM notes.
 //!
-//! Design contract (see docs/Grain space files/FINAL-PLAN.md):
-//! - Flat JSON files under `{app_data_dir}/grain_space/notes/` are the source
-//!   of truth; `index.sqlite` (FTS5 + sqlite-vec) is a derived, rebuildable
-//!   index. Embeddings NEVER live in the JSON files.
+//! Design contract (docs/Grain Space 2.0/: OBSIDIAN-PLAN.md + EXECUTION-PLAN.md):
+//! - ONE store format everywhere: Markdown + YAML frontmatter (`vault.rs`).
+//!   The native backend is a Grain-managed vault under
+//!   `{app_data_dir}/grain_space/notes/`; the obsidian backend is a
+//!   user-chosen vault. The per-backend SQLite index (FTS5 + sqlite-vec) is
+//!   derived and rebuildable; embeddings NEVER live in the note files.
 //! - No WAL: `journal_mode=TRUNCATE` + one application-wide `Mutex` serializes
 //!   every store operation. Connections open per operation and drop — the
 //!   feature holds zero resident memory while its surfaces are closed.
@@ -15,9 +17,9 @@ pub mod backend;
 pub mod capture;
 pub mod commands;
 pub mod embed;
+pub mod note;
 pub mod recall;
 pub mod reminders;
-pub mod store;
 pub mod vault;
 pub mod window;
 

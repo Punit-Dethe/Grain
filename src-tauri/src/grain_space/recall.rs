@@ -17,7 +17,7 @@ use tauri::{AppHandle, Manager};
 
 use super::backend::{self, Backend};
 use super::capture;
-use super::store::Note;
+use super::note::Note;
 use crate::agent::{AgentMessage, AgentReply, AgentSource};
 
 /// Memories fed to the model per turn (post-fusion). Recall over precision —
@@ -1035,7 +1035,7 @@ async fn build_block_and_meta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::grain_space::store::Note;
+    use crate::grain_space::note::Note;
 
     fn note(id: &str, ts: i64) -> Note {
         let mut n = Note::raw(format!("body of {id}"));

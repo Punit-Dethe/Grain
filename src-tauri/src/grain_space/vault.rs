@@ -1,11 +1,14 @@
-//! [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md).
+//! [GRAIN] The vault store (OBSIDIAN-PLAN.md + EXECUTION-PLAN.md P1) — since
+//! the format unification, the ONLY store implementation. Both backends run
+//! this code: the native backend against a Grain-managed folder in app data,
+//! the obsidian backend against a user-chosen vault.
 //!
-//! Notes are plain Markdown files in a user-chosen vault. Grain-owned notes
-//! (created by capture) carry a flat YAML frontmatter block with a `grain_id`
-//! and land under the configurable Grain subfolder; every other `.md` in the
-//! vault is a **foreign** note — searchable and readable, but never written
-//! (v1 read-only rule: Grain must not race an Obsidian editor buffer it
-//! doesn't own).
+//! Notes are plain Markdown files. Grain-owned notes (created by capture)
+//! carry a flat YAML frontmatter block with a `grain_id` and land under the
+//! configurable Grain subfolder (the vault root itself for the native
+//! backend); every other `.md` in the vault is a **foreign** note —
+//! searchable and readable, but never written (v1 read-only rule: Grain must
+//! not race an Obsidian editor buffer it doesn't own).
 //!
 //! The derived index (`vault_index.sqlite`, FTS5 + sqlite-vec) lives in
 //! Grain's app-data dir, NEVER inside the vault. It is refreshed by a lazy
@@ -22,7 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use super::store::{Note, ReminderState, ReminderStatus, TodoTag};
+use super::note::{Note, ReminderState, ReminderStatus, TodoTag};
 
 /// One application-wide lock serializing every vault read/write and index op
 /// (same concurrency directive as the grain store: no WAL, single writer).
@@ -35,16 +38,50 @@ pub struct Vault {
     pub root: PathBuf,
     pub folder: String,
     pub index_base: PathBuf,
+    /// Native = the Grain-managed vault in app data (auto-created; every note
+    /// is grain-owned in practice). False = a user-chosen Obsidian vault.
+    pub native: bool,
 }
 
 impl Vault {
+    /// The user-chosen Obsidian vault backend.
+    pub fn obsidian(root: PathBuf, folder: String, index_base: PathBuf) -> Self {
+        Vault {
+            root,
+            folder,
+            index_base,
+            native: false,
+        }
+    }
+
+    /// The native backend: a Grain-managed vault at `{app_data}/grain_space/
+    /// notes/` (the pre-unification JSON dir — migration folds the old files
+    /// into it in place). Notes land flat in the root (no subfolder).
+    pub fn native(base: PathBuf) -> Self {
+        Vault {
+            root: base.join("notes"),
+            folder: String::new(),
+            index_base: base,
+            native: true,
+        }
+    }
+
+    /// Per-backend index files so switching backends never mixes corpora.
     fn index_path(&self) -> PathBuf {
-        self.index_base.join("vault_index.sqlite")
+        self.index_base.join(if self.native {
+            "native_index.sqlite"
+        } else {
+            "vault_index.sqlite"
+        })
     }
 
     /// The only directory Grain creates files in.
     fn grain_dir(&self) -> PathBuf {
-        self.root.join(&self.folder)
+        if self.folder.is_empty() {
+            self.root.clone()
+        } else {
+            self.root.join(&self.folder)
+        }
     }
 
     fn abs(&self, rel: &str) -> PathBuf {
@@ -477,7 +514,7 @@ fn file_mtime_ms(path: &Path) -> Option<i64> {
 /// Same shape as the grain store's index plus the vault columns: the file the
 /// row mirrors and the (mtime, size) fingerprint reconcile compares against.
 fn open_index(v: &Vault) -> Result<Connection> {
-    super::store::ensure_vec_extension();
+    super::note::ensure_vec_extension();
     fs::create_dir_all(&v.index_base).context("create grain_space dir")?;
     let conn = Connection::open(v.index_path()).context("open vault index")?;
     conn.pragma_update(None, "journal_mode", "TRUNCATE")?;
@@ -580,7 +617,7 @@ fn index_remove(conn: &Connection, id: &str) -> Result<()> {
     conn.execute("DELETE FROM notes_meta WHERE id = ?1", params![id])?;
     conn.execute("DELETE FROM notes_fts WHERE id = ?1", params![id])?;
     if vec_table_exists(conn) {
-        conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id])?;
+        purge_note_vectors(conn, id)?;
     }
     Ok(())
 }
@@ -658,9 +695,10 @@ fn walk_vault(root: &Path) -> Result<Vec<(String, i64, i64)>> {
 /// Called with `VAULT_LOCK` held.
 fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
     let disk = walk_vault(&v.root)?;
-    let mut indexed: HashMap<String, (String, i64, i64)> = HashMap::new();
+    let mut indexed: HashMap<String, (String, i64, i64, bool)> = HashMap::new();
     {
-        let mut stmt = conn.prepare("SELECT path, id, mtime, size FROM notes_meta")?;
+        let mut stmt =
+            conn.prepare("SELECT path, id, mtime, size, foreign_note FROM notes_meta")?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -668,6 +706,7 @@ fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
                     r.get::<_, String>(1)?,
                     r.get::<_, i64>(2)?,
                     r.get::<_, i64>(3)?,
+                    r.get::<_, i64>(4)? != 0,
                 ),
             ))
         })?;
@@ -677,8 +716,12 @@ fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
         }
     }
 
+    // Foreign files first seen this pass, as (new_id, content_hash) — the
+    // candidate pool for rename detection in the vanished sweep below.
+    let mut added_foreign: Vec<(String, [u8; 32])> = Vec::new();
+
     for (rel, mtime, size) in &disk {
-        if let Some((_, im, is)) = indexed.get(rel) {
+        if let Some((_, im, is, _)) = indexed.get(rel) {
             if im == mtime && is == size {
                 indexed.remove(rel);
                 continue;
@@ -693,25 +736,99 @@ fn reconcile_locked(v: &Vault, conn: &Connection) -> Result<()> {
                 continue;
             }
         };
+        let newly_tracked = !indexed.contains_key(rel);
         let (note, grain_owned) = read_md_note(rel, &text, *mtime);
         index_upsert(conn, &note, rel, *mtime, *size, !grain_owned, &text)?;
+        if newly_tracked && !grain_owned {
+            added_foreign.push((note.id.clone(), Sha256::digest(text.as_bytes()).into()));
+        }
         indexed.remove(rel);
         // A moved/renamed grain note keeps its id: the upsert re-pathed the
         // row, so its OLD path entry must not survive into the vanished sweep
         // below (it would delete the note we just re-indexed).
-        indexed.retain(|_, (iid, _, _)| iid != &note.id);
+        indexed.retain(|_, (iid, _, _, _)| iid != &note.id);
     }
 
-    // Whatever's left in `indexed` vanished from disk.
-    for (_, (id, _, _)) in indexed {
+    // Whatever's left in `indexed` vanished from disk. A vanished FOREIGN row
+    // whose content matches a file added this pass is a rename (foreign ids
+    // are path hashes, so a rename is remove+add) — hand its embedding to the
+    // new id instead of dropping it (OBSIDIAN-PLAN §7 V3).
+    for (_, (id, _, _, foreign)) in indexed {
+        if foreign {
+            if let Err(e) = adopt_renamed_foreign(conn, &id, &mut added_foreign) {
+                log::warn!("[GRAIN] vault: rename-adopt for {id} failed: {e:#}");
+            }
+        }
         index_remove(conn, &id)?;
     }
+    Ok(())
+}
+
+/// If the vanished foreign row `old_id` has the same last-synced content as a
+/// foreign file added in this reconcile pass, move its vec rows (chunk-aware)
+/// to the new id and mark the new row fresh — a rename keeps its embedding.
+/// The title (= filename) changed, but the body dominates the embedding; the
+/// trade is a free rename vs a full re-embed.
+fn adopt_renamed_foreign(
+    conn: &Connection,
+    old_id: &str,
+    added: &mut Vec<(String, [u8; 32])>,
+) -> Result<()> {
+    if added.is_empty() || !vec_table_exists(conn) {
+        return Ok(());
+    }
+    let (content, stale): (String, i64) = conn.query_row(
+        "SELECT content, embed_stale FROM notes_meta WHERE id = ?1",
+        params![old_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    if stale != 0 || content.is_empty() {
+        return Ok(()); // nothing embedded worth carrying over
+    }
+    let hash: [u8; 32] = Sha256::digest(content.as_bytes()).into();
+    let Some(pos) = added.iter().position(|(_, h)| *h == hash) else {
+        return Ok(()); // genuinely deleted, not renamed
+    };
+    let (new_id, _) = added.remove(pos);
+
+    let rows: Vec<(String, Vec<u8>)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, embedding FROM notes_vec
+             WHERE id = ?1 OR substr(id, 1, length(?1) + 1) = ?1 || '#'",
+        )?;
+        let rows = stmt.query_map(params![old_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    if rows.is_empty() {
+        return Ok(());
+    }
+    purge_note_vectors(conn, &new_id)?; // the add pass can't have embedded yet, but be safe
+    for (key, embedding) in rows {
+        let suffix = &key[old_id.len()..]; // "" (legacy) or "#n"
+        conn.execute(
+            "INSERT INTO notes_vec (id, embedding) VALUES (?1, ?2)",
+            params![format!("{new_id}{suffix}"), embedding],
+        )?;
+    }
+    conn.execute(
+        "UPDATE notes_meta SET embed_stale = 0 WHERE id = ?1",
+        params![new_id],
+    )?;
+    log::info!("[GRAIN] vault: foreign rename detected; embedding carried {old_id} → {new_id}");
     Ok(())
 }
 
 // -- public API (mirrors store.rs; each fn: lock → reconcile → work → drop) -------
 
 fn ensure_vault(v: &Vault) -> Result<()> {
+    if v.native {
+        // The Grain-managed vault is ours to create — an empty corpus must
+        // behave like an empty store, never an error.
+        fs::create_dir_all(&v.root).context("create native notes dir")?;
+        return Ok(());
+    }
     if !v.root.is_dir() {
         return Err(anyhow!(
             "Obsidian vault folder not found: {}",
@@ -903,7 +1020,7 @@ pub fn get_note(v: &Vault, id: &str) -> Result<Note> {
 /// last index is logged (Obsidian merges our disk write on its side).
 pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     ensure_vault(v)?;
-    super::store::validate_id(&note.id)?;
+    super::note::validate_id(&note.id)?;
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
 
@@ -970,7 +1087,7 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
 /// Delete a Grain-owned note file + its index rows. Foreign notes: read-only.
 pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
     ensure_vault(v)?;
-    super::store::validate_id(id)?;
+    super::note::validate_id(id)?;
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
     match path_of(&conn, id)? {
@@ -1005,7 +1122,7 @@ pub fn set_reminder(v: &Vault, id: &str, state: ReminderState) -> Result<Note> {
 /// stays fresh — only the fingerprint and flags are updated.
 fn mutate_grain_note(v: &Vault, id: &str, apply: impl FnOnce(&mut Note)) -> Result<Note> {
     ensure_vault(v)?;
-    super::store::validate_id(id)?;
+    super::note::validate_id(id)?;
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
     // Refresh on a stale path (moved/renamed in Obsidian) before mutating.
@@ -1068,7 +1185,201 @@ pub fn rebuild_index(v: &Vault) -> Result<u32> {
     Ok(count)
 }
 
-// -- semantic search (same contract as store.rs, whole-vault corpus) --------------
+// -- legacy JSON migration (EXECUTION-PLAN.md P1) ---------------------------------
+
+/// Set once the legacy scan has converged (no `.json` left to fold in) — so
+/// the per-resolve cost drops to one atomic load for the rest of the run.
+static LEGACY_MIGRATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// One-time fold of pre-unification JSON notes into the native vault. Errors
+/// never propagate (the store must keep working) and never latch the flag, so
+/// a partial migration retries on the next resolve and converges —
+/// `save_note` is keyed on the preserved note id, so a re-run cannot
+/// duplicate anything.
+pub fn migrate_legacy_json_once(v: &Vault) {
+    use std::sync::atomic::Ordering;
+    if LEGACY_MIGRATED.load(Ordering::Relaxed) {
+        return;
+    }
+    match migrate_legacy_json(v) {
+        Ok(()) => LEGACY_MIGRATED.store(true, Ordering::Relaxed),
+        Err(e) => log::error!("[GRAIN] legacy JSON migration incomplete (will retry): {e:#}"),
+    }
+}
+
+/// The migration body: every `notes/*.json` is parsed with the locked schema,
+/// re-saved through the ONE store path (same id + timestamp ⇒ identity and
+/// ordering survive; embeddings come back lazily via `embed_stale`), and the
+/// original file moves to `notes-json-backup/` — unparseable files move there
+/// too, logged, never deleted.
+fn migrate_legacy_json(v: &Vault) -> Result<()> {
+    let dir = &v.root;
+    if !dir.is_dir() {
+        return Ok(()); // fresh install — nothing legacy
+    }
+    let mut json_files: Vec<PathBuf> = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
+        let path = entry?.path();
+        if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("json") {
+            json_files.push(path);
+        }
+    }
+    if json_files.is_empty() {
+        return Ok(());
+    }
+
+    log::info!(
+        "[GRAIN] migrating {} legacy JSON note(s) to Markdown",
+        json_files.len()
+    );
+    let backup = v.index_base.join("notes-json-backup");
+    fs::create_dir_all(&backup).context("create notes-json-backup dir")?;
+
+    for path in json_files {
+        match fs::read(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| serde_json::from_slice::<Note>(&bytes).map_err(Into::into))
+        {
+            Ok(mut note) => {
+                if note.title.trim().is_empty() {
+                    // Filename = title in the vault format; blank-title raw
+                    // captures predate the capture-side fallback — apply it now.
+                    note.title = super::capture::fallback_title(&note.body);
+                }
+                save_note(v, &note)?;
+            }
+            Err(e) => {
+                log::warn!(
+                    "[GRAIN] legacy note {} unparseable ({e:#}); preserving in backup",
+                    path.display()
+                );
+            }
+        }
+        // Parsed or not, the original is preserved (never clobbering a prior
+        // backup of the same name).
+        let name = path.file_name().unwrap_or_default().to_os_string();
+        let mut dest = backup.join(&name);
+        if dest.exists() {
+            let ts = chrono::Utc::now().timestamp_millis();
+            dest = backup.join(format!("{}.{ts}", name.to_string_lossy()));
+        }
+        fs::rename(&path, &dest).with_context(|| format!("back up {}", path.display()))?;
+    }
+
+    // The pre-unification JSON index is superseded derived data.
+    let _ = fs::remove_file(v.index_base.join("index.sqlite"));
+    Ok(())
+}
+
+// -- semantic search (same contract for both backends, whole-vault corpus) --------
+//
+// Long notes are embedded in CHUNKS (EXECUTION-PLAN.md P2, Smart-Connections
+// lesson): one whole-note vector dilutes a long vault note past retrieval.
+// Chunk vec rows are keyed `"{note_id}#{n}"` — `#` is outside the id charset
+// (`validate_id`), so a chunk key can never collide with a real id, and every
+// caller of `stale_embed_texts`/`store_embeddings` already treats the id as an
+// opaque token it zips back with the vector. KNN dedupes chunks to note level.
+
+/// Greedy chunk budget. Short notes (the overwhelmingly common capture) stay
+/// one chunk — identical retrieval behavior to the pre-chunking store.
+const CHUNK_TARGET_CHARS: usize = 1200;
+
+/// The note id a vec-row key belongs to (`"abc#2"` → `"abc"`).
+fn vec_note_id(key: &str) -> &str {
+    key.split('#').next().unwrap_or(key)
+}
+
+/// Split a body into markdown blocks (a heading starts a block, a blank line
+/// ends one) and greedily pack them into chunks of ~`CHUNK_TARGET_CHARS`.
+/// A single pathological block (wall of text) is hard-split so no chunk can
+/// blow the embed context.
+fn chunk_body(body: &str) -> Vec<String> {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut flush = |cur: &mut String, blocks: &mut Vec<String>| {
+        if !cur.trim().is_empty() {
+            blocks.push(cur.trim_end().to_string());
+        }
+        cur.clear();
+    };
+    for line in body.lines() {
+        let is_heading = line.trim_start().starts_with('#');
+        let is_blank = line.trim().is_empty();
+        if is_heading || is_blank {
+            flush(&mut cur, &mut blocks);
+        }
+        if !is_blank {
+            cur.push_str(line);
+            cur.push('\n');
+        }
+    }
+    flush(&mut cur, &mut blocks);
+
+    // Hard-split any block that alone exceeds the budget.
+    let blocks: Vec<String> = blocks
+        .into_iter()
+        .flat_map(|b| {
+            if b.chars().count() <= CHUNK_TARGET_CHARS {
+                vec![b]
+            } else {
+                b.chars()
+                    .collect::<Vec<_>>()
+                    .chunks(CHUNK_TARGET_CHARS)
+                    .map(|c| c.iter().collect::<String>())
+                    .collect()
+            }
+        })
+        .collect();
+
+    // Greedy pack.
+    let mut chunks: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_chars = 0usize;
+    for block in blocks {
+        let block_chars = block.chars().count();
+        if cur_chars > 0 && cur_chars + block_chars > CHUNK_TARGET_CHARS {
+            chunks.push(std::mem::take(&mut cur));
+            cur_chars = 0;
+        }
+        if cur_chars > 0 {
+            cur.push_str("\n\n");
+        }
+        cur.push_str(&block);
+        cur_chars += block_chars;
+    }
+    if !cur.is_empty() {
+        chunks.push(cur);
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new()); // title/tldr-only note still embeds once
+    }
+    chunks
+}
+
+/// The embed texts for one note, in chunk order. Every chunk carries the title
+/// (retrieval context); the tldr rides only on the first chunk.
+fn chunk_embed_texts(title: &str, tldr: &str, body: &str) -> Vec<String> {
+    if body.chars().count() <= CHUNK_TARGET_CHARS {
+        return vec![super::embed::note_embed_text(title, tldr, body)];
+    }
+    chunk_body(body)
+        .into_iter()
+        .enumerate()
+        .map(|(i, chunk)| {
+            super::embed::note_embed_text(title, if i == 0 { tldr } else { "" }, &chunk)
+        })
+        .collect()
+}
+
+/// Delete every vec row belonging to `note_id` — the plain legacy key and all
+/// `id#n` chunk keys. `substr` (not LIKE) so `_` in ids can't wildcard-match.
+fn purge_note_vectors(conn: &Connection, note_id: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM notes_vec WHERE id = ?1 OR substr(id, 1, length(?1) + 1) = ?1 || '#'",
+        params![note_id],
+    )?;
+    Ok(())
+}
 
 pub fn stale_embed_texts(v: &Vault) -> Result<Vec<(String, String)>> {
     ensure_vault(v)?;
@@ -1084,10 +1395,14 @@ pub fn stale_embed_texts(v: &Vault) -> Result<Vec<(String, String)>> {
     let mut out = Vec::with_capacity(rows.len());
     for (id, rel) in rows {
         match read_note_at(v, &rel) {
-            Ok(note) => out.push((
-                id,
-                super::embed::note_embed_text(&note.title, &note.tldr, &note.body),
-            )),
+            Ok(note) => {
+                for (i, text) in chunk_embed_texts(&note.title, &note.tldr, &note.body)
+                    .into_iter()
+                    .enumerate()
+                {
+                    out.push((format!("{id}#{i}"), text));
+                }
+            }
             Err(e) => {
                 log::warn!("[GRAIN] vault stale-embed {id} unreadable: {e:#}");
                 index_remove(&conn, &id)?;
@@ -1102,21 +1417,39 @@ pub fn store_embeddings(v: &Vault, items: &[(String, Vec<f32>)]) -> Result<()> {
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
     ensure_vec_table(&conn)?;
-    for (id, embedding) in items {
-        if !embedding.iter().all(|x| x.is_finite()) || embedding.iter().all(|&x| x == 0.0) {
+
+    // Group chunk rows per note so a note is stored all-or-nothing: one bad
+    // chunk vector leaves the WHOLE note stale (it retries next pass) instead
+    // of half-embedded with its stale flag cleared.
+    let mut by_note: Vec<(&str, Vec<&(String, Vec<f32>)>)> = Vec::new();
+    for item in items {
+        let note_id = vec_note_id(&item.0);
+        match by_note.last_mut() {
+            Some((id, group)) if *id == note_id => group.push(item),
+            _ => by_note.push((note_id, vec![item])),
+        }
+    }
+
+    for (note_id, group) in by_note {
+        let all_ok = group
+            .iter()
+            .all(|(_, e)| e.iter().all(|x| x.is_finite()) && !e.iter().all(|&x| x == 0.0));
+        if !all_ok {
             log::error!(
-                "[GRAIN] vault: refusing non-finite/zero embedding for {id}; leaving stale"
+                "[GRAIN] vault: refusing non-finite/zero embedding for {note_id}; leaving stale"
             );
             continue;
         }
-        conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id])?;
-        conn.execute(
-            "INSERT INTO notes_vec (id, embedding) VALUES (?1, ?2)",
-            params![id, embedding.as_slice().as_bytes()],
-        )?;
+        purge_note_vectors(&conn, note_id)?;
+        for (key, embedding) in group {
+            conn.execute(
+                "INSERT INTO notes_vec (id, embedding) VALUES (?1, ?2)",
+                params![key, embedding.as_slice().as_bytes()],
+            )?;
+        }
         conn.execute(
             "UPDATE notes_meta SET embed_stale = 0 WHERE id = ?1",
-            params![id],
+            params![note_id],
         )?;
     }
     Ok(())
@@ -1145,18 +1478,39 @@ pub fn semantic_search_ranged(
     let conn = open_index(v)?;
     ensure_vec_table(&conn)?;
 
+    // Chunked corpus: pull a wider KNN pool (a long note may occupy several
+    // of the nearest slots), then dedupe chunk hits to note level — the best
+    // (nearest) chunk speaks for its note.
     let hits: Vec<(String, Option<f64>)> = {
         let mut stmt = conn.prepare(
             "SELECT id, distance FROM notes_vec
              WHERE embedding MATCH ?1
              ORDER BY distance
-             LIMIT 24",
+             LIMIT 48",
         )?;
         let rows = stmt.query_map(params![query_embedding.as_bytes()], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<f64>>(1)?))
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
+
+    let mut best: Vec<(String, f64)> = Vec::with_capacity(hits.len());
+    for (key, distance) in hits {
+        let note_id = vec_note_id(&key).to_string();
+        let Some(distance) = distance else {
+            log::warn!("[GRAIN] vault: NULL distance for {key}; marking stale");
+            let _ = conn.execute(
+                "UPDATE notes_meta SET embed_stale = 1 WHERE id = ?1",
+                params![note_id],
+            );
+            let _ = conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![key]);
+            continue;
+        };
+        match best.iter_mut().find(|(id, _)| *id == note_id) {
+            Some((_, d)) => *d = d.min(distance),
+            None => best.push((note_id, distance)),
+        }
+    }
 
     let now = chrono::Utc::now().timestamp_millis();
     let lambda_per_ms = if half_life_days == 0 {
@@ -1165,17 +1519,8 @@ pub fn semantic_search_ranged(
         std::f64::consts::LN_2 / (half_life_days as f64 * 24.0 * 60.0 * 60.0 * 1000.0)
     };
 
-    let mut scored: Vec<(f64, Note)> = Vec::with_capacity(hits.len());
-    for (id, distance) in hits {
-        let Some(distance) = distance else {
-            log::warn!("[GRAIN] vault: NULL distance for {id}; marking stale");
-            let _ = conn.execute(
-                "UPDATE notes_meta SET embed_stale = 1 WHERE id = ?1",
-                params![id],
-            );
-            let _ = conn.execute("DELETE FROM notes_vec WHERE id = ?1", params![id]);
-            continue;
-        };
+    let mut scored: Vec<(f64, Note)> = Vec::with_capacity(best.len());
+    for (id, distance) in best {
         let Some((rel, _)) = path_of(&conn, &id)? else {
             continue;
         };
@@ -1220,6 +1565,7 @@ mod tests {
             root: dir.join("vault"),
             folder: "Grain".to_string(),
             index_base: dir.join("appdata"),
+            native: false,
         }
     }
 
@@ -1547,14 +1893,16 @@ mod tests {
         fs::write(v.root.join("Report.md"), "quarterly report").unwrap();
 
         let stale = stale_embed_texts(&v).unwrap();
-        assert_eq!(stale.len(), 2); // grain + foreign both embed
+        assert_eq!(stale.len(), 2); // grain + foreign both embed (one chunk each)
 
         let ids: Vec<String> = stale.iter().map(|(id, _)| id.clone()).collect();
+        // Short notes are a single chunk, keyed "{id}#0".
+        assert!(ids.iter().all(|k| k.ends_with("#0")));
         let mut va = vec![0.0f32; 384];
         va[0] = 1.0;
         let mut vb = vec![0.0f32; 384];
         vb[1] = 1.0;
-        let a_first = ids[0] == a.id;
+        let a_first = vec_note_id(&ids[0]) == a.id;
         let items = if a_first {
             vec![(ids[0].clone(), va.clone()), (ids[1].clone(), vb)]
         } else {
@@ -1571,6 +1919,183 @@ mod tests {
         let floored = semantic_search_ranged(&v, &va, 30, None, 0.5).unwrap();
         assert_eq!(floored.len(), 1);
         assert_eq!(floored[0].id, a.id);
+        cleanup(&v);
+    }
+
+    fn temp_native(tag: &str) -> Vault {
+        let base =
+            std::env::temp_dir().join(format!("grain_native_test_{tag}_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        Vault::native(base)
+    }
+
+    fn cleanup_native(v: &Vault) {
+        let _ = fs::remove_dir_all(&v.index_base);
+    }
+
+    #[test]
+    fn native_vault_empty_corpus_is_empty_store_and_notes_land_flat() {
+        let v = temp_native("empty");
+        // No notes dir yet — must behave like an empty store, not an error.
+        assert!(list_notes(&v).unwrap().is_empty());
+        assert!(search_notes(&v, "anything").unwrap().is_empty());
+
+        let note = grain_note("Flat Note", "native body");
+        save_note(&v, &note).unwrap();
+        // folder = "" ⇒ files land directly in the root (no subfolder).
+        assert!(v.root.join("Flat Note.md").exists());
+        assert_eq!(list_notes(&v).unwrap().len(), 1);
+        // Per-backend index file name.
+        assert!(v.index_base.join("native_index.sqlite").exists());
+        cleanup_native(&v);
+    }
+
+    #[test]
+    fn legacy_json_migrates_to_markdown_idempotently() {
+        let v = temp_native("migrate");
+        fs::create_dir_all(&v.root).unwrap();
+
+        // Two legacy notes: one titled, one raw (blank title), plus garbage.
+        let mut titled = Note::raw("the wifi password is hunter2".to_string());
+        titled.title = "Wifi Password".into();
+        titled.is_pinned = true;
+        let raw = Note::raw("buy milk and eggs tomorrow".to_string());
+        fs::write(
+            v.root.join(format!("{}.json", titled.id)),
+            serde_json::to_vec_pretty(&titled).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            v.root.join(format!("{}.json", raw.id)),
+            serde_json::to_vec_pretty(&raw).unwrap(),
+        )
+        .unwrap();
+        fs::write(v.root.join("broken.json"), b"{ not json ").unwrap();
+
+        migrate_legacy_json(&v).unwrap();
+
+        // Same ids, markdown on disk, JSON gone from the notes dir.
+        let migrated = get_note(&v, &titled.id).unwrap();
+        assert_eq!(migrated.body, titled.body);
+        assert_eq!(migrated.timestamp, titled.timestamp);
+        assert!(migrated.is_pinned);
+        let raw_migrated = get_note(&v, &raw.id).unwrap();
+        // Blank title got the capture fallback (filename = title).
+        assert!(!raw_migrated.title.trim().is_empty());
+        assert!(v.root.join("Wifi Password.md").exists());
+        assert!(!v.root.join(format!("{}.json", titled.id)).exists());
+
+        // Everything (including the unparseable file) is preserved in backup.
+        let backup = v.index_base.join("notes-json-backup");
+        assert!(backup.join(format!("{}.json", titled.id)).exists());
+        assert!(backup.join("broken.json").exists());
+
+        // Idempotent: a second run finds nothing to do and duplicates nothing.
+        migrate_legacy_json(&v).unwrap();
+        assert_eq!(list_notes(&v).unwrap().len(), 2);
+        assert_eq!(search_notes(&v, "hunter2").unwrap().len(), 1);
+        cleanup_native(&v);
+    }
+
+    #[test]
+    fn long_notes_chunk_and_knn_dedupes_to_note_level() {
+        let v = temp_vault("chunks");
+
+        // A long note: three heading-separated sections, each well under the
+        // budget alone but together far over it → multiple chunks.
+        let section = "word ".repeat(160); // ~800 chars
+        let body = format!("# Alpha\n{section}\n# Beta\n{section}\n# Gamma\n{section}");
+        let long = grain_note("Long Note", &body);
+        save_note(&v, &long).unwrap();
+        let short = grain_note("Short Note", "just a line");
+        save_note(&v, &short).unwrap();
+
+        let stale = stale_embed_texts(&v).unwrap();
+        let long_keys: Vec<&String> = stale
+            .iter()
+            .map(|(k, _)| k)
+            .filter(|k| vec_note_id(k) == long.id)
+            .collect();
+        assert!(long_keys.len() >= 2, "long note must chunk: {long_keys:?}");
+        // Every chunk text carries the title; the tldr only rides chunk 0.
+        for (k, text) in &stale {
+            if vec_note_id(k) == long.id {
+                assert!(text.contains("Long Note"));
+                assert_eq!(text.contains("Summary of Long Note."), k.ends_with("#0"));
+            }
+        }
+
+        // Distinct unit vectors per chunk; the SECOND chunk is the good match.
+        let items: Vec<(String, Vec<f32>)> = stale
+            .iter()
+            .enumerate()
+            .map(|(i, (k, _))| {
+                let mut e = vec![0.0f32; 384];
+                e[i] = 1.0;
+                (k.clone(), e)
+            })
+            .collect();
+        store_embeddings(&v, &items).unwrap();
+        assert!(stale_embed_texts(&v).unwrap().is_empty());
+
+        let chunk1_key = format!("{}#1", long.id);
+        let query = &items.iter().find(|(k, _)| *k == chunk1_key).unwrap().1;
+        let hits = semantic_search(&v, query, 30).unwrap();
+        // The long note appears ONCE (deduped), ranked first (cos 1.0 chunk).
+        assert_eq!(hits.iter().filter(|n| n.id == long.id).count(), 1);
+        assert_eq!(hits[0].id, long.id);
+
+        // Deleting the note removes every chunk row.
+        delete_note(&v, &long.id).unwrap();
+        let after = semantic_search(&v, query, 30).unwrap();
+        assert!(after.iter().all(|n| n.id != long.id));
+        cleanup(&v);
+    }
+
+    #[test]
+    fn chunk_body_packs_blocks_and_hard_splits_walls() {
+        // Small body → single chunk path (chunk_embed_texts short-circuits).
+        assert_eq!(chunk_embed_texts("T", "S", "tiny body").len(), 1);
+
+        // Heading-separated blocks pack greedily under the budget.
+        let chunks = chunk_body("# A\none\n\n# B\ntwo");
+        assert_eq!(chunks.len(), 1); // tiny blocks pack together
+
+        // A wall of text with no breaks still splits.
+        let wall = "x".repeat(CHUNK_TARGET_CHARS * 3);
+        let chunks = chunk_body(&wall);
+        assert!(chunks.len() >= 3);
+        assert!(chunks
+            .iter()
+            .all(|c| c.chars().count() <= CHUNK_TARGET_CHARS));
+    }
+
+    #[test]
+    fn foreign_rename_keeps_embedding() {
+        let v = temp_vault("rename");
+        fs::write(v.root.join("Original.md"), "unique foreign content here").unwrap();
+        let stale = stale_embed_texts(&v).unwrap();
+        assert_eq!(stale.len(), 1);
+        let old_key = stale[0].0.clone();
+        let old_id = vec_note_id(&old_key).to_string();
+        let mut e = vec![0.0f32; 384];
+        e[0] = 1.0;
+        store_embeddings(&v, &[(old_key, e.clone())]).unwrap();
+        assert!(stale_embed_texts(&v).unwrap().is_empty());
+
+        // The user renames the file in Obsidian: the path-hash id changes.
+        fs::rename(v.root.join("Original.md"), v.root.join("Renamed.md")).unwrap();
+
+        // The next retrieval reconciles: content-match adopts the embedding —
+        // nothing to re-embed, and KNN finds the note under its new identity.
+        assert!(
+            stale_embed_texts(&v).unwrap().is_empty(),
+            "rename must not force a re-embed"
+        );
+        let hits = semantic_search(&v, &e, 30).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].title, "Renamed");
+        assert_ne!(hits[0].id, old_id);
         cleanup(&v);
     }
 

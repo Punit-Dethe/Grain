@@ -15,7 +15,7 @@ use tauri::AppHandle;
 use tauri_plugin_notification::NotificationExt;
 
 use super::backend;
-use super::store::{Note, ReminderStatus};
+use super::note::{Note, ReminderStatus};
 
 /// Bumped on every sync; a parked timer only acts if it still holds the
 /// latest generation.

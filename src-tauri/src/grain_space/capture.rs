@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use serde::Deserialize;
 use tauri::{AppHandle, Manager};
 
-use super::store::{Note, ReminderState, ReminderStatus, TodoTag};
+use super::note::{Note, ReminderState, ReminderStatus, TodoTag};
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 
 /// Input C debounce: OS key-repeat / double taps within this window are one add.
