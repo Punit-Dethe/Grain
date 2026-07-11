@@ -1055,6 +1055,83 @@ pub fn search_notes_ranged(v: &Vault, query: &str, range: Option<(i64, i64)>) ->
     }
 }
 
+/// Function words that carry no retrieval signal. A natural-language recall
+/// question ("what was the wifi password for the cabin we rented") is mostly
+/// these; under FTS5's implicit-AND they force zero hits. Small and
+/// conservative on purpose — dropping a real content word costs recall.
+const STOPWORDS: [&str; 52] = [
+    "a", "an", "the", "is", "am", "are", "was", "were", "be", "been", "being", "do", "does",
+    "did", "have", "has", "had", "i", "me", "my", "mine", "we", "us", "our", "you", "your",
+    "he", "she", "it", "its", "they", "them", "their", "what", "which", "who", "whom", "whose",
+    "when", "where", "how", "that", "this", "these", "those", "and", "or", "of", "to", "in",
+    "on", "for",
+];
+
+/// Build the OR-semantics FTS5 query for a natural-language question: drop
+/// stopwords, keep alphanumeric content terms (length ≥ 2) as quoted prefix
+/// tokens joined with OR. `None` when nothing survives (the caller's FTS leg
+/// then contributes no candidates; the semantic leg still runs).
+fn natural_fts_query(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .filter(|t| t.chars().any(char::is_alphanumeric))
+        .map(|t| t.to_lowercase())
+        .filter(|t| t.chars().count() >= 2 && !STOPWORDS.contains(&t.as_str()))
+        .map(|t| format!("\"{}\"*", t.replace('"', "\"\"")))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" OR "))
+    }
+}
+
+/// FTS for a NATURAL-LANGUAGE question (the recall path): stopword-filtered
+/// content terms with OR semantics, ranked by BM25 (title 10× / tldr 5× /
+/// body 1×). Where `search_notes_ranged`'s implicit-AND suits search-as-you-
+/// type precision, a spoken question must match on ANY informative word and
+/// let ranking sort it out — with AND, one non-matching filler word zeroes
+/// the whole leg. Capped: OR over a big vault matches broadly, the caller
+/// fuses ranked lists, and only the head matters.
+pub fn search_notes_natural(v: &Vault, query: &str, range: Option<(i64, i64)>) -> Result<Vec<Note>> {
+    ensure_vault(v)?;
+    let Some(fts_query) = natural_fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+
+    let rels: Vec<String> = match range {
+        Some((lo, hi)) => {
+            let mut stmt = conn.prepare(
+                "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
+                 WHERE notes_fts MATCH ?1 AND m.timestamp BETWEEN ?2 AND ?3 \
+                 ORDER BY bm25(notes_fts, 1.0, 10.0, 5.0, 1.0) LIMIT 24",
+            )?;
+            let rows = stmt.query_map(params![fts_query, lo, hi], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        }
+        None => {
+            let mut stmt = conn.prepare(
+                "SELECT m.path FROM notes_fts f JOIN notes_meta m ON f.id = m.id \
+                 WHERE notes_fts MATCH ?1 \
+                 ORDER BY bm25(notes_fts, 1.0, 10.0, 5.0, 1.0) LIMIT 24",
+            )?;
+            let rows = stmt.query_map(params![fts_query], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        }
+    };
+    let mut out = Vec::with_capacity(rels.len());
+    for rel in rels {
+        match read_note_at(v, &rel) {
+            Ok(note) => out.push(note),
+            Err(e) => log::warn!("[GRAIN] vault natural search hit unreadable: {e:#}"),
+        }
+    }
+    Ok(out)
+}
+
 /// True when the vault has any indexed note at all (grain-owned OR foreign) —
 /// so recall over a vault of purely foreign Obsidian notes still runs.
 pub fn has_any_notes(v: &Vault) -> Result<bool> {
@@ -1380,10 +1457,10 @@ fn vec_note_id(key: &str) -> &str {
 /// ends one) and greedily pack them into chunks of ~`CHUNK_TARGET_CHARS`.
 /// A single pathological block (wall of text) is hard-split so no chunk can
 /// blow the embed context.
-fn chunk_body(body: &str) -> Vec<String> {
+pub(crate) fn chunk_body(body: &str) -> Vec<String> {
     let mut blocks: Vec<String> = Vec::new();
     let mut cur = String::new();
-    let mut flush = |cur: &mut String, blocks: &mut Vec<String>| {
+    let flush = |cur: &mut String, blocks: &mut Vec<String>| {
         if !cur.trim().is_empty() {
             blocks.push(cur.trim_end().to_string());
         }
@@ -1637,6 +1714,52 @@ pub fn semantic_search_ranged(
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     Ok(scored.into_iter().map(|(_, note)| note).collect())
+}
+
+/// EXACT cosine of the query against a specific set of notes, from their
+/// STORED chunk vectors (best chunk speaks for its note) — the reranker's
+/// semantic evidence. Where the KNN above surfaces the global top-K, this
+/// scores an arbitrary candidate pool (e.g. FTS hits that never reached the
+/// KNN head), so every candidate gets true semantic evidence, not just a rank.
+/// Both sides are L2-normalized ⇒ cosine is a dot product. Notes with no
+/// stored vector (embed-stale, or semantic just enabled) are simply absent
+/// from the map — the caller treats that as "no evidence", never as 0.
+pub fn note_similarities(
+    v: &Vault,
+    note_ids: &[String],
+    query_embedding: &[f32],
+) -> Result<HashMap<String, f64>> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    ensure_vec_table(&conn)?;
+
+    let mut out: HashMap<String, f64> = HashMap::new();
+    let mut stmt = conn.prepare(
+        "SELECT id, embedding FROM notes_vec
+         WHERE id = ?1 OR substr(id, 1, length(?1) + 1) = ?1 || '#'",
+    )?;
+    for note_id in note_ids {
+        let rows = stmt.query_map(params![note_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        for row in rows {
+            let (_, blob) = row?;
+            if blob.len() != query_embedding.len() * 4 {
+                continue; // foreign-dim row (never expected) — no evidence
+            }
+            let cos: f64 = blob
+                .chunks_exact(4)
+                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f64)
+                .zip(query_embedding.iter())
+                .map(|(x, q)| x * (*q as f64))
+                .sum();
+            out.entry(note_id.clone())
+                .and_modify(|best| *best = best.max(cos))
+                .or_insert(cos);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -2255,6 +2378,73 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].title, "Renamed");
         assert_ne!(hits[0].id, old_id);
+        cleanup(&v);
+    }
+
+    #[test]
+    fn natural_query_drops_stopwords_and_ors_content_terms() {
+        // A spoken question keeps only its informative words, OR-joined.
+        let q = natural_fts_query("what was the wifi password for the cabin").unwrap();
+        assert_eq!(q, "\"wifi\"* OR \"password\"* OR \"cabin\"*");
+        // Pure function words → no query at all (the FTS leg sits out).
+        assert!(natural_fts_query("what was it").is_none());
+        // Embedded quotes are doubled (FTS5 escaping), not query-breaking.
+        assert_eq!(
+            natural_fts_query("say \"hello\"").unwrap(),
+            "\"say\"* OR \"\"\"hello\"\"\"*"
+        );
+    }
+
+    #[test]
+    fn natural_search_survives_filler_words_where_and_fails() {
+        let v = temp_vault("natural");
+        let note = grain_note("Wifi password", "the wifi password is interstellar");
+        save_note(&v, &note).unwrap();
+
+        // The AND matcher requires EVERY word — a natural question misses.
+        let question = "what was the wifi password for the cabin we rented";
+        assert!(search_notes(&v, question).unwrap().is_empty());
+        // The OR leg finds it.
+        let hits = search_notes_natural(&v, question, None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, note.id);
+        // Date pre-filter still applies.
+        let outside = search_notes_natural(&v, question, Some((0, 10))).unwrap();
+        assert!(outside.is_empty());
+        cleanup(&v);
+    }
+
+    #[test]
+    fn note_similarities_scores_best_chunk_per_note() {
+        let v = temp_vault("exact_cos");
+        let a = grain_note("Alpha", "alpha body");
+        save_note(&v, &a).unwrap();
+        let b = grain_note("Beta", "beta body");
+        save_note(&v, &b).unwrap();
+        let stale = stale_embed_texts(&v).unwrap();
+
+        // a gets axis-0, b gets a 45° vector in the 0-1 plane.
+        let mut e_a = vec![0.0f32; 384];
+        e_a[0] = 1.0;
+        let mut e_b = vec![0.0f32; 384];
+        e_b[0] = 0.7071;
+        e_b[1] = 0.7071;
+        let items: Vec<(String, Vec<f32>)> = stale
+            .iter()
+            .map(|(k, _)| {
+                let e = if vec_note_id(k) == a.id { e_a.clone() } else { e_b.clone() };
+                (k.clone(), e)
+            })
+            .collect();
+        store_embeddings(&v, &items).unwrap();
+
+        // Query along axis 0: cos(a)=1.0, cos(b)≈0.707; the unembedded id is
+        // simply absent (no evidence ≠ zero).
+        let ids = vec![a.id.clone(), b.id.clone(), "missing".to_string()];
+        let sims = note_similarities(&v, &ids, &e_a).unwrap();
+        assert!((sims[&a.id] - 1.0).abs() < 1e-4);
+        assert!((sims[&b.id] - 0.7071).abs() < 1e-3);
+        assert!(!sims.contains_key("missing"));
         cleanup(&v);
     }
 

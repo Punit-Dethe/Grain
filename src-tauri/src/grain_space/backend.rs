@@ -67,12 +67,23 @@ pub fn search_notes(b: &Backend, query: &str) -> Result<Vec<Note>> {
     vault::search_notes(b, query)
 }
 
-pub fn search_notes_ranged(
+/// Natural-language FTS (the recall path): stopword-filtered OR semantics,
+/// BM25-ranked — a spoken question must never be zeroed by one filler word.
+pub fn search_notes_natural(
     b: &Backend,
     query: &str,
     range: Option<(i64, i64)>,
 ) -> Result<Vec<Note>> {
-    vault::search_notes_ranged(b, query, range)
+    vault::search_notes_natural(b, query, range)
+}
+
+/// Exact stored-vector cosine for a candidate pool (reranker evidence).
+pub fn note_similarities(
+    b: &Backend,
+    note_ids: &[String],
+    query_embedding: &[f32],
+) -> Result<std::collections::HashMap<String, f64>> {
+    vault::note_similarities(b, note_ids, query_embedding)
 }
 
 pub fn get_note(b: &Backend, id: &str) -> Result<Note> {

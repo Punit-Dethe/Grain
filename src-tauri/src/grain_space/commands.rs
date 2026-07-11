@@ -384,9 +384,12 @@ pub fn grain_space_cancel_embed_model_download() -> Result<(), String> {
     Ok(())
 }
 
-/// Semantic (meaning-based) search. Spawns the engine lazily on first use —
-/// allowed only while the overlay window exists, so the weights can never
-/// outlive it. Re-embeds stale notes before serving so results stay truthful.
+/// Semantic-mode search — actually HYBRID: exact FTS ∪ meaning-based KNN,
+/// fused with Reciprocal Rank Fusion, so typing a literal title in semantic
+/// mode can never miss it (either leg alone loses queries the other wins).
+/// Spawns the engine lazily on first use — allowed only while the overlay
+/// window exists, so the weights can never outlive it. Re-embeds stale notes
+/// before serving so results stay truthful.
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_semantic_search(
@@ -427,10 +430,26 @@ pub async fn grain_space_semantic_search(
                 stale.into_iter().map(|(id, _)| id).zip(vectors).collect();
             backend::store_embeddings(&be, &items)?;
         }
-        let query_vec = super::embed::embed(vec![trimmed])?
-            .pop()
-            .ok_or_else(|| anyhow::anyhow!("empty query embedding"))?;
-        backend::semantic_search(&be, &query_vec, half_life_days)
+        // Asymmetric query embedding (BGE retrieval instruction on the query
+        // side only; stored note vectors stay bare).
+        let query_vec = super::embed::embed_query(trimmed.clone())?;
+        let semantic = backend::semantic_search(&be, &query_vec, half_life_days)?;
+        // Lexical leg: the precise as-you-type AND matcher first; if the query
+        // reads like a sentence and AND finds nothing, the stopword-filtered
+        // OR leg still contributes exact-keyword hits.
+        let mut fts = backend::search_notes(&be, &trimmed)?;
+        if fts.is_empty() {
+            fts = backend::search_notes_natural(&be, &trimmed, None)?;
+        }
+        Ok(
+            super::recall::fuse_scored(fts, semantic, HYBRID_UI_RESULTS)
+                .into_iter()
+                .map(|(note, _)| note)
+                .collect(),
+        )
     })
     .await
 }
+
+/// Result cap for the overlay's hybrid search — a sidebar list, not a corpus dump.
+const HYBRID_UI_RESULTS: usize = 40;

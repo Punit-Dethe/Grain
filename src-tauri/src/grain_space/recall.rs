@@ -49,19 +49,39 @@ const RRF_K: f64 = 60.0;
 /// to fill the top-K. FTS still contributes exact keyword matches regardless;
 /// this only gates the fuzzy semantic leg.
 ///
-/// TUNING KNOB: BGE-small has a fairly high baseline (unrelated pairs often sit
-/// ~0.35–0.45, related ≳ 0.55), so this is set at 0.45 — high enough to reject
-/// clearly-unrelated notes, low enough that a genuine loose match still passes
-/// (and FTS backs up exact-keyword hits). Raise it if noise still leaks; lower
-/// it if real matches get dropped.
-const SEMANTIC_MIN_SIMILARITY: f64 = 0.45;
-/// Reranker weights (must sum to 1.0): fused RRF rank, query-term overlap in
-/// title/tldr, and recency decay. RRF leads (it already blends lexical +
-/// semantic); overlap sharpens exact-topic hits; recency breaks near-ties
-/// toward fresher memories.
-const RERANK_W_RRF: f64 = 0.5;
-const RERANK_W_OVERLAP: f64 = 0.3;
-const RERANK_W_RECENCY: f64 = 0.2;
+/// TUNING KNOB, calibrated against the ASYMMETRIC (instruction-prefixed) query
+/// geometry via `embed::tests::query_prefix_separates_related_from_unrelated`:
+/// measured unrelated pairs sit ~0.40–0.44, a direct hit ~0.78. 0.50 rejects
+/// the measured noise band with margin while leaving half the gap for genuine
+/// loose matches (and FTS backs up exact-keyword hits regardless). Re-run that
+/// test with `--nocapture` before moving this.
+const SEMANTIC_MIN_SIMILARITY: f64 = 0.50;
+/// Reranker weights, semantic profile (must sum to 1.0): fused RRF rank,
+/// EXACT stored-vector cosine (min-max normalized within the pool), query-term
+/// overlap in title/tldr, and recency decay. RRF still leads (robust, blends
+/// both legs); the exact cosine is the true semantic evidence the pool ranks
+/// only approximate — an FTS-only candidate finally gets scored on meaning,
+/// not just its BM25 rank.
+const RERANK_W_RRF: f64 = 0.35;
+const RERANK_W_SEMANTIC: f64 = 0.25;
+const RERANK_W_OVERLAP: f64 = 0.25;
+const RERANK_W_RECENCY: f64 = 0.15;
+/// Lexical profile (semantic off / model absent / embed failed): the original
+/// three-signal blend.
+const RERANK_LEX_W_RRF: f64 = 0.5;
+const RERANK_LEX_W_OVERLAP: f64 = 0.3;
+const RERANK_LEX_W_RECENCY: f64 = 0.2;
+/// Bodies at or below this go to the model VERBATIM — the no-truncation
+/// philosophy holds for every dictated capture and normal note. Only past it
+/// (in practice: long foreign Obsidian documents) does query-aware excerpting
+/// kick in, because one 100 KB note would otherwise drown a small edge model's
+/// whole context ("lost in the middle").
+const FULL_BODY_CHARS: usize = 2800;
+/// Excerpt budget for a long note: the best-matching sections, in document
+/// order, up to about this many chars (~600 tokens). Sections come from the
+/// same markdown chunker the embeddings use, so what recall shows is aligned
+/// with what semantic search matched on.
+const EXCERPT_BUDGET_CHARS: usize = 2400;
 
 /// Grain Recall session state, held in `AgentState` and cleared on each fresh
 /// summon. `ids[i]` is the note id shown as memory `M(i+1)`; the ordering is
@@ -169,8 +189,15 @@ async fn retrieve(
     let query_owned = query.to_string();
 
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<Note>> {
-        let fts = backend::search_notes_ranged(&be_owned, &query_owned, range)?;
+        // Natural-language FTS: stopword-filtered OR semantics. A spoken
+        // question ("what was the wifi password for the cabin…") almost never
+        // matches ALL its words — implicit-AND would zero this leg exactly
+        // when recall needs it.
+        let fts = backend::search_notes_natural(&be_owned, &query_owned, range)?;
 
+        // The query vector doubles as the reranker's evidence source, so it
+        // outlives the KNN leg.
+        let mut query_vec: Option<Vec<f32>> = None;
         let semantic = if semantic_on {
             // Re-embed anything stale so semantic results reflect current
             // content (same batch the overlay's search path uses).
@@ -188,21 +215,31 @@ async fn retrieve(
                         // FTS-only for this turn rather than failing the answer.
                         log::warn!("[GRAIN] recall: embed failed ({e:#}); FTS-only this turn");
                         let pool = fuse_scored(fts, Vec::new(), CANDIDATE_POOL);
-                        return Ok(rerank(&query_owned, pool, half_life_days, TOP_K_PER_TURN));
+                        return Ok(rerank(
+                            &query_owned,
+                            pool,
+                            &std::collections::HashMap::new(),
+                            half_life_days,
+                            TOP_K_PER_TURN,
+                        ));
                     }
                 }
             }
-            match super::embed::embed(vec![query_owned.clone()]) {
-                Ok(mut v) => match v.pop() {
-                    Some(q) => backend::semantic_search_ranged(
+            // Asymmetric embedding: the query carries BGE's retrieval
+            // instruction; stored note vectors are bare (the model's intended
+            // geometry — no re-embedding needed).
+            match super::embed::embed_query(query_owned.clone()) {
+                Ok(q) => {
+                    let hits = backend::semantic_search_ranged(
                         &be_owned,
                         &q,
                         half_life_days,
                         range,
                         SEMANTIC_MIN_SIMILARITY,
-                    )?,
-                    None => Vec::new(),
-                },
+                    )?;
+                    query_vec = Some(q);
+                    hits
+                }
                 Err(e) => {
                     log::warn!("[GRAIN] recall: query embed failed ({e:#}); FTS-only");
                     Vec::new()
@@ -213,7 +250,27 @@ async fn retrieve(
         };
 
         let pool = fuse_scored(fts, semantic, CANDIDATE_POOL);
-        Ok(rerank(&query_owned, pool, half_life_days, TOP_K_PER_TURN))
+
+        // Exact re-scoring: true cosine for EVERY pool candidate from its
+        // stored chunk vectors — including FTS hits the KNN head never saw.
+        // Failure degrades to the lexical rerank profile, never the turn.
+        let sims = match &query_vec {
+            Some(q) => {
+                let ids: Vec<String> = pool.iter().map(|(n, _)| n.id.clone()).collect();
+                backend::note_similarities(&be_owned, &ids, q).unwrap_or_else(|e| {
+                    log::warn!("[GRAIN] recall: exact re-score failed ({e:#})");
+                    std::collections::HashMap::new()
+                })
+            }
+            None => std::collections::HashMap::new(),
+        };
+        Ok(rerank(
+            &query_owned,
+            pool,
+            &sims,
+            half_life_days,
+            TOP_K_PER_TURN,
+        ))
     })
     .await?
 }
@@ -222,7 +279,7 @@ async fn retrieve(
 /// (0-based rank, k=60). Returns the top `k` notes PAIRED WITH their fused
 /// score (the reranker needs the raw score). Deterministic: ties break by
 /// newest timestamp (HashMap iteration is not ordered).
-fn fuse_scored(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<(Note, f64)> {
+pub(crate) fn fuse_scored(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<(Note, f64)> {
     use std::collections::HashMap;
     let mut score: HashMap<String, f64> = HashMap::new();
     let mut notes: HashMap<String, Note> = HashMap::new();
@@ -264,11 +321,21 @@ fn fuse(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<Note> {
 }
 
 /// Stage-2 reranker (SEARCH-OVERHAUL S1, heuristic — no second model). Re-scores
-/// the fused candidate pool by a weighted blend of: normalized RRF score,
-/// query-term overlap in title/tldr, and recency decay (`exp(-λΔt)`, pinned
-/// notes treated as fresh). Deterministic and testable; ties break toward the
-/// newer memory. Returns the top `k` notes.
-fn rerank(query: &str, pool: Vec<(Note, f64)>, half_life_days: u32, k: usize) -> Vec<Note> {
+/// the fused candidate pool by a weighted blend of: normalized RRF score, EXACT
+/// stored-vector cosine (`sims`, min-max normalized within the pool so it
+/// self-calibrates to whatever range the model produces), query-term overlap in
+/// title/tldr, and recency decay (`exp(-λΔt)`, pinned notes treated as fresh).
+/// With no semantic evidence at all it falls back to the lexical weight
+/// profile; a candidate MISSING from a non-empty `sims` (no stored vector yet)
+/// scores a neutral 0.5 — absence of evidence is not evidence of irrelevance.
+/// Deterministic and testable; ties break toward the newer memory. Top `k`.
+fn rerank(
+    query: &str,
+    pool: Vec<(Note, f64)>,
+    sims: &std::collections::HashMap<String, f64>,
+    half_life_days: u32,
+    k: usize,
+) -> Vec<Note> {
     if pool.is_empty() {
         return Vec::new();
     }
@@ -277,6 +344,21 @@ fn rerank(query: &str, pool: Vec<(Note, f64)>, half_life_days: u32, k: usize) ->
         .map(|(_, s)| *s)
         .fold(0.0_f64, f64::max)
         .max(f64::MIN_POSITIVE);
+
+    let (sim_min, sim_max) = sims
+        .values()
+        .fold((f64::MAX, f64::MIN), |(lo, hi), &c| (lo.min(c), hi.max(c)));
+    let sims_spread = !sims.is_empty() && sim_max > sim_min;
+    let (w_rrf, w_sem, w_overlap, w_recency) = if sims.is_empty() {
+        (RERANK_LEX_W_RRF, 0.0, RERANK_LEX_W_OVERLAP, RERANK_LEX_W_RECENCY)
+    } else {
+        (
+            RERANK_W_RRF,
+            RERANK_W_SEMANTIC,
+            RERANK_W_OVERLAP,
+            RERANK_W_RECENCY,
+        )
+    };
 
     let terms = query_terms(query);
     let now_ms = chrono::Utc::now().timestamp_millis();
@@ -290,6 +372,10 @@ fn rerank(query: &str, pool: Vec<(Note, f64)>, half_life_days: u32, k: usize) ->
         .into_iter()
         .map(|(note, rrf)| {
             let norm_rrf = rrf / max_rrf;
+            let semantic = match sims.get(&note.id) {
+                Some(c) if sims_spread => (c - sim_min) / (sim_max - sim_min),
+                _ => 0.5, // no vector / no spread — neutral
+            };
             let overlap = term_overlap(&terms, &note);
             let age_ms = if note.is_pinned {
                 0.0
@@ -297,8 +383,10 @@ fn rerank(query: &str, pool: Vec<(Note, f64)>, half_life_days: u32, k: usize) ->
                 (now_ms - note.timestamp).max(0) as f64
             };
             let recency = (-lambda_per_ms * age_ms).exp();
-            let final_score =
-                RERANK_W_RRF * norm_rrf + RERANK_W_OVERLAP * overlap + RERANK_W_RECENCY * recency;
+            let final_score = w_rrf * norm_rrf
+                + w_sem * semantic
+                + w_overlap * overlap
+                + w_recency * recency;
             (final_score, note)
         })
         .collect();
@@ -334,8 +422,83 @@ fn term_overlap(terms: &[String], note: &Note) -> f64 {
 
 // -- memories block -------------------------------------------------------------
 
-/// Render one memory as an `[Mn] …` block entry with a human-readable saved-age.
-fn render_memory(m: usize, note: &Note, now_ms: i64) -> String {
+/// Fraction of query terms present in `text` (lowercased containment).
+fn text_overlap(terms: &[String], text: &str) -> f64 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let hay = text.to_lowercase();
+    let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
+    hits as f64 / terms.len() as f64
+}
+
+/// Query-aware excerpt of a LONG body: pick the sections (same markdown
+/// chunker the embeddings use) that best match the query terms, within
+/// `EXCERPT_BUDGET_CHARS`, re-joined in document order with `[…]` gap markers.
+/// The first section gets a small bonus (a note's opening usually carries its
+/// identity, and it is the deterministic fallback when no term matches).
+/// Returns `None` for bodies within `FULL_BODY_CHARS` — those go verbatim.
+fn excerpt_body(body: &str, terms: &[String]) -> Option<String> {
+    if body.chars().count() <= FULL_BODY_CHARS {
+        return None;
+    }
+    let chunks = super::vault::chunk_body(body);
+    let mut ranked: Vec<(usize, f64)> = chunks
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let bonus = if i == 0 { 0.15 } else { 0.0 };
+            (i, text_overlap(terms, c) + bonus)
+        })
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let mut used = 0usize;
+    let mut picked: Vec<usize> = Vec::new();
+    for (i, _) in &ranked {
+        let len = chunks[*i].chars().count();
+        if !picked.is_empty() && used + len > EXCERPT_BUDGET_CHARS {
+            continue;
+        }
+        picked.push(*i);
+        used += len;
+        if used >= EXCERPT_BUDGET_CHARS {
+            break;
+        }
+    }
+    picked.sort_unstable();
+
+    let mut out = String::new();
+    if picked.first().is_some_and(|&i| i > 0) {
+        out.push_str("[…]\n\n");
+    }
+    let mut prev: Option<usize> = None;
+    for i in &picked {
+        if let Some(p) = prev {
+            out.push_str(if *i > p + 1 { "\n\n[…]\n\n" } else { "\n\n" });
+        }
+        out.push_str(chunks[*i].trim());
+        prev = Some(*i);
+    }
+    if picked.last().is_some_and(|&i| i + 1 < chunks.len()) {
+        out.push_str("\n\n[…]");
+    }
+    Some(format!(
+        "(long note — showing the {} most relevant of {} sections)\n{out}",
+        picked.len(),
+        chunks.len()
+    ))
+}
+
+/// Render one memory as an `[Mn] …` block entry with a human-readable
+/// saved-age. Bodies within `FULL_BODY_CHARS` are VERBATIM (the no-truncation
+/// rule for real captures); longer ones are query-aware excerpts so a single
+/// giant vault note can't drown the model's context.
+fn render_memory(m: usize, note: &Note, now_ms: i64, terms: &[String]) -> String {
     let mut out = String::new();
     out.push_str(&format!(
         "[M{m}] saved {}",
@@ -370,10 +533,14 @@ fn render_memory(m: usize, note: &Note, now_ms: i64) -> String {
         out.push_str(&format!("Todos: {}\n", todos.join(", ")));
     }
 
-    // Strict no-truncation policy: the FULL body goes to the model. Truncating
-    // risks cutting the exact fact the user is asking about; we trust the
-    // context window. The registry cap (`MAX_SESSION_MEMORIES`) is the bound.
-    out.push_str(note.body.trim());
+    // Bodies within `FULL_BODY_CHARS` go to the model in FULL — truncating a
+    // capture risks cutting the exact fact being asked about. Past that (long
+    // foreign vault notes) the query decides which sections are worth the
+    // context; the registry cap (`MAX_SESSION_MEMORIES`) bounds the rest.
+    match excerpt_body(note.body.trim(), terms) {
+        Some(excerpt) => out.push_str(&excerpt),
+        None => out.push_str(note.body.trim()),
+    }
     out
 }
 
@@ -597,7 +764,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
     // Build the first-pass memories block from the FULL session registry (fresh
     // read so earlier conversational edits are reflected).
     let registry = session_registry(app);
-    let (block, _) = build_block_and_meta(&be, registry).await?;
+    let (block, _) = build_block_and_meta(&be, registry, &latest).await?;
 
     // Assemble the tool-enabled conversation: the memories are prepended to the
     // LATEST user message (NOT the system prompt) so the model attends to them
@@ -617,7 +784,7 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
     // Rebuild the source map from the FINAL registry (search_memory hops may
     // have added memories) so SOURCES / ACTION M-numbers resolve to notes.
     let final_registry = session_registry(app);
-    let (_, source_meta) = build_block_and_meta(&be, final_registry).await?;
+    let (_, source_meta) = build_block_and_meta(&be, final_registry, &latest).await?;
 
     log::info!(
         "[GRAIN] recall: answered ({} memories registered, sources={:?}, not_found={}, action={:?})",
@@ -919,12 +1086,13 @@ async fn execute_search_memory(
     // Register (stable M-ids) and render with the assigned M-numbers so the
     // model can cite them exactly like the prepended block.
     let now_ms = chrono::Utc::now().timestamp_millis();
+    let terms = query_terms(&query);
     let mut rendered: Vec<String> = Vec::with_capacity(hits.len());
     if let Some(state) = app.try_state::<crate::agent::AgentState>() {
         if let Ok(mut session) = state.recall.lock() {
             for note in &hits {
                 if let Some(m) = session.register(&note.id) {
-                    rendered.push(render_memory(m, note, now_ms));
+                    rendered.push(render_memory(m, note, now_ms, &terms));
                 }
             }
         }
@@ -997,22 +1165,30 @@ fn session_registry(app: &AppHandle) -> Vec<String> {
 /// Build the memories block AND the M-number → source-meta map from a session
 /// registry, in one off-runtime pass. SOURCES/ACTION cite M-numbers, so keying
 /// by M-number (not list position) means an unreadable/skipped note never
-/// renumbers the rest.
+/// renumbers the rest. `query` steers per-memory excerpting AND the block's
+/// ORDER: entries are laid out weakest→strongest relevance so the best memory
+/// sits adjacent to the user's message ("lost in the middle" — models attend
+/// most to the edges of a context region; M-numbers are labels, not positions,
+/// so reordering is free).
 async fn build_block_and_meta(
     be: &Backend,
     registry: Vec<String>,
+    query: &str,
 ) -> Result<(String, std::collections::HashMap<usize, AgentSource>), String> {
     let be_block = be.clone();
+    let terms = query_terms(query);
     tauri::async_runtime::spawn_blocking(move || {
         use std::collections::HashMap;
         let now_ms = chrono::Utc::now().timestamp_millis();
-        let mut blocks: Vec<String> = Vec::new();
+        // (relevance, M, rendered) — sorted ascending before joining.
+        let mut blocks: Vec<(f64, usize, String)> = Vec::new();
         let mut meta: HashMap<usize, AgentSource> = HashMap::new();
         for (i, id) in registry.iter().enumerate() {
             match backend::get_note(&be_block, id) {
                 Ok(note) => {
                     let m = i + 1;
-                    blocks.push(render_memory(m, &note, now_ms));
+                    let relevance = term_overlap(&terms, &note);
+                    blocks.push((relevance, m, render_memory(m, &note, now_ms, &terms)));
                     let title = display_title(&note);
                     meta.insert(
                         m,
@@ -1026,7 +1202,17 @@ async fn build_block_and_meta(
                 Err(e) => log::warn!("[GRAIN] recall: memory {id} unreadable: {e:#}"),
             }
         }
-        (blocks.join("\n\n"), meta)
+        blocks.sort_by(|a, b| {
+            a.0.partial_cmp(&b.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.cmp(&b.1))
+        });
+        let joined = blocks
+            .into_iter()
+            .map(|(_, _, s)| s)
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        (joined, meta)
     })
     .await
     .map_err(|e| format!("recall block join error: {e}"))
@@ -1163,17 +1349,45 @@ mod tests {
     }
 
     #[test]
-    fn render_memory_keeps_full_body() {
-        // Strict no-truncation: the entire body must reach the block.
-        let mut n = note("big", 1);
-        n.body = "y".repeat(5000);
-        let out = render_memory(1, &n, 2);
-        assert!(out.contains(&"y".repeat(5000)));
+    fn render_memory_keeps_normal_bodies_verbatim() {
+        // No-truncation holds for anything a person actually dictates: bodies
+        // within FULL_BODY_CHARS reach the block untouched.
+        let mut n = note("normal", 1);
+        n.body = "y".repeat(FULL_BODY_CHARS);
+        let out = render_memory(1, &n, 2, &[]);
+        assert!(out.contains(&"y".repeat(FULL_BODY_CHARS)));
         assert!(!out.contains("[…]"));
     }
 
     #[test]
+    fn render_memory_excerpts_giant_bodies() {
+        // A wall-of-text vault note must be excerpted, not shipped whole.
+        let mut n = note("big", 1);
+        n.body = "y".repeat(8_000);
+        let out = render_memory(1, &n, 2, &[]);
+        assert!(out.contains("long note"));
+        assert!(out.len() < 4_000, "excerpt must respect the budget");
+    }
+
+    #[test]
+    fn excerpt_picks_query_matching_sections() {
+        // Sections split on blank lines; the query term sits deep in the note.
+        // The excerpt must contain that section and mark the elided gap.
+        let filler = "lorem ipsum dolor sit amet ".repeat(35); // ~945 chars
+        let body = format!(
+            "{filler}\n\n{filler}\n\n{filler}\n\n{filler}\n\nthe wifi password is interstellar\n\n{filler}"
+        );
+        let terms = query_terms("wifi password");
+        let out = excerpt_body(&body, &terms).expect("long body must excerpt");
+        assert!(out.contains("interstellar"), "matching section must survive");
+        assert!(out.contains("[…]"), "gaps must be marked");
+        // Short bodies stay verbatim.
+        assert!(excerpt_body("short note", &terms).is_none());
+    }
+
+    #[test]
     fn rerank_favours_term_overlap_over_raw_rrf() {
+        use std::collections::HashMap;
         // Two candidates, equal recency (no decay). `hit` has the query term in
         // its title; `miss` has a slightly higher raw RRF. Overlap should lift
         // `hit` to the top.
@@ -1181,18 +1395,41 @@ mod tests {
         hit.title = "Wifi password".into();
         let miss = note("miss", 100);
         let pool = vec![(miss, 0.02_f64), (hit, 0.019_f64)];
-        let out = rerank("what is the wifi password", pool, 0, 6);
+        let out = rerank("what is the wifi password", pool, &HashMap::new(), 0, 6);
         assert_eq!(out[0].id, "hit");
     }
 
     #[test]
     fn rerank_recency_breaks_ties() {
+        use std::collections::HashMap;
         // Identical RRF + no term overlap → newer note wins on recency.
         let older = note("older", 1_000);
         let newer = note("newer", 5_000_000_000_000);
         let pool = vec![(older, 0.01_f64), (newer, 0.01_f64)];
-        let out = rerank("unrelated terms", pool, 30, 6);
+        let out = rerank("unrelated terms", pool, &HashMap::new(), 30, 6);
         assert_eq!(out[0].id, "newer");
+    }
+
+    #[test]
+    fn rerank_semantic_evidence_outranks_equal_lexical() {
+        use std::collections::HashMap;
+        // Same RRF, same (zero) overlap, same recency — the exact stored-vector
+        // cosine must decide. A candidate missing from sims scores neutral 0.5,
+        // BELOW the strong match but ABOVE the poor one.
+        let strong = note("strong", 100);
+        let unknown = note("unknown", 100);
+        let weak = note("weak", 100);
+        let pool = vec![
+            (weak, 0.01_f64),
+            (unknown, 0.01_f64),
+            (strong, 0.01_f64),
+        ];
+        let sims =
+            HashMap::from([("strong".to_string(), 0.82_f64), ("weak".to_string(), 0.31_f64)]);
+        let out = rerank("query with no lexical hits", pool, &sims, 0, 6);
+        assert_eq!(out[0].id, "strong");
+        assert_eq!(out[1].id, "unknown");
+        assert_eq!(out[2].id, "weak");
     }
 
     #[test]

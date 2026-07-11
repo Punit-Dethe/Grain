@@ -522,9 +522,12 @@ async grainSpaceCancelEmbedModelDownload() : Promise<Result<null, string>> {
 }
 },
 /**
- * Semantic (meaning-based) search. Spawns the engine lazily on first use —
- * allowed only while the overlay window exists, so the weights can never
- * outlive it. Re-embeds stale notes before serving so results stay truthful.
+ * Semantic-mode search — actually HYBRID: exact FTS ∪ meaning-based KNN,
+ * fused with Reciprocal Rank Fusion, so typing a literal title in semantic
+ * mode can never miss it (either leg alone loses queries the other wins).
+ * Spawns the engine lazily on first use — allowed only while the overlay
+ * window exists, so the weights can never outlive it. Re-embeds stale notes
+ * before serving so results stay truthful.
  */
 async grainSpaceSemanticSearch(query: string) : Promise<Result<Note[], string>> {
     try {

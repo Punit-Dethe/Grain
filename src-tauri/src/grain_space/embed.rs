@@ -300,6 +300,24 @@ pub fn shutdown_engine_if_idle(app: &AppHandle) {
     }
 }
 
+/// BGE v1.5's retrieval instruction. ASYMMETRIC by design: the model card
+/// recommends prefixing short QUERIES with this when retrieving passages —
+/// documents are embedded bare. Applying it only at query time means stored
+/// note vectors never need re-embedding to benefit.
+pub const QUERY_INSTRUCTION: &str = "Represent this sentence for searching relevant passages: ";
+
+/// Embed one QUERY (instruction-prefixed; see [`QUERY_INSTRUCTION`]). Every
+/// query-side embedding must come through here so query and note vectors stay
+/// in the model's intended asymmetric geometry. Blocking, like [`embed`].
+pub fn embed_query(text: String) -> Result<Vec<f32>> {
+    let mut prefixed = String::with_capacity(QUERY_INSTRUCTION.len() + text.len());
+    prefixed.push_str(QUERY_INSTRUCTION);
+    prefixed.push_str(&text);
+    embed(vec![prefixed])?
+        .pop()
+        .ok_or_else(|| anyhow!("empty query embedding"))
+}
+
 /// Embed a batch of texts (mean-pooled, L2-normalized, `EMBED_DIM` floats
 /// each), lazily spawning the engine thread on first use. Blocking — call from
 /// `spawn_blocking`. Fails fast when the model files are not on disk.
@@ -527,6 +545,51 @@ mod tests {
             "Body: raw capture"
         );
         assert_eq!(super::note_embed_text("", "", ""), "");
+    }
+
+    /// Calibration probe for `SEMANTIC_MIN_SIMILARITY` (recall.rs): prints the
+    /// prefixed-query cosine against related and unrelated notes so the floor
+    /// can be tuned against real model output, and asserts the asymmetric
+    /// geometry actually separates them. Skips itself if the model isn't on
+    /// disk. Run with `--nocapture` to read the values.
+    #[test]
+    fn query_prefix_separates_related_from_unrelated() {
+        if !super::model_on_disk() {
+            println!("model not on disk; skipped");
+            return;
+        }
+        super::USE_F16.store(false, std::sync::atomic::Ordering::Relaxed);
+        let docs = vec![
+            super::note_embed_text(
+                "Wifi password",
+                "The home network details.",
+                "the wifi password is interstellar, router is in the hallway",
+            ),
+            super::note_embed_text(
+                "Dentist",
+                "Appointment note.",
+                "dentist appointment moved to the 14th at 3pm",
+            ),
+            super::note_embed_text(
+                "Pasta recipe",
+                "Dinner idea.",
+                "carbonara: guanciale, pecorino, eggs, no cream ever",
+            ),
+        ];
+        let doc_vecs = super::embed(docs).expect("doc embed");
+        let q = super::embed_query("what was my wifi password again".to_string())
+            .expect("query embed");
+        let cos = |a: &[f32], b: &[f32]| -> f64 {
+            a.iter().zip(b).map(|(x, y)| (*x as f64) * (*y as f64)).sum()
+        };
+        let related = cos(&q, &doc_vecs[0]);
+        let unrelated_1 = cos(&q, &doc_vecs[1]);
+        let unrelated_2 = cos(&q, &doc_vecs[2]);
+        println!("related={related:.4} unrelated=[{unrelated_1:.4}, {unrelated_2:.4}]");
+        assert!(
+            related > unrelated_1 && related > unrelated_2,
+            "prefixed query must rank the related note first"
+        );
     }
 
     /// Regression: when f16 is enabled but its forward pass produces invalid
