@@ -22,6 +22,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
     extractingModels,
     downloadProgress,
     downloadStats,
+    cancelDownload,
   } = useModelStore();
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
@@ -78,6 +79,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
     }
   };
 
+  const handleCancelDownload = async (modelId: string) => {
+    const success = await cancelDownload(modelId);
+    if (success) {
+      setSelectedModelId(null);
+    }
+  };
+
   const getModelStatus = (modelId: string): ModelCardStatus => {
     if (modelId in extractingModels) return "extracting";
     if (modelId in verifyingModels) return "verifying";
@@ -118,6 +126,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
                 disabled={isDownloading}
                 onSelect={handleDownloadModel}
                 onDownload={handleDownloadModel}
+                onCancel={handleCancelDownload}
                 downloadProgress={getModelDownloadProgress(model.id)}
                 downloadSpeed={getModelDownloadSpeed(model.id)}
               />
@@ -138,6 +147,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
                 disabled={isDownloading}
                 onSelect={handleDownloadModel}
                 onDownload={handleDownloadModel}
+                onCancel={handleCancelDownload}
                 downloadProgress={getModelDownloadProgress(model.id)}
                 downloadSpeed={getModelDownloadSpeed(model.id)}
               />
