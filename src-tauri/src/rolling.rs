@@ -399,6 +399,10 @@ impl RollingSession {
                                     } else {
                                         Some(words.as_slice())
                                     },
+                                    // [GRAIN] The cut kind becomes the acoustic
+                                    // prior for the NEXT seam's punctuation
+                                    // revision (see rolling-window/src/seam.rs).
+                                    chunk.boundary,
                                 );
                                 // Preview: the committed text just grew; show it
                                 // solid and clear the tentative tail (its audio is

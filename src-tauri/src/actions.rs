@@ -78,6 +78,17 @@ fn build_system_prompt(prompt_template: &str) -> String {
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
+/// [GRAIN] Token-efficient seam-repair layer appended to the post-process
+/// prompt ONLY for rolling-window transcripts. Rolling text is assembled from
+/// sequential audio segments, so its residual defects are seam-shaped (casing,
+/// stray/missing sentence punctuation, doubled boundary words) — this line aims
+/// the LLM at exactly those, and at nothing else. ~40 tokens; invisible to the
+/// user.
+const ROLLING_SEAM_PROMPT: &str = "\n[Live dictation]\nThe text was assembled \
+from sequential speech segments. Repair segment-join artifacts: wrong \
+capitalization, stray or missing periods/commas, doubled words, extra spaces. \
+Never reword, reorder, or drop content.";
+
 async fn post_process_transcription(
     app: &AppHandle,
     settings: &AppSettings,
@@ -86,6 +97,9 @@ async fn post_process_transcription(
     // clicking the pill). Layered as the ABSOLUTE highest-priority stage in
     // `compose_prompt`, above any hard app mode.
     spoken_prompt: Option<&str>,
+    // [GRAIN] True when the transcript came from the rolling-window assembler —
+    // appends the compact seam-repair layer above.
+    rolling: bool,
 ) -> Option<String> {
     if transcription.trim().is_empty() {
         debug!("Post-processing skipped because transcription is empty");
@@ -136,8 +150,11 @@ async fn post_process_transcription(
     } else {
         None
     };
-    let prompt =
+    let mut prompt =
         crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref(), spoken_prompt);
+    if rolling {
+        prompt.push_str(ROLLING_SEAM_PROMPT);
+    }
 
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
@@ -621,6 +638,9 @@ pub(crate) async fn process_transcription_output(
     // instruction is actually applied regardless of which shortcut stopped the
     // session.
     spoken_prompt: Option<String>,
+    // [GRAIN] True when `transcription` came from the rolling-window assembler —
+    // enables the token-efficient seam-repair prompt layer.
+    rolling: bool,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
 
@@ -639,8 +659,14 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) =
-            post_process_transcription(app, &settings, &final_text, spoken_prompt.as_deref()).await
+        if let Some(processed_text) = post_process_transcription(
+            app,
+            &settings,
+            &final_text,
+            spoken_prompt.as_deref(),
+            rolling,
+        )
+        .await
         {
             post_processed_text = Some(processed_text.clone());
             final_text = processed_text;
@@ -924,6 +950,7 @@ impl ShortcutAction for TranscribeAction {
                                 &transcription,
                                 post_process,
                                 spoken_prompt,
+                                false,
                             )
                             .await;
 
@@ -1381,19 +1408,22 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // utterance (content + spoken instruction mixed), so it can't be split.
             // Re-transcribe the two audio slices batch-style instead. This extra
             // pass only happens when the user actually clicked the pill.
-            let (final_text, spoken_prompt, post_process) =
+            let (final_text, spoken_prompt, post_process, was_rolling) =
                 if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
                     let (content_res, spoken) =
                         crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
                     // `transcribe_split` routes through the STT dispatcher, which
-                    // finalizes internally — don't finalize again.
+                    // finalizes internally — don't finalize again. Batch-style
+                    // re-transcription has no rolling seams.
                     (
                         content_res.unwrap_or_default(),
                         spoken.clone(),
                         post_process || spoken.is_some(),
+                        false,
                     )
                 } else {
-                    let ft = if !rolling_text.trim().is_empty() {
+                    let assembled = !rolling_text.trim().is_empty();
+                    let ft = if assembled {
                         // [GRAIN] Apply the shared final-text stage (custom-word dictionary
                         // + filler/stutter filtering) ONCE on the assembled transcript.
                         // The rolling engine never biases via Whisper `initial_prompt`, so
@@ -1418,11 +1448,12 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     } else {
                         String::new()
                     };
-                    (ft, None, post_process)
+                    (ft, None, post_process, assembled)
                 };
 
             let processed =
-                process_transcription_output(&ah, &final_text, post_process, spoken_prompt).await;
+                process_transcription_output(&ah, &final_text, post_process, spoken_prompt, was_rolling)
+                    .await;
             let final_text = processed.final_text;
 
             if !samples.is_empty() {
@@ -1648,7 +1679,8 @@ impl ShortcutAction for NativeAsrAction {
                 let (content_res, spoken) =
                     crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
                 let content = content_res.unwrap_or_default();
-                let processed = process_transcription_output(&ah, &content, true, spoken).await;
+                let processed =
+                    process_transcription_output(&ah, &content, true, spoken, false).await;
                 let ft = processed.final_text;
                 if !ft.trim().is_empty() {
                     if let Err(e) = hm.save_entry(

@@ -61,6 +61,25 @@ impl Default for RollingWindowConfig {
     }
 }
 
+/// Why a chunk's END boundary was placed where it is — the acoustic ground
+/// truth of the seam that follows it. The assembler uses this as a prior when
+/// revising seam punctuation (see `seam.rs`): a [`HardCut`](CutKind::HardCut)
+/// landed mid-speech, so a sentence break exactly there is unlikely; a
+/// [`Silence`](CutKind::Silence) cut means a real ≥`silence_min_duration` pause
+/// happened — the strongest full-stop cue there is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CutKind {
+    /// Early finalize: a real trailing-silence run (VAD non-speech or RMS
+    /// quiet) ended the chunk at a natural pause.
+    Silence,
+    /// The window filled while speech was still flowing (including the
+    /// snapped-to-quiet-gap variant — the gap is far shorter than a pause).
+    HardCut,
+    /// Session stop: the user ended the recording. Nothing follows, so no
+    /// seam ever forms on this boundary.
+    Stop,
+}
+
 /// A finalized chunk of session audio, tagged with its ABSOLUTE position on the
 /// session timeline (seconds since recording started).
 ///
@@ -68,14 +87,16 @@ impl Default for RollingWindowConfig {
 /// any model's timestamps. `fresh_start_sec` is the send-cursor position when the
 /// chunk was cut: everything before it is overlap context a previous chunk
 /// already covered; everything from it to `end_sec` is new audio only this chunk
-/// carries. Port of `chunked_audio.AudioChunk` (carrying raw samples instead of
-/// pre-encoded WAV bytes — encoding happens at the STT boundary).
+/// carries. `boundary` records WHY the chunk ended (see [`CutKind`]). Port of
+/// `chunked_audio.AudioChunk` (carrying raw samples instead of pre-encoded WAV
+/// bytes — encoding happens at the STT boundary).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioChunk {
     pub samples: Vec<i16>,
     pub start_sec: f64,
     pub fresh_start_sec: f64,
     pub end_sec: f64,
+    pub boundary: CutKind,
 }
 
 impl AudioChunk {
@@ -223,9 +244,9 @@ impl SessionCursor {
             // No natural pause in a full window of speech — snap the boundary to
             // the quietest sub-window near the end so the cut lands between words
             // (WhisperX-style min-cut) instead of mid-phoneme.
-            self.emit_chunk_at(self.snap_hard_cut_end())
+            self.emit_chunk_at(self.snap_hard_cut_end(), CutKind::HardCut)
         } else if early_cut {
-            self.emit_chunk()
+            self.emit_chunk_at(self.total_frames(), CutKind::Silence)
         } else {
             None
         }
@@ -304,16 +325,17 @@ impl SessionCursor {
     /// Emit frames `[cursor - overlap, total)` as a chunk and advance the cursor.
     ///
     /// Port of `_emit_chunk_locked`. The overlap before the cursor protects
-    /// boundary words; the assembler removes the duplicated region.
+    /// boundary words; the assembler removes the duplicated region. A manual
+    /// emit is a forced mid-speech boundary, so it's tagged [`CutKind::HardCut`].
     pub fn emit_chunk(&mut self) -> Option<AudioChunk> {
-        self.emit_chunk_at(self.total_frames())
+        self.emit_chunk_at(self.total_frames(), CutKind::HardCut)
     }
 
     /// Emit frames `[cursor - overlap, end)` as a chunk and advance the cursor
     /// to `end`. `end` is normally `total_frames()`; the hard-cut snap passes an
     /// earlier boundary so the cut lands in a quiet gap, leaving `[end, total)`
     /// to roll into the next chunk. `end` is clamped to the valid range.
-    fn emit_chunk_at(&mut self, end: usize) -> Option<AudioChunk> {
+    fn emit_chunk_at(&mut self, end: usize, boundary: CutKind) -> Option<AudioChunk> {
         let end = end.clamp(self.sent_frames, self.total_frames());
         if end <= self.sent_frames {
             return None;
@@ -329,6 +351,7 @@ impl SessionCursor {
             start_sec: self.frame_to_sec(start_frame),
             fresh_start_sec: self.frame_to_sec(fresh_start_frame),
             end_sec: self.frame_to_sec(end),
+            boundary,
         };
         self.sent_frames = end;
         self.silence_frames = 0;
@@ -355,6 +378,7 @@ impl SessionCursor {
             start_sec: self.frame_to_sec(start_frame),
             fresh_start_sec: self.frame_to_sec(fresh_start_frame),
             end_sec: self.frame_to_sec(end_frame),
+            boundary: CutKind::Stop,
         })
     }
 
@@ -469,6 +493,35 @@ mod tests {
         // 0.5s pause is below silence_min (0.7s) — must NOT finalize.
         let sil = (0.5 * f as f64) as usize;
         assert!(s.push_block_vad(&block(sil, 0), false).is_none());
+    }
+
+    #[test]
+    fn chunk_boundaries_carry_cut_kind() {
+        // Early finalize → Silence.
+        let mut s = cur();
+        let f = fps(&s);
+        for _ in 0..12 {
+            s.push_block_vad(&block(f, 3000), true);
+        }
+        let sil = (0.7 * f as f64) as usize;
+        let c = s
+            .push_block_vad(&block(sil, 0), false)
+            .expect("early finalize");
+        assert_eq!(c.boundary, CutKind::Silence);
+
+        // Hard cut → HardCut.
+        let mut s = cur();
+        let mut hard = None;
+        for _ in 0..26 {
+            if let Some(c) = s.push_block(&block(f, 1000), 0.5) {
+                hard = Some(c);
+            }
+        }
+        assert_eq!(hard.expect("hard cut").boundary, CutKind::HardCut);
+
+        // Stop flush → Stop.
+        let c = s.stop().expect("stop flush");
+        assert_eq!(c.boundary, CutKind::Stop);
     }
 
     #[test]

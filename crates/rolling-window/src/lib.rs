@@ -11,7 +11,8 @@
 pub mod assembler;
 pub mod cursor;
 pub mod merge;
+pub mod seam;
 
 pub use assembler::{merge_transcript, TimelineAssembler, WordTiming};
-pub use cursor::{AudioChunk, RollingWindowConfig, SessionCursor};
+pub use cursor::{AudioChunk, CutKind, RollingWindowConfig, SessionCursor};
 pub use merge::seam_overlap_len;
