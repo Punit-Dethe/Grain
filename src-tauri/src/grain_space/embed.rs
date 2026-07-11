@@ -287,9 +287,13 @@ pub fn uninstall_model() -> Result<()> {
 /// Assist-only agent sessions (which never spawn it) pay nothing.
 pub fn shutdown_engine_if_idle(app: &AppHandle) {
     use tauri::Manager;
+    // The overlay survives its "close" hidden (hide-don't-destroy) — a
+    // sleeping overlay must not keep the model resident, so only a VISIBLE
+    // window counts as open.
     let overlay_open = app
         .get_webview_window(super::window::WINDOW_LABEL)
-        .is_some();
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
     let panel_open = app.get_webview_window(crate::agent::PANEL_LABEL).is_some();
     if !overlay_open && !panel_open {
         shutdown_engine();

@@ -1,7 +1,8 @@
-/* [GRAIN] Grain Space overlay — Raycast-style two-pane notes browser, in the
- * same beige/mechanical language as the Agent surfaces (see agent.css). The
- * window is transparent and exactly card-sized, so the rounded corners read as
- * a floating panel. Self-contained: this window loads no other app CSS. */
+/* [GRAIN] Grain Space workspace — Mem/Obsidian-inspired three-pane surface
+ * (TAURI-OVERLAY-PLAN.md Phase D): warm-paper app background, a deeper sidebar
+ * wash, a white editor "sheet", one orange accent. The window is transparent
+ * and exactly card-sized so the rounded corners read as a floating workspace.
+ * Self-contained: this window loads no other app CSS. */
 
 .gs-root {
   width: 100vw;
@@ -11,62 +12,216 @@
   -webkit-font-smoothing: antialiased;
 }
 
-.gs-card {
-  --surface: #e8e1d4;
-  --recess: #ddd5c8;
-  --input-bg: #f2ece1;
-  --ink: #141312;
+.gs-frame {
+  /* Design tokens — every pane pulls only from these. */
+  --paper: #f3eee2;
+  --side: #ece5d3;
+  --sheet: #fbf9f2;
+  --input-bg: #faf7ef;
+  --ink: #171412;
+  --muted: rgba(23, 20, 18, 0.55);
+  --faint: rgba(23, 20, 18, 0.38);
+  --hairline: rgba(23, 20, 18, 0.1);
   --orange: #ff5d1e;
+  --orange-soft: rgba(255, 93, 30, 0.1);
   --error: #c0392f;
-  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  --mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
   --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
 
   box-sizing: border-box;
   width: 100%;
   height: 100%;
   display: flex;
-  flex-direction: column;
-  background: var(--surface);
-  border-radius: 14px;
-  border: 1px solid rgba(20, 19, 18, 0.18);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+  background: var(--paper);
+  border-radius: 16px;
+  border: 1px solid rgba(23, 20, 18, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
   color: var(--ink);
   font-family: var(--body);
   overflow: hidden;
 }
-.gs-card *,
-.gs-card *::before,
-.gs-card *::after {
+.gs-frame *,
+.gs-frame *::before,
+.gs-frame *::after {
   box-sizing: border-box;
 }
+.gs-frame ::selection {
+  background: rgba(255, 93, 30, 0.18);
+}
 
-/* ── HEADER ──────────────────────────────────────────────────────────────── */
-.gs-head {
+/* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
+.gs-side {
+  flex: none;
+  width: 244px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--side);
+  border-right: 1px solid var(--hairline);
+}
+.gs-side-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(20, 19, 18, 0.12);
+  padding: 14px 16px 8px;
 }
 .gs-brand {
   font-family: var(--mono);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 1.6px;
-  color: rgba(20, 19, 18, 0.55);
+  letter-spacing: 1.8px;
+  color: var(--muted);
   white-space: nowrap;
+}
+.gs-create {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 12px 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--sheet);
+  font-family: var(--body);
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(23, 20, 18, 0.06);
+}
+.gs-create:hover {
+  border-color: rgba(23, 20, 18, 0.22);
+}
+.gs-create svg {
+  color: var(--muted);
+}
+
+.gs-nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 14px;
+}
+.gs-nav::-webkit-scrollbar {
+  width: 8px;
+}
+.gs-nav::-webkit-scrollbar-thumb {
+  background: rgba(23, 20, 18, 0.16);
+  border-radius: 4px;
+}
+.gs-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 14px 8px 4px;
+  white-space: nowrap;
+}
+.gs-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--ink);
+  font-family: var(--body);
+}
+.gs-row:hover {
+  background: rgba(23, 20, 18, 0.05);
+}
+.gs-row--on {
+  background: var(--orange-soft);
+}
+.gs-row--child {
+  padding-left: 26px;
+}
+.gs-row-icon {
+  flex: none;
+  color: var(--muted);
+  display: inline-flex;
+}
+.gs-row--on .gs-row-icon {
+  color: var(--orange);
+}
+.gs-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 480;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-row-age {
+  flex: none;
+  font-size: 10px;
+  color: var(--faint);
+}
+.gs-row-count {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  background: rgba(23, 20, 18, 0.07);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.gs-row-chev {
+  flex: none;
+  color: var(--faint);
+  display: inline-flex;
+  transition: transform 140ms ease;
+}
+.gs-row-chev--open {
+  transform: rotate(90deg);
+}
+.gs-nav-empty {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* ── MAIN COLUMN: top strip + stage ─────────────────────────────────────── */
+.gs-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gs-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
 }
 .gs-search {
   flex: 1 1 auto;
   min-width: 0;
+  max-width: 560px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   background: var(--input-bg);
-  border: 1px solid rgba(20, 19, 18, 0.16);
-  border-radius: 8px;
-  padding: 5px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--faint);
+}
+.gs-search:focus-within {
+  border-color: rgba(23, 20, 18, 0.24);
 }
 .gs-search input {
   flex: 1 1 auto;
@@ -79,24 +234,27 @@
   color: var(--ink);
 }
 .gs-search input::placeholder {
-  color: rgba(20, 19, 18, 0.38);
+  color: var(--faint);
+}
+.gs-top-spacer {
+  flex: 1 1 auto;
 }
 .gs-iconbtn {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  color: rgba(20, 19, 18, 0.55);
+  border-radius: 7px;
+  color: var(--muted);
   cursor: pointer;
   padding: 0;
 }
 .gs-iconbtn:hover {
-  background: rgba(20, 19, 18, 0.08);
+  background: rgba(23, 20, 18, 0.07);
   color: var(--ink);
 }
 .gs-iconbtn--active {
@@ -110,24 +268,24 @@
 .gs-mode {
   flex: none;
   display: flex;
-  border: 1px solid rgba(20, 19, 18, 0.16);
-  border-radius: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
   overflow: hidden;
 }
 .gs-mode button {
   border: none;
   background: transparent;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 8.5px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  padding: 5px 8px;
-  color: rgba(20, 19, 18, 0.5);
+  padding: 5px 9px;
+  color: var(--muted);
   cursor: pointer;
 }
 .gs-mode button.gs-mode--on {
   background: var(--ink);
-  color: var(--surface);
+  color: var(--paper);
 }
 
 /* ── MODEL BANNER (semantic consent / download progress) ─────────────────── */
@@ -136,50 +294,52 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  margin: 0 14px 8px;
   padding: 8px 12px;
-  background: var(--recess);
-  border-bottom: 1px solid rgba(20, 19, 18, 0.12);
+  background: var(--side);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
   font-size: 11.5px;
 }
 .gs-banner-text {
   flex: 1 1 auto;
   min-width: 0;
-  color: rgba(20, 19, 18, 0.75);
+  color: var(--muted);
 }
 .gs-banner-error {
   color: var(--error);
 }
 .gs-btn {
   flex: none;
-  border: 1px solid rgba(20, 19, 18, 0.25);
+  border: 1px solid rgba(23, 20, 18, 0.25);
   background: var(--input-bg);
-  border-radius: 7px;
+  border-radius: 999px;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 9px;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  padding: 4px 10px;
+  padding: 4px 11px;
   color: var(--ink);
   cursor: pointer;
 }
 .gs-btn:hover {
   background: var(--ink);
-  color: var(--surface);
+  color: var(--paper);
 }
 .gs-btn--quiet {
   border-color: transparent;
   background: transparent;
-  color: rgba(20, 19, 18, 0.55);
+  color: var(--muted);
 }
 .gs-btn--quiet:hover {
-  background: rgba(20, 19, 18, 0.08);
+  background: rgba(23, 20, 18, 0.07);
   color: var(--ink);
 }
 .gs-progress {
   flex: 1 1 auto;
   height: 4px;
   border-radius: 2px;
-  background: rgba(20, 19, 18, 0.12);
+  background: rgba(23, 20, 18, 0.12);
   overflow: hidden;
 }
 .gs-progress span {
@@ -189,89 +349,32 @@
   transition: width 160ms linear;
 }
 
-/* ── BODY: list + editor ─────────────────────────────────────────────────── */
-.gs-body {
+/* ── STAGE: editor sheet + chat rail ─────────────────────────────────────── */
+.gs-stage {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
+  padding: 0 14px 14px;
+  gap: 12px;
 }
-.gs-list {
-  flex: none;
-  width: 236px;
-  min-width: 0;
-  overflow-y: auto;
-  background: var(--recess);
-  border-right: 1px solid rgba(20, 19, 18, 0.12);
-  padding: 6px 0 10px;
-}
-.gs-list::-webkit-scrollbar {
-  width: 8px;
-}
-.gs-list::-webkit-scrollbar-thumb {
-  background: rgba(20, 19, 18, 0.18);
-  border-radius: 4px;
-}
-.gs-group {
-  font-family: var(--mono);
-  font-size: 8.5px;
-  letter-spacing: 1.4px;
-  text-transform: uppercase;
-  color: rgba(20, 19, 18, 0.45);
-  padding: 10px 12px 4px;
-}
-.gs-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: transparent;
-  padding: 7px 12px;
-  cursor: pointer;
-  border-left: 2px solid transparent;
-}
-.gs-item:hover {
-  background: rgba(20, 19, 18, 0.05);
-}
-.gs-item--on {
-  background: rgba(20, 19, 18, 0.08);
-  border-left-color: var(--orange);
-}
-.gs-item-title {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.gs-item-title svg {
-  flex: none;
-  color: var(--orange);
-}
-.gs-item-sub {
-  font-size: 10.5px;
-  color: rgba(20, 19, 18, 0.5);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 1px;
-}
-.gs-list-empty {
-  padding: 18px 12px;
-  font-size: 11.5px;
-  color: rgba(20, 19, 18, 0.45);
-  text-align: center;
-}
-
-/* ── EDITOR ──────────────────────────────────────────────────────────────── */
-.gs-editor {
+.gs-sheet {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--sheet);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(23, 20, 18, 0.05);
+  overflow: hidden;
+}
+.gs-sheet-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--faint);
 }
 .gs-title {
   flex: none;
@@ -279,48 +382,96 @@
   outline: none;
   background: transparent;
   font-family: var(--body);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 21px;
+  font-weight: 650;
   color: var(--ink);
-  padding: 14px 16px 4px;
+  padding: 20px 26px 2px;
 }
 .gs-title::placeholder {
-  color: rgba(20, 19, 18, 0.3);
+  color: var(--faint);
+}
+.gs-title:disabled {
+  color: var(--ink);
+}
+.gs-meta {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 26px 10px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.gs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.4px;
+  color: var(--orange);
+  background: var(--orange-soft);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.gs-chip--quiet {
+  color: var(--muted);
+  background: rgba(23, 20, 18, 0.06);
 }
 .gs-tldr {
   flex: none;
-  font-size: 11.5px;
-  color: rgba(20, 19, 18, 0.55);
-  padding: 0 16px 6px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 0 26px 8px;
 }
-.gs-bodytext {
+.gs-edit {
   flex: 1 1 auto;
   min-height: 0;
+  padding: 0 8px;
+}
+.gs-edit .cm-editor {
+  height: 100%;
+}
+.gs-edit .cm-scroller {
+  overflow-y: auto;
+  padding: 0 18px;
+}
+.gs-edit .cm-scroller::-webkit-scrollbar {
+  width: 8px;
+}
+.gs-edit .cm-scroller::-webkit-scrollbar-thumb {
+  background: rgba(23, 20, 18, 0.14);
+  border-radius: 4px;
+}
+.gs-ed-loading {
+  flex: 1 1 auto;
+}
+/* Plain-textarea fallback while the editor chunk streams in. */
+.gs-bodytext {
+  width: 100%;
+  height: 100%;
   border: none;
   outline: none;
   background: transparent;
   resize: none;
   font-family: var(--body);
-  font-size: 13px;
-  line-height: 1.55;
+  font-size: 13.5px;
+  line-height: 1.65;
   color: var(--ink);
-  padding: 6px 16px 10px;
-}
-.gs-bodytext::placeholder {
-  color: rgba(20, 19, 18, 0.3);
+  padding: 4px 18px;
 }
 .gs-todos {
   flex: none;
-  padding: 4px 16px 8px;
-  border-top: 1px dashed rgba(20, 19, 18, 0.14);
+  padding: 4px 26px 8px;
+  border-top: 1px dashed rgba(23, 20, 18, 0.12);
 }
 .gs-todos-label {
   font-family: var(--mono);
   font-size: 8.5px;
   letter-spacing: 1.4px;
   text-transform: uppercase;
-  color: rgba(20, 19, 18, 0.45);
-  padding: 6px 0 2px;
+  color: var(--faint);
+  padding: 8px 0 2px;
 }
 .gs-todo {
   display: flex;
@@ -336,18 +487,18 @@
 }
 .gs-todo--done span {
   text-decoration: line-through;
-  color: rgba(20, 19, 18, 0.45);
+  color: var(--faint);
 }
 
-/* Bottom-right action row: reminder · pin · delete. */
+/* Bottom action row: reminder · open-in-obsidian · pin · delete. */
 .gs-actions {
   flex: none;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  padding: 8px 12px;
-  border-top: 1px solid rgba(20, 19, 18, 0.12);
+  padding: 8px 14px;
+  border-top: 1px solid var(--hairline);
 }
 .gs-reminder {
   flex: 1 1 auto;
@@ -356,13 +507,101 @@
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: rgba(20, 19, 18, 0.6);
+  color: var(--muted);
 }
-.gs-editor-empty {
-  flex: 1 1 auto;
+
+/* ── CHAT RAIL (scaffold; slides via width on the clip shell) ────────────── */
+.gs-chat-clip {
+  flex: none;
+  width: 0;
+  overflow: hidden;
+  transition: width 200ms ease;
+}
+.gs-chat-clip--open {
+  width: 300px;
+}
+.gs-chat {
+  width: 300px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--sheet);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.gs-chat-head {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.gs-chat-title {
+  flex: 1 1 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.gs-chat-tag {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.gs-chat-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.gs-skel {
+  border-radius: 10px;
+  background: rgba(23, 20, 18, 0.06);
+}
+.gs-skel--me {
+  align-self: flex-end;
+  width: 62%;
+  height: 34px;
+  background: var(--orange-soft);
+}
+.gs-skel--ai {
+  align-self: flex-start;
+  width: 78%;
+  height: 52px;
+}
+.gs-chat-foot {
+  flex: none;
+  padding: 10px 12px 12px;
+}
+.gs-chat-input {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--input-bg);
+  padding: 7px 12px;
+  color: var(--faint);
+}
+.gs-chat-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--body);
   font-size: 12px;
-  color: rgba(20, 19, 18, 0.4);
+  color: var(--ink);
+}
+.gs-chat-input input::placeholder {
+  color: var(--faint);
 }

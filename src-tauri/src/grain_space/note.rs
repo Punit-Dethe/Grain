@@ -86,6 +86,23 @@ pub struct Note {
     pub is_pinned: bool,
 }
 
+/// Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
+/// `Note` schema and never persisted: light metadata derived at list time so a
+/// browse ships no bodies to the webview. `collection` comes from the note's
+/// folder; `readonly` marks foreign vault files the editor must not write to.
+#[derive(Serialize, Debug, Clone, PartialEq, Type)]
+pub struct NoteCard {
+    pub id: String,
+    pub title: String,
+    pub tldr: String,
+    pub timestamp: i64,
+    pub is_pinned: bool,
+    pub reminder_state: ReminderState,
+    /// Immediate parent folder name; `None` = loose (shown under "Notes").
+    pub collection: Option<String>,
+    pub readonly: bool,
+}
+
 impl Note {
     /// A fresh raw note (Input B/C shape): blank title/tldr, stamped now.
     pub fn raw(body: String) -> Self {

@@ -5,7 +5,102 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
-## 2026-07-11 (latest) — PIVOT: Floem abandoned (330 MB), back to the Tauri overlay
+## 2026-07-11 (latest) — Tauri overlay → Mem-style workspace SHIPPED (plan Phases A–E + sleep lifecycle)
+
+`TAURI-OVERLAY-PLAN.md` is implemented, plus the user's added requirements
+from this session: a **hide-don't-destroy window** with aggressive idle-RAM
+reclamation, an **Obsidian-style live markdown editor**, a **Reminders**
+sidebar section, and **whole-vault browsing** (the active store's folders ARE
+the collections; switching backends switches the visible corpus, no merging).
+
+**1. Backend listing (`NoteCard`, plan Phase A — with two deliberate
+deviations).** `note.rs::NoteCard` is a LIGHT card (`id/title/tldr/timestamp/
+is_pinned/reminder_state/collection/readonly`), NOT `{note, collection}` —
+a browse ships no bodies to the webview (RAM discipline; a big vault stays
+cheap). And `vault::list_cards` covers the WHOLE vault on the obsidian
+backend: foreign notes appear as readonly cards built from the index alone
+(title = filename, zero file reads); grain notes read fully. Collection =
+immediate parent folder name unless vault root or the Grain home folder
+(`collection_of`, the plan's recommended rule; native = always None). New
+command `grain_space_list_cards`; `list_notes` untouched for existing callers.
+Full note loads on select via `grain_space_get_note`. 2 new vault tests.
+
+**2. Window sleep lifecycle (`window.rs` rewrite).** Close no longer destroys:
+- **Sleep**: backend emits `grain-space://sleep` → frontend flushes saves,
+  unmounts the ENTIRE React tree (DOM purge → JS heap collectable), acks via
+  `grain_space_sleep_ready` → backend hides the window, suspends the WebView2
+  renderer (`ICoreWebView2_3::TrySuspend` + `MemoryUsageTargetLevel = LOW` —
+  the Edge sleeping-tabs mechanism; new dep `webview2-com = "0.38"`, version
+  MUST track wry's) and drops the embed engine if the panel doesn't need it.
+- **Wake**: resume webview → `grain-space://revive` → frontend remounts →
+  `grain_space_ui_ready` → show+focus (window appears already painted).
+- Both acks have 700 ms fallback timers (a wedged webview can never make the
+  window unreachable or unhideable). `AWAKE` atomic guards stale sleep acks.
+  Alt+F4/taskbar-close is intercepted (`CloseRequested` → sleep). Window is
+  born hidden; first reveal also rides `ui_ready`. 1180×760, min 880×560.
+- The old `SetProcessWorkingSetSize` idea was deliberately NOT used: it would
+  page out the MAIN process (whisper model included) and slow the next
+  dictation. The real RAM lives in the WebView2 child processes — TrySuspend
+  is the targeted tool.
+- **Engine-lifetime fix**: `embed::shutdown_engine_if_idle` + the semantic-
+  search gate now count only a VISIBLE overlay as open (a window now exists
+  while asleep — existence checks would have leaked the model).
+
+**3. Frontend split (plan Phase B/C/D + Mem design).**
+`GrainSpaceOverlay.tsx` (shell: all state/save/search logic) + `Sidebar` +
+`EditorPane` + `ChatRail` + `MarkdownEditor` + `GrainSpaceHost` (the
+mount/unmount host driving the sleep cycle) + `sleepBridge` (flush handoff).
+Sidebar: Create note pill, then **Reminders** (armed/fired) / **Pinned** /
+**Notes** (loose) / **Collections** (expandable, count badges, indented
+members). Search moved to the top strip (plan's assumption confirmed by the
+Mem screenshot), exact/semantic toggle + model-consent banner preserved.
+Chat rail: pure scaffold (skeleton bubbles, disabled input, "Soon" tag),
+slides via width-animated clip shell. Warm-paper CSS rewrite (`--paper/
+--side/--sheet/--ink/--orange` tokens). Foreign notes: title disabled,
+editor read-only, `Read-only` chip, pin/delete hidden, Open-in-Obsidian
+button (also shown for grain notes on the vault backend).
+
+**4. Obsidian-style editor (CodeMirror 6, lazy).** `MarkdownEditor.tsx` is a
+`React.lazy` chunk (built: ~500 KB split out of main — never fetched until a
+note first opens; Suspense falls back to a readonly textarea). CM6 with
+`lang-markdown` (GFM base): headings sized, bold/italic/strike/inline-code
+styled in place, links orange; a `ViewPlugin` conceals syntax markers
+(`HeaderMark/EmphasisMark/CodeMark/StrikethroughMark/LinkMark/URL`) on every
+line the cursor is NOT on — the Obsidian live-preview feel. External note
+refreshes only replace the doc when the editor is unfocused (annotation-
+guarded so they don't echo as edits).
+
+**Verified:** `cargo test --lib` **201 passed** (2 new), `cargo check` clean,
+tsc clean, eslint clean on all touched files (repo-wide lint has PRE-EXISTING
+errors in quick-panel/ModuleC + ModelSelector), `vite build` clean with the
+editor chunk split, bindings.ts regenerated (`NoteCard`, `grainSpaceListCards`,
+`grainSpaceUiReady`, `grainSpaceSleepReady`). `check:translations` fails 0/21
+on the BASELINE too (en-only keys, pre-existing).
+
+### NEEDS USER GUI TESTING (can't drive headlessly)
+Open the workspace (shortcut/settings): sidebar sections + collections
+expand, open/edit/save round-trip, markdown live preview + marker hiding,
+draft caret survives the first autosave, chat rail slide, Esc/close → reopen
+is instant, idle RAM after close (watch the msedgewebview2 processes shrink
+post-suspend), vault backend: foreign folders as collections + readonly
+editors, backend switch swaps the visible corpus.
+
+### Gotchas
+- `webview2-com` must stay version-locked to wry's own (0.38 for wry 0.54) —
+  two versions of the COM bindings in one process will not link.
+- `TrySuspend` requires `controller.SetIsVisible(false)` FIRST; resume order
+  is the mirror (Resume → memory NORMAL → SetIsVisible(true)).
+- A draft adopting its minted id must NOT remount the editor — the doc is
+  keyed on an `editSession` counter bumped only in `adopt()`, never by the
+  id/timestamp swap inside `saveSelected`.
+- The overlay now EXISTS while asleep: any "is the overlay open" check must
+  test `is_visible()`, not window existence (embed engine + semantic gate).
+- Event listeners in the overlay read `cardByIdRef`, not the memo, so the
+  mount effect never re-registers (no missed `notes-changed` windows).
+
+---
+
+## 2026-07-11 — PIVOT: Floem abandoned (330 MB), back to the Tauri overlay
 
 **Decision: Floem is dead. `crates/grain-editor` is removed.** The user
 measured the Floem editor process at a **~330 MB peak RAM** (verified across

@@ -15,7 +15,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 use tauri::AppHandle;
 
-use super::note::{Note, ReminderState};
+use super::note::{Note, NoteCard, ReminderState};
 use super::vault::{self, Vault};
 
 /// The resolved backend — since the unification, always a vault.
@@ -55,6 +55,12 @@ pub fn resolve(app: &AppHandle) -> std::result::Result<Backend, String> {
 
 pub fn list_notes(b: &Backend) -> Result<Vec<Note>> {
     vault::list_notes(b)
+}
+
+/// Whole-vault sidebar browse: light cards with derived collections
+/// (TAURI-OVERLAY-PLAN.md Phase A). Foreign notes appear readonly.
+pub fn list_cards(b: &Backend) -> Result<Vec<NoteCard>> {
+    vault::list_cards(b)
 }
 
 pub fn search_notes(b: &Backend, query: &str) -> Result<Vec<Note>> {

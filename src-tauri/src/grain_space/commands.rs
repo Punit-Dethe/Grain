@@ -35,6 +35,16 @@ pub async fn grain_space_list_notes(app: AppHandle) -> Result<Vec<Note>, String>
     blocking(move || backend::list_notes(&be)).await
 }
 
+/// Sidebar browse: light cards (no bodies) for the whole active store, with
+/// each note's derived collection. The overlay's listing surface; full notes
+/// load one at a time via `grain_space_get_note` on select.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_list_cards(app: AppHandle) -> Result<Vec<note::NoteCard>, String> {
+    let be = gate(&app)?;
+    blocking(move || backend::list_cards(&be)).await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_search_notes(app: AppHandle, query: String) -> Result<Vec<Note>, String> {
@@ -284,13 +294,30 @@ pub async fn grain_space_open_window(
     Ok(())
 }
 
-/// Close (destroy) the overlay. Deliberately NOT gated: the window must be
-/// closable even if the feature was just disabled underneath it.
+/// Close (sleep) the overlay: the window hides and its renderer is suspended,
+/// but it survives for an instant re-summon. Deliberately NOT gated: the
+/// window must be closable even if the feature was just disabled underneath it.
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_close_window(app: AppHandle) -> Result<(), String> {
     super::window::close(&app);
     Ok(())
+}
+
+/// Frontend ack (not gated): the workspace UI is mounted and painted — the
+/// backend may reveal the window now.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_ui_ready(app: AppHandle) {
+    super::window::ui_ready(&app);
+}
+
+/// Frontend ack (not gated): the React tree is unmounted (DOM purged) — the
+/// backend may hide the window and suspend the webview now.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_sleep_ready(app: AppHandle) {
+    super::window::sleep_ready(&app);
 }
 
 /// One-shot: the note id the overlay should select on mount, if any.
@@ -371,11 +398,14 @@ pub async fn grain_space_semantic_search(
     if !settings.grain_space_semantic {
         return Err("semantic search is disabled".to_string());
     }
-    // Directive 7: the engine's lifetime is bound to the overlay window.
-    if app
+    // Directive 7: the engine's lifetime is bound to the overlay window — and
+    // since hide-don't-destroy, to a VISIBLE overlay (a sleeping window must
+    // never spawn the model).
+    let overlay_visible = app
         .get_webview_window(super::window::WINDOW_LABEL)
-        .is_none()
-    {
+        .map(|w| w.is_visible().unwrap_or(false))
+        .unwrap_or(false);
+    if !overlay_visible {
         return Err("Grain Space window is not open".to_string());
     }
     if !super::embed::model_on_disk() {

@@ -25,7 +25,7 @@ use anyhow::{anyhow, Context, Result};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use super::note::{Note, ReminderState, ReminderStatus, TodoTag};
+use super::note::{Note, NoteCard, ReminderState, ReminderStatus, TodoTag};
 
 /// One application-wide lock serializing every vault read/write and index op
 /// (same concurrency directive as the grain store: no WAL, single writer).
@@ -862,6 +862,81 @@ pub fn list_notes(v: &Vault) -> Result<Vec<Note>> {
     Ok(notes)
 }
 
+/// A note's collection = its immediate parent folder name, unless that parent
+/// is the vault root or Grain's writable home folder (both mean "loose", i.e.
+/// the sidebar's plain "Notes" section). Native vaults are flat → always None.
+fn collection_of(v: &Vault, rel: &str) -> Option<String> {
+    let parent = Path::new(rel).parent()?;
+    if parent.as_os_str().is_empty() {
+        return None; // vault root
+    }
+    if !v.folder.is_empty() && parent == Path::new(&v.folder) {
+        return None; // Grain's own home folder
+    }
+    parent.file_name().map(|n| n.to_string_lossy().to_string())
+}
+
+/// Sidebar listing (TAURI-OVERLAY-PLAN.md Phase A): light cards, newest first.
+/// Unlike `list_notes` this is the WHOLE-vault browse — on the obsidian
+/// backend foreign notes appear too (readonly, title = filename), so switching
+/// backends shows exactly the files of the active store. Foreign cards are
+/// built from the index alone (no file reads — a big vault stays cheap).
+pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+    let rows: Vec<(String, String, i64, bool)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, path, timestamp, foreign_note FROM notes_meta ORDER BY timestamp DESC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, i64>(3)? != 0,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut cards = Vec::with_capacity(rows.len());
+    for (id, rel, timestamp, foreign) in rows {
+        let collection = collection_of(v, &rel);
+        if foreign {
+            let stem = Path::new(&rel)
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            cards.push(NoteCard {
+                id,
+                title: stem,
+                tldr: String::new(),
+                timestamp,
+                is_pinned: false,
+                reminder_state: ReminderState::default(),
+                collection,
+                readonly: true,
+            });
+            continue;
+        }
+        match read_note_at(v, &rel) {
+            Ok(n) => cards.push(NoteCard {
+                id: n.id,
+                title: n.title,
+                tldr: n.tldr,
+                timestamp: n.timestamp,
+                is_pinned: n.is_pinned,
+                reminder_state: n.reminder_state,
+                collection,
+                readonly: false,
+            }),
+            Err(e) => log::warn!("[GRAIN] vault list_cards: {e:#}"),
+        }
+    }
+    Ok(cards)
+}
+
 pub fn search_notes(v: &Vault, query: &str) -> Result<Vec<Note>> {
     search_notes_ranged(v, query, None)
 }
@@ -1578,6 +1653,63 @@ mod tests {
         n.title = title.to_string();
         n.tldr = format!("Summary of {title}.");
         n
+    }
+
+    #[test]
+    fn collection_derivation_rules() {
+        let v = temp_vault("collection_rules");
+        // Vault root and the Grain home folder are both "loose".
+        assert_eq!(collection_of(&v, "Foo.md"), None);
+        assert_eq!(collection_of(&v, "Grain/Wifi.md"), None);
+        // Any other folder names the collection (immediate parent wins).
+        assert_eq!(
+            collection_of(&v, "Grain/Work/Standup.md"),
+            Some("Work".to_string())
+        );
+        assert_eq!(
+            collection_of(&v, "Projects/Roadmap.md"),
+            Some("Projects".to_string())
+        );
+        assert_eq!(collection_of(&v, "A/B/C/deep.md"), Some("C".to_string()));
+        // Native vault: flat root, empty folder name → everything loose.
+        let native = Vault {
+            folder: String::new(),
+            native: true,
+            ..v.clone()
+        };
+        assert_eq!(collection_of(&native, "note.md"), None);
+        cleanup(&v);
+    }
+
+    #[test]
+    fn list_cards_covers_whole_vault_with_readonly_foreign() {
+        let v = temp_vault("list_cards");
+        // A grain-owned note in the home folder and one promoted to a folder.
+        let loose = grain_note("Loose", "loose body");
+        save_note(&v, &loose).unwrap();
+        // A foreign note inside a user folder, and one at the vault root.
+        fs::create_dir_all(v.root.join("Projects")).unwrap();
+        fs::write(v.root.join("Projects/Roadmap.md"), "# roadmap\ntext").unwrap();
+        fs::write(v.root.join("Scratch.md"), "scratch text").unwrap();
+
+        let cards = list_cards(&v).unwrap();
+        assert_eq!(cards.len(), 3);
+
+        let by_title = |t: &str| cards.iter().find(|c| c.title == t).unwrap();
+        let g = by_title("Loose");
+        assert!(!g.readonly);
+        assert_eq!(g.collection, None);
+        assert_eq!(g.id, loose.id);
+
+        let f = by_title("Roadmap");
+        assert!(f.readonly, "foreign notes are read-only cards");
+        assert_eq!(f.collection, Some("Projects".to_string()));
+        assert!(f.tldr.is_empty());
+
+        let s = by_title("Scratch");
+        assert!(s.readonly);
+        assert_eq!(s.collection, None, "vault root is loose");
+        cleanup(&v);
     }
 
     #[test]

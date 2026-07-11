@@ -296,6 +296,19 @@ async grainSpaceListNotes() : Promise<Result<Note[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Sidebar browse: light cards (no bodies) for the whole active store, with
+ * each note's derived collection. The overlay's listing surface; full notes
+ * load one at a time via `grain_space_get_note` on select.
+ */
+async grainSpaceListCards() : Promise<Result<NoteCard[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_list_cards") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async grainSpaceSearchNotes(query: string) : Promise<Result<Note[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_search_notes", { query }) };
@@ -439,8 +452,9 @@ async grainSpaceOpenWindow(noteId: string | null) : Promise<Result<null, string>
 }
 },
 /**
- * Close (destroy) the overlay. Deliberately NOT gated: the window must be
- * closable even if the feature was just disabled underneath it.
+ * Close (sleep) the overlay: the window hides and its renderer is suspended,
+ * but it survives for an instant re-summon. Deliberately NOT gated: the
+ * window must be closable even if the feature was just disabled underneath it.
  */
 async grainSpaceCloseWindow() : Promise<Result<null, string>> {
     try {
@@ -449,6 +463,20 @@ async grainSpaceCloseWindow() : Promise<Result<null, string>> {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Frontend ack (not gated): the workspace UI is mounted and painted — the
+ * backend may reveal the window now.
+ */
+async grainSpaceUiReady() : Promise<void> {
+    await TAURI_INVOKE("grain_space_ui_ready");
+},
+/**
+ * Frontend ack (not gated): the React tree is unmounted (DOM purged) — the
+ * backend may hide the window and suspend the webview now.
+ */
+async grainSpaceSleepReady() : Promise<void> {
+    await TAURI_INVOKE("grain_space_sleep_ready");
 },
 /**
  * One-shot: the note id the overlay should select on mount, if any.
@@ -1885,6 +1913,17 @@ tldr: string; body: string;
  * Epoch ms (UTC). Date grouping happens in the UI, in local time.
  */
 timestamp: number; todo_tags?: TodoTag[]; reminder_state?: ReminderState; is_pinned?: boolean }
+/**
+ * Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
+ * `Note` schema and never persisted: light metadata derived at list time so a
+ * browse ships no bodies to the webview. `collection` comes from the note's
+ * folder; `readonly` marks foreign vault files the editor must not write to.
+ */
+export type NoteCard = { id: string; title: string; tldr: string; timestamp: number; is_pinned: boolean; reminder_state: ReminderState; 
+/**
+ * Immediate parent folder name; `None` = loose (shown under "Notes").
+ */
+collection: string | null; readonly: boolean }
 export type OverlayPosition = "none" | "top" | "bottom" | 
 /**
  * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home

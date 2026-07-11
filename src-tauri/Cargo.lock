@@ -3025,6 +3025,7 @@ dependencies = [
  "transcribe-cpp",
  "uuid",
  "vad-rs",
+ "webview2-com",
  "windows 0.61.3",
  "winreg 0.55.0",
  "zerocopy",

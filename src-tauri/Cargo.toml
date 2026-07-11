@@ -121,6 +121,10 @@ tauri-plugin-single-instance = "2.3.2"
 tauri-plugin-updater = "2.10.0"
 
 [target.'cfg(windows)'.dependencies]
+# [GRAIN] Grain Space workspace: suspend the hidden window's WebView2 renderer
+# (TrySuspend + MemoryUsageTargetLevel) so the sleeping overlay holds almost no
+# RAM. Version must track the one wry already pulls in (see Cargo.lock).
+webview2-com = "0.38"
 windows = { version = "0.61.3", features = [
   "Win32_Media_Audio_Endpoints",
   "Win32_System_Com_StructuredStorage",

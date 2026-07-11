@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { AlarmClock, Pin, Plus, Search, Trash2, X } from "lucide-react";
-import { commands, type Note, type ReminderState } from "@/bindings";
+import { MessageSquare, Plus, Search, X } from "lucide-react";
+import { commands, type Note, type NoteCard } from "@/bindings";
+import { Sidebar } from "./Sidebar";
+import { EditorPane } from "./EditorPane";
+import { ChatRail } from "./ChatRail";
+import { flushBridge } from "./sleepBridge";
 import "./grain-space.css";
 
 /** Backend events (see src-tauri/src/grain_space). */
@@ -20,68 +23,34 @@ type ModelBanner =
   | { kind: "downloading"; percentage: number }
   | { kind: "error"; message: string };
 
-const reminderOf = (note: Note): ReminderState =>
-  note.reminder_state ?? { status: "none", fire_at: null };
-
-const timeFormat = new Intl.DateTimeFormat(undefined, {
-  hour: "2-digit",
-  minute: "2-digit",
-});
-const dateFormat = new Intl.DateTimeFormat(undefined, {
-  weekday: "short",
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
-const fireFormat = new Intl.DateTimeFormat(undefined, {
-  day: "numeric",
-  month: "short",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-
-/** Local-day bucket label: Today / Yesterday / formatted date. */
-function dayLabel(ms: number): string {
-  const d = new Date(ms);
-  const today = new Date();
-  const startOf = (x: Date) =>
-    new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round(
-    (startOf(today) - startOf(d)) / (24 * 60 * 60 * 1000),
-  );
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  return dateFormat.format(d);
-}
-
-function listTitle(note: Note): string {
-  if (note.title.trim()) return note.title;
-  const firstLine = note.body.split("\n")[0]?.trim() ?? "";
-  return firstLine.length > 48 ? `${firstLine.slice(0, 45)}…` : firstLine;
-}
-
 /**
- * [GRAIN] The Grain Space overlay: a Raycast-Notes-style two-pane browser.
- * Search on top (exact FTS, plus opt-in semantic), date-grouped list on the
- * left, and the note itself — a full editor, not a metadata panel — on the
- * right, with a compact pin/reminder/delete action row at the bottom-right.
- * Strictly search + manual editing (no voice append, no ask-AI: directive 12).
- * The window is created on summon and destroyed on close/Esc.
+ * [GRAIN] The Grain Space workspace shell (TAURI-OVERLAY-PLAN.md): a Mem/
+ * Obsidian-style three-pane surface — sidebar (Reminders / Pinned / Notes /
+ * Collections), markdown editor sheet, and a slide-in chat rail scaffold.
+ * The sidebar lists light `NoteCard`s (no bodies); the full note loads on
+ * select. On the vault backend the whole vault appears — the store's folders
+ * ARE the collections — and foreign files open read-only. The shell owns all
+ * state; the window host above it unmounts everything on sleep (DOM purge).
  */
 export function GrainSpaceOverlay() {
   const { t } = useTranslation();
-  const win = getCurrentWindow();
 
-  const [notes, setNotes] = useState<Note[]>([]);
+  const [cards, setCards] = useState<NoteCard[]>([]);
+  const [results, setResults] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("exact");
   const [semanticAvailable, setSemanticAvailable] = useState(false);
+  const [isObsidian, setIsObsidian] = useState(false);
   const [selected, setSelected] = useState<Note | null>(null);
+  const [selectedReadonly, setSelectedReadonly] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [chatOpen, setChatOpen] = useState(false);
   const [banner, setBanner] = useState<ModelBanner | null>(null);
 
   const queryRef = useRef("");
   const modeRef = useRef<SearchMode>("exact");
   const selectedRef = useRef<Note | null>(null);
+  const readonlyRef = useRef(false);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
@@ -90,6 +59,20 @@ export function GrainSpaceOverlay() {
   queryRef.current = query;
   modeRef.current = mode;
   selectedRef.current = selected;
+  readonlyRef.current = selectedReadonly;
+
+  /** Card lookup for collection chips + readonly checks on search hits. */
+  const cardById = useMemo(() => {
+    const map = new Map<string, NoteCard>();
+    for (const card of cards) map.set(card.id, card);
+    return map;
+  }, [cards]);
+  const cardByIdRef = useRef(cardById);
+  cardByIdRef.current = cardById;
+
+  /** Bumped on every editor switch — keys the CodeMirror document so a draft
+   * adopting its backend-minted id mid-typing never resets the caret. */
+  const [editSession, setEditSession] = useState(0);
 
   /** A fresh, not-yet-persisted note (backend mints the real id on first save). */
   const blankDraft = (): Note => ({
@@ -107,6 +90,7 @@ export function GrainSpaceOverlay() {
   const saveSelected = useCallback(async () => {
     const note = selectedRef.current;
     if (!note || !dirtyRef.current || savingRef.current) return;
+    if (readonlyRef.current) return; // foreign vault file: never write
     if (!note.id && !note.title.trim() && !note.body.trim()) return; // empty draft: never persist
     savingRef.current = true;
     dirtyRef.current = false;
@@ -155,6 +139,7 @@ export function GrainSpaceOverlay() {
   /** Debounced save-on-change (600 ms), flushed on blur/close/switch. */
   const touchSelected = useCallback(
     (updated: Note) => {
+      if (readonlyRef.current) return;
       setSelected(updated);
       selectedRef.current = updated;
       dirtyRef.current = true;
@@ -169,102 +154,118 @@ export function GrainSpaceOverlay() {
     await saveSelected();
   }, [saveSelected]);
 
+  // The host flushes through this bridge right before the sleep-unmount.
+  useEffect(() => {
+    flushBridge.flush = flushSave;
+    return () => {
+      flushBridge.flush = null;
+    };
+  }, [flushSave]);
+
   /** Switch the editor to another note (flushing pending edits first). */
-  const selectNote = useCallback(
-    async (note: Note | null) => {
+  const adopt = useCallback((note: Note | null, readonly: boolean) => {
+    setSelected(note);
+    selectedRef.current = note;
+    setSelectedReadonly(readonly);
+    readonlyRef.current = readonly;
+    dirtyRef.current = false;
+    setEditSession((s) => s + 1);
+  }, []);
+
+  const selectCard = useCallback(
+    async (card: NoteCard) => {
       await flushSave();
-      setSelected(note);
-      selectedRef.current = note;
-      dirtyRef.current = false;
+      const result = await commands.grainSpaceGetNote(card.id);
+      if (result.status !== "ok") {
+        console.error("Grain Space: open note failed:", result.error);
+        return;
+      }
+      adopt(result.data, card.readonly);
     },
-    [flushSave],
+    [adopt, flushSave],
+  );
+
+  const selectResult = useCallback(
+    async (note: Note) => {
+      await flushSave();
+      adopt(note, cardByIdRef.current.get(note.id)?.readonly ?? false);
+    },
+    [adopt, flushSave],
   );
 
   const newNote = useCallback(async () => {
-    await selectNote(blankDraft());
-  }, [selectNote]);
+    await flushSave();
+    adopt(blankDraft(), false);
+  }, [adopt, flushSave]);
 
-  /** Run the current search (or list) and reconcile the selection. */
-  const refresh = useCallback(async () => {
+  /** Run the current browse/search and (optionally) refresh the open note. */
+  const refresh = useCallback(async (refreshSelected = false) => {
     const q = queryRef.current.trim();
-    let result;
     if (!q) {
-      result = await commands.grainSpaceListNotes();
-    } else if (modeRef.current === "semantic") {
-      result = await commands.grainSpaceSemanticSearch(q);
-      if (result.status === "error") {
-        if (result.error === "model-not-downloaded") {
-          setBanner((b) => (b?.kind === "downloading" ? b : { kind: "consent" }));
-        } else {
-          console.error("Grain Space: semantic search failed:", result.error);
-        }
-        result = await commands.grainSpaceSearchNotes(q);
-      }
-    } else {
-      result = await commands.grainSpaceSearchNotes(q);
-    }
-    if (result.status !== "ok") {
-      console.error("Grain Space: search failed:", result.error);
-      return;
-    }
-    const fresh = result.data;
-    setNotes(fresh);
-
-    const current = selectedRef.current;
-    if (current) {
-      // Keep the editor put; refresh its content only when there are no
-      // pending local edits (e.g. quick-add elsewhere touched another note).
-      const match = fresh.find((n) => n.id === current.id);
-      if (match && !dirtyRef.current) {
-        setSelected(match);
-        selectedRef.current = match;
-      }
-      return;
-    }
-    if (fresh.length > 0) {
-      setSelected(fresh[0]);
-      selectedRef.current = fresh[0];
-    }
-  }, []);
-
-  // Mount: blank-vs-list rule + focus-note handoff + event wiring.
-  useEffect(() => {
-    if (mountedRef.current) return;
-    mountedRef.current = true;
-
-    void (async () => {
-      const settings = await commands.getAppSettings();
-      if (settings.status === "ok") {
-        setSemanticAvailable(settings.data.grain_space_semantic ?? false);
-      }
-      const focus = await commands.grainSpaceTakeFocusNote();
-      const list = await commands.grainSpaceListNotes();
+      const list = await commands.grainSpaceListCards();
       if (list.status !== "ok") {
         console.error("Grain Space: list failed:", list.error);
         return;
       }
-      setNotes(list.data);
-      if (list.data.length === 0) {
-        // No notes at all ⇒ open straight into a new blank note.
-        const draft = blankDraft();
-        setSelected(draft);
-        selectedRef.current = draft;
+      setCards(list.data);
+      setResults([]);
+    } else {
+      let result;
+      if (modeRef.current === "semantic") {
+        result = await commands.grainSpaceSemanticSearch(q);
+        if (result.status === "error") {
+          if (result.error === "model-not-downloaded") {
+            setBanner((b) =>
+              b?.kind === "downloading" ? b : { kind: "consent" },
+            );
+          } else {
+            console.error("Grain Space: semantic search failed:", result.error);
+          }
+          result = await commands.grainSpaceSearchNotes(q);
+        }
       } else {
-        const target =
-          (focus && list.data.find((n) => n.id === focus)) || list.data[0];
-        setSelected(target);
-        selectedRef.current = target;
+        result = await commands.grainSpaceSearchNotes(q);
       }
-    })();
+      if (result.status !== "ok") {
+        console.error("Grain Space: search failed:", result.error);
+        return;
+      }
+      setResults(result.data);
+    }
 
+    // Quiet content refresh for the open note (e.g. quick-add elsewhere
+    // touched it) — only when there are no pending local edits.
+    if (refreshSelected) {
+      const current = selectedRef.current;
+      if (current?.id && !dirtyRef.current) {
+        const fresh = await commands.grainSpaceGetNote(current.id);
+        if (fresh.status === "ok" && selectedRef.current?.id === current.id) {
+          setSelected(fresh.data);
+          selectedRef.current = fresh.data;
+        }
+      }
+    }
+  }, []);
+
+  // Mount: settings + focus-note handoff + first listing + event wiring.
+  useEffect(() => {
     const unlistens = [
-      listen(NOTES_CHANGED_EVENT, () => void refresh()),
+      listen(NOTES_CHANGED_EVENT, () => void refresh(true)),
       listen<string>(FOCUS_NOTE_EVENT, async (event) => {
+        await flushSave();
         const result = await commands.grainSpaceGetNote(event.payload);
-        if (result.status === "ok") await selectNote(result.data);
+        if (result.status === "ok") {
+          adopt(
+            result.data,
+            cardByIdRef.current.get(result.data.id)?.readonly ?? false,
+          );
+        }
       }),
       listen<{ percentage: number }>(MODEL_PROGRESS_EVENT, (event) => {
-        setBanner({ kind: "downloading", percentage: event.payload.percentage });
+        setBanner({
+          kind: "downloading",
+          percentage: event.payload.percentage,
+        });
       }),
       listen(MODEL_COMPLETE_EVENT, () => {
         setBanner(null);
@@ -274,10 +275,39 @@ export function GrainSpaceOverlay() {
         setBanner({ kind: "error", message: event.payload });
       }),
     ];
+
+    if (!mountedRef.current) {
+      mountedRef.current = true;
+      void (async () => {
+        const settings = await commands.getAppSettings();
+        if (settings.status === "ok") {
+          setSemanticAvailable(settings.data.grain_space_semantic ?? false);
+          setIsObsidian(settings.data.grain_space_backend === "obsidian");
+        }
+        const focus = await commands.grainSpaceTakeFocusNote();
+        const list = await commands.grainSpaceListCards();
+        if (list.status !== "ok") {
+          console.error("Grain Space: list failed:", list.error);
+          return;
+        }
+        setCards(list.data);
+        const target = focus
+          ? (list.data.find((c) => c.id === focus) ?? list.data[0])
+          : list.data[0];
+        if (!target) {
+          // No notes at all ⇒ open straight into a new blank note.
+          adopt(blankDraft(), false);
+          return;
+        }
+        const note = await commands.grainSpaceGetNote(target.id);
+        if (note.status === "ok") adopt(note.data, target.readonly);
+      })();
+    }
+
     return () => {
       unlistens.forEach((p) => void p.then((fn) => fn()));
     };
-  }, [refresh, selectNote]);
+  }, [adopt, flushSave, refresh]);
 
   // Debounced search-as-you-type (semantic waits a bit longer per keystroke).
   useEffect(() => {
@@ -289,7 +319,11 @@ export function GrainSpaceOverlay() {
     return () => window.clearTimeout(searchTimer.current);
   }, [query, mode, refresh]);
 
-  // Esc: clear the search first, then close (destroy) the window. Ctrl+N: new note.
+  const closeWindow = useCallback(() => {
+    void flushSave().then(() => void commands.grainSpaceCloseWindow());
+  }, [flushSave]);
+
+  // Esc: clear the search first, then put the window to sleep. Ctrl+N: new note.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -297,7 +331,7 @@ export function GrainSpaceOverlay() {
         if (queryRef.current) {
           setQuery("");
         } else {
-          void flushSave().then(() => void win.close());
+          closeWindow();
         }
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
@@ -306,9 +340,9 @@ export function GrainSpaceOverlay() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [flushSave, newNote, win]);
+  }, [closeWindow, newNote]);
 
-  // Flush pending edits when the window is about to go away.
+  // Safety net: flush pending edits if the window is truly torn down.
   useEffect(() => {
     const flush = () => void flushSave();
     window.addEventListener("beforeunload", flush);
@@ -317,7 +351,7 @@ export function GrainSpaceOverlay() {
 
   const deleteSelected = async () => {
     const note = selectedRef.current;
-    if (!note) return;
+    if (!note || readonlyRef.current) return;
     dirtyRef.current = false;
     window.clearTimeout(saveTimer.current);
     if (note.id) {
@@ -327,16 +361,13 @@ export function GrainSpaceOverlay() {
         return;
       }
     }
-    const remaining = notes.filter((n) => n.id !== note.id);
-    setNotes(remaining);
-    const next = remaining[0] ?? null;
-    setSelected(next);
-    selectedRef.current = next;
+    adopt(null, false);
+    void refresh();
   };
 
   const togglePin = async () => {
     const note = selectedRef.current;
-    if (!note?.id) return;
+    if (!note?.id || readonlyRef.current) return;
     const result = await commands.grainSpaceSetPinned(note.id, !note.is_pinned);
     if (result.status === "ok") {
       setSelected(result.data);
@@ -347,7 +378,7 @@ export function GrainSpaceOverlay() {
 
   const armReminder = async () => {
     const note = selectedRef.current;
-    const fireAt = note ? reminderOf(note).fire_at : null;
+    const fireAt = note?.reminder_state?.fire_at ?? null;
     if (!note?.id || fireAt == null) return;
     const result = await commands.grainSpaceArmReminder(note.id, fireAt);
     if (result.status === "ok") {
@@ -375,6 +406,21 @@ export function GrainSpaceOverlay() {
     touchSelected({ ...note, todo_tags: todos });
   };
 
+  const openExternal = () => {
+    const note = selectedRef.current;
+    if (!note?.id) return;
+    void commands.grainSpaceOpenInObsidian(note.id);
+  };
+
+  const toggleCollection = (name: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+
   const startModelDownload = () => {
     setBanner({ kind: "downloading", percentage: 0 });
     commands.grainSpaceDownloadEmbedModel().then((result) => {
@@ -387,293 +433,191 @@ export function GrainSpaceOverlay() {
     });
   };
 
-  // Grouping: pinned first, then local-day buckets (search results keep the
-  // backend's relevance order instead).
   const searching = query.trim().length > 0;
-  const groups: { label: string; items: Note[] }[] = [];
-  if (searching) {
-    if (notes.length > 0)
-      groups.push({ label: t("grainSpaceOverlay.results"), items: notes });
-  } else {
-    const sorted = [...notes].sort(
-      (a, b) =>
-        Number(b.is_pinned) - Number(a.is_pinned) || b.timestamp - a.timestamp,
-    );
-    for (const note of sorted) {
-      const label = note.is_pinned
-        ? t("grainSpaceOverlay.pinned")
-        : dayLabel(note.timestamp);
-      const last = groups[groups.length - 1];
-      if (last && last.label === label) last.items.push(note);
-      else groups.push({ label, items: [note] });
-    }
-  }
-
-  const reminder = selected ? reminderOf(selected) : null;
-  const todos = selected?.todo_tags ?? [];
+  const selectedCollection =
+    (selected && cardById.get(selected.id)?.collection) ?? null;
 
   return (
     <div className="gs-root">
-      <div className="gs-card">
-        <div className="gs-head" data-tauri-drag-region>
-          <span className="gs-brand" data-tauri-drag-region>
-            {t("grainSpaceOverlay.brand")}
-          </span>
-          <div className="gs-search">
-            <Search width={13} height={13} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("grainSpaceOverlay.searchPlaceholder")}
-              spellCheck={false}
-            />
-            {query && (
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title="Clear search"
-                onClick={() => setQuery("")}
-              >
-                <X width={12} height={12} />
-              </button>
-            )}
-          </div>
-          {semanticAvailable && (
-            <div className="gs-mode">
-              <button
-                type="button"
-                className={mode === "exact" ? "gs-mode--on" : ""}
-                onClick={() => setMode("exact")}
-              >
-                {t("grainSpaceOverlay.exact")}
-              </button>
-              <button
-                type="button"
-                className={mode === "semantic" ? "gs-mode--on" : ""}
-                onClick={() => setMode("semantic")}
-              >
-                {t("grainSpaceOverlay.semantic")}
-              </button>
-            </div>
-          )}
-          <button
-            type="button"
-            className="gs-iconbtn"
-            title="New note (Ctrl+N)"
-            onClick={() => void newNote()}
-          >
-            <Plus width={15} height={15} />
-          </button>
-          <button
-            type="button"
-            className="gs-iconbtn"
-            title="Close"
-            onClick={() => void flushSave().then(() => void win.close())}
-          >
-            <X width={15} height={15} />
-          </button>
-        </div>
+      <div className="gs-frame">
+        <Sidebar
+          cards={cards}
+          searching={searching}
+          results={results}
+          selectedId={selected?.id ?? null}
+          expanded={expanded}
+          onToggleCollection={toggleCollection}
+          onSelectCard={(card) => void selectCard(card)}
+          onSelectResult={(note) => void selectResult(note)}
+          onCreate={() => void newNote()}
+        />
 
-        {banner && (
-          <div className="gs-banner">
-            {banner.kind === "consent" && (
-              <>
-                <span className="gs-banner-text">
-                  {t("grainSpaceOverlay.consent")}
-                </span>
-                <button type="button" className="gs-btn" onClick={startModelDownload}>
-                  {t("grainSpaceOverlay.download")}
-                </button>
-                <button
-                  type="button"
-                  className="gs-btn gs-btn--quiet"
-                  onClick={() => {
-                    setBanner(null);
-                    setMode("exact");
-                  }}
-                >
-                  {t("grainSpaceOverlay.notNow")}
-                </button>
-              </>
-            )}
-            {banner.kind === "downloading" && (
-              <>
-                <span className="gs-banner-text">
-                  {t("grainSpaceOverlay.downloading")}
-                </span>
-                <div className="gs-progress">
-                  <span style={{ width: `${banner.percentage.toFixed(1)}%` }} />
-                </div>
-                <button
-                  type="button"
-                  className="gs-btn gs-btn--quiet"
-                  onClick={() => {
-                    void commands.grainSpaceCancelEmbedModelDownload();
-                    setBanner(null);
-                  }}
-                >
-                  {t("grainSpaceOverlay.cancel")}
-                </button>
-              </>
-            )}
-            {banner.kind === "error" && (
-              <>
-                <span className="gs-banner-text gs-banner-error">
-                  {t("grainSpaceOverlay.downloadFailed", {
-                    message: banner.message,
-                  })}
-                </span>
-                <button type="button" className="gs-btn" onClick={startModelDownload}>
-                  {t("grainSpaceOverlay.retry")}
-                </button>
-                <button
-                  type="button"
-                  className="gs-btn gs-btn--quiet"
-                  onClick={() => setBanner(null)}
-                >
-                  {t("grainSpaceOverlay.dismiss")}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
-        <div className="gs-body">
-          <div className="gs-list">
-            {groups.length === 0 ? (
-              <div className="gs-list-empty">
-                {searching
-                  ? t("grainSpaceOverlay.noMatches")
-                  : t("grainSpaceOverlay.emptyList")}
-              </div>
-            ) : (
-              groups.map((group) => (
-                <div key={group.label}>
-                  <div className="gs-group">{group.label}</div>
-                  {group.items.map((note) => (
-                    <button
-                      key={note.id}
-                      type="button"
-                      className={`gs-item${
-                        selected?.id === note.id ? " gs-item--on" : ""
-                      }`}
-                      onClick={() => void selectNote(note)}
-                    >
-                      <div className="gs-item-title">
-                        {note.is_pinned && <Pin width={11} height={11} />}
-                        <span>
-                          {listTitle(note) || t("grainSpaceOverlay.untitled")}
-                        </span>
-                      </div>
-                      <div className="gs-item-sub">
-                        {timeFormat.format(new Date(note.timestamp))}
-                        {note.tldr.trim() ? ` · ${note.tldr}` : ""}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ))
-            )}
-          </div>
-
-          {selected ? (
-            <div className="gs-editor">
+        <div className="gs-main">
+          <div className="gs-top" data-tauri-drag-region>
+            <div className="gs-search">
+              <Search width={13} height={13} />
               <input
-                className="gs-title"
-                value={selected.title}
-                placeholder={t("grainSpaceOverlay.titlePlaceholder")}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t("grainSpaceOverlay.searchPlaceholder")}
                 spellCheck={false}
-                onChange={(e) =>
-                  touchSelected({ ...selected, title: e.target.value })
-                }
-                onBlur={() => void flushSave()}
               />
-              {selected.tldr.trim() && (
-                <div className="gs-tldr">{selected.tldr}</div>
-              )}
-              <textarea
-                className="gs-bodytext"
-                value={selected.body}
-                placeholder={t("grainSpaceOverlay.bodyPlaceholder")}
-                onChange={(e) =>
-                  touchSelected({ ...selected, body: e.target.value })
-                }
-                onBlur={() => void flushSave()}
-              />
-              {todos.length > 0 && (
-                <div className="gs-todos">
-                  <div className="gs-todos-label">
-                    {t("grainSpaceOverlay.todos")}
-                  </div>
-                  {todos.map((todo, i) => (
-                    <label
-                      key={`${i}-${todo.text}`}
-                      className={`gs-todo${todo.done ? " gs-todo--done" : ""}`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={todo.done}
-                        onChange={() => toggleTodo(i)}
-                      />
-                      <span>{todo.text}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-              <div className="gs-actions">
-                <div className="gs-reminder">
-                  {reminder?.status === "pending" && reminder.fire_at != null && (
-                    <>
-                      <AlarmClock width={13} height={13} />
-                      <span>{fireFormat.format(new Date(reminder.fire_at))}</span>
-                      <button type="button" className="gs-btn" onClick={armReminder}>
-                        {t("grainSpaceOverlay.armReminder")}
-                      </button>
-                    </>
-                  )}
-                  {(reminder?.status === "armed" ||
-                    reminder?.status === "fired") && (
-                    <>
-                      <AlarmClock width={13} height={13} />
-                      {reminder.fire_at != null && (
-                        <span>
-                          {fireFormat.format(new Date(reminder.fire_at))}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className="gs-btn gs-btn--quiet"
-                        onClick={dismissReminder}
-                      >
-                        {t("grainSpaceOverlay.dismiss")}
-                      </button>
-                    </>
-                  )}
-                </div>
+              {query && (
                 <button
                   type="button"
-                  className={`gs-iconbtn${selected.is_pinned ? " gs-iconbtn--active" : ""}`}
-                  title={selected.is_pinned ? "Unpin" : "Pin"}
-                  onClick={togglePin}
-                  disabled={!selected.id}
+                  className="gs-iconbtn"
+                  title="Clear search"
+                  onClick={() => setQuery("")}
                 >
-                  <Pin width={14} height={14} />
+                  <X width={12} height={12} />
+                </button>
+              )}
+            </div>
+            {semanticAvailable && (
+              <div className="gs-mode">
+                <button
+                  type="button"
+                  className={mode === "exact" ? "gs-mode--on" : ""}
+                  onClick={() => setMode("exact")}
+                >
+                  {t("grainSpaceOverlay.exact")}
                 </button>
                 <button
                   type="button"
-                  className="gs-iconbtn gs-iconbtn--danger"
-                  title="Delete note"
-                  onClick={() => void deleteSelected()}
+                  className={mode === "semantic" ? "gs-mode--on" : ""}
+                  onClick={() => setMode("semantic")}
                 >
-                  <Trash2 width={14} height={14} />
+                  {t("grainSpaceOverlay.semantic")}
                 </button>
               </div>
-            </div>
-          ) : (
-            <div className="gs-editor-empty">
-              {t("grainSpaceOverlay.noSelection")}
+            )}
+            <div className="gs-top-spacer" data-tauri-drag-region />
+            <button
+              type="button"
+              className="gs-iconbtn"
+              title="New note (Ctrl+N)"
+              onClick={() => void newNote()}
+            >
+              <Plus width={15} height={15} />
+            </button>
+            <button
+              type="button"
+              className={`gs-iconbtn${chatOpen ? " gs-iconbtn--active" : ""}`}
+              title="Toggle chat"
+              onClick={() => setChatOpen((v) => !v)}
+            >
+              <MessageSquare width={14} height={14} />
+            </button>
+            <button
+              type="button"
+              className="gs-iconbtn"
+              title="Close"
+              onClick={closeWindow}
+            >
+              <X width={15} height={15} />
+            </button>
+          </div>
+
+          {banner && (
+            <div className="gs-banner">
+              {banner.kind === "consent" && (
+                <>
+                  <span className="gs-banner-text">
+                    {t("grainSpaceOverlay.consent")}
+                  </span>
+                  <button
+                    type="button"
+                    className="gs-btn"
+                    onClick={startModelDownload}
+                  >
+                    {t("grainSpaceOverlay.download")}
+                  </button>
+                  <button
+                    type="button"
+                    className="gs-btn gs-btn--quiet"
+                    onClick={() => {
+                      setBanner(null);
+                      setMode("exact");
+                    }}
+                  >
+                    {t("grainSpaceOverlay.notNow")}
+                  </button>
+                </>
+              )}
+              {banner.kind === "downloading" && (
+                <>
+                  <span className="gs-banner-text">
+                    {t("grainSpaceOverlay.downloading")}
+                  </span>
+                  <div className="gs-progress">
+                    <span
+                      style={{ width: `${banner.percentage.toFixed(1)}%` }}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="gs-btn gs-btn--quiet"
+                    onClick={() => {
+                      void commands.grainSpaceCancelEmbedModelDownload();
+                      setBanner(null);
+                    }}
+                  >
+                    {t("grainSpaceOverlay.cancel")}
+                  </button>
+                </>
+              )}
+              {banner.kind === "error" && (
+                <>
+                  <span className="gs-banner-text gs-banner-error">
+                    {t("grainSpaceOverlay.downloadFailed", {
+                      message: banner.message,
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className="gs-btn"
+                    onClick={startModelDownload}
+                  >
+                    {t("grainSpaceOverlay.retry")}
+                  </button>
+                  <button
+                    type="button"
+                    className="gs-btn gs-btn--quiet"
+                    onClick={() => setBanner(null)}
+                  >
+                    {t("grainSpaceOverlay.dismiss")}
+                  </button>
+                </>
+              )}
             </div>
           )}
+
+          <div className="gs-stage">
+            {selected ? (
+              <EditorPane
+                note={selected}
+                docKey={editSession}
+                readonly={selectedReadonly}
+                isObsidian={isObsidian}
+                collection={selectedCollection}
+                onEdit={touchSelected}
+                onFlush={() => void flushSave()}
+                onTogglePin={() => void togglePin()}
+                onDelete={() => void deleteSelected()}
+                onArmReminder={() => void armReminder()}
+                onDismissReminder={() => void dismissReminder()}
+                onToggleTodo={toggleTodo}
+                onOpenExternal={openExternal}
+              />
+            ) : (
+              <section className="gs-sheet">
+                <div className="gs-sheet-empty">
+                  {t("grainSpaceOverlay.noSelection")}
+                </div>
+              </section>
+            )}
+            <ChatRail open={chatOpen} />
+          </div>
         </div>
       </div>
     </div>
