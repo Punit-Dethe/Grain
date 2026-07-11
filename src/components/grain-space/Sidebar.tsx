@@ -4,19 +4,20 @@ import {
   AlarmClock,
   ChevronRight,
   FileText,
-  Hash,
+  Library,
   Pin,
+  Search,
   SquarePen,
 } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
- * [GRAIN] Workspace sidebar — Mem-style: a profile header, a Create-note
- * button, then collapsible Pinned / Notes / Folders sections. The Notes
- * section splits loose GRAIN notes from loose OBSIDIAN (vault-root) notes with
- * a divider. Folders render a nested tree from each card's `folder` path
- * (subfolders nest). While a search runs the sections give way to a flat
- * result list in relevance order.
+ * [GRAIN] Workspace sidebar — premium three-section layout. A profile header,
+ * a Create-note button, then BIG section headings (Reminders / Pinned /
+ * Notes / Collections) each with their own colored icon tile on the left and
+ * a collapse chevron on the right. Sections read as distinct areas, not a
+ * folder tree. While a search runs the sections give way to a flat result
+ * list in relevance order.
  */
 
 const dayFormat = new Intl.DateTimeFormat(undefined, {
@@ -136,6 +137,10 @@ export function Sidebar({
   const topFolders = [...tree.children.values()].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
+  const collectionCount = useMemo(
+    () => topFolders.reduce((n, f) => n + subtreeCount(f), 0),
+    [topFolders],
+  );
 
   const cardRow = (card: NoteCard, depth = 0) => (
     <button
@@ -199,7 +204,7 @@ export function Sidebar({
             <ChevronRight width={13} height={13} />
           </span>
           <span className="gs-row-hash">
-            <Hash width={13} height={13} />
+            <FileText width={13} height={13} />
           </span>
           <span className="gs-row-title">{node.name}</span>
           <span className="gs-row-count">{subtreeCount(node)}</span>
@@ -214,19 +219,30 @@ export function Sidebar({
     );
   };
 
-  const sectionHead = (key: string, label: string, icon?: React.ReactNode) => (
+  /** Big section heading: colored icon tile (left) + label + count, chevron
+   * flush to the right edge. Clicking toggles collapse. */
+  const sectionHead = (
+    key: string,
+    label: string,
+    iconClass: string,
+    icon: React.ReactNode,
+    count?: number,
+  ) => (
     <button
       type="button"
       className="gs-section"
       onClick={() => toggleSection(key)}
     >
+      <span className={`gs-section-ic ${iconClass}`}>{icon}</span>
+      <span className="gs-section-label">{label}</span>
+      {count != null && count > 0 && (
+        <span className="gs-section-count">{count}</span>
+      )}
       <span
         className={`gs-section-chev${collapsed[key] ? " gs-section-chev--closed" : ""}`}
       >
-        <ChevronRight width={11} height={11} />
+        <ChevronRight width={14} height={14} />
       </span>
-      {icon}
-      <span className="gs-section-label">{label}</span>
     </button>
   );
 
@@ -251,6 +267,9 @@ export function Sidebar({
         {searching ? (
           <>
             <div className="gs-section gs-section--static">
+              <span className="gs-section-ic gs-section-ic--results">
+                <Search width={13} height={13} />
+              </span>
               <span className="gs-section-label">
                 {t("grainSpaceOverlay.results")}
               </span>
@@ -281,25 +300,24 @@ export function Sidebar({
           </>
         ) : (
           <>
-            {reminders.length > 0 && (
-              <>
-                {sectionHead(
-                  "reminders",
-                  t("grainSpaceOverlay.reminders"),
-                  <AlarmClock
-                    width={12}
-                    height={12}
-                    className="gs-section-ic"
-                  />,
-                )}
-                {!collapsed.reminders && reminders.map((c) => cardRow(c))}
-              </>
+            {reminders.length > 0 &&
+              sectionHead(
+                "reminders",
+                t("grainSpaceOverlay.reminders"),
+                "gs-section-ic--reminders",
+                <AlarmClock width={13} height={13} />,
+                reminders.length,
+              )}
+            {!collapsed.reminders && reminders.length > 0 && (
+              <>{reminders.map((c) => cardRow(c))}</>
             )}
 
             {sectionHead(
               "pinned",
               t("grainSpaceOverlay.pinned"),
-              <Pin width={12} height={12} className="gs-section-ic" />,
+              "gs-section-ic--pinned",
+              <Pin width={13} height={13} />,
+              pinned.length,
             )}
             {!collapsed.pinned &&
               (pinned.length > 0 ? (
@@ -310,7 +328,13 @@ export function Sidebar({
                 </div>
               ))}
 
-            {sectionHead("notes", t("grainSpaceOverlay.notes"))}
+            {sectionHead(
+              "notes",
+              t("grainSpaceOverlay.notes"),
+              "gs-section-ic--notes",
+              <FileText width={13} height={13} />,
+              grainLoose.length + obsidianLoose.length,
+            )}
             {!collapsed.notes && (
               <>
                 {grainLoose.length === 0 && obsidianLoose.length === 0 && (
@@ -330,13 +354,16 @@ export function Sidebar({
               </>
             )}
 
-            {topFolders.length > 0 && (
-              <>
-                {sectionHead("folders", t("grainSpaceOverlay.folders"))}
-                {!collapsed.folders &&
-                  topFolders.map((node) => renderFolder(node, 0))}
-              </>
-            )}
+            {topFolders.length > 0 &&
+              sectionHead(
+                "folders",
+                t("grainSpaceOverlay.collections"),
+                "gs-section-ic--collections",
+                <Library width={13} height={13} />,
+                collectionCount,
+              )}
+            {!collapsed.folders &&
+              topFolders.map((node) => renderFolder(node, 0))}
           </>
         )}
       </nav>

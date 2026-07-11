@@ -1,7 +1,9 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { AlarmClock, ExternalLink, Lock, Pin, Trash2 } from "lucide-react";
 import type { Note, ReminderState } from "@/bindings";
+import { EditorToolbar } from "./EditorToolbar";
+import type { EditorHandle } from "./MarkdownEditor";
 
 /**
  * [GRAIN] The editor sheet. The markdown editor itself is code-split via
@@ -60,6 +62,7 @@ export function EditorPane({
   onOpenExternal,
 }: Props) {
   const { t } = useTranslation();
+  const editorRef = useRef<EditorHandle | null>(null);
   const reminder: ReminderState = note.reminder_state ?? {
     status: "none",
     fire_at: null,
@@ -89,6 +92,8 @@ export function EditorPane({
       </div>
       {note.tldr.trim() && <div className="gs-tldr">{note.tldr}</div>}
 
+      {!readonly && <EditorToolbar editor={editorRef} />}
+
       <Suspense
         fallback={
           <div className="gs-ed-loading">
@@ -102,6 +107,7 @@ export function EditorPane({
         }
       >
         <MarkdownEditor
+          ref={editorRef}
           docKey={docKey}
           value={note.body}
           readOnly={readonly}

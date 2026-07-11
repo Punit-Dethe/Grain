@@ -1,7 +1,7 @@
-/* [GRAIN] Grain Space workspace — Mem-inspired three-pane surface. Soft warm
- * paper, near-white editor sheet, restrained accents, generous whitespace and
- * rounded geometry. The window is transparent and card-sized so the corners
- * read as a floating workspace. Self-contained: loads no other app CSS. */
+/* [GRAIN] Grain Space workspace — premium three-pane surface. Refined warm
+ * palette, generous whitespace, bold section headings, subtle depth. The
+ * window is transparent and card-sized so the corners read as a floating
+ * workspace. Self-contained: loads no other app CSS. */
 
 .gs-root {
   width: 100vw;
@@ -13,22 +13,41 @@
 }
 
 .gs-frame {
-  /* Design tokens — every pane pulls only from these. */
-  --paper: #f5f1e9;
-  --side: #f2eee5;
+  /* Design tokens — refined warm palette. */
+  --paper: #faf7f1;
+  --side: #f3efe6;
+  --side-2: #efeadf;
   --sheet: #fffdf8;
-  --input-bg: #f7f3ec;
-  --ink: #2a261f;
-  --muted: rgba(42, 38, 31, 0.62);
-  --faint: rgba(42, 38, 31, 0.4);
-  --ghost: rgba(42, 38, 31, 0.28);
-  --line: rgba(42, 38, 31, 0.08);
-  --hover: rgba(42, 38, 31, 0.045);
-  --sel: rgba(42, 38, 31, 0.075);
+  --input-bg: #f6f2ea;
+  --ink: #1e1b16;
+  --ink-2: #322e26;
+  --muted: rgba(30, 27, 22, 0.56);
+  --faint: rgba(30, 27, 22, 0.38);
+  --ghost: rgba(30, 27, 22, 0.22);
+  --line: rgba(30, 27, 22, 0.07);
+  --line-2: rgba(30, 27, 22, 0.04);
+  --hover: rgba(30, 27, 22, 0.032);
+  --sel: rgba(255, 93, 30, 0.07);
+  --sel-border: rgba(255, 93, 30, 0.22);
   --orange: #ff5d1e;
-  --orange-soft: rgba(255, 93, 30, 0.12);
+  --orange-2: #ff7a45;
+  --orange-soft: rgba(255, 93, 30, 0.1);
   --green: #4f9d69;
+  --green-soft: rgba(79, 157, 105, 0.12);
+  --blue: #5b7cc4;
+  --blue-soft: rgba(91, 124, 196, 0.12);
+  --amber: #c8842f;
+  --amber-soft: rgba(200, 132, 47, 0.14);
+  --purple: #8a6bc0;
+  --purple-soft: rgba(138, 107, 192, 0.12);
   --error: #c0392f;
+  /* Editor rich-content accents. */
+  --hl-mark: rgba(255, 214, 92, 0.42);
+  --code-bg: rgba(30, 27, 22, 0.045);
+  --code-border: rgba(30, 27, 22, 0.08);
+  --shadow-sm: 0 1px 2px rgba(30, 27, 22, 0.04);
+  --shadow-md: 0 2px 8px rgba(30, 27, 22, 0.05);
+  --shadow-lg: 0 4px 16px rgba(30, 27, 22, 0.06);
   --mono:
     "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
   --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
@@ -38,9 +57,11 @@
   height: 100%;
   display: flex;
   background: var(--paper);
-  border-radius: 16px;
-  border: 1px solid rgba(42, 38, 31, 0.14);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+  border-radius: 18px;
+  border: 1px solid rgba(30, 27, 22, 0.1);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.6),
+    0 24px 60px -12px rgba(30, 27, 22, 0.18);
   color: var(--ink);
   font-family: var(--body);
   overflow: hidden;
@@ -57,12 +78,29 @@
 /* ══ SIDEBAR ═══════════════════════════════════════════════════════════════ */
 .gs-side {
   flex: none;
-  width: 258px;
+  width: 274px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--side);
+  background: linear-gradient(178deg, var(--side) 0%, var(--side-2) 100%);
   border-right: 1px solid var(--line);
+  position: relative;
+}
+.gs-side::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    var(--line) 20%,
+    var(--line) 80%,
+    transparent
+  );
+  pointer-events: none;
 }
 
 /* Profile header (avatar + workspace / active store). */
@@ -70,133 +108,217 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 16px 10px;
+  gap: 11px;
+  padding: 22px 18px 14px;
+  margin-bottom: 2px;
 }
 .gs-avatar {
   flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 11px;
   display: grid;
   place-items: center;
-  background: linear-gradient(140deg, #ff7a45, var(--orange));
+  background: linear-gradient(140deg, var(--orange-2), var(--orange));
   color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  box-shadow: 0 1px 2px rgba(42, 38, 31, 0.18);
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  box-shadow:
+    0 2px 6px rgba(255, 93, 30, 0.34),
+    0 1px 2px rgba(255, 93, 30, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 .gs-profile-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.25;
+  line-height: 1.3;
 }
 .gs-profile-name {
-  font-size: 13.5px;
-  font-weight: 650;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .gs-profile-sub {
-  font-size: 10.5px;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  margin-top: 1px;
 }
 
 .gs-create {
   flex: none;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 9px;
-  margin: 4px 12px 8px;
-  padding: 9px 14px;
-  border: 1px solid var(--line);
+  margin: 4px 14px 12px;
+  padding: 11px 16px;
+  border: 1px solid transparent;
   border-radius: 12px;
-  background: var(--sheet);
+  background: linear-gradient(140deg, var(--orange-2), var(--orange));
   font-family: var(--body);
   font-size: 13px;
-  font-weight: 560;
-  color: var(--ink);
+  font-weight: 650;
+  letter-spacing: 0.1px;
+  color: #fff;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(42, 38, 31, 0.05);
+  box-shadow:
+    0 2px 8px rgba(255, 93, 30, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
   transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    transform 60ms ease;
+    box-shadow 160ms ease,
+    transform 80ms ease,
+    filter 140ms ease;
 }
 .gs-create:hover {
-  border-color: rgba(42, 38, 31, 0.2);
-  box-shadow: 0 2px 6px rgba(42, 38, 31, 0.09);
+  filter: brightness(1.04);
+  box-shadow:
+    0 4px 14px rgba(255, 93, 30, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
 }
 .gs-create:active {
   transform: translateY(0.5px);
+  box-shadow:
+    0 1px 4px rgba(255, 93, 30, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 .gs-create svg {
-  color: var(--orange);
+  color: #fff;
 }
 
 .gs-nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 8px 16px;
+  padding: 2px 10px 20px;
+  scrollbar-gutter: stable;
 }
 .gs-nav::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 .gs-nav::-webkit-scrollbar-thumb {
-  background: rgba(42, 38, 31, 0.14);
-  border-radius: 4px;
+  background: rgba(30, 27, 22, 0.12);
+  border-radius: 3px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 .gs-nav::-webkit-scrollbar-thumb:hover {
-  background: rgba(42, 38, 31, 0.24);
+  background: rgba(30, 27, 22, 0.22);
+  background-clip: padding-box;
 }
 
-/* Section header (collapsible). */
+/* Section header — BIG heading, icon-left, chevron-right. */
 .gs-section {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   width: 100%;
   border: none;
   background: transparent;
-  padding: 12px 8px 4px;
+  padding: 18px 6px 8px;
   cursor: pointer;
-  color: var(--faint);
+  color: var(--ink-2);
+  border-radius: 8px;
+  transition: background 120ms ease;
+}
+.gs-section:hover {
+  background: var(--hover);
 }
 .gs-section--static {
   cursor: default;
-  padding-left: 12px;
+  padding-left: 10px;
+}
+.gs-section--static:hover {
+  background: transparent;
 }
 .gs-section-chev {
+  flex: none;
   display: inline-flex;
+  align-items: center;
+  margin-left: auto;
   color: var(--ghost);
-  transition: transform 130ms ease;
+  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
   transform: rotate(90deg);
 }
 .gs-section-chev--closed {
   transform: rotate(0deg);
 }
 .gs-section-ic {
-  color: var(--faint);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
+  border-radius: 7px;
+  background: var(--line-2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.gs-section-ic svg {
+  color: var(--ink-2);
 }
 .gs-section-label {
-  font-size: 11px;
-  font-weight: 650;
-  letter-spacing: 0.3px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.15px;
+  color: var(--ink-2);
+}
+.gs-section-count {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
   color: var(--muted);
+  background: var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  min-width: 22px;
+  text-align: center;
+}
+
+/* Per-section icon accent colors. */
+.gs-section-ic--pinned {
+  background: var(--orange-soft);
+}
+.gs-section-ic--pinned svg {
+  color: var(--orange);
+}
+.gs-section-ic--notes {
+  background: var(--blue-soft);
+}
+.gs-section-ic--notes svg {
+  color: var(--blue);
+}
+.gs-section-ic--collections {
+  background: var(--green-soft);
+}
+.gs-section-ic--collections svg {
+  color: var(--green);
+}
+.gs-section-ic--reminders {
+  background: var(--amber-soft);
+}
+.gs-section-ic--reminders svg {
+  color: var(--amber);
+}
+.gs-section-ic--results {
+  background: var(--line);
 }
 
 /* Rows: notes + folders share the base. */
 .gs-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
   text-align: left;
   border: none;
@@ -206,13 +328,28 @@
   cursor: pointer;
   color: var(--ink);
   font-family: var(--body);
+  transition: background 100ms ease;
+  position: relative;
 }
 .gs-row:hover {
   background: var(--hover);
 }
 .gs-row--on {
   background: var(--sel);
-  box-shadow: inset 2px 0 0 var(--orange);
+}
+.gs-row--on::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--orange);
+}
+.gs-row--on .gs-row-title {
+  font-weight: 600;
 }
 .gs-row-icon {
   flex: none;
@@ -234,12 +371,14 @@
 .gs-row-age {
   flex: none;
   font-size: 10px;
+  font-weight: 500;
   color: var(--ghost);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Folder rows: chevron + green hash + count badge. */
 .gs-row--folder .gs-row-title {
-  font-weight: 550;
+  font-weight: 560;
 }
 .gs-row-chev {
   flex: none;
@@ -259,20 +398,24 @@
   flex: none;
   font-family: var(--mono);
   font-size: 9.5px;
+  font-weight: 600;
   color: var(--muted);
-  background: rgba(42, 38, 31, 0.06);
+  background: var(--line);
   border-radius: 999px;
   padding: 1px 7px;
+  min-width: 20px;
+  text-align: center;
 }
 
 .gs-seeall {
   border: none;
   background: transparent;
-  padding: 5px 10px 5px 34px;
+  padding: 6px 10px 6px 38px;
   font-size: 11.5px;
   font-weight: 550;
   color: var(--muted);
   cursor: pointer;
+  transition: color 120ms ease;
 }
 .gs-seeall:hover {
   color: var(--orange);
@@ -282,8 +425,8 @@
 .gs-divider {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 10px 4px;
+  gap: 10px;
+  padding: 12px 10px 6px;
   color: var(--ghost);
 }
 .gs-divider::before,
@@ -296,7 +439,7 @@
 .gs-divider span {
   font-size: 9px;
   font-weight: 650;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.8px;
   text-transform: uppercase;
   color: var(--faint);
   white-space: nowrap;
@@ -304,10 +447,11 @@
 
 .gs-nav-empty,
 .gs-nav-hint {
-  padding: 6px 10px 4px;
+  padding: 8px 12px 4px;
   font-size: 11.5px;
+  font-style: italic;
   color: var(--faint);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 /* ══ MAIN COLUMN: top strip + stage ════════════════════════════════════════ */
@@ -316,13 +460,14 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background: var(--paper);
 }
 .gs-top {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px 10px;
+  gap: 10px;
+  padding: 14px 18px 12px;
 }
 .gs-search {
   flex: 1 1 auto;
@@ -330,16 +475,19 @@
   max-width: 620px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   background: var(--input-bg);
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 8px 14px;
+  padding: 9px 16px;
   color: var(--faint);
-  transition: border-color 120ms ease;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 .gs-search:focus-within {
-  border-color: rgba(42, 38, 31, 0.22);
+  border-color: var(--sel-border);
+  box-shadow: 0 0 0 3px var(--orange-soft);
 }
 .gs-search input {
   flex: 1 1 auto;
@@ -349,6 +497,7 @@
   outline: none;
   font-family: var(--body);
   font-size: 13px;
+  font-weight: 450;
   color: var(--ink);
 }
 .gs-search input::placeholder {
@@ -365,8 +514,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   border: none;
   background: transparent;
   border-radius: 9px;
@@ -387,6 +536,7 @@
 }
 .gs-iconbtn--danger:hover {
   color: var(--error);
+  background: rgba(192, 57, 47, 0.08);
 }
 
 /* Exact / Semantic mode switch. */
@@ -397,21 +547,29 @@
   border-radius: 999px;
   overflow: hidden;
   background: var(--input-bg);
+  padding: 2px;
+  gap: 2px;
 }
 .gs-mode button {
   border: none;
   background: transparent;
   font-family: var(--mono);
-  font-size: 8.5px;
+  font-size: 9px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  padding: 6px 10px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 999px;
   color: var(--muted);
   cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
 }
 .gs-mode button.gs-mode--on {
   background: var(--ink);
   color: var(--paper);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ══ MODEL BANNER (semantic consent / download progress) ═══════════════════ */
@@ -419,39 +577,43 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 16px 10px;
-  padding: 9px 14px;
+  gap: 12px;
+  margin: 0 18px 12px;
+  padding: 11px 16px;
   background: var(--sheet);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   font-size: 11.5px;
-  box-shadow: 0 1px 3px rgba(42, 38, 31, 0.05);
+  box-shadow: var(--shadow-md);
 }
 .gs-banner-text {
   flex: 1 1 auto;
   min-width: 0;
   color: var(--muted);
+  line-height: 1.5;
 }
 .gs-banner-error {
   color: var(--error);
 }
 .gs-btn {
   flex: none;
-  border: 1px solid rgba(42, 38, 31, 0.22);
-  background: var(--input-bg);
+  border: 1px solid var(--sel-border);
+  background: var(--orange-soft);
   border-radius: 999px;
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
-  padding: 5px 12px;
-  color: var(--ink);
+  font-family: var(--body);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1px;
+  padding: 6px 14px;
+  color: var(--orange);
   cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
 }
 .gs-btn:hover {
-  background: var(--ink);
-  color: var(--paper);
+  background: var(--orange);
+  color: #fff;
 }
 .gs-btn--quiet {
   border-color: transparent;
@@ -464,15 +626,16 @@
 }
 .gs-progress {
   flex: 1 1 auto;
-  height: 4px;
-  border-radius: 2px;
-  background: rgba(42, 38, 31, 0.12);
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
   overflow: hidden;
 }
 .gs-progress span {
   display: block;
   height: 100%;
-  background: var(--orange);
+  background: linear-gradient(90deg, var(--orange-2), var(--orange));
+  border-radius: 3px;
   transition: width 160ms linear;
 }
 
@@ -481,8 +644,8 @@
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  padding: 0 16px 16px;
-  gap: 14px;
+  padding: 0 18px 18px;
+  gap: 16px;
 }
 .gs-sheet {
   flex: 1 1 auto;
@@ -491,8 +654,10 @@
   flex-direction: column;
   background: var(--sheet);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 2px 10px rgba(42, 38, 31, 0.06);
+  border-radius: 18px;
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
   overflow: hidden;
 }
 .gs-sheet-empty {
@@ -500,7 +665,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--faint);
 }
 .gs-title {
@@ -509,48 +675,53 @@
   outline: none;
   background: transparent;
   font-family: var(--body);
-  font-size: 23px;
-  font-weight: 680;
-  letter-spacing: -0.01em;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--ink);
-  padding: 26px 34px 4px;
+  padding: 30px 38px 6px;
 }
 .gs-title::placeholder {
   color: var(--ghost);
 }
 .gs-title:disabled {
   color: var(--ink);
+  -webkit-text-fill-color: var(--ink);
 }
 .gs-meta {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 34px 12px;
+  padding: 4px 38px 14px;
   font-size: 11px;
+  font-weight: 500;
   color: var(--faint);
 }
 .gs-chip {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   font-family: var(--mono);
   font-size: 9.5px;
+  font-weight: 600;
   letter-spacing: 0.3px;
   color: var(--green);
-  background: rgba(79, 157, 105, 0.12);
+  background: var(--green-soft);
   border-radius: 999px;
-  padding: 2px 9px;
+  padding: 3px 10px;
 }
 .gs-chip--quiet {
   color: var(--muted);
-  background: rgba(42, 38, 31, 0.06);
+  background: var(--line);
 }
 .gs-tldr {
   flex: none;
-  font-size: 12.5px;
+  font-size: 13px;
+  font-weight: 450;
   color: var(--muted);
-  padding: 0 34px 10px;
+  line-height: 1.55;
+  padding: 0 38px 12px;
 }
 .gs-edit {
   flex: 1 1 auto;
@@ -562,14 +733,16 @@
 }
 .gs-edit .cm-scroller {
   overflow-y: auto;
-  padding: 0 18px;
+  padding: 0 22px;
 }
 .gs-edit .cm-scroller::-webkit-scrollbar {
-  width: 8px;
+  width: 6px;
 }
 .gs-edit .cm-scroller::-webkit-scrollbar-thumb {
-  background: rgba(42, 38, 31, 0.12);
-  border-radius: 4px;
+  background: rgba(30, 27, 22, 0.12);
+  border-radius: 3px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 .gs-ed-loading {
   flex: 1 1 auto;
@@ -586,32 +759,35 @@
   font-size: 14px;
   line-height: 1.7;
   color: var(--ink);
-  padding: 4px 20px;
+  padding: 4px 22px;
 }
 .gs-todos {
   flex: none;
-  padding: 6px 34px 10px;
-  border-top: 1px dashed rgba(42, 38, 31, 0.1);
+  padding: 8px 38px 12px;
+  border-top: 1px solid var(--line-2);
 }
 .gs-todos-label {
   font-family: var(--mono);
   font-size: 8.5px;
+  font-weight: 700;
   letter-spacing: 1.4px;
   text-transform: uppercase;
   color: var(--faint);
-  padding: 8px 0 2px;
+  padding: 10px 0 4px;
 }
 .gs-todo {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 0;
+  gap: 10px;
+  padding: 4px 0;
   font-size: 13px;
   cursor: pointer;
 }
 .gs-todo input {
   accent-color: var(--orange);
   cursor: pointer;
+  width: 14px;
+  height: 14px;
 }
 .gs-todo--done span {
   text-decoration: line-through;
@@ -625,16 +801,18 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  padding: 10px 18px;
+  padding: 12px 20px;
   border-top: 1px solid var(--line);
+  background: linear-gradient(to bottom, transparent, var(--line-2));
 }
 .gs-reminder {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   font-size: 11px;
+  font-weight: 500;
   color: var(--muted);
 }
 
@@ -643,37 +821,40 @@
   flex: none;
   width: 0;
   overflow: hidden;
-  transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  transition: width 240ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .gs-chat-clip--open {
-  width: 312px;
+  width: 320px;
 }
 .gs-chat {
-  width: 312px;
+  width: 320px;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--sheet);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: 0 2px 10px rgba(42, 38, 31, 0.06);
+  border-radius: 18px;
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
   overflow: hidden;
 }
 .gs-chat-tabs {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 14px 18px 12px;
+  gap: 18px;
+  padding: 16px 20px 14px;
   border-bottom: 1px solid var(--line);
 }
 .gs-chat-tab {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
+  gap: 7px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--faint);
+  cursor: default;
 }
 .gs-chat-tab--on {
   color: var(--ink);
@@ -681,53 +862,71 @@
 .gs-chat-tab svg {
   color: var(--ghost);
 }
+.gs-chat-tab--on svg {
+  color: var(--orange);
+}
 .gs-chat-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding: 22px 18px;
+  padding: 26px 20px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 12px;
+  gap: 14px;
 }
 .gs-chat-welcome {
   text-align: center;
-  font-size: 15px;
-  font-weight: 640;
+  font-size: 16px;
+  font-weight: 660;
   color: var(--ink);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
 }
 .gs-chat-card {
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--input-bg);
-  padding: 14px 16px;
+  padding: 15px 17px;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+  cursor: default;
+}
+.gs-chat-card:hover {
+  border-color: var(--sel-border);
+  box-shadow: var(--shadow-sm);
 }
 .gs-chat-card-title {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 620;
   color: var(--ink);
-  margin-bottom: 3px;
+  margin-bottom: 4px;
 }
 .gs-chat-card-sub {
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 11.5px;
+  line-height: 1.5;
   color: var(--muted);
 }
 .gs-chat-foot {
   flex: none;
-  padding: 12px;
+  padding: 14px;
 }
 .gs-chat-input {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--input-bg);
-  padding: 10px 12px;
+  padding: 11px 13px;
   color: var(--faint);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+.gs-chat-input:focus-within {
+  border-color: var(--sel-border);
+  box-shadow: 0 0 0 3px var(--orange-soft);
 }
 .gs-chat-input input {
   flex: 1 1 auto;
@@ -736,7 +935,7 @@
   outline: none;
   background: transparent;
   font-family: var(--body);
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--ink);
 }
 .gs-chat-input input::placeholder {
@@ -747,9 +946,180 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 8px;
-  background: rgba(42, 38, 31, 0.1);
+  background: var(--orange);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(255, 93, 30, 0.3);
+}
+
+/* ══ FORMATTING TOOLBAR ════════════════════════════════════════════════════ */
+.gs-fmt {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex-wrap: wrap;
+  margin: 0 22px 8px;
+  padding: 4px 6px;
+  background: var(--input-bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+}
+.gs-fmt-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
   color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    transform 70ms ease;
+}
+.gs-fmt-btn:hover {
+  background: var(--sheet);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+.gs-fmt-btn:active {
+  transform: translateY(0.5px);
+}
+.gs-fmt-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--line);
+}
+
+/* ══ EDITOR RICH CONTENT (CodeMirror live preview) ═════════════════════════ */
+/* Interactive task checkbox replacing a `[ ]` / `[x]` marker. */
+.gs-cm-check {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin: 0 2px 0 0;
+  border: 1.5px solid var(--ghost);
+  border-radius: 5px;
+  background: var(--sheet);
+  vertical-align: -2px;
+  cursor: pointer;
+  position: relative;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.gs-cm-check:hover {
+  border-color: var(--orange);
+}
+.gs-cm-check:checked {
+  background: var(--orange);
+  border-color: var(--orange);
+}
+.gs-cm-check:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+/* Fenced code block — a soft slab with rounded top/bottom. */
+.gs-edit .cm-line.gs-cm-code {
+  background: var(--code-bg);
+  box-shadow:
+    inset 1px 0 0 var(--code-border),
+    inset -1px 0 0 var(--code-border);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.gs-edit .cm-line.gs-cm-code--top {
+  box-shadow:
+    inset 1px 1px 0 var(--code-border),
+    inset -1px 0 0 var(--code-border);
+  border-radius: 8px 8px 0 0;
+  padding-top: 3px;
+}
+.gs-edit .cm-line.gs-cm-code--bot {
+  box-shadow:
+    inset 1px -1px 0 var(--code-border),
+    inset -1px 0 0 var(--code-border);
+  border-radius: 0 0 8px 8px;
+  padding-bottom: 3px;
+}
+
+/* Table rows — subtle banded slab. */
+.gs-edit .cm-line.gs-cm-tablerow {
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  letter-spacing: -0.2px;
+}
+
+/* Plain blockquote — hidden `>` marker replaced by a soft left spine. */
+.gs-edit .cm-line.gs-cm-quote {
+  box-shadow: inset 3px 0 0 var(--line);
+  padding-left: 12px;
+  color: var(--muted);
+}
+
+/* Callouts — `> [!type]` blockquotes get a colored spine + tinted body. */
+.gs-edit .cm-line.gs-cm-callout {
+  background: var(--callout-soft, var(--blue-soft));
+  box-shadow: inset 3px 0 0 var(--callout, var(--blue));
+  padding-left: 12px;
+}
+.gs-edit .cm-line.gs-cm-callout--head {
+  font-weight: 640;
+}
+.gs-cm-callout--note,
+.gs-cm-callout--info,
+.gs-cm-callout--todo {
+  --callout: var(--blue);
+  --callout-soft: var(--blue-soft);
+}
+.gs-cm-callout--tip,
+.gs-cm-callout--hint,
+.gs-cm-callout--success,
+.gs-cm-callout--check,
+.gs-cm-callout--done {
+  --callout: var(--green);
+  --callout-soft: var(--green-soft);
+}
+.gs-cm-callout--warning,
+.gs-cm-callout--caution,
+.gs-cm-callout--attention {
+  --callout: var(--amber);
+  --callout-soft: var(--amber-soft);
+}
+.gs-cm-callout--danger,
+.gs-cm-callout--error,
+.gs-cm-callout--bug,
+.gs-cm-callout--failure,
+.gs-cm-callout--fail {
+  --callout: var(--error);
+  --callout-soft: rgba(192, 57, 47, 0.09);
+}
+.gs-cm-callout--quote,
+.gs-cm-callout--cite,
+.gs-cm-callout--example,
+.gs-cm-callout--abstract,
+.gs-cm-callout--summary {
+  --callout: var(--purple);
+  --callout-soft: var(--purple-soft);
 }
