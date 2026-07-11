@@ -7,6 +7,13 @@
     "pr": "1648"
   },
   {
+    "date": "Jul 11, 2026",
+    "commit": "Add cancel download functionality to Onboarding component (#1653)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1653"
+  },
+  {
     "date": "Jul 10, 2026",
     "commit": "fix: push-to-talk rapidly toggles recording under X11 auto-repeat (defer synthesized releases) (#1605)",
     "status": "Pending",
