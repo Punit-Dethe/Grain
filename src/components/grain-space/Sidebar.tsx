@@ -1,26 +1,31 @@
+import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   AlarmClock,
   ChevronRight,
   FileText,
   Hash,
-  PenLine,
   Pin,
+  SquarePen,
 } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
- * [GRAIN] Workspace sidebar (TAURI-OVERLAY-PLAN.md Phase B): Create note, then
- * Reminders / Pinned / Notes / Collections. Collections are the note folders
- * of the active store (Obsidian folders on the vault backend), expandable in
- * place. While a search is running the sections give way to a flat result
- * list in relevance order.
+ * [GRAIN] Workspace sidebar — Mem-style: a profile header, a Create-note
+ * button, then collapsible Pinned / Notes / Folders sections. The Notes
+ * section splits loose GRAIN notes from loose OBSIDIAN (vault-root) notes with
+ * a divider. Folders render a nested tree from each card's `folder` path
+ * (subfolders nest). While a search runs the sections give way to a flat
+ * result list in relevance order.
  */
 
 const dayFormat = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   month: "short",
 });
+
+/** How many loose notes / folder members to show before "See all". */
+const PREVIEW = 8;
 
 /** Compact relative age for row trailers. */
 function age(ms: number): string {
@@ -34,13 +39,53 @@ function age(ms: number): string {
   return dayFormat.format(new Date(ms));
 }
 
+/** A node in the folder tree built from card `folder` paths. */
+type FolderNode = {
+  name: string;
+  path: string;
+  notes: NoteCard[];
+  children: Map<string, FolderNode>;
+};
+
+function buildTree(cards: NoteCard[]): FolderNode {
+  const root: FolderNode = {
+    name: "",
+    path: "",
+    notes: [],
+    children: new Map(),
+  };
+  for (const card of cards) {
+    if (!card.folder) continue;
+    let node = root;
+    let acc = "";
+    for (const seg of card.folder.split("/")) {
+      if (!seg) continue;
+      acc = acc ? `${acc}/${seg}` : seg;
+      let child = node.children.get(seg);
+      if (!child) {
+        child = { name: seg, path: acc, notes: [], children: new Map() };
+        node.children.set(seg, child);
+      }
+      node = child;
+    }
+    node.notes.push(card);
+  }
+  return root;
+}
+
+/** Total notes under a folder subtree (for the count badge). */
+function subtreeCount(node: FolderNode): number {
+  let n = node.notes.length;
+  for (const child of node.children.values()) n += subtreeCount(child);
+  return n;
+}
+
 type Props = {
   cards: NoteCard[];
   searching: boolean;
   results: Note[];
   selectedId: string | null;
-  expanded: ReadonlySet<string>;
-  onToggleCollection: (name: string) => void;
+  storeLabel: string;
   onSelectCard: (card: NoteCard) => void;
   onSelectResult: (note: Note) => void;
   onCreate: () => void;
@@ -51,13 +96,29 @@ export function Sidebar({
   searching,
   results,
   selectedId,
-  expanded,
-  onToggleCollection,
+  storeLabel,
   onSelectCard,
   onSelectResult,
   onCreate,
 }: Props) {
   const { t } = useTranslation();
+
+  // Section collapse + per-folder expand + "see all" are sidebar-local UI.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [openFolders, setOpenFolders] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const [seeAll, setSeeAll] = useState<Record<string, boolean>>({});
+
+  const toggleSection = (key: string) =>
+    setCollapsed((c) => ({ ...c, [key]: !c[key] }));
+  const toggleFolder = (path: string) =>
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
 
   const reminders = cards.filter(
     (c) =>
@@ -65,30 +126,31 @@ export function Sidebar({
       c.reminder_state.status === "fired",
   );
   const pinned = cards.filter((c) => c.is_pinned);
-  const loose = cards.filter((c) => !c.collection && !c.is_pinned);
-  const collections = new Map<string, NoteCard[]>();
-  for (const card of cards) {
-    if (!card.collection) continue;
-    const list = collections.get(card.collection) ?? [];
-    list.push(card);
-    collections.set(card.collection, list);
-  }
-  const collectionNames = [...collections.keys()].sort((a, b) =>
-    a.localeCompare(b),
+  const grainLoose = cards.filter(
+    (c) => !c.folder && !c.is_pinned && !c.readonly,
+  );
+  const obsidianLoose = cards.filter(
+    (c) => !c.folder && !c.is_pinned && c.readonly,
+  );
+  const tree = useMemo(() => buildTree(cards), [cards]);
+  const topFolders = [...tree.children.values()].sort((a, b) =>
+    a.name.localeCompare(b.name),
   );
 
-  const cardRow = (card: NoteCard, child = false) => (
+  const cardRow = (card: NoteCard, depth = 0) => (
     <button
       key={card.id}
       type="button"
-      className={`gs-row${selectedId === card.id ? " gs-row--on" : ""}${child ? " gs-row--child" : ""}`}
+      className={`gs-row${selectedId === card.id ? " gs-row--on" : ""}`}
+      style={depth ? { paddingLeft: 12 + depth * 16 } : undefined}
       onClick={() => onSelectCard(card)}
+      title={card.title.trim() || t("grainSpaceOverlay.untitled")}
     >
       <span className="gs-row-icon">
         {card.is_pinned ? (
-          <Pin width={12} height={12} />
+          <Pin width={13} height={13} />
         ) : (
-          <FileText width={12} height={12} />
+          <FileText width={13} height={13} />
         )}
       </span>
       <span className="gs-row-title">
@@ -98,22 +160,101 @@ export function Sidebar({
     </button>
   );
 
+  /** A "see all"-capped list of loose note rows. */
+  const looseList = (key: string, list: NoteCard[]) => {
+    const show = seeAll[key] ? list : list.slice(0, PREVIEW);
+    return (
+      <>
+        {show.map((c) => cardRow(c))}
+        {list.length > PREVIEW && (
+          <button
+            type="button"
+            className="gs-seeall"
+            onClick={() => setSeeAll((s) => ({ ...s, [key]: !s[key] }))}
+          >
+            {seeAll[key]
+              ? t("grainSpaceOverlay.seeLess")
+              : t("grainSpaceOverlay.seeAll")}
+          </button>
+        )}
+      </>
+    );
+  };
+
+  /** Recursive folder node: header row + (subfolders, then note members). */
+  const renderFolder = (node: FolderNode, depth: number) => {
+    const open = openFolders.has(node.path);
+    const subs = [...node.children.values()].sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    return (
+      <div key={node.path}>
+        <button
+          type="button"
+          className="gs-row gs-row--folder"
+          style={{ paddingLeft: 8 + depth * 16 }}
+          onClick={() => toggleFolder(node.path)}
+        >
+          <span className={`gs-row-chev${open ? " gs-row-chev--open" : ""}`}>
+            <ChevronRight width={13} height={13} />
+          </span>
+          <span className="gs-row-hash">
+            <Hash width={13} height={13} />
+          </span>
+          <span className="gs-row-title">{node.name}</span>
+          <span className="gs-row-count">{subtreeCount(node)}</span>
+        </button>
+        {open && (
+          <>
+            {subs.map((child) => renderFolder(child, depth + 1))}
+            {node.notes.map((c) => cardRow(c, depth + 1))}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  const sectionHead = (key: string, label: string, icon?: React.ReactNode) => (
+    <button
+      type="button"
+      className="gs-section"
+      onClick={() => toggleSection(key)}
+    >
+      <span
+        className={`gs-section-chev${collapsed[key] ? " gs-section-chev--closed" : ""}`}
+      >
+        <ChevronRight width={11} height={11} />
+      </span>
+      {icon}
+      <span className="gs-section-label">{label}</span>
+    </button>
+  );
+
   return (
     <aside className="gs-side">
-      <div className="gs-side-head" data-tauri-drag-region>
-        <span className="gs-brand" data-tauri-drag-region>
-          {t("grainSpaceOverlay.brand")}
-        </span>
+      <div className="gs-profile" data-tauri-drag-region>
+        <span className="gs-avatar">G</span>
+        <div className="gs-profile-text">
+          <span className="gs-profile-name">
+            {t("grainSpaceOverlay.brand")}
+          </span>
+          <span className="gs-profile-sub">{storeLabel}</span>
+        </div>
       </div>
+
       <button type="button" className="gs-create" onClick={onCreate}>
-        <PenLine width={13} height={13} />
+        <SquarePen width={15} height={15} />
         <span>{t("grainSpaceOverlay.createNote")}</span>
       </button>
 
       <nav className="gs-nav">
         {searching ? (
           <>
-            <div className="gs-section">{t("grainSpaceOverlay.results")}</div>
+            <div className="gs-section gs-section--static">
+              <span className="gs-section-label">
+                {t("grainSpaceOverlay.results")}
+              </span>
+            </div>
             {results.length === 0 && (
               <div className="gs-nav-empty">
                 {t("grainSpaceOverlay.noMatches")}
@@ -127,7 +268,7 @@ export function Sidebar({
                 onClick={() => onSelectResult(note)}
               >
                 <span className="gs-row-icon">
-                  <FileText width={12} height={12} />
+                  <FileText width={13} height={13} />
                 </span>
                 <span className="gs-row-title">
                   {note.title.trim() ||
@@ -142,62 +283,58 @@ export function Sidebar({
           <>
             {reminders.length > 0 && (
               <>
-                <div className="gs-section">
-                  <AlarmClock width={10} height={10} />
-                  {t("grainSpaceOverlay.reminders")}
-                </div>
-                {reminders.map((c) => cardRow(c))}
+                {sectionHead(
+                  "reminders",
+                  t("grainSpaceOverlay.reminders"),
+                  <AlarmClock
+                    width={12}
+                    height={12}
+                    className="gs-section-ic"
+                  />,
+                )}
+                {!collapsed.reminders && reminders.map((c) => cardRow(c))}
               </>
             )}
 
-            {pinned.length > 0 && (
-              <>
-                <div className="gs-section">
-                  <Pin width={10} height={10} />
-                  {t("grainSpaceOverlay.pinned")}
-                </div>
-                {pinned.map((c) => cardRow(c))}
-              </>
+            {sectionHead(
+              "pinned",
+              t("grainSpaceOverlay.pinned"),
+              <Pin width={12} height={12} className="gs-section-ic" />,
             )}
-
-            <div className="gs-section">{t("grainSpaceOverlay.notes")}</div>
-            {loose.length === 0 && (
-              <div className="gs-nav-empty">
-                {t("grainSpaceOverlay.emptyList")}
-              </div>
-            )}
-            {loose.map((c) => cardRow(c))}
-
-            {collectionNames.length > 0 && (
-              <>
-                <div className="gs-section">
-                  {t("grainSpaceOverlay.collections")}
+            {!collapsed.pinned &&
+              (pinned.length > 0 ? (
+                pinned.map((c) => cardRow(c))
+              ) : (
+                <div className="gs-nav-hint">
+                  {t("grainSpaceOverlay.pinnedHint")}
                 </div>
-                {collectionNames.map((name) => {
-                  const members = collections.get(name) ?? [];
-                  const open = expanded.has(name);
-                  return (
-                    <div key={name}>
-                      <button
-                        type="button"
-                        className="gs-row"
-                        onClick={() => onToggleCollection(name)}
-                      >
-                        <span
-                          className={`gs-row-chev${open ? " gs-row-chev--open" : ""}`}
-                        >
-                          <ChevronRight width={12} height={12} />
-                        </span>
-                        <span className="gs-row-icon">
-                          <Hash width={12} height={12} />
-                        </span>
-                        <span className="gs-row-title">{name}</span>
-                        <span className="gs-row-count">{members.length}</span>
-                      </button>
-                      {open && members.map((c) => cardRow(c, true))}
+              ))}
+
+            {sectionHead("notes", t("grainSpaceOverlay.notes"))}
+            {!collapsed.notes && (
+              <>
+                {grainLoose.length === 0 && obsidianLoose.length === 0 && (
+                  <div className="gs-nav-hint">
+                    {t("grainSpaceOverlay.emptyList")}
+                  </div>
+                )}
+                {looseList("grain", grainLoose)}
+                {obsidianLoose.length > 0 && (
+                  <>
+                    <div className="gs-divider">
+                      <span>{t("grainSpaceOverlay.fromVault")}</span>
                     </div>
-                  );
-                })}
+                    {looseList("obsidian", obsidianLoose)}
+                  </>
+                )}
+              </>
+            )}
+
+            {topFolders.length > 0 && (
+              <>
+                {sectionHead("folders", t("grainSpaceOverlay.folders"))}
+                {!collapsed.folders &&
+                  topFolders.map((node) => renderFolder(node, 0))}
               </>
             )}
           </>

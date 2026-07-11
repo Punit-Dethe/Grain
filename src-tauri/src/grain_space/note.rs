@@ -88,8 +88,7 @@ pub struct Note {
 
 /// Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
 /// `Note` schema and never persisted: light metadata derived at list time so a
-/// browse ships no bodies to the webview. `collection` comes from the note's
-/// folder; `readonly` marks foreign vault files the editor must not write to.
+/// browse ships no bodies to the webview.
 #[derive(Serialize, Debug, Clone, PartialEq, Type)]
 pub struct NoteCard {
     pub id: String,
@@ -98,8 +97,13 @@ pub struct NoteCard {
     pub timestamp: i64,
     pub is_pinned: bool,
     pub reminder_state: ReminderState,
-    /// Immediate parent folder name; `None` = loose (shown under "Notes").
-    pub collection: Option<String>,
+    /// The note's folder path relative to its browse origin (the Grain home
+    /// folder for grain notes, the vault root for foreign ones), with `/`
+    /// separators so the sidebar can render a nested tree. `None` = the note
+    /// sits loose at that origin (shown under "Notes").
+    pub folder: Option<String>,
+    /// True = a foreign vault file (Obsidian-owned): read-only in the editor,
+    /// and grouped below the divider in the loose "Notes" list.
     pub readonly: bool,
 }
 

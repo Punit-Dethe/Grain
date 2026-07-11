@@ -43,7 +43,6 @@ export function GrainSpaceOverlay() {
   const [isObsidian, setIsObsidian] = useState(false);
   const [selected, setSelected] = useState<Note | null>(null);
   const [selectedReadonly, setSelectedReadonly] = useState(false);
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [chatOpen, setChatOpen] = useState(false);
   const [banner, setBanner] = useState<ModelBanner | null>(null);
 
@@ -412,15 +411,6 @@ export function GrainSpaceOverlay() {
     void commands.grainSpaceOpenInObsidian(note.id);
   };
 
-  const toggleCollection = (name: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
-  };
-
   const startModelDownload = () => {
     setBanner({ kind: "downloading", percentage: 0 });
     commands.grainSpaceDownloadEmbedModel().then((result) => {
@@ -434,8 +424,11 @@ export function GrainSpaceOverlay() {
   };
 
   const searching = query.trim().length > 0;
-  const selectedCollection =
-    (selected && cardById.get(selected.id)?.collection) ?? null;
+  const selectedFolder =
+    (selected && cardById.get(selected.id)?.folder) ?? null;
+  const storeLabel = isObsidian
+    ? t("grainSpaceOverlay.storeObsidian")
+    : t("grainSpaceOverlay.storeLocal");
 
   return (
     <div className="gs-root">
@@ -445,8 +438,7 @@ export function GrainSpaceOverlay() {
           searching={searching}
           results={results}
           selectedId={selected?.id ?? null}
-          expanded={expanded}
-          onToggleCollection={toggleCollection}
+          storeLabel={storeLabel}
           onSelectCard={(card) => void selectCard(card)}
           onSelectResult={(note) => void selectResult(note)}
           onCreate={() => void newNote()}
@@ -491,31 +483,32 @@ export function GrainSpaceOverlay() {
                 </button>
               </div>
             )}
-            <div className="gs-top-spacer" data-tauri-drag-region />
-            <button
-              type="button"
-              className="gs-iconbtn"
-              title="New note (Ctrl+N)"
-              onClick={() => void newNote()}
-            >
-              <Plus width={15} height={15} />
-            </button>
-            <button
-              type="button"
-              className={`gs-iconbtn${chatOpen ? " gs-iconbtn--active" : ""}`}
-              title="Toggle chat"
-              onClick={() => setChatOpen((v) => !v)}
-            >
-              <MessageSquare width={14} height={14} />
-            </button>
-            <button
-              type="button"
-              className="gs-iconbtn"
-              title="Close"
-              onClick={closeWindow}
-            >
-              <X width={15} height={15} />
-            </button>
+            <div className="gs-top-actions">
+              <button
+                type="button"
+                className="gs-iconbtn"
+                title="New note (Ctrl+N)"
+                onClick={() => void newNote()}
+              >
+                <Plus width={16} height={16} />
+              </button>
+              <button
+                type="button"
+                className={`gs-iconbtn${chatOpen ? " gs-iconbtn--active" : ""}`}
+                title="Toggle chat"
+                onClick={() => setChatOpen((v) => !v)}
+              >
+                <MessageSquare width={15} height={15} />
+              </button>
+              <button
+                type="button"
+                className="gs-iconbtn"
+                title="Close"
+                onClick={closeWindow}
+              >
+                <X width={16} height={16} />
+              </button>
+            </div>
           </div>
 
           {banner && (
@@ -599,7 +592,7 @@ export function GrainSpaceOverlay() {
                 docKey={editSession}
                 readonly={selectedReadonly}
                 isObsidian={isObsidian}
-                collection={selectedCollection}
+                folder={selectedFolder}
                 onEdit={touchSelected}
                 onFlush={() => void flushSave()}
                 onTogglePin={() => void togglePin()}

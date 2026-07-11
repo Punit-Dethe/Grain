@@ -1916,14 +1916,21 @@ timestamp: number; todo_tags?: TodoTag[]; reminder_state?: ReminderState; is_pin
 /**
  * Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
  * `Note` schema and never persisted: light metadata derived at list time so a
- * browse ships no bodies to the webview. `collection` comes from the note's
- * folder; `readonly` marks foreign vault files the editor must not write to.
+ * browse ships no bodies to the webview.
  */
 export type NoteCard = { id: string; title: string; tldr: string; timestamp: number; is_pinned: boolean; reminder_state: ReminderState; 
 /**
- * Immediate parent folder name; `None` = loose (shown under "Notes").
+ * The note's folder path relative to its browse origin (the Grain home
+ * folder for grain notes, the vault root for foreign ones), with `/`
+ * separators so the sidebar can render a nested tree. `None` = the note
+ * sits loose at that origin (shown under "Notes").
  */
-collection: string | null; readonly: boolean }
+folder: string | null; 
+/**
+ * True = a foreign vault file (Obsidian-owned): read-only in the editor,
+ * and grouped below the divider in the loose "Notes" list.
+ */
+readonly: boolean }
 export type OverlayPosition = "none" | "top" | "bottom" | 
 /**
  * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home

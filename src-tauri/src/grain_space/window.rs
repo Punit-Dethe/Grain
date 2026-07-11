@@ -154,6 +154,25 @@ pub fn close(app: &AppHandle) {
     });
 }
 
+/// TRULY close the overlay: destroy the window and its webview so NOTHING of
+/// the workspace stays resident. Used when the feature is disabled or the
+/// active corpus changes underneath it — cases where instant re-summon is not
+/// worth keeping a hidden window (and, for disable, must not). Distinct from
+/// `close`, which only sleeps (hides + suspends) for a fast reopen.
+pub fn destroy(app: &AppHandle) {
+    AWAKE.store(false, Ordering::SeqCst);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(win) = app.get_webview_window(WINDOW_LABEL) {
+            // Resume first so a suspended renderer tears down cleanly, then
+            // destroy (the Destroyed hook drops the embed engine + clears
+            // focus state).
+            set_webview_suspended(&win, false);
+            let _ = win.destroy();
+        }
+    });
+}
+
 /// Frontend ack: the React tree is unmounted — hide + trim now.
 pub fn sleep_ready(app: &AppHandle) {
     if AWAKE.load(Ordering::SeqCst) {

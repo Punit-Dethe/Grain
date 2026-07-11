@@ -862,18 +862,30 @@ pub fn list_notes(v: &Vault) -> Result<Vec<Note>> {
     Ok(notes)
 }
 
-/// A note's collection = its immediate parent folder name, unless that parent
-/// is the vault root or Grain's writable home folder (both mean "loose", i.e.
-/// the sidebar's plain "Notes" section). Native vaults are flat → always None.
-fn collection_of(v: &Vault, rel: &str) -> Option<String> {
+/// A note's folder = the directories it lives under, relative to its browse
+/// origin, or `None` when it sits loose there (shown under "Notes").
+/// Subfolders are preserved with `/` separators so the sidebar renders a
+/// nested tree. Origin = the Grain home folder for grain-owned notes (a grain
+/// note promoted OUT of that folder falls back to the vault root); the vault
+/// root for foreign notes. Native vaults are flat → always `None`.
+fn folder_of(v: &Vault, rel: &str, foreign: bool) -> Option<String> {
     let parent = Path::new(rel).parent()?;
-    if parent.as_os_str().is_empty() {
-        return None; // vault root
+    let parent = parent.to_string_lossy().replace('\\', "/");
+    let parent = parent.trim_matches('/');
+    if parent.is_empty() {
+        return None; // loose at the vault root
     }
-    if !v.folder.is_empty() && parent == Path::new(&v.folder) {
-        return None; // Grain's own home folder
+    // Grain-owned notes browse relative to the Grain home folder.
+    if !foreign && !v.folder.is_empty() {
+        let home = v.folder.trim_matches('/');
+        if parent == home {
+            return None; // loose directly inside the Grain folder
+        }
+        if let Some(sub) = parent.strip_prefix(&format!("{home}/")) {
+            return Some(sub.to_string());
+        }
     }
-    parent.file_name().map(|n| n.to_string_lossy().to_string())
+    Some(parent.to_string())
 }
 
 /// Sidebar listing (TAURI-OVERLAY-PLAN.md Phase A): light cards, newest first.
@@ -902,7 +914,7 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
     };
     let mut cards = Vec::with_capacity(rows.len());
     for (id, rel, timestamp, foreign) in rows {
-        let collection = collection_of(v, &rel);
+        let folder = folder_of(v, &rel, foreign);
         if foreign {
             let stem = Path::new(&rel)
                 .file_stem()
@@ -915,7 +927,7 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
                 timestamp,
                 is_pinned: false,
                 reminder_state: ReminderState::default(),
-                collection,
+                folder,
                 readonly: true,
             });
             continue;
@@ -928,7 +940,7 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
                 timestamp: n.timestamp,
                 is_pinned: n.is_pinned,
                 reminder_state: n.reminder_state,
-                collection,
+                folder,
                 readonly: false,
             }),
             Err(e) => log::warn!("[GRAIN] vault list_cards: {e:#}"),
@@ -1656,40 +1668,51 @@ mod tests {
     }
 
     #[test]
-    fn collection_derivation_rules() {
-        let v = temp_vault("collection_rules");
+    fn folder_derivation_rules() {
+        let v = temp_vault("folder_rules");
         // Vault root and the Grain home folder are both "loose".
-        assert_eq!(collection_of(&v, "Foo.md"), None);
-        assert_eq!(collection_of(&v, "Grain/Wifi.md"), None);
-        // Any other folder names the collection (immediate parent wins).
+        assert_eq!(folder_of(&v, "Foo.md", true), None);
+        assert_eq!(folder_of(&v, "Grain/Wifi.md", false), None);
+        // Grain subfolders browse relative to the Grain home folder, and
+        // NEST (subfolder path preserved with `/`).
         assert_eq!(
-            collection_of(&v, "Grain/Work/Standup.md"),
+            folder_of(&v, "Grain/Work/Standup.md", false),
             Some("Work".to_string())
         );
         assert_eq!(
-            collection_of(&v, "Projects/Roadmap.md"),
+            folder_of(&v, "Grain/Work/Q1/plan.md", false),
+            Some("Work/Q1".to_string())
+        );
+        // A grain note promoted OUT of the Grain folder falls back to the
+        // vault-root-relative path.
+        assert_eq!(
+            folder_of(&v, "Projects/Roadmap.md", false),
             Some("Projects".to_string())
         );
-        assert_eq!(collection_of(&v, "A/B/C/deep.md"), Some("C".to_string()));
+        // Foreign notes browse relative to the vault root, nesting preserved.
+        assert_eq!(
+            folder_of(&v, "A/B/C/deep.md", true),
+            Some("A/B/C".to_string())
+        );
         // Native vault: flat root, empty folder name → everything loose.
         let native = Vault {
             folder: String::new(),
             native: true,
             ..v.clone()
         };
-        assert_eq!(collection_of(&native, "note.md"), None);
+        assert_eq!(folder_of(&native, "note.md", false), None);
         cleanup(&v);
     }
 
     #[test]
     fn list_cards_covers_whole_vault_with_readonly_foreign() {
         let v = temp_vault("list_cards");
-        // A grain-owned note in the home folder and one promoted to a folder.
+        // A grain-owned note in the home folder and one in a Grain subfolder.
         let loose = grain_note("Loose", "loose body");
         save_note(&v, &loose).unwrap();
-        // A foreign note inside a user folder, and one at the vault root.
-        fs::create_dir_all(v.root.join("Projects")).unwrap();
-        fs::write(v.root.join("Projects/Roadmap.md"), "# roadmap\ntext").unwrap();
+        // A foreign note nested two deep, and one at the vault root.
+        fs::create_dir_all(v.root.join("Projects/2026")).unwrap();
+        fs::write(v.root.join("Projects/2026/Roadmap.md"), "# roadmap\ntext").unwrap();
         fs::write(v.root.join("Scratch.md"), "scratch text").unwrap();
 
         let cards = list_cards(&v).unwrap();
@@ -1698,17 +1721,21 @@ mod tests {
         let by_title = |t: &str| cards.iter().find(|c| c.title == t).unwrap();
         let g = by_title("Loose");
         assert!(!g.readonly);
-        assert_eq!(g.collection, None);
+        assert_eq!(g.folder, None);
         assert_eq!(g.id, loose.id);
 
         let f = by_title("Roadmap");
         assert!(f.readonly, "foreign notes are read-only cards");
-        assert_eq!(f.collection, Some("Projects".to_string()));
+        assert_eq!(
+            f.folder,
+            Some("Projects/2026".to_string()),
+            "subfolders nest with a slash path"
+        );
         assert!(f.tldr.is_empty());
 
         let s = by_title("Scratch");
         assert!(s.readonly);
-        assert_eq!(s.collection, None, "vault root is loose");
+        assert_eq!(s.folder, None, "vault root is loose");
         cleanup(&v);
     }
 

@@ -1080,10 +1080,11 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     // Arm (or tear down) the reminder timer for the new state.
     crate::grain_space::reminders::sync(&app);
 
-    // Feature off while the overlay is open ⇒ destroy the window (which also
-    // drops the embedding engine via its Destroyed hook).
+    // Feature off ⇒ TRULY destroy the window (not sleep) so nothing of the
+    // workspace stays resident, then drop the embedding engine. Disabled must
+    // mean zero footprint.
     if !enabled {
-        crate::grain_space::window::close(&app);
+        crate::grain_space::window::destroy(&app);
         crate::grain_space::embed::shutdown_engine();
     }
 
@@ -1134,7 +1135,9 @@ pub fn change_grain_space_backend_setting(
     }
     settings.grain_space_backend = backend;
     settings::write_settings(&app, settings);
-    crate::grain_space::window::close(&app);
+    // The corpus changes wholesale — destroy the window so it rebuilds against
+    // the new backend rather than showing a stale (slept) view of the old one.
+    crate::grain_space::window::destroy(&app);
     crate::grain_space::embed::shutdown_engine();
     crate::grain_space::reminders::sync(&app);
     Ok(())
@@ -1152,7 +1155,8 @@ pub fn change_grain_space_vault_path_setting(app: AppHandle, path: String) -> Re
     let mut settings = settings::get_settings(&app);
     settings.grain_space_vault_path = trimmed;
     settings::write_settings(&app, settings);
-    crate::grain_space::window::close(&app);
+    // Different vault ⇒ different corpus: destroy so it rebuilds fresh.
+    crate::grain_space::window::destroy(&app);
     crate::grain_space::embed::shutdown_engine();
     crate::grain_space::reminders::sync(&app);
     Ok(())

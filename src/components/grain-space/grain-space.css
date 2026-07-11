@@ -1,8 +1,7 @@
-/* [GRAIN] Grain Space workspace — Mem/Obsidian-inspired three-pane surface
- * (TAURI-OVERLAY-PLAN.md Phase D): warm-paper app background, a deeper sidebar
- * wash, a white editor "sheet", one orange accent. The window is transparent
- * and exactly card-sized so the rounded corners read as a floating workspace.
- * Self-contained: this window loads no other app CSS. */
+/* [GRAIN] Grain Space workspace — Mem-inspired three-pane surface. Soft warm
+ * paper, near-white editor sheet, restrained accents, generous whitespace and
+ * rounded geometry. The window is transparent and card-sized so the corners
+ * read as a floating workspace. Self-contained: loads no other app CSS. */
 
 .gs-root {
   width: 100vw;
@@ -10,20 +9,25 @@
   background: transparent;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .gs-frame {
   /* Design tokens — every pane pulls only from these. */
-  --paper: #f3eee2;
-  --side: #ece5d3;
-  --sheet: #fbf9f2;
-  --input-bg: #faf7ef;
-  --ink: #171412;
-  --muted: rgba(23, 20, 18, 0.55);
-  --faint: rgba(23, 20, 18, 0.38);
-  --hairline: rgba(23, 20, 18, 0.1);
+  --paper: #f5f1e9;
+  --side: #f2eee5;
+  --sheet: #fffdf8;
+  --input-bg: #f7f3ec;
+  --ink: #2a261f;
+  --muted: rgba(42, 38, 31, 0.62);
+  --faint: rgba(42, 38, 31, 0.4);
+  --ghost: rgba(42, 38, 31, 0.28);
+  --line: rgba(42, 38, 31, 0.08);
+  --hover: rgba(42, 38, 31, 0.045);
+  --sel: rgba(42, 38, 31, 0.075);
   --orange: #ff5d1e;
-  --orange-soft: rgba(255, 93, 30, 0.1);
+  --orange-soft: rgba(255, 93, 30, 0.12);
+  --green: #4f9d69;
   --error: #c0392f;
   --mono:
     "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
@@ -35,8 +39,8 @@
   display: flex;
   background: var(--paper);
   border-radius: 16px;
-  border: 1px solid rgba(23, 20, 18, 0.18);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  border: 1px solid rgba(42, 38, 31, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
   color: var(--ink);
   font-family: var(--body);
   overflow: hidden;
@@ -50,106 +54,169 @@
   background: rgba(255, 93, 30, 0.18);
 }
 
-/* ── SIDEBAR ─────────────────────────────────────────────────────────────── */
+/* ══ SIDEBAR ═══════════════════════════════════════════════════════════════ */
 .gs-side {
   flex: none;
-  width: 244px;
+  width: 258px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--side);
-  border-right: 1px solid var(--hairline);
+  border-right: 1px solid var(--line);
 }
-.gs-side-head {
+
+/* Profile header (avatar + workspace / active store). */
+.gs-profile {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 16px 8px;
+  gap: 10px;
+  padding: 16px 16px 10px;
 }
-.gs-brand {
-  font-family: var(--mono);
-  font-size: 10px;
+.gs-avatar {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(140deg, #ff7a45, var(--orange));
+  color: #fff;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 1.8px;
-  color: var(--muted);
-  white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(42, 38, 31, 0.18);
 }
+.gs-profile-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.gs-profile-name {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-profile-sub {
+  font-size: 10.5px;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .gs-create {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 6px 12px 10px;
-  padding: 8px 14px;
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
+  gap: 9px;
+  margin: 4px 12px 8px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   background: var(--sheet);
   font-family: var(--body);
-  font-size: 12.5px;
-  font-weight: 550;
+  font-size: 13px;
+  font-weight: 560;
   color: var(--ink);
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(23, 20, 18, 0.06);
+  box-shadow: 0 1px 2px rgba(42, 38, 31, 0.05);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 60ms ease;
 }
 .gs-create:hover {
-  border-color: rgba(23, 20, 18, 0.22);
+  border-color: rgba(42, 38, 31, 0.2);
+  box-shadow: 0 2px 6px rgba(42, 38, 31, 0.09);
+}
+.gs-create:active {
+  transform: translateY(0.5px);
 }
 .gs-create svg {
-  color: var(--muted);
+  color: var(--orange);
 }
 
 .gs-nav {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 8px 14px;
+  padding: 4px 8px 16px;
 }
 .gs-nav::-webkit-scrollbar {
   width: 8px;
 }
 .gs-nav::-webkit-scrollbar-thumb {
-  background: rgba(23, 20, 18, 0.16);
+  background: rgba(42, 38, 31, 0.14);
   border-radius: 4px;
 }
+.gs-nav::-webkit-scrollbar-thumb:hover {
+  background: rgba(42, 38, 31, 0.24);
+}
+
+/* Section header (collapsible). */
 .gs-section {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-family: var(--mono);
-  font-size: 8.5px;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 12px 8px 4px;
+  cursor: pointer;
   color: var(--faint);
-  padding: 14px 8px 4px;
-  white-space: nowrap;
 }
+.gs-section--static {
+  cursor: default;
+  padding-left: 12px;
+}
+.gs-section-chev {
+  display: inline-flex;
+  color: var(--ghost);
+  transition: transform 130ms ease;
+  transform: rotate(90deg);
+}
+.gs-section-chev--closed {
+  transform: rotate(0deg);
+}
+.gs-section-ic {
+  color: var(--faint);
+}
+.gs-section-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.3px;
+  color: var(--muted);
+}
+
+/* Rows: notes + folders share the base. */
 .gs-row {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   width: 100%;
   text-align: left;
   border: none;
   background: transparent;
-  padding: 6px 8px;
-  border-radius: 8px;
+  padding: 7px 10px;
+  border-radius: 9px;
   cursor: pointer;
   color: var(--ink);
   font-family: var(--body);
 }
 .gs-row:hover {
-  background: rgba(23, 20, 18, 0.05);
+  background: var(--hover);
 }
 .gs-row--on {
-  background: var(--orange-soft);
-}
-.gs-row--child {
-  padding-left: 26px;
+  background: var(--sel);
+  box-shadow: inset 2px 0 0 var(--orange);
 }
 .gs-row-icon {
   flex: none;
-  color: var(--muted);
+  color: var(--faint);
   display: inline-flex;
 }
 .gs-row--on .gs-row-icon {
@@ -158,7 +225,7 @@
 .gs-row-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 480;
   white-space: nowrap;
   overflow: hidden;
@@ -167,33 +234,83 @@
 .gs-row-age {
   flex: none;
   font-size: 10px;
-  color: var(--faint);
+  color: var(--ghost);
 }
-.gs-row-count {
-  flex: none;
-  font-family: var(--mono);
-  font-size: 9px;
-  color: var(--muted);
-  background: rgba(23, 20, 18, 0.07);
-  border-radius: 999px;
-  padding: 1px 7px;
+
+/* Folder rows: chevron + green hash + count badge. */
+.gs-row--folder .gs-row-title {
+  font-weight: 550;
 }
 .gs-row-chev {
   flex: none;
-  color: var(--faint);
   display: inline-flex;
-  transition: transform 140ms ease;
+  color: var(--ghost);
+  transition: transform 130ms ease;
 }
 .gs-row-chev--open {
   transform: rotate(90deg);
 }
-.gs-nav-empty {
-  padding: 4px 8px 2px;
-  font-size: 11px;
-  color: var(--faint);
+.gs-row-hash {
+  flex: none;
+  display: inline-flex;
+  color: var(--green);
+}
+.gs-row-count {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+  background: rgba(42, 38, 31, 0.06);
+  border-radius: 999px;
+  padding: 1px 7px;
 }
 
-/* ── MAIN COLUMN: top strip + stage ─────────────────────────────────────── */
+.gs-seeall {
+  border: none;
+  background: transparent;
+  padding: 5px 10px 5px 34px;
+  font-size: 11.5px;
+  font-weight: 550;
+  color: var(--muted);
+  cursor: pointer;
+}
+.gs-seeall:hover {
+  color: var(--orange);
+}
+
+/* Divider between loose Grain notes and loose Obsidian (vault) notes. */
+.gs-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 4px;
+  color: var(--ghost);
+}
+.gs-divider::before,
+.gs-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
+}
+.gs-divider span {
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.gs-nav-empty,
+.gs-nav-hint {
+  padding: 6px 10px 4px;
+  font-size: 11.5px;
+  color: var(--faint);
+  line-height: 1.4;
+}
+
+/* ══ MAIN COLUMN: top strip + stage ════════════════════════════════════════ */
 .gs-main {
   flex: 1 1 auto;
   min-width: 0;
@@ -205,23 +322,24 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 12px 16px 10px;
 }
 .gs-search {
   flex: 1 1 auto;
   min-width: 0;
-  max-width: 560px;
+  max-width: 620px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: var(--input-bg);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 6px 12px;
+  padding: 8px 14px;
   color: var(--faint);
+  transition: border-color 120ms ease;
 }
 .gs-search:focus-within {
-  border-color: rgba(23, 20, 18, 0.24);
+  border-color: rgba(42, 38, 31, 0.22);
 }
 .gs-search input {
   flex: 1 1 auto;
@@ -230,35 +348,42 @@
   border: none;
   outline: none;
   font-family: var(--body);
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--ink);
 }
 .gs-search input::placeholder {
   color: var(--faint);
 }
-.gs-top-spacer {
-  flex: 1 1 auto;
+.gs-top-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 .gs-iconbtn {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border: none;
   background: transparent;
-  border-radius: 7px;
+  border-radius: 9px;
   color: var(--muted);
   cursor: pointer;
   padding: 0;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 .gs-iconbtn:hover {
-  background: rgba(23, 20, 18, 0.07);
+  background: var(--hover);
   color: var(--ink);
 }
 .gs-iconbtn--active {
   color: var(--orange);
+  background: var(--orange-soft);
 }
 .gs-iconbtn--danger:hover {
   color: var(--error);
@@ -268,9 +393,10 @@
 .gs-mode {
   flex: none;
   display: flex;
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--line);
   border-radius: 999px;
   overflow: hidden;
+  background: var(--input-bg);
 }
 .gs-mode button {
   border: none;
@@ -279,7 +405,7 @@
   font-size: 8.5px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
-  padding: 5px 9px;
+  padding: 6px 10px;
   color: var(--muted);
   cursor: pointer;
 }
@@ -288,18 +414,19 @@
   color: var(--paper);
 }
 
-/* ── MODEL BANNER (semantic consent / download progress) ─────────────────── */
+/* ══ MODEL BANNER (semantic consent / download progress) ═══════════════════ */
 .gs-banner {
   flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 0 14px 8px;
-  padding: 8px 12px;
-  background: var(--side);
-  border: 1px solid var(--hairline);
-  border-radius: 10px;
+  margin: 0 16px 10px;
+  padding: 9px 14px;
+  background: var(--sheet);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   font-size: 11.5px;
+  box-shadow: 0 1px 3px rgba(42, 38, 31, 0.05);
 }
 .gs-banner-text {
   flex: 1 1 auto;
@@ -311,14 +438,14 @@
 }
 .gs-btn {
   flex: none;
-  border: 1px solid rgba(23, 20, 18, 0.25);
+  border: 1px solid rgba(42, 38, 31, 0.22);
   background: var(--input-bg);
   border-radius: 999px;
   font-family: var(--mono);
   font-size: 9px;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  padding: 4px 11px;
+  padding: 5px 12px;
   color: var(--ink);
   cursor: pointer;
 }
@@ -332,14 +459,14 @@
   color: var(--muted);
 }
 .gs-btn--quiet:hover {
-  background: rgba(23, 20, 18, 0.07);
+  background: var(--hover);
   color: var(--ink);
 }
 .gs-progress {
   flex: 1 1 auto;
   height: 4px;
   border-radius: 2px;
-  background: rgba(23, 20, 18, 0.12);
+  background: rgba(42, 38, 31, 0.12);
   overflow: hidden;
 }
 .gs-progress span {
@@ -349,13 +476,13 @@
   transition: width 160ms linear;
 }
 
-/* ── STAGE: editor sheet + chat rail ─────────────────────────────────────── */
+/* ══ STAGE: editor sheet + chat rail ═══════════════════════════════════════ */
 .gs-stage {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
-  padding: 0 14px 14px;
-  gap: 12px;
+  padding: 0 16px 16px;
+  gap: 14px;
 }
 .gs-sheet {
   flex: 1 1 auto;
@@ -363,9 +490,9 @@
   display: flex;
   flex-direction: column;
   background: var(--sheet);
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(23, 20, 18, 0.05);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgba(42, 38, 31, 0.06);
   overflow: hidden;
 }
 .gs-sheet-empty {
@@ -373,7 +500,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--faint);
 }
 .gs-title {
@@ -382,13 +509,14 @@
   outline: none;
   background: transparent;
   font-family: var(--body);
-  font-size: 21px;
-  font-weight: 650;
+  font-size: 23px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
   color: var(--ink);
-  padding: 20px 26px 2px;
+  padding: 26px 34px 4px;
 }
 .gs-title::placeholder {
-  color: var(--faint);
+  color: var(--ghost);
 }
 .gs-title:disabled {
   color: var(--ink);
@@ -398,7 +526,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 26px 10px;
+  padding: 4px 34px 12px;
   font-size: 11px;
   color: var(--faint);
 }
@@ -408,26 +536,26 @@
   gap: 3px;
   font-family: var(--mono);
   font-size: 9.5px;
-  letter-spacing: 0.4px;
-  color: var(--orange);
-  background: var(--orange-soft);
+  letter-spacing: 0.3px;
+  color: var(--green);
+  background: rgba(79, 157, 105, 0.12);
   border-radius: 999px;
   padding: 2px 9px;
 }
 .gs-chip--quiet {
   color: var(--muted);
-  background: rgba(23, 20, 18, 0.06);
+  background: rgba(42, 38, 31, 0.06);
 }
 .gs-tldr {
   flex: none;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--muted);
-  padding: 0 26px 8px;
+  padding: 0 34px 10px;
 }
 .gs-edit {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 8px;
+  padding: 0 16px;
 }
 .gs-edit .cm-editor {
   height: 100%;
@@ -440,7 +568,7 @@
   width: 8px;
 }
 .gs-edit .cm-scroller::-webkit-scrollbar-thumb {
-  background: rgba(23, 20, 18, 0.14);
+  background: rgba(42, 38, 31, 0.12);
   border-radius: 4px;
 }
 .gs-ed-loading {
@@ -455,15 +583,15 @@
   background: transparent;
   resize: none;
   font-family: var(--body);
-  font-size: 13.5px;
-  line-height: 1.65;
+  font-size: 14px;
+  line-height: 1.7;
   color: var(--ink);
-  padding: 4px 18px;
+  padding: 4px 20px;
 }
 .gs-todos {
   flex: none;
-  padding: 4px 26px 8px;
-  border-top: 1px dashed rgba(23, 20, 18, 0.12);
+  padding: 6px 34px 10px;
+  border-top: 1px dashed rgba(42, 38, 31, 0.1);
 }
 .gs-todos-label {
   font-family: var(--mono);
@@ -476,9 +604,9 @@
 .gs-todo {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   padding: 3px 0;
-  font-size: 12.5px;
+  font-size: 13px;
   cursor: pointer;
 }
 .gs-todo input {
@@ -497,8 +625,8 @@
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
-  padding: 8px 14px;
-  border-top: 1px solid var(--hairline);
+  padding: 10px 18px;
+  border-top: 1px solid var(--line);
 }
 .gs-reminder {
   flex: 1 1 auto;
@@ -510,86 +638,95 @@
   color: var(--muted);
 }
 
-/* ── CHAT RAIL (scaffold; slides via width on the clip shell) ────────────── */
+/* ══ CHAT RAIL (scaffold; slides via width on the clip shell) ══════════════ */
 .gs-chat-clip {
   flex: none;
   width: 0;
   overflow: hidden;
-  transition: width 200ms ease;
+  transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 .gs-chat-clip--open {
-  width: 300px;
+  width: 312px;
 }
 .gs-chat {
-  width: 300px;
+  width: 312px;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--sheet);
-  border: 1px solid var(--hairline);
-  border-radius: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgba(42, 38, 31, 0.06);
   overflow: hidden;
 }
-.gs-chat-head {
+.gs-chat-tabs {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--hairline);
+  gap: 16px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--line);
 }
-.gs-chat-title {
-  flex: 1 1 auto;
+.gs-chat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12.5px;
   font-weight: 600;
+  color: var(--faint);
 }
-.gs-chat-tag {
-  flex: none;
-  font-family: var(--mono);
-  font-size: 8px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  color: var(--muted);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-  padding: 2px 8px;
+.gs-chat-tab--on {
+  color: var(--ink);
+}
+.gs-chat-tab svg {
+  color: var(--ghost);
 }
 .gs-chat-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  padding: 14px;
+  padding: 22px 18px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  justify-content: center;
+  gap: 12px;
 }
-.gs-skel {
-  border-radius: 10px;
-  background: rgba(23, 20, 18, 0.06);
+.gs-chat-welcome {
+  text-align: center;
+  font-size: 15px;
+  font-weight: 640;
+  color: var(--ink);
+  margin-bottom: 4px;
 }
-.gs-skel--me {
-  align-self: flex-end;
-  width: 62%;
-  height: 34px;
-  background: var(--orange-soft);
+.gs-chat-card {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--input-bg);
+  padding: 14px 16px;
 }
-.gs-skel--ai {
-  align-self: flex-start;
-  width: 78%;
-  height: 52px;
+.gs-chat-card-title {
+  font-size: 12.5px;
+  font-weight: 620;
+  color: var(--ink);
+  margin-bottom: 3px;
+}
+.gs-chat-card-sub {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--muted);
 }
 .gs-chat-foot {
   flex: none;
-  padding: 10px 12px 12px;
+  padding: 12px;
 }
 .gs-chat-input {
   display: flex;
   align-items: center;
-  gap: 7px;
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
   background: var(--input-bg);
-  padding: 7px 12px;
+  padding: 10px 12px;
   color: var(--faint);
 }
 .gs-chat-input input {
@@ -599,9 +736,20 @@
   outline: none;
   background: transparent;
   font-family: var(--body);
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--ink);
 }
 .gs-chat-input input::placeholder {
   color: var(--faint);
+}
+.gs-chat-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: rgba(42, 38, 31, 0.1);
+  color: var(--muted);
 }

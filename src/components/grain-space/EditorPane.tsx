@@ -33,7 +33,7 @@ type Props = {
   readonly: boolean;
   /** Active backend is the user's Obsidian vault (enables the deep link). */
   isObsidian: boolean;
-  collection: string | null;
+  folder: string | null;
   onEdit: (note: Note) => void;
   onFlush: () => void;
   onTogglePin: () => void;
@@ -49,7 +49,7 @@ export function EditorPane({
   docKey,
   readonly,
   isObsidian,
-  collection,
+  folder,
   onEdit,
   onFlush,
   onTogglePin,
@@ -79,7 +79,7 @@ export function EditorPane({
       />
       <div className="gs-meta">
         <span>{dateFormat.format(new Date(note.timestamp))}</span>
-        {collection && <span className="gs-chip">{`#${collection}`}</span>}
+        {folder && <span className="gs-chip">{`#${folder}`}</span>}
         {readonly && (
           <span className="gs-chip gs-chip--quiet">
             <Lock width={9} height={9} />

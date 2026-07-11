@@ -5,7 +5,67 @@ Newest entry first. Each entry assumes the reader has ZERO context: read
 
 ---
 
-## 2026-07-11 (latest) — Tauri overlay → Mem-style workspace SHIPPED (plan Phases A–E + sleep lifecycle)
+## 2026-07-11 (latest) — Workspace round 2: Mem-fidelity sidebar, subfolder tree, notes divider, destroy-on-disable
+
+User feedback on the first workspace pass: (1) UI too plain — wants Mem
+one-to-one; (2) disabled Grain Space must hold ZERO memory; (3) a divider in
+the NOTES section between loose Grain notes and loose Obsidian (vault-root)
+notes; (4) real nested SUBFOLDERS (a tree), and rename "Collections" →
+"Folders". ("electron" = Tauri; not a runtime switch.) All shipped.
+
+**Backend.**
+- `NoteCard.collection` (immediate parent name) → **`NoteCard.folder`**: the
+  FULL relative folder path with `/` separators, so the sidebar renders a
+  nested tree. `folder_of(v, rel, foreign)` = path relative to the Grain home
+  folder for grain notes (a grain note promoted OUT of it falls back to
+  vault-root-relative), and relative to the vault root for foreign notes;
+  `None` = loose. Native = always `None`. Tests updated for 2–3 level nesting.
+- **`window::destroy()`** (real close: resume webview then `win.destroy()`,
+  bypassing the CloseRequested→sleep intercept). Wired into
+  `change_grain_space_enabled_setting(false)` (was sleep — a slept window kept
+  RAM), plus backend-switch and vault-path changes (corpus changed ⇒ rebuild
+  fresh, not a stale slept view). Confirmed nothing builds the grain-space
+  window at startup, so disabled = never created = zero footprint; disabling
+  while open now destroys.
+
+**Frontend — sidebar rebuilt to Mem (`Sidebar.tsx`).** Profile header (gradient
+"G" avatar + brand + active-store subtitle "Obsidian vault"/"Local notes"),
+rounded Create-note, collapsible sections with rotating chevrons
+(Reminders/Pinned/Notes/Folders), "See all" past 8 loose notes. **Notes
+section**: loose GRAIN notes, then a `From your vault` divider, then loose
+OBSIDIAN (readonly) notes — split by `card.readonly`; the divider only appears
+when foreign loose notes exist (native backend → no divider). **Folders**:
+`buildTree` splits `folder` paths into a real recursive tree — each node
+renders subfolders THEN its own note members, indented by depth, green `#`
+icon, subtree count badge, per-path expand. Sidebar owns its own
+collapse/expand/see-all state now (shell dropped `expanded`/`onToggleCollection`,
+passes `storeLabel`). Verified visually in a scratch Vite harness: profile,
+divider, and Work→Retros→2026 three-level nesting all render correctly.
+
+**Frontend — palette + panes polished.** Lighter warm-paper tokens
+(`--paper/side/sheet/ink/green`), softer selection (inset orange bar on
+`--sel`), rounded 16px sheets with soft shadows, centered pill search, grouped
+top actions. Chat rail restyled to Mem's chat pane: Heads-Up/Chat tabs, a
+welcome line + two suggestion cards, an input with `+` and a send affordance —
+still pure scaffold. Editor sheet: bigger title, `#folder` chip is green now.
+
+**Verified:** `cargo test --lib` 201 pass, `cargo check`/`fmt` clean, tsc +
+eslint clean on grain-space, bindings regenerated (`NoteCard.folder`). Scratch
+harness (`gs-preview.*`, `.claude/launch.json`) removed after the visual pass.
+
+### Gotchas
+- The notes divider keys on `readonly` (= foreign/Obsidian), NOT on folder —
+  a loose grain note and a loose foreign note both have `folder === null`.
+- `destroy()` vs `close()`: close = sleep (hide + suspend, instant reopen);
+  destroy = gone (disable / corpus change). CloseRequested still maps to sleep,
+  so only an explicit `destroy()` truly tears the window down.
+- Folder tree merges a grain subfolder and a foreign folder that happen to
+  share the same relative path into one node (rare; acceptable — "best of both
+  worlds"). Each note still opens read-only or not per its own card.
+
+---
+
+## 2026-07-11 — Tauri overlay → Mem-style workspace SHIPPED (plan Phases A–E + sleep lifecycle)
 
 `TAURI-OVERLAY-PLAN.md` is implemented, plus the user's added requirements
 from this session: a **hide-don't-destroy window** with aggressive idle-RAM
