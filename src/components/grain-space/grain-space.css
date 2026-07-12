@@ -52,6 +52,33 @@
     "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
   --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
 
+  /* ── Design tokens (see DESIGN.md) ───────────────────────────────────── */
+  /* Spacing — 4px base. */
+  --gs-sp-1: 4px;
+  --gs-sp-2: 8px;
+  --gs-sp-3: 12px;
+  --gs-sp-4: 16px;
+  --gs-sp-5: 20px;
+  --gs-sp-6: 24px;
+  --gs-sp-8: 32px;
+  /* Type scale. */
+  --gs-fs-11: 11px;
+  --gs-fs-12: 12px;
+  --gs-fs-13: 13px;
+  --gs-fs-14: 14px;
+  --gs-fs-16: 16px;
+  --gs-fs-26: 26px;
+  /* Weights — prefer weight + colour over size for hierarchy. */
+  --gs-w-normal: 460;
+  --gs-w-medium: 520;
+  --gs-w-semi: 600;
+  --gs-w-bold: 700;
+  /* Radius. */
+  --gs-r-sm: 8px;
+  --gs-r-md: 10px;
+  --gs-r-lg: 14px;
+  --gs-r-xl: 18px;
+
   box-sizing: border-box;
   width: 100%;
   height: 100%;
@@ -78,29 +105,13 @@
 /* ══ SIDEBAR ═══════════════════════════════════════════════════════════════ */
 .gs-side {
   flex: none;
-  width: 274px;
+  width: 268px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(178deg, var(--side) 0%, var(--side-2) 100%);
+  background: var(--side);
   border-right: 1px solid var(--line);
   position: relative;
-}
-.gs-side::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    var(--line) 20%,
-    var(--line) 80%,
-    transparent
-  );
-  pointer-events: none;
 }
 
 /* Profile header (avatar + workspace / active store). */
@@ -108,45 +119,41 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 22px 18px 14px;
-  margin-bottom: 2px;
+  gap: var(--gs-sp-3);
+  padding: var(--gs-sp-5) var(--gs-sp-5) var(--gs-sp-3);
 }
 .gs-avatar {
   flex: none;
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
   display: grid;
   place-items: center;
   background: linear-gradient(140deg, var(--orange-2), var(--orange));
   color: #fff;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.5px;
-  box-shadow:
-    0 2px 6px rgba(255, 93, 30, 0.34),
-    0 1px 2px rgba(255, 93, 30, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  font-size: var(--gs-fs-13);
+  font-weight: var(--gs-w-bold);
+  letter-spacing: 0.3px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 .gs-profile-text {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 .gs-profile-name {
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
+  font-size: var(--gs-fs-13);
+  font-weight: var(--gs-w-semi);
+  letter-spacing: 0.1px;
   color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .gs-profile-sub {
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-medium);
   color: var(--faint);
   white-space: nowrap;
   overflow: hidden;
@@ -154,45 +161,38 @@
   margin-top: 1px;
 }
 
+/* Create note — quiet, Mem-style: hairline card, ink text, orange only on the
+ * pencil. No loud fills. */
 .gs-create {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 9px;
-  margin: 4px 14px 12px;
-  padding: 11px 16px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: linear-gradient(140deg, var(--orange-2), var(--orange));
+  gap: var(--gs-sp-2);
+  margin: var(--gs-sp-1) var(--gs-sp-4) var(--gs-sp-3);
+  padding: var(--gs-sp-2) var(--gs-sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--gs-r-md);
+  background: var(--sheet);
   font-family: var(--body);
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.1px;
-  color: #fff;
+  font-size: var(--gs-fs-13);
+  font-weight: var(--gs-w-semi);
+  color: var(--ink-2);
   cursor: pointer;
-  box-shadow:
-    0 2px 8px rgba(255, 93, 30, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: var(--shadow-sm);
   transition:
-    box-shadow 160ms ease,
-    transform 80ms ease,
-    filter 140ms ease;
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background 150ms ease;
 }
 .gs-create:hover {
-  filter: brightness(1.04);
-  box-shadow:
-    0 4px 14px rgba(255, 93, 30, 0.36),
-    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  border-color: var(--ghost);
+  box-shadow: var(--shadow-md);
 }
 .gs-create:active {
-  transform: translateY(0.5px);
-  box-shadow:
-    0 1px 4px rgba(255, 93, 30, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  background: var(--hover);
 }
 .gs-create svg {
-  color: #fff;
+  color: var(--orange);
 }
 
 .gs-nav {
@@ -216,102 +216,54 @@
   background-clip: padding-box;
 }
 
-/* Section header — BIG heading, icon-left, chevron-right. */
+/* Section header — quiet disclosure row: chevron + label + count. */
 .gs-section {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--gs-sp-2);
   width: 100%;
   border: none;
   background: transparent;
-  padding: 18px 6px 8px;
+  padding: var(--gs-sp-5) var(--gs-sp-2) var(--gs-sp-1);
   cursor: pointer;
-  color: var(--ink-2);
-  border-radius: 8px;
-  transition: background 120ms ease;
+  color: var(--muted);
+  border-radius: var(--gs-r-sm);
+  transition: color 120ms ease;
 }
 .gs-section:hover {
-  background: var(--hover);
+  color: var(--ink-2);
+}
+.gs-section:hover .gs-section-chev {
+  color: var(--muted);
 }
 .gs-section--static {
   cursor: default;
-  padding-left: 10px;
-}
-.gs-section--static:hover {
-  background: transparent;
+  padding-left: var(--gs-sp-2);
 }
 .gs-section-chev {
   flex: none;
   display: inline-flex;
   align-items: center;
-  margin-left: auto;
-  color: var(--ghost);
+  color: var(--faint);
   transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
   transform: rotate(90deg);
 }
 .gs-section-chev--closed {
   transform: rotate(0deg);
 }
-.gs-section-ic {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 23px;
-  height: 23px;
-  border-radius: 7px;
-  background: var(--line-2);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
-}
-.gs-section-ic svg {
-  color: var(--ink-2);
-}
 .gs-section-label {
-  font-size: 13.5px;
-  font-weight: 700;
-  letter-spacing: 0.15px;
-  color: var(--ink-2);
+  font-size: var(--gs-fs-12);
+  font-weight: var(--gs-w-semi);
+  letter-spacing: 0.2px;
+  color: inherit;
 }
 .gs-section-count {
   flex: none;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--line);
-  border-radius: 999px;
-  padding: 2px 8px;
-  min-width: 22px;
-  text-align: center;
-}
-
-/* Per-section icon accent colors. */
-.gs-section-ic--pinned {
-  background: var(--orange-soft);
-}
-.gs-section-ic--pinned svg {
-  color: var(--orange);
-}
-.gs-section-ic--notes {
-  background: var(--blue-soft);
-}
-.gs-section-ic--notes svg {
-  color: var(--blue);
-}
-.gs-section-ic--collections {
-  background: var(--green-soft);
-}
-.gs-section-ic--collections svg {
-  color: var(--green);
-}
-.gs-section-ic--reminders {
-  background: var(--amber-soft);
-}
-.gs-section-ic--reminders svg {
-  color: var(--amber);
-}
-.gs-section-ic--results {
-  background: var(--line);
+  margin-left: auto;
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-medium);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Rows: notes + folders share the base. */
@@ -396,15 +348,10 @@
 }
 .gs-row-count {
   flex: none;
-  font-family: var(--mono);
-  font-size: 9.5px;
-  font-weight: 600;
-  color: var(--muted);
-  background: var(--line);
-  border-radius: 999px;
-  padding: 1px 7px;
-  min-width: 20px;
-  text-align: center;
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-medium);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .gs-seeall {
@@ -794,26 +741,34 @@
   color: var(--faint);
 }
 
-/* Bottom action row: reminder · open-in-obsidian · pin · delete. */
+/* Bottom action row: formatting toolbar │ reminder · open · pin · delete.
+ * One flat strip, no distinct backgrounds — the formatting tools live here,
+ * split from the note actions by a hairline vertical divider. */
 .gs-actions {
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding: 12px 20px;
+  gap: var(--gs-sp-1);
+  padding: var(--gs-sp-2) var(--gs-sp-4);
   border-top: 1px solid var(--line);
-  background: linear-gradient(to bottom, transparent, var(--line-2));
 }
 .gs-reminder {
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
-  font-size: 11px;
-  font-weight: 500;
+  gap: var(--gs-sp-2);
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-medium);
   color: var(--muted);
+}
+/* Divider between the formatting tools and the note-level actions. */
+.gs-fmt-divider {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 2px var(--gs-sp-2);
+  background: var(--line);
 }
 
 /* ══ CHAT RAIL (scaffold; slides via width on the clip shell) ══════════════ */
@@ -954,51 +909,44 @@
   box-shadow: 0 1px 3px rgba(255, 93, 30, 0.3);
 }
 
-/* ══ FORMATTING TOOLBAR ════════════════════════════════════════════════════ */
+/* ══ FORMATTING TOOLBAR (flat, lives in the bottom action row) ══════════════ */
 .gs-fmt {
-  flex: none;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 1px;
-  flex-wrap: wrap;
-  margin: 0 22px 8px;
-  padding: 4px 6px;
-  background: var(--input-bg);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  min-width: 0;
+  overflow: hidden;
 }
 .gs-fmt-btn {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: none;
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--gs-r-sm);
   color: var(--muted);
   cursor: pointer;
   padding: 0;
   transition:
     background 120ms ease,
-    color 120ms ease,
-    transform 70ms ease;
+    color 120ms ease;
 }
 .gs-fmt-btn:hover {
-  background: var(--sheet);
+  background: var(--hover);
   color: var(--ink);
-  box-shadow: var(--shadow-sm);
 }
 .gs-fmt-btn:active {
-  transform: translateY(0.5px);
+  background: var(--line);
 }
 .gs-fmt-sep {
   flex: none;
   width: 1px;
-  height: 18px;
-  margin: 0 5px;
+  height: 16px;
+  margin: 0 var(--gs-sp-1);
   background: var(--line);
 }
 

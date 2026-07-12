@@ -92,8 +92,6 @@ export function EditorPane({
       </div>
       {note.tldr.trim() && <div className="gs-tldr">{note.tldr}</div>}
 
-      {!readonly && <EditorToolbar editor={editorRef} />}
-
       <Suspense
         fallback={
           <div className="gs-ed-loading">
@@ -138,6 +136,12 @@ export function EditorPane({
       )}
 
       <div className="gs-actions">
+        {!readonly && (
+          <>
+            <EditorToolbar editor={editorRef} />
+            <span className="gs-fmt-divider" />
+          </>
+        )}
         <div className="gs-reminder">
           {reminder.status === "pending" && reminder.fire_at != null && (
             <>

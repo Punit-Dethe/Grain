@@ -191,6 +191,10 @@ fn llm_usable(settings: &AppSettings) -> bool {
 /// The structured-output shape for the extraction call.
 #[derive(Deserialize, Debug)]
 struct ExtractedMeta {
+    /// The note rewritten as tidy Markdown (structuring path only). Empty when
+    /// structuring was not requested — the verbatim body is then kept.
+    #[serde(default)]
+    body: String,
     title: String,
     tldr: String,
     #[serde(default)]
@@ -255,6 +259,7 @@ async fn extract_metadata(
     settings: &AppSettings,
     body: &str,
     framing: Option<&str>,
+    structure: bool,
 ) -> Result<ExtractedMeta, String> {
     let provider = settings
         .active_post_process_provider()
@@ -276,40 +281,65 @@ async fn extract_metadata(
         .ok_or("shared HTTP client unavailable")?;
 
     let now_local = chrono::Local::now().format("%A %Y-%m-%dT%H:%M").to_string();
-    // When the note body is a SELECTION the user is saving, their spoken/typed
-    // instruction frames what it's for — use it for the title/summary only, and
-    // NEVER fold it into the note text.
+
+    // Two modes share one call. STRUCTURING (freshly dictated/typed note, no
+    // selection): the model also returns a Markdown-formatted `body`. VERBATIM
+    // (a selection the user is saving): the body is preserved untouched and the
+    // `framing` line steers only the title/summary.
+    let body_rule = if structure {
+        "- body: the note as clean Markdown. Infer intent and format for readability using headings \
+         (#/##), bullet or numbered lists, `- [ ]` checklists for tasks, tables for tabular/columned \
+         data, **bold**, > quotes and `code`. Keep EVERY fact and detail — reformat and lightly drop \
+         only spoken filler; never summarize, invent, or omit content. Strip a leading command such \
+         as \"make a note that…\" or \"note:\". A single plain thought stays one line.\n"
+    } else {
+        ""
+    };
     let framing_line = match framing {
         Some(f) if !f.trim().is_empty() => format!(
             "\nThe user selected the note text and, to say what it is for, added: \"{}\". Use that \
-             to shape the title and summary (what the note is FOR), but do NOT add it to the note \
-             text.",
+             to shape the title and summary (what the note is FOR); do NOT add it to the note text.",
             f.trim()
         ),
         _ => String::new(),
     };
+    let intro = if structure {
+        "You turn what the user just captured into a clean personal note. Reply with JSON only."
+    } else {
+        "You extract metadata from a personal note the user is saving. Reply with JSON only."
+    };
     let system_prompt = format!(
-        "You extract metadata from a personal note the user is saving. Generate a 3-word title, \
-         a 1-sentence TLDR, and extract reminders/timers. Reply with JSON only.{framing_line}\n\
+        "{intro}{framing_line}\n\
          Rules:\n\
+         {body_rule}\
          - title: at most 3 words, plain text.\n\
          - tldr: exactly one short sentence.\n\
-         - todos: action items explicitly present in the note (empty array if none).\n\
-         - reminder_at: if the note asks for a reminder/timer, the local datetime \
-           it should fire, formatted YYYY-MM-DDTHH:MM; otherwise an empty string. \
-           The current local datetime is {now_local}.\n\
-         Never rewrite or summarize away the note itself — you only produce metadata."
+         - todos: action items present in the note (empty array if none).\n\
+         - reminder_at: if a reminder/timer is requested, the local datetime it should fire as \
+           YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}.\
+         {verbatim_tail}",
+        verbatim_tail = if structure {
+            ""
+        } else {
+            "\nNever rewrite or summarize away the note itself — you only produce metadata."
+        }
     );
 
+    let mut properties = serde_json::json!({
+        "title": { "type": "string" },
+        "tldr": { "type": "string" },
+        "todos": { "type": "array", "items": { "type": "string" } },
+        "reminder_at": { "type": "string" }
+    });
+    let mut required = vec!["title", "tldr", "todos", "reminder_at"];
+    if structure {
+        properties["body"] = serde_json::json!({ "type": "string" });
+        required.insert(0, "body");
+    }
     let schema = serde_json::json!({
         "type": "object",
-        "properties": {
-            "title": { "type": "string" },
-            "tldr": { "type": "string" },
-            "todos": { "type": "array", "items": { "type": "string" } },
-            "reminder_at": { "type": "string" }
-        },
-        "required": ["title", "tldr", "todos", "reminder_at"],
+        "properties": properties,
+        "required": required,
         "additionalProperties": false
     });
 
@@ -446,6 +476,16 @@ fn merge_lost_content(current: &Note, candidate: &Note) -> bool {
     cur >= 40 && new.saturating_mul(2) < cur
 }
 
+/// True when a structuring reformat lost more than half of a non-trivial note —
+/// the signal to distrust it and keep the verbatim body. Markdown formatting
+/// only ADDS characters, so a big shrink means the model summarized. Short notes
+/// (< 40 chars) are exempt: a one-liner legitimately stays short.
+fn reformat_lost_content(raw: &str, formatted: &str) -> bool {
+    let r = raw.trim().chars().count();
+    let f = formatted.trim().chars().count();
+    r >= 40 && f.saturating_mul(2) < r
+}
+
 /// Degrade path: append the change to the body verbatim, keep everything else.
 fn raw_append(current: &Note, change: &str) -> Note {
     let mut note = current.clone();
@@ -470,10 +510,36 @@ pub(crate) async fn compose_note(app: &AppHandle, body: &str, framing: Option<&s
     let mut note = Note::raw(body.trim().to_string());
     let settings = get_settings(app);
     if llm_usable(&settings) {
+        // Structure the body only for a freshly dictated/typed note (no framed
+        // selection) that fits the sample window — a truncated giant paste can't
+        // be safely reformatted, and a saved selection stays verbatim.
+        let fits = body.trim().chars().count() <= META_SAMPLE_CHARS;
+        let structure = framing.is_none() && fits;
         // Only a capped sample of a huge body is sent for metadata; the note
         // body itself (set above) stays complete.
-        match extract_metadata(app, &settings, &sample_for_meta(body.trim()), framing).await {
-            Ok(meta) => meta.apply(&mut note, settings.grain_space_auto_reminders),
+        match extract_metadata(
+            app,
+            &settings,
+            &sample_for_meta(body.trim()),
+            framing,
+            structure,
+        )
+        .await
+        {
+            Ok(mut meta) => {
+                // Adopt the reformatted body only when it clearly preserved the
+                // content — a formatted note is longer, not shorter, so a big
+                // shrink means the model summarized and we keep the raw text.
+                let formatted = std::mem::take(&mut meta.body);
+                let formatted = formatted.trim();
+                if structure
+                    && !formatted.is_empty()
+                    && !reformat_lost_content(&note.body, formatted)
+                {
+                    note.body = formatted.to_string();
+                }
+                meta.apply(&mut note, settings.grain_space_auto_reminders);
+            }
             Err(e) => log::warn!("[GRAIN] space compose: extraction failed ({e}); raw note"),
         }
     }
@@ -611,6 +677,7 @@ mod tests {
     fn metadata_apply_arms_or_parks_reminder() {
         let meta = |auto: bool| {
             let m = ExtractedMeta {
+                body: String::new(),
                 title: " Wifi Note ".into(),
                 tldr: "The wifi password.".into(),
                 todos: vec!["buy milk".into(), "  ".into()],
@@ -636,6 +703,7 @@ mod tests {
     #[test]
     fn bad_reminder_string_means_no_reminder() {
         let m = ExtractedMeta {
+            body: String::new(),
             title: "T".into(),
             tldr: "S".into(),
             todos: vec![],
@@ -710,6 +778,18 @@ mod tests {
         assert_eq!(sample_for_meta(&huge).chars().count(), META_SAMPLE_CHARS);
         let small = "short body";
         assert_eq!(sample_for_meta(small), small);
+    }
+
+    #[test]
+    fn reformat_lost_content_flags_summaries_only() {
+        let raw = "buy milk and eggs, call the plumber about the leak, book the dentist";
+        // A genuine reformat is longer (adds markdown) → trusted.
+        let formatted = "- [ ] buy milk and eggs\n- [ ] call the plumber about the leak\n- [ ] book the dentist";
+        assert!(!reformat_lost_content(raw, formatted));
+        // A summary that dropped over half the note → distrusted.
+        assert!(reformat_lost_content(raw, "- buy groceries"));
+        // Short notes are exempt (a one-liner stays short).
+        assert!(!reformat_lost_content("call mom", "call mom"));
     }
 
     #[test]

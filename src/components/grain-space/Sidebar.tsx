@@ -1,14 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  AlarmClock,
-  ChevronRight,
-  FileText,
-  Library,
-  Pin,
-  Search,
-  SquarePen,
-} from "lucide-react";
+import { ChevronRight, FileText, Hash, Pin, SquarePen } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
@@ -204,7 +196,7 @@ export function Sidebar({
             <ChevronRight width={13} height={13} />
           </span>
           <span className="gs-row-hash">
-            <FileText width={13} height={13} />
+            <Hash width={12} height={12} />
           </span>
           <span className="gs-row-title">{node.name}</span>
           <span className="gs-row-count">{subtreeCount(node)}</span>
@@ -219,30 +211,24 @@ export function Sidebar({
     );
   };
 
-  /** Big section heading: colored icon tile (left) + label + count, chevron
-   * flush to the right edge. Clicking toggles collapse. */
-  const sectionHead = (
-    key: string,
-    label: string,
-    iconClass: string,
-    icon: React.ReactNode,
-    count?: number,
-  ) => (
+  /** Section heading — Mem style: a small disclosure chevron, a quiet label,
+   * and a subtle count. No icon tiles; hierarchy reads through restraint.
+   * Clicking toggles collapse. */
+  const sectionHead = (key: string, label: string, count?: number) => (
     <button
       type="button"
       className="gs-section"
       onClick={() => toggleSection(key)}
     >
-      <span className={`gs-section-ic ${iconClass}`}>{icon}</span>
+      <span
+        className={`gs-section-chev${collapsed[key] ? " gs-section-chev--closed" : ""}`}
+      >
+        <ChevronRight width={12} height={12} />
+      </span>
       <span className="gs-section-label">{label}</span>
       {count != null && count > 0 && (
         <span className="gs-section-count">{count}</span>
       )}
-      <span
-        className={`gs-section-chev${collapsed[key] ? " gs-section-chev--closed" : ""}`}
-      >
-        <ChevronRight width={14} height={14} />
-      </span>
     </button>
   );
 
@@ -267,9 +253,6 @@ export function Sidebar({
         {searching ? (
           <>
             <div className="gs-section gs-section--static">
-              <span className="gs-section-ic gs-section-ic--results">
-                <Search width={13} height={13} />
-              </span>
               <span className="gs-section-label">
                 {t("grainSpaceOverlay.results")}
               </span>
@@ -304,8 +287,6 @@ export function Sidebar({
               sectionHead(
                 "reminders",
                 t("grainSpaceOverlay.reminders"),
-                "gs-section-ic--reminders",
-                <AlarmClock width={13} height={13} />,
                 reminders.length,
               )}
             {!collapsed.reminders && reminders.length > 0 && (
@@ -315,8 +296,6 @@ export function Sidebar({
             {sectionHead(
               "pinned",
               t("grainSpaceOverlay.pinned"),
-              "gs-section-ic--pinned",
-              <Pin width={13} height={13} />,
               pinned.length,
             )}
             {!collapsed.pinned &&
@@ -331,8 +310,6 @@ export function Sidebar({
             {sectionHead(
               "notes",
               t("grainSpaceOverlay.notes"),
-              "gs-section-ic--notes",
-              <FileText width={13} height={13} />,
               grainLoose.length + obsidianLoose.length,
             )}
             {!collapsed.notes && (
@@ -358,8 +335,6 @@ export function Sidebar({
               sectionHead(
                 "folders",
                 t("grainSpaceOverlay.collections"),
-                "gs-section-ic--collections",
-                <Library width={13} height={13} />,
                 collectionCount,
               )}
             {!collapsed.folders &&
