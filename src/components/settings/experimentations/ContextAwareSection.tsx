@@ -9,7 +9,7 @@ import { Input } from "../../ui/Input";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Textarea } from "../../ui/Textarea";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
-import { CountChip } from "./CountChip";
+import { CountChip } from "../../ui/CountChip";
 import { FieldLabel } from "./ui";
 
 type MatchKind = AppMatch["kind"]; // "process" | "url_host"

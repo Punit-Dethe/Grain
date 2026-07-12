@@ -8,7 +8,7 @@ import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { Textarea } from "../../ui/Textarea";
-import { CountChip } from "./CountChip";
+import { CountChip } from "../../ui/CountChip";
 import { FieldLabel, TriggerChip, MapArrow } from "./ui";
 
 const MAX_TRIGGER_LENGTH = 100;
@@ -148,7 +148,8 @@ export const SnippetsSection: React.FC = () => {
               id="snippet-expansion"
               className="w-full"
               variant="compact"
-              rows={3}
+              autoResize
+              maxRows={3}
               value={replacement}
               onChange={(e) => setReplacement(e.target.value)}
               placeholder={t(

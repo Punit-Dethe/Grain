@@ -17,7 +17,7 @@ import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { SettingsGroup } from "../../ui/SettingsGroup";
-import { CountChip } from "./CountChip";
+import { CountChip } from "../../ui/CountChip";
 import { FieldLabel, TriggerChip, MapArrow } from "./ui";
 
 const MAX_TRIGGER_LENGTH = 100;
@@ -243,14 +243,17 @@ export const ActionsSection: React.FC = () => {
         <div className="space-y-2">
           <FieldLabel>Opens</FieldLabel>
           {form.targets.map((target, i) => (
-            <div key={i} className="flex items-center gap-2">
-              {/* App / Website segmented toggle */}
-              <div className="flex items-center shrink-0 rounded-md overflow-hidden border border-line">
+            <div
+              key={i}
+              className="flex items-stretch rounded-lg border border-line bg-paper-sunken overflow-hidden transition-colors focus-within:border-accent"
+            >
+              {/* App / Web type toggle — the leading segment of the field. */}
+              <div className="flex items-stretch shrink-0 border-e border-line">
                 <button
                   type="button"
                   onClick={() => setTarget(i, { kind: "app" })}
                   title="Application, file, or folder"
-                  className={`flex items-center gap-1 px-2.5 py-1.5 text-sm transition-colors cursor-pointer ${
+                  className={`flex items-center gap-1 px-2.5 text-sm border-e border-line transition-colors cursor-pointer ${
                     target.kind === "app"
                       ? "bg-accent text-black"
                       : "text-ink-soft hover:text-ink"
@@ -262,7 +265,7 @@ export const ActionsSection: React.FC = () => {
                   type="button"
                   onClick={() => setTarget(i, { kind: "url" })}
                   title="Website (opens in your default browser)"
-                  className={`flex items-center gap-1 px-2.5 py-1.5 text-sm transition-colors cursor-pointer ${
+                  className={`flex items-center gap-1 px-2.5 text-sm transition-colors cursor-pointer ${
                     target.kind === "url"
                       ? "bg-accent text-black"
                       : "text-ink-soft hover:text-ink"
@@ -272,10 +275,8 @@ export const ActionsSection: React.FC = () => {
                 </button>
               </div>
 
-              <Input
+              <input
                 type="text"
-                className="w-full"
-                variant="compact"
                 value={target.value}
                 onChange={(e) => setTarget(i, { value: e.target.value })}
                 placeholder={
@@ -284,48 +285,51 @@ export const ActionsSection: React.FC = () => {
                     : "Website, e.g. github.com, mail.google.com"
                 }
                 disabled={updating}
+                className="flex-1 min-w-0 bg-transparent px-2.5 py-1.5 text-sm font-medium text-ink placeholder:text-ink-faint focus:outline-none disabled:opacity-60"
               />
 
-              {/* Capture the currently focused app/site into this row. */}
-              <button
-                type="button"
-                onClick={() => startCapture(i)}
-                disabled={updating || capturing !== null}
-                title="Capture focused app — switch to it during the countdown"
-                className={`shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed ${
-                  capturing?.index === i
-                    ? "text-accent"
-                    : "text-ink-soft hover:text-accent"
-                }`}
-              >
-                {capturing?.index === i ? (
-                  <span className="text-xs font-mono w-4 text-center tabular-nums">
-                    {capturing.countdown}
-                  </span>
-                ) : (
-                  <Crosshair width={16} height={16} />
-                )}
-              </button>
-              {target.kind === "app" && (
+              {/* Trailing controls — capture / browse / remove. */}
+              <div className="flex items-center shrink-0 gap-0.5 pe-1">
                 <button
                   type="button"
-                  onClick={() => browseForApp(i)}
-                  disabled={updating}
-                  title="Browse for an application"
-                  className="shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-soft hover:text-accent"
+                  onClick={() => startCapture(i)}
+                  disabled={updating || capturing !== null}
+                  title="Capture focused app — switch to it during the countdown"
+                  className={`p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed ${
+                    capturing?.index === i
+                      ? "text-accent"
+                      : "text-ink-soft hover:text-accent"
+                  }`}
                 >
-                  <FolderOpen width={16} height={16} />
+                  {capturing?.index === i ? (
+                    <span className="text-xs font-mono w-4 text-center tabular-nums">
+                      {capturing.countdown}
+                    </span>
+                  ) : (
+                    <Crosshair width={16} height={16} />
+                  )}
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={() => removeTarget(i)}
-                disabled={updating}
-                title="Remove target"
-                className="shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-faint hover:text-accent"
-              >
-                <X width={16} height={16} />
-              </button>
+                {target.kind === "app" && (
+                  <button
+                    type="button"
+                    onClick={() => browseForApp(i)}
+                    disabled={updating}
+                    title="Browse for an application"
+                    className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-soft hover:text-accent"
+                  >
+                    <FolderOpen width={16} height={16} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeTarget(i)}
+                  disabled={updating}
+                  title="Remove target"
+                  className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-faint hover:text-accent"
+                >
+                  <X width={16} height={16} />
+                </button>
+              </div>
             </div>
           ))}
 
@@ -333,7 +337,7 @@ export const ActionsSection: React.FC = () => {
             type="button"
             onClick={addTarget}
             disabled={updating}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-line text-ink-soft hover:text-ink hover:border-accent transition-colors cursor-pointer"
+            className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg border border-dashed border-line text-xs text-ink-soft hover:text-ink hover:border-accent transition-colors cursor-pointer"
           >
             <Plus width={14} height={14} /> Add target
           </button>

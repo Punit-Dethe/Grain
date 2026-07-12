@@ -14,7 +14,7 @@ export const FieldLabel: React.FC<{
 }> = ({ children, htmlFor, className }) => (
   <label
     htmlFor={htmlFor}
-    className={`block font-mono text-[0.58rem] font-semibold uppercase tracking-[0.15em] text-ink-faint ${
+    className={`block font-mono text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-ink-soft ${
       className ?? ""
     }`}
   >

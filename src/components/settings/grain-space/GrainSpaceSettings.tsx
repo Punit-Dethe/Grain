@@ -7,6 +7,9 @@ import { commands } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
+import { Switch } from "../../ui/Switch";
+import { InfoHint } from "../../ui/InfoHint";
+import { CountChip } from "../../ui/CountChip";
 import { ShortcutInput } from "../ShortcutInput";
 
 /** `#[serde(default)]` fields come out optional in the generated types; the
@@ -276,31 +279,36 @@ export const GrainSpaceSettings: React.FC = () => {
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
-      <SettingsGroup
-        title="Grain Space"
-        description="A local scratch space for spoken and captured notes. Everything stays on this machine as plain files, and the feature holds zero memory while its surfaces are closed. Turning it off unregisters its shortcuts and loads nothing — your notes stay on disk."
-      >
-        <ToggleSwitch
-          label="Enable Grain Space"
-          description="Registers the capture shortcuts and the reminder timer."
-          descriptionMode="inline"
-          grouped
+      {/* Title + master switch. The tab itself is the on/off — everything below
+          appears only once enabled. */}
+      <div className="flex items-center justify-between gap-4 px-1">
+        <div className="flex items-center gap-2">
+          <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
+            Grain Space
+          </h1>
+          <InfoHint
+            text="A local scratch space for spoken and captured notes. Everything stays on this machine as plain files, and the feature holds zero memory while its surfaces are closed. Turning it off unregisters its shortcuts and loads nothing — your notes stay on disk."
+            position="bottom"
+          />
+        </div>
+        <Switch
           checked={enabled}
           isUpdating={isUpdating("grain_space_enabled")}
           onChange={(v) => updateSetting("grain_space_enabled", v)}
+          ariaLabel="Enable Grain Space"
         />
-      </SettingsGroup>
+      </div>
 
       {enabled && (
         <>
           <SettingsGroup
             title="Storage"
-            description="Where your notes live. The built-in Grain store keeps them as plain files in the app's data folder. Or point Grain at an Obsidian vault: notes become ordinary Markdown files you own — searchable here, editable in Obsidian, synced by whatever your vault already uses. Switching is a hard swap between the two stores; nothing is migrated or deleted."
+            info="Where your notes live. The built-in Grain store keeps them as plain files in the app's data folder. Or point Grain at an Obsidian vault: notes become ordinary Markdown files you own — searchable here, editable in Obsidian, synced by whatever your vault already uses. Switching is a hard swap between the two stores; nothing is migrated or deleted."
           >
             <ToggleSwitch
               label="Store notes in an Obsidian vault"
               description="Capture writes Markdown into your vault; search and Recall cover the whole vault."
-              descriptionMode="inline"
+              descriptionMode="tooltip"
               grouped
               checked={backend === "obsidian"}
               isUpdating={isUpdating("grain_space_backend")}
@@ -329,13 +337,11 @@ export const GrainSpaceSettings: React.FC = () => {
                   </button>
                 </div>
                 <div className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
                     <div className="text-sm text-ink">
                       {t("settings.grainSpace.subfolderLabel")}
                     </div>
-                    <div className="text-xs text-ink-soft">
-                      {t("settings.grainSpace.subfolderHint")}
-                    </div>
+                    <InfoHint text={t("settings.grainSpace.subfolderHint")} />
                   </div>
                   <input
                     type="text"
@@ -343,14 +349,17 @@ export const GrainSpaceSettings: React.FC = () => {
                     onChange={(e) => setFolderDraft(e.target.value)}
                     onBlur={() => void commitFolder()}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                      if (e.key === "Enter")
+                        (e.target as HTMLInputElement).blur();
                     }}
                     spellCheck={false}
                     className="w-36 shrink-0 rounded border border-line bg-transparent px-2 py-1 text-sm text-ink focus:border-accent focus:outline-none"
                   />
                 </div>
                 {vaultMsg && (
-                  <div className="px-4 pb-3 text-xs text-red-500">{vaultMsg}</div>
+                  <div className="px-4 pb-3 text-xs text-red-500">
+                    {vaultMsg}
+                  </div>
                 )}
               </>
             )}
@@ -358,32 +367,32 @@ export const GrainSpaceSettings: React.FC = () => {
 
           <SettingsGroup
             title="Capture"
-            description="Quick Add silently saves the text you have highlighted in any app. Create Note opens the Grain pill so you can speak OR type a note — and if you have text selected, that becomes the note (say what it's for). Each note gets an AI title, summary, and extracted reminders when a processing provider is configured."
+            info="Quick Add silently saves the text you have highlighted in any app. Create Note opens the Grain pill so you can speak OR type a note — and if you have text selected, that becomes the note (say what it's for). Each note gets an AI title, summary, and extracted reminders when a processing provider is configured."
           >
             <ShortcutInput
               shortcutId="grain_space_quick_add"
               grouped
-              descriptionMode="inline"
+              descriptionMode="tooltip"
             />
             <ShortcutInput
               shortcutId="grain_space_capture"
               grouped
-              descriptionMode="inline"
+              descriptionMode="tooltip"
             />
             <ShortcutInput
               shortcutId="grain_space_open"
               grouped
-              descriptionMode="inline"
+              descriptionMode="tooltip"
             />
             <ShortcutInput
               shortcutId="grain_space_recall"
               grouped
-              descriptionMode="inline"
+              descriptionMode="tooltip"
             />
             <ToggleSwitch
               label="Auto-set reminders"
               description="Arm reminders extracted from a dictated note automatically. When off, notes keep the suggestion and you arm it manually."
-              descriptionMode="inline"
+              descriptionMode="tooltip"
               grouped
               checked={autoReminders}
               isUpdating={isUpdating("grain_space_auto_reminders")}
@@ -393,12 +402,12 @@ export const GrainSpaceSettings: React.FC = () => {
 
           <SettingsGroup
             title="Search"
-            description="Notes are always searchable with fast exact/fuzzy text matching. Semantic search understands meaning ('that café Anna mentioned') but relies on a small local model (~34 MB) that downloads the first time you use it — nothing is bundled with the app, and with this off the model never loads into memory."
+            info="Notes are always searchable with fast exact/fuzzy text matching. Semantic search understands meaning ('that café Anna mentioned') but relies on a small local model (~34 MB) that downloads the first time you use it — nothing is bundled with the app, and with this off the model never loads into memory."
           >
             <ToggleSwitch
               label="Semantic search"
               description="Meaning-based search with a small local model, downloaded on first use."
-              descriptionMode="inline"
+              descriptionMode="tooltip"
               grouped
               checked={semantic}
               isUpdating={isUpdating("grain_space_semantic")}
@@ -478,7 +487,7 @@ export const GrainSpaceSettings: React.FC = () => {
               <ToggleSwitch
                 label="Half-precision (f16) model"
                 description="Load the embedding model in f16 — about half the memory, near-identical results. Same download."
-                descriptionMode="inline"
+                descriptionMode="tooltip"
                 grouped
                 checked={embedF16}
                 isUpdating={isUpdating("grain_space_embed_f16")}
@@ -496,7 +505,9 @@ export const GrainSpaceSettings: React.FC = () => {
                   {t("settings.grainSpace.uninstallModel")}
                 </button>
                 {uninstallMsg && (
-                  <div className="mt-1.5 text-xs text-red-500">{uninstallMsg}</div>
+                  <div className="mt-1.5 text-xs text-red-500">
+                    {uninstallMsg}
+                  </div>
                 )}
               </div>
             )}
@@ -505,7 +516,8 @@ export const GrainSpaceSettings: React.FC = () => {
           {reminders.length > 0 && (
             <SettingsGroup
               title="Reminders"
-              description="Reminders and timers extracted from your notes."
+              info="Reminders and timers extracted from your notes. Suggested ones you arm; armed ones fire at their time."
+              trailing={<CountChip n={reminders.length} />}
             >
               {reminders.map((note) => {
                 const reminder = reminderOf(note);
@@ -562,11 +574,8 @@ export const GrainSpaceSettings: React.FC = () => {
 
           <SettingsGroup
             title="Notes"
-            description={
-              notes.length === 0
-                ? "Nothing captured yet — highlight text and press Quick Add, or press Create Note to speak or type one."
-                : undefined
-            }
+            info="Everything you've captured, newest first and grouped by day; pinned notes stay on top. Click a note to open it in Grain Space."
+            trailing={notes.length > 0 ? <CountChip n={notes.length} /> : null}
           >
             {groups.length === 0 ? (
               <div className="px-4 py-6 text-sm text-ink-faint text-center">

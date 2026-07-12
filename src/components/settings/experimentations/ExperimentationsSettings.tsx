@@ -73,8 +73,8 @@ export const ExperimentationsSettings: React.FC = () => {
               onClick={() => setTab(tb.key)}
               className={`group relative flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm transition-all duration-150 cursor-pointer ${
                 isActive
-                  ? "bg-[var(--color-ink)] text-[var(--color-paper)] shadow-[0_1px_3px_rgba(0,0,0,0.22)]"
-                  : "text-ink-soft hover:text-ink hover:bg-[rgba(20,19,18,0.04)]"
+                  ? "bg-paper-raised text-ink shadow-[0_1px_2px_rgba(0,0,0,0.14)] border border-accent/30"
+                  : "border border-transparent text-ink-soft hover:text-ink hover:bg-[rgba(20,19,18,0.04)]"
               }`}
             >
               <span
