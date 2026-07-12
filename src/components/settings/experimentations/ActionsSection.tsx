@@ -17,6 +17,8 @@ import { useSettings } from "../../../hooks/useSettings";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { SettingsGroup } from "../../ui/SettingsGroup";
+import { CountChip } from "./CountChip";
+import { FieldLabel, TriggerChip, MapArrow } from "./ui";
 
 const MAX_TRIGGER_LENGTH = 100;
 
@@ -215,34 +217,42 @@ export const ActionsSection: React.FC = () => {
   return (
     <SettingsGroup
       title="Actions"
-      description="Say a phrase to open apps and websites. One action can open several at once — say “start coding” to launch your editor and open two docs in your browser. Fully local; the trigger phrase is removed from what gets typed."
+      info="Say a phrase to open apps and websites. One action can open several at once — say “start coding” to launch your editor and open two docs in your browser. Fully local; the trigger phrase is removed from what gets typed."
+      trailing={actions.length > 0 ? <CountChip n={actions.length} /> : null}
     >
-      {/* Add / edit form */}
-      <div className="px-4 py-3 space-y-3">
-        <Input
-          type="text"
-          className="w-full"
-          variant="compact"
-          value={form.trigger}
-          onChange={(e) => setForm((f) => ({ ...f, trigger: e.target.value }))}
-          maxLength={MAX_TRIGGER_LENGTH}
-          placeholder="Trigger phrase, e.g. start coding, open email"
-          disabled={updating}
-        />
+      {/* Composer */}
+      <div className="p-4 space-y-3.5">
+        <div className="space-y-1.5">
+          <FieldLabel htmlFor="action-trigger">Trigger phrase</FieldLabel>
+          <Input
+            id="action-trigger"
+            type="text"
+            className="w-full"
+            variant="compact"
+            value={form.trigger}
+            onChange={(e) =>
+              setForm((f) => ({ ...f, trigger: e.target.value }))
+            }
+            maxLength={MAX_TRIGGER_LENGTH}
+            placeholder="e.g. start coding, open email"
+            disabled={updating}
+          />
+        </div>
 
         {/* Targets */}
         <div className="space-y-2">
+          <FieldLabel>Opens</FieldLabel>
           {form.targets.map((target, i) => (
             <div key={i} className="flex items-center gap-2">
-              {/* App / Website toggle */}
-              <div className="flex items-center shrink-0 rounded-md overflow-hidden border border-[color-mix(in_srgb,var(--color-mid-gray)_40%,transparent)]">
+              {/* App / Website segmented toggle */}
+              <div className="flex items-center shrink-0 rounded-md overflow-hidden border border-line">
                 <button
                   type="button"
                   onClick={() => setTarget(i, { kind: "app" })}
                   title="Application, file, or folder"
                   className={`flex items-center gap-1 px-2.5 py-1.5 text-sm transition-colors cursor-pointer ${
                     target.kind === "app"
-                      ? "bg-[var(--color-accent)] text-black"
+                      ? "bg-accent text-black"
                       : "text-ink-soft hover:text-ink"
                   }`}
                 >
@@ -254,7 +264,7 @@ export const ActionsSection: React.FC = () => {
                   title="Website (opens in your default browser)"
                   className={`flex items-center gap-1 px-2.5 py-1.5 text-sm transition-colors cursor-pointer ${
                     target.kind === "url"
-                      ? "bg-[var(--color-accent)] text-black"
+                      ? "bg-accent text-black"
                       : "text-ink-soft hover:text-ink"
                   }`}
                 >
@@ -312,7 +322,7 @@ export const ActionsSection: React.FC = () => {
                 onClick={() => removeTarget(i)}
                 disabled={updating}
                 title="Remove target"
-                className="shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-soft hover:text-accent"
+                className="shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-faint hover:text-accent"
               >
                 <X width={16} height={16} />
               </button>
@@ -323,7 +333,7 @@ export const ActionsSection: React.FC = () => {
             type="button"
             onClick={addTarget}
             disabled={updating}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-[color-mix(in_srgb,var(--color-mid-gray)_40%,transparent)] text-ink-soft hover:text-ink hover:border-[var(--color-accent)] transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border border-line text-ink-soft hover:text-ink hover:border-accent transition-colors cursor-pointer"
           >
             <Plus width={14} height={14} /> Add target
           </button>
@@ -357,85 +367,102 @@ export const ActionsSection: React.FC = () => {
 
       {/* Saved actions */}
       {actions.length === 0 ? (
-        <div className="px-4 py-3 text-center text-sm text-ink-soft">
+        <div className="px-4 py-6 text-center text-sm text-ink-faint">
           No actions yet. Add one above to open apps or sites with your voice.
         </div>
       ) : (
-        actions.map((action) => {
-          const enabled = action.enabled ?? true;
-          return (
-            <div
-              key={action.id}
-              className={`px-4 py-2.5 flex items-center gap-3 ${
-                enabled ? "" : "opacity-50"
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <p className="font-mono text-sm font-medium text-ink truncate">
-                  {action.trigger}
-                </p>
-                <p className="text-xs text-ink-soft truncate flex items-center gap-2">
-                  {action.targets.map((t, i) => (
-                    <span key={i} className="inline-flex items-center gap-1">
-                      {t.kind === "app" ? (
-                        <AppWindow width={12} height={12} />
-                      ) : (
-                        <Globe width={12} height={12} />
-                      )}
-                      {t.value}
-                    </span>
-                  ))}
-                </p>
+        <div className="max-h-[360px] overflow-y-auto divide-y divide-line">
+          {actions.map((action) => {
+            const enabled = action.enabled ?? true;
+            const editing = form.editingId === action.id;
+            return (
+              <div
+                key={action.id}
+                className={`group px-4 py-2.5 flex items-center gap-3 transition-colors ${
+                  editing
+                    ? "bg-[var(--accent-tint)]"
+                    : "hover:bg-[rgba(20,19,18,0.02)]"
+                } ${enabled ? "" : "opacity-45"}`}
+              >
+                <div className="flex-1 min-w-0 flex items-center gap-2.5">
+                  <TriggerChip>{action.trigger}</TriggerChip>
+                  <MapArrow />
+                  <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
+                    {action.targets.map((t, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1 shrink-0 max-w-[190px] text-xs text-ink-soft bg-paper-sunken border border-line rounded-md px-1.5 py-[3px]"
+                      >
+                        {t.kind === "app" ? (
+                          <AppWindow
+                            width={12}
+                            height={12}
+                            className="shrink-0 text-ink-faint"
+                          />
+                        ) : (
+                          <Globe
+                            width={12}
+                            height={12}
+                            className="shrink-0 text-ink-faint"
+                          />
+                        )}
+                        <span className="truncate">{t.value}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => testTargets(action.targets)}
+                  title="Run now"
+                  className="shrink-0 p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-soft hover:text-accent"
+                >
+                  <Play width={15} height={15} />
+                </button>
+                <label
+                  className={`inline-flex items-center shrink-0 transition-transform duration-100 active:scale-90 ${
+                    updating
+                      ? "cursor-not-allowed active:scale-100"
+                      : "cursor-pointer"
+                  }`}
+                  title="Enable / disable action"
+                >
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
+                    checked={enabled}
+                    disabled={updating}
+                    onChange={() => handleToggle(action.id)}
+                  />
+                  <div
+                    className="relative w-8 h-[18px] rounded-full transition-colors duration-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:shadow-[0_1px_3px_rgba(0,0,0,0.35)] after:transition-all after:duration-200 peer-checked:after:translate-x-[14px] peer-checked:after:bg-[var(--color-accent)] after:bg-[#f0ebe3] rtl:peer-checked:after:-translate-x-[14px]"
+                    style={{ backgroundColor: "#0a0a0a" }}
+                  ></div>
+                </label>
+                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={() => handleEdit(action)}
+                    disabled={updating}
+                    className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed text-ink-soft hover:text-accent"
+                    title="Edit action"
+                  >
+                    <Pencil width={15} height={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(action.id)}
+                    disabled={updating}
+                    className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed text-ink-soft hover:text-accent"
+                    title="Delete action"
+                  >
+                    <Trash2 width={15} height={15} />
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => testTargets(action.targets)}
-                title="Run now"
-                className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer text-ink-soft hover:text-accent"
-              >
-                <Play width={15} height={15} />
-              </button>
-              <label
-                className={`inline-flex items-center shrink-0 transition-transform duration-100 active:scale-90 ${
-                  updating
-                    ? "cursor-not-allowed active:scale-100"
-                    : "cursor-pointer"
-                }`}
-                title="Enable / disable action"
-              >
-                <input
-                  type="checkbox"
-                  className="sr-only peer"
-                  checked={enabled}
-                  disabled={updating}
-                  onChange={() => handleToggle(action.id)}
-                />
-                <div
-                  className="relative w-8 h-[18px] rounded-full transition-colors duration-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:shadow-[0_1px_3px_rgba(0,0,0,0.35)] after:transition-all after:duration-200 peer-checked:after:translate-x-[14px] peer-checked:after:bg-[var(--color-accent)] after:bg-[#f0ebe3] rtl:peer-checked:after:-translate-x-[14px]"
-                  style={{ backgroundColor: "#0a0a0a" }}
-                ></div>
-              </label>
-              <button
-                type="button"
-                onClick={() => handleEdit(action)}
-                disabled={updating}
-                className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed text-ink-soft hover:text-accent"
-                title="Edit action"
-              >
-                <Pencil width={15} height={15} />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDelete(action.id)}
-                disabled={updating}
-                className="p-1.5 rounded-md flex items-center justify-center transition-colors cursor-pointer disabled:cursor-not-allowed text-ink-soft hover:text-accent"
-                title="Delete action"
-              >
-                <Trash2 width={15} height={15} />
-              </button>
-            </div>
-          );
-        })
+            );
+          })}
+        </div>
       )}
     </SettingsGroup>
   );

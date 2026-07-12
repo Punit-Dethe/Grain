@@ -1,8 +1,15 @@
 import React from "react";
+import { InfoHint } from "./InfoHint";
 
 interface SettingsGroupProps {
   title?: string;
   description?: string;
+  /** Preferred over `description`: renders a compact "i" hint next to the title
+   * instead of a full paragraph, so headings stay clean (production style). */
+  info?: string;
+  /** Optional control pinned to the far right of the header rule — e.g. an item
+   * count or a small action. */
+  trailing?: React.ReactNode;
   /** Optional two-digit section index (e.g. "01") shown in mono before the title. */
   index?: string;
   children: React.ReactNode;
@@ -11,6 +18,8 @@ interface SettingsGroupProps {
 export const SettingsGroup: React.FC<SettingsGroupProps> = ({
   title,
   description,
+  info,
+  trailing,
   index,
   children,
 }) => {
@@ -31,6 +40,9 @@ export const SettingsGroup: React.FC<SettingsGroupProps> = ({
               <h2 className="font-mono text-[0.68rem] font-semibold text-ink uppercase tracking-[0.18em]">
                 {title}
               </h2>
+              {/* Compact "i" affordance carrying the explanation, so the heading
+                  itself needs no paragraph of subtext. */}
+              {info && <InfoHint text={info} position="bottom" />}
               {/* The rule runs out to a small patch jack — a socket like the
                   Quick Panel console's, so each settings group reads as a
                   module on the same instrument. */}
@@ -40,6 +52,7 @@ export const SettingsGroup: React.FC<SettingsGroupProps> = ({
                   <span className="w-1 h-1 rounded-full bg-ink-faint/60" />
                 </span>
               </div>
+              {trailing && <div className="shrink-0">{trailing}</div>}
             </div>
           )}
           {description && (
