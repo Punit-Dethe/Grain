@@ -1,16 +1,9 @@
 [
   {
     "date": "Jul 12, 2026",
-    "commit": "bump transcribe-cpp to 0.1.3",
+    "commit": "transcribe 0.1.3 (#1664)",
     "status": "Merged",
     "notes": "Bumped transcribe-cpp version.",
-    "pr": ""
-  },
-  {
-    "date": "Jul 12, 2026",
-    "commit": "transcribe 0.1.3 (#1664)",
-    "status": "Pending",
-    "notes": "",
     "pr": "1664"
   },
   {
