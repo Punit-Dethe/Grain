@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { MessageSquare, Plus, Search, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { Maximize2, MessageSquare, Minus, Plus, Search, X } from "lucide-react";
 import { commands, type Note, type NoteCard } from "@/bindings";
 import { Sidebar } from "./Sidebar";
 import { EditorPane } from "./EditorPane";
+import { CalendarView } from "./CalendarView";
 import { ChatRail } from "./ChatRail";
 import { flushBridge } from "./sleepBridge";
 import "./grain-space.css";
@@ -44,6 +46,7 @@ export function GrainSpaceOverlay() {
   const [selected, setSelected] = useState<Note | null>(null);
   const [selectedReadonly, setSelectedReadonly] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [banner, setBanner] = useState<ModelBanner | null>(null);
 
   const queryRef = useRef("");
@@ -169,6 +172,7 @@ export function GrainSpaceOverlay() {
     readonlyRef.current = readonly;
     dirtyRef.current = false;
     setEditSession((s) => s + 1);
+    setCalendarOpen(false); // opening a note leaves the calendar view
   }, []);
 
   const selectCard = useCallback(
@@ -426,19 +430,39 @@ export function GrainSpaceOverlay() {
   const searching = query.trim().length > 0;
   const selectedFolder =
     (selected && cardById.get(selected.id)?.folder) ?? null;
-  const storeLabel = isObsidian
-    ? t("grainSpaceOverlay.storeObsidian")
-    : t("grainSpaceOverlay.storeLocal");
+
+  /** Notes carrying a live (armed/fired) reminder, ordered upcoming-first then
+   * most-recently-past — the source for the sidebar dock and calendar view. */
+  const reminders = useMemo(() => {
+    const now = Date.now();
+    return cards
+      .filter(
+        (c) =>
+          (c.reminder_state.status === "armed" ||
+            c.reminder_state.status === "fired") &&
+          c.reminder_state.fire_at != null,
+      )
+      .sort((a, b) => {
+        const fa = a.reminder_state.fire_at as number;
+        const fb = b.reminder_state.fire_at as number;
+        const aFut = fa >= now;
+        const bFut = fb >= now;
+        if (aFut !== bFut) return aFut ? -1 : 1;
+        return aFut ? fa - fb : fb - fa;
+      });
+  }, [cards]);
 
   return (
     <div className="gs-root">
       <div className="gs-frame">
         <Sidebar
           cards={cards}
+          reminders={reminders}
           searching={searching}
           results={results}
           selectedId={selected?.id ?? null}
-          storeLabel={storeLabel}
+          calendarOpen={calendarOpen}
+          onOpenCalendar={() => setCalendarOpen(true)}
           onSelectCard={(card) => void selectCard(card)}
           onSelectResult={(note) => void selectResult(note)}
           onCreate={() => void newNote()}
@@ -499,6 +523,23 @@ export function GrainSpaceOverlay() {
                 onClick={() => setChatOpen((v) => !v)}
               >
                 <MessageSquare width={15} height={15} />
+              </button>
+              <span className="gs-win-sep" />
+              <button
+                type="button"
+                className="gs-iconbtn"
+                title="Minimize"
+                onClick={() => void getCurrentWindow().minimize()}
+              >
+                <Minus width={14} height={14} />
+              </button>
+              <button
+                type="button"
+                className="gs-iconbtn"
+                title="Maximize"
+                onClick={() => void getCurrentWindow().toggleMaximize()}
+              >
+                <Maximize2 width={14} height={14} />
               </button>
               <button
                 type="button"
@@ -586,7 +627,12 @@ export function GrainSpaceOverlay() {
           )}
 
           <div className="gs-stage">
-            {selected ? (
+            {calendarOpen ? (
+              <CalendarView
+                reminders={reminders}
+                onSelectCard={(card) => void selectCard(card)}
+              />
+            ) : selected ? (
               <EditorPane
                 note={selected}
                 docKey={editSession}

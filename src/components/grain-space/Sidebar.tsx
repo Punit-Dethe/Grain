@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronRight, FileText, Hash, Pin, SquarePen } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronRight,
+  FileText,
+  Hash,
+  Pin,
+  SquarePen,
+} from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
@@ -30,6 +37,21 @@ function age(ms: number): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
   return dayFormat.format(new Date(ms));
+}
+
+/** Signed compact label for a reminder's fire time ("2h", "3d ago", "12 Aug"). */
+function fireLabel(fireAt: number): string {
+  const diff = fireAt - Date.now();
+  const past = diff < 0;
+  const mins = Math.round(Math.abs(diff) / 60000);
+  const suffix = (s: string) => (past ? `${s} ago` : s);
+  if (mins < 1) return "now";
+  if (mins < 60) return suffix(`${mins}m`);
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return suffix(`${hours}h`);
+  const days = Math.round(hours / 24);
+  if (days < 7) return suffix(`${days}d`);
+  return dayFormat.format(new Date(fireAt));
 }
 
 /** A node in the folder tree built from card `folder` paths. */
@@ -73,12 +95,73 @@ function subtreeCount(node: FolderNode): number {
   return n;
 }
 
+/** Two reminders at rest; expands to a scrollable ~6-row list. */
+const DOCK_REST = 2;
+
+function RemindersDock({
+  reminders,
+  onSelectCard,
+}: {
+  reminders: NoteCard[];
+  onSelectCard: (card: NoteCard) => void;
+}) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  if (reminders.length === 0) return null;
+  const shown = expanded ? reminders : reminders.slice(0, DOCK_REST);
+  const now = Date.now();
+  return (
+    <div className="gs-dock">
+      <div className="gs-dock-head">
+        <span className="gs-dock-title">
+          {t("grainSpaceOverlay.reminders")}
+        </span>
+        {reminders.length > DOCK_REST && (
+          <button
+            type="button"
+            className="gs-dock-toggle"
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded
+              ? t("grainSpaceOverlay.seeLess")
+              : `+${reminders.length - DOCK_REST}`}
+          </button>
+        )}
+      </div>
+      <div className={`gs-dock-list${expanded ? " gs-dock-list--exp" : ""}`}>
+        {shown.map((r) => {
+          const at = r.reminder_state.fire_at ?? 0;
+          return (
+            <button
+              key={r.id}
+              type="button"
+              className="gs-dock-item"
+              onClick={() => onSelectCard(r)}
+              title={r.title.trim() || t("grainSpaceOverlay.untitled")}
+            >
+              <span
+                className={`gs-dock-dot${at < now ? " gs-dock-dot--past" : ""}`}
+              />
+              <span className="gs-dock-item-title">
+                {r.title.trim() || t("grainSpaceOverlay.untitled")}
+              </span>
+              <span className="gs-dock-item-when">{fireLabel(at)}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 type Props = {
   cards: NoteCard[];
+  reminders: NoteCard[];
   searching: boolean;
   results: Note[];
   selectedId: string | null;
-  storeLabel: string;
+  calendarOpen: boolean;
+  onOpenCalendar: () => void;
   onSelectCard: (card: NoteCard) => void;
   onSelectResult: (note: Note) => void;
   onCreate: () => void;
@@ -86,10 +169,12 @@ type Props = {
 
 export function Sidebar({
   cards,
+  reminders,
   searching,
   results,
   selectedId,
-  storeLabel,
+  calendarOpen,
+  onOpenCalendar,
   onSelectCard,
   onSelectResult,
   onCreate,
@@ -113,11 +198,6 @@ export function Sidebar({
       return next;
     });
 
-  const reminders = cards.filter(
-    (c) =>
-      c.reminder_state.status === "armed" ||
-      c.reminder_state.status === "fired",
-  );
   const pinned = cards.filter((c) => c.is_pinned);
   const grainLoose = cards.filter(
     (c) => !c.folder && !c.is_pinned && !c.readonly,
@@ -234,20 +314,27 @@ export function Sidebar({
 
   return (
     <aside className="gs-side">
-      <div className="gs-profile" data-tauri-drag-region>
-        <span className="gs-avatar">G</span>
-        <div className="gs-profile-text">
-          <span className="gs-profile-name">
-            {t("grainSpaceOverlay.brand")}
-          </span>
-          <span className="gs-profile-sub">{storeLabel}</span>
-        </div>
+      <div className="gs-sidebar-brand" data-tauri-drag-region>
+        {t("grainSpaceOverlay.brand")}
       </div>
-
-      <button type="button" className="gs-create" onClick={onCreate}>
-        <SquarePen width={15} height={15} />
-        <span>{t("grainSpaceOverlay.createNote")}</span>
-      </button>
+      <div className="gs-sidebar-foot">
+        <button
+          type="button"
+          className={`gs-nav-tab${calendarOpen ? " gs-nav-tab--on" : ""}`}
+          onClick={onOpenCalendar}
+        >
+          <span className="gs-nav-tab-icon">
+            <CalendarDays width={13} height={13} />
+          </span>
+          <span className="gs-nav-tab-label">
+            {t("grainSpaceOverlay.calendar")}
+          </span>
+        </button>
+        <button type="button" className="gs-create" onClick={onCreate}>
+          <SquarePen width={15} height={15} />
+          <span>{t("grainSpaceOverlay.createNote")}</span>
+        </button>
+      </div>
 
       <nav className="gs-nav">
         {searching ? (
@@ -283,29 +370,15 @@ export function Sidebar({
           </>
         ) : (
           <>
-            {reminders.length > 0 &&
+            {pinned.length > 0 &&
               sectionHead(
-                "reminders",
-                t("grainSpaceOverlay.reminders"),
-                reminders.length,
+                "pinned",
+                t("grainSpaceOverlay.pinned"),
+                pinned.length,
               )}
-            {!collapsed.reminders && reminders.length > 0 && (
-              <>{reminders.map((c) => cardRow(c))}</>
-            )}
-
-            {sectionHead(
-              "pinned",
-              t("grainSpaceOverlay.pinned"),
-              pinned.length,
-            )}
-            {!collapsed.pinned &&
-              (pinned.length > 0 ? (
-                pinned.map((c) => cardRow(c))
-              ) : (
-                <div className="gs-nav-hint">
-                  {t("grainSpaceOverlay.pinnedHint")}
-                </div>
-              ))}
+            {pinned.length > 0 &&
+              !collapsed.pinned &&
+              pinned.map((c) => cardRow(c))}
 
             {sectionHead(
               "notes",
@@ -342,6 +415,8 @@ export function Sidebar({
           </>
         )}
       </nav>
+
+      <RemindersDock reminders={reminders} onSelectCard={onSelectCard} />
     </aside>
   );
 }

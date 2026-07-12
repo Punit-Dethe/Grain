@@ -14,11 +14,11 @@
 
 .gs-frame {
   /* Design tokens — refined warm palette. */
-  --paper: #faf7f1;
-  --side: #f3efe6;
-  --side-2: #efeadf;
-  --sheet: #fffdf8;
-  --input-bg: #f6f2ea;
+  --paper: #f9f1e4;
+  --side: #f9f1e4;
+  --side-2: #f9f1e4;
+  --sheet: #f9f1e4;
+  --input-bg: #ede5d4;
   --ink: #1e1b16;
   --ink-2: #322e26;
   --muted: rgba(30, 27, 22, 0.56);
@@ -105,13 +105,73 @@
 /* ══ SIDEBAR ═══════════════════════════════════════════════════════════════ */
 .gs-side {
   flex: none;
-  width: 268px;
+  width: 224px;
   min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--side);
-  border-right: 1px solid var(--line);
   position: relative;
+}
+
+/* Brand title at top of sidebar — drag region, centered. */
+.gs-sidebar-brand {
+  flex: none;
+  padding: 18px 14px 12px;
+  text-align: center;
+  font-size: var(--gs-fs-16);
+  font-weight: var(--gs-w-semi);
+  letter-spacing: 0.1px;
+  color: var(--ink);
+}
+
+/* Nav tab — a single sidebar row item (e.g. Calendar). */
+.gs-nav-tab {
+  display: flex;
+  align-items: center;
+  gap: var(--gs-sp-2);
+  width: 100%;
+  padding: 7px var(--gs-sp-3);
+  border: none;
+  background: none;
+  border-radius: var(--gs-r-sm);
+  font-family: var(--body);
+  font-size: var(--gs-fs-13);
+  font-weight: var(--gs-w-medium);
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+  margin-bottom: 2px;
+}
+.gs-nav-tab:hover {
+  background: var(--hover);
+}
+.gs-nav-tab--on {
+  background: var(--hover);
+  color: var(--ink);
+  font-weight: var(--gs-w-semi);
+}
+.gs-nav-tab--on .gs-nav-tab-icon {
+  color: var(--ink);
+}
+.gs-nav-tab-icon {
+  flex: none;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+}
+.gs-nav-tab-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Create note + nav tabs wrapper below the brand. */
+.gs-sidebar-foot {
+  flex: none;
+  padding: 0 10px 10px;
 }
 
 /* Profile header (avatar + workspace / active store). */
@@ -168,7 +228,8 @@
   display: flex;
   align-items: center;
   gap: var(--gs-sp-2);
-  margin: var(--gs-sp-1) var(--gs-sp-4) var(--gs-sp-3);
+  margin: 0;
+  width: 100%;
   padding: var(--gs-sp-2) var(--gs-sp-3);
   border: 1px solid var(--line);
   border-radius: var(--gs-r-md);
@@ -456,6 +517,14 @@
   align-items: center;
   gap: 4px;
 }
+/* Thin vertical divider between note-actions and window controls. */
+.gs-win-sep {
+  flex: none;
+  width: 1px;
+  height: 14px;
+  margin: 0 4px;
+  background: var(--line);
+}
 .gs-iconbtn {
   flex: none;
   display: inline-flex;
@@ -599,7 +668,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--sheet);
+  background: #ffffff;
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
@@ -1070,4 +1139,334 @@
 .gs-cm-callout--summary {
   --callout: var(--purple);
   --callout-soft: var(--purple-soft);
+}
+
+/* ══ REMINDERS DOCK (sidebar bottom) ═══════════════════════════════════════
+ * A quiet events strip pinned to the foot of the sidebar. Two rows at rest;
+ * expands to a scrollable ~6-row list. Neutral greys — no accent fills. */
+.gs-dock {
+  flex: none;
+  border-top: 1px solid var(--line);
+  padding: 10px 14px 12px;
+}
+.gs-dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+  margin-bottom: 6px;
+}
+.gs-dock-title {
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-semi);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.gs-dock-toggle {
+  border: none;
+  background: none;
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-medium);
+  color: var(--faint);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.gs-dock-toggle:hover {
+  color: var(--ink-2);
+  background: var(--hover);
+}
+.gs-dock-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.gs-dock-list--exp {
+  max-height: 204px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.gs-dock-list--exp::-webkit-scrollbar {
+  width: 6px;
+}
+.gs-dock-list--exp::-webkit-scrollbar-thumb {
+  background: rgba(30, 27, 22, 0.12);
+  border-radius: 3px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+.gs-dock-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  background: none;
+  border-radius: var(--gs-r-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background 120ms ease;
+}
+.gs-dock-item:hover {
+  background: var(--hover);
+}
+.gs-dock-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-2);
+}
+.gs-dock-dot--past {
+  background: var(--ghost);
+}
+.gs-dock-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--gs-fs-12);
+  font-weight: var(--gs-w-medium);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-dock-item-when {
+  flex: none;
+  font-size: 10px;
+  font-weight: var(--gs-w-medium);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ══ CALENDAR VIEW (main stage) ════════════════════════════════════════════
+ * A month grid spanning the sheet with reminder-bearing notes listed below.
+ * Neutral palette: today reads as a dark disc, day-dots are muted grey. */
+.gs-cal-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow:
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  overflow: hidden;
+}
+.gs-cal-view-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 28px 16px;
+}
+.gs-cal-view-title {
+  font-size: 20px;
+  font-weight: var(--gs-w-bold);
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.gs-cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.gs-cal-nav button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 8px;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.gs-cal-nav button:hover {
+  background: var(--hover);
+  border-color: var(--ghost);
+}
+.gs-cal-today-btn {
+  width: auto !important;
+  padding: 0 12px !important;
+  font-family: var(--body);
+  font-size: var(--gs-fs-12);
+  font-weight: var(--gs-w-medium);
+}
+.gs-cal-month {
+  flex: none;
+  padding: 0 28px 12px;
+}
+.gs-cal-dow-row {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+.gs-cal-dow-cell {
+  text-align: center;
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-semi);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 4px 0 10px;
+}
+.gs-cal-days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.gs-cal-cell {
+  position: relative;
+  min-height: 46px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: none;
+  cursor: pointer;
+  font-family: var(--body);
+  font-size: var(--gs-fs-13);
+  font-weight: var(--gs-w-medium);
+  color: var(--ink-2);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.gs-cal-cell:hover {
+  background: var(--hover);
+}
+.gs-cal-cell--empty,
+.gs-cal-cell--empty:hover {
+  cursor: default;
+  background: none;
+}
+.gs-cal-cell--sel {
+  border-color: var(--ghost);
+  background: var(--hover);
+}
+.gs-cal-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 50%;
+}
+.gs-cal-cell--today {
+  color: var(--ink);
+  font-weight: var(--gs-w-bold);
+}
+.gs-cal-cell--today .gs-cal-num {
+  background: var(--ink);
+  color: #fff;
+}
+.gs-cal-dots {
+  position: absolute;
+  left: 8px;
+  bottom: 7px;
+  display: flex;
+  gap: 3px;
+}
+.gs-cal-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.gs-cal-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  padding: 16px 28px 24px;
+}
+.gs-cal-list-head {
+  font-size: var(--gs-fs-11);
+  font-weight: var(--gs-w-semi);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.gs-cal-empty {
+  padding: 28px 0;
+  text-align: center;
+  font-size: var(--gs-fs-13);
+  color: var(--faint);
+}
+.gs-cal-ev {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 11px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--gs-r-md);
+  background: var(--paper);
+  cursor: pointer;
+  text-align: left;
+  margin-bottom: 6px;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.gs-cal-ev:hover {
+  border-color: var(--ghost);
+  box-shadow: var(--shadow-sm);
+}
+.gs-cal-ev--past {
+  opacity: 0.6;
+}
+.gs-cal-ev-time {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 62px;
+}
+.gs-cal-ev-day {
+  font-size: var(--gs-fs-12);
+  font-weight: var(--gs-w-semi);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.gs-cal-ev-clock {
+  font-size: var(--gs-fs-11);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 1px;
+}
+.gs-cal-ev-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gs-cal-ev-title {
+  font-size: var(--gs-fs-13);
+  font-weight: var(--gs-w-semi);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gs-cal-ev-sub {
+  font-size: var(--gs-fs-12);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+.gs-cal-ev-icon {
+  flex: none;
+  color: var(--faint);
 }
