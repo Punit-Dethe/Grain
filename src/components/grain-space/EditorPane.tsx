@@ -42,7 +42,6 @@ type Props = {
   onDelete: () => void;
   onArmReminder: () => void;
   onDismissReminder: () => void;
-  onToggleTodo: (index: number) => void;
   onOpenExternal: () => void;
 };
 
@@ -58,7 +57,6 @@ export function EditorPane({
   onDelete,
   onArmReminder,
   onDismissReminder,
-  onToggleTodo,
   onOpenExternal,
 }: Props) {
   const { t } = useTranslation();
@@ -67,19 +65,9 @@ export function EditorPane({
     status: "none",
     fire_at: null,
   };
-  const todos = note.todo_tags ?? [];
 
   return (
     <section className="gs-sheet">
-      <input
-        className="gs-title"
-        value={note.title}
-        placeholder={t("grainSpaceOverlay.titlePlaceholder")}
-        spellCheck={false}
-        disabled={readonly}
-        onChange={(e) => onEdit({ ...note, title: e.target.value })}
-        onBlur={onFlush}
-      />
       <div className="gs-meta">
         <span>{dateFormat.format(new Date(note.timestamp))}</span>
         {folder && <span className="gs-chip">{`#${folder}`}</span>}
@@ -90,7 +78,15 @@ export function EditorPane({
           </span>
         )}
       </div>
-      {note.tldr.trim() && <div className="gs-tldr">{note.tldr}</div>}
+      <input
+        className="gs-title"
+        value={note.title}
+        placeholder={t("grainSpaceOverlay.titlePlaceholder")}
+        spellCheck={false}
+        disabled={readonly}
+        onChange={(e) => onEdit({ ...note, title: e.target.value })}
+        onBlur={onFlush}
+      />
 
       <Suspense
         fallback={
@@ -114,26 +110,6 @@ export function EditorPane({
           onBlur={onFlush}
         />
       </Suspense>
-
-      {todos.length > 0 && (
-        <div className="gs-todos">
-          <div className="gs-todos-label">{t("grainSpaceOverlay.todos")}</div>
-          {todos.map((todo, i) => (
-            <label
-              key={`${i}-${todo.text}`}
-              className={`gs-todo${todo.done ? " gs-todo--done" : ""}`}
-            >
-              <input
-                type="checkbox"
-                checked={todo.done}
-                disabled={readonly}
-                onChange={() => onToggleTodo(i)}
-              />
-              <span>{todo.text}</span>
-            </label>
-          ))}
-        </div>
-      )}
 
       <div className="gs-actions">
         {!readonly && (

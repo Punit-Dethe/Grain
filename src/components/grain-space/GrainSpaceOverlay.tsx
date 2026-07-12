@@ -400,15 +400,6 @@ export function GrainSpaceOverlay() {
     }
   };
 
-  const toggleTodo = (index: number) => {
-    const note = selectedRef.current;
-    if (!note) return;
-    const todos = (note.todo_tags ?? []).map((todo, i) =>
-      i === index ? { ...todo, done: !todo.done } : todo,
-    );
-    touchSelected({ ...note, todo_tags: todos });
-  };
-
   const openExternal = () => {
     const note = selectedRef.current;
     if (!note?.id) return;
@@ -645,7 +636,6 @@ export function GrainSpaceOverlay() {
                 onDelete={() => void deleteSelected()}
                 onArmReminder={() => void armReminder()}
                 onDismissReminder={() => void dismissReminder()}
-                onToggleTodo={toggleTodo}
                 onOpenExternal={openExternal}
               />
             ) : (

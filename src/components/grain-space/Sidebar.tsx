@@ -1,13 +1,6 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  CalendarDays,
-  ChevronRight,
-  FileText,
-  Hash,
-  Pin,
-  SquarePen,
-} from "lucide-react";
+import { CalendarDays, ChevronRight, Hash, SquarePen } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
@@ -223,13 +216,6 @@ export function Sidebar({
       onClick={() => onSelectCard(card)}
       title={card.title.trim() || t("grainSpaceOverlay.untitled")}
     >
-      <span className="gs-row-icon">
-        {card.is_pinned ? (
-          <Pin width={13} height={13} />
-        ) : (
-          <FileText width={13} height={13} />
-        )}
-      </span>
       <span className="gs-row-title">
         {card.title.trim() || t("grainSpaceOverlay.untitled")}
       </span>
@@ -356,9 +342,6 @@ export function Sidebar({
                 className={`gs-row${selectedId === note.id ? " gs-row--on" : ""}`}
                 onClick={() => onSelectResult(note)}
               >
-                <span className="gs-row-icon">
-                  <FileText width={13} height={13} />
-                </span>
                 <span className="gs-row-title">
                   {note.title.trim() ||
                     note.body.split("\n")[0]?.trim() ||
@@ -395,9 +378,7 @@ export function Sidebar({
                 {looseList("grain", grainLoose)}
                 {obsidianLoose.length > 0 && (
                   <>
-                    <div className="gs-divider">
-                      <span>{t("grainSpaceOverlay.fromVault")}</span>
-                    </div>
+                    <div className="gs-divider" />
                     {looseList("obsidian", obsidianLoose)}
                   </>
                 )}
