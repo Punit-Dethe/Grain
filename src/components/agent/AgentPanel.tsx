@@ -545,22 +545,16 @@ export function AgentPanel() {
     if (sources.length === 0) return null;
     return (
       <div className="agc-evidence">
-        <div className="agc-evidence-label">
-          {t("agent.basedOn", { count: sources.length })}
-        </div>
-        <div className="agc-chips">
+        <div className="agc-sources">
           {sources.map((s) => (
             <button
               key={s.note_id}
               type="button"
-              className="agc-chip"
-              title={relDate(s.saved_at)}
+              className="agc-source"
+              title={`${s.title.trim() || t("agent.untitledNote")} · ${relDate(s.saved_at)}`}
               onClick={() => openNote(s.note_id)}
             >
-              <span className="agc-chip-title">
-                {s.title.trim() || t("agent.untitledNote")}
-              </span>
-              <span className="agc-chip-date">{relDate(s.saved_at)}</span>
+              {s.title.trim() || t("agent.untitledNote")}
             </button>
           ))}
         </div>

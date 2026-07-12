@@ -28,8 +28,6 @@
     "prevVersion": "Previous version",
     "nextVersion": "Next version",
     "more": "More",
-    "basedOn_one": "Based on {{count}} memory",
-    "basedOn_other": "Based on {{count}} memories",
     "untitledNote": "Untitled",
     "notFoundOpen": "Couldn't find that memory — open your notes",
     "forgetConfirm": "Delete “{{title}}”? This can't be undone.",
