@@ -163,6 +163,21 @@ const richDecorations = ViewPlugin.fromClass(
           from,
           to,
           enter: (node) => {
+            // Headings get breathing room above them (like every desktop
+            // editor). A line class carries the margin; concealment of the
+            // `#` marks still happens via the child HeaderMark below.
+            if (
+              node.name.startsWith("ATXHeading") ||
+              node.name.startsWith("SetextHeading")
+            ) {
+              const ln = doc.lineAt(node.from);
+              decos.push({
+                from: ln.from,
+                to: ln.from,
+                deco: Decoration.line({ class: "gs-cm-head" }),
+              });
+              // fall through — children (HeaderMark) still need concealing.
+            }
             // Block backgrounds: fenced code + tables read as distinct slabs.
             if (node.name === "FencedCode" || node.name === "Table") {
               const startLine = doc.lineAt(node.from).number;
@@ -269,10 +284,10 @@ const richDecorations = ViewPlugin.fromClass(
 
 /** Markdown token styling — pulls only from the grain-space.css tokens. */
 const mdHighlight = HighlightStyle.define([
-  { tag: tags.heading1, fontSize: "1.55em", fontWeight: "700" },
-  { tag: tags.heading2, fontSize: "1.32em", fontWeight: "680" },
-  { tag: tags.heading3, fontSize: "1.16em", fontWeight: "650" },
-  { tag: tags.heading4, fontSize: "1.05em", fontWeight: "650" },
+  { tag: tags.heading1, fontSize: "1.7em", fontWeight: "700" },
+  { tag: tags.heading2, fontSize: "1.42em", fontWeight: "680" },
+  { tag: tags.heading3, fontSize: "1.2em", fontWeight: "650" },
+  { tag: tags.heading4, fontSize: "1.08em", fontWeight: "650" },
   { tag: tags.heading5, fontWeight: "650" },
   { tag: tags.heading6, fontWeight: "650", color: "var(--muted)" },
   { tag: tags.strong, fontWeight: "700" },
@@ -319,18 +334,24 @@ const mdHighlight = HighlightStyle.define([
 const editorTheme = EditorView.theme({
   "&": {
     height: "100%",
-    fontSize: "13.5px",
+    // Body copy sized to match desktop note editors (Obsidian/Bear ≈ 16px);
+    // hierarchy still reads through weight + the relative heading scale below.
+    fontSize: "16px",
     backgroundColor: "transparent",
     color: "var(--ink)",
   },
   "&.cm-focused": { outline: "none" },
   ".cm-content": {
     fontFamily: "var(--body)",
-    lineHeight: "1.7",
-    padding: "4px 0 28px",
+    // Roomier leading + a readable measure (~64 chars) so long lines wrap for
+    // comfort instead of spanning the whole sheet.
+    lineHeight: "1.75",
+    letterSpacing: "0.001em",
+    padding: "6px 0 48px",
+    maxWidth: "42rem",
     caretColor: "var(--orange)",
   },
-  ".cm-line": { padding: "0" },
+  ".cm-line": { padding: "1px 0" },
   ".cm-cursor": { borderLeftColor: "var(--orange)" },
   ".cm-placeholder": { color: "var(--faint)" },
 });

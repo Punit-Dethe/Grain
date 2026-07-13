@@ -183,7 +183,8 @@ export function GrainSpaceOverlay() {
         console.error("Grain Space: open note failed:", result.error);
         return;
       }
-      adopt(result.data, card.readonly);
+      // Everything in the note UI lives inside the Grain folder → editable.
+      adopt(result.data, false);
     },
     [adopt, flushSave],
   );
@@ -191,7 +192,7 @@ export function GrainSpaceOverlay() {
   const selectResult = useCallback(
     async (note: Note) => {
       await flushSave();
-      adopt(note, cardByIdRef.current.get(note.id)?.readonly ?? false);
+      adopt(note, false);
     },
     [adopt, flushSave],
   );
@@ -233,7 +234,10 @@ export function GrainSpaceOverlay() {
         console.error("Grain Space: search failed:", result.error);
         return;
       }
-      setResults(result.data);
+      // Scope results to the Grain folder (matching the browse): `cardById`
+      // holds exactly the Grain-folder notes, so any hit outside it — the
+      // user's own vault — is dropped. Backend recall stays whole-vault.
+      setResults(result.data.filter((n) => cardByIdRef.current.has(n.id)));
     }
 
     // Quiet content refresh for the open note (e.g. quick-add elsewhere
@@ -258,10 +262,7 @@ export function GrainSpaceOverlay() {
         await flushSave();
         const result = await commands.grainSpaceGetNote(event.payload);
         if (result.status === "ok") {
-          adopt(
-            result.data,
-            cardByIdRef.current.get(result.data.id)?.readonly ?? false,
-          );
+          adopt(result.data, false);
         }
       }),
       listen<{ percentage: number }>(MODEL_PROGRESS_EVENT, (event) => {
@@ -303,7 +304,7 @@ export function GrainSpaceOverlay() {
           return;
         }
         const note = await commands.grainSpaceGetNote(target.id);
-        if (note.status === "ok") adopt(note.data, target.readonly);
+        if (note.status === "ok") adopt(note.data, false);
       })();
     }
 
@@ -351,6 +352,17 @@ export function GrainSpaceOverlay() {
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
   }, [flushSave]);
+
+  // Live two-way sync: there is no resident file watcher (zero idle RAM), so
+  // re-reconcile the vault whenever the window regains focus — returning from
+  // Obsidian surfaces new/edited/moved notes and folders immediately. Cheap: a
+  // stat-scan the reconcile already runs on every listing, and mid-edit local
+  // changes are protected (refresh only re-adopts the open note when not dirty).
+  useEffect(() => {
+    const onFocus = () => void refresh(true);
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refresh]);
 
   const deleteSelected = async () => {
     const note = selectedRef.current;

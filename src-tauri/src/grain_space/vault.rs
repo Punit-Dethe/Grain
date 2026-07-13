@@ -261,9 +261,65 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
     Some(meta)
 }
 
+/// Frontmatter keys Grain owns and re-emits itself. Any OTHER key in an
+/// existing file's frontmatter is the user's own (Obsidian `tags`, `aliases`,
+/// `cssclass`, …) and must survive a save — see [`preserved_frontmatter`].
+const GRAIN_FM_KEYS: [&str; 8] = [
+    "grain_id",
+    "tldr",
+    "created",
+    "pinned",
+    "todos",
+    "reminder",
+    "reminder_status",
+    "source",
+];
+
+/// The user's own frontmatter lines from an existing file — every line NOT
+/// under a Grain-owned key — so editing an Obsidian-authored note in Grain
+/// never drops the properties the user set in Obsidian. Nested list items (e.g.
+/// under `aliases:`) ride along with their parent key; those under a Grain key
+/// are dropped with it.
+fn preserved_frontmatter(existing_text: &str) -> Vec<String> {
+    let (Some(fm), _) = split_frontmatter(existing_text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut dropping_grain_block = false;
+    for line in fm.lines() {
+        let line = line.trim_end_matches('\r');
+        let indented = line.starts_with(' ') || line.starts_with('\t');
+        if indented {
+            // A nested item belongs to the most recent top-level key.
+            if !dropping_grain_block {
+                out.push(line.to_string());
+            }
+            continue;
+        }
+        dropping_grain_block = false;
+        if let Some((key, _)) = line.split_once(':') {
+            if GRAIN_FM_KEYS.contains(&key.trim()) {
+                dropping_grain_block = true;
+                continue;
+            }
+        }
+        if !line.trim().is_empty() {
+            out.push(line.to_string());
+        }
+    }
+    out
+}
+
 /// Render a Grain-owned note to its on-disk Markdown form. AI metadata lives
 /// ONLY here in the frontmatter; the body below stays the verbatim capture.
 fn emit_markdown(note: &Note) -> String {
+    emit_markdown_with(note, &[])
+}
+
+/// As [`emit_markdown`], but carries the user's own frontmatter lines
+/// (`preserved`) through the write so an Obsidian-authored note keeps its
+/// properties when Grain adopts it.
+fn emit_markdown_with(note: &Note, preserved: &[String]) -> String {
     let mut fm = String::from("---\n");
     fm.push_str(&format!("grain_id: {}\n", note.id));
     if !note.tldr.trim().is_empty() {
@@ -298,6 +354,11 @@ fn emit_markdown(note: &Note) -> String {
             ReminderStatus::None => unreachable!(),
         };
         fm.push_str(&format!("reminder_status: {status}\n"));
+    }
+    // The user's own Obsidian properties (tags, aliases, …), carried verbatim.
+    for line in preserved {
+        fm.push_str(line);
+        fm.push('\n');
     }
     fm.push_str("source: grain\n---\n");
     let body = note.body.trim_end();
@@ -862,37 +923,70 @@ pub fn list_notes(v: &Vault) -> Result<Vec<Note>> {
     Ok(notes)
 }
 
-/// A note's folder = the directories it lives under, relative to its browse
-/// origin, or `None` when it sits loose there (shown under "Notes").
-/// Subfolders are preserved with `/` separators so the sidebar renders a
-/// nested tree. Origin = the Grain home folder for grain-owned notes (a grain
-/// note promoted OUT of that folder falls back to the vault root); the vault
-/// root for foreign notes. Native vaults are flat → always `None`.
-fn folder_of(v: &Vault, rel: &str, foreign: bool) -> Option<String> {
+/// Case-insensitive `strip_prefix` for ASCII path prefixes (folder names round-
+/// trip through the OS with their on-disk case; the setting stores our own).
+fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    if s.len() >= prefix.len() && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        Some(&s[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+/// True when `rel` (vault-relative, `/`-separated) lives inside Grain's
+/// WRITABLE area: the whole store on the native backend, or under the
+/// configured Grain subfolder on an Obsidian vault. This — not the presence of
+/// a `grain_id` — is what makes a note editable: everything inside the Grain
+/// folder is Grain's to edit (a note authored in Obsidian there gains our
+/// frontmatter on first save); everything outside it is the user's own vault,
+/// never shown and never written.
+fn in_grain_folder(v: &Vault, rel: &str) -> bool {
+    if v.native || v.folder.is_empty() {
+        return true;
+    }
+    let home = v.folder.trim_matches('/');
+    match rel.split_once('/') {
+        // A note in `Grain/…` (or a deeper subfolder) — the first segment is
+        // the home folder.
+        Some((first, _)) => first.eq_ignore_ascii_case(home),
+        // A loose file at the vault root is outside the Grain folder.
+        None => false,
+    }
+}
+
+/// A note's collection = its subfolder path INSIDE the Grain folder, or `None`
+/// when it sits loose directly in the Grain folder (shown under "Notes"). The
+/// Grain folder itself is never surfaced as a collection — only its subfolders
+/// are — so the home prefix is stripped for every note. Native vaults are flat
+/// → the parent dir (if any) is the collection.
+fn folder_of(v: &Vault, rel: &str) -> Option<String> {
     let parent = Path::new(rel).parent()?;
     let parent = parent.to_string_lossy().replace('\\', "/");
-    let parent = parent.trim_matches('/');
+    let parent = parent.trim_matches('/').to_string();
     if parent.is_empty() {
         return None; // loose at the vault root
     }
-    // Grain-owned notes browse relative to the Grain home folder.
-    if !foreign && !v.folder.is_empty() {
-        let home = v.folder.trim_matches('/');
-        if parent == home {
-            return None; // loose directly inside the Grain folder
-        }
-        if let Some(sub) = parent.strip_prefix(&format!("{home}/")) {
-            return Some(sub.to_string());
-        }
+    if v.folder.is_empty() {
+        return Some(parent); // native store: the parent dir is the collection
     }
-    Some(parent.to_string())
+    let home = v.folder.trim_matches('/');
+    if parent.eq_ignore_ascii_case(home) {
+        return None; // loose directly inside the Grain folder
+    }
+    if let Some(sub) = strip_prefix_ci(&parent, &format!("{home}/")) {
+        return Some(sub.to_string());
+    }
+    Some(parent) // outside the Grain folder (won't be listed anyway)
 }
 
 /// Sidebar listing (TAURI-OVERLAY-PLAN.md Phase A): light cards, newest first.
-/// Unlike `list_notes` this is the WHOLE-vault browse — on the obsidian
-/// backend foreign notes appear too (readonly, title = filename), so switching
-/// backends shows exactly the files of the active store. Foreign cards are
-/// built from the index alone (no file reads — a big vault stays cheap).
+/// The browse is scoped to Grain's own folder — ONLY notes inside the Grain
+/// subfolder appear (the whole store on the native backend). The rest of an
+/// Obsidian vault is the user's; it stays out of the note UI (recall still
+/// searches it under the hood). `readonly` no longer gates editing — every
+/// listed note is editable; it now flags a note authored OUTSIDE Grain (no
+/// `grain_id` yet), which the sidebar groups below the loose-notes divider.
+/// Foreign cards are built from the index alone (no file reads — cheap).
 pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
     ensure_vault(v)?;
     let _guard = VAULT_LOCK.lock().unwrap();
@@ -914,7 +1008,10 @@ pub fn list_cards(v: &Vault) -> Result<Vec<NoteCard>> {
     };
     let mut cards = Vec::with_capacity(rows.len());
     for (id, rel, timestamp, foreign) in rows {
-        let folder = folder_of(v, &rel, foreign);
+        if !in_grain_folder(v, &rel) {
+            continue; // the user's own vault files — never shown in the note UI
+        }
+        let folder = folder_of(v, &rel);
         if foreign {
             let stem = Path::new(&rel)
                 .file_stem()
@@ -1060,11 +1157,10 @@ pub fn search_notes_ranged(v: &Vault, query: &str, range: Option<(i64, i64)>) ->
 /// these; under FTS5's implicit-AND they force zero hits. Small and
 /// conservative on purpose — dropping a real content word costs recall.
 const STOPWORDS: [&str; 52] = [
-    "a", "an", "the", "is", "am", "are", "was", "were", "be", "been", "being", "do", "does",
-    "did", "have", "has", "had", "i", "me", "my", "mine", "we", "us", "our", "you", "your",
-    "he", "she", "it", "its", "they", "them", "their", "what", "which", "who", "whom", "whose",
-    "when", "where", "how", "that", "this", "these", "those", "and", "or", "of", "to", "in",
-    "on", "for",
+    "a", "an", "the", "is", "am", "are", "was", "were", "be", "been", "being", "do", "does", "did",
+    "have", "has", "had", "i", "me", "my", "mine", "we", "us", "our", "you", "your", "he", "she",
+    "it", "its", "they", "them", "their", "what", "which", "who", "whom", "whose", "when", "where",
+    "how", "that", "this", "these", "those", "and", "or", "of", "to", "in", "on", "for",
 ];
 
 /// Build the OR-semantics FTS5 query for a natural-language question: drop
@@ -1093,7 +1189,11 @@ fn natural_fts_query(query: &str) -> Option<String> {
 /// let ranking sort it out — with AND, one non-matching filler word zeroes
 /// the whole leg. Capped: OR over a big vault matches broadly, the caller
 /// fuses ranked lists, and only the head matters.
-pub fn search_notes_natural(v: &Vault, query: &str, range: Option<(i64, i64)>) -> Result<Vec<Note>> {
+pub fn search_notes_natural(
+    v: &Vault,
+    query: &str,
+    range: Option<(i64, i64)>,
+) -> Result<Vec<Note>> {
     ensure_vault(v)?;
     let Some(fts_query) = natural_fts_query(query) else {
         return Ok(Vec::new());
@@ -1177,11 +1277,13 @@ pub fn get_note(v: &Vault, id: &str) -> Result<Note> {
     read_note_at(v, &rel)
 }
 
-/// Create or update a Grain-owned note. Foreign notes are READ-ONLY in v1 —
-/// Grain never rewrites a file the user might have open dirty in Obsidian.
-/// New notes land in the Grain subfolder; a title change renames the file
-/// (identity rides on `grain_id`). Atomic tmp+rename; mtime drift since the
-/// last index is logged (Obsidian merges our disk write on its side).
+/// Create or update a note inside Grain's folder. Editability is by LOCATION,
+/// not ownership: a note authored in Obsidian INSIDE the Grain folder is
+/// writable and gains Grain's frontmatter on first save (its own properties are
+/// carried through — see [`preserved_frontmatter`]). Only files OUTSIDE the
+/// Grain folder are refused. New notes land in the Grain subfolder; a title
+/// change renames the file (identity rides on `grain_id`). Atomic tmp+rename;
+/// a concurrent Obsidian edit is 3-way-merged, never clobbered.
 pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     ensure_vault(v)?;
     super::note::validate_id(&note.id)?;
@@ -1189,10 +1291,12 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     let conn = open_index(v)?;
 
     let existing = path_of(&conn, note.id.as_str())?;
-    if let Some((_, true)) = existing {
-        return Err(anyhow!(
-            "This note lives outside Grain's folder and is read-only here — edit it in Obsidian."
-        ));
+    if let Some((rel, _)) = &existing {
+        if !in_grain_folder(v, rel) {
+            return Err(anyhow!(
+                "This note lives outside Grain's folder — edit it in Obsidian."
+            ));
+        }
     }
 
     // Merge base: the file text Grain last synced for this note (None for a
@@ -1200,6 +1304,14 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     let base = existing
         .as_ref()
         .and_then(|_| indexed_content(&conn, &note.id));
+    // The user's own frontmatter from the file as it stands on disk (captures
+    // properties added in Obsidian since the last sync, and everything on an
+    // Obsidian-authored note Grain is adopting for the first time).
+    let preserved = existing
+        .as_ref()
+        .and_then(|(rel, _)| fs::read_to_string(v.abs(rel)).ok())
+        .map(|t| preserved_frontmatter(&t))
+        .unwrap_or_default();
     let abs = match &existing {
         Some((rel, _)) => {
             let current = v.abs(rel);
@@ -1230,7 +1342,7 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     // Two-way-sync-safe write: merge into any concurrent external edit rather
     // than overwrite it. The written text (clean-merge result or ours) becomes
     // the new merge base.
-    let written = safe_write(&abs, base.as_deref(), &emit_markdown(note))?;
+    let written = safe_write(&abs, base.as_deref(), &emit_markdown_with(note, &preserved))?;
 
     let rel = rel_key(&v.root, &abs)?;
     let mtime = file_mtime_ms(&abs).unwrap_or(0);
@@ -1248,17 +1360,18 @@ pub fn save_note(v: &Vault, note: &Note) -> Result<()> {
     Ok(())
 }
 
-/// Delete a Grain-owned note file + its index rows. Foreign notes: read-only.
+/// Delete a note file inside Grain's folder + its index rows. Files outside the
+/// Grain folder belong to the user's vault and are refused.
 pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
     ensure_vault(v)?;
     super::note::validate_id(id)?;
     let _guard = VAULT_LOCK.lock().unwrap();
     let conn = open_index(v)?;
     match path_of(&conn, id)? {
-        Some((_, true)) => Err(anyhow!(
+        Some((rel, _)) if !in_grain_folder(v, &rel) => Err(anyhow!(
             "This note lives outside Grain's folder — delete it in Obsidian."
         )),
-        Some((rel, false)) => {
+        Some((rel, _)) => {
             let abs = v.abs(&rel);
             if abs.exists() {
                 fs::remove_file(&abs).with_context(|| format!("delete {}", abs.display()))?;
@@ -1297,10 +1410,10 @@ fn mutate_grain_note(v: &Vault, id: &str, apply: impl FnOnce(&mut Note)) -> Resu
             path_of(&conn, id)?
         }
     };
-    let (rel, foreign) = entry.ok_or_else(|| anyhow!("note not found: {id}"))?;
-    if foreign {
+    let (rel, _) = entry.ok_or_else(|| anyhow!("note not found: {id}"))?;
+    if !in_grain_folder(v, &rel) {
         return Err(anyhow!(
-            "This note lives outside Grain's folder and is read-only here."
+            "This note lives outside Grain's folder — edit it in Obsidian."
         ));
     }
     let abs = v.abs(&rel);
@@ -1312,7 +1425,10 @@ fn mutate_grain_note(v: &Vault, id: &str, apply: impl FnOnce(&mut Note)) -> Resu
     let mut note = read_md_note(&rel, &base, base_mtime).0;
     apply(&mut note);
 
-    let ours = emit_markdown(&note);
+    // Carry the user's own frontmatter through (pin/reminder on an Obsidian-
+    // authored note must not drop its tags/aliases).
+    let preserved = preserved_frontmatter(&base);
+    let ours = emit_markdown_with(&note, &preserved);
     let written = safe_write(&abs, Some(&base), &ours)?;
     let mtime = file_mtime_ms(&abs).unwrap_or(0);
     let size = fs::metadata(&abs).map(|m| m.len() as i64).unwrap_or(0);
@@ -1320,9 +1436,12 @@ fn mutate_grain_note(v: &Vault, id: &str, apply: impl FnOnce(&mut Note)) -> Resu
         // No external edit merged in: this was a pure frontmatter change
         // (pin/reminder), so the searchable content and embedding are still
         // valid — update only the flags + fingerprint + merge base, leaving
-        // embed_stale untouched (no needless re-embed).
+        // embed_stale untouched (no needless re-embed). `foreign_note` is
+        // cleared unconditionally: the write just stamped `grain_id`, so an
+        // Obsidian-authored note pinned here is now Grain-owned (above the
+        // divider), not a re-parse away from it.
         conn.execute(
-            "UPDATE notes_meta SET is_pinned = ?2, mtime = ?3, size = ?4, content = ?5 WHERE id = ?1",
+            "UPDATE notes_meta SET is_pinned = ?2, mtime = ?3, size = ?4, content = ?5, foreign_note = 0 WHERE id = ?1",
             params![id, note.is_pinned as i64, mtime, size, written],
         )?;
         Ok(note)
@@ -1793,72 +1912,82 @@ mod tests {
     #[test]
     fn folder_derivation_rules() {
         let v = temp_vault("folder_rules");
-        // Vault root and the Grain home folder are both "loose".
-        assert_eq!(folder_of(&v, "Foo.md", true), None);
-        assert_eq!(folder_of(&v, "Grain/Wifi.md", false), None);
-        // Grain subfolders browse relative to the Grain home folder, and
-        // NEST (subfolder path preserved with `/`).
+        // A file loose directly in the Grain folder is "loose" (None).
+        assert_eq!(folder_of(&v, "Grain/Wifi.md"), None);
+        // Grain subfolders are collections, with the Grain home prefix STRIPPED
+        // (the folder itself is never surfaced) and nesting preserved with `/`.
         assert_eq!(
-            folder_of(&v, "Grain/Work/Standup.md", false),
+            folder_of(&v, "Grain/Work/Standup.md"),
             Some("Work".to_string())
         );
         assert_eq!(
-            folder_of(&v, "Grain/Work/Q1/plan.md", false),
+            folder_of(&v, "Grain/Work/Q1/plan.md"),
             Some("Work/Q1".to_string())
         );
-        // A grain note promoted OUT of the Grain folder falls back to the
-        // vault-root-relative path.
+        // Paths OUTSIDE the Grain folder derive their vault-root-relative path
+        // (they aren't listed by the browse anyway, but the mapping is defined).
         assert_eq!(
-            folder_of(&v, "Projects/Roadmap.md", false),
+            folder_of(&v, "Projects/Roadmap.md"),
             Some("Projects".to_string())
         );
-        // Foreign notes browse relative to the vault root, nesting preserved.
-        assert_eq!(
-            folder_of(&v, "A/B/C/deep.md", true),
-            Some("A/B/C".to_string())
-        );
-        // Native vault: flat root, empty folder name → everything loose.
+        // Native vault: flat root, empty folder name → everything loose; a
+        // parent dir (if any) is the collection.
         let native = Vault {
             folder: String::new(),
             native: true,
             ..v.clone()
         };
-        assert_eq!(folder_of(&native, "note.md", false), None);
+        assert_eq!(folder_of(&native, "note.md"), None);
+        assert_eq!(folder_of(&native, "Sub/note.md"), Some("Sub".to_string()));
         cleanup(&v);
     }
 
     #[test]
-    fn list_cards_covers_whole_vault_with_readonly_foreign() {
+    fn list_cards_is_scoped_to_grain_folder() {
         let v = temp_vault("list_cards");
-        // A grain-owned note in the home folder and one in a Grain subfolder.
+        // A grain-owned loose note in the Grain folder.
         let loose = grain_note("Loose", "loose body");
         save_note(&v, &loose).unwrap();
-        // A foreign note nested two deep, and one at the vault root.
+        // A foreign (Obsidian-authored) note INSIDE the Grain folder, loose and
+        // in a subfolder — both shown, both editable, flagged `readonly` only
+        // for the divider grouping.
+        fs::create_dir_all(v.root.join("Grain/Work")).unwrap();
+        fs::write(v.root.join("Grain/Imported.md"), "dropped in by hand").unwrap();
+        fs::write(v.root.join("Grain/Work/Standup.md"), "# notes\ntext").unwrap();
+        // Files OUTSIDE the Grain folder must NOT appear in the note UI.
         fs::create_dir_all(v.root.join("Projects/2026")).unwrap();
         fs::write(v.root.join("Projects/2026/Roadmap.md"), "# roadmap\ntext").unwrap();
         fs::write(v.root.join("Scratch.md"), "scratch text").unwrap();
 
         let cards = list_cards(&v).unwrap();
-        assert_eq!(cards.len(), 3);
+        assert_eq!(cards.len(), 3, "only Grain-folder notes are listed");
+        assert!(
+            cards
+                .iter()
+                .all(|c| c.title != "Roadmap" && c.title != "Scratch"),
+            "vault files outside the Grain folder are excluded"
+        );
 
         let by_title = |t: &str| cards.iter().find(|c| c.title == t).unwrap();
         let g = by_title("Loose");
-        assert!(!g.readonly);
+        assert!(!g.readonly, "grain-authored: above the divider");
         assert_eq!(g.folder, None);
         assert_eq!(g.id, loose.id);
 
-        let f = by_title("Roadmap");
-        assert!(f.readonly, "foreign notes are read-only cards");
-        assert_eq!(
-            f.folder,
-            Some("Projects/2026".to_string()),
-            "subfolders nest with a slash path"
+        let imported = by_title("Imported");
+        assert!(
+            imported.readonly,
+            "external: below the divider (still editable)"
         );
-        assert!(f.tldr.is_empty());
+        assert_eq!(imported.folder, None, "loose directly in the Grain folder");
 
-        let s = by_title("Scratch");
-        assert!(s.readonly);
-        assert_eq!(s.folder, None, "vault root is loose");
+        let standup = by_title("Standup");
+        assert!(standup.readonly);
+        assert_eq!(
+            standup.folder,
+            Some("Work".to_string()),
+            "the Grain home prefix is stripped from the collection path"
+        );
         cleanup(&v);
     }
 
@@ -2012,12 +2141,12 @@ mod tests {
     }
 
     #[test]
-    fn external_move_of_grain_note_keeps_identity() {
+    fn moving_a_note_out_of_grain_folder_unmanages_it() {
         let v = temp_vault("promote");
         let note = grain_note("Promote Me", "important content");
         save_note(&v, &note).unwrap();
 
-        // User promotes it in Obsidian: moves it out of Grain/.
+        // User moves it out of Grain/ in Obsidian — it leaves Grain's control.
         let dest = v.root.join("Projects");
         fs::create_dir_all(&dest).unwrap();
         fs::rename(
@@ -2026,13 +2155,58 @@ mod tests {
         )
         .unwrap();
 
-        // Same id still resolves; still writable (grain_id travels with it).
+        // Still readable (recall reaches the whole vault), but no longer
+        // writable and no longer in the note UI — editability is by location.
         let found = get_note(&v, &note.id).unwrap();
         assert_eq!(found.body, "important content");
-        let pinned = set_pinned(&v, &note.id, true).unwrap();
-        assert!(pinned.is_pinned);
-        // And the edit stayed in its new home.
-        assert!(dest.join("Promote Me.md").exists());
+        assert!(set_pinned(&v, &note.id, true).is_err());
+        assert!(save_note(&v, &found).is_err());
+        assert!(
+            list_cards(&v).unwrap().iter().all(|c| c.id != note.id),
+            "a note outside the Grain folder is not browsed"
+        );
+        cleanup(&v);
+    }
+
+    #[test]
+    fn adopting_a_foreign_grain_folder_note_preserves_its_frontmatter() {
+        // An Obsidian-authored note dropped INTO the Grain folder is editable;
+        // the first Grain save stamps our metadata but keeps the user's own
+        // properties (tags, aliases) intact.
+        let v = temp_vault("adopt");
+        fs::create_dir_all(v.grain_dir()).unwrap();
+        let path = v.grain_dir().join("Imported.md");
+        fs::write(
+            &path,
+            "---\ntags:\n  - project\n  - urgent\naliases: [Imp]\n---\nOriginal body.",
+        )
+        .unwrap();
+
+        // It lists as external-but-editable.
+        let card = list_cards(&v)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.title == "Imported")
+            .unwrap();
+        assert!(card.readonly, "flagged external for the divider");
+
+        // Edit + save through Grain (as the frontend would).
+        let mut note = get_note(&v, &card.id).unwrap();
+        note.body = "Edited in Grain.".into();
+        save_note(&v, &note).unwrap();
+
+        let on_disk = fs::read_to_string(&path).unwrap();
+        assert!(on_disk.contains("grain_id:"), "Grain adopted it");
+        assert!(on_disk.contains("- project"), "user tags preserved");
+        assert!(on_disk.contains("aliases: [Imp]"), "user aliases preserved");
+        assert!(on_disk.contains("Edited in Grain."));
+        // Reopened, it's now grain-owned (above the divider).
+        let recard = list_cards(&v)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.title == "Imported")
+            .unwrap();
+        assert!(!recard.readonly, "adopted → grain-authored");
         cleanup(&v);
     }
 
@@ -2432,7 +2606,11 @@ mod tests {
         let items: Vec<(String, Vec<f32>)> = stale
             .iter()
             .map(|(k, _)| {
-                let e = if vec_note_id(k) == a.id { e_a.clone() } else { e_b.clone() };
+                let e = if vec_note_id(k) == a.id {
+                    e_a.clone()
+                } else {
+                    e_b.clone()
+                };
                 (k.clone(), e)
             })
             .collect();

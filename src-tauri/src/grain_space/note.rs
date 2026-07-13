@@ -97,13 +97,15 @@ pub struct NoteCard {
     pub timestamp: i64,
     pub is_pinned: bool,
     pub reminder_state: ReminderState,
-    /// The note's folder path relative to its browse origin (the Grain home
-    /// folder for grain notes, the vault root for foreign ones), with `/`
+    /// The note's subfolder path INSIDE the Grain folder (the Grain home prefix
+    /// is stripped, so the folder itself is never a collection), with `/`
     /// separators so the sidebar can render a nested tree. `None` = the note
-    /// sits loose at that origin (shown under "Notes").
+    /// sits loose directly in the Grain folder (shown under "Notes").
     pub folder: Option<String>,
-    /// True = a foreign vault file (Obsidian-owned): read-only in the editor,
-    /// and grouped below the divider in the loose "Notes" list.
+    /// True = authored OUTSIDE Grain (an Obsidian file inside the Grain folder
+    /// with no `grain_id` yet). Still fully editable — Grain adopts it on first
+    /// edit; the flag only groups it below the divider in the loose "Notes"
+    /// list. (Legacy field name kept for the wire schema.)
     pub readonly: bool,
 }
 

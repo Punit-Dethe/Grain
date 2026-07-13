@@ -191,6 +191,10 @@ export function Sidebar({
       return next;
     });
 
+  // The "Notes" section holds loose notes (not in a Grain subfolder), split by
+  // a divider: Grain-authored notes above, notes authored in Obsidian inside
+  // the Grain folder (no `grain_id` yet — `readonly` flags them, though all are
+  // editable) below. Collections below are the Grain folder's subfolders.
   const pinned = cards.filter((c) => c.is_pinned);
   const grainLoose = cards.filter(
     (c) => !c.folder && !c.is_pinned && !c.readonly,
