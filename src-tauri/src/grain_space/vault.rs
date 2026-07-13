@@ -427,6 +427,24 @@ fn sanitize_filename(title: &str) -> String {
     }
 }
 
+/// Sanitize one folder-path segment for auto-categorization: strip the
+/// characters Windows/Obsidian reject, collapse whitespace, cap length. Empty
+/// (e.g. all-invalid) → empty string, which the caller skips.
+fn sanitize_folder_segment(seg: &str) -> String {
+    let cleaned: String = seg
+        .chars()
+        .filter(|c| {
+            !matches!(c, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|') && !c.is_control()
+        })
+        .collect();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    cleaned
+        .trim_matches(|c: char| c == '.' || c == ' ')
+        .chars()
+        .take(60)
+        .collect()
+}
+
 /// First free `stem.md`, `stem 2.md`, … in `dir` (excluding `current`, so a
 /// note keeps its own name on re-save).
 fn unique_path(dir: &Path, stem: &str, current: Option<&Path>) -> PathBuf {
@@ -1384,6 +1402,90 @@ pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
             Ok(())
         }
     }
+}
+
+// -- auto-categorization (AUTO-CATEGORIZATION-PLAN.md P1) --------------------------
+
+/// The distinct collection paths (Grain subfolders that currently hold notes) —
+/// the candidate categories for routing a fresh capture. Cheap: derived from
+/// the index alone (no file reads), scoped to the Grain folder, sorted + unique.
+pub fn list_folders(v: &Vault) -> Result<Vec<String>> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+    let rels: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT path FROM notes_meta")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut set = std::collections::BTreeSet::new();
+    for rel in rels {
+        if !in_grain_folder(v, &rel) {
+            continue;
+        }
+        if let Some(folder) = folder_of(v, &rel) {
+            set.insert(folder);
+        }
+    }
+    Ok(set.into_iter().collect())
+}
+
+/// Move a Grain note into a subfolder of the Grain folder (auto-categorization),
+/// or back to the Grain root when `folder` is `None`/empty. The file moves;
+/// identity (`grain_id`) rides along, so links and the note's id are unchanged.
+/// Refuses notes outside the Grain folder (the user's own vault). A no-op when
+/// the note already lives in the target folder. Returns the moved note.
+pub fn move_note_to_folder(v: &Vault, id: &str, folder: Option<&str>) -> Result<Note> {
+    ensure_vault(v)?;
+    super::note::validate_id(id)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    // Refresh on a stale path (moved/renamed in Obsidian) before acting.
+    let rel = match path_of(&conn, id)? {
+        Some((rel, _)) if v.abs(&rel).exists() => rel,
+        _ => {
+            reconcile_locked(v, &conn)?;
+            path_of(&conn, id)?
+                .map(|(rel, _)| rel)
+                .ok_or_else(|| anyhow!("note not found: {id}"))?
+        }
+    };
+    if !in_grain_folder(v, &rel) {
+        return Err(anyhow!("This note lives outside Grain's folder."));
+    }
+    let current = v.abs(&rel);
+
+    // Target directory: the Grain folder, plus each sanitized subfolder segment.
+    let mut dir = v.grain_dir();
+    if let Some(f) = folder.map(str::trim).filter(|f| !f.is_empty()) {
+        for seg in f.split('/') {
+            let seg = sanitize_folder_segment(seg);
+            if !seg.is_empty() {
+                dir = dir.join(seg);
+            }
+        }
+    }
+    let stem = current
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Untitled".to_string());
+    fs::create_dir_all(&dir).context("create target folder in vault")?;
+    let target = unique_path(&dir, &stem, Some(current.as_path()));
+    if target == current {
+        return read_note_at(v, &rel); // already there — no-op
+    }
+    fs::rename(&current, &target).with_context(|| format!("move {}", current.display()))?;
+
+    // Re-index at the new path (identity preserved; grain-owned).
+    let new_rel = rel_key(&v.root, &target)?;
+    let text = fs::read_to_string(&target).with_context(|| format!("read {}", target.display()))?;
+    let mtime = file_mtime_ms(&target).unwrap_or(0);
+    let size = fs::metadata(&target).map(|m| m.len() as i64).unwrap_or(0);
+    let (mut indexed, grain_owned) = read_md_note(&new_rel, &text, mtime);
+    indexed.title = stem;
+    index_upsert(&conn, &indexed, &new_rel, mtime, size, !grain_owned, &text)?;
+    read_note_at(v, &new_rel)
 }
 
 pub fn set_pinned(v: &Vault, id: &str, pinned: bool) -> Result<Note> {
@@ -2640,6 +2742,52 @@ mod tests {
         assert_eq!(windowed.len(), 1);
         let outside = search_notes_ranged(&v, "", Some((0, 10))).unwrap();
         assert!(outside.is_empty());
+        cleanup(&v);
+    }
+
+    #[test]
+    fn list_folders_and_move_note_auto_categorization() {
+        let v = temp_vault("categorize");
+        // Two loose grain notes + one already in a subfolder.
+        let a = grain_note("Standup", "sprint notes");
+        save_note(&v, &a).unwrap();
+        let b = grain_note("Grocery", "milk and eggs");
+        save_note(&v, &b).unwrap();
+        fs::create_dir_all(v.grain_dir().join("Work")).unwrap();
+        let existing = grain_note("Roadmap", "q3 plan");
+        save_note(&v, &existing).unwrap();
+        move_note_to_folder(&v, &existing.id, Some("Work")).unwrap();
+
+        // list_folders surfaces the existing collection (scoped, unique, sorted).
+        assert_eq!(list_folders(&v).unwrap(), vec!["Work".to_string()]);
+
+        // Move a loose note into "Work" — file moves, identity + body preserved.
+        let moved = move_note_to_folder(&v, &a.id, Some("Work")).unwrap();
+        assert_eq!(moved.id, a.id);
+        assert_eq!(moved.body, "sprint notes");
+        assert!(v.grain_dir().join("Work/Standup.md").exists());
+        assert!(!v.grain_dir().join("Standup.md").exists());
+        // Its card now reports the "Work" collection.
+        let card = list_cards(&v)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == a.id)
+            .unwrap();
+        assert_eq!(card.folder, Some("Work".to_string()));
+
+        // A nested target creates the path; None moves back to the Grain root.
+        move_note_to_folder(&v, &b.id, Some("Work/Q3")).unwrap();
+        assert!(v.grain_dir().join("Work/Q3/Grocery.md").exists());
+        move_note_to_folder(&v, &b.id, None).unwrap();
+        assert!(v.grain_dir().join("Grocery.md").exists());
+        assert!(!v.grain_dir().join("Work/Q3/Grocery.md").exists());
+
+        // A foreign note outside the Grain folder is refused.
+        fs::write(v.root.join("Outsider.md"), "not grain's").unwrap();
+        let outsider = list_cards(&v).unwrap(); // reconcile
+        let _ = outsider;
+        let fid = foreign_id("Outsider.md");
+        assert!(move_note_to_folder(&v, &fid, Some("Work")).is_err());
         cleanup(&v);
     }
 }

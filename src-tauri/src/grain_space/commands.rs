@@ -149,6 +149,33 @@ pub async fn grain_space_delete_note(app: AppHandle, id: String) -> Result<(), S
     result
 }
 
+/// The existing Grain folders (collections that hold notes) — the candidate
+/// categories the frontend shows when suggesting where a note belongs.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_list_folders(app: AppHandle) -> Result<Vec<String>, String> {
+    let be = gate(&app)?;
+    blocking(move || backend::list_folders(&be)).await
+}
+
+/// File a note into a Grain subfolder (or back to the Grain root when `folder`
+/// is null/empty) — the accept action for an auto-categorization suggestion, or
+/// a manual re-file. Returns the moved note.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_move_note(
+    app: AppHandle,
+    id: String,
+    folder: Option<String>,
+) -> Result<Note, String> {
+    let be = gate(&app)?;
+    let result = blocking(move || backend::move_note_to_folder(&be, &id, folder.as_deref())).await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+    }
+    result
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_set_pinned(
@@ -441,12 +468,10 @@ pub async fn grain_space_semantic_search(
         if fts.is_empty() {
             fts = backend::search_notes_natural(&be, &trimmed, None)?;
         }
-        Ok(
-            super::recall::fuse_scored(fts, semantic, HYBRID_UI_RESULTS)
-                .into_iter()
-                .map(|(note, _)| note)
-                .collect(),
-        )
+        Ok(super::recall::fuse_scored(fts, semantic, HYBRID_UI_RESULTS)
+            .into_iter()
+            .map(|(note, _)| note)
+            .collect())
     })
     .await
 }

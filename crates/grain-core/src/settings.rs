@@ -825,6 +825,12 @@ pub struct AppSettings {
     /// vault is read-only (searchable, never written).
     #[serde(default = "default_grain_space_vault_folder")]
     pub grain_space_vault_folder: String,
+    /// [GRAIN] Auto-categorization (AUTO-CATEGORIZATION-PLAN.md). When ON, a
+    /// captured note is routed into the best-fitting existing Grain folder via
+    /// the structuring call that already runs — no extra model, no idle work.
+    /// Off by default; when off, no categorization code path runs.
+    #[serde(default)]
+    pub grain_space_auto_categorize: bool,
 }
 
 /// [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
@@ -1552,6 +1558,7 @@ pub fn get_default_settings() -> AppSettings {
         grain_space_backend: GrainSpaceBackend::default(),
         grain_space_vault_path: String::new(),
         grain_space_vault_folder: default_grain_space_vault_folder(),
+        grain_space_auto_categorize: false,
     }
 }
 

@@ -350,7 +350,12 @@ fn rerank(
         .fold((f64::MAX, f64::MIN), |(lo, hi), &c| (lo.min(c), hi.max(c)));
     let sims_spread = !sims.is_empty() && sim_max > sim_min;
     let (w_rrf, w_sem, w_overlap, w_recency) = if sims.is_empty() {
-        (RERANK_LEX_W_RRF, 0.0, RERANK_LEX_W_OVERLAP, RERANK_LEX_W_RECENCY)
+        (
+            RERANK_LEX_W_RRF,
+            0.0,
+            RERANK_LEX_W_OVERLAP,
+            RERANK_LEX_W_RECENCY,
+        )
     } else {
         (
             RERANK_W_RRF,
@@ -383,10 +388,8 @@ fn rerank(
                 (now_ms - note.timestamp).max(0) as f64
             };
             let recency = (-lambda_per_ms * age_ms).exp();
-            let final_score = w_rrf * norm_rrf
-                + w_sem * semantic
-                + w_overlap * overlap
-                + w_recency * recency;
+            let final_score =
+                w_rrf * norm_rrf + w_sem * semantic + w_overlap * overlap + w_recency * recency;
             (final_score, note)
         })
         .collect();
@@ -809,7 +812,8 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
             .unwrap_or_default();
         match action {
             RecallAction::Remember => {
-                let note = capture::compose_note(app, &latest, None).await;
+                // Recall's "remember" doesn't auto-categorize (no folder list).
+                let (note, _) = capture::compose_note(app, &latest, None, &[]).await;
                 persist(app, &be, note).await;
             }
             RecallAction::Reconcile { m } => {
@@ -1379,7 +1383,10 @@ mod tests {
         );
         let terms = query_terms("wifi password");
         let out = excerpt_body(&body, &terms).expect("long body must excerpt");
-        assert!(out.contains("interstellar"), "matching section must survive");
+        assert!(
+            out.contains("interstellar"),
+            "matching section must survive"
+        );
         assert!(out.contains("[…]"), "gaps must be marked");
         // Short bodies stay verbatim.
         assert!(excerpt_body("short note", &terms).is_none());
@@ -1419,13 +1426,11 @@ mod tests {
         let strong = note("strong", 100);
         let unknown = note("unknown", 100);
         let weak = note("weak", 100);
-        let pool = vec![
-            (weak, 0.01_f64),
-            (unknown, 0.01_f64),
-            (strong, 0.01_f64),
-        ];
-        let sims =
-            HashMap::from([("strong".to_string(), 0.82_f64), ("weak".to_string(), 0.31_f64)]);
+        let pool = vec![(weak, 0.01_f64), (unknown, 0.01_f64), (strong, 0.01_f64)];
+        let sims = HashMap::from([
+            ("strong".to_string(), 0.82_f64),
+            ("weak".to_string(), 0.31_f64),
+        ]);
         let out = rerank("query with no lexical hits", pool, &sims, 0, 6);
         assert_eq!(out[0].id, "strong");
         assert_eq!(out[1].id, "unknown");

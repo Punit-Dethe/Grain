@@ -115,6 +115,18 @@ pub fn delete_note(b: &Backend, id: &str) -> Result<()> {
     vault::delete_note(b, id)
 }
 
+/// Existing Grain subfolders that hold notes — the candidate categories for
+/// auto-routing a fresh capture (AUTO-CATEGORIZATION-PLAN.md P1).
+pub fn list_folders(b: &Backend) -> Result<Vec<String>> {
+    vault::list_folders(b)
+}
+
+/// File a Grain note into a subfolder (or back to the Grain root when `None`),
+/// keeping its identity. Auto-categorization's filing action.
+pub fn move_note_to_folder(b: &Backend, id: &str, folder: Option<&str>) -> Result<Note> {
+    vault::move_note_to_folder(b, id, folder)
+}
+
 pub fn set_pinned(b: &Backend, id: &str, pinned: bool) -> Result<Note> {
     vault::set_pinned(b, id, pinned)
 }

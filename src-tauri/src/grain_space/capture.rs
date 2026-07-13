@@ -138,7 +138,21 @@ pub async fn capture_and_save(
     }
 
     let backend = super::backend::resolve(app)?;
-    let mut note = compose_note(app, &body, framing).await;
+    let settings = get_settings(app);
+    // Auto-categorization (AUTO-CATEGORIZATION-PLAN.md P1): when enabled, offer
+    // the existing Grain folders to the (already-happening) structuring call so
+    // it can route the note. Off/empty ⇒ no routing, no behavior change.
+    let folders = if settings.grain_space_auto_categorize {
+        let be = backend.clone();
+        tauri::async_runtime::spawn_blocking(move || super::backend::list_folders(&be))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let (mut note, category) = compose_note(app, &body, framing, &folders).await;
     // An explicit typed title wins over the auto-generated one (kept short).
     if let Some(t) = title_override.map(str::trim).filter(|t| !t.is_empty()) {
         note.title = t.chars().take(80).collect();
@@ -146,11 +160,28 @@ pub async fn capture_and_save(
     let id = note.id.clone();
 
     let app2 = app.clone();
+    let be_save = backend.clone();
     let saved =
-        tauri::async_runtime::spawn_blocking(move || super::backend::save_note(&backend, &note))
+        tauri::async_runtime::spawn_blocking(move || super::backend::save_note(&be_save, &note))
             .await;
     match saved {
         Ok(Ok(())) => {
+            // Auto-file into the routed existing folder (confident by construction
+            // — the model chose from real folders). New-folder discovery is a
+            // separate, gated pass (P3), never a single-note decision.
+            if let Some(folder) = category {
+                let be_move = backend.clone();
+                let id_move = id.clone();
+                match tauri::async_runtime::spawn_blocking(move || {
+                    super::backend::move_note_to_folder(&be_move, &id_move, Some(&folder))
+                })
+                .await
+                {
+                    Ok(Ok(_)) => log::info!("[GRAIN] space capture: auto-filed {id}"),
+                    Ok(Err(e)) => log::warn!("[GRAIN] space capture: auto-file failed: {e:#}"),
+                    Err(e) => log::warn!("[GRAIN] space capture: auto-file task panicked: {e}"),
+                }
+            }
             super::emit_notes_changed(&app2);
             // Capture may have armed a reminder.
             super::reminders::sync(&app2);
@@ -203,6 +234,12 @@ struct ExtractedMeta {
     /// reminder/timer.
     #[serde(default)]
     reminder_at: String,
+    /// Auto-categorization (AUTO-CATEGORIZATION-PLAN.md P1): the existing Grain
+    /// folder this note best belongs to (chosen ONLY from the provided list), or
+    /// "" for none. Piggybacks the structuring call — no extra model, no extra
+    /// RAM. Present only when the caller supplied candidate folders.
+    #[serde(default)]
+    category: String,
 }
 
 impl ExtractedMeta {
@@ -260,6 +297,7 @@ async fn extract_metadata(
     body: &str,
     framing: Option<&str>,
     structure: bool,
+    folders: &[String],
 ) -> Result<ExtractedMeta, String> {
     let provider = settings
         .active_post_process_provider()
@@ -308,6 +346,18 @@ async fn extract_metadata(
     } else {
         "You extract metadata from a personal note the user is saving. Reply with JSON only."
     };
+    // Auto-categorization rides this existing call: offer the current folders and
+    // let the model pick the best fit (or none). Only when folders exist.
+    let category_line = if folders.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n- category: the ONE existing folder this note clearly belongs in, copied EXACTLY \
+             from this list, or an empty string when none is a confident fit (do NOT force it, and \
+             NEVER invent a folder). Folders: {}.",
+            folders.join(", ")
+        )
+    };
     let system_prompt = format!(
         "{intro}{framing_line}\n\
          Rules:\n\
@@ -317,6 +367,7 @@ async fn extract_metadata(
          - todos: action items present in the note (empty array if none).\n\
          - reminder_at: if a reminder/timer is requested, the local datetime it should fire as \
            YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}.\
+         {category_line}\
          {verbatim_tail}",
         verbatim_tail = if structure {
             ""
@@ -335,6 +386,10 @@ async fn extract_metadata(
     if structure {
         properties["body"] = serde_json::json!({ "type": "string" });
         required.insert(0, "body");
+    }
+    if !folders.is_empty() {
+        properties["category"] = serde_json::json!({ "type": "string" });
+        required.push("category");
     }
     let schema = serde_json::json!({
         "type": "object",
@@ -506,9 +561,17 @@ fn raw_append(current: &Note, change: &str) -> Note {
 /// shapes the title/summary only. Degrades to a raw note on any extraction
 /// failure — the body is always preserved. Shared by the `remember` action and
 /// note capture; does NOT save.
-pub(crate) async fn compose_note(app: &AppHandle, body: &str, framing: Option<&str>) -> Note {
+pub(crate) async fn compose_note(
+    app: &AppHandle,
+    body: &str,
+    framing: Option<&str>,
+    folders: &[String],
+) -> (Note, Option<String>) {
     let mut note = Note::raw(body.trim().to_string());
     let settings = get_settings(app);
+    // The existing Grain folder the model routed this note to (validated back to
+    // an exact list entry), or None. Piggybacks the extraction call above.
+    let mut category: Option<String> = None;
     if llm_usable(&settings) {
         // Structure the body only for a freshly dictated/typed note (no framed
         // selection) that fits the sample window — a truncated giant paste can't
@@ -523,10 +586,21 @@ pub(crate) async fn compose_note(app: &AppHandle, body: &str, framing: Option<&s
             &sample_for_meta(body.trim()),
             framing,
             structure,
+            folders,
         )
         .await
         {
             Ok(mut meta) => {
+                // Validate the routed category against the real folder list
+                // (exact entry, case-insensitive) so the model can never invent
+                // a folder here — new-folder discovery is a separate, gated pass.
+                let cat = meta.category.trim();
+                if !cat.is_empty() {
+                    category = folders
+                        .iter()
+                        .find(|f| f.eq_ignore_ascii_case(cat))
+                        .cloned();
+                }
                 // Adopt the reformatted body only when it clearly preserved the
                 // content — a formatted note is longer, not shorter, so a big
                 // shrink means the model summarized and we keep the raw text.
@@ -548,7 +622,7 @@ pub(crate) async fn compose_note(app: &AppHandle, body: &str, framing: Option<&s
     if note.title.trim().is_empty() {
         note.title = fallback_title(&note.body);
     }
-    note
+    (note, category)
 }
 
 /// One structured merge call against the active post-process provider.
@@ -682,6 +756,7 @@ mod tests {
                 tldr: "The wifi password.".into(),
                 todos: vec!["buy milk".into(), "  ".into()],
                 reminder_at: "2026-07-06T18:30".into(),
+                category: String::new(),
             };
             let mut note = Note::raw("body".into());
             m.apply(&mut note, auto);
@@ -708,6 +783,7 @@ mod tests {
             tldr: "S".into(),
             todos: vec![],
             reminder_at: "tomorrow evening".into(),
+            category: String::new(),
         };
         let mut note = Note::raw("b".into());
         m.apply(&mut note, true);

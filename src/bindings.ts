@@ -250,6 +250,14 @@ async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
+async changeGrainSpaceAutoCategorizeSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_auto_categorize_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * [GRAIN] Grain Space backend hard switch (OBSIDIAN-PLAN.md §1). Swapping the
  * backend changes which corpus every surface sees; the overlay is closed and
@@ -304,6 +312,22 @@ async grainSpaceListNotes() : Promise<Result<Note[], string>> {
 async grainSpaceListCards() : Promise<Result<NoteCard[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_list_cards") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceListFolders() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_list_folders") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_move_note", { id, folder }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1794,7 +1818,14 @@ grain_space_vault_path?: string;
  * Grain only ever creates/edits files under this folder; the rest of the
  * vault is read-only (searchable, never written).
  */
-grain_space_vault_folder?: string }
+grain_space_vault_folder?: string;
+/**
+ * [GRAIN] Auto-categorization (AUTO-CATEGORIZATION-PLAN.md). When ON, a
+ * captured note is routed into the best-fitting existing Grain folder via
+ * the structuring call that already runs — no extra model, no idle work.
+ * Off by default; when off, no categorization code path runs.
+ */
+grain_space_auto_categorize?: boolean }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
