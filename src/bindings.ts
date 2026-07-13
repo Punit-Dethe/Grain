@@ -561,6 +561,17 @@ async grainSpaceSemanticSearch(query: string) : Promise<Result<Note[], string>> 
     else return { status: "error", error: e  as any };
 }
 },
+async grainSpaceRecallTurn(messages: AgentMessage[]) : Promise<Result<AgentReply, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_recall_turn", { messages }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceRecallReset() : Promise<void> {
+    await TAURI_INVOKE("grain_space_recall_reset");
+},
 async changeExperimentalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_experimental_enabled_setting", { enabled }) };

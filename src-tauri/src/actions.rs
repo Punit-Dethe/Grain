@@ -1451,9 +1451,14 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     (ft, None, post_process, assembled)
                 };
 
-            let processed =
-                process_transcription_output(&ah, &final_text, post_process, spoken_prompt, was_rolling)
-                    .await;
+            let processed = process_transcription_output(
+                &ah,
+                &final_text,
+                post_process,
+                spoken_prompt,
+                was_rolling,
+            )
+            .await;
             let final_text = processed.final_text;
 
             if !samples.is_empty() {

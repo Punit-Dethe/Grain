@@ -674,6 +674,8 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_download_embed_model,
             grain_space::commands::grain_space_cancel_embed_model_download,
             grain_space::commands::grain_space_semantic_search,
+            grain_space::commands::grain_space_recall_turn,
+            grain_space::commands::grain_space_recall_reset,
             shortcut::change_experimental_enabled_setting,
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_key_setting,

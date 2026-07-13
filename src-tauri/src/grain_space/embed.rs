@@ -577,10 +577,13 @@ mod tests {
             ),
         ];
         let doc_vecs = super::embed(docs).expect("doc embed");
-        let q = super::embed_query("what was my wifi password again".to_string())
-            .expect("query embed");
+        let q =
+            super::embed_query("what was my wifi password again".to_string()).expect("query embed");
         let cos = |a: &[f32], b: &[f32]| -> f64 {
-            a.iter().zip(b).map(|(x, y)| (*x as f64) * (*y as f64)).sum()
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (*x as f64) * (*y as f64))
+                .sum()
         };
         let related = cos(&q, &doc_vecs[0]);
         let unrelated_1 = cos(&q, &doc_vecs[1]);

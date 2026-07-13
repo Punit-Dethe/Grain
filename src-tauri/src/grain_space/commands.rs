@@ -478,3 +478,41 @@ pub async fn grain_space_semantic_search(
 
 /// Result cap for the overlay's hybrid search — a sidebar list, not a corpus dump.
 const HYBRID_UI_RESULTS: usize = 40;
+
+// -- conversational recall in the overlay's chat rail ----------------------------
+
+/// Run one Grain Recall turn for the overlay's chat rail. This is the SAME
+/// retrieval + synthesis brain the voice Recall pill drives
+/// (`recall::run_turn`) — hybrid retrieve, memories block, bounded
+/// `search_memory` tool loop, `SOURCES:`/`NOT_FOUND`/`ACTION:` tail — only now
+/// fed by messages typed into the in-window chat instead of the summon panel.
+///
+/// Deliberately NOT gated on `AgentMode`: that mode is fixed by whichever voice
+/// binding fired, but the chat rail is a distinct surface that always means
+/// Recall, so it calls `run_turn` directly. `run_turn` still gates on the master
+/// toggle and returns friendly prose for an empty corpus. The chat maintains its
+/// own message history frontend-side and sends the whole thread each turn (the
+/// same shape `agent_run` receives).
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_recall_turn(
+    app: AppHandle,
+    messages: Vec<crate::agent::AgentMessage>,
+) -> Result<crate::agent::AgentReply, String> {
+    super::recall::run_turn(&app, &messages).await
+}
+
+/// Clear the shared Grain Recall session registry (the stable `Mn` memory ids).
+/// The chat rail calls this before the first turn of a NEW conversation,
+/// mirroring the reset the voice pill performs on each fresh summon — so a fresh
+/// thread never inherits M-numbers from a previous one. Rendered source chips
+/// carry their own note ids, so clearing the registry never breaks past turns.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_recall_reset(app: AppHandle) {
+    if let Some(state) = app.try_state::<crate::agent::AgentState>() {
+        if let Ok(mut session) = state.recall.lock() {
+            session.clear();
+        }
+    }
+}

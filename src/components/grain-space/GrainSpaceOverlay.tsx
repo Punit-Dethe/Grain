@@ -197,6 +197,22 @@ export function GrainSpaceOverlay() {
     [adopt, flushSave],
   );
 
+  /** Open a note by id — the chat rail's source chips land here. A hit outside
+   * the Grain folder (whole-vault recall on the Obsidian backend) opens
+   * read-only, matching how foreign vault files behave elsewhere. */
+  const openNoteById = useCallback(
+    async (id: string) => {
+      await flushSave();
+      const result = await commands.grainSpaceGetNote(id);
+      if (result.status !== "ok") {
+        console.error("Grain Space: open note failed:", result.error);
+        return;
+      }
+      adopt(result.data, !cardByIdRef.current.has(id));
+    },
+    [adopt, flushSave],
+  );
+
   const newNote = useCallback(async () => {
     await flushSave();
     adopt(blankDraft(), false);
@@ -657,7 +673,10 @@ export function GrainSpaceOverlay() {
                 </div>
               </section>
             )}
-            <ChatRail open={chatOpen} />
+            <ChatRail
+              open={chatOpen}
+              onOpenNote={(id) => void openNoteById(id)}
+            />
           </div>
         </div>
       </div>
