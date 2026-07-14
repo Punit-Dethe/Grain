@@ -819,6 +819,24 @@
   color: var(--agc-ink);
 }
 
+/* A restrained counterweight to the close control; presentational only. */
+.agc-c-label {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  color: rgba(255, 255, 255, 0.48);
+  font-family: var(--agc-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.65px;
+  line-height: 1;
+  pointer-events: none;
+}
+
 /* Content stream — grows, then scrolls once the card hits its max-height. */
 .agc-c-scroll {
   flex: 1 1 auto;
@@ -827,7 +845,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 24px 18px 6px;
+  padding: 24px 18px 2px;
 }
 
 /* The captured question / selection, shown once above the first answer. */
@@ -884,10 +902,8 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  height: 20px;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  height: 22px;
+  margin-top: 3px;
 }
 .agc-c-tool {
   display: inline-flex;
@@ -922,7 +938,7 @@
   align-items: center;
   gap: 8px;
   flex: none;
-  padding: 9px 12px 12px;
+  padding: 5px 12px 10px;
 }
 .agc-c-followup {
   display: inline-flex;
