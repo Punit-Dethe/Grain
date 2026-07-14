@@ -918,6 +918,10 @@
   flex: none;
   padding: 5px 12px 10px;
 }
+.agc-c-bar-tool {
+  flex: none;
+  opacity: 0.62;
+}
 .agc-c-followup {
   display: inline-flex;
   align-items: center;

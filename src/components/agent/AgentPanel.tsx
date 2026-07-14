@@ -854,32 +854,32 @@ export function AgentPanel() {
                       <div className="agc-c-answer">{m.content}</div>
                       {renderEvidence(m.sources ?? [], m.notFound ?? false)}
                       {m.confirmDelete && renderConfirmDelete(m.confirmDelete)}
-                      {/* Per-reply tools — a hairline divider + quiet icons,
-                          revealed on hover, directly beneath the answer. */}
-                      <div className="agc-c-tools">
-                        <button
-                          type="button"
-                          className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
-                          onClick={() => copyOne(m.id, m.content)}
-                          title={t("agent.copyReply")}
-                        >
-                          {flashedId === m.id ? (
-                            <Check size={13} />
-                          ) : (
-                            <Copy size={13} />
-                          )}
-                        </button>
-                        {canRedo && idx === lastIdx && (
+                      {expanded && (
+                        <div className="agc-c-tools">
                           <button
                             type="button"
-                            className="agc-c-tool"
-                            onClick={retry}
-                            title={t("agent.retry")}
+                            className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
+                            onClick={() => copyOne(m.id, m.content)}
+                            title={t("agent.copyReply")}
                           >
-                            <RotateCcw size={13} />
+                            {flashedId === m.id ? (
+                              <Check size={13} />
+                            ) : (
+                              <Copy size={13} />
+                            )}
                           </button>
-                        )}
-                      </div>
+                          {canRedo && idx === lastIdx && (
+                            <button
+                              type="button"
+                              className="agc-c-tool"
+                              onClick={retry}
+                              title={t("agent.retry")}
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </>
                   )}
                 </div>
@@ -929,15 +929,39 @@ export function AgentPanel() {
               </button>
               <span className="agc-spacer" />
               {!expanded && (
-                <button
-                  type="button"
-                  className="agc-c-insert"
-                  disabled={!canConfirm}
-                  onClick={confirm}
-                  title={t("agent.confirmHint")}
-                >
-                  {t("agent.confirm")}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className={`agc-c-tool agc-c-bar-tool ${flashedId === "a0" ? "is-flash" : ""}`}
+                    onClick={() => copyOne("a0", displayedReply)}
+                    title={t("agent.copyReply")}
+                  >
+                    {flashedId === "a0" ? (
+                      <Check size={13} />
+                    ) : (
+                      <Copy size={13} />
+                    )}
+                  </button>
+                  {canRedo && (
+                    <button
+                      type="button"
+                      className="agc-c-tool agc-c-bar-tool"
+                      onClick={retry}
+                      title={t("agent.retry")}
+                    >
+                      <RotateCcw size={13} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="agc-c-insert"
+                    disabled={!canConfirm}
+                    onClick={confirm}
+                    title={t("agent.confirmHint")}
+                  >
+                    {t("agent.confirm")}
+                  </button>
+                </>
               )}
             </div>
           ) : null}
