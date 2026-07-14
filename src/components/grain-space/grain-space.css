@@ -116,8 +116,8 @@
 /* Theme stays inside the Notes frame: no app-level class, service, or shared
  * token can affect Agent, settings, or another Tauri window. */
 .gs-frame[data-theme="dark"] {
-  /* The frame and sidebar form one graphite foundation; workspace
-   * surfaces lift one deliberate step above it. */
+  /* Opaque fallbacks keep the Notes shell stable where backdrop filtering is
+   * unavailable; the writing surface remains deliberately solid. */
   --paper: #1f1f1f;
   --side: #1f1f1f;
   --side-2: #1f1f1f;
@@ -149,7 +149,7 @@
   --code-bg: rgba(255, 255, 255, 0.06);
   --code-border: rgba(255, 255, 255, 0.1);
   --mono-inline-bg: rgba(255, 255, 255, 0.09);
-  --editor-sheet: #323232;
+  --editor-sheet: #181818;
   --calendar-sheet: #323232;
   --create-bg: #1f1f1f;
   --scroll-thumb: rgba(255, 255, 255, 0.2);
@@ -170,6 +170,28 @@
 .gs-frame[data-theme="dark"] .gs-mode button.gs-mode--on {
   background: var(--sheet);
   color: var(--ink);
+}
+
+/* One compositor surface only: the outer Notes shell carries the frosted
+ * effect. Inner layout regions stay transparent so they do not create stacked
+ * blur layers; controls and the editor retain their normal opaque surfaces. */
+@supports (
+  (-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))
+) {
+  .gs-frame[data-theme="dark"] {
+    background: rgba(15, 15, 15, 0.79);
+    -webkit-backdrop-filter: blur(12px) saturate(108%);
+    backdrop-filter: blur(12px) saturate(108%);
+  }
+
+  .gs-frame[data-theme="dark"] .gs-side,
+  .gs-frame[data-theme="dark"] .gs-main {
+    background: transparent;
+  }
+
+  .gs-frame[data-theme="dark"] .gs-top {
+    background: rgba(12, 12, 12, 0.18);
+  }
 }
 
 /* ══ SIDEBAR ═══════════════════════════════════════════════════════════════ */
