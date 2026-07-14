@@ -884,7 +884,8 @@
 .agc-markdown ul,
 .agc-markdown ol,
 .agc-markdown blockquote,
-.agc-markdown pre {
+.agc-markdown pre,
+.agc-md-table-wrap {
   margin: 0 0 0.7em;
 }
 .agc-markdown > :last-child {
@@ -937,6 +938,33 @@
   background: transparent;
   font-size: 0.86em;
 }
+.agc-md-table-wrap {
+  overflow-x: auto;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+}
+.agc-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.agc-markdown th,
+.agc-markdown td {
+  min-width: 5.5em;
+  padding: 0.48em 0.62em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: top;
+}
+.agc-markdown th {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 650;
+}
+.agc-markdown tbody tr:last-child td {
+  border-bottom: 0;
+}
+.agc-md-align-left { text-align: left; }
+.agc-md-align-center { text-align: center; }
+.agc-md-align-right { text-align: right; }
 .agc-markdown a {
   color: #9fc1ff;
   text-decoration: underline;
