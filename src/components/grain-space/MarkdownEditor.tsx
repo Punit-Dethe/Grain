@@ -214,6 +214,25 @@ const richDecorations = ViewPlugin.fromClass(
               });
               return;
             }
+            // Task markers are nested in a normal list item, so the parser
+            // exposes the preceding `-`/`*` as a separate ListMark node.
+            // Conceal only that marker (and the whitespace before `[ ]`) when
+            // it directly introduces a task; ordinary Markdown lists remain
+            // untouched.
+            if (node.name === "ListMark") {
+              const line = doc.lineAt(node.from);
+              const prefix = doc
+                .sliceString(node.to, line.to)
+                .match(/^[\t ]+(?=\[[ xX]\])/);
+              if (prefix) {
+                decos.push({
+                  from: node.from,
+                  to: node.to + prefix[0].length,
+                  deco: Decoration.replace({}),
+                });
+              }
+              return;
+            }
             if (!HIDDEN_MARKS.has(node.name)) return;
             const startLine = doc.lineAt(node.from).number;
             const endLine = doc.lineAt(node.to).number;

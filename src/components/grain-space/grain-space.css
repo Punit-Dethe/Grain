@@ -1308,11 +1308,11 @@
     border-color 120ms ease;
 }
 .gs-cm-check:hover {
-  border-color: var(--orange);
+  border-color: var(--ghost);
 }
 .gs-cm-check:checked {
-  background: var(--orange);
-  border-color: var(--orange);
+  background: var(--ghost);
+  border-color: var(--ghost);
 }
 .gs-cm-check:checked::after {
   content: "";
