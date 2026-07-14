@@ -912,12 +912,28 @@
 
 /* Bottom bar (before composing): follow-up + shortcut left, Confirm right. */
 .agc-c-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   flex: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid transparent;
   padding: 5px 12px 10px;
+}
+.agc-c-bar::before {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  left: 14px;
+  height: 1px;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 12%,
+    rgba(255, 255, 255, 0.08) 88%,
+    transparent 100%
+  );
 }
 .agc-c-bar-tool {
   flex: none;
