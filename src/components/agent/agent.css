@@ -873,6 +873,84 @@
   word-break: break-word;
 }
 
+/* Stateless Agent reply Markdown — no renderer cache survives the panel. */
+.agc-markdown {
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  white-space: normal;
+}
+.agc-markdown p,
+.agc-markdown ul,
+.agc-markdown ol,
+.agc-markdown blockquote,
+.agc-markdown pre {
+  margin: 0 0 0.7em;
+}
+.agc-markdown > :last-child {
+  margin-bottom: 0;
+}
+.agc-markdown h1,
+.agc-markdown h2,
+.agc-markdown h3,
+.agc-markdown h4,
+.agc-markdown h5,
+.agc-markdown h6 {
+  margin: 0.9em 0 0.42em;
+  color: inherit;
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.agc-markdown h1 { font-size: 1.28em; }
+.agc-markdown h2 { font-size: 1.15em; }
+.agc-markdown h3 { font-size: 1.06em; }
+.agc-markdown ul,
+.agc-markdown ol {
+  padding-left: 1.35em;
+}
+.agc-markdown li + li {
+  margin-top: 0.28em;
+}
+.agc-markdown blockquote {
+  padding-left: 0.8em;
+  border-left: 2px solid rgba(255, 255, 255, 0.22);
+  color: var(--agc-muted);
+}
+.agc-markdown code {
+  padding: 0.08em 0.32em;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.09);
+  font-family: var(--agc-mono);
+  font-size: 0.88em;
+}
+.agc-markdown pre {
+  overflow-x: auto;
+  padding: 0.75em 0.85em;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+  white-space: pre;
+}
+.agc-markdown pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.86em;
+}
+.agc-markdown a {
+  color: #9fc1ff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.agc-markdown hr {
+  margin: 0.9em 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+}
+.agc-markdown p {
+  white-space: normal;
+}
+
 /* Per-reply tools: a hairline divider + quiet icons directly below the answer.
  * Kept in a compact fixed strip so hovering never reshuffles the layout (which
  * would resize the window). Gray by default, brighter on hover. */

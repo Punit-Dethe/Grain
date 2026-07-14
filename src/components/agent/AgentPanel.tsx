@@ -17,6 +17,7 @@ import {
   type AgentReply,
   type AgentSource,
 } from "@/bindings";
+import { AgentMarkdown } from "./AgentMarkdown";
 import "./agent.css";
 
 /** [GRAIN] CENTER layout geometry that must agree with the backend
@@ -851,7 +852,7 @@ export function AgentPanel() {
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
                     <>
-                      <div className="agc-c-answer">{m.content}</div>
+                      <div className="agc-c-answer"><AgentMarkdown markdown={m.content} /></div>
                       {renderEvidence(m.sources ?? [], m.notFound ?? false)}
                       {m.confirmDelete && renderConfirmDelete(m.confirmDelete)}
                       {expanded && (
@@ -1041,7 +1042,7 @@ export function AgentPanel() {
               <div className="agc-error">{error}</div>
             ) : (
               <>
-                <div className="agc-reply">{displayedReply}</div>
+                <div className="agc-reply"><AgentMarkdown markdown={displayedReply} /></div>
                 {renderEvidence(compactSources, compactNotFound)}
                 {compactConfirmDelete &&
                   renderConfirmDelete(compactConfirmDelete)}
@@ -1131,7 +1132,7 @@ export function AgentPanel() {
                 {m.role === "user" ? t("agent.you") : t("agent.grain")}
               </div>
               <div className={`agc-turn-body agc-turn-body--${m.role}`}>
-                {m.content}
+                {m.role === "assistant" ? <AgentMarkdown markdown={m.content} /> : m.content}
               </div>
               {m.role === "assistant" &&
                 renderEvidence(m.sources ?? [], m.notFound ?? false)}
