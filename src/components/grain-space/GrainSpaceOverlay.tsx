@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Maximize2, MessageSquare, Minus, Plus, Search, X } from "lucide-react";
+import {
+  Maximize2,
+  MessageSquare,
+  Minus,
+  Moon,
+  Plus,
+  Search,
+  Sun,
+  X,
+} from "lucide-react";
 import { commands, type Note, type NoteCard } from "@/bindings";
 import { Sidebar } from "./Sidebar";
 import { EditorPane } from "./EditorPane";
@@ -37,6 +46,15 @@ type ModelBanner =
 export function GrainSpaceOverlay() {
   const { t } = useTranslation();
 
+  // GrainSpaceHost unmounts this overlay on sleep. Keep the preference as one
+  // small local value so it is rehydrated on revive without a resident store.
+  const [darkMode, setDarkMode] = useState(() => {
+    try {
+      return window.localStorage.getItem("grain-space-theme") === "dark";
+    } catch {
+      return false;
+    }
+  });
   const [cards, setCards] = useState<NoteCard[]>([]);
   const [results, setResults] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
@@ -343,6 +361,22 @@ export function GrainSpaceOverlay() {
     void flushSave().then(() => void commands.grainSpaceCloseWindow());
   }, [flushSave]);
 
+  const toggleTheme = useCallback(() => {
+    setDarkMode((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(
+          "grain-space-theme",
+          next ? "dark" : "light",
+        );
+      } catch {
+        // Storage can be unavailable in restricted webviews; the local state
+        // still lets this session use the selected appearance.
+      }
+      return next;
+    });
+  }, []);
+
   // Esc: clear the search first, then put the window to sleep. Ctrl+N: new note.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -473,7 +507,7 @@ export function GrainSpaceOverlay() {
 
   return (
     <div className="gs-root">
-      <div className="gs-frame">
+      <div className="gs-frame" data-theme={darkMode ? "dark" : "light"}>
         <Sidebar
           cards={cards}
           reminders={reminders}
@@ -542,6 +576,24 @@ export function GrainSpaceOverlay() {
                 onClick={() => setChatOpen((v) => !v)}
               >
                 <MessageSquare width={15} height={15} />
+              </button>
+              <button
+                type="button"
+                className="gs-iconbtn"
+                title={
+                  darkMode ? "Use light appearance" : "Use dark appearance"
+                }
+                aria-label={
+                  darkMode ? "Use light appearance" : "Use dark appearance"
+                }
+                aria-pressed={darkMode}
+                onClick={toggleTheme}
+              >
+                {darkMode ? (
+                  <Sun width={15} height={15} />
+                ) : (
+                  <Moon width={15} height={15} />
+                )}
               </button>
               <span className="gs-win-sep" />
               <button

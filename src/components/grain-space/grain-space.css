@@ -45,6 +45,17 @@
   --hl-mark: rgba(255, 214, 92, 0.42);
   --code-bg: rgba(30, 27, 22, 0.045);
   --code-border: rgba(30, 27, 22, 0.08);
+  --mono-inline-bg: rgba(23, 20, 18, 0.06);
+  --editor-sheet: #fcfcfa;
+  --calendar-sheet: #f6f6f4;
+  --create-bg: #fdf8ef;
+  --scroll-thumb: rgba(30, 27, 22, 0.12);
+  --scroll-thumb-hover: rgba(30, 27, 22, 0.22);
+  --selected-row: rgba(30, 27, 22, 0.075);
+  --danger-soft: rgba(192, 57, 47, 0.08);
+  --inset-highlight: rgba(255, 255, 255, 0.6);
+  --frame-border: rgba(30, 27, 22, 0.1);
+  --frame-shadow: 0 24px 60px -12px rgba(30, 27, 22, 0.18);
   --shadow-sm: 0 1px 2px rgba(30, 27, 22, 0.04);
   --shadow-md: 0 2px 8px rgba(30, 27, 22, 0.05);
   --shadow-lg: 0 4px 16px rgba(30, 27, 22, 0.06);
@@ -85,10 +96,10 @@
   display: flex;
   background: var(--paper);
   border-radius: 18px;
-  border: 1px solid rgba(30, 27, 22, 0.1);
+  border: 1px solid var(--frame-border);
   box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.6),
-    0 24px 60px -12px rgba(30, 27, 22, 0.18);
+    inset 0 0 0 1px var(--inset-highlight),
+    var(--frame-shadow);
   color: var(--ink);
   font-family: var(--body);
   overflow: hidden;
@@ -100,6 +111,59 @@
 }
 .gs-frame ::selection {
   background: rgba(255, 93, 30, 0.18);
+}
+
+/* Theme stays inside the Notes frame: no app-level class, service, or shared
+ * token can affect Agent, settings, or another Tauri window. */
+.gs-frame[data-theme="dark"] {
+  --paper: #1c1c1e;
+  --side: #242426;
+  --side-2: #242426;
+  --sheet: #2c2c2e;
+  --input-bg: #3a3a3c;
+  --ink: #f5f5f7;
+  --ink-2: #e5e5e7;
+  --muted: rgba(245, 245, 247, 0.62);
+  --faint: rgba(245, 245, 247, 0.42);
+  --ghost: rgba(245, 245, 247, 0.26);
+  --line: rgba(255, 255, 255, 0.12);
+  --line-2: rgba(255, 255, 255, 0.07);
+  --hover: rgba(255, 255, 255, 0.07);
+  --sel: rgba(255, 116, 70, 0.15);
+  --sel-border: rgba(255, 130, 84, 0.38);
+  --orange: #ff7947;
+  --orange-2: #ff9a73;
+  --orange-soft: rgba(255, 121, 71, 0.16);
+  --green: #70bd88;
+  --green-soft: rgba(112, 189, 136, 0.17);
+  --blue: #89a8ec;
+  --blue-soft: rgba(137, 168, 236, 0.17);
+  --amber: #e0a75a;
+  --amber-soft: rgba(224, 167, 90, 0.18);
+  --purple: #b89bea;
+  --purple-soft: rgba(184, 155, 234, 0.17);
+  --error: #ff8a8f;
+  --hl-mark: rgba(255, 210, 89, 0.3);
+  --code-bg: rgba(255, 255, 255, 0.06);
+  --code-border: rgba(255, 255, 255, 0.1);
+  --mono-inline-bg: rgba(255, 255, 255, 0.09);
+  --editor-sheet: #2c2c2e;
+  --calendar-sheet: #2c2c2e;
+  --create-bg: #3a3a3c;
+  --scroll-thumb: rgba(255, 255, 255, 0.2);
+  --scroll-thumb-hover: rgba(255, 255, 255, 0.32);
+  --selected-row: rgba(255, 255, 255, 0.1);
+  --danger-soft: rgba(255, 138, 143, 0.14);
+  --inset-highlight: rgba(255, 255, 255, 0.08);
+  --frame-border: rgba(255, 255, 255, 0.12);
+  --frame-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 3px 10px rgba(0, 0, 0, 0.26);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+.gs-frame[data-theme="dark"] .gs-avatar,
+.gs-frame[data-theme="dark"] .gs-progress span {
+  background: var(--orange);
 }
 
 /* ══ SIDEBAR ═══════════════════════════════════════════════════════════════ */
@@ -233,7 +297,7 @@
   padding: var(--gs-sp-2) var(--gs-sp-3);
   border: 1px solid var(--line);
   border-radius: var(--gs-r-md);
-  background: #fdf8ef;
+  background: var(--create-bg);
   font-family: var(--body);
   font-size: var(--gs-fs-13);
   font-weight: var(--gs-w-semi);
@@ -267,13 +331,13 @@
   width: 6px;
 }
 .gs-nav::-webkit-scrollbar-thumb {
-  background: rgba(30, 27, 22, 0.12);
+  background: var(--scroll-thumb);
   border-radius: 3px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 .gs-nav::-webkit-scrollbar-thumb:hover {
-  background: rgba(30, 27, 22, 0.22);
+  background: var(--scroll-thumb-hover);
   background-clip: padding-box;
 }
 
@@ -348,7 +412,7 @@
   background: var(--hover);
 }
 .gs-row--on {
-  background: rgba(30, 27, 22, 0.075);
+  background: var(--selected-row);
 }
 .gs-row--on .gs-row-title {
   font-weight: 600;
@@ -518,7 +582,7 @@
 }
 .gs-iconbtn--danger:hover {
   color: var(--error);
-  background: rgba(192, 57, 47, 0.08);
+  background: var(--danger-soft);
 }
 
 /* Exact / Semantic mode switch. */
@@ -633,12 +697,12 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #fcfcfa;
+  background: var(--editor-sheet);
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
     var(--shadow-lg),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    inset 0 1px 0 var(--inset-highlight);
   overflow: hidden;
 }
 .gs-sheet-empty {
@@ -727,7 +791,7 @@
   width: 6px;
 }
 .gs-edit .cm-scroller::-webkit-scrollbar-thumb {
-  background: rgba(30, 27, 22, 0.12);
+  background: var(--scroll-thumb);
   border-radius: 3px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -836,7 +900,7 @@
   border-radius: 18px;
   box-shadow:
     var(--shadow-lg),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    inset 0 1px 0 var(--inset-highlight);
   overflow: hidden;
 }
 .gs-chat-tabs {
@@ -1391,7 +1455,7 @@
   width: 6px;
 }
 .gs-dock-list--exp::-webkit-scrollbar-thumb {
-  background: rgba(30, 27, 22, 0.12);
+  background: var(--scroll-thumb);
   border-radius: 3px;
   border: 2px solid transparent;
   background-clip: padding-box;
@@ -1448,12 +1512,12 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #f6f6f4;
+  background: var(--calendar-sheet);
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
     var(--shadow-lg),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    inset 0 1px 0 var(--inset-highlight);
   overflow: hidden;
 }
 .gs-cal-view-head {

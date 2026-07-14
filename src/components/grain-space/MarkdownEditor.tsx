@@ -301,7 +301,7 @@ const mdHighlight = HighlightStyle.define([
     tag: tags.monospace,
     fontFamily: "var(--mono)",
     fontSize: "0.9em",
-    background: "rgba(23, 20, 18, 0.06)",
+    background: "var(--mono-inline-bg)",
     borderRadius: "4px",
     padding: "0.5px 3px",
   },
