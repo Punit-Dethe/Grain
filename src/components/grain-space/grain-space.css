@@ -13,25 +13,31 @@
 }
 
 .gs-frame {
-  /* Design tokens — refined warm palette. */
-  --paper: #f9f1e4;
-  --side: #f9f1e4;
-  --side-2: #f9f1e4;
-  --sheet: #f9f1e4;
-  --input-bg: #ede5d4;
-  --ink: #1e1b16;
-  --ink-2: #322e26;
-  --muted: rgba(30, 27, 22, 0.56);
-  --faint: rgba(30, 27, 22, 0.38);
-  --ghost: rgba(30, 27, 22, 0.22);
-  --line: rgba(30, 27, 22, 0.07);
-  --line-2: rgba(30, 27, 22, 0.04);
-  --hover: rgba(30, 27, 22, 0.032);
+  /* Design tokens — soft paper on quiet, cool-grey chrome. */
+  --paper: #f2f4f7;
+  --side: #eef0f3;
+  --side-2: #f6f7f8;
+  --sheet: #fcfcfa;
+  --input-bg: #f1f3f7;
+  --chat-surface: #f7f8fb;
+  --chat-card: #ffffff;
+  --ink: #202631;
+  --ink-2: #303946;
+  --muted: rgba(32, 38, 49, 0.61);
+  --faint: rgba(32, 38, 49, 0.43);
+  --ghost: rgba(32, 38, 49, 0.24);
+  --line: rgba(32, 38, 49, 0.09);
+  --line-2: rgba(32, 38, 49, 0.055);
+  --hover: rgba(32, 38, 49, 0.04);
   --sel: rgba(255, 93, 30, 0.07);
   --sel-border: rgba(255, 93, 30, 0.22);
   --orange: #ff5d1e;
   --orange-2: #ff7a45;
   --orange-soft: rgba(255, 93, 30, 0.1);
+  --recall: #53698f;
+  --recall-strong: #435878;
+  --recall-soft: rgba(83, 105, 143, 0.12);
+  --recall-ring: rgba(83, 105, 143, 0.2);
   --green: #4f9d69;
   --green-soft: rgba(79, 157, 105, 0.12);
   --blue: #5b7cc4;
@@ -43,11 +49,11 @@
   --error: #c0392f;
   /* Editor rich-content accents. */
   --hl-mark: rgba(255, 214, 92, 0.42);
-  --code-bg: rgba(30, 27, 22, 0.045);
-  --code-border: rgba(30, 27, 22, 0.08);
-  --shadow-sm: 0 1px 2px rgba(30, 27, 22, 0.04);
-  --shadow-md: 0 2px 8px rgba(30, 27, 22, 0.05);
-  --shadow-lg: 0 4px 16px rgba(30, 27, 22, 0.06);
+  --code-bg: rgba(32, 38, 49, 0.045);
+  --code-border: rgba(32, 38, 49, 0.08);
+  --shadow-sm: 0 1px 2px rgba(32, 38, 49, 0.04);
+  --shadow-md: 0 2px 8px rgba(32, 38, 49, 0.05);
+  --shadow-lg: 0 4px 16px rgba(32, 38, 49, 0.055);
   --mono:
     "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
   --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
@@ -85,10 +91,10 @@
   display: flex;
   background: var(--paper);
   border-radius: 18px;
-  border: 1px solid rgba(30, 27, 22, 0.1);
+  border: 1px solid rgba(32, 38, 49, 0.1);
   box-shadow:
     inset 0 0 0 1px rgba(255, 255, 255, 0.6),
-    0 24px 60px -12px rgba(30, 27, 22, 0.18);
+    0 24px 60px -12px rgba(32, 38, 49, 0.15);
   color: var(--ink);
   font-family: var(--body);
   overflow: hidden;
@@ -233,7 +239,7 @@
   padding: var(--gs-sp-2) var(--gs-sp-3);
   border: 1px solid var(--line);
   border-radius: var(--gs-r-md);
-  background: #fdf8ef;
+  background: #ffffff;
   font-family: var(--body);
   font-size: var(--gs-fs-13);
   font-weight: var(--gs-w-semi);
@@ -633,7 +639,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #f6f6f4;
+  background: var(--sheet);
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
@@ -831,7 +837,7 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--sheet);
+  background: var(--chat-surface);
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
@@ -871,7 +877,7 @@
   color: var(--ghost);
 }
 .gs-chat-tab--on svg {
-  color: var(--orange);
+  color: var(--recall);
 }
 .gs-chat-tabs-spacer {
   flex: 1 1 auto;
@@ -894,7 +900,7 @@
 }
 .gs-chat-new:hover {
   color: var(--ink);
-  background: var(--input-bg);
+  background: var(--recall-soft);
 }
 .gs-chat-body {
   flex: 1 1 auto;
@@ -919,7 +925,7 @@
   text-align: left;
   border: 1px solid var(--line);
   border-radius: 14px;
-  background: var(--input-bg);
+  background: var(--chat-card);
   padding: 15px 17px;
   font-family: inherit;
   transition:
@@ -928,7 +934,7 @@
   cursor: pointer;
 }
 .gs-chat-card:hover {
-  border-color: var(--sel-border);
+  border-color: var(--recall-ring);
   box-shadow: var(--shadow-sm);
 }
 .gs-chat-card--static {
@@ -957,9 +963,9 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(83, 105, 143, 0.22);
   border-radius: 14px;
-  background: var(--input-bg);
+  background: #ffffff;
   padding: 11px 13px;
   color: var(--faint);
   transition:
@@ -967,8 +973,8 @@
     box-shadow 160ms ease;
 }
 .gs-chat-input:focus-within {
-  border-color: var(--sel-border);
-  box-shadow: 0 0 0 3px var(--orange-soft);
+  border-color: var(--recall);
+  box-shadow: 0 0 0 3px var(--recall-ring);
 }
 .gs-chat-input input {
   flex: 1 1 auto;
@@ -992,16 +998,16 @@
   height: 26px;
   border: none;
   border-radius: 8px;
-  background: var(--orange);
+  background: var(--recall);
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 1px 3px rgba(255, 93, 30, 0.3);
+  box-shadow: 0 1px 3px rgba(67, 88, 120, 0.22);
   transition:
     opacity 140ms ease,
     filter 140ms ease;
 }
 .gs-chat-send:hover:not(:disabled) {
-  filter: brightness(1.05);
+  background: var(--recall-strong);
 }
 .gs-chat-send:disabled {
   opacity: 0.4;
@@ -1038,7 +1044,7 @@
   color: var(--faint);
 }
 .gs-chat-turn-label.is-grain {
-  color: var(--orange);
+  color: var(--recall);
 }
 .gs-chat-bubble {
   font-size: 13px;
@@ -1058,6 +1064,11 @@
 }
 .gs-chat-bubble--assistant {
   color: var(--ink);
+  padding: 9px 12px;
+  border: 1px solid rgba(83, 105, 143, 0.13);
+  border-radius: 12px;
+  border-top-left-radius: 4px;
+  background: var(--recall-soft);
 }
 .gs-chat-evidence {
   margin-top: 2px;
@@ -1072,7 +1083,7 @@
   padding: 3px 9px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: var(--input-bg);
+  background: var(--chat-card);
   font-family: inherit;
   font-size: 11px;
   font-weight: 550;
@@ -1087,7 +1098,7 @@
 }
 .gs-chat-source:hover {
   color: var(--ink);
-  border-color: var(--sel-border);
+  border-color: var(--recall-ring);
 }
 .gs-chat-notfound {
   font-size: 11.5px;
@@ -1100,7 +1111,7 @@
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--input-bg);
+  background: var(--chat-card);
 }
 .gs-chat-confirm-q {
   font-size: 12px;
@@ -1137,7 +1148,7 @@
 }
 .gs-chat-keep-btn:hover {
   color: var(--ink);
-  border-color: var(--sel-border);
+  border-color: var(--recall-ring);
 }
 .gs-chat-forget-done {
   font-size: 11.5px;
@@ -1448,7 +1459,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #f6f6f4;
+  background: var(--sheet);
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
