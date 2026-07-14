@@ -45,7 +45,8 @@ use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::rotation_state::{CallOutcome, RotationTrackers};
 use crate::settings::{
-    get_settings, AgentAutocopy, AgentContextMode, ShortcutBinding, APPLE_INTELLIGENCE_PROVIDER_ID,
+    get_settings, AgentAutocopy, AgentContextMode, AgentPanelPosition, ShortcutBinding,
+    APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 
 /// Window label (matched by its capability + the frontend router in
@@ -79,6 +80,24 @@ const PANEL_W: f64 = 500.0;
 const PANEL_COMPACT_W: f64 = 392.0;
 const PANEL_COMPACT_H: f64 = 442.0;
 const PANEL_MARGIN: f64 = 18.0;
+
+/// [GRAIN] CENTER-TOP panel geometry (logical px). The center variant is a
+/// single sleek surface anchored near the top-centre of the work area. Its width
+/// is fixed (a touch broader than the compact card); its HEIGHT is driven by the
+/// webview — it hugs its content and grows downward as the conversation grows,
+/// up to a max, after which the surface scrolls internally.
+const PANEL_CENTER_W: f64 = 588.0;
+/// Distance from the work-area top edge to the panel's top (fixed anchor — the
+/// panel grows downward from here).
+const PANEL_CENTER_TOP: f64 = 76.0;
+/// Breathing room kept below the panel when it reaches its tallest.
+const PANEL_CENTER_BOTTOM_GAP: f64 = 52.0;
+/// Height the center panel opens at (loading state, before any content lands).
+/// Close to the resting minimum so the webview's first height report barely
+/// nudges it — avoids a visible grow-in on reveal.
+const PANEL_CENTER_START_H: f64 = 178.0;
+/// Absolute floor so the window can never collapse to nothing mid-resize.
+const PANEL_CENTER_MIN_H: f64 = 96.0;
 
 /// The Agent's system instruction. The user's dictated/typed instruction is the
 /// task; the selected text (if any) is supplied as context separately.
@@ -132,6 +151,12 @@ pub struct AgentState {
     /// numbering is stable and additive across follow-up turns. Index `i` holds
     /// the note id for memory `M(i+1)`. Cleared on each fresh summon.
     pub recall: Mutex<crate::grain_space::recall::RecallSession>,
+    /// [GRAIN] CENTER-panel only: the current logical height the webview last
+    /// requested via `agent_resize_panel`. Lets window transitions (reveal /
+    /// follow-up focus) preserve an already-grown surface instead of snapping it
+    /// back to the opening height. `0.0` means "not sized yet → use the start
+    /// height". Reset on each fresh summon.
+    pub center_height: Mutex<f64>,
 }
 
 /// One conversation turn from the frontend.
@@ -296,6 +321,9 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             if let Ok(mut g) = state.recall.lock() {
                 g.clear();
             }
+            if let Ok(mut g) = state.center_height.lock() {
+                *g = 0.0; // fresh session opens at the start height
+            }
             state.input_active.store(true, Ordering::SeqCst);
             // Fresh session starts compact — dictation won't route to the panel
             // until it actually expands into the conversation stage.
@@ -381,7 +409,8 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
     if app.get_webview_window(PANEL_LABEL).is_some() {
         return Ok(());
     }
-    let w = build_window(app, PANEL_LABEL, PANEL_COMPACT_W, PANEL_COMPACT_H)
+    let (sw, sh) = panel_start_size(app);
+    let w = build_window(app, PANEL_LABEL, sw, sh)
         .map_err(|e| format!("failed to build agent panel: {e}"))?;
     place_panel(&w, false); // placed but NOT shown
     info!("[GRAIN] agent: panel pre-created (hidden, warming)");
@@ -590,10 +619,42 @@ fn monitor_work_logical(window: &tauri::WebviewWindow) -> Option<(f64, f64, f64,
     ))
 }
 
-/// Anchor the panel to the BOTTOM-RIGHT corner of the work area (the reference
-/// design). Compact = the small reply card; expanded = the old sidebar footprint
-/// (same width/height budget), still bottom-right.
+/// The user's chosen reply-surface position (side card vs center-top panel).
+fn panel_position(app: &AppHandle) -> AgentPanelPosition {
+    get_settings(app).agent_panel_position
+}
+
+/// The footprint a freshly built panel window opens at, per the active layout.
+/// The exact size is corrected the moment it is placed / resized, but building
+/// at the right size avoids a first-paint flash.
+fn panel_start_size(app: &AppHandle) -> (f64, f64) {
+    if panel_position(app) == AgentPanelPosition::Center {
+        (PANEL_CENTER_W, PANEL_CENTER_START_H)
+    } else {
+        (PANEL_COMPACT_W, PANEL_COMPACT_H)
+    }
+}
+
+/// Place the panel per the active layout. SIDE anchors the bottom-right corner
+/// (the reference design). CENTER pins the top-centre and sizes to the height
+/// the webview last requested (preserved across transitions so an already-grown
+/// surface never snaps back).
 fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
+    if panel_position(window.app_handle()) == AgentPanelPosition::Center {
+        let stored = window
+            .app_handle()
+            .try_state::<AgentState>()
+            .and_then(|s| s.center_height.lock().ok().map(|g| *g))
+            .unwrap_or(0.0);
+        let h = if stored >= PANEL_CENTER_MIN_H {
+            stored
+        } else {
+            PANEL_CENTER_START_H
+        };
+        place_panel_center(window, h);
+        return;
+    }
+
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
         let (w, h) = if expanded {
@@ -607,6 +668,22 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
         let _ = window.set_size(tauri::LogicalSize::new(w, h));
         let x = ox + sw - w - PANEL_MARGIN;
         let y = oy + sh - h - PANEL_MARGIN;
+        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    }
+}
+
+/// Anchor + size the CENTER-TOP panel. Width is fixed; `height` is the webview's
+/// requested content height, clamped to the work area. The top edge is pinned
+/// (`PANEL_CENTER_TOP` below the work-area top) so the surface grows downward.
+fn place_panel_center(window: &tauri::WebviewWindow, height: f64) {
+    let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
+    if let Some((ox, oy, sw, sh)) = metrics {
+        let w = PANEL_CENTER_W.min(sw - 32.0);
+        let max_h = (sh - PANEL_CENTER_TOP - PANEL_CENTER_BOTTOM_GAP).max(PANEL_CENTER_MIN_H);
+        let h = height.clamp(PANEL_CENTER_MIN_H, max_h);
+        let _ = window.set_size(tauri::LogicalSize::new(w, h));
+        let x = ox + (sw - w) / 2.0;
+        let y = oy + PANEL_CENTER_TOP;
         let _ = window.set_position(tauri::LogicalPosition::new(x, y));
     }
 }
@@ -744,12 +821,44 @@ pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), 
     if let Some(w) = app.get_webview_window(PANEL_LABEL) {
         place_panel(&w, expanded);
     }
-    if expanded {
-        let _ = crate::shortcut::unregister_shortcut(&app, submit_binding());
-    } else {
-        register_one_transient(&app, submit_binding());
+    arm_global_enter(&app, expanded);
+    Ok(())
+}
+
+/// [GRAIN] CENTER panel: the webview reports the exact content height it wants
+/// and the backend sizes the window to match (clamped to the work area), keeping
+/// it centred and top-anchored so it grows downward. No-op unless the center
+/// layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] —
+/// never resize a visible window from a sync command on the main thread
+/// (tauri#3990) — so the height feedback loop stays smooth.
+#[tauri::command]
+#[specta::specta]
+pub async fn agent_resize_panel(app: AppHandle, height: f64) -> Result<(), String> {
+    if panel_position(&app) != AgentPanelPosition::Center {
+        return Ok(());
+    }
+    let clamped = height.max(PANEL_CENTER_MIN_H);
+    if let Some(state) = app.try_state::<AgentState>() {
+        if let Ok(mut g) = state.center_height.lock() {
+            *g = clamped;
+        }
+    }
+    if let Some(w) = app.get_webview_window(PANEL_LABEL) {
+        place_panel_center(&w, clamped);
     }
     Ok(())
+}
+
+/// Register (or release) the transient global Enter for the reply panel. Global
+/// Enter = "Confirm/paste the shown reply", and it must be live ONLY for the
+/// SIDE compact card: the side-expanded conversation and the CENTER surface both
+/// own an in-window input, so a global Enter would swallow the user's keystrokes.
+fn arm_global_enter(app: &AppHandle, expanded: bool) {
+    if !expanded && panel_position(app) == AgentPanelPosition::Side {
+        register_one_transient(app, submit_binding());
+    } else {
+        let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
+    }
 }
 
 fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
@@ -761,11 +870,7 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
     if let Some(state) = app.try_state::<AgentState>() {
         state.panel_expanded.store(expanded, Ordering::SeqCst);
     }
-    if expanded {
-        let _ = crate::shortcut::unregister_shortcut(app, submit_binding());
-    } else {
-        register_one_transient(app, submit_binding());
-    }
+    arm_global_enter(app, expanded);
 
     info!("[GRAIN] agent: showing panel (expanded: {expanded})");
     let win = match app.get_webview_window(PANEL_LABEL) {
@@ -775,7 +880,9 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
         }
         None => {
             info!("[GRAIN] agent: building panel window");
-            let (w, h) = if expanded {
+            let (w, h) = if panel_position(app) == AgentPanelPosition::Center {
+                (PANEL_CENTER_W, PANEL_CENTER_START_H)
+            } else if expanded {
                 (PANEL_W, 600.0)
             } else {
                 (PANEL_COMPACT_W, PANEL_COMPACT_H)
@@ -978,19 +1085,30 @@ fn dispatch_instruction(app: AppHandle, text: String, quick: bool) {
     let _ = app.emit_to(PANEL_LABEL, "agent-instruction", ());
 }
 
-/// Show the (pre-created, warm) panel bottom-right in its loading state and arm
-/// the panel-phase transients. Idempotent — safe to call when already visible.
+/// Show the (pre-created, warm) panel in its loading state and arm the
+/// panel-phase transients. Idempotent — safe to call when already visible.
 /// Builds the window on the spot if pre-creation failed.
 fn reveal_panel_loading(app: &AppHandle) {
     register_one_transient(app, close_binding());
     register_followup_shortcut(app);
-    register_one_transient(app, submit_binding()); // compact → global Enter = Confirm
+    arm_global_enter(app, false); // SIDE compact → global Enter = Confirm; CENTER owns its input
 
+    // CENTER always owns an in-window follow-up field, so mark the panel
+    // "expanded" now that the input phase is over (the pill has submitted). This
+    // routes app dictation INTO that field while the panel is focused, instead
+    // of OS-pasting the auto-copied reply — the SIDE card gets this on expand().
+    if panel_position(app) == AgentPanelPosition::Center {
+        if let Some(state) = app.try_state::<AgentState>() {
+            state.panel_expanded.store(true, Ordering::SeqCst);
+        }
+    }
+
+    let (sw, sh) = panel_start_size(app);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         let win = match app2.get_webview_window(PANEL_LABEL) {
             Some(w) => w,
-            None => match build_window(&app2, PANEL_LABEL, PANEL_COMPACT_W, PANEL_COMPACT_H) {
+            None => match build_window(&app2, PANEL_LABEL, sw, sh) {
                 Ok(w) => {
                     place_panel(&w, false);
                     w
@@ -1017,7 +1135,8 @@ fn deliver_agent_error(app: &AppHandle, message: &str) {
     let _ = app.clone().run_on_main_thread(move || {
         let existed = app.get_webview_window(PANEL_LABEL).is_some();
         if !existed {
-            match build_window(&app, PANEL_LABEL, PANEL_COMPACT_W, PANEL_COMPACT_H) {
+            let (sw, sh) = panel_start_size(&app);
+            match build_window(&app, PANEL_LABEL, sw, sh) {
                 Ok(w) => place_panel(&w, false),
                 Err(e) => {
                     error!("[GRAIN] agent: failed to build panel for error: {e}");

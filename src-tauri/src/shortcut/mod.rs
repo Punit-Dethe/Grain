@@ -809,6 +809,19 @@ pub fn change_agent_input_type_to_expand_setting(
     Ok(())
 }
 
+/// [GRAIN] Agent reply-surface position (side card vs center-top panel).
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_panel_position_setting(
+    app: AppHandle,
+    position: settings::AgentPanelPosition,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_panel_position = position;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
 /// entries missing a name, prompt, or a non-blank matcher value — the UI enforces
 /// this too, but this guards direct invoke calls.

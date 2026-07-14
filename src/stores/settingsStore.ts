@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   AgentAutocopy,
   AgentContextMode,
+  AgentPanelPosition,
   AppMode,
   AppSettings as Settings,
   AudioDevice,
@@ -140,6 +141,8 @@ const settingUpdaters: {
     commands.changeAgentContextModeSetting(value as AgentContextMode),
   agent_input_type_to_expand: (value) =>
     commands.changeAgentInputTypeToExpandSetting(value as boolean),
+  agent_panel_position: (value) =>
+    commands.changeAgentPanelPositionSetting(value as AgentPanelPosition),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_delay_ms: (value) =>

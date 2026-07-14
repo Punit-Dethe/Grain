@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -13,10 +13,18 @@ import {
   commands,
   type AgentMessage,
   type AgentAutocopy,
+  type AgentPanelPosition,
   type AgentReply,
   type AgentSource,
 } from "@/bindings";
 import "./agent.css";
+
+/** [GRAIN] CENTER layout geometry that must agree with the backend
+ * (`agent.rs`): the panel's top is pinned this far below the work-area top and
+ * keeps this gap at the bottom, so the frontend can cap its own max-height to
+ * match what the window will actually clamp to. */
+const CENTER_TOP_OFFSET = 76;
+const CENTER_BOTTOM_GAP = 52;
 
 type Role = "user" | "assistant";
 interface ChatMessage {
@@ -113,8 +121,21 @@ export function AgentPanel() {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copyFlash, setCopyFlash] = useState(false);
+  // CENTER: which reply's copy icon is currently flashing (per-turn, not global).
+  const [flashedId, setFlashedId] = useState<string | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
   const [followupShortcut, setFollowupShortcut] = useState<string>("");
+  // Which reply surface this session is rendering — loaded at mount. `side` is
+  // the original bottom-right card; `center` is the sleek center-top panel.
+  const [position, setPosition] = useState<AgentPanelPosition>("side");
+  const positionRef = useRef<AgentPanelPosition>("side");
+  positionRef.current = position;
+  // CENTER only: false until the user opens a follow-up. While false the bottom
+  // shows the follow-up + Confirm bar; once true it's just the text field — and
+  // it stays true for the rest of the session (the bar never returns).
+  const [composing, setComposing] = useState(false);
+  const composingRef = useRef(false);
+  composingRef.current = composing;
 
   const contextRef = useRef<string | null>(null);
   const instructionRef = useRef<string>("");
@@ -126,6 +147,11 @@ export function AgentPanel() {
   const expandedRef = useRef(false);
   const busyRef = useRef(false);
   const followupRef = useRef<HTMLInputElement>(null);
+  // CENTER layout: the auto-growing follow-up textarea + the card whose height
+  // the webview reports to the backend so the window hugs its content.
+  const centerInputRef = useRef<HTMLTextAreaElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const lastReportedH = useRef(0);
   const endRef = useRef<HTMLDivElement>(null);
   const flashTimer = useRef<number | undefined>(undefined);
   const startedRef = useRef(false);
@@ -274,6 +300,13 @@ export function AgentPanel() {
     window.setTimeout(() => followupRef.current?.focus(), 60);
   }, []);
 
+  /** Open the CENTER follow-up field (button click or the continuation
+   * shortcut). Once open it stays open for the session. */
+  const startCompose = useCallback(() => {
+    setComposing(true);
+    requestAnimationFrame(() => centerInputRef.current?.focus());
+  }, []);
+
   /** Confirm: paste the displayed reply back into the source app (backend
    * closes this window, refocuses the target, and pastes). */
   const confirm = useCallback(() => {
@@ -356,6 +389,7 @@ export function AgentPanel() {
         const res = await commands.getAppSettings();
         if (res.status === "ok") {
           autocopyRef.current = res.data.agent_autocopy ?? "first";
+          setPosition(res.data.agent_panel_position ?? "side");
           const b = res.data.bindings["agent_followup"];
           if (b) setFollowupShortcut(b.current_binding);
         }
@@ -400,11 +434,18 @@ export function AgentPanel() {
     // follow-up field instead of it being OS-pasted (which would paste the
     // auto-copied AI reply). Handled here, not by the OS clipboard.
     void win.listen<string>("agent-panel-dictation", (e) => {
-      const el = followupRef.current;
+      const el =
+        positionRef.current === "center"
+          ? centerInputRef.current
+          : followupRef.current;
       const dictated = (e.payload || "").trim();
       if (!el || !dictated || busyRef.current) return;
       const sep = el.value && !el.value.endsWith(" ") ? " " : "";
       el.value = el.value + sep + dictated;
+      if (el instanceof HTMLTextAreaElement) {
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+      }
       el.focus();
     }).then((fn) => uns.push(fn));
     return () => uns.forEach((u) => u());
@@ -436,7 +477,13 @@ export function AgentPanel() {
       });
     void win
       .listen("agent-followup", () => {
-        expand();
+        // CENTER: the continuation shortcut opens (and focuses) the follow-up
+        // field. SIDE keeps its discrete expand step.
+        if (positionRef.current === "center") {
+          startCompose();
+        } else {
+          expand();
+        }
       })
       .then((fn) => {
         unFollow = fn;
@@ -445,7 +492,7 @@ export function AgentPanel() {
       unEnter?.();
       unFollow?.();
     };
-  }, [confirm, expand, win]);
+  }, [confirm, expand, startCompose, win]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -463,6 +510,169 @@ export function AgentPanel() {
     setMessages(next);
     await runConversation(next);
   }, [runConversation]);
+
+  // ── CENTER layout: unified follow-up + auto-grow plumbing ─────────────────
+  // Send a follow-up in the CENTER surface. Unlike the side card there is no
+  // discrete "expand" step — the surface is one continuously-growing thread — so
+  // the first follow-up materialises the opening exchange (instruction + the
+  // shown reply) into the conversation before appending the new turn.
+  const runFollowup = useCallback(
+    async (text: string) => {
+      if (!text.trim() || busyRef.current) return;
+      let base = messagesRef.current;
+      if (!expandedRef.current) {
+        const seed: ChatMessage[] = [];
+        if (instructionRef.current) {
+          seed.push({
+            id: rid(),
+            role: "user",
+            content: instructionRef.current,
+          });
+        }
+        const reply = versionsRef.current[versionIdxRef.current];
+        if (reply?.text) {
+          seed.push({
+            id: rid(),
+            role: "assistant",
+            content: reply.text,
+            sources: reply.sources,
+            notFound: reply.not_found,
+            confirmDelete: reply.confirm_delete,
+          });
+        }
+        base = seed;
+        setMessages(seed);
+        setExpanded(true);
+      }
+      const next: ChatMessage[] = [
+        ...base,
+        { id: rid(), role: "user", content: text },
+      ];
+      setMessages(next);
+      await runConversation(next);
+      // runConversation returns focus to the SIDE input; the center textarea
+      // is a different element, so return focus to it here.
+      centerInputRef.current?.focus();
+    },
+    [runConversation],
+  );
+
+  /** Report the card's natural height to the backend so the window hugs it. The
+   * CSS max-height caps the measurement, so the window stops growing and the
+   * thread scrolls internally past that point. */
+  const reportHeight = useCallback(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    const h = Math.ceil(el.getBoundingClientRect().height);
+    if (h > 0 && Math.abs(h - lastReportedH.current) >= 2) {
+      lastReportedH.current = h;
+      void commands.agentResizePanel(h).catch(() => {});
+    }
+  }, []);
+
+  /** Grow the follow-up textarea with its content (capped, then it scrolls). */
+  const autoGrowTextarea = useCallback(() => {
+    const el = centerInputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+  }, []);
+
+  const onCenterKey = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const el = centerInputRef.current;
+        const text = el?.value.trim() ?? "";
+        if (text) {
+          if (el) {
+            el.value = "";
+            el.style.height = "auto";
+          }
+          void runFollowup(text);
+        } else {
+          // Enter on an empty field = insert the shown answer into the app.
+          confirm();
+        }
+      }
+    },
+    [runFollowup, confirm],
+  );
+
+  /** Cap the center panel's own max-height to what the window will clamp to, so
+   * the internal scroll kicks in exactly when the window stops growing. */
+  const centerMax = useMemo(() => {
+    const avail =
+      (typeof window !== "undefined" && window.screen?.availHeight) ||
+      window.innerHeight ||
+      800;
+    return Math.max(220, Math.round(avail - CENTER_TOP_OFFSET - CENTER_BOTTOM_GAP));
+  }, []);
+
+  /** Copy one specific answer (the per-reply copy affordance). Only the copied
+   * reply's icon flashes — the flash is keyed by turn id, not global. */
+  const copyOne = useCallback((id: string, text: string) => {
+    if (!text.trim()) return;
+    commands
+      .agentCopy(text)
+      .then(() => {
+        setFlashedId(id);
+        window.clearTimeout(flashTimer.current);
+        flashTimer.current = window.setTimeout(() => setFlashedId(null), 1600);
+      })
+      .catch(() => {});
+  }, []);
+
+  // CENTER: drive the window height from the card's content. A ResizeObserver
+  // catches every source of growth (reply lands, follow-up added, textarea
+  // grows, quote expands) and reports the new height on the next frame.
+  useEffect(() => {
+    if (position !== "center") return;
+    const el = cardRef.current;
+    if (!el) return;
+    let raf = 0;
+    const measure = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(reportHeight);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
+  }, [position, reportHeight]);
+
+  // CENTER: "just start typing" opens the follow-up field, seeded with the key —
+  // the same type-to-expand feel as the summon pill. Only while the panel is
+  // focused (global keydown), not composing, and idle.
+  useEffect(() => {
+    if (position !== "center") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (composingRef.current || busyRef.current) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || e.key.length !== 1) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLInputElement
+      )
+        return;
+      e.preventDefault();
+      const ch = e.key;
+      startCompose();
+      requestAnimationFrame(() => {
+        const el = centerInputRef.current;
+        if (!el) return;
+        el.value = ch;
+        el.style.height = "auto";
+        el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [position, startCompose]);
+
 
   /** Open the memory browser — on a specific note (source chip) or unfocused
    * (the not-found escape hatch). Both go through the existing overlay command. */
@@ -567,6 +777,175 @@ export function AgentPanel() {
     ? followupShortcut.split("+").map(keycapLabel)
     : [];
   const canConfirm = !busy && displayedReply.trim().length > 0;
+
+  // ══ CENTER: the sleek center-top panel ════════════════════════════════════
+  // One continuously-growing surface (no compact/expanded split). Before the
+  // first follow-up the thread is just the shown answer; a follow-up
+  // materialises the exchange into a threaded conversation.
+  if (position === "center") {
+    const thread: ChatMessage[] = expanded
+      ? messages
+      : !busy && displayedReply
+        ? [
+            {
+              id: "a0",
+              role: "assistant",
+              content: displayedReply,
+              sources: compactSources,
+              notFound: compactNotFound,
+              confirmDelete: compactConfirmDelete,
+            },
+          ]
+        : [];
+    const hasAnswer = thread.some((m) => m.role === "assistant");
+    // Redo re-runs the first instruction only (there are no versions once the
+    // conversation branches), so it lives under the sole pre-follow-up answer.
+    const canRedo = !expanded && !busy && versions.length > 0;
+    // The shortcut reads as one unit, e.g. "Alt Q" — never split into chips.
+    const shortcutLabel = shortcutParts.join(" ");
+    const lastIdx = thread.length - 1;
+
+    return (
+      <div className="agent-panel-root">
+        <div
+          ref={cardRef}
+          className="agc-card agc-center"
+          style={{ maxHeight: centerMax }}
+        >
+          {/* Top edge: a fade to black so content dissolves under the rim, plus
+              a whisper-quiet close that only surfaces on hover. No brand chrome. */}
+          <div className="agc-c-fade" aria-hidden="true" />
+          <button
+            type="button"
+            className="agc-c-x"
+            title={t("agent.escCue")}
+            onClick={() => void win.close()}
+          >
+            <X size={12} />
+          </button>
+
+          {/* Content — grows with the conversation, scrolls past the max. */}
+          <div className="agc-c-scroll">
+            {quoteText && !expanded && (
+              <div
+                className={`agc-c-prompt ${quoteOpen ? "is-open" : ""}`}
+                onClick={() => setQuoteOpen((v) => !v)}
+                role="button"
+                tabIndex={-1}
+              >
+                {quoteText}
+              </div>
+            )}
+
+            {error ? (
+              <div className="agc-error">{error}</div>
+            ) : thread.length === 0 && busy ? (
+              <div className="agent-typing" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            ) : (
+              thread.map((m, idx) => (
+                <div key={m.id} className={`agc-c-turn is-${m.role}`}>
+                  {m.role === "user" ? (
+                    <div className="agc-c-user">{m.content}</div>
+                  ) : (
+                    <>
+                      <div className="agc-c-answer">{m.content}</div>
+                      {renderEvidence(m.sources ?? [], m.notFound ?? false)}
+                      {m.confirmDelete && renderConfirmDelete(m.confirmDelete)}
+                      {/* Per-reply tools — a hairline divider + quiet icons,
+                          revealed on hover, directly beneath the answer. */}
+                      <div className="agc-c-tools">
+                        <button
+                          type="button"
+                          className={`agc-c-tool ${flashedId === m.id ? "is-flash" : ""}`}
+                          onClick={() => copyOne(m.id, m.content)}
+                          title={t("agent.copyReply")}
+                        >
+                          {flashedId === m.id ? (
+                            <Check size={13} />
+                          ) : (
+                            <Copy size={13} />
+                          )}
+                        </button>
+                        {canRedo && idx === lastIdx && (
+                          <button
+                            type="button"
+                            className="agc-c-tool"
+                            onClick={retry}
+                            title={t("agent.retry")}
+                          >
+                            <RotateCcw size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))
+            )}
+
+            {thread.length > 0 && busy && (
+              <div className="agent-typing" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Bottom: JUST the text field once composing; otherwise the quiet
+              follow-up + shortcut (left) and Confirm on the first reply (right). */}
+          {composing ? (
+            <div className="agc-c-compose">
+              <textarea
+                ref={centerInputRef}
+                rows={1}
+                className="agc-c-textarea"
+                disabled={busy}
+                placeholder={
+                  busy
+                    ? t("agent.followupWaiting")
+                    : t("agent.followupPlaceholder")
+                }
+                onInput={autoGrowTextarea}
+                onKeyDown={onCenterKey}
+              />
+            </div>
+          ) : hasAnswer ? (
+            <div className="agc-c-bar">
+              <button
+                type="button"
+                className="agc-c-followup"
+                disabled={busy}
+                onClick={startCompose}
+              >
+                {t("agent.askFollowup")}
+                {shortcutLabel && (
+                  <span className="agc-c-kbd">{shortcutLabel}</span>
+                )}
+              </button>
+              <span className="agc-spacer" />
+              {!expanded && (
+                <button
+                  type="button"
+                  className="agc-c-insert"
+                  disabled={!canConfirm}
+                  onClick={confirm}
+                  title={t("agent.confirmHint")}
+                >
+                  {t("agent.confirm")}
+                </button>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
 
   // ── COMPACT: the reference reply card ─────────────────────────────────────
   if (!expanded) {

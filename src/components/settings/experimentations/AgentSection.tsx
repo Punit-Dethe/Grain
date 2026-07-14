@@ -1,5 +1,9 @@
 import React from "react";
-import type { AgentAutocopy, AgentContextMode } from "@/bindings";
+import type {
+  AgentAutocopy,
+  AgentContextMode,
+  AgentPanelPosition,
+} from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
@@ -19,6 +23,11 @@ const CONTEXT_OPTIONS: { value: AgentContextMode; label: string }[] = [
   { value: "full", label: "Full field text" },
 ];
 
+const POSITION_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
+  { value: "side", label: "Side card" },
+  { value: "center", label: "Center panel (beta)" },
+];
+
 /** [GRAIN] Agent settings, consolidated into two groups so single controls no
  * longer each get their own heading: Replies (auto-copy, the follow-up
  * shortcut, Quick Agent) and Input & context (type-to-expand + what the Agent
@@ -29,12 +38,34 @@ export const AgentSection: React.FC = () => {
   const quick = getSetting("agent_quick_enabled") ?? false;
   const contextMode = getSetting("agent_context_mode") ?? "off";
   const typeToExpand = getSetting("agent_input_type_to_expand") ?? true;
+  const panelPosition = getSetting("agent_panel_position") ?? "side";
 
   return (
     <div className="space-y-6">
       <SettingsGroup
+        title="Reply surface"
+        info="Where the Agent's answer appears after you submit. The side card sits in the bottom-right corner; the center panel opens near the top of the screen, hugs its content, and grows downward as the conversation lengthens."
+      >
+        <SettingContainer
+          title="Position"
+          description="'Side card' is the original bottom-right reply card. 'Center panel' is the sleeker center-top surface that grows with your conversation up to a maximum height, then scrolls. The center panel is still in development."
+          descriptionMode="tooltip"
+          grouped
+        >
+          <Dropdown
+            options={POSITION_OPTIONS}
+            selectedValue={panelPosition}
+            disabled={isUpdating("agent_panel_position")}
+            onSelect={(v) =>
+              updateSetting("agent_panel_position", v as AgentPanelPosition)
+            }
+          />
+        </SettingContainer>
+      </SettingsGroup>
+
+      <SettingsGroup
         title="Replies"
-        info="How the Agent hands its replies back to you. Confirm (Enter on the reply card) always pastes the shown reply into the app you summoned the Agent from."
+        info="How the Agent hands its replies back to you. Confirm always pastes the shown reply into the app you summoned the Agent from."
       >
         <SettingContainer
           title="Auto-copy replies"

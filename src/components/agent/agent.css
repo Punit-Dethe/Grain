@@ -763,6 +763,272 @@
   border-radius: 999px;
 }
 
+/* ══ CENTER — the sleek center-top panel ════════════════════════════════════
+ * A single near-black surface anchored top-centre that hugs its content and
+ * grows downward (the webview reports its height; the backend sizes the window).
+ * No brand chrome: a top fade dissolves content under the rim, tools sit under
+ * each reply, and the bottom is either the follow-up bar or just the field. */
+.agc-card.agc-center {
+  position: relative;
+  height: auto; /* hug content — the window is sized to match */
+  max-height: 680px; /* overridden inline per screen; enables internal scroll */
+  gap: 0;
+  padding: 0;
+  background: #0e0e11;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Top fade — content dissolves to black under the rim (the top line stays). */
+.agc-c-fade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 30px;
+  z-index: 4;
+  pointer-events: none;
+  border-radius: 20px 20px 0 0;
+  background: linear-gradient(180deg, #0e0e11 28%, rgba(14, 14, 17, 0) 100%);
+}
+
+/* Whisper-quiet close — surfaces only on hover. */
+.agc-c-x {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.4);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s ease, background 0.12s ease, color 0.12s ease;
+}
+.agc-center:hover .agc-c-x {
+  opacity: 1;
+}
+.agc-c-x:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: var(--agc-ink);
+}
+
+/* Content stream — grows, then scrolls once the card hits its max-height. */
+.agc-c-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 24px 18px 6px;
+}
+
+/* The captured question / selection, shown once above the first answer. */
+.agc-c-prompt {
+  flex: none;
+  margin-bottom: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--agc-muted);
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.agc-c-prompt.is-open {
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
+
+.agc-c-turn {
+  display: flex;
+  flex-direction: column;
+}
+.agc-c-turn.is-user {
+  margin-top: 5px;
+}
+/* User follow-ups read as quiet right-aligned bubbles. */
+.agc-c-user {
+  align-self: flex-end;
+  max-width: 86%;
+  padding: 8px 13px;
+  border-radius: 14px 14px 4px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* The answer is the hero: larger, full-ink, no container. */
+.agc-c-answer {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--agc-ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Per-reply tools: a hairline divider + quiet icons directly below the answer.
+ * Kept in a compact fixed strip so hovering never reshuffles the layout (which
+ * would resize the window). Gray by default, brighter on hover. */
+.agc-c-tools {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  height: 20px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+.agc-c-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--agc-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s ease, background 0.12s ease, color 0.12s ease;
+}
+.agc-c-turn:hover .agc-c-tool {
+  opacity: 0.62;
+}
+.agc-c-tool:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--agc-ink);
+}
+.agc-c-tool.is-flash {
+  opacity: 1;
+  color: var(--green);
+}
+
+/* Bottom bar (before composing): follow-up + shortcut left, Confirm right. */
+.agc-c-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 9px 12px 12px;
+}
+.agc-c-followup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 6px 0 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--agc-muted);
+  font-family: var(--agc-body-font);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.agc-c-followup:hover:not(:disabled) {
+  color: var(--agc-ink);
+  background: rgba(255, 255, 255, 0.05);
+}
+.agc-c-followup:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+/* The shortcut reads as ONE unit (e.g. "Alt Q"), never split into chips. */
+.agc-c-kbd {
+  font-family: var(--agc-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.6px;
+  color: var(--agc-muted);
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  white-space: nowrap;
+}
+.agc-c-insert {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 15px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--agc-ink);
+  font-family: var(--agc-body-font);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.agc-c-insert:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.17);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.agc-c-insert:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Bottom (once composing): JUST the field — the textarea IS the field. */
+.agc-c-compose {
+  flex: none;
+  padding: 8px 12px 12px;
+}
+.agc-c-textarea {
+  display: block;
+  width: 100%;
+  resize: none;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 13px;
+  outline: none;
+  background: rgba(255, 255, 255, 0.05);
+  font-family: var(--agc-body-font);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--agc-ink);
+  max-height: 132px;
+  overflow-y: auto;
+  padding: 9px 13px;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+.agc-c-textarea:focus {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.07);
+}
+.agc-c-textarea::placeholder {
+  color: rgba(255, 255, 255, 0.32);
+}
+.agc-c-textarea:disabled {
+  opacity: 0.6;
+}
+
+/* Center scrollbars (match the card's quiet palette). */
+.agc-c-scroll::-webkit-scrollbar,
+.agc-c-textarea::-webkit-scrollbar {
+  width: 6px;
+}
+.agc-c-scroll::-webkit-scrollbar-thumb,
+.agc-c-textarea::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+}
+
 @keyframes agent-pulse {
   0%,
   100% {

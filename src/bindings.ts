@@ -250,6 +250,10 @@ async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<nu
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] Auto-categorization: route captured notes into existing Grain folders
+ * (AUTO-CATEGORIZATION-PLAN.md). Off by default.
+ */
 async changeGrainSpaceAutoCategorizeSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_grain_space_auto_categorize_setting", { enabled }) };
@@ -317,6 +321,10 @@ async grainSpaceListCards() : Promise<Result<NoteCard[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The existing Grain folders (collections that hold notes) — the candidate
+ * categories the frontend shows when suggesting where a note belongs.
+ */
 async grainSpaceListFolders() : Promise<Result<string[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_list_folders") };
@@ -325,6 +333,11 @@ async grainSpaceListFolders() : Promise<Result<string[], string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * File a note into a Grain subfolder (or back to the Grain root when `folder`
+ * is null/empty) — the accept action for an auto-categorization suggestion, or
+ * a manual re-file. Returns the moved note.
+ */
 async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Note, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_move_note", { id, folder }) };
@@ -561,6 +574,20 @@ async grainSpaceSemanticSearch(query: string) : Promise<Result<Note[], string>> 
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Run one Grain Recall turn for the overlay's chat rail. This is the SAME
+ * retrieval + synthesis brain the voice Recall pill drives
+ * (`recall::run_turn`) — hybrid retrieve, memories block, bounded
+ * `search_memory` tool loop, `SOURCES:`/`NOT_FOUND`/`ACTION:` tail — only now
+ * fed by messages typed into the in-window chat instead of the summon panel.
+ * 
+ * Deliberately NOT gated on `AgentMode`: that mode is fixed by whichever voice
+ * binding fired, but the chat rail is a distinct surface that always means
+ * Recall, so it calls `run_turn` directly. `run_turn` still gates on the master
+ * toggle and returns friendly prose for an empty corpus. The chat maintains its
+ * own message history frontend-side and sends the whole thread each turn (the
+ * same shape `agent_run` receives).
+ */
 async grainSpaceRecallTurn(messages: AgentMessage[]) : Promise<Result<AgentReply, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_recall_turn", { messages }) };
@@ -569,6 +596,13 @@ async grainSpaceRecallTurn(messages: AgentMessage[]) : Promise<Result<AgentReply
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Clear the shared Grain Recall session registry (the stable `Mn` memory ids).
+ * The chat rail calls this before the first turn of a NEW conversation,
+ * mirroring the reset the voice pill performs on each fresh summon — so a fresh
+ * thread never inherits M-numbers from a previous one. Rendered source chips
+ * carry their own note ids, so clearing the registry never breaks past turns.
+ */
 async grainSpaceRecallReset() : Promise<void> {
     await TAURI_INVOKE("grain_space_recall_reset");
 },
@@ -768,6 +802,17 @@ async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<nul
 async changeAgentInputTypeToExpandSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_agent_input_type_to_expand_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Agent reply-surface position (side card vs center-top panel).
+ */
+async changeAgentPanelPositionSetting(position: AgentPanelPosition) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_panel_position_setting", { position }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1044,6 +1089,22 @@ async agentRun(messages: AgentMessage[], context: string | null) : Promise<Resul
 async agentSetPanelMode(expanded: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("agent_set_panel_mode", { expanded }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] CENTER panel: the webview reports the exact content height it wants
+ * and the backend sizes the window to match (clamped to the work area), keeping
+ * it centred and top-anchored so it grows downward. No-op unless the center
+ * layout is active. ASYNC for the same reason as [`agent_set_panel_mode`] —
+ * never resize a visible window from a sync command on the main thread
+ * (tauri#3990) — so the height feedback loop stays smooth.
+ */
+async agentResizePanel(height: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("agent_resize_panel", { height }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1609,6 +1670,13 @@ export type AgentMessage = {
  */
 role: string; content: string }
 /**
+ * [GRAIN] Where the Agent reply surface appears. `Side` (default) is the
+ * original bottom-right card that grows into a right-side conversation.
+ * `Center` is the sleek center-top panel that hugs its content and grows
+ * downward as the conversation lengthens (up to a max height, then scrolls).
+ */
+export type AgentPanelPosition = "side" | "center"
+/**
  * The panel's per-turn reply. `text` is the display answer (any Recall
  * convention line already stripped). `sources` + `not_found` drive Recall's
  * evidence footer / escape hatch (RECALL-PLAN §6); Assist always returns an
@@ -1785,6 +1853,12 @@ scrap_that_enabled?: boolean;
  */
 agent_input_type_to_expand?: boolean; 
 /**
+ * [GRAIN] Where the Agent reply surface appears: the original bottom-right
+ * `side` card, or the sleek center-top `center` panel that hugs its content
+ * and grows downward. Default `side`; the center panel is in development.
+ */
+agent_panel_position?: AgentPanelPosition; 
+/**
  * [GRAIN] Grain Space master gate. OFF by default and OFF is truly
  * zero-overhead: no shortcuts register, no directories are created, no
  * DB opens, no models load. Disabling never deletes on-disk data.
@@ -1829,7 +1903,7 @@ grain_space_vault_path?: string;
  * Grain only ever creates/edits files under this folder; the rest of the
  * vault is read-only (searchable, never written).
  */
-grain_space_vault_folder?: string;
+grain_space_vault_folder?: string; 
 /**
  * [GRAIN] Auto-categorization (AUTO-CATEGORIZATION-PLAN.md). When ON, a
  * captured note is routed into the best-fitting existing Grain folder via
@@ -1965,15 +2039,17 @@ timestamp: number; todo_tags?: TodoTag[]; reminder_state?: ReminderState; is_pin
  */
 export type NoteCard = { id: string; title: string; tldr: string; timestamp: number; is_pinned: boolean; reminder_state: ReminderState; 
 /**
- * The note's folder path relative to its browse origin (the Grain home
- * folder for grain notes, the vault root for foreign ones), with `/`
+ * The note's subfolder path INSIDE the Grain folder (the Grain home prefix
+ * is stripped, so the folder itself is never a collection), with `/`
  * separators so the sidebar can render a nested tree. `None` = the note
- * sits loose at that origin (shown under "Notes").
+ * sits loose directly in the Grain folder (shown under "Notes").
  */
 folder: string | null; 
 /**
- * True = a foreign vault file (Obsidian-owned): read-only in the editor,
- * and grouped below the divider in the loose "Notes" list.
+ * True = authored OUTSIDE Grain (an Obsidian file inside the Grain folder
+ * with no `grain_id` yet). Still fully editable — Grain adopts it on first
+ * edit; the flag only groups it below the divider in the loose "Notes"
+ * list. (Legacy field name kept for the wire schema.)
  */
 readonly: boolean }
 export type OverlayPosition = "none" | "top" | "bottom" | 
