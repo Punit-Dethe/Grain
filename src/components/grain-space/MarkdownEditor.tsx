@@ -343,12 +343,9 @@ const editorTheme = EditorView.theme({
   "&.cm-focused": { outline: "none" },
   ".cm-content": {
     fontFamily: "var(--body)",
-    // Roomier leading + a readable measure (~64 chars) so long lines wrap for
-    // comfort instead of spanning the whole sheet.
     lineHeight: "1.75",
     letterSpacing: "0.001em",
     padding: "6px 0 48px",
-    maxWidth: "42rem",
     caretColor: "var(--orange)",
   },
   ".cm-line": { padding: "1px 0" },
