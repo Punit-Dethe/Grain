@@ -1381,7 +1381,6 @@
 }
 
 @keyframes gs-chat-blink {
-
   0%,
   80%,
   100% {
@@ -1504,12 +1503,71 @@
   padding-bottom: 3px;
 }
 
-/* Table rows — subtle banded slab. */
+/* Table rows (raw edit view) — subtle banded slab shown while the caret is
+ * inside the table; the rendered grid below takes over once it leaves. */
 .gs-edit .cm-line.gs-cm-tablerow {
   background: var(--code-bg);
   font-family: var(--mono);
   font-size: 12.5px;
   letter-spacing: -0.2px;
+}
+
+/* Rendered GFM table (caret outside) — a real grid; click any cell to edit. */
+.gs-edit .gs-cm-tablewrap {
+  margin: 10px 0;
+  overflow-x: auto;
+  cursor: text;
+}
+
+.gs-edit .gs-cm-table {
+  border-collapse: collapse;
+  max-width: 100%;
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+
+.gs-edit .gs-cm-table th,
+.gs-edit .gs-cm-table td {
+  border: 1px solid var(--line);
+  padding: 5px 11px;
+  text-align: left;
+  vertical-align: top;
+  color: var(--ink);
+}
+
+.gs-edit .gs-cm-table th {
+  background: var(--code-bg);
+  font-weight: 640;
+}
+
+.gs-edit .gs-cm-table code.gs-cm-tcode {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  background: var(--mono-inline-bg);
+  border-radius: 4px;
+  padding: 0.5px 4px;
+}
+
+.gs-edit .gs-cm-table mark.gs-cm-thl {
+  background: var(--hl-mark);
+  border-radius: 3px;
+  padding: 0 2px;
+  color: inherit;
+}
+
+.gs-edit .gs-cm-table .gs-cm-tlink,
+.gs-edit .gs-cm-table .gs-cm-twlink {
+  color: var(--orange);
+}
+
+.gs-edit .gs-cm-table .gs-cm-tlink {
+  text-decoration: underline;
+}
+
+/* Thematic break — the `---` text is concealed; this line draws the rule. */
+.gs-edit .cm-line.gs-cm-hr {
+  border-bottom: 1px solid var(--line);
+  margin: 6px 0;
 }
 
 /* Plain blockquote — hidden `>` marker replaced by a soft left spine. */

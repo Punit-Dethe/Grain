@@ -19,6 +19,7 @@ import {
 } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { grainMarkdownExtensions, grainTags } from "./markdownExtensions";
+import { grainTableField } from "./tableExtension";
 import {
   insertBlock,
   insertLink,
@@ -197,6 +198,26 @@ const richDecorations = ViewPlugin.fromClass(
                   from: ln.from,
                   to: ln.from,
                   deco: Decoration.line({ class: cls }),
+                });
+              }
+              return;
+            }
+            // Thematic break (`---`, `***`, `___`) → a real rule off the
+            // cursor's line; the raw dashes return for editing when the caret
+            // lands on it. (Tables render as full blocks via grainTableField —
+            // a StateField, since block widgets are illegal from a plugin.)
+            if (node.name === "HorizontalRule") {
+              const ln = doc.lineAt(node.from);
+              if (!active.has(ln.number)) {
+                decos.push({
+                  from: ln.from,
+                  to: ln.from,
+                  deco: Decoration.line({ class: "gs-cm-hr" }),
+                });
+                decos.push({
+                  from: node.from,
+                  to: node.to,
+                  deco: Decoration.replace({}),
                 });
               }
               return;
@@ -446,6 +467,7 @@ function MarkdownEditor(
         }),
         syntaxHighlighting(mdHighlight),
         richDecorations,
+        grainTableField,
         editorTheme,
         EditorView.lineWrapping,
         cmPlaceholder(placeholder),
