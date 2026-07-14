@@ -792,7 +792,7 @@
   background: linear-gradient(180deg, #0e0e11 28%, rgba(14, 14, 17, 0) 100%);
 }
 
-/* Whisper-quiet close — surfaces only on hover. */
+/* Visible close control, kept subtle against the dark panel. */
 .agc-c-x {
   position: absolute;
   top: 8px;
@@ -806,35 +806,13 @@
   border: none;
   border-radius: 50%;
   background: transparent;
-  color: rgba(255, 255, 255, 0.4);
+  color: rgba(255, 255, 255, 0.58);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.14s ease, background 0.12s ease, color 0.12s ease;
-}
-.agc-center:hover .agc-c-x {
-  opacity: 1;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .agc-c-x:hover {
   background: rgba(255, 255, 255, 0.09);
   color: var(--agc-ink);
-}
-
-/* A restrained counterweight to the close control; presentational only. */
-.agc-c-label {
-  position: absolute;
-  top: 8px;
-  left: 12px;
-  z-index: 5;
-  display: inline-flex;
-  align-items: center;
-  height: 22px;
-  color: rgba(255, 255, 255, 0.48);
-  font-family: var(--agc-mono);
-  font-size: 9px;
-  font-weight: 600;
-  letter-spacing: 0.65px;
-  line-height: 1;
-  pointer-events: none;
 }
 
 /* Content stream — grows, then scrolls once the card hits its max-height. */

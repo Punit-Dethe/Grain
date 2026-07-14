@@ -25,7 +25,6 @@ import "./agent.css";
  * match what the window will actually clamp to. */
 const CENTER_TOP_OFFSET = 76;
 const CENTER_BOTTOM_GAP = 52;
-const CENTER_AGENT_LABEL = "Grain Agent";
 
 type Role = "user" | "assistant";
 interface ChatMessage {
@@ -813,12 +812,8 @@ export function AgentPanel() {
           className="agc-card agc-center"
           style={{ maxHeight: centerMax }}
         >
-          {/* Top edge: a fade to black so content dissolves under the rim, plus
-              a whisper-quiet close that only surfaces on hover. No brand chrome. */}
+          {/* Top edge: a fade to black so content dissolves under the rim. */}
           <div className="agc-c-fade" aria-hidden="true" />
-          <div className="agc-c-label" aria-hidden="true">
-            {CENTER_AGENT_LABEL}
-          </div>
           <button
             type="button"
             className="agc-c-x"
