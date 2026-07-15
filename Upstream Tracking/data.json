@@ -14,6 +14,20 @@
     "pr": "1675"
   },
   {
+    "date": "Jul 15, 2026",
+    "commit": "Declutter model cards (only show quantization label on modelcard in debug mode) (#1685)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1685"
+  },
+  {
+    "date": "Jul 15, 2026",
+    "commit": "fix: prevent history audio players from playing simultaneously (#1665)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1665"
+  },
+  {
     "date": "Jul 12, 2026",
     "commit": "transcribe 0.1.3 (#1664)",
     "status": "Merged",
