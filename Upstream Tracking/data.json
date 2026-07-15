@@ -1,5 +1,19 @@
 [
   {
+    "date": "Jul 15, 2026",
+    "commit": "fix(models): handle Hugging Face linked size headers (#1678)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1678"
+  },
+  {
+    "date": "Jul 15, 2026",
+    "commit": "bump tauri version and Mac dock fixes (#1675)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1675"
+  },
+  {
     "date": "Jul 12, 2026",
     "commit": "transcribe 0.1.3 (#1664)",
     "status": "Merged",
