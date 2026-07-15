@@ -964,7 +964,16 @@
     "fmtLink": "Link  ·  Ctrl+K",
     "fmtTable": "Table",
     "fmtCodeBlock": "Code block",
-    "fmtRule": "Divider"
+    "fmtRule": "Divider",
+    "save": "Save",
+    "folderDescEmpty": "Add a description to file notes here better",
+    "folderDescEdit": "Edit description",
+    "folderDescPlaceholder": "What belongs in this collection? e.g. “Work at Acme — projects, meetings, deadlines.”",
+    "folderDescSuggest": "Suggest",
+    "folderDescSuggesting": "Thinking…",
+    "suggestFileHere": "File in #{{folder}}?",
+    "suggestAccept": "File it",
+    "suggestDismiss": "Not now"
   },
   "overlay": {
     "transcribing": "Transcribing...",

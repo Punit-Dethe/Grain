@@ -67,6 +67,19 @@ export function GrainSpaceOverlay() {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [banner, setBanner] = useState<ModelBanner | null>(null);
 
+  // Auto-categorization (AUTO-CATEGORIZATION-PLAN.md): folder routing
+  // descriptions + pending medium-confidence suggestions. Loaded only when the
+  // feature is on, so an off install pays nothing.
+  const [autoCategorize, setAutoCategorize] = useState(false);
+  const [descriptions, setDescriptions] = useState<Map<string, string>>(
+    new Map(),
+  );
+  const [suggestions, setSuggestions] = useState<Map<string, string>>(
+    new Map(),
+  );
+  const autoCatRef = useRef(false);
+  autoCatRef.current = autoCategorize;
+
   const queryRef = useRef("");
   const modeRef = useRef<SearchMode>("exact");
   const selectedRef = useRef<Note | null>(null);
@@ -236,8 +249,21 @@ export function GrainSpaceOverlay() {
     adopt(blankDraft(), false);
   }, [adopt, flushSave]);
 
+  /** Reload folder descriptions + pending suggestions. No-op when the feature
+   * is off (nothing to route), so it never adds calls to a plain install. */
+  const loadMeta = useCallback(async () => {
+    if (!autoCatRef.current) return;
+    const [descRes, sugRes] = await Promise.all([
+      commands.grainSpaceFolderDescriptions(),
+      commands.grainSpacePendingSuggestions(),
+    ]);
+    if (descRes.status === "ok") setDescriptions(new Map(descRes.data));
+    if (sugRes.status === "ok") setSuggestions(new Map(sugRes.data));
+  }, []);
+
   /** Run the current browse/search and (optionally) refresh the open note. */
-  const refresh = useCallback(async (refreshSelected = false) => {
+  const refresh = useCallback(
+    async (refreshSelected = false) => {
     const q = queryRef.current.trim();
     if (!q) {
       const list = await commands.grainSpaceListCards();
@@ -247,6 +273,7 @@ export function GrainSpaceOverlay() {
       }
       setCards(list.data);
       setResults([]);
+      void loadMeta();
     } else {
       let result;
       if (modeRef.current === "semantic") {
@@ -286,6 +313,64 @@ export function GrainSpaceOverlay() {
         }
       }
     }
+    },
+    [loadMeta],
+  );
+
+  /** Set/clear a collection's routing description (optimistic). */
+  const setFolderDescription = useCallback(
+    async (folder: string, description: string) => {
+      setDescriptions((prev) => {
+        const next = new Map(prev);
+        if (description) next.set(folder, description);
+        else next.delete(folder);
+        return next;
+      });
+      const res = await commands.grainSpaceSetFolderDescription(
+        folder,
+        description,
+      );
+      if (res.status !== "ok") {
+        console.error("Grain Space: set description failed:", res.error);
+        void loadMeta(); // reconcile the optimistic update
+      }
+    },
+    [loadMeta],
+  );
+
+  /** Ask the backend to propose a description from the folder's notes. */
+  const suggestFolderDescription = useCallback(async (folder: string) => {
+    const res = await commands.grainSpaceSuggestFolderDescription(folder);
+    return res.status === "ok" ? res.data : "";
+  }, []);
+
+  /** Accept a pending route: file the note and drop the chip. */
+  const acceptSuggestion = useCallback(
+    async (id: string) => {
+      setSuggestions((prev) => {
+        const next = new Map(prev);
+        next.delete(id);
+        return next;
+      });
+      const res = await commands.grainSpaceAcceptSuggestion(id);
+      if (res.status !== "ok") {
+        console.error("Grain Space: accept suggestion failed:", res.error);
+        void loadMeta();
+        return;
+      }
+      void refresh(true); // the note moved — refresh its folder chip
+    },
+    [loadMeta, refresh],
+  );
+
+  /** Dismiss a pending route without moving the note. */
+  const dismissSuggestion = useCallback(async (id: string) => {
+    setSuggestions((prev) => {
+      const next = new Map(prev);
+      next.delete(id);
+      return next;
+    });
+    await commands.grainSpaceDismissSuggestion(id);
   }, []);
 
   // Mount: settings + focus-note handoff + first listing + event wiring.
@@ -321,6 +406,11 @@ export function GrainSpaceOverlay() {
         if (settings.status === "ok") {
           setSemanticAvailable(settings.data.grain_space_semantic ?? false);
           setIsObsidian(settings.data.grain_space_backend === "obsidian");
+          const auto = settings.data.grain_space_auto_categorize ?? false;
+          // Set the ref eagerly so the first loadMeta this mount isn't gated out
+          // by the not-yet-applied state update.
+          autoCatRef.current = auto;
+          setAutoCategorize(auto);
         }
         const focus = await commands.grainSpaceTakeFocusNote();
         const list = await commands.grainSpaceListCards();
@@ -329,6 +419,7 @@ export function GrainSpaceOverlay() {
           return;
         }
         setCards(list.data);
+        void loadMeta();
         const target = focus
           ? (list.data.find((c) => c.id === focus) ?? list.data[0])
           : list.data[0];
@@ -345,7 +436,7 @@ export function GrainSpaceOverlay() {
     return () => {
       unlistens.forEach((p) => void p.then((fn) => fn()));
     };
-  }, [adopt, flushSave, refresh]);
+  }, [adopt, flushSave, refresh, loadMeta]);
 
   // Debounced search-as-you-type (semantic waits a bit longer per keystroke).
   useEffect(() => {
@@ -483,6 +574,8 @@ export function GrainSpaceOverlay() {
   const searching = query.trim().length > 0;
   const selectedFolder =
     (selected && cardById.get(selected.id)?.folder) ?? null;
+  const selectedSuggestion =
+    (selected && suggestions.get(selected.id)) ?? null;
 
   /** Notes carrying a live (armed/fired) reminder, ordered upcoming-first then
    * most-recently-past — the source for the sidebar dock and calendar view. */
@@ -515,10 +608,15 @@ export function GrainSpaceOverlay() {
           results={results}
           selectedId={selected?.id ?? null}
           calendarOpen={calendarOpen}
+          descriptions={descriptions}
           onOpenCalendar={() => setCalendarOpen(true)}
           onSelectCard={(card) => void selectCard(card)}
           onSelectResult={(note) => void selectResult(note)}
           onCreate={() => void newNote()}
+          onSetDescription={(folder, desc) =>
+            void setFolderDescription(folder, desc)
+          }
+          onSuggestDescription={suggestFolderDescription}
         />
 
         <div className="gs-main">
@@ -710,6 +808,7 @@ export function GrainSpaceOverlay() {
                 readonly={selectedReadonly}
                 isObsidian={isObsidian}
                 folder={selectedFolder}
+                suggestedFolder={selectedSuggestion}
                 onEdit={touchSelected}
                 onFlush={() => void flushSave()}
                 onTogglePin={() => void togglePin()}
@@ -717,6 +816,12 @@ export function GrainSpaceOverlay() {
                 onArmReminder={() => void armReminder()}
                 onDismissReminder={() => void dismissReminder()}
                 onOpenExternal={openExternal}
+                onAcceptSuggestion={() =>
+                  selected && void acceptSuggestion(selected.id)
+                }
+                onDismissSuggestion={() =>
+                  selected && void dismissSuggestion(selected.id)
+                }
               />
             ) : (
               <section className="gs-sheet">

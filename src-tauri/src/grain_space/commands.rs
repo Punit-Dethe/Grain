@@ -176,6 +176,110 @@ pub async fn grain_space_move_note(
     result
 }
 
+/// Every Grain collection paired with its description (the "what belongs here"
+/// evidence the router classifies against). Folders with no description return
+/// an empty string. Orphaned descriptions (folder deleted) are pruned here.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_folder_descriptions(
+    app: AppHandle,
+) -> Result<Vec<(String, String)>, String> {
+    let be = gate(&app)?;
+    blocking(move || {
+        let names = backend::list_folders(&be)?;
+        super::folder_meta::descriptions_for(&be, &names)
+    })
+    .await
+}
+
+/// Set (or clear, with an empty string) a collection's description.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_set_folder_description(
+    app: AppHandle,
+    folder: String,
+    description: String,
+) -> Result<(), String> {
+    let be = gate(&app)?;
+    blocking(move || super::folder_meta::set_description(&be, &folder, &description)).await
+}
+
+/// Propose a one-sentence description for a folder from a sample of the notes
+/// already in it — the user-triggered "Suggest" affordance. Runs only while the
+/// overlay is open (the caller is a button), so no idle RAM. Returns "" when
+/// there's nothing to sample or no usable LLM.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_suggest_folder_description(
+    app: AppHandle,
+    folder: String,
+) -> Result<String, String> {
+    let be = gate(&app)?;
+    let folder_for_cards = folder.clone();
+    // Gather light title/tldr samples of the notes in this folder (no bodies).
+    let samples = blocking(move || {
+        let cards = backend::list_cards(&be)?;
+        let samples: Vec<String> = cards
+            .into_iter()
+            .filter(|c| c.folder.as_deref() == Some(folder_for_cards.as_str()))
+            .take(14)
+            .map(|c| {
+                if c.tldr.trim().is_empty() {
+                    c.title
+                } else {
+                    format!("{} — {}", c.title, c.tldr)
+                }
+            })
+            .collect();
+        Ok(samples)
+    })
+    .await?;
+    Ok(super::capture::propose_folder_description(&app, &folder, &samples)
+        .await
+        .unwrap_or_default())
+}
+
+/// All pending `(note id, suggested folder)` routes — the medium-confidence
+/// suggestions awaiting a one-click accept/dismiss in the editor.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_pending_suggestions(
+    app: AppHandle,
+) -> Result<Vec<(String, String)>, String> {
+    let be = gate(&app)?;
+    blocking(move || Ok(super::folder_meta::suggestions(&be))).await
+}
+
+/// Accept a note's pending folder suggestion: file it there and clear the
+/// suggestion. Returns the moved note.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_accept_suggestion(app: AppHandle, id: String) -> Result<Note, String> {
+    let be = gate(&app)?;
+    let result = blocking(move || {
+        let folder = super::folder_meta::clear_suggestion(&be, &id)?
+            .ok_or_else(|| anyhow::anyhow!("no pending suggestion for {id}"))?;
+        backend::move_note_to_folder(&be, &id, Some(&folder))
+    })
+    .await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+    }
+    result
+}
+
+/// Dismiss a note's pending folder suggestion without moving it.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_dismiss_suggestion(app: AppHandle, id: String) -> Result<(), String> {
+    let be = gate(&app)?;
+    blocking(move || {
+        super::folder_meta::clear_suggestion(&be, &id)?;
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_set_pinned(

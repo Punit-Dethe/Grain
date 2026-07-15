@@ -346,6 +346,72 @@ async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Not
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Every Grain collection paired with its description (empty when unset).
+ */
+async grainSpaceFolderDescriptions() : Promise<Result<([string, string])[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_folder_descriptions") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Set (or clear, with an empty string) a collection's description.
+ */
+async grainSpaceSetFolderDescription(folder: string, description: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_set_folder_description", { folder, description }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Propose a one-sentence description for a folder from its notes (LLM).
+ */
+async grainSpaceSuggestFolderDescription(folder: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_suggest_folder_description", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * All pending `(note id, suggested folder)` routes awaiting accept/dismiss.
+ */
+async grainSpacePendingSuggestions() : Promise<Result<([string, string])[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_pending_suggestions") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Accept a note's pending folder suggestion: file it there and clear it.
+ */
+async grainSpaceAcceptSuggestion(id: string) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_accept_suggestion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Dismiss a note's pending folder suggestion without moving it.
+ */
+async grainSpaceDismissSuggestion(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_dismiss_suggestion", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async grainSpaceSearchNotes(query: string) : Promise<Result<Note[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_search_notes", { query }) };

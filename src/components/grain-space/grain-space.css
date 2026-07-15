@@ -839,6 +839,144 @@
   background: var(--line);
 }
 
+/* ── Auto-categorization: in-editor suggestion chip ─────────────────────── */
+.gs-suggest {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 26px 0;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid var(--sel-border);
+  background: var(--orange-soft);
+  border-radius: 12px;
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.gs-suggest > svg {
+  flex: none;
+  color: var(--orange);
+}
+
+.gs-suggest-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.gs-btn--tiny {
+  padding: 4px 12px;
+}
+
+.gs-suggest-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.gs-suggest-dismiss:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+/* ── Auto-categorization: per-collection routing description ─────────────── */
+.gs-folder-desc {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 2px;
+  padding-bottom: 6px;
+  padding-right: 12px;
+}
+
+.gs-folder-desc-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.gs-folder-desc-text--empty {
+  color: var(--faint);
+  font-style: italic;
+}
+
+.gs-folder-desc-edit {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 140ms ease,
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.gs-folder-desc:hover .gs-folder-desc-edit {
+  opacity: 1;
+}
+
+.gs-folder-desc-edit:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.gs-folder-desc--editing {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.gs-folder-desc-input {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--sel-border);
+  border-radius: 8px;
+  background: var(--editor-sheet, transparent);
+  padding: 6px 8px;
+  font-family: var(--body);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink);
+  outline: none;
+}
+
+.gs-folder-desc-input:focus {
+  border-color: var(--orange);
+}
+
+.gs-folder-desc-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gs-folder-desc-spacer {
+  flex: 1 1 auto;
+}
+
 .gs-tldr {
   flex: none;
   font-size: 13px;

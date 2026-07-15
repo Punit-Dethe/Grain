@@ -1,6 +1,14 @@
 import { lazy, Suspense, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { AlarmClock, ExternalLink, Lock, Pin, Trash2 } from "lucide-react";
+import {
+  AlarmClock,
+  ExternalLink,
+  FolderInput,
+  Lock,
+  Pin,
+  Trash2,
+  X,
+} from "lucide-react";
 import type { Note, ReminderState } from "@/bindings";
 import { EditorToolbar } from "./EditorToolbar";
 import type { EditorHandle } from "./MarkdownEditor";
@@ -36,6 +44,9 @@ type Props = {
   /** Active backend is the user's Obsidian vault (enables the deep link). */
   isObsidian: boolean;
   folder: string | null;
+  /** A medium-confidence auto-categorization route awaiting a one-click accept
+   * (null when the note has none). Never shown for read-only notes. */
+  suggestedFolder: string | null;
   onEdit: (note: Note) => void;
   onFlush: () => void;
   onTogglePin: () => void;
@@ -43,6 +54,8 @@ type Props = {
   onArmReminder: () => void;
   onDismissReminder: () => void;
   onOpenExternal: () => void;
+  onAcceptSuggestion: () => void;
+  onDismissSuggestion: () => void;
 };
 
 export function EditorPane({
@@ -51,6 +64,7 @@ export function EditorPane({
   readonly,
   isObsidian,
   folder,
+  suggestedFolder,
   onEdit,
   onFlush,
   onTogglePin,
@@ -58,6 +72,8 @@ export function EditorPane({
   onArmReminder,
   onDismissReminder,
   onOpenExternal,
+  onAcceptSuggestion,
+  onDismissSuggestion,
 }: Props) {
   const { t } = useTranslation();
   const editorRef = useRef<EditorHandle | null>(null);
@@ -78,6 +94,29 @@ export function EditorPane({
           </span>
         )}
       </div>
+      {!readonly && suggestedFolder && suggestedFolder !== folder && (
+        <div className="gs-suggest">
+          <FolderInput width={13} height={13} />
+          <span className="gs-suggest-text">
+            {t("grainSpaceOverlay.suggestFileHere", { folder: suggestedFolder })}
+          </span>
+          <button
+            type="button"
+            className="gs-btn gs-btn--tiny"
+            onClick={onAcceptSuggestion}
+          >
+            {t("grainSpaceOverlay.suggestAccept")}
+          </button>
+          <button
+            type="button"
+            className="gs-suggest-dismiss"
+            title={t("grainSpaceOverlay.suggestDismiss")}
+            onClick={onDismissSuggestion}
+          >
+            <X width={12} height={12} />
+          </button>
+        </div>
+      )}
       <input
         className="gs-title"
         value={note.title}

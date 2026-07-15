@@ -95,9 +95,26 @@ LLM. Centroids are inert bytes in sqlite when idle.
   capture auto-files via `vault::move_note_to_folder`. New primitives:
   `list_folders`, `move_note_to_folder` (+ `grain_space_list_folders` /
   `grain_space_move_note` commands). Gated by `grain_space_auto_categorize`
-  (off by default). Zero new RAM — no model, no background work. REMAINING for
-  P1.5: the in-editor suggestion chip for the low-confidence "suggest, one-click
-  accept" case (backend `grain_space_move_note` is ready for it).
+  (off by default). Zero new RAM — no model, no background work.
+- **P1.5 — descriptions + confidence gate + suggestion chip: ✅ SHIPPED
+  (2026-07-15).** Fixes the "news landed in Work" misfile. Two changes to the
+  same zero-extra-model call, plus a durable Grain-managed store:
+  - **Folder descriptions** (`folder_meta.rs`, JSON in app-data — NOT the
+    rebuildable index, NOT the vault): each candidate folder now rides into the
+    router prompt WITH its "what belongs here" description (the label schema;
+    Label-Description Training, arXiv:2305.02239, +17–19% over bare names).
+    Editable per-collection in the Sidebar; a "Suggest" button proposes one from
+    the folder's notes via one LLM call (`grain_space_suggest_folder_description`,
+    user-triggered → overlay-visible only). Commands
+    `grain_space_folder_descriptions` / `_set_folder_description`.
+  - **Confidence gate** (`Confidence` enum in `capture.rs`): the model returns
+    `category_confidence` (high/medium/low). HIGH auto-files silently; MEDIUM is
+    recorded as a pending suggestion (`folder_meta` suggestions map) surfaced as
+    a one-click "File in #X?" chip in `EditorPane`; LOW/none leaves the note
+    loose — a weak guess NEVER moves a file. Commands
+    `grain_space_pending_suggestions` / `_accept_suggestion` / `_dismiss_suggestion`.
+  Still zero idle RAM: descriptions/suggestions are inert JSON when the window
+  is closed; the suggest call only runs on a button press.
 - **P2 — centroids + geometric routing:** `folder_centroids` table, lazy
   refresh from `notes_vec` on window-open reconcile; cosine routing to verify/
   improve P1 suggestions; τ thresholds.

@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarDays, ChevronRight, Hash, SquarePen } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronRight,
+  Hash,
+  Pencil,
+  Sparkles,
+  SquarePen,
+} from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
@@ -88,6 +95,112 @@ function subtreeCount(node: FolderNode): number {
   return n;
 }
 
+/** Inline view/edit for a collection's routing description — the "what belongs
+ * here" evidence the auto-categorizer classifies against (folder_meta.rs). A
+ * blank one invites a first description; "Suggest" proposes one from the
+ * folder's notes via one LLM call. Shown only for the folder that's expanded. */
+function FolderDescription({
+  folder,
+  description,
+  pad,
+  onSet,
+  onSuggest,
+}: {
+  folder: string;
+  description: string;
+  pad: number;
+  onSet: (folder: string, desc: string) => void;
+  onSuggest: (folder: string) => Promise<string>;
+}) {
+  const { t } = useTranslation();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(description);
+  const [busy, setBusy] = useState(false);
+
+  if (!editing) {
+    return (
+      <div className="gs-folder-desc" style={{ paddingLeft: pad }}>
+        <span
+          className={
+            description
+              ? "gs-folder-desc-text"
+              : "gs-folder-desc-text gs-folder-desc-text--empty"
+          }
+        >
+          {description || t("grainSpaceOverlay.folderDescEmpty")}
+        </span>
+        <button
+          type="button"
+          className="gs-folder-desc-edit"
+          title={t("grainSpaceOverlay.folderDescEdit")}
+          onClick={() => {
+            setDraft(description);
+            setEditing(true);
+          }}
+        >
+          <Pencil width={11} height={11} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="gs-folder-desc gs-folder-desc--editing"
+      style={{ paddingLeft: pad }}
+    >
+      <textarea
+        className="gs-folder-desc-input"
+        value={draft}
+        autoFocus
+        rows={2}
+        spellCheck={false}
+        placeholder={t("grainSpaceOverlay.folderDescPlaceholder")}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+      <div className="gs-folder-desc-row">
+        <button
+          type="button"
+          className="gs-btn gs-btn--quiet"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const proposed = await onSuggest(folder);
+              if (proposed) setDraft(proposed);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <Sparkles width={11} height={11} />
+          {busy
+            ? t("grainSpaceOverlay.folderDescSuggesting")
+            : t("grainSpaceOverlay.folderDescSuggest")}
+        </button>
+        <span className="gs-folder-desc-spacer" />
+        <button
+          type="button"
+          className="gs-btn gs-btn--quiet"
+          onClick={() => setEditing(false)}
+        >
+          {t("grainSpaceOverlay.cancel")}
+        </button>
+        <button
+          type="button"
+          className="gs-btn"
+          onClick={() => {
+            onSet(folder, draft.trim());
+            setEditing(false);
+          }}
+        >
+          {t("grainSpaceOverlay.save")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Two reminders at rest; expands to a scrollable ~6-row list. */
 const DOCK_REST = 2;
 
@@ -154,10 +267,14 @@ type Props = {
   results: Note[];
   selectedId: string | null;
   calendarOpen: boolean;
+  /** Folder path → routing description (empty when unset). */
+  descriptions: ReadonlyMap<string, string>;
   onOpenCalendar: () => void;
   onSelectCard: (card: NoteCard) => void;
   onSelectResult: (note: Note) => void;
   onCreate: () => void;
+  onSetDescription: (folder: string, description: string) => void;
+  onSuggestDescription: (folder: string) => Promise<string>;
 };
 
 export function Sidebar({
@@ -167,10 +284,13 @@ export function Sidebar({
   results,
   selectedId,
   calendarOpen,
+  descriptions,
   onOpenCalendar,
   onSelectCard,
   onSelectResult,
   onCreate,
+  onSetDescription,
+  onSuggestDescription,
 }: Props) {
   const { t } = useTranslation();
 
@@ -273,6 +393,13 @@ export function Sidebar({
         </button>
         {open && (
           <>
+            <FolderDescription
+              folder={node.path}
+              description={descriptions.get(node.path) ?? ""}
+              pad={8 + (depth + 1) * 16}
+              onSet={onSetDescription}
+              onSuggest={onSuggestDescription}
+            />
             {subs.map((child) => renderFolder(child, depth + 1))}
             {node.notes.map((c) => cardRow(c, depth + 1))}
           </>
