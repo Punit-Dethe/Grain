@@ -1,4 +1,40 @@
-src/** merge=ours
+# Merge policy for upstream (Handy) syncs — see docs/UPSTREAM.md.
+#
+# `merge=ours` keeps Grain's version whenever a file conflicts during an
+# upstream merge. It requires the driver to be defined once per clone:
+#     git config merge.ours.driver true
+# Without that config the attribute is silently ignored and a normal
+# merge happens instead (safe fallback).
+#
+# Only list files Grain fully owns — where upstream's version is never
+# wanted. Shared code (src/, src-tauri/src/) must NOT be listed: we want
+# upstream fixes there, and real conflicts should surface.
+
+# Grain-owned docs and repo meta
+README.md          merge=ours
+AGENTS.md          merge=ours
+CLAUDE.md          merge=ours
+CRUSH.md           merge=ours
+BUILD.md           merge=ours
+CONTRIBUTING.md    merge=ours
+CONTRIBUTING_TRANSLATIONS.md merge=ours
+docs/**            merge=ours
+website/**         merge=ours
+Upstream[[:space:]]Tracking/** merge=ours
+
+# Grain-owned CI (upstream workflows do not apply to this repo)
+.github/workflows/** merge=ours
+
+# App identity: com.grain.app, no auto-updater. Review upstream conf
+# changes manually (git log upstream/main -- src-tauri/tauri.conf.json).
+src-tauri/tauri.conf.json         merge=ours
+src-tauri/tauri.windows.conf.json merge=ours
+
+# Lockfiles: keep ours during the merge, then REGENERATE
+# (bun install / cargo update -p <crate> as needed) before committing.
+bun.lock           merge=ours
+Cargo.lock         merge=ours
+src-tauri/Cargo.lock merge=ours
 
 # Font binaries must never be line-ending converted (would corrupt the file).
 *.ttf binary
