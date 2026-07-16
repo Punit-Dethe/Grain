@@ -123,4 +123,5 @@ When you make a new deliberate deviation, add it here in the same commit.
 | Date | Upstream ref | Notes |
 |---|---|---|
 | 2026-04-11 | `0392b7b` | Import baseline (grafted 2026-07-16 as `33638cc`) |
-| 2026-07-16 | 10 cherry-picks through `b00ae666` | Mic-init caches, settings salvage (reimplemented in grain-core), cancel-stalled-output (+ new cancel-generation infra), ampersands, hf-hub pin, auto timestamps (batch), tray state, 3 frontend fixes. Deferred: tauri bump (#1675), X11 push-to-talk (#1605), vsredist (#1577). |
+| 2026-07-16 | 10 cherry-picks through `b00ae666` | Mic-init caches, settings salvage (reimplemented in grain-core), cancel-stalled-output (+ new cancel-generation infra), ampersands, hf-hub pin, auto timestamps (batch), tray state, 3 frontend fixes. |
+| 2026-07-17 | `438582fc`, `f1359706`, `5a7c0eac` | The 3 deferred items: X11 push-to-talk deferral; vsredist app-local bundling (build.rs + `grain-release.yml` locator); tauri 2.10.2 → 2.11.5 with the cjpais runtime fork dropped for a tao rev pin. **Upstream backlog is now zero through v0.9.3** — every commit is Merged or Ignored with a reason in `data.json`. |

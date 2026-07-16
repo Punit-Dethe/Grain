@@ -25,14 +25,14 @@ default: 3-way merge normally, prefer upstream in the STT core.
 | `settings.rs` (src-tauri) | Rewritten: thin facade over grain-core `AppContext` | Ours always; real logic lives in `crates/grain-core` — port upstream settings fixes THERE |
 | `overlay.rs` | Rewritten: webview overlay retired, native pill only (audio-level fan-out remains) | Ours always |
 | `tray.rs` | Moderate: single branded icon (no theme/state variants), non-panicking icon load, Grain menu | Keep Grain icon model; take upstream menu/state logic |
-| `transcription_coordinator.rs` | Near-upstream (−341 = un-merged X11 fix #1605) | Merge upstream freely |
+| `transcription_coordinator.rs` | Light: Grain's `stop_with_intent` (send-to-AI) alongside upstream's PTT deferral | Merge upstream freely |
 | `lib.rs` | Moderate: Grain service bootstrap (rolling, routers, events server, pill supervisor, Grain Space) | Merge; keep the [GRAIN] bootstrap block intact |
 | `audio_toolkit/audio/recorder.rs` | Moderate: sample_cb (rolling), conditioning (high-pass+AGC), recorded_len (Prompt Record); no VadPolicy in Cmd::Start | Keep Grain hooks; take upstream capture/latency fixes |
 | `audio_toolkit/text.rs` | Moderate (+104): custom-words extensions (auto-dictionary substrate) | Merge; watch word-boundary semantics |
 | `managers/audio.rs` | Moderate: prompt_mark, cancel_generation, Grain mode handling | Merge; keep [GRAIN] fields |
 | `commands/models.rs`, `managers/history.rs`, `clipboard.rs`, `cli.rs`, `utils.rs` | Light (≤45 lines each) | Merge normally |
 | `catalog/*`, `managers/gguf_meta.rs`, `managers/model_capabilities.rs`, `managers/transcription_mock.rs`, `audio_toolkit/*mod.rs`, `resampler.rs` | Converged (≈ upstream as of v0.9.3) | Merge freely |
-| `Cargo.toml` / `build.rs` | Grain deps (grain-core, WS, embeddings) + transcribe-lib staging | Merge; never drop Grain deps |
+| `Cargo.toml` / `build.rs` | Grain deps (grain-core, WS, embeddings) + transcribe-lib staging. `[patch.crates-io]` now matches upstream (tao rev pin; the cjpais tauri-runtime fork is gone) | Merge; never drop Grain deps |
 
 ## Grain-only subsystems (no upstream counterpart — never expect upstream changes)
 

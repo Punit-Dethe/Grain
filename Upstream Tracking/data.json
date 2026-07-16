@@ -9,8 +9,8 @@
   {
     "date": "Jul 15, 2026",
     "commit": "bump tauri version and Mac dock fixes (#1675)",
-    "status": "Pending",
-    "notes": "DEFERRED: tauri dep bump needs a full build+regression pass, do as its own task",
+    "status": "Merged",
+    "notes": "tauri 2.11.5 + api/cli ^2.11; cjpais runtime fork replaced by tao rev pin; overlay Dock fix n/a (native pill)",
     "pr": "1675"
   },
   {
@@ -72,8 +72,8 @@
   {
     "date": "Jul 10, 2026",
     "commit": "fix: push-to-talk rapidly toggles recording under X11 auto-repeat (defer synthesized releases) (#1605)",
-    "status": "Pending",
-    "notes": "DEFERRED: Linux-only, +339 lines into Grain-modified transcription_coordinator",
+    "status": "Merged",
+    "notes": "Deferral gate auto-threaded ahead of Grain debounce/send-to-AI; 7 new tests pass",
     "pr": "1605"
   },
   {
@@ -317,8 +317,8 @@
   {
     "date": "Jul 02, 2026",
     "commit": "`ship vsredist directly with the app (#1577)`",
-    "status": "Pending",
-    "notes": "DEFERRED: needs a grain-release.yml decision (Grain CI, not upstream build.yml)",
+    "status": "Merged",
+    "notes": "build.rs staging cherry-picked; redist locator wired into grain-release.yml (x64) instead of upstream build.yml",
     "pr": "1577"
   },
   {
