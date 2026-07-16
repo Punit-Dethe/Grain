@@ -1,5 +1,12 @@
 [
   {
+    "date": "Jul 17, 2026",
+    "commit": "chore(i18n): update and correct Spanish translation (#1697)",
+    "status": "Merged",
+    "notes": "Conflict reconciled against Grain en structure: kept Grain-only keys (loadModels/downloadModel, multiLanguage, acceleration.whisper, flat overlay, translateToEnglish.descriptionUnsupported, acknowledgments.whisper, footer downloadUpdate/restart), skipped upstream-only keys absent from en (existingModelsTitle/showAllModels/showFewerModels, languageCount, selectModel, voiceActivityDetection, ggml ack, overlay.style/position split), took upstream's sentence-case Spanish corrections + liveLogs block (present in Grain en).",
+    "pr": "1697"
+  },
+  {
     "date": "Jul 15, 2026",
     "commit": "fix(models): handle Hugging Face linked size headers (#1678)",
     "status": "Merged",
