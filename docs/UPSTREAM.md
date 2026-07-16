@@ -37,7 +37,49 @@ The `merge=ours` rules in `.gitattributes` only work after:
 
 ```bash
 git config merge.ours.driver true
+git config rerere.enabled true      # record every conflict resolution…
+git config rerere.autoupdate true   # …and auto-replay it on recurrence
 ```
+
+`rerere` is the compounding win: a conflict resolved once (e.g. the same
+locale or Cargo.toml hunk across successive syncs) never needs manual
+resolution again on this clone.
+
+## Runbook — for any maintainer, human or AI agent
+
+Follow this sequence for every upstream item; no other context is required
+beyond this file and [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md).
+
+1. **What's pending?** Read `Upstream Tracking/data.json` (`status:
+   "Pending"`) and `Upstream Tracking/merge-report.md` (CI-generated, lists
+   the files the next full merge would conflict on).
+2. **Understand the commit.** `git show <sha>` on the upstream commit. Map
+   each touched file through the divergence map. Decide: **Merge** (Grain
+   benefits), **Ignore** (Grain replaced/removed that surface — record why),
+   or **Defer** (needs its own session; record why).
+3. **Apply.** `git cherry-pick -x <sha>` for single commits, oldest first;
+   `git merge <release-tag>` for full syncs. Resolve conflicts per the
+   divergence map. If the upstream change targets code Grain relocated
+   (e.g. settings → grain-core), reimplement it in the Grain location and
+   say so in the commit body.
+4. **Verify.** Rust: `cargo check --lib` then `cargo test --lib` in
+   `src-tauri`. Frontend: `./node_modules/.bin/tsc --noEmit`. Windows quirks
+   on the primary dev machine: unset `LOCALAPPDATA` and `TEMP`, set
+   `TMP=C:\Windows\Temp` (transcribe-cpp-sys junction workaround, see
+   `scripts/run-tauri.ts`), and build with `CARGO_TARGET_DIR=C:\gtc` — the
+   running Grain app locks the default target dir (`C:/gt`); NEVER kill the
+   user's running app to free it.
+5. **Record.** Update the entry in `data.json` (`status` + a one-line
+   `notes` saying what was adapted). If the item created a new deliberate
+   deviation, add it to the divergence map in the same commit.
+6. **Commit and push.** One commit per upstream item, keeping the
+   `(cherry picked from …)` line. The sync bot also pushes to `main` every
+   2 hours — on a rejected push, `git pull --no-rebase` and push again.
+
+Hard rules: never rebase or `git pull --rebase` (flattens the graft merge
+`33638cc` and destroys the shared ancestry); never hand-edit
+`src/bindings.ts` (generated); never re-add the Handy auto-updater or change
+the `com.grain.app` identity.
 
 ## Conflict policy by area
 

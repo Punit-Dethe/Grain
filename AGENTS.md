@@ -25,7 +25,7 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 </code_review_graph_protocol>
 
 <boundaries>
-1. **Upstream Compatibility:** Maintain compatibility with the upstream "Handy" project. Prefer extending over modifying shared code.
+1. **Upstream Compatibility:** Maintain compatibility with the upstream "Handy" project. Prefer extending over modifying shared code. For ANY upstream-sync work (merging Handy commits, resolving conflicts, assessing pending items), follow the runbook in `docs/UPSTREAM.md` and the per-file policy in `docs/UPSTREAM-DIVERGENCE.md` — do not improvise a process.
 2. **Frontend/Backend Decoupling:** All frontend→backend communication uses Tauri commands. Backend→frontend uses Tauri events. Do not blur this boundary.
 </boundaries>
 
