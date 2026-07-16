@@ -1784,6 +1784,13 @@ export type AppMatch = { kind: "process"; value: string } | { kind: "url_host"; 
  * reference into `post_process_prompts`, so a mode can be shared/exported whole.
  */
 export type AppMode = { id: string; name: string; match: AppMatch; prompt: string; enabled?: boolean }
+/**
+ * The container-level `serde(default)` (backed by the `Default` impl below)
+ * guarantees every field — including ones added in the future — falls back to
+ * its `get_default_settings()` value when missing from a stored settings
+ * object, so a partial store can never fail the whole load (upstream #1619).
+ * Field-level defaults below take precedence where present.
+ */
 export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
 /**
  * [GRAIN] Which panel is visible when the main window opens.
