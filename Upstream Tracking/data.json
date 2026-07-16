@@ -2,43 +2,43 @@
   {
     "date": "Jul 15, 2026",
     "commit": "fix(models): handle Hugging Face linked size headers (#1678)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "hf-hub fork pin bumped 63b6034->9918f11",
     "pr": "1678"
   },
   {
     "date": "Jul 15, 2026",
     "commit": "bump tauri version and Mac dock fixes (#1675)",
     "status": "Pending",
-    "notes": "",
+    "notes": "DEFERRED: tauri dep bump needs a full build+regression pass, do as its own task",
     "pr": "1675"
   },
   {
     "date": "Jul 15, 2026",
     "commit": "Declutter model cards (only show quantization label on modelcard in debug mode) (#1685)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Grain's ModelCard shows no quant label at all",
     "pr": "1685"
   },
   {
     "date": "Jul 15, 2026",
     "commit": "fix: prevent history audio players from playing simultaneously (#1665)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "AudioPlayerGroup wrapper; kept Grain list markup and copyText prop",
     "pr": "1665"
   },
   {
     "date": "Jul 15, 2026",
     "commit": "fix(model-card): prevent reselection of currently active model (#1662)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Clean cherry-pick",
     "pr": "1662"
   },
   {
     "date": "Jul 15, 2026",
     "commit": "release v0.9.3",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Upstream version bump; Grain versions independently",
     "pr": ""
   },
   {
@@ -51,8 +51,8 @@
   {
     "date": "Jul 12, 2026",
     "commit": "release v0.9.2",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Upstream version bump; Grain versions independently",
     "pr": ""
   },
   {
@@ -65,15 +65,15 @@
   {
     "date": "Jul 11, 2026",
     "commit": "Add cancel download functionality to Onboarding component (#1653)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Adapted to Grain flat onboarding layout; store/ModelCard infra already present",
     "pr": "1653"
   },
   {
     "date": "Jul 10, 2026",
     "commit": "fix: push-to-talk rapidly toggles recording under X11 auto-repeat (defer synthesized releases) (#1605)",
     "status": "Pending",
-    "notes": "",
+    "notes": "DEFERRED: Linux-only, +339 lines into Grain-modified transcription_coordinator",
     "pr": "1605"
   },
   {
@@ -114,8 +114,8 @@
   {
     "date": "Jul 09, 2026",
     "commit": "`[bugfix] keep track of current tray icon state (#1158)`",
-    "status": "Pending",
-    "notes": "Pending (Grain's native architecture modified this part of the code for the Pill UI. Kept pending for manual analysis and merge.)",
+    "status": "Merged",
+    "notes": "Kept Grain non-panicking icon load; menu now reflects real state",
     "pr": "1158"
   },
   {
@@ -128,22 +128,22 @@
   {
     "date": "Jul 09, 2026",
     "commit": "fix: cancel stalled output processing (#1614)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Added the cancel-generation infra Grain lacked; cancel now aborts in-flight LLM/paste",
     "pr": "1614"
   },
   {
     "date": "Jul 09, 2026",
     "commit": "fix: tray icon invisible on Windows with dark taskbar + light apps (#1423) (#1636)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Grain uses a single branded tray icon by design",
     "pr": "1423"
   },
   {
     "date": "Jul 08, 2026",
     "commit": "`salvage valid settings instead of resetting store on parse failure (#1631)`",
-    "status": "Pending",
-    "notes": "Pending",
+    "status": "Merged",
+    "notes": "Reimplemented in grain-core AppContext (headless store); secrets file protected; +4 tests",
     "pr": "1631"
   },
   {
@@ -212,8 +212,8 @@
   {
     "date": "Jul 08, 2026",
     "commit": "fix build",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "n/a - Grain kept its own bindings.ts typings, no optional bindings",
     "pr": ""
   },
   {
@@ -226,8 +226,8 @@
   {
     "date": "Jul 07, 2026",
     "commit": "`fix: preserve ampersands in custom words (#1569)`",
-    "status": "Pending",
-    "notes": "Pending (complex change: adds `build_match_key` + dual-lookup struct to `text.rs` + `CustomWords.tsx` frontend changes)",
+    "status": "Merged",
+    "notes": "Clean cherry-pick",
     "pr": "1569"
   },
   {
@@ -261,8 +261,8 @@
   {
     "date": "Jul 05, 2026",
     "commit": "`move to auto timestamps for all models (#1602)`",
-    "status": "Pending",
-    "notes": "Reverted / Pending (Porting this strictly caused Whisper models to collapse/return empty text when queried with an initial prompt. This broke the Agent voice query completely, leading to an empty embedding and a `Null distance` SQLite crash.)",
+    "status": "Merged",
+    "notes": "Batch path only; rolling keeps Word timestamps + coarse fallback",
     "pr": "1602"
   },
   {
@@ -296,8 +296,8 @@
   {
     "date": "Jul 03, 2026",
     "commit": "`faster mic initialization (#1582)`",
-    "status": "Pending",
-    "notes": "Pending",
+    "status": "Merged",
+    "notes": "Adapted: config/device caches + first-buffer fix rewoven around pill/rolling/conditioning; overlay part n/a (native pill)",
     "pr": "1582"
   },
   {
@@ -318,7 +318,7 @@
     "date": "Jul 02, 2026",
     "commit": "`ship vsredist directly with the app (#1577)`",
     "status": "Pending",
-    "notes": "Pending",
+    "notes": "DEFERRED: needs a grain-release.yml decision (Grain CI, not upstream build.yml)",
     "pr": "1577"
   },
   {
