@@ -1107,21 +1107,15 @@ impl TranscriptionManager {
                     model_supports_translate,
                 );
 
+                // Timestamps come from the `TimestampKind::Auto` default
+                // (upstream #1602): the crate resolves the richest supported
+                // granularity per family, which keeps whisper's long-form
+                // (>30s) decode stable with an initial prompt — the repetition
+                // loop the old explicit Segment/None selection guarded against.
                 let run_options = RunOptions {
                     task: run_plan.task,
                     language: run_plan.language,
                     target_language: run_plan.target_language,
-                    // Whisper-family long-form (>30s) decode degenerates into a
-                    // repetition loop when an initial prompt is set AND timestamps
-                    // are off — a shared whisper.cpp behavior. Handy runs
-                    // whisper.cpp with timestamps on, so request segment timestamps
-                    // here too for parity, which keeps multi-window decode stable.
-                    // Only whisper advertises InitialPrompt; other arches keep None.
-                    timestamps: if takes_prompt {
-                        TimestampKind::Segment
-                    } else {
-                        TimestampKind::None
-                    },
                     family,
                     ..Default::default()
                 };
