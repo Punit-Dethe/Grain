@@ -347,7 +347,9 @@ async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Not
 }
 },
 /**
- * Every Grain collection paired with its description (empty when unset).
+ * Every Grain collection paired with its description (the "what belongs here"
+ * evidence the router classifies against). Folders with no description return
+ * an empty string. Orphaned descriptions (folder deleted) are pruned here.
  */
 async grainSpaceFolderDescriptions() : Promise<Result<([string, string])[], string>> {
     try {
@@ -369,7 +371,10 @@ async grainSpaceSetFolderDescription(folder: string, description: string) : Prom
 }
 },
 /**
- * Propose a one-sentence description for a folder from its notes (LLM).
+ * Propose a one-sentence description for a folder from a sample of the notes
+ * already in it — the user-triggered "Suggest" affordance. Runs only while the
+ * overlay is open (the caller is a button), so no idle RAM. Returns "" when
+ * there's nothing to sample or no usable LLM.
  */
 async grainSpaceSuggestFolderDescription(folder: string) : Promise<Result<string, string>> {
     try {
@@ -380,7 +385,8 @@ async grainSpaceSuggestFolderDescription(folder: string) : Promise<Result<string
 }
 },
 /**
- * All pending `(note id, suggested folder)` routes awaiting accept/dismiss.
+ * All pending `(note id, suggested folder)` routes — the medium-confidence
+ * suggestions awaiting a one-click accept/dismiss in the editor.
  */
 async grainSpacePendingSuggestions() : Promise<Result<([string, string])[], string>> {
     try {
@@ -391,7 +397,8 @@ async grainSpacePendingSuggestions() : Promise<Result<([string, string])[], stri
 }
 },
 /**
- * Accept a note's pending folder suggestion: file it there and clear it.
+ * Accept a note's pending folder suggestion: file it there and clear the
+ * suggestion. Returns the moved note.
  */
 async grainSpaceAcceptSuggestion(id: string) : Promise<Result<Note, string>> {
     try {
