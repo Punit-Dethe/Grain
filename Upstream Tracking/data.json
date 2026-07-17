@@ -1,5 +1,19 @@
 [
   {
+    "date": "Jul 16, 2026",
+    "commit": "chore(i18n): update and correct Spanish translation (#1697)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1697"
+  },
+  {
+    "date": "Jul 16, 2026",
+    "commit": "feat: add Hindi (hi) translation (#1701)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1701"
+  },
+  {
     "date": "Jul 15, 2026",
     "commit": "fix(models): handle Hugging Face linked size headers (#1678)",
     "status": "Merged",
