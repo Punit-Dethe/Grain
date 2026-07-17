@@ -67,8 +67,10 @@ fn store(v: &Vault, meta: &Meta) -> Result<()> {
 
 // -- descriptions ---------------------------------------------------------------
 
-/// The description for one folder, or `None` when unset/blank.
-pub fn description_of(v: &Vault, folder: &str) -> Option<String> {
+/// The description for one folder, or `None` when unset/blank. Test-only:
+/// the app reads descriptions in bulk via [`descriptions_for`].
+#[cfg(test)]
+fn description_of(v: &Vault, folder: &str) -> Option<String> {
     load(v)
         .descriptions
         .get(folder)

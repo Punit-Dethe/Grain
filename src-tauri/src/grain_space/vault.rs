@@ -312,13 +312,8 @@ fn preserved_frontmatter(existing_text: &str) -> Vec<String> {
 
 /// Render a Grain-owned note to its on-disk Markdown form. AI metadata lives
 /// ONLY here in the frontmatter; the body below stays the verbatim capture.
-fn emit_markdown(note: &Note) -> String {
-    emit_markdown_with(note, &[])
-}
-
-/// As [`emit_markdown`], but carries the user's own frontmatter lines
-/// (`preserved`) through the write so an Obsidian-authored note keeps its
-/// properties when Grain adopts it.
+/// `preserved` carries the user's own frontmatter lines through the write, so
+/// an Obsidian-authored note keeps its properties when Grain adopts it.
 fn emit_markdown_with(note: &Note, preserved: &[String]) -> String {
     let mut fm = String::from("---\n");
     fm.push_str(&format!("grain_id: {}\n", note.id));
@@ -2111,7 +2106,7 @@ mod tests {
             status: ReminderStatus::Armed,
             fire_at: Some(note.timestamp + 3_600_000),
         };
-        let md = emit_markdown(&note);
+        let md = emit_markdown_with(&note, &[]);
         let (fm, body) = split_frontmatter(&md);
         let meta = parse_grain_meta(fm.unwrap()).unwrap();
         assert_eq!(meta.grain_id, note.id);
