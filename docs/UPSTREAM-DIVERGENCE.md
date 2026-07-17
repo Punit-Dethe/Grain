@@ -21,7 +21,7 @@ default: 3-way merge normally, prefer upstream in the STT core.
 | `shortcut/mod.rs` | Heavy (+434/−128): Grain bindings (agent summon, Grain Space recall, send-to-AI), cancel shortcut lifecycle | Keep Grain; take upstream's key-handling fixes |
 | `llm_client.rs` | Heavy (+440/−80): multi-provider + smart rotation (upstream is single-provider) | Grain authoritative; upstream provider fixes usually n/a |
 | `managers/transcription.rs` | Heavy (+354/−441): transcribe-cpp unification, shared model across Batch/Rolling/Native ASR, stream router | Keep Grain; upstream decode-parameter fixes DO matter — port them |
-| `managers/model.rs` | Behind upstream (−461): Grain slimmed the manager; upstream has since grown | Review upstream changes at each sync; take what the HF-cache flow needs |
+| `managers/model.rs` | Deliberate (−461): legacy ONNX model entries (Parakeet/Moonshine/SenseVoice/GigaAM/Canary via transcribe-rs) REMOVED — every family ships as GGUF via the catalog | Ours for the model list; take upstream download/verify-flow fixes |
 | `settings.rs` (src-tauri) | Rewritten: thin facade over grain-core `AppContext` | Ours always; real logic lives in `crates/grain-core` — port upstream settings fixes THERE |
 | `overlay.rs` | Rewritten: webview overlay retired, native pill only (audio-level fan-out remains) | Ours always |
 | `tray.rs` | Moderate: single branded icon (no theme/state variants), non-panicking icon load, Grain menu | Keep Grain icon model; take upstream menu/state logic |
@@ -47,11 +47,11 @@ default: 3-way merge normally, prefer upstream in the STT core.
 | `App.tsx`, `main.tsx`, `App.css` | Grain shell/branding, decoupled-frontend boot | Keep Grain layout; take upstream logic fixes |
 | `components/settings/**` | Grain UI on Handy's component skeleton | Component-by-component judgment: Grain styling, upstream behavior fixes |
 | `components/onboarding/**` | Grain flat layout, standard-models-only filter | Same |
-| `overlay/RecordingOverlay.*` | Vestigial (native pill replaced it) | Ours; candidate for deletion |
+| `overlay/RecordingOverlay.*` | DELETED (native pill replaced the webview overlay) | Modify/delete conflict each sync → always keep deleted |
 | `stores/settingsStore.ts` | Moderate: Grain settings fields | Merge normally |
 | `bindings.ts` | GENERATED from Grain's Rust (specta) | Never hand-merge — regenerate |
 | `i18n/locales/*` | "Handy"→"Grain" string rebrand + Grain keys | Take upstream's new keys, keep Grain strings |
-| `tailwind.config.js` | Upstream deleted it (Tailwind v4); Grain still uses it | Ours until Grain migrates |
+| `tailwind.config.js` | DELETED 2026-07-17, converging with upstream: Grain was already on Tailwind v4 (`@theme` in App.css) and nothing referenced the file | Converged — conflict gone |
 
 ## Repo meta (all `merge=ours` via .gitattributes)
 
