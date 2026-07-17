@@ -1066,9 +1066,10 @@ impl TranscriptionManager {
         // Run the decode on the shared engine with crash isolation. The closure
         // probes the loaded session's real capabilities (source of truth, not
         // the ModelManager copy), builds the run plan, and returns both the text
-        // and whether the model took the custom-word prompt (gates the fuzzy
-        // post-correction below).
-        let (result, model_takes_initial_prompt) =
+        // and whether the model is whisper-family — i.e. whether it actually
+        // received the custom words as a prompt (gates the fuzzy post-correction
+        // below; must match the `family` gate exactly, see upstream #1603).
+        let (result, model_is_whisper) =
             self.with_engine_session(&active_model, |session| {
                 let model = session.model();
                 let caps = model.capabilities();
@@ -1129,16 +1130,17 @@ impl TranscriptionManager {
 
                 session
                     .run(&audio, &run_options)
-                    .map(|t| (t.text, takes_prompt))
+                    .map(|t| (t.text, model_is_whisper))
                     .map_err(|e| anyhow::anyhow!("transcribe-cpp transcription failed: {}", e))
             })?;
 
         // Apply fuzzy word correction if custom words are configured — UNLESS the
-        // words were already handed to the model as an initial prompt (whisper
-        // family). Non-whisper transcribe-cpp models can't take a prompt, so they
-        // still get fuzzy correction here.
-        let filtered_result =
-            post_process_transcription_text(result, &settings, model_takes_initial_prompt);
+        // words were already handed to the model as an initial prompt. That gate
+        // must be the SAME condition that built `family` above (whisper arch, not
+        // the InitialPrompt feature flag): a non-whisper model advertising the
+        // feature gets no prompt, so it must still get fuzzy correction here or
+        // custom words would silently do nothing (upstream #1603).
+        let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1279,14 +1281,18 @@ impl TranscriptionManager {
         self.with_engine_session(&active_model, |session| {
             let model = session.model();
             let caps = model.capabilities();
-            let takes_prompt = model.supports(Feature::InitialPrompt);
             let model_supports_translate = caps.supports_translate;
             let model_languages = caps.languages;
 
             // Whisper-family models accept a decode prompt; feed custom words +
             // the committed tail so spelling/casing stay consistent across the
-            // seam. Non-whisper arches reject the extension, so skip it there.
-            let family = if !takes_prompt {
+            // seam. Gate on the ARCH, not Feature::InitialPrompt: non-whisper
+            // arches (e.g. Voxtral Small) can advertise the feature yet reject
+            // the whisper-kind extension with INVALID_ARG (upstream #1601/#1603).
+            // Getting this wrong fails BOTH attempts below — the retry only
+            // changes timestamps, so a rejected extension kills every chunk.
+            let model_is_whisper = model.arch() == "whisper";
+            let family = if !model_is_whisper {
                 None
             } else {
                 let mut prompt = settings.custom_words.join(", ");
@@ -1332,7 +1338,9 @@ impl TranscriptionManager {
             match session.run(audio, &run_options) {
                 Ok(t) => Ok(t),
                 Err(_) => {
-                    run_options.timestamps = if takes_prompt {
+                    // Whisper long-form decode with a prompt needs timestamps on
+                    // to avoid the repetition loop; other arches take None.
+                    run_options.timestamps = if model_is_whisper {
                         TimestampKind::Segment
                     } else {
                         TimestampKind::None
