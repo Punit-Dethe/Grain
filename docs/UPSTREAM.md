@@ -13,6 +13,10 @@ upstream `0392b7b` (Handy as of 2026-04-11). Since then git can 3-way merge
 upstream properly — upstream-only changes land automatically; only files
 modified on both sides conflict.
 
+The merge base is **advanced to each release once that release is fully
+assessed** (see "Closing out a release" below). It currently sits at
+upstream `v0.9.3`.
+
 ## How to sync with upstream
 
 Never rebase onto upstream. Never reset-and-reapply. **Merge release tags.**
@@ -30,6 +34,31 @@ cargo check               # regenerate Cargo.lock files
 Merging release-by-release keeps conflicts small and attributable. The CI
 trial-merge report (`Upstream Tracking/merge-report.md`, refreshed every
 2 hours) tells you in advance exactly which files will conflict.
+
+### Closing out a release (do not skip)
+
+Cherry-picking is often the right tool for an individual fix, but
+`git cherry-pick` **records no ancestry**: git still counts that commit as
+unmerged, so the next real merge replays it onto the code you already
+adapted and conflicts with itself. (Measured 2026-07-17: 13 commits
+cherry-picked, conflict surface stayed at 57 — every one a re-litigation of
+a decision already made.)
+
+So once every commit in a release has a recorded verdict in
+`Upstream Tracking/data.json` (Merged **or** Ignored-with-reason — zero
+Pending), close the release out:
+
+```bash
+git merge -s ours vX.Y.Z      # tree untouched; ancestry says "assessed"
+```
+
+That advances the merge base, and the next sync diffs only `vX.Y.Z..next`.
+Verify the tree really is unchanged (`git diff HEAD~1 --stat` must be empty).
+
+> **The audit trail is the licence.** An `-s ours` merge over commits you
+> have *not* assessed silently locks their fixes out forever, with no
+> conflict to warn you. Never run it to "clear" a backlog — only to record
+> one you actually worked through.
 
 ### One-time per clone
 
@@ -75,6 +104,10 @@ beyond this file and [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md).
 6. **Commit and push.** One commit per upstream item, keeping the
    `(cherry picked from …)` line. The sync bot also pushes to `main` every
    2 hours — on a rejected push, `git pull --no-rebase` and push again.
+7. **Close out the release** once nothing in it is Pending — the
+   `git merge -s ours vX.Y.Z` step above. Skipping this is what makes a fork
+   drift: the work gets done but git never learns it, so every future merge
+   re-fights it.
 
 Hard rules: never rebase or `git pull --rebase` (flattens the graft merge
 `33638cc` and destroys the shared ancestry); never hand-edit
@@ -125,3 +158,4 @@ When you make a new deliberate deviation, add it here in the same commit.
 | 2026-04-11 | `0392b7b` | Import baseline (grafted 2026-07-16 as `33638cc`) |
 | 2026-07-16 | 10 cherry-picks through `b00ae666` | Mic-init caches, settings salvage (reimplemented in grain-core), cancel-stalled-output (+ new cancel-generation infra), ampersands, hf-hub pin, auto timestamps (batch), tray state, 3 frontend fixes. |
 | 2026-07-17 | `438582fc`, `f1359706`, `5a7c0eac` | The 3 deferred items: X11 push-to-talk deferral; vsredist app-local bundling (build.rs + `grain-release.yml` locator); tauri 2.10.2 → 2.11.5 with the cjpais runtime fork dropped for a tao rev pin. **Upstream backlog is now zero through v0.9.3** — every commit is Merged or Ignored with a reason in `data.json`. |
+| 2026-07-17 | `v0.9.3` closed out | Backlog-zero recorded in ancestry via `git merge -s ours v0.9.3` (tree unchanged). Merge base 2026-04-11 → v0.9.3; trial-merge conflicts 57 → **0**. Next sync starts clean from v0.9.4. |
