@@ -1386,6 +1386,15 @@ fn has_conversation(app: &AppHandle) -> bool {
 /// exactly as long as that offer does.
 fn quick_run(app: AppHandle, instruction: String) {
     std::thread::spawn(move || {
+        // The input phase is over and the quick path never shows a compact card,
+        // so the global Enter has no meaning for the rest of this run. Release it
+        // NOW rather than at the offer's teardown: the alternative leaves a
+        // system-wide Enter hotkey swallowing the user's keystrokes for the whole
+        // LLM call plus the follow-up offer — precisely while they are back in
+        // their own app typing after our paste. The panel paths re-arm it via
+        // `arm_global_enter`; nothing here needs it.
+        let _ = crate::shortcut::unregister_shortcut(&app, submit_binding());
+
         // Seed the retained conversation with the user's turn.
         if let Some(state) = app.try_state::<AgentState>() {
             if let Ok(mut g) = state.conversation.lock() {
