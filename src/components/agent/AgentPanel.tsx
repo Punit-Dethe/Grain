@@ -435,22 +435,35 @@ export function AgentPanel() {
     // follow-up field instead of it being OS-pasted (which would paste the
     // auto-copied AI reply). Handled here, not by the OS clipboard.
     void win.listen<string>("agent-panel-dictation", (e) => {
-      const el =
-        positionRef.current === "center"
-          ? centerInputRef.current
-          : followupRef.current;
       const dictated = (e.payload || "").trim();
-      if (!el || !dictated || busyRef.current) return;
-      const sep = el.value && !el.value.endsWith(" ") ? " " : "";
-      el.value = el.value + sep + dictated;
-      if (el instanceof HTMLTextAreaElement) {
-        el.style.height = "auto";
-        el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+      if (!dictated || busyRef.current) return;
+      const append = (el: HTMLTextAreaElement | HTMLInputElement | null) => {
+        if (!el) return;
+        const sep = el.value && !el.value.endsWith(" ") ? " " : "";
+        el.value = el.value + sep + dictated;
+        if (el instanceof HTMLTextAreaElement) {
+          el.style.height = "auto";
+          el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+        }
+        el.focus();
+      };
+      if (positionRef.current !== "center") {
+        append(followupRef.current);
+        return;
       }
-      el.focus();
+      // CENTER: the field only exists once composing, but the backend has
+      // already suppressed the OS paste to route the transcript here — so a
+      // dictation while the quiet bar is showing would be dropped outright.
+      // Dictating IS the request to compose: open the field, then append.
+      if (composingRef.current) {
+        append(centerInputRef.current);
+        return;
+      }
+      startCompose();
+      requestAnimationFrame(() => append(centerInputRef.current));
     }).then((fn) => uns.push(fn));
     return () => uns.forEach((u) => u());
-  }, [openRetainedConversation, startFirstIfQueued, t, win]);
+  }, [openRetainedConversation, startCompose, startFirstIfQueued, t, win]);
 
   // Esc closes — global so it works even when no field is focused.
   useEffect(() => {
