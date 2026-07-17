@@ -59,7 +59,7 @@
     "date": "Jul 11, 2026",
     "commit": "Update descriptions for Moonshine models (#1648)",
     "status": "Merged",
-    "notes": "Updated Moonshine model descriptions.",
+    "notes": "AUDIT 2026-07-17: was NOT actually applied - all 12 Moonshine models still read \"English speech-to-text\". Fixed by taking upstream catalog.json verbatim (also converged its hand-reformatting).",
     "pr": "1648"
   },
   {
@@ -360,7 +360,7 @@
     "date": "Jun 23, 2026",
     "commit": "`live debug log viewer in app (#1535)`",
     "status": "Merged",
-    "notes": "Ported live log viewer and CLI tool.",
+    "notes": "AUDIT 2026-07-17: startup WEBVIEW_LOG_STREAMING.store was missing, so the live log viewer was empty until debug mode was toggled. Fixed.",
     "pr": "1535"
   },
   {

@@ -31,7 +31,8 @@ default: 3-way merge normally, prefer upstream in the STT core.
 | `audio_toolkit/text.rs` | Moderate (+104): custom-words extensions (auto-dictionary substrate) | Merge; watch word-boundary semantics |
 | `managers/audio.rs` | Moderate: prompt_mark, cancel_generation, Grain mode handling | Merge; keep [GRAIN] fields |
 | `commands/models.rs`, `managers/history.rs`, `clipboard.rs`, `cli.rs`, `utils.rs` | Light (≤45 lines each) | Merge normally |
-| `catalog/*`, `managers/gguf_meta.rs`, `managers/model_capabilities.rs`, `managers/transcription_mock.rs`, `audio_toolkit/*mod.rs`, `resampler.rs` | Converged (≈ upstream as of v0.9.3) | Merge freely |
+| `catalog/catalog.json` | Converged 2026-07-17 (byte-identical). It is **generated upstream** by `scripts/gen_catalog.py`, which Grain deliberately does not vendor — so Grain must never hand-edit it | **Take upstream's version verbatim.** A 2026-07-17 audit found it had drifted (reformatted by hand, and upstream #1648's Moonshine language descriptions silently lost), which is exactly what hand-editing causes |
+| `catalog/mod.rs`, `managers/gguf_meta.rs`, `managers/model_capabilities.rs`, `managers/transcription_mock.rs`, `audio_toolkit/*mod.rs`, `resampler.rs` | Converged (byte-identical to upstream as of v0.9.3) | Merge freely. Do not "fix" upstream's comments here (e.g. `catalog/mod.rs` refers to `gen_catalog.py`, which is correct in upstream's tree) — editing them would re-open a conflict for no gain |
 | `Cargo.toml` / `build.rs` | Grain deps (grain-core, WS, embeddings) + transcribe-lib staging. `[patch.crates-io]` now matches upstream (tao rev pin; the cjpais tauri-runtime fork is gone) | Merge; never drop Grain deps |
 
 ## Grain-only subsystems (no upstream counterpart — never expect upstream changes)

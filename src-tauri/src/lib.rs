@@ -1002,6 +1002,13 @@ pub fn run(cli_args: CliArgs) {
             let file_log_level: log::Level = tauri_log_level.into();
             // Store the file log level in the atomic for the filter to use
             FILE_LOG_LEVEL.store(file_log_level.to_level_filter() as u8, Ordering::Relaxed);
+            // Only forward logs to the webview while debug mode is on (the live log
+            // viewer is the sole consumer and only exists in debug mode). This also
+            // honors the runtime `--debug` override applied to `settings` above.
+            // Without this the flag stays at its `false` default until debug mode
+            // is toggled, so a user who already had it enabled opens the viewer to
+            // an empty panel.
+            WEBVIEW_LOG_STREAMING.store(settings.debug_mode, Ordering::Relaxed);
             let app_handle = app.handle().clone();
             app.manage(TranscriptionCoordinator::new(app_handle.clone()));
 
