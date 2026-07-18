@@ -7,6 +7,13 @@
     "pr": "1708"
   },
   {
+    "date": "Jul 18, 2026",
+    "commit": "Add missing translations (#1709)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1709"
+  },
+  {
     "date": "Jul 16, 2026",
     "commit": "chore(i18n): update and correct Spanish translation (#1697)",
     "status": "Pending",
