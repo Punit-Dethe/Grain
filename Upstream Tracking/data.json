@@ -1,6 +1,13 @@
 [
   {
     "date": "Jul 18, 2026",
+    "commit": "drop 'direct' paste method from the ui for macOS (#1708)",
+    "status": "Merged",
+    "notes": "Clean cherry-pick. Grain PasteMethod.tsx matched upstream pre-fix structure; Grain Dropdown already supported DropdownOption.disabled, so the macOS hide-but-keep-manual-selection logic works as-is.",
+    "pr": "1708"
+  },
+  {
+    "date": "Jul 18, 2026",
     "commit": "Add missing translations (#1709)",
     "status": "Merged",
     "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) — clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) → conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
