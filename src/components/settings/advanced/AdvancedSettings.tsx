@@ -29,10 +29,10 @@ export const AdvancedSettings: React.FC = () => {
   const experimentalEnabled = getSetting("experimental_enabled") || false;
   const autoDictionary = getSetting("auto_dictionary_enabled") ?? false;
   const scrapThat = getSetting("scrap_that_enabled") ?? false;
+  const voiceCommands = getSetting("voice_commands_enabled") ?? false;
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
-
       <SettingsGroup title={t("settings.advanced.groups.app")}>
         <DefaultPanel grouped={true} />
         <ShowOverlay descriptionMode="tooltip" grouped={true} />
@@ -68,6 +68,15 @@ export const AdvancedSettings: React.FC = () => {
           checked={scrapThat}
           isUpdating={isUpdating("scrap_that_enabled")}
           onChange={(v) => updateSetting("scrap_that_enabled", v)}
+        />
+        <ToggleSwitch
+          label='Voice commands ("hey grain")'
+          description='Say "hey grain" mid-dictation in a live-streaming mode (Rolling / Native ASR) to issue a command. Follow it with "switch prompt" / "change profile" to open the prompt switcher (arrow keys cycle it), or with anything else to dictate an AI instruction (voice-triggered Prompt Record). The keyword is matched phonetically, so mistranscriptions still trigger. Off = zero overhead.'
+          descriptionMode="tooltip"
+          grouped
+          checked={voiceCommands}
+          isUpdating={isUpdating("voice_commands_enabled")}
+          onChange={(v) => updateSetting("voice_commands_enabled", v)}
         />
         <AppendTrailingSpace descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>

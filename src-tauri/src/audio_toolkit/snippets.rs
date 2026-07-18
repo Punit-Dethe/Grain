@@ -32,8 +32,8 @@ struct CompiledSnippet<'a> {
 pub(crate) struct Token<'a> {
     pub(crate) start: usize,
     pub(crate) end: usize,
-    norm: String,
-    raw: &'a str,
+    pub(crate) norm: String,
+    pub(crate) raw: &'a str,
 }
 
 /// Lowercased alphanumeric characters only. Unicode-aware so non-Latin

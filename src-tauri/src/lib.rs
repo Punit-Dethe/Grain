@@ -33,6 +33,8 @@ mod tray;
 mod tray_i18n;
 mod utils;
 mod voice_actions; // [GRAIN] voice actions: spoken trigger → open apps/sites
+mod voice_command; // [GRAIN] voice commands: mid-dictation "hey grain" wake phrase → prompt switch / record
+mod voice_switch; // [GRAIN] voice-command prompt switcher: transient arrow-key cycling UI
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -707,6 +709,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_agent_panel_position_setting,
             shortcut::change_auto_dictionary_enabled_setting,
             shortcut::change_scrap_that_enabled_setting,
+            shortcut::change_voice_commands_enabled_setting,
+            shortcut::change_voice_command_keyword_setting,
             shortcut::update_app_modes,
             shortcut::detect_active_app,
             shortcut::suspend_binding,

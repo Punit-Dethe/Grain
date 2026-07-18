@@ -207,6 +207,11 @@ pub struct TranscriptionManager {
     /// `is_model_loaded()` consults this so the model still reports "loaded"
     /// while the worker holds it.
     active_engine_lease: Arc<AtomicU64>,
+    /// [GRAIN] Voice commands: the wake gesture resolved by the current/last
+    /// Native ASR stream worker (`Some` = the user said "hey grain …"), read once
+    /// by `NativeAsrAction::stop` to split/scrub the final text. Cleared at
+    /// `start_stream` so it never leaks into the next session.
+    voice_resolution: Arc<Mutex<Option<crate::voice_command::Resolution>>>,
 }
 
 impl TranscriptionManager {
@@ -226,6 +231,7 @@ impl TranscriptionManager {
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
+            voice_resolution: Arc::new(Mutex::new(None)),
         };
 
         // Start the idle watcher
@@ -685,8 +691,18 @@ impl TranscriptionManager {
         }
         let rx = self.router.open();
 
+        // [GRAIN] Fresh voice-command resolution per session.
+        *self.voice_resolution.lock().unwrap() = None;
+
         let manager = self.clone();
         thread::spawn(move || manager.run_stream_worker(rx, worker_id));
+    }
+
+    /// [GRAIN] Take (and clear) any voice-command gesture the stream worker
+    /// resolved this session. `NativeAsrAction::stop` uses it to split/scrub the
+    /// finalized text (see `voice_command::apply_to_final`).
+    pub fn take_voice_resolution(&self) -> Option<crate::voice_command::Resolution> {
+        self.voice_resolution.lock().unwrap().take()
     }
 
     fn run_stream_worker(&self, rx: mpsc::Receiver<StreamCmd>, worker_id: u64) {
@@ -825,6 +841,18 @@ impl TranscriptionManager {
             // last reset phrase so the Studio pill restarts + collapses; the final
             // text is scrubbed again independently in `finalize_stream`.
             let scrap_that = get_settings(&self.app_handle).scrap_that_enabled;
+            // [GRAIN] Voice commands: a per-session wake detector on the committed
+            // stream text (the same interceptor Rolling uses). `None` = disabled,
+            // the exact zero-overhead path.
+            let mut wake = {
+                let s = get_settings(&self.app_handle);
+                s.voice_commands_enabled.then(|| {
+                    crate::voice_command::WakeDetector::new(
+                        crate::voice_command::WakePhrase::parse(&s.voice_command_keyword),
+                    )
+                })
+            };
+            let wake_session = crate::actions::current_session_id();
             while let Ok(cmd) = rx.recv() {
                 match cmd {
                     StreamCmd::Feed(pcm) => {
@@ -852,6 +880,22 @@ impl TranscriptionManager {
                                         (text.committed.to_string(), text.tentative.to_string())
                                     };
                                     self.emit_stream_text(&committed, &tentative);
+                                    // [GRAIN] Voice commands: scan the raw committed
+                                    // prefix (not the scrubbed preview) for the wake
+                                    // phrase and drive the pill / switcher.
+                                    if let Some(det) = wake.as_mut() {
+                                        if !det.is_resolved() {
+                                            let event = det.observe(&text.committed);
+                                            crate::voice_switch::drive(
+                                                &self.app_handle,
+                                                wake_session,
+                                                event,
+                                            );
+                                            if let Some(res) = det.resolution() {
+                                                *self.voice_resolution.lock().unwrap() = Some(res);
+                                            }
+                                        }
+                                    }
                                 }
                                 perf.maybe_log();
                             }
@@ -890,6 +934,30 @@ impl TranscriptionManager {
                             _ => 0,
                         };
                         perf.log_finalized(chars);
+                        // [GRAIN] Voice commands: one last look at the finalized text
+                        // (the wake phrase may have only fully committed now), then
+                        // commit any still-armed gesture so a trailing "hey grain
+                        // <instruction>" is honored. Stored BEFORE the reply is sent,
+                        // so `NativeAsrAction::stop` sees it via `take_voice_resolution`.
+                        if let Some(det) = wake.as_mut() {
+                            if !det.is_resolved() {
+                                if let Some(text) = &result {
+                                    let event = det.observe(text);
+                                    crate::voice_switch::drive(
+                                        &self.app_handle,
+                                        wake_session,
+                                        event,
+                                    );
+                                }
+                            }
+                            if det.is_armed() {
+                                let event = det.resolve_on_stop();
+                                crate::voice_switch::drive(&self.app_handle, wake_session, event);
+                            }
+                            if let Some(res) = det.resolution() {
+                                *self.voice_resolution.lock().unwrap() = Some(res);
+                            }
+                        }
                         finalize_reply = Some(reply);
                         finalize_result = Some(result);
                         break;

@@ -32,6 +32,7 @@ use transcribe_cpp::Transcript;
 
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
+use crate::voice_command::{Resolution, WakeDetector, WakeEvent, WakePhrase};
 
 /// Where the live preview streams to (the pill's Studio Window over the WS bus).
 /// `None` = preview OFF, which is the zero-overhead path (the worker blocks on
@@ -46,6 +47,31 @@ struct PreviewSink {
     /// Studio pill restarts + collapses. The final assembled text is scrubbed
     /// independently in the shortcut action's `finalize_transcript`.
     scrap_that: bool,
+}
+
+/// [GRAIN] The final result of a rolling session: the assembled transcript and
+/// how any voice-command gesture resolved (so the shortcut action can apply the
+/// matching text surgery on the FINAL text — see `voice_command::apply_to_final`).
+pub struct RollingOutcome {
+    pub text: String,
+    pub voice: Option<Resolution>,
+}
+
+/// [GRAIN] Voice-command side channel for a rolling session: carries the
+/// AppHandle the worker needs to drive the pill (yellow/blue) and open the
+/// prompt switcher when a wake gesture resolves. Present only when voice commands
+/// are enabled; absent = the exact zero-overhead path.
+#[derive(Clone)]
+struct CommandSink {
+    app: AppHandle,
+    session_id: u64,
+}
+
+impl CommandSink {
+    /// React to a wake-detector transition (shared with the Native ASR path).
+    fn handle(&self, event: WakeEvent) {
+        crate::voice_switch::drive(&self.app, self.session_id, event);
+    }
 }
 
 impl PreviewSink {
@@ -192,6 +218,13 @@ pub struct RollingTranscriber {
     /// [GRAIN] Mirror of `settings.scrap_that_enabled`, refreshed on each
     /// `ensure_loaded` and read at `start_session` to configure the preview sink.
     scrap_that: AtomicBool,
+    /// [GRAIN] Mirror of `settings.voice_commands_enabled`, refreshed on each
+    /// `ensure_loaded`. When set, the session runs the wake-phrase detector on the
+    /// committed transcript after each chunk (see `voice_command`).
+    voice_commands: AtomicBool,
+    /// [GRAIN] Parsed `settings.voice_command_keyword`, refreshed on each
+    /// `ensure_loaded`. The per-session detector clones it at `start_session`.
+    wake_phrase: Mutex<WakePhrase>,
 }
 
 impl RollingTranscriber {
@@ -201,6 +234,8 @@ impl RollingTranscriber {
             active: Mutex::new(None),
             conditioning: AtomicBool::new(false),
             scrap_that: AtomicBool::new(false),
+            voice_commands: AtomicBool::new(false),
+            wake_phrase: Mutex::new(WakePhrase::default()),
         }
     }
 
@@ -215,6 +250,11 @@ impl RollingTranscriber {
             .store(settings.audio_conditioning, Ordering::Relaxed);
         self.scrap_that
             .store(settings.scrap_that_enabled, Ordering::Relaxed);
+        // [GRAIN] Refresh the voice-command mirrors so the session worker (no
+        // AppHandle of its own for settings) honors the current toggle + phrase.
+        self.voice_commands
+            .store(settings.voice_commands_enabled, Ordering::Relaxed);
+        *self.wake_phrase.lock().unwrap() = WakePhrase::parse(&settings.voice_command_keyword);
         let model_id = settings.selected_model;
         if model_id.is_empty() {
             return Err("no model selected".into());
@@ -231,15 +271,27 @@ impl RollingTranscriber {
     /// it always did.
     pub fn start_session(self: &Arc<Self>, app: AppHandle, session_id: u64, preview: bool) {
         let sink = preview.then(|| PreviewSink {
-            app,
+            app: app.clone(),
             session_id,
             scrap_that: self.scrap_that.load(Ordering::Relaxed),
         });
-        let session = Arc::new(RollingSession::start(self.clone(), sink));
+        // [GRAIN] Voice commands run independently of the (opt-in) live preview:
+        // the committed transcript updates per chunk regardless, so wake detection
+        // costs one fuzzy scan of the tail with preview OFF.
+        let command = self.voice_commands.load(Ordering::Relaxed).then(|| {
+            (
+                CommandSink {
+                    app: app.clone(),
+                    session_id,
+                },
+                WakeDetector::new(self.wake_phrase.lock().unwrap().clone()),
+            )
+        });
+        let voice = command.is_some();
+        let session = Arc::new(RollingSession::start(self.clone(), sink, command));
         *self.active.lock().unwrap() = Some(session);
         log::info!(
-            "[GRAIN] rolling session started (shared engine, preview={})",
-            preview
+            "[GRAIN] rolling session started (shared engine, preview={preview}, voice_commands={voice})"
         );
     }
 
@@ -253,13 +305,14 @@ impl RollingTranscriber {
     }
 
     /// Stop the live session: flush the tail, drain the worker, return the final
-    /// assembled transcript. `None` if no session was active. Honors the
-    /// "Immediately" unload once, now that no more chunks will decode.
-    pub fn finish_session(&self) -> Option<String> {
+    /// assembled transcript plus any resolved voice-command gesture. `None` if no
+    /// session was active. Honors the "Immediately" unload once, now that no more
+    /// chunks will decode.
+    pub fn finish_session(&self) -> Option<RollingOutcome> {
         let session = self.active.lock().unwrap().take()?;
-        let text = session.finish();
+        let outcome = session.finish();
         self.tm.maybe_unload_immediately("rolling session");
-        Some(text)
+        Some(outcome)
     }
 
     /// Abort the live session without producing a transcript (cancel).
@@ -281,7 +334,7 @@ struct RollingSession {
     // without stealing it from the feed path.
     cursor: Arc<Mutex<SessionCursor>>,
     tx: Sender<Job>,
-    worker: Mutex<Option<JoinHandle<String>>>,
+    worker: Mutex<Option<JoinHandle<RollingOutcome>>>,
     frames_fed: AtomicUsize,
     chunks_emitted: AtomicUsize,
 }
@@ -301,7 +354,11 @@ const PREVIEW_MAX_TAIL_SEC: f64 = 20.0;
 const PREVIEW_MIN_TAIL_SEC: f64 = 0.8;
 
 impl RollingSession {
-    fn start(transcriber: Arc<RollingTranscriber>, preview: Option<PreviewSink>) -> Self {
+    fn start(
+        transcriber: Arc<RollingTranscriber>,
+        preview: Option<PreviewSink>,
+        command: Option<(CommandSink, WakeDetector)>,
+    ) -> Self {
         // [GRAIN] The rolling-window geometry is fixed by the research-tuned,
         // model-agnostic defaults in `RollingWindowConfig::default()` (see
         // crates/rolling-window/src/cursor.rs). There is deliberately NO user
@@ -320,6 +377,8 @@ impl RollingSession {
             // LocalAgreement-2 state for the live preview: the previous tail
             // hypothesis, so only text two consecutive decodes agree on is shown.
             let mut prev_tail_hyp: Vec<String> = Vec::new();
+            // [GRAIN] Per-session wake detector (voice commands), if enabled.
+            let mut command = command;
             loop {
                 // Preview ON polls so it can decode the tail between chunks;
                 // preview OFF blocks forever (zero overhead — no wakeups).
@@ -412,14 +471,38 @@ impl RollingSession {
                                     sink.emit(assembler.text(), "");
                                     prev_tail_hyp.clear();
                                 }
+                                // [GRAIN] Voice commands: scan the freshly-grown
+                                // committed transcript for the wake phrase and
+                                // drive the pill / switcher. One tolerant scan of
+                                // the tail; a no-op once the gesture resolves.
+                                if let Some((sink, detector)) = command.as_mut() {
+                                    if !detector.is_resolved() {
+                                        let event = detector.observe(assembler.text());
+                                        sink.handle(event);
+                                    }
+                                }
                             }
                             Err(e) => log::warn!("[GRAIN] rolling chunk transcribe failed: {e}"),
                         }
                     }
-                    Job::Finish => break,
+                    Job::Finish => {
+                        // [GRAIN] A wake phrase heard right at the end (no decisive
+                        // follow-up) commits to Record so a trailing instruction is
+                        // still honored.
+                        if let Some((sink, detector)) = command.as_mut() {
+                            if detector.is_armed() {
+                                let event = detector.resolve_on_stop();
+                                sink.handle(event);
+                            }
+                        }
+                        break;
+                    }
                 }
             }
-            assembler.text().to_string()
+            RollingOutcome {
+                text: assembler.text().to_string(),
+                voice: command.as_ref().and_then(|(_, d)| d.resolution()),
+            }
         });
         Self {
             cursor,
@@ -502,25 +585,32 @@ impl RollingSession {
         }
     }
 
-    fn finish(&self) -> String {
+    fn finish(&self) -> RollingOutcome {
         if let Some(tail) = self.cursor.lock().unwrap().stop() {
             self.chunks_emitted.fetch_add(1, Ordering::Relaxed);
             let _ = self.tx.send(Job::Chunk(tail));
         }
         let _ = self.tx.send(Job::Finish);
-        let text = match self.worker.lock().unwrap().take() {
-            Some(worker) => worker.join().unwrap_or_default(),
-            None => String::new(),
+        let outcome = match self.worker.lock().unwrap().take() {
+            Some(worker) => worker.join().unwrap_or_else(|_| RollingOutcome {
+                text: String::new(),
+                voice: None,
+            }),
+            None => RollingOutcome {
+                text: String::new(),
+                voice: None,
+            },
         };
         let frames = self.frames_fed.load(Ordering::Relaxed);
         log::info!(
-            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, final={:?}",
+            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, voice={:?}, final={:?}",
             frames,
             frames as f64 / 16_000.0,
             self.chunks_emitted.load(Ordering::Relaxed),
-            text.trim()
+            outcome.voice,
+            outcome.text.trim()
         );
-        text
+        outcome
     }
 }
 

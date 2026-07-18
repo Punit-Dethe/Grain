@@ -133,6 +133,10 @@ const settingUpdaters: {
     commands.changeAutoDictionaryEnabledSetting(value as boolean),
   scrap_that_enabled: (value) =>
     commands.changeScrapThatEnabledSetting(value as boolean),
+  voice_commands_enabled: (value) =>
+    commands.changeVoiceCommandsEnabledSetting(value as boolean),
+  voice_command_keyword: (value) =>
+    commands.changeVoiceCommandKeywordSetting(value as string),
   agent_autocopy: (value) =>
     commands.changeAgentAutocopySetting(value as AgentAutocopy),
   agent_quick_enabled: (value) =>

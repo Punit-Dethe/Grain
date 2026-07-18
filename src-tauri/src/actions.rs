@@ -1123,6 +1123,8 @@ struct CancelAction;
 impl ShortcutAction for CancelAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         utils::cancel_current_operation(app);
+        // [GRAIN] Release the voice switcher's arrow-key grab if it was open.
+        crate::voice_switch::close(app);
         // [GRAIN] tear down any rolling session + tell the pill to hide.
         if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
             rt.cancel_session();
@@ -1152,34 +1154,58 @@ struct PromptSwitchAction {
     delta: i32,
 }
 
+/// [GRAIN] Cycle the active post-processing prompt by `delta` (wrapping) and show
+/// the new title in the pill's switcher capsule. Shared by the hold-shortcut
+/// [`PromptSwitchAction`] and the voice-command arrow keys ([`VoicePromptSwitchAction`]).
+pub fn cycle_prompt(app: &AppHandle, delta: i32) {
+    let mut settings = get_settings(app);
+    let n = settings.post_process_prompts.len() as i32;
+    if n == 0 {
+        return;
+    }
+    let cur_idx = settings
+        .post_process_selected_prompt_id
+        .as_deref()
+        .and_then(|id| {
+            settings
+                .post_process_prompts
+                .iter()
+                .position(|p| p.id == id)
+        })
+        .unwrap_or(0) as i32;
+    // Wrapping modulo that stays correct for negative deltas.
+    let new_idx = (((cur_idx + delta) % n) + n) % n;
+    let chosen = &settings.post_process_prompts[new_idx as usize];
+    let chosen_id = chosen.id.clone();
+    let chosen_name = chosen.name.clone();
+
+    settings.post_process_selected_prompt_id = Some(chosen_id);
+    crate::settings::write_settings(app, settings);
+
+    // Show the new title in the pill.
+    crate::bridge::emit(app, DaemonEvent::PromptChanged { name: chosen_name });
+}
+
 impl ShortcutAction for PromptSwitchAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        let mut settings = get_settings(app);
-        let n = settings.post_process_prompts.len() as i32;
-        if n == 0 {
-            return;
-        }
-        let cur_idx = settings
-            .post_process_selected_prompt_id
-            .as_deref()
-            .and_then(|id| {
-                settings
-                    .post_process_prompts
-                    .iter()
-                    .position(|p| p.id == id)
-            })
-            .unwrap_or(0) as i32;
-        // Wrapping modulo that stays correct for negative deltas.
-        let new_idx = (((cur_idx + self.delta) % n) + n) % n;
-        let chosen = &settings.post_process_prompts[new_idx as usize];
-        let chosen_id = chosen.id.clone();
-        let chosen_name = chosen.name.clone();
+        cycle_prompt(app, self.delta);
+    }
 
-        settings.post_process_selected_prompt_id = Some(chosen_id);
-        crate::settings::write_settings(app, settings);
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
 
-        // Show the new title in the pill.
-        crate::bridge::emit(app, DaemonEvent::PromptChanged { name: chosen_name });
+// [GRAIN] Voice-command prompt switching: the transient arrow keys registered by
+// `voice_switch` while the wake-triggered switcher is open. Cycles like
+// `PromptSwitchAction`, then re-arms the switcher's idle-close timer so it stays
+// open as long as the user keeps pressing arrows.
+struct VoicePromptSwitchAction {
+    delta: i32,
+}
+
+impl ShortcutAction for VoicePromptSwitchAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        cycle_prompt(app, self.delta);
+        crate::voice_switch::bump(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -1432,6 +1458,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         shortcut::unregister_cancel_shortcut(app);
         shortcut::unregister_send_to_ai_shortcut(app);
+        // [GRAIN] Release the voice switcher's arrow-key grab if it was left open.
+        crate::voice_switch::close(app);
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
@@ -1458,17 +1486,47 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // [GRAIN] Prompt Record mark (the pill-click split point), taken before
             // draining the worker.
             let prompt_mark = rm.take_prompt_mark();
-            // Drain the rolling worker → final assembled transcript. Always done,
-            // even under Prompt Record, so the worker never leaks — its text is
-            // just unused in that case (it mixed content + instruction).
-            let rolling_text = rt.finish_session().unwrap_or_default();
+            // Drain the rolling worker → final assembled transcript + any resolved
+            // voice-command gesture. Always done, even under Prompt Record, so the
+            // worker never leaks.
+            let outcome = rt.finish_session();
+            let voice_resolution = outcome.as_ref().and_then(|o| o.voice);
+            let rolling_text = outcome.map(|o| o.text).unwrap_or_default();
 
             // [GRAIN] Prompt Record: the rolling-assembled text covers the WHOLE
             // utterance (content + spoken instruction mixed), so it can't be split.
             // Re-transcribe the two audio slices batch-style instead. This extra
             // pass only happens when the user actually clicked the pill.
             let (final_text, spoken_prompt, post_process, was_rolling) =
-                if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
+                if let Some(resolution) = voice_resolution {
+                    // [GRAIN] Voice command ("hey grain …") resolved mid-dictation.
+                    // Split/scrub the assembled transcript in TEXT space — no audio
+                    // re-slice, no second STT pass — since the phrase was detected in
+                    // the text. Record → content + spoken instruction; Switch → the
+                    // command span removed (the switch already happened live).
+                    let settings = get_settings(&ah);
+                    let phrase =
+                        crate::voice_command::WakePhrase::parse(&settings.voice_command_keyword);
+                    let cleaned =
+                        crate::voice_command::apply_to_final(&rolling_text, &phrase, resolution);
+                    let content = crate::audio_toolkit::finalize_transcript(
+                        &cleaned.content,
+                        &settings.custom_words,
+                        settings.word_correction_threshold,
+                        &settings.app_language,
+                        &settings.custom_filler_words,
+                        false,
+                        &settings.snippets,
+                        settings.scrap_that_enabled,
+                    );
+                    let has_instruction = cleaned.instruction.is_some();
+                    (
+                        content,
+                        cleaned.instruction,
+                        post_process || has_instruction,
+                        true,
+                    )
+                } else if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
                     let (content_res, spoken) =
                         crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
                     // `transcribe_split` routes through the STT dispatcher, which
@@ -1681,6 +1739,8 @@ impl ShortcutAction for NativeAsrAction {
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         shortcut::unregister_cancel_shortcut(app);
+        // [GRAIN] Release the voice switcher's arrow-key grab if it was left open.
+        crate::voice_switch::close(app);
 
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
@@ -1733,7 +1793,48 @@ impl ShortcutAction for NativeAsrAction {
             .await
             .unwrap_or_default();
 
-            let final_text = if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
+            // [GRAIN] Any voice-command gesture the stream worker resolved.
+            let voice_resolution = tm.take_voice_resolution();
+            let final_text = if matches!(
+                voice_resolution,
+                Some(crate::voice_command::Resolution::Record)
+            ) {
+                // [GRAIN] Voice-triggered Prompt Record: split the finalized stream
+                // text at the wake phrase in TEXT space (no audio re-slice), then
+                // post-process the content with the spoken instruction (AI forced on).
+                let settings = get_settings(&ah);
+                let phrase =
+                    crate::voice_command::WakePhrase::parse(&settings.voice_command_keyword);
+                let cleaned = crate::voice_command::apply_to_final(
+                    &finalized,
+                    &phrase,
+                    crate::voice_command::Resolution::Record,
+                );
+                let content = crate::voice_actions::intercept(&ah, &cleaned.content);
+                let processed =
+                    process_transcription_output(&ah, &content, true, cleaned.instruction, false)
+                        .await;
+                let ft = processed.final_text;
+                if !ft.trim().is_empty() {
+                    if let Err(e) = hm.save_entry(
+                        String::new(),
+                        content.clone(),
+                        true,
+                        processed.post_processed_text.clone(),
+                        processed.post_process_prompt.clone(),
+                    ) {
+                        error!("Failed to save Native ASR history entry: {e}");
+                    }
+                    crate::bridge::emit(
+                        &ah,
+                        DaemonEvent::AsrSessionFinal {
+                            session_id,
+                            text: ft.clone(),
+                        },
+                    );
+                }
+                ft
+            } else if let Some(m) = prompt_mark.filter(|&m| m > 0 && m < samples.len()) {
                 // [GRAIN] Prompt Record on the streaming path: the live transcript
                 // covered content + the spoken instruction together, so it can't be
                 // split. Re-transcribe the two audio slices and post-process the
@@ -1766,9 +1867,28 @@ impl ShortcutAction for NativeAsrAction {
                 }
                 ft
             } else {
+                // [GRAIN] A voice-triggered prompt Switch scrubs its command span
+                // ("hey grain switch prompt") from the finalized text; the switch
+                // itself already happened live. Speech before and after it is kept.
+                let base = if matches!(
+                    voice_resolution,
+                    Some(crate::voice_command::Resolution::Switch)
+                ) {
+                    let settings = get_settings(&ah);
+                    let phrase =
+                        crate::voice_command::WakePhrase::parse(&settings.voice_command_keyword);
+                    crate::voice_command::apply_to_final(
+                        &finalized,
+                        &phrase,
+                        crate::voice_command::Resolution::Switch,
+                    )
+                    .content
+                } else {
+                    finalized
+                };
                 // [GRAIN] Voice actions also apply to the Live streaming path: fire
                 // any spoken trigger and strip it before paste (no-op when unused).
-                let finalized = crate::voice_actions::intercept(&ah, &finalized);
+                let finalized = crate::voice_actions::intercept(&ah, &base);
                 if finalized.trim().is_empty() {
                     String::new()
                 } else {
@@ -1859,6 +1979,16 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
     map.insert(
         "prompt_prev".to_string(),
         Arc::new(PromptSwitchAction { delta: -1 }) as Arc<dyn ShortcutAction>,
+    );
+    // [GRAIN] Voice-command arrow keys (transiently registered by `voice_switch`
+    // while the wake-triggered switcher is open).
+    map.insert(
+        "voice_prompt_next".to_string(),
+        Arc::new(VoicePromptSwitchAction { delta: 1 }) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "voice_prompt_prev".to_string(),
+        Arc::new(VoicePromptSwitchAction { delta: -1 }) as Arc<dyn ShortcutAction>,
     );
     // [GRAIN] summon the Agent window.
     map.insert(

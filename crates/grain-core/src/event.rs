@@ -67,6 +67,16 @@ pub enum DaemonEvent {
         active: bool,
     },
 
+    /// [GRAIN] Voice commands: the live transcript just matched the wake phrase
+    /// ("hey grain"). Drives the pill's YELLOW listening tint while the machine
+    /// waits to disambiguate the follow-up into a prompt switch or a Prompt
+    /// Record. `active` goes false when the gesture resolves or the armed window
+    /// lapses (the pill returns to its normal orange, or flips blue for Record).
+    WakeListening {
+        session_id: u64,
+        active: bool,
+    },
+
     // -- Rolling-window progress --
     /// Intermediate assembled text after a chunk finalized.
     ChunkComplete {
