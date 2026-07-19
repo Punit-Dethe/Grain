@@ -13,6 +13,11 @@ Budgets only ever move down without ceremony: after shrinking a diff (or
 deliberately accepting a new hook), run ``python "Handy Isolation/ratchet.py"
 --update`` and commit the tightened ``budget.json`` alongside the change.
 
+**Measure after committing.** The diff is taken against ``HEAD``, not the
+working tree, so running ``--update`` with the change still unstaged records
+the *old* numbers. Commit the code first, then ``--update``, then amend or
+follow up with the budget commit.
+
 The reference is the *merge base* with ``upstream/main`` (not upstream's HEAD),
 so upstream activity never shifts Grain's numbers; only Grain commits and
 release close-outs (``git merge -s ours vX.Y.Z``) do. After a close-out the
