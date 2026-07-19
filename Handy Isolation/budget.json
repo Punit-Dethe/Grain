@@ -21,7 +21,7 @@
   "src-tauri/src/managers/audio.rs": 71,
   "src-tauri/src/managers/history.rs": 34,
   "src-tauri/src/managers/model.rs": 487,
-  "src-tauri/src/managers/transcription.rs": 749,
+  "src-tauri/src/managers/transcription.rs": 732,
   "src-tauri/src/portable.rs": 12,
   "src-tauri/src/shortcut/handy_keys.rs": 49,
   "src-tauri/src/shortcut/mod.rs": 206,
