@@ -804,21 +804,6 @@ pub struct AppSettings {
     /// resets and collapses back to the compact capsule until the next word.
     #[serde(default)]
     pub scrap_that_enabled: bool,
-    /// [GRAIN] Voice commands: when on, saying the wake phrase
-    /// ([`voice_command_keyword`](Self::voice_command_keyword), e.g. "hey grain")
-    /// mid-dictation in a live-streaming mode (Rolling / Native ASR) arms a
-    /// command listener. A following `switch/change prompt/profile` opens the
-    /// prompt switcher (arrow keys cycle it); anything else becomes a spoken AI
-    /// instruction (voice-triggered Prompt Record). Reuses the snippet matcher
-    /// with phonetic tolerance (no new engine), so OFF is zero-overhead.
-    #[serde(default)]
-    pub voice_commands_enabled: bool,
-    /// [GRAIN] The wake phrase for voice commands: an anchor word that ASR
-    /// transcribes reliably plus a keyword ("hey grain"). Matched phonetically,
-    /// so keyword mistranscriptions (grain → green / grin) still trigger. A bare
-    /// keyword is paired with the default "hey" anchor.
-    #[serde(default = "default_voice_command_keyword")]
-    pub voice_command_keyword: String,
     /// [GRAIN] Native agent input: when on (default), typing a printable key
     /// while the input is listening immediately switches it to the expanded
     /// typing card. When off, the input stays in voice mode and typing is
@@ -912,11 +897,6 @@ fn default_audio_conditioning() -> bool {
 /// users opt in explicitly (see `rolling_live_preview`).
 fn default_rolling_live_preview() -> bool {
     false
-}
-/// Default wake phrase for voice commands. "hey" is a strong, reliably
-/// transcribed anchor; the keyword is matched phonetically downstream.
-fn default_voice_command_keyword() -> String {
-    "hey grain".to_string()
 }
 fn default_translate_to_english() -> bool {
     false
@@ -1597,8 +1577,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_quick_enabled: false,
         agent_context_mode: AgentContextMode::default(),
         scrap_that_enabled: false,
-        voice_commands_enabled: false,
-        voice_command_keyword: default_voice_command_keyword(),
         agent_input_type_to_expand: true,
         agent_panel_position: AgentPanelPosition::default(),
         grain_space_enabled: false,

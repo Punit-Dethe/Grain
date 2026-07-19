@@ -749,33 +749,6 @@ pub fn change_scrap_that_enabled_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
-/// [GRAIN] Toggle voice commands (the mid-dictation "hey grain" wake phrase). Off
-/// = zero overhead (the wake detector is never constructed for a session).
-#[tauri::command]
-#[specta::specta]
-pub fn change_voice_commands_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.voice_commands_enabled = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Set the voice-command wake phrase ("hey grain"). An empty value resets
-/// to the default. Matched phonetically, so keyword mistranscriptions still fire.
-#[tauri::command]
-#[specta::specta]
-pub fn change_voice_command_keyword_setting(app: AppHandle, keyword: String) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    let trimmed = keyword.trim();
-    settings.voice_command_keyword = if trimmed.is_empty() {
-        "hey grain".to_string()
-    } else {
-        trimmed.to_string()
-    };
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
 /// [GRAIN] Toggle the silent nearby-term hints (reads focused-field unique tokens
 /// via UI Automation). Only effective when context awareness is also on.
 #[tauri::command]

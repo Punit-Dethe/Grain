@@ -596,11 +596,6 @@ struct Aura {
     /// dictating an AI instruction. The density-tracks-volume behavior is
     /// unchanged — only the palette shifts.
     prompt_recording: bool,
-    /// [GRAIN] Voice commands: while the wake phrase ("hey grain") is heard and
-    /// the machine is deciding switch-vs-record, the button pulse turns YELLOW
-    /// (from its usual orange). Transient — it clears when the gesture resolves
-    /// (back to orange, or on to the blue `prompt_recording`).
-    wake_listening: bool,
 }
 
 impl Aura {
@@ -621,7 +616,6 @@ impl Aura {
             dots: vec![NONE; ROWS * COLS],
             rng: Rng(0x9E3779B97F4A7C15),
             prompt_recording: false,
-            wake_listening: false,
         }
     }
 
@@ -766,14 +760,7 @@ impl Aura {
                 let brightness = 0.5 + 0.5 * (self.btn_angle - rdist * 1.4).sin();
                 let a = 0.04 + brightness * 0.96;
                 let idx = (BTN_ROW + lr) * COLS + (BTN_COL + lc);
-                // [GRAIN] Yellow while listening for a voice command ("hey grain"),
-                // otherwise the usual recording orange.
-                let (rr, gg, bb) = if self.wake_listening {
-                    (255, 205, 40)
-                } else {
-                    (255, 93, 30)
-                };
-                self.dots[idx] = [rr, gg, bb, (a * 255.0) as u8];
+                self.dots[idx] = [255, 93, 30, (a * 255.0) as u8];
             }
         }
     }
@@ -2061,10 +2048,6 @@ struct Remote {
     /// dictating an AI instruction. Tints the recording dots / Studio waveform blue
     /// (the sole visual indicator). Set by `PromptRecordingChanged`; reset per session.
     prompt_recording: bool,
-    /// [GRAIN] Voice commands: the wake phrase was heard and the machine is
-    /// deciding switch-vs-record. Turns the button pulse yellow. Set by
-    /// `WakeListening`; cleared when it resolves or the session ends.
-    wake_listening: bool,
     /// [GRAIN] Quick-Agent follow-up offer: the configured shortcut label while
     /// an offer is live (`AgentFollowupOffer`), else `None`. Reveals the pill
     /// with an "ASK FOLLOW-UP" riser; a click sends `PillAction::AgentFollowup`.
@@ -2102,7 +2085,6 @@ impl Default for Remote {
             mode: PillMode::Collapsed,
             streaming: false,
             prompt_recording: false,
-            wake_listening: false,
             agent_offer: None,
             agent_offer_seq: 0,
             agent_input: None,
@@ -2140,7 +2122,6 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.mode = PillMode::Collapsed;
             r.streaming = mode == SessionMode::NativeAsr;
             r.prompt_recording = false; // fresh session — never carry a prior mark's tint.
-            r.wake_listening = false; // fresh session — no lingering yellow.
             // A new session supersedes any lingering Quick-Agent follow-up offer.
             if r.agent_offer.take().is_some() {
                 r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
@@ -2152,25 +2133,14 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.state = PillState::Processing;
             r.visible = can_show(&r);
             r.prompt_recording = false; // recording over → drop the blue tint.
-            r.wake_listening = false; // recording over → drop the yellow tint.
             eprintln!("event: RecordingStopped -> processing");
         }
-        // [GRAIN] Prompt Record: the core registered the pill-click split mark.
-        // Flips the dot field / Studio waveform to the blue tint — the sole visual
-        // indicator that the user is now dictating an AI instruction.
+        // [GRAIN] Prompt Record: the core registered the pill-click / Alt+1 split
+        // mark. Flips the dot field / Studio waveform to the blue tint — the sole
+        // visual indicator that the user is now dictating an AI instruction.
         DaemonEvent::PromptRecordingChanged { active, .. } => {
             r.prompt_recording = active && r.state == PillState::Recording;
-            // Record supersedes the listening state.
-            if r.prompt_recording {
-                r.wake_listening = false;
-            }
             eprintln!("event: PromptRecordingChanged -> {}", r.prompt_recording);
-        }
-        // [GRAIN] Voice commands: the wake phrase was heard (yellow) or the gesture
-        // resolved (cleared). Only meaningful while recording.
-        DaemonEvent::WakeListening { active, .. } => {
-            r.wake_listening = active && r.state == PillState::Recording;
-            eprintln!("event: WakeListening -> {}", r.wake_listening);
         }
         DaemonEvent::ProcessingComplete { .. } | DaemonEvent::SessionCancelled { .. } => {
             // [GRAIN] Session over → back to idle. Resetting the state (not just
@@ -2350,7 +2320,6 @@ fn spawn_event_client(
                                             | DaemonEvent::PasteError { .. }
                                             | DaemonEvent::OverlayConfig { .. }
                                             | DaemonEvent::PromptRecordingChanged { .. }
-                                            | DaemonEvent::WakeListening { .. }
                                             // The follow-up offer arrives while the pill is
                                             // HIDDEN (no session) — without a wake the loop
                                             // sits in ControlFlow::Wait and the offer never
@@ -2505,9 +2474,6 @@ struct App {
     /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint — the
     /// sole visual indicator of Prompt Record.
     prompt_recording: bool,
-    /// [GRAIN] Voice-command listening active (mirrors `Remote`). Turns the button
-    /// pulse yellow while the wake gesture is being disambiguated.
-    wake_listening: bool,
     amp: Arc<AtomicU32>,
     _mic: Option<cpal::Stream>,
     sim_target: f32,
@@ -2609,7 +2575,6 @@ impl App {
             aura: Aura::new(),
             state: PillState::Idle,
             prompt_recording: false,
-            wake_listening: false,
             amp,
             _mic: None,
             sim_target: 0.5,
@@ -4285,7 +4250,6 @@ impl ApplicationHandler<UserEvent> for App {
                 self.offer_fade_close = false;
             }
             self.prompt_recording = r.prompt_recording;
-            self.wake_listening = r.wake_listening;
             self.asr = r.asr.clone();
 
             // [GRAIN] Native agent input shown/hidden by the core. Adopt it
@@ -4539,7 +4503,6 @@ impl ApplicationHandler<UserEvent> for App {
                     // collapsed recording field turns grey/light-blue, the Studio
                     // waveform turns sky blue. Density/shape are unchanged.
                     self.aura.prompt_recording = self.prompt_recording;
-                    self.aura.wake_listening = self.wake_listening;
                     if self.mode == PillMode::Studio {
                         match self.state {
                             PillState::Recording => self.aura.roll_studio_waveform(amp),

@@ -915,30 +915,6 @@ async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, str
 }
 },
 /**
- * [GRAIN] Toggle voice commands (the mid-dictation "hey grain" wake phrase). Off
- * = zero overhead (the wake detector is never constructed for a session).
- */
-async changeVoiceCommandsEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_voice_commands_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Set the voice-command wake phrase ("hey grain"). An empty value resets
- * to the default. Matched phonetically, so keyword mistranscriptions still fire.
- */
-async changeVoiceCommandKeywordSetting(keyword: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_voice_command_keyword_setting", { keyword }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
  * entries missing a name, prompt, or a non-blank matcher value — the UI enforces
  * this too, but this guards direct invoke calls.
@@ -1948,24 +1924,7 @@ agent_context_mode?: AgentContextMode;
  * is truly zero-overhead. In live-streaming modes the expanded Studio pill
  * resets and collapses back to the compact capsule until the next word.
  */
-scrap_that_enabled?: boolean; 
-/**
- * [GRAIN] Voice commands: when on, saying the wake phrase
- * ([`voice_command_keyword`](Self::voice_command_keyword), e.g. "hey grain")
- * mid-dictation in a live-streaming mode (Rolling / Native ASR) arms a
- * command listener. A following `switch/change prompt/profile` opens the
- * prompt switcher (arrow keys cycle it); anything else becomes a spoken AI
- * instruction (voice-triggered Prompt Record). Reuses the snippet matcher
- * with phonetic tolerance (no new engine), so OFF is zero-overhead.
- */
-voice_commands_enabled?: boolean; 
-/**
- * [GRAIN] The wake phrase for voice commands: an anchor word that ASR
- * transcribes reliably plus a keyword ("hey grain"). Matched phonetically,
- * so keyword mistranscriptions (grain → green / grin) still trigger. A bare
- * keyword is paired with the default "hey" anchor.
- */
-voice_command_keyword?: string; 
+scrap_that_enabled?: boolean;
 /**
  * [GRAIN] Native agent input: when on (default), typing a printable key
  * while the input is listening immediately switches it to the expanded
