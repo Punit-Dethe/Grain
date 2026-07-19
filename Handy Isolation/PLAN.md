@@ -129,3 +129,5 @@ Grain.**
 | Date | Phase | Done |
 |---|---|---|
 | 2026-07-19 | — | Plan written; baseline measured |
+| 2026-07-19 | 1 | Audio chain re-baselined (`cca5ae45`): vad/* + cli.rs at divergence **0**; recorder.rs + managers/audio.rs additive `[GRAIN]` hooks only. Recovered upstream's VadPolicy profiles, Silero LSTM reset, Stopping state, cancellable buffer. Follow-up noted: port upstream's `vad_enabled` setting into grain-core. |
+| 2026-07-19 | 2 | transcription.rs parity restored (`ced99522`): StreamPhase/StreamWorkKind/StreamPhaseEvent, stream_active + is_streaming + emit_stream_working back, event registered in lib.rs. Remaining divergence = deliberate (ONNX removal, with_engine_session, rolling chunk, scrap-that). |
