@@ -33,6 +33,99 @@ pub(crate) fn current_session_id() -> u64 {
     SESSION_ID.load(Ordering::Relaxed)
 }
 
+/// Claim the next session id. Split from [`session_started`] for the rolling
+/// path, which needs the id before the engine session opens so its live-preview
+/// events carry the same id as `RecordingStarted`.
+pub(crate) fn next_session_id() -> u64 {
+    SESSION_ID.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+/// Announce a started recording to the pill: `OverlayConfig` first so it anchors
+/// (or stays hidden when the user chose no overlay position), then
+/// `RecordingStarted`. Emitted only after capture actually starts, so a failed
+/// start never shows a pill that must be torn down.
+pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: SessionMode) {
+    crate::bridge::emit(
+        app,
+        DaemonEvent::OverlayConfig {
+            position: get_settings(app).overlay_position,
+        },
+    );
+    crate::bridge::emit(
+        app,
+        DaemonEvent::RecordingStarted { session_id, mode },
+    );
+}
+
+/// [`next_session_id`] + [`emit_session_started`] — the whole pill-start step for
+/// capture paths that don't need the id beforehand (batch, Native ASR).
+pub(crate) fn session_started(app: &AppHandle, mode: SessionMode) -> u64 {
+    let session_id = next_session_id();
+    emit_session_started(app, session_id, mode);
+    session_id
+}
+
+/// Stop pressed: the pill switches to "processing" while the transcript is
+/// produced. Returns the session id to carry into the async tail so the matching
+/// [`emit_processing_complete`] reuses it.
+pub(crate) fn emit_recording_stopped(app: &AppHandle) -> u64 {
+    let session_id = current_session_id();
+    crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
+    session_id
+}
+
+/// Processing finished (success, empty result, or error) → the pill hides. Every
+/// terminal branch of a capture path must call this exactly once, or the pill
+/// stays up.
+pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
+    crate::bridge::emit(
+        app,
+        DaemonEvent::ProcessingComplete {
+            session_id,
+            text: String::new(),
+        },
+    );
+}
+
+/// Register the shortcuts that live only while a recording session is open:
+/// the master chords (Alt+1 Prompt Record / Alt+2 switcher) and — unless
+/// push-to-talk owns the key — send-to-AI. Both defer their actual registration
+/// internally, which is what keeps this safe to call from inside a
+/// `ShortcutAction`.
+pub(crate) fn register_session_shortcuts(app: &AppHandle) {
+    crate::master_key::register_chords(app);
+    if !get_settings(app).push_to_talk {
+        shortcut::register_send_to_ai_shortcut(app);
+    }
+}
+
+/// Release what [`register_session_shortcuts`] took.
+pub(crate) fn unregister_session_shortcuts(app: &AppHandle) {
+    shortcut::unregister_send_to_ai_shortcut(app);
+    crate::master_key::unregister_chords(app);
+}
+
+/// Tear down every Grain surface a cancel has to clear, on top of upstream's
+/// `utils::cancel_current_operation`: the master chords, any rolling session,
+/// and any live stream worker (whose command channel would otherwise stay open
+/// and block the next `start_stream`) — then hide the pill. The discarded
+/// transcript is intentionally dropped.
+pub(crate) fn cancel_session(app: &AppHandle) {
+    crate::master_key::unregister_chords(app);
+    if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
+        rt.cancel_session();
+    }
+    if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
+        tm.cancel_stream();
+    }
+    crate::bridge::emit(
+        app,
+        DaemonEvent::SessionCancelled {
+            session_id: current_session_id(),
+        },
+    );
+}
+
 // Prompt switcher — cycles the active post-processing prompt and shows
 // the new title in the pill. A tap shortcut: the switch happens on press.
 struct PromptSwitchAction {
@@ -255,7 +348,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // event below carries. Preview is opt-in; when off the worker takes the
         // zero-overhead path and no preview events fire.
         let preview = get_settings(app).rolling_live_preview;
-        let sid = SESSION_ID.fetch_add(1, Ordering::Relaxed) + 1;
+        let sid = next_session_id();
         rt.start_session(app.clone(), sid, preview);
         {
             let rm = Arc::clone(&rm);
@@ -302,33 +395,19 @@ impl ShortcutAction for RealtimeTranscribeAction {
         }
 
         if recording_error.is_none() {
-            // B2: tell the pill recording has started (it shows + animates).
-            // OverlayConfig first so the pill anchors (or stays hidden if None).
             // With the live preview on, use the Studio Window (NativeAsr) so the
             // growing caption has room; otherwise the compact dictation pill.
-            crate::bridge::emit(
+            emit_session_started(
                 app,
-                DaemonEvent::OverlayConfig {
-                    position: get_settings(app).overlay_position,
-                },
-            );
-            crate::bridge::emit(
-                app,
-                DaemonEvent::RecordingStarted {
-                    session_id: sid,
-                    mode: if preview {
-                        SessionMode::NativeAsr
-                    } else {
-                        SessionMode::Dictation
-                    },
+                sid,
+                if preview {
+                    SessionMode::NativeAsr
+                } else {
+                    SessionMode::Dictation
                 },
             );
             shortcut::register_cancel_shortcut(app);
-            // Master chords for the live session.
-            crate::master_key::register_chords(app);
-            if !get_settings(app).push_to_talk {
-                shortcut::register_send_to_ai_shortcut(app);
-            }
+            register_session_shortcuts(app);
         } else {
             rt.cancel_session();
             change_tray_icon(app, TrayIconState::Idle);
@@ -358,19 +437,16 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         shortcut::unregister_cancel_shortcut(app);
-        shortcut::unregister_send_to_ai_shortcut(app);
-        // Release the master chords (and the switcher, if open).
-        crate::master_key::unregister_chords(app);
+        unregister_session_shortcuts(app);
         let ah = app.clone();
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
         let tm = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let rt = Arc::clone(&app.state::<Arc<crate::rolling::RollingTranscriber>>());
 
-        // B2: stop pressed → pill enters "processing" while the remaining
-        // chunks finalize (recording overrode processing until now).
-        let session_id = SESSION_ID.load(Ordering::Relaxed);
-        crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
+        // Stop pressed → pill enters "processing" while the remaining chunks
+        // finalize (recording overrode processing until now).
+        let session_id = emit_recording_stopped(app);
 
         change_tray_icon(app, TrayIconState::Transcribing);
         // C1: pill already showed "processing" from RecordingStopped above.
@@ -491,13 +567,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             }
 
             // B2: processing finished → pill hides.
-            crate::bridge::emit(
-                &ah,
-                DaemonEvent::ProcessingComplete {
-                    session_id,
-                    text: String::new(),
-                },
-            );
+            emit_processing_complete(&ah, session_id);
         });
     }
 }
@@ -577,23 +647,12 @@ impl ShortcutAction for NativeAsrAction {
         }
 
         if recording_error.is_none() {
-            let sid = SESSION_ID.fetch_add(1, Ordering::Relaxed) + 1;
-            crate::bridge::emit(
-                app,
-                DaemonEvent::OverlayConfig {
-                    position: get_settings(app).overlay_position,
-                },
-            );
-            crate::bridge::emit(
-                app,
-                DaemonEvent::RecordingStarted {
-                    session_id: sid,
-                    mode: SessionMode::NativeAsr,
-                },
-            );
+            session_started(app, SessionMode::NativeAsr);
 
             shortcut::register_cancel_shortcut(app);
-            // Master chords for the live session.
+            // Master chords for the live session. Native ASR has no send-to-AI
+            // binding, so the chords are registered directly rather than via
+            // `register_session_shortcuts`.
             crate::master_key::register_chords(app);
         } else {
             // Tear down the pending stream worker so its channel doesn't leak
@@ -630,8 +689,7 @@ impl ShortcutAction for NativeAsrAction {
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
         let binding_id = binding_id.to_string();
 
-        let session_id = SESSION_ID.load(Ordering::Relaxed);
-        crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
+        let session_id = emit_recording_stopped(app);
 
         change_tray_icon(app, TrayIconState::Transcribing);
         rm.remove_mute();
@@ -755,13 +813,7 @@ impl ShortcutAction for NativeAsrAction {
             }
 
             // processing finished → pill/Studio Window hides.
-            crate::bridge::emit(
-                &ah,
-                DaemonEvent::ProcessingComplete {
-                    session_id,
-                    text: String::new(),
-                },
-            );
+            emit_processing_complete(&ah, session_id);
         });
     }
 }

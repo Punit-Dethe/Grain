@@ -15,7 +15,7 @@ use crate::utils;
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use grain_core::PostProcessProvider;
-use grain_core::{DaemonEvent, SessionMode}; // [GRAIN] pill lifecycle events
+use grain_core::SessionMode; // [GRAIN] pill session mode
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -24,8 +24,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-// [GRAIN] The session id + Grain's own actions live in `grain_actions.rs`.
-use crate::grain_actions::SESSION_ID;
 use tauri::Manager;
 use tauri::{AppHandle, Emitter};
 
@@ -703,31 +701,12 @@ impl ShortcutAction for TranscribeAction {
         }
 
         if recording_error.is_none() {
-            // [GRAIN] tell the single pill recording has started (Batch mode). The
-            // pill is mode-agnostic, so this drives the same show+animate as rolling.
-            // OverlayConfig first so the pill anchors (or stays hidden if None).
-            let sid = SESSION_ID.fetch_add(1, Ordering::Relaxed) + 1;
-            crate::bridge::emit(
-                app,
-                DaemonEvent::OverlayConfig {
-                    position: get_settings(app).overlay_position,
-                },
-            );
-            crate::bridge::emit(
-                app,
-                DaemonEvent::RecordingStarted {
-                    session_id: sid,
-                    mode: SessionMode::Batch,
-                },
-            );
+            // [GRAIN] the single pill is the overlay for every capture mode.
+            crate::grain_actions::session_started(app, SessionMode::Batch);
             // Dynamically register the cancel shortcut in a separate task to avoid deadlock
             shortcut::register_cancel_shortcut(app);
-            // [GRAIN] Master chords (Alt+1 Prompt Record / Alt+2 switcher) live
-            // for the whole recording session, in every capture mode.
-            crate::master_key::register_chords(app);
-            if !get_settings(app).push_to_talk {
-                shortcut::register_send_to_ai_shortcut(app);
-            }
+            // [GRAIN] master chords + send-to-AI, for this session only.
+            crate::grain_actions::register_session_shortcuts(app);
         } else {
             // Starting failed (e.g. blocked mic permissions). The pill was never
             // shown (we only emit on success), so nothing to tear down here.
@@ -764,9 +743,8 @@ impl ShortcutAction for TranscribeAction {
     fn stop(&self, app: &AppHandle, binding_id: &str, _shortcut_str: &str) {
         // Unregister the cancel shortcut when transcription stops
         shortcut::unregister_cancel_shortcut(app);
-        shortcut::unregister_send_to_ai_shortcut(app);
-        // [GRAIN] Release the master chords (and the switcher, if open).
-        crate::master_key::unregister_chords(app);
+        // [GRAIN] release the session-only shortcuts (chords + send-to-AI).
+        crate::grain_actions::unregister_session_shortcuts(app);
 
         let stop_time = Instant::now();
         debug!("TranscribeAction::stop called for binding: {}", binding_id);
@@ -776,11 +754,9 @@ impl ShortcutAction for TranscribeAction {
         let hm = Arc::clone(&app.state::<Arc<HistoryManager>>());
 
         change_tray_icon(app, TrayIconState::Transcribing);
-        // [GRAIN] stop pressed → the single pill enters "processing" while we
-        // transcribe (mirrors the rolling path). Carried into the async tail so
-        // ProcessingComplete (pill hide) reuses the same session id.
-        let session_id = SESSION_ID.load(Ordering::Relaxed);
-        crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
+        // [GRAIN] stop pressed → the pill enters "processing". The id is carried
+        // into the async tail so the matching pill-hide reuses it.
+        let session_id = crate::grain_actions::emit_recording_stopped(app);
 
         // Unmute before playing audio feedback so the stop sound is audible
         rm.remove_mute();
@@ -822,13 +798,7 @@ impl ShortcutAction for TranscribeAction {
 
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
-                    crate::bridge::emit(
-                        &ah,
-                        DaemonEvent::ProcessingComplete {
-                            session_id,
-                            text: String::new(),
-                        },
-                    );
+                    crate::grain_actions::emit_processing_complete(&ah, session_id);
                     change_tray_icon(&ah, TrayIconState::Idle);
                 } else {
                     // Save WAV concurrently with transcription
@@ -938,13 +908,7 @@ impl ShortcutAction for TranscribeAction {
                             }
 
                             if processed.final_text.is_empty() {
-                                crate::bridge::emit(
-                                    &ah,
-                                    DaemonEvent::ProcessingComplete {
-                                        session_id,
-                                        text: String::new(),
-                                    },
-                                );
+                                crate::grain_actions::emit_processing_complete(&ah, session_id);
                                 change_tray_icon(&ah, TrayIconState::Idle);
                             } else {
                                 let ah_clone = ah.clone();
@@ -961,24 +925,12 @@ impl ShortcutAction for TranscribeAction {
                                             let _ = ah_clone.emit("paste-error", ());
                                         }
                                     }
-                                    crate::bridge::emit(
-                                        &ah_clone,
-                                        DaemonEvent::ProcessingComplete {
-                                            session_id,
-                                            text: String::new(),
-                                        },
-                                    );
+                                    crate::grain_actions::emit_processing_complete(&ah_clone, session_id);
                                     change_tray_icon(&ah_clone, TrayIconState::Idle);
                                 })
                                 .unwrap_or_else(|e| {
                                     error!("Failed to run paste on main thread: {:?}", e);
-                                    crate::bridge::emit(
-                                        &ah,
-                                        DaemonEvent::ProcessingComplete {
-                                            session_id,
-                                            text: String::new(),
-                                        },
-                                    );
+                                    crate::grain_actions::emit_processing_complete(&ah, session_id);
                                     change_tray_icon(&ah, TrayIconState::Idle);
                                 });
                             }
@@ -1000,26 +952,14 @@ impl ShortcutAction for TranscribeAction {
                                     error!("Failed to save failed history entry: {}", save_err);
                                 }
                             }
-                            crate::bridge::emit(
-                                &ah,
-                                DaemonEvent::ProcessingComplete {
-                                    session_id,
-                                    text: String::new(),
-                                },
-                            );
+                            crate::grain_actions::emit_processing_complete(&ah, session_id);
                             change_tray_icon(&ah, TrayIconState::Idle);
                         }
                     }
                 }
             } else {
                 debug!("No samples retrieved from recording stop");
-                crate::bridge::emit(
-                    &ah,
-                    DaemonEvent::ProcessingComplete {
-                        session_id,
-                        text: String::new(),
-                    },
-                );
+                crate::grain_actions::emit_processing_complete(&ah, session_id);
                 change_tray_icon(&ah, TrayIconState::Idle);
             }
         });
@@ -1037,24 +977,9 @@ struct CancelAction;
 impl ShortcutAction for CancelAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         utils::cancel_current_operation(app);
-        // [GRAIN] Release the master chords (and the switcher, if open).
-        crate::master_key::unregister_chords(app);
-        // [GRAIN] tear down any rolling session + tell the pill to hide.
-        if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
-            rt.cancel_session();
-        }
-        // [GRAIN] Native ASR: cancel must tear down the live stream worker too,
-        // or its command channel stays open and blocks the next start_stream.
-        // The discarded transcript is intentionally dropped.
-        if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
-            tm.cancel_stream();
-        }
-        crate::bridge::emit(
-            app,
-            DaemonEvent::SessionCancelled {
-                session_id: SESSION_ID.load(Ordering::Relaxed),
-            },
-        );
+        // [GRAIN] tear down Grain's session surfaces (chords, rolling worker,
+        // live stream) and hide the pill.
+        crate::grain_actions::cancel_session(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
