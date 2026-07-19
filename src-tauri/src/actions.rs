@@ -75,17 +75,6 @@ fn build_system_prompt(prompt_template: &str) -> String {
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
-/// [GRAIN] Token-efficient seam-repair layer appended to the post-process
-/// prompt ONLY for rolling-window transcripts. Rolling text is assembled from
-/// sequential audio segments, so its residual defects are seam-shaped (casing,
-/// stray/missing sentence punctuation, doubled boundary words) — this line aims
-/// the LLM at exactly those, and at nothing else. ~40 tokens; invisible to the
-/// user.
-const ROLLING_SEAM_PROMPT: &str = "\n[Live dictation]\nThe text was assembled \
-from sequential speech segments. Repair segment-join artifacts: wrong \
-capitalization, stray or missing periods/commas, doubled words, extra spaces. \
-Never reword, reorder, or drop content.";
-
 /// Poll `is_cancelled` while awaiting `operation`; returns `None` the moment a
 /// cancellation is observed, abandoning the (possibly stalled) operation.
 async fn complete_unless_cancelled<F, C>(operation: F, is_cancelled: C) -> Option<F::Output>
@@ -172,14 +161,14 @@ async fn post_process_transcription(
     let mut prompt =
         crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref(), spoken_prompt);
     if rolling {
-        prompt.push_str(ROLLING_SEAM_PROMPT);
+        prompt.push_str(crate::post_process_router::ROLLING_SEAM_PROMPT);
     }
 
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
     // post-processing keeps its own provider list.
     if settings.post_process_smart_rotation {
-        return post_process_rotated(app, &prompt, transcription).await;
+        return crate::post_process_router::post_process_rotated(app, &prompt, transcription).await;
     }
 
     // Default single-provider path — unchanged behavior.
@@ -224,7 +213,7 @@ async fn post_process_transcription(
     let http_client = http_client.inner().clone();
 
     // Single-provider path: no rotation, so the tracker isn't consulted/updated.
-    match run_one_provider_with_timeout(
+    match crate::post_process_router::run_one_provider_with_timeout(
         &http_client,
         &provider,
         model,
@@ -239,153 +228,11 @@ async fn post_process_transcription(
     }
 }
 
-/// [GRAIN] Rotation path: try ENABLED post-process providers best-first by live
-/// health (recent 429s cool down, headroom leads — via `select_order`) until one
-/// returns a result, recording quota usage on success. Returns None if none are
-/// eligible or all fail (the caller then pastes the raw transcript).
-async fn post_process_rotated(
-    app: &AppHandle,
-    prompt: &str,
-    transcription: &str,
-) -> Option<String> {
-    // [GRAIN] Roll daily quotas first; then read settings ONCE so the pool
-    // reflects any newly-zeroed counters.
-    crate::post_process_router::reset_quota_if_new_day(app);
-    let settings = get_settings(app);
-    // Eligible = enabled + under daily quota (the hard gate) AND has a model
-    // configured (no point routing to a provider that can't run). The quota gate
-    // is ours; the tracker only orders what survives it.
-    let eligible: Vec<PostProcessProvider> = crate::post_process_router::rotation_pool(&settings)
-        .into_iter()
-        .filter(|p| {
-            settings
-                .post_process_models
-                .get(&p.id)
-                .map(|m| !m.trim().is_empty())
-                .unwrap_or(false)
-        })
-        .collect();
-    if eligible.is_empty() {
-        debug!(
-            "Post-process smart rotation is on, but no eligible providers have a model configured"
-        );
-        return None;
-    }
-
-    let Some(trackers) = app.try_state::<Arc<crate::rotation_state::RotationTrackers>>() else {
-        warn!("Post-process rotation: RotationTrackers unavailable");
-        return None;
-    };
-
-    let Some(http_client) = app.try_state::<reqwest::Client>() else {
-        warn!("Post-process rotation: shared HTTP client unavailable");
-        return None;
-    };
-    let http_client = http_client.inner().clone();
-
-    // Order best-first by live health (recent 429s cool down, headroom leads).
-    let est_tokens = provider_router::estimate_tokens(transcription);
-    let candidates: Vec<(String, String)> = eligible
-        .iter()
-        .map(|p| (p.id.clone(), p.base_url.clone()))
-        .collect();
-
-    // Failover walk lives in the shared driver; we supply only how to run one
-    // provider and how to record quota on success.
-    let result = crate::rotation_state::run_with_rotation(
-        &trackers.llm,
-        &candidates,
-        est_tokens,
-        |id| {
-            let http_client = http_client.clone();
-            let eligible = &eligible;
-            let settings = &settings;
-            async move {
-                let Some(provider) = eligible.iter().find(|p| p.id == id) else {
-                    return CallOutcome::Failed;
-                };
-                let model = settings
-                    .post_process_models
-                    .get(&provider.id)
-                    .cloned()
-                    .unwrap_or_default();
-                let api_key = settings
-                    .post_process_api_keys
-                    .get(&provider.id)
-                    .cloned()
-                    .unwrap_or_default();
-                debug!(
-                    "Rotation: trying provider '{}' (model: {})",
-                    provider.id, model
-                );
-                run_one_provider_with_timeout(
-                    &http_client,
-                    provider,
-                    model,
-                    api_key,
-                    prompt,
-                    transcription,
-                )
-                .await
-            }
-        },
-        |id| {
-            crate::post_process_router::record_usage(app, id);
-            log::info!("[GRAIN] post-process routed to '{id}'");
-        },
-    )
-    .await;
-
-    match result {
-        Ok(text) => Some(text),
-        Err(e) => {
-            warn!("Post-process rotation: no provider produced output ({e})");
-            None
-        }
-    }
-}
-
-/// Hard ceiling on a single post-process provider call. A provider that accepts
-/// the connection but never responds must not hang the transcribe→paste pipeline
-/// (and in rotation mode must yield so the next provider is tried). Matches the
-/// Agent's `AGENT_LLM_TIMEOUT` so all LLM paths behave the same.
-const LLM_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// [GRAIN] `run_one_provider` bounded by [`LLM_REQUEST_TIMEOUT`]. A timeout is
-/// surfaced as [`CallOutcome::Failed`] — identical to any other failure — so the
-/// single-provider path returns `None` and the rotation path fails over to the
-/// next candidate instead of stalling. Both post-process call sites go through
-/// here so neither can forget the deadline.
-async fn run_one_provider_with_timeout(
-    client: &reqwest::Client,
-    provider: &PostProcessProvider,
-    model: String,
-    api_key: String,
-    prompt: &str,
-    transcription: &str,
-) -> CallOutcome {
-    match tokio::time::timeout(
-        LLM_REQUEST_TIMEOUT,
-        run_one_provider(client, provider, model, api_key, prompt, transcription),
-    )
-    .await
-    {
-        Ok(outcome) => outcome,
-        Err(_) => {
-            warn!(
-                "post-process provider '{}' timed out after {}s",
-                provider.id,
-                LLM_REQUEST_TIMEOUT.as_secs()
-            );
-            CallOutcome::Failed
-        }
-    }
-}
-
 /// Run ONE post-process provider with already-resolved model/key/prompt. Returns
 /// the processed text, or None on any failure/empty result (so callers can fail
 /// over to the next provider or fall back to the raw transcript).
-async fn run_one_provider(
+/// [GRAIN] pub(crate): driven by post_process_router's timeout wrapper.
+pub(crate) async fn run_one_provider(
     client: &reqwest::Client,
     provider: &PostProcessProvider,
     model: String,
