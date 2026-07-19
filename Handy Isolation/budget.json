@@ -8,7 +8,7 @@
   "src-tauri/src/audio_toolkit/audio/recorder.rs": 180,
   "src-tauri/src/audio_toolkit/audio/resampler.rs": 179,
   "src-tauri/src/audio_toolkit/mod.rs": 4,
-  "src-tauri/src/audio_toolkit/text.rs": 105,
+  "src-tauri/src/audio_toolkit/text.rs": 2,
   "src-tauri/src/cli.rs": 16,
   "src-tauri/src/clipboard.rs": 22,
   "src-tauri/src/commands/audio.rs": 2,
