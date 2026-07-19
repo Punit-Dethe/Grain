@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod constants;
 pub mod snippets;
+pub mod grain_text; // [GRAIN] final-text stage layered on upstream's text.rs
 pub mod text;
 pub mod utils;
 pub mod vad;
@@ -10,6 +11,7 @@ pub use audio::{
     read_wav_samples, save_wav_file, verify_wav_file, AudioRecorder, CpalDeviceInfo, VadPolicy,
 };
 pub use snippets::{apply_snippets, scrub_stream_preview, strip_scrapped};
-pub use text::{apply_custom_words, filter_transcription_output, finalize_transcript};
+pub use grain_text::finalize_transcript; // [GRAIN]
+pub use text::{apply_custom_words, filter_transcription_output};
 pub use utils::get_cpal_host;
 pub use vad::{SileroVad, VoiceActivityDetector};
