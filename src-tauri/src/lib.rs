@@ -497,6 +497,47 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
         }
     }
 
+    // --list-models: print the model registry (catalog + on-disk + custom) with
+    // their ids — the same ids `--model` accepts — then exit. `--json` emits the
+    // full ModelInfo array for scripting.
+    if args.list_models {
+        let model_manager = app.state::<Arc<ModelManager>>();
+        let models = model_manager.get_available_models();
+        if args.json {
+            match serde_json::to_string_pretty(&models) {
+                Ok(s) => println!("{}", s),
+                Err(e) => {
+                    eprintln!("error: failed to serialize models: {}", e);
+                    return 1;
+                }
+            }
+        } else if models.is_empty() {
+            println!("No models available.");
+        } else {
+            println!("Available models (\u{2713} = installed):");
+            let width = models.iter().map(|m| m.id.len()).max().unwrap_or(0);
+            for m in &models {
+                let mark = if m.is_downloaded { "\u{2713}" } else { " " };
+                let rec = if m.is_recommended {
+                    "  [recommended]"
+                } else {
+                    ""
+                };
+                println!(
+                    "  {}  {:<width$}  {}{}",
+                    mark,
+                    m.id,
+                    m.name,
+                    rec,
+                    width = width
+                );
+            }
+        }
+        if args.transcribe_file.is_none() {
+            return 0;
+        }
+    }
+
     let Some(wav) = args.transcribe_file.clone() else {
         return 0;
     };
@@ -839,7 +880,8 @@ pub fn run(cli_args: CliArgs) {
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
-    let headless_mode = cli_args.transcribe_file.is_some() || cli_args.list_devices;
+    let headless_mode =
+        cli_args.transcribe_file.is_some() || cli_args.list_devices || cli_args.list_models;
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
