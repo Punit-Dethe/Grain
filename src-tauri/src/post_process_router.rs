@@ -8,8 +8,9 @@
 //!
 //! The quota bookkeeping, pool selection, and the rotation/failover walk
 //! ([`post_process_rotated`]) live here; the actual LLM call (Apple /
-//! structured-output / legacy `run_one_provider`) stays in `actions.rs` where
-//! its deps are — this module drives it through the shared timeout wrapper.
+//! structured-output / legacy `run_one_provider`) lives in
+//! `grain_post_process.rs`; this module drives it through the shared timeout
+//! wrapper.
 
 use std::sync::Arc;
 
@@ -118,7 +119,7 @@ pub(crate) async fn run_one_provider_with_timeout(
 ) -> CallOutcome {
     match tokio::time::timeout(
         LLM_REQUEST_TIMEOUT,
-        crate::actions::run_one_provider(client, provider, model, api_key, prompt, transcription),
+        crate::grain_post_process::run_one_provider(client, provider, model, api_key, prompt, transcription),
     )
     .await
     {

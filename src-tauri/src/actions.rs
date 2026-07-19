@@ -1,22 +1,17 @@
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
 use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
-use crate::llm_client::LlmError;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
 use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
-use crate::rotation_state::CallOutcome;
-use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
+use crate::settings::{get_settings, AppSettings};
 use crate::shortcut;
 use crate::tray::{change_tray_icon, TrayIconState};
 use crate::utils;
 use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
-use grain_core::PostProcessProvider;
 use grain_core::SessionMode; // [GRAIN] pill session mode
-use log::{debug, error, warn};
+use log::{debug, error};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::future::Future;
@@ -61,16 +56,16 @@ struct TranscribeAction {
 }
 
 /// Field name for structured output JSON schema
-const TRANSCRIPTION_FIELD: &str = "transcription";
+pub(crate) const TRANSCRIPTION_FIELD: &str = "transcription"; // [GRAIN] pub(crate): shared with grain_post_process
 
 /// Strip invisible Unicode characters that some LLMs may insert
-fn strip_invisible_chars(s: &str) -> String {
+pub(crate) fn strip_invisible_chars(s: &str) -> String { // [GRAIN] pub(crate)
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
 }
 
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
-fn build_system_prompt(prompt_template: &str) -> String {
+pub(crate) fn build_system_prompt(prompt_template: &str) -> String { // [GRAIN] pub(crate)
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
@@ -79,7 +74,7 @@ fn build_system_prompt(prompt_template: &str) -> String {
 /// LLM call when nothing was actually transcribed, which would otherwise make
 /// the model reply with an error message such as "you need to provide the
 /// transcription".
-fn is_blank_transcription(transcription: &str) -> bool {
+pub(crate) fn is_blank_transcription(transcription: &str) -> bool { // [GRAIN] pub(crate)
     transcription.trim().is_empty()
 }
 
@@ -105,352 +100,18 @@ where
     }
 }
 
-async fn post_process_transcription(
-    app: &AppHandle,
-    settings: &AppSettings,
-    transcription: &str,
-    // [GRAIN] Prompt Record: an instruction the user dictated mid-recording (by
-    // clicking the pill). Layered as the ABSOLUTE highest-priority stage in
-    // `compose_prompt`, above any hard app mode.
-    spoken_prompt: Option<&str>,
-    // [GRAIN] True when the transcript came from the rolling-window assembler —
-    // appends the compact seam-repair layer above.
-    rolling: bool,
-) -> Option<String> {
-    if is_blank_transcription(transcription) {
-        debug!("Post-processing skipped because the transcription is empty");
-        return None;
-    }
-
-    // Resolve the selected prompt body once — shared by both the single-provider
-    // and the rotation paths.
-    let selected_prompt_id = match &settings.post_process_selected_prompt_id {
-        Some(id) => id.clone(),
-        None => {
-            debug!("Post-processing skipped because no prompt is selected");
-            return None;
-        }
-    };
-
-    let prompt = match settings
-        .post_process_prompts
-        .iter()
-        .find(|prompt| prompt.id == selected_prompt_id)
-    {
-        Some(prompt) => prompt.prompt.clone(),
-        None => {
-            debug!(
-                "Post-processing skipped because prompt '{}' was not found",
-                selected_prompt_id
-            );
-            return None;
-        }
-    };
-
-    if prompt.trim().is_empty() {
-        debug!("Post-processing skipped because the selected prompt is empty");
-        return None;
-    }
-
-    // [GRAIN] Context awareness: layer automatic SOFT context (per detected app
-    // category) and any matching user MODE (hard formatting) on top of the base
-    // prompt. Detection is one cheap OS call made ONCE here — never per rolling
-    // chunk — and `compose_prompt` returns the base untouched when the feature is
-    // off, nothing is detected, and no mode matches (so the common path is today's).
-    // [GRAIN] Detect context only when the feature is on (one cheap OS call). The
-    // spoken Prompt Record instruction is independent of that toggle, so
-    // `compose_prompt` is always consulted — it returns the base untouched when
-    // there is neither a spoken instruction nor any context layer to add.
-    let ctx = if settings.context_awareness_enabled {
-        crate::context_detect::detect_active_context(settings.context_nearby_terms)
-    } else {
-        None
-    };
-    let mut prompt =
-        crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref(), spoken_prompt);
-    if rolling {
-        prompt.push_str(crate::post_process_router::ROLLING_SEAM_PROMPT);
-    }
-
-    // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
-    // (round-robin + per-provider daily quota + failover). Independent of STT —
-    // post-processing keeps its own provider list.
-    if settings.post_process_smart_rotation {
-        return crate::post_process_router::post_process_rotated(app, &prompt, transcription).await;
-    }
-
-    // Default single-provider path — unchanged behavior.
-    let provider = match settings.active_post_process_provider().cloned() {
-        Some(provider) => provider,
-        None => {
-            debug!("Post-processing enabled but no provider is selected");
-            return None;
-        }
-    };
-
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    if model.trim().is_empty() {
-        debug!(
-            "Post-processing skipped because provider '{}' has no model configured",
-            provider.id
-        );
-        return None;
-    }
-
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    debug!(
-        "Starting LLM post-processing with provider '{}' (model: {})",
-        provider.id, model
-    );
-
-    // Fetch the shared HTTP client from Tauri managed state.
-    let Some(http_client) = app.try_state::<reqwest::Client>() else {
-        warn!("post-process: shared HTTP client unavailable");
-        return None;
-    };
-    let http_client = http_client.inner().clone();
-
-    // Single-provider path: no rotation, so the tracker isn't consulted/updated.
-    match crate::post_process_router::run_one_provider_with_timeout(
-        &http_client,
-        &provider,
-        model,
-        api_key,
-        &prompt,
-        transcription,
-    )
-    .await
-    {
-        CallOutcome::Ok { text, .. } => Some(text),
-        _ => None,
-    }
-}
-
-/// Run ONE post-process provider with already-resolved model/key/prompt. Returns
-/// the processed text, or None on any failure/empty result (so callers can fail
-/// over to the next provider or fall back to the raw transcript).
-/// [GRAIN] pub(crate): driven by post_process_router's timeout wrapper.
-pub(crate) async fn run_one_provider(
-    client: &reqwest::Client,
-    provider: &PostProcessProvider,
-    model: String,
-    api_key: String,
-    prompt: &str,
-    transcription: &str,
-) -> CallOutcome {
-    // Disable reasoning for providers where post-processing rarely benefits from it.
-    // - custom: top-level reasoning_effort (works for local OpenAI-compat servers)
-    // - openrouter: nested reasoning object; exclude:true also keeps reasoning text
-    //   out of the response so it can't pollute structured-output JSON parsing
-    let (reasoning_effort, reasoning) = match provider.id.as_str() {
-        "custom" => (Some("none".to_string()), None),
-        "openrouter" => (
-            None,
-            Some(crate::llm_client::ReasoningConfig {
-                effort: Some("none".to_string()),
-                exclude: Some(true),
-            }),
-        ),
-        _ => (None, None),
-    };
-
-    if provider.supports_structured_output {
-        debug!("Using structured outputs for provider '{}'", provider.id);
-
-        let system_prompt = build_system_prompt(prompt);
-        let user_content = transcription.to_string();
-
-        // Handle Apple Intelligence separately since it uses native Swift APIs.
-        // It's a LOCAL backend — no network, so no rate-limit signal (success or
-        // Failed only).
-        if provider.id == APPLE_INTELLIGENCE_PROVIDER_ID {
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                if !apple_intelligence::check_apple_intelligence_availability() {
-                    debug!(
-                        "Apple Intelligence selected but not currently available on this device"
-                    );
-                    return CallOutcome::Failed;
-                }
-
-                let token_limit = model.trim().parse::<i32>().unwrap_or(0);
-                return match apple_intelligence::process_text_with_system_prompt(
-                    &system_prompt,
-                    &user_content,
-                    token_limit,
-                ) {
-                    Ok(result) => {
-                        if result.trim().is_empty() {
-                            debug!("Apple Intelligence returned an empty response");
-                            CallOutcome::Failed
-                        } else {
-                            let result = strip_invisible_chars(&result);
-                            debug!(
-                                "Apple Intelligence post-processing succeeded. Output length: {} chars",
-                                result.len()
-                            );
-                            CallOutcome::Ok {
-                                text: result,
-                                remaining_requests: None,
-                                remaining_tokens: None,
-                                total_tokens: None,
-                            }
-                        }
-                    }
-                    Err(err) => {
-                        error!("Apple Intelligence post-processing failed: {}", err);
-                        CallOutcome::Failed
-                    }
-                };
-            }
-
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            {
-                debug!("Apple Intelligence provider selected on unsupported platform");
-                return CallOutcome::Failed;
-            }
-        }
-
-        // Define JSON schema for transcription output
-        let json_schema = serde_json::json!({
-            "type": "object",
-            "properties": {
-                (TRANSCRIPTION_FIELD): {
-                    "type": "string",
-                    "description": "The cleaned and processed transcription text"
-                }
-            },
-            "required": [TRANSCRIPTION_FIELD],
-            "additionalProperties": false
-        });
-
-        match crate::llm_client::send_chat_completion_with_schema(
-            client,
-            provider,
-            api_key.clone(),
-            &model,
-            user_content,
-            Some(system_prompt),
-            Some(json_schema),
-            reasoning_effort.clone(),
-            reasoning.clone(),
-        )
-        .await
-        {
-            Ok(success) => match success.content {
-                Some(content) => {
-                    // Extract the transcription field; fall back to raw content.
-                    let text = match serde_json::from_str::<serde_json::Value>(&content) {
-                        Ok(json) => json
-                            .get(TRANSCRIPTION_FIELD)
-                            .and_then(|t| t.as_str())
-                            .map(strip_invisible_chars)
-                            .unwrap_or_else(|| {
-                                error!("Structured output response missing 'transcription' field");
-                                strip_invisible_chars(&content)
-                            }),
-                        Err(e) => {
-                            error!("Failed to parse structured output JSON: {e}. Returning raw content.");
-                            strip_invisible_chars(&content)
-                        }
-                    };
-                    debug!(
-                        "Structured output post-processing succeeded for provider '{}'. Output length: {} chars",
-                        provider.id,
-                        text.len()
-                    );
-                    return CallOutcome::Ok {
-                        text,
-                        remaining_requests: success.remaining_requests,
-                        remaining_tokens: success.remaining_tokens,
-                        total_tokens: success.total_tokens,
-                    };
-                }
-                None => {
-                    error!("LLM API response has no content");
-                    return CallOutcome::Failed;
-                }
-            },
-            // A 429 means this provider is rate-limited — don't retry it in legacy
-            // mode; surface the cooldown so the router moves on.
-            Err(LlmError::RateLimited { retry_after_s }) => {
-                warn!(
-                    "Structured output rate-limited for provider '{}'",
-                    provider.id
-                );
-                return CallOutcome::RateLimited { retry_after_s };
-            }
-            Err(LlmError::Other(e)) => {
-                warn!(
-                    "Structured output failed for provider '{}': {e}. Falling back to legacy mode.",
-                    provider.id
-                );
-                // Fall through to legacy mode below.
-            }
-        }
-    }
-
-    // Legacy mode: Replace ${output} variable in the prompt with the actual text
-    let processed_prompt = prompt.replace("${output}", transcription);
-    debug!("Processed prompt length: {} chars", processed_prompt.len());
-
-    match crate::llm_client::send_chat_completion(
-        client,
-        provider,
-        api_key,
-        &model,
-        processed_prompt,
-        reasoning_effort,
-        reasoning,
-    )
-    .await
-    {
-        Ok(success) => match success.content {
-            Some(content) => {
-                let text = strip_invisible_chars(&content);
-                debug!(
-                    "LLM post-processing succeeded for provider '{}'. Output length: {} chars",
-                    provider.id,
-                    text.len()
-                );
-                CallOutcome::Ok {
-                    text,
-                    remaining_requests: success.remaining_requests,
-                    remaining_tokens: success.remaining_tokens,
-                    total_tokens: success.total_tokens,
-                }
-            }
-            None => {
-                error!("LLM API response has no content");
-                CallOutcome::Failed
-            }
-        },
-        Err(LlmError::RateLimited { retry_after_s }) => {
-            warn!(
-                "LLM post-processing rate-limited for provider '{}'",
-                provider.id
-            );
-            CallOutcome::RateLimited { retry_after_s }
-        }
-        Err(LlmError::Other(e)) => {
-            error!(
-                "LLM post-processing failed for provider '{}': {e}. Falling back to original transcription.",
-                provider.id
-            );
-            CallOutcome::Failed
-        }
-    }
-}
+// [GRAIN] Upstream's `post_process_transcription` lived here. Grain's
+// replacement — multi-provider, context-aware, rotation-capable — is
+// `grain_post_process::post_process_transcription`, and the LLM call it drives
+// is `grain_post_process::run_one_provider`.
+//
+// Upstream's original is NOT kept inline the way `llm_client.rs`/`overlay.rs`
+// keep theirs: those are whole files left un-compiled, while anything inline
+// here must still typecheck — and upstream's version calls
+// `llm_client::send_chat_completion*` with upstream's signature, which Grain's
+// client no longer has. So this is a deliberate hole: expect a modify/delete
+// conflict when upstream touches that function, and port the change into
+// `grain_post_process.rs` by hand.
 
 async fn maybe_convert_chinese_variant(
     effective_language: &str,
@@ -566,7 +227,7 @@ pub(crate) async fn process_transcription_output(
     }
 
     if post_process {
-        if let Some(processed_text) = post_process_transcription(
+        if let Some(processed_text) = crate::grain_post_process::post_process_transcription(
             app,
             &settings,
             &final_text,
