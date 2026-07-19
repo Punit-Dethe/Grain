@@ -1017,7 +1017,8 @@ impl TranscriptionManager {
         let settings = get_settings(&self.app_handle);
         // Streaming models do not receive a decode prompt, so custom words
         // always go through the shared fuzzy post-correction path.
-        let filtered = post_process_transcription_text(raw, &settings, false);
+        let filtered =
+            crate::audio_toolkit::grain_text::finalize_batch_text(raw, &settings, false); // [GRAIN]
 
         self.maybe_unload_immediately("streaming transcription");
         Ok(Some(filtered))
@@ -1049,19 +1050,8 @@ impl TranscriptionManager {
             tentative: tentative.to_string(),
         }
         .emit(&self.app_handle);
-        // [GRAIN] Mirror the live snapshot to the native pill's Studio Window
-        // over the WS event bus. Both parts are cumulative snapshots (SET, not
-        // append): `committed` is the stable prefix, `tentative` the volatile
-        // tail — the pill needs the tail so the preview keeps moving while the
-        // engine's auto-commit is between commit points.
-        crate::bridge::emit(
-            &self.app_handle,
-            grain_core::DaemonEvent::AsrStreamText {
-                session_id: crate::grain_actions::current_session_id(),
-                committed: committed.to_string(),
-                tentative: tentative.to_string(),
-            },
-        );
+        // [GRAIN] mirror the snapshot to the native pill's Studio Window.
+        crate::grain_actions::mirror_stream_text(&self.app_handle, committed, tentative);
     }
 
     pub fn transcribe(&self, audio: Vec<f32>) -> Result<String> {
@@ -1202,7 +1192,9 @@ impl TranscriptionManager {
         // the InitialPrompt feature flag): a non-whisper model advertising the
         // feature gets no prompt, so it must still get fuzzy correction here or
         // custom words would silently do nothing (upstream #1603).
-        let filtered_result = post_process_transcription_text(result, &settings, model_is_whisper);
+        // [GRAIN] wrapper adds scrap-that + snippet expansion around upstream's stages.
+        let filtered_result =
+            crate::audio_toolkit::grain_text::finalize_batch_text(result, &settings, model_is_whisper);
 
         let et = std::time::Instant::now();
         let translation_note = if settings.translate_to_english {
@@ -1590,20 +1582,14 @@ fn transcribe_cpp_run_plan(
     }
 }
 
-fn post_process_transcription_text(
+/// [GRAIN] pub(crate): Grain's bracketing stages (scrap-that before, snippet
+/// expansion after) live in `audio_toolkit::grain_text::finalize_batch_text`,
+/// which wraps this. Body is upstream's, unchanged.
+pub(crate) fn post_process_transcription_text(
     raw: String,
     settings: &AppSettings,
     custom_words_already_prompted: bool,
 ) -> String {
-    // [GRAIN] "Scrap that" runs FIRST, on the raw transcript: anything spoken
-    // before the last reset phrase is discarded so the rest of the pipeline
-    // (custom words / fillers / snippets) only sees the kept remainder.
-    let raw = if settings.scrap_that_enabled {
-        crate::audio_toolkit::strip_scrapped(&raw)
-    } else {
-        raw
-    };
-
     let corrected = if !settings.custom_words.is_empty() && !custom_words_already_prompted {
         apply_custom_words(
             &raw,
@@ -1614,16 +1600,11 @@ fn post_process_transcription_text(
         raw
     };
 
-    let filtered = filter_transcription_output(
+    filter_transcription_output(
         &corrected,
         &settings.app_language,
         &settings.custom_filler_words,
-    );
-
-    // [GRAIN] Voice snippets run LAST, on the corrected/filtered full
-    // transcript — this covers the local batch and stream-finalize paths
-    // (rolling + cloud STT expand via `finalize_transcript`).
-    crate::audio_toolkit::apply_snippets(&filtered, &settings.snippets)
+    )
 }
 
 /// Decide a transcribe-cpp run's task + translation target from settings.

@@ -113,3 +113,30 @@ mod tests {
         assert_eq!(result, "hello world");
     }
 }
+
+/// [GRAIN] Grain's bracketing stages around upstream's batch text pipeline
+/// ([`crate::managers::transcription::post_process_transcription_text`]):
+/// "scrap that" runs FIRST on the raw transcript, so everything spoken before
+/// the last reset phrase is discarded and the rest of the pipeline (custom
+/// words, fillers) only sees the kept remainder; snippet expansion runs LAST on
+/// the corrected/filtered text. Covers the local batch and stream-finalize
+/// paths — rolling and cloud STT expand via [`finalize_transcript`] instead.
+pub fn finalize_batch_text(
+    raw: String,
+    settings: &crate::settings::AppSettings,
+    custom_words_already_prompted: bool,
+) -> String {
+    let raw = if settings.scrap_that_enabled {
+        super::strip_scrapped(&raw)
+    } else {
+        raw
+    };
+
+    let filtered = crate::managers::transcription::post_process_transcription_text(
+        raw,
+        settings,
+        custom_words_already_prompted,
+    );
+
+    super::apply_snippets(&filtered, &settings.snippets)
+}

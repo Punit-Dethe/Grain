@@ -105,6 +105,22 @@ pub(crate) fn unregister_session_shortcuts(app: &AppHandle) {
     crate::master_key::unregister_chords(app);
 }
 
+/// Mirror a live streaming snapshot to the native pill's Studio Window over the
+/// WS event bus. Both parts are cumulative snapshots (SET, not append):
+/// `committed` is the stable prefix, `tentative` the volatile tail — the pill
+/// needs the tail so the preview keeps moving while the engine's auto-commit is
+/// between commit points.
+pub(crate) fn mirror_stream_text(app: &AppHandle, committed: &str, tentative: &str) {
+    crate::bridge::emit(
+        app,
+        DaemonEvent::AsrStreamText {
+            session_id: current_session_id(),
+            committed: committed.to_string(),
+            tentative: tentative.to_string(),
+        },
+    );
+}
+
 /// Tear down every Grain surface a cancel has to clear, on top of upstream's
 /// `utils::cancel_current_operation`: the master chords, any rolling session,
 /// and any live stream worker (whose command channel would otherwise stay open
