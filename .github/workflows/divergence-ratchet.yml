@@ -1,0 +1,44 @@
+name: Divergence Ratchet
+
+# Handy Isolation phase 5: fails any push/PR that grows a Handy-derived file's
+# divergence from the upstream merge base, or diverges a core file that had
+# none. See "Handy Isolation/PLAN.md" and ratchet.py.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - 'Handy Isolation/budget.json'
+      - 'Handy Isolation/ratchet.py'
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'Handy Isolation/budget.json'
+      - 'Handy Isolation/ratchet.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history required for the merge base
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Fetch Upstream
+        run: |
+          git remote add upstream https://github.com/cjpais/handy.git
+          git fetch upstream --tags
+
+      - name: Check divergence budgets
+        run: python "Handy Isolation/ratchet.py"

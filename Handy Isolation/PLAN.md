@@ -131,3 +131,6 @@ Grain.**
 | 2026-07-19 | — | Plan written; baseline measured |
 | 2026-07-19 | 1 | Audio chain re-baselined (`cca5ae45`): vad/* + cli.rs at divergence **0**; recorder.rs + managers/audio.rs additive `[GRAIN]` hooks only. Recovered upstream's VadPolicy profiles, Silero LSTM reset, Stopping state, cancellable buffer. Follow-up noted: port upstream's `vad_enabled` setting into grain-core. |
 | 2026-07-19 | 2 | transcription.rs parity restored (`ced99522`): StreamPhase/StreamWorkKind/StreamPhaseEvent, stream_active + is_streaming + emit_stream_working back, event registered in lib.rs. Remaining divergence = deliberate (ONNX removal, with_engine_session, rolling chunk, scrap-that). |
+| 2026-07-19 | 3 | Counterpart audit written (AUDIT.md, `78da1e76`): nothing to retire; rolling+RCSR stays; watch items recorded. |
+| 2026-07-19 | 4 | llm_client.rs + overlay.rs reclassified (`78da1e76`): Grain rewrites now `grain_llm_client.rs`/`grain_overlay.rs` with `pub(crate) use` aliases; upstream files restored byte-identical, un-compiled. Divergence for both paths: **0**. tray.rs verdict: keep as-is. |
+| 2026-07-19 | 5 | Divergence ratchet live: `ratchet.py` + `budget.json` (32 files, measured vs merge base, Cargo.lock excluded) + `.github/workflows/divergence-ratchet.yml` on push/PR. Close-out step added to UPSTREAM.md. |
