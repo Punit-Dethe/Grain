@@ -1,13 +1,34 @@
+//! Grain's composition root.
+//!
+//! LAYOUT (Handy Isolation phase 7): every Handy-derived module physically lives
+//! in `src/handy/` and is declared here with `#[path = "handy/..."]`. The
+//! attribute keeps their crate paths (`crate::actions`, `crate::managers::…`)
+//! and, crucially, their FILE CONTENTS byte-unchanged — so they still diff
+//! cleanly against upstream and upstream merges map into `handy/` by rename
+//! detection. Grain-owned modules sit directly in `src/`.
+//!
+//! Rule of thumb for contributors: **don't add features inside `src/handy/`.**
+//! That tree is upstream's, plus small marked `[GRAIN]` hooks. New Grain work
+//! belongs in `src/` (see the `grain_*` modules) or in `crates/`.
+
+#[path = "handy/actions.rs"]
 mod actions;
 mod agent; // [GRAIN] summoned voice-first AI window (Phase 7)
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+#[path = "handy/apple_intelligence.rs"]
 mod apple_intelligence;
+#[path = "handy/audio_feedback.rs"]
 mod audio_feedback;
+#[path = "handy/audio_toolkit/mod.rs"]
 pub mod audio_toolkit;
 mod bridge; // [GRAIN] Tauri-shell → headless DaemonEvent bus
+#[path = "handy/catalog/mod.rs"]
 mod catalog;
+#[path = "handy/cli.rs"]
 pub mod cli;
+#[path = "handy/clipboard.rs"]
 mod clipboard;
+#[path = "handy/commands/mod.rs"]
 mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
@@ -32,24 +53,34 @@ mod grain_llm_client;
 // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
 mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
+#[path = "handy/helpers/mod.rs"]
 mod helpers;
+#[path = "handy/input.rs"]
 mod input;
 pub(crate) use grain_llm_client as llm_client;
 pub(crate) use grain_overlay as overlay;
+#[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
+#[path = "handy/portable.rs"]
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
+#[path = "handy/shortcut/mod.rs"]
 mod shortcut;
+#[path = "handy/signal_handle.rs"]
 mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
+#[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
+#[path = "handy/tray.rs"]
 mod tray;
+#[path = "handy/tray_i18n.rs"]
 mod tray_i18n;
+#[path = "handy/utils.rs"]
 mod utils;
 mod voice_actions; // [GRAIN] voice actions: spoken trigger → open apps/sites
 
