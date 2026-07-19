@@ -1,5 +1,6 @@
-use enigo::{Enigo, Key, Keyboard, Settings};
+use enigo::{Enigo, Key, Keyboard, Mouse, Settings};
 use std::sync::Mutex;
+use tauri::{AppHandle, Manager};
 
 /// Wrapper for Enigo to store in Tauri's managed state.
 /// Enigo is wrapped in a Mutex since it requires mutable access.
@@ -11,6 +12,18 @@ impl EnigoState {
             .map_err(|e| format!("Failed to initialize Enigo: {}", e))?;
         Ok(Self(Mutex::new(enigo)))
     }
+}
+
+/// Get the current mouse cursor position using the managed Enigo instance.
+/// Returns None if the state is not available or if getting the location fails.
+/// [GRAIN] `#[allow(dead_code)]`: its only upstream caller is the webview
+/// overlay, which Grain retired for the native pill (the pill positions itself).
+/// Kept byte-identical to upstream otherwise so the file merges cleanly.
+#[allow(dead_code)]
+pub fn get_cursor_position(app_handle: &AppHandle) -> Option<(i32, i32)> {
+    let enigo_state = app_handle.try_state::<EnigoState>()?;
+    let enigo = enigo_state.0.lock().ok()?;
+    enigo.location().ok()
 }
 
 /// Sends a Ctrl+V or Cmd+V paste command using platform-specific virtual key codes.

@@ -449,10 +449,19 @@ impl AudioRecorder {
                 }
             }
 
-            if sample_tx
-                .send(AudioChunk::Samples(output_buffer.clone()))
-                .is_err()
-            {
+            // [GRAIN] Hand the buffer over instead of cloning it. This runs in
+            // the cpal callback for EVERY captured chunk, so upstream's
+            // `output_buffer.clone()` costs one heap allocation + memcpy per
+            // chunk for the whole recording; `mem::replace` hands the filled Vec
+            // to the consumer and leaves a fresh one behind, with the same
+            // capacity the next chunk needs. (Upstreamable — see
+            // "Handy Isolation/UPSTREAMABLE.md".)
+            let chunk_to_send = std::mem::replace(
+                &mut output_buffer,
+                Vec::with_capacity(data.len() / channels),
+            );
+
+            if sample_tx.send(AudioChunk::Samples(chunk_to_send)).is_err() {
                 log::error!("Failed to send samples");
             }
         };

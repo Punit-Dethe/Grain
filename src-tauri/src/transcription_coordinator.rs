@@ -167,7 +167,7 @@ impl TranscriptionCoordinator {
                             // Push-to-talk releases may be deferred above to absorb X11 auto-repeat.
                             if is_pressed {
                                 let now = Instant::now();
-                                if last_press.map_or(false, |t| now.duration_since(t) < DEBOUNCE) {
+                                if last_press.is_some_and(|t| now.duration_since(t) < DEBOUNCE) {
                                     debug!("Debounced press for '{binding_id}'");
                                     continue;
                                 }

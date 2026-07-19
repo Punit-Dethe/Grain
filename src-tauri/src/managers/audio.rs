@@ -168,14 +168,14 @@ fn create_audio_recorder(
                 utils::emit_levels(&app_handle, &levels);
             }
         })
-        .with_audio_callback({
-            let router = stream_router;
-            move |frame| {
-                router.feed(frame);
-            }
-        })
-        // [GRAIN] forward every raw 16 kHz frame + VAD decision to the active
-        // rolling session (no-op unless a rolling recording is in progress).
+        // [GRAIN] Both live consumers are fed from the sample callback, which
+        // fires for EVERY resampled 16 kHz frame — deliberately NOT from
+        // upstream's `with_audio_callback`, which only sees frames that passed
+        // VAD. Rolling needs a continuous timeline (it uses `speech` purely for
+        // segmentation), and the Native ASR stream worker does its own
+        // commit/segmentation inside transcribe-cpp, so it expects the
+        // uninterrupted signal too. Routing either one through the post-VAD
+        // callback would silently drop the gaps they rely on.
         .with_sample_callback({
             let app_handle = app_handle.clone();
             move |frame: &[f32], speech: Option<bool>| {
@@ -184,6 +184,10 @@ fn create_audio_recorder(
                 {
                     rt.feed(frame, speech);
                 }
+                // Fan out to the unified TranscriptionManager's live streaming
+                // worker (Native ASR path). A single relaxed atomic load when no
+                // stream is open, so Rolling/Batch are unaffected.
+                stream_router.feed(frame);
             }
         });
 
