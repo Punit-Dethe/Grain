@@ -373,7 +373,7 @@ pub async fn grain_space_pick_vault(app: AppHandle) -> Result<Option<String>, St
         return Ok(None); // user cancelled
     };
     let path = folder.to_string_lossy().to_string();
-    crate::shortcut::change_grain_space_vault_path_setting(app, path.clone())?;
+    crate::grain_commands::change_grain_space_vault_path_setting(app, path.clone())?;
     Ok(Some(path))
 }
 
