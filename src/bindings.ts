@@ -1702,9 +1702,11 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
+streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
 historyUpdatePayload: "history-update-payload",
+streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
 })
 
@@ -2200,11 +2202,37 @@ export type ShortcutBinding = { id: string; name: string; description: string; d
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
 /**
+ * Phase of the streaming overlay card, emitted to drive its UI state.
+ */
+export type StreamPhase = 
+/**
+ * Receiving audio / live text (or waiting for the stream to begin). Rust
+ * does not emit this today; the frontend starts in this phase and Rust only
+ * emits transitions away from it.
+ */
+"listening" | 
+/**
+ * Finalizing or post-processing — show a spinner.
+ */
+"working"
+/**
+ * Emitted to switch the streaming overlay to a working spinner.
+ */
+export type StreamPhaseEvent = { phase: StreamPhase; 
+/**
+ * Present only when `phase` is `Working`.
+ */
+kind?: StreamWorkKind | null }
+/**
  * Live transcription snapshot emitted to the overlay during a streaming run.
  * `committed` is the append-only, flicker-free prefix; `tentative` is the
  * volatile suffix the model may still rewrite.
  */
 export type StreamTextEvent = { committed: string; tentative: string }
+/**
+ * Semantic kind of "working" phase, used to localize the spinner label.
+ */
+export type StreamWorkKind = "transcribing" | "polishing"
 /**
  * A read-only view of the STT pool. API keys are NEVER returned — only the set
  * of provider ids that currently have a key stored.
