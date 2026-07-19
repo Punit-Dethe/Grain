@@ -109,6 +109,23 @@ Extend the existing 2-hourly trial-merge workflow: a checked-in budget file
 
 ### Phase 6 — Extract [GRAIN] blocks from the composition files
 
+**Three kinds of divergence, three different treatments.** The ratchet counts
+added **and removed** lines, which makes the distinction load-bearing:
+
+1. **Grain additions** woven into upstream functions (pill emits, extra
+   params, feature hooks). Extracting them into a Grain module genuinely
+   removes lines from the diff — this is where phase 6 pays.
+2. **Grain rewrites** of upstream code (e.g. `run_one_provider` returning
+   `CallOutcome` for rotation). Moving these out leaves a same-sized hole:
+   net zero. The only real fixes are to restore upstream's version and layer
+   on top, or accept the divergence and mark it clearly.
+3. **Grain deletions** of upstream code. Restoring them is free divergence
+   reduction — and, as chunk 3 found, often restores a lost upstream fix.
+   Audit these first; they are pure win.
+
+Before extracting, classify the hunk. If it is kind 2, prefer parity
+restoration over relocation.
+
 `actions.rs` (68 markers) and `shortcut/mod.rs` (24): convert each block to
 a one-line typed-event emission or hook call; feature bodies move to
 Grain-owned modules; registration happens in `lib.rs` (the composition root,
@@ -135,4 +152,7 @@ Grain.**
 | 2026-07-19 | 4 | llm_client.rs + overlay.rs reclassified (`78da1e76`): Grain rewrites now `grain_llm_client.rs`/`grain_overlay.rs` with `pub(crate) use` aliases; upstream files restored byte-identical, un-compiled. Divergence for both paths: **0**. tray.rs verdict: keep as-is. |
 | 2026-07-19 | 5 | Divergence ratchet live: `ratchet.py` + `budget.json` (32 files, measured vs merge base, Cargo.lock excluded) + `.github/workflows/divergence-ratchet.yml` on push/PR. Close-out step added to UPSTREAM.md. |
 | 2026-07-19 | 6.1 | Grain shortcut actions extracted to `grain_actions.rs` (`8cc3df14`): rolling/NativeAsr/switcher/master-chord/Agent/Grain Space actions + SESSION_ID; ACTION_MAP keeps one `register` hook. actions.rs budget 1760 → 875. |
-| 2026-07-19 | 6.2 | Post-process rotation machinery → `post_process_router.rs` (`7f9c5bb6`): post_process_rotated, timeout wrapper, ROLLING_SEAM_PROMPT. actions.rs budget 875 → **722**. Remaining actions.rs divergence: TranscribeAction pill/warm-up/cancel threading + post_process_transcription context layers + `run_one_provider` reasoning/Apple extensions. Next targets: those threads, then `shortcut/mod.rs` (562). |
+| 2026-07-19 | 6.2 | Post-process rotation machinery → `post_process_router.rs` (`7f9c5bb6`): post_process_rotated, timeout wrapper, ROLLING_SEAM_PROMPT. actions.rs budget 875 → 722. |
+| 2026-07-19 | 6.3 | **Parity restoration** (`2ddca402`) — kind-3 divergence, all accidental losses: upstream's effective-language gate for OpenCC (real bug: a stale zh intent rewrote CJK from non-Chinese models) + `resolve_effective_language`; two cancellation guards in `TranscribeAction::stop` deleted with the overlay calls they sat beside (a cancel ran a full decode before anyone noticed); silent transcription failures (`debug!`, no toast) → upstream's `error!` + `transcription-error`; `is_blank_transcription` + its 2 tests. budget 722 → 646, tests 227 → 229. |
+| 2026-07-19 | 6.4 | Pill session events → `grain_actions` helpers (`5f38b0f4`): 6 ProcessingComplete blocks, 3 start pairs, 3 stop reads, CancelAction's 18-line teardown all become one-liners; SESSION_ID no longer referenced from actions.rs. Shortcut order preserved (deferral lives in master_key/shortcut — deadlock-safe). budget 646 → **571**. |
+| | | Remaining actions.rs divergence is mostly kind 2 (the `run_one_provider` CallOutcome rewrite + post_process context layers) and the TranscribeAction cloud warm-up / Prompt Record threading. Next: `shortcut/mod.rs` (562), then phase 7. |
