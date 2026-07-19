@@ -34,6 +34,7 @@ mod tray_i18n;
 mod utils;
 mod voice_actions; // [GRAIN] voice actions: spoken trigger → open apps/sites
 mod voice_command; // [GRAIN] voice commands: mid-dictation "hey grain" wake phrase → prompt switch / record
+mod wake_detect; // [GRAIN] acoustic wake-phrase spotter (rustpotter MFCC+DTW) — low-latency arming
 mod voice_switch; // [GRAIN] voice-command prompt switcher: transient arrow-key cycling UI
 
 pub use cli::CliArgs;

@@ -1948,20 +1948,24 @@ agent_context_mode?: AgentContextMode;
  * is truly zero-overhead. In live-streaming modes the expanded Studio pill
  * resets and collapses back to the compact capsule until the next word.
  */
-scrap_that_enabled?: boolean;
+scrap_that_enabled?: boolean; 
 /**
  * [GRAIN] Voice commands: when on, saying the wake phrase
- * (voice_command_keyword, e.g. "hey grain") mid-dictation in a live-streaming
- * mode (Rolling / Native ASR) arms a command listener. A following
- * switch/change prompt/profile opens the prompt switcher; anything else becomes
- * a spoken AI instruction (voice-triggered Prompt Record). OFF is zero-overhead.
+ * ([`voice_command_keyword`](Self::voice_command_keyword), e.g. "hey grain")
+ * mid-dictation in a live-streaming mode (Rolling / Native ASR) arms a
+ * command listener. A following `switch/change prompt/profile` opens the
+ * prompt switcher (arrow keys cycle it); anything else becomes a spoken AI
+ * instruction (voice-triggered Prompt Record). Reuses the snippet matcher
+ * with phonetic tolerance (no new engine), so OFF is zero-overhead.
  */
-voice_commands_enabled?: boolean;
+voice_commands_enabled?: boolean; 
 /**
- * [GRAIN] The wake phrase for voice commands: an anchor word ASR transcribes
- * reliably plus a keyword ("hey grain"). Matched phonetically.
+ * [GRAIN] The wake phrase for voice commands: an anchor word that ASR
+ * transcribes reliably plus a keyword ("hey grain"). Matched phonetically,
+ * so keyword mistranscriptions (grain → green / grin) still trigger. A bare
+ * keyword is paired with the default "hey" anchor.
  */
-voice_command_keyword?: string;
+voice_command_keyword?: string; 
 /**
  * [GRAIN] Native agent input: when on (default), typing a printable key
  * while the input is listening immediately switches it to the expanded
