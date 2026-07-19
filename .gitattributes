@@ -1,4 +1,4 @@
-# Merge policy for upstream (Handy) syncs — see docs/UPSTREAM.md.
+# Merge policy for upstream (Handy) syncs — see Upstream/UPSTREAM.md.
 #
 # `merge=ours` keeps Grain's version whenever a file conflicts during an
 # upstream merge. It requires the driver to be defined once per clone:
@@ -20,7 +20,7 @@ CONTRIBUTING.md    merge=ours
 CONTRIBUTING_TRANSLATIONS.md merge=ours
 docs/**            merge=ours
 website/**         merge=ours
-Upstream[[:space:]]Tracking/** merge=ours
+Upstream/**        merge=ours
 
 # Grain-owned CI (upstream workflows do not apply to this repo)
 .github/workflows/** merge=ours
@@ -35,6 +35,11 @@ src-tauri/tauri.windows.conf.json merge=ours
 bun.lock           merge=ours
 Cargo.lock         merge=ours
 src-tauri/Cargo.lock merge=ours
+
+# Shared rerere resolutions (Upstream/rerere_cache.py): pre/postimages must
+# stay byte-exact or rerere's conflict hashes stop matching — never convert
+# line endings.
+Upstream/rr-cache/** -text
 
 # Font binaries must never be line-ending converted (would corrupt the file).
 *.ttf binary

@@ -5,7 +5,7 @@ from datetime import datetime
 import re
 
 API_URL = "https://api.github.com/repos/cjpais/handy/commits?per_page=30"
-# Script runs from root via GitHub Actions, or from Upstream Tracking folder locally
+# Script runs from root via GitHub Actions, or from the Upstream/ folder locally
 # Determine path to data.json
 script_dir = os.path.dirname(os.path.abspath(__file__))
 DATA_FILE = os.path.join(script_dir, "data.json")

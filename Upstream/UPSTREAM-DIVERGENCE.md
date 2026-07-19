@@ -15,7 +15,7 @@ default: 3-way merge normally, prefer upstream in the STT core.
 
 > **Paths below are upstream's.** Since the phase-7 folder move the same files
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
-> unchanged). `Handy Isolation/ratchet.py` maps between the two.
+> unchanged). `Upstream/ratchet.py` maps between the two.
 
 ## Rust backend
 
@@ -52,7 +52,7 @@ default: 3-way merge normally, prefer upstream in the STT core.
 convention — upstream has no counterpart, so they never conflict),
 `crates/*` (grain-core, grain-pill, grain-editor, provider-router),
 `src-tauri/src/{rolling,stt_router,post_process_router,rotation_state,agent,bridge,events_server,context_detect,grain_space/**,stt_client}.rs`,
-`Upstream Tracking/`, `docs/`.
+`Upstream/`, `docs/`.
 
 ## Frontend
 
@@ -73,4 +73,4 @@ Docs (`README`, `AGENTS.md`, `CLAUDE.md`, `BUILD.md`, `CRUSH.md`,
 `CONTRIBUTING*`), `.github/workflows/**`, `tauri.conf.json` +
 `tauri.windows.conf.json` (identity `com.grain.app`, **no auto-updater —
 never re-add**), lockfiles (regenerate after merges), `website/`, `docs/`,
-`Upstream Tracking/`.
+`Upstream/`.

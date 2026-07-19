@@ -1,5 +1,9 @@
 # Handy Isolation — Plan
 
+> **Historical document.** All seven phases shipped (2026-07-19/20). The living
+> infrastructure this plan produced — ratchet.py, budget.json, UPSTREAMABLE.md,
+> the runbook — now lives in `Upstream/`.
+
 Goal: make the Handy-derived foundation of Grain *legible and isolated* so a
 contributor can tell at a glance what is Handy (don't touch, updated by
 upstream merges) and what is Grain (build here freely). End state: the
