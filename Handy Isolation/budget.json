@@ -2,7 +2,7 @@
   "src-tauri/Cargo.toml": 85,
   "src-tauri/capabilities/default.json": 14,
   "src-tauri/capabilities/desktop.json": 2,
-  "src-tauri/src/actions.rs": 873,
+  "src-tauri/src/actions.rs": 720,
   "src-tauri/src/apple_intelligence.rs": 2,
   "src-tauri/src/audio_toolkit/audio/mod.rs": 2,
   "src-tauri/src/audio_toolkit/audio/recorder.rs": 180,

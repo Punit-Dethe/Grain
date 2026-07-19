@@ -5,6 +5,7 @@ use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error
 use crate::llm_client::LlmError;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
+use crate::managers::model::ModelManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::rotation_state::CallOutcome;
 use crate::settings::{get_settings, AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
@@ -75,6 +76,15 @@ fn build_system_prompt(prompt_template: &str) -> String {
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
+/// Returns `true` when a transcription has no meaningful content to
+/// post-process (empty or whitespace-only). Used to skip the post-processing
+/// LLM call when nothing was actually transcribed, which would otherwise make
+/// the model reply with an error message such as "you need to provide the
+/// transcription".
+fn is_blank_transcription(transcription: &str) -> bool {
+    transcription.trim().is_empty()
+}
+
 /// Poll `is_cancelled` while awaiting `operation`; returns `None` the moment a
 /// cancellation is observed, abandoning the (possibly stalled) operation.
 async fn complete_unless_cancelled<F, C>(operation: F, is_cancelled: C) -> Option<F::Output>
@@ -109,8 +119,8 @@ async fn post_process_transcription(
     // appends the compact seam-repair layer above.
     rolling: bool,
 ) -> Option<String> {
-    if transcription.trim().is_empty() {
-        debug!("Post-processing skipped because transcription is empty");
+    if is_blank_transcription(transcription) {
+        debug!("Post-processing skipped because the transcription is empty");
         return None;
     }
 
@@ -445,21 +455,25 @@ pub(crate) async fn run_one_provider(
 }
 
 async fn maybe_convert_chinese_variant(
-    settings: &AppSettings,
+    effective_language: &str,
     transcription: &str,
 ) -> Option<String> {
-    // Check if language is set to Simplified or Traditional Chinese
-    let is_simplified = settings.selected_language == "zh-Hans";
-    let is_traditional = settings.selected_language == "zh-Hant";
+    // Gate on the language the model actually transcribed in (the effective
+    // language), not the persisted intent. A leftover zh-Hans/zh-Hant intent
+    // from a previously selected model must not run OpenCC S2T/T2S over output a
+    // non-Chinese model produced — that would silently rewrite any shared CJK
+    // characters (e.g. Japanese kanji) in the result.
+    let is_simplified = effective_language == "zh-Hans";
+    let is_traditional = effective_language == "zh-Hant";
 
     if !is_simplified && !is_traditional {
-        debug!("selected_language is not Simplified or Traditional Chinese; skipping translation");
+        debug!("effective language is not Simplified or Traditional Chinese; skipping conversion");
         return None;
     }
 
     debug!(
-        "Starting Chinese translation using OpenCC for language: {}",
-        settings.selected_language
+        "Starting Chinese variant conversion using OpenCC for language: {}",
+        effective_language
     );
 
     // Use OpenCC to convert based on selected language
@@ -494,6 +508,27 @@ pub(crate) struct ProcessedTranscription {
     pub post_process_prompt: Option<String>,
 }
 
+/// Resolve the persisted language *intent* into the language the currently-loaded
+/// model will actually use — the same capability-aware coercion the transcription
+/// paths apply (see [`crate::managers::model::effective_language`]). Post-processing
+/// resolves it independently so it agrees with the language the transcription ran
+/// in, without threading a value through the pipeline.
+fn resolve_effective_language(app: &AppHandle, settings: &AppSettings) -> String {
+    let tm = app.state::<Arc<TranscriptionManager>>();
+    let model_manager = app.state::<Arc<ModelManager>>();
+    let active_model = tm
+        .get_current_model()
+        .unwrap_or_else(|| settings.selected_model.clone());
+    match model_manager.get_model_info(&active_model) {
+        Some(info) => crate::managers::model::effective_language(
+            &settings.selected_language,
+            &info.supported_languages,
+            info.supports_language_detection,
+        ),
+        None => settings.selected_language.clone(),
+    }
+}
+
 pub(crate) async fn process_transcription_output(
     app: &AppHandle,
     transcription: &str,
@@ -520,7 +555,15 @@ pub(crate) async fn process_transcription_output(
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
 
-    if let Some(converted_text) = maybe_convert_chinese_variant(&settings, &final_text).await {
+    // Resolve the language the transcription actually ran in (the persisted
+    // intent coerced against the loaded model's capabilities) so OpenCC keys off
+    // the effective language rather than a possibly-stale intent.
+    // [GRAIN] Converts `final_text` (post voice-action strip), not the raw
+    // transcription, so a stripped trigger phrase can't reach OpenCC.
+    let effective_language = resolve_effective_language(app, &settings);
+    if let Some(converted_text) =
+        maybe_convert_chinese_variant(&effective_language, &final_text).await
+    {
         final_text = converted_text;
     }
 
@@ -768,6 +811,15 @@ impl ShortcutAction for TranscribeAction {
                     samples.len()
                 );
 
+                // [GRAIN] A cancel landing between the stop and the decode must
+                // bail BEFORE the expensive transcription. Upstream also hides
+                // its overlay and resets the tray here; Grain's cancel initiator
+                // already did both (SessionCancelled + tray), so this only stops.
+                if rm.was_cancelled_since(cancel_generation) {
+                    debug!("Transcription operation cancelled after recording stop");
+                    return;
+                }
+
                 if samples.is_empty() {
                     debug!("Recording produced no audio samples; skipping persistence");
                     crate::bridge::emit(
@@ -828,6 +880,14 @@ impl ShortcutAction for TranscribeAction {
                             false
                         }
                     };
+
+                    // [GRAIN] Same as above: a cancel that landed while the decode
+                    // ran stops here, before history/paste. No teardown — the
+                    // cancel initiator owns the pill and tray.
+                    if rm.was_cancelled_since(cancel_generation) {
+                        debug!("Transcription operation cancelled before output handling");
+                        return;
+                    }
 
                     match transcription_result {
                         Ok(transcription) => {
@@ -924,7 +984,10 @@ impl ShortcutAction for TranscribeAction {
                             }
                         }
                         Err(err) => {
-                            debug!("Global Shortcut Transcription error: {}", err);
+                            error!("Transcription failed: {}", err);
+                            // Surface the failure to the UI (toast). The full
+                            // message is also in the log via the line above.
+                            let _ = ah.emit("transcription-error", err.to_string());
                             // Save entry with empty text so user can retry
                             if wav_saved {
                                 if let Err(save_err) = hm.save_entry(
@@ -1055,12 +1118,25 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::complete_unless_cancelled;
+    use super::{complete_unless_cancelled, is_blank_transcription};
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn blank_transcription_is_detected() {
+        assert!(is_blank_transcription(""));
+        assert!(is_blank_transcription("   "));
+        assert!(is_blank_transcription("\t\n  \r\n"));
+    }
+
+    #[test]
+    fn non_blank_transcription_is_kept() {
+        assert!(!is_blank_transcription("hello"));
+        assert!(!is_blank_transcription("  hello  "));
+    }
 
     #[test]
     fn completed_operation_returns_its_output() {
