@@ -99,9 +99,13 @@ tooling.
    [index.html](index.html), the tracker dashboard.
 2. **Trial merge** → [merge-report.md](merge-report.md): the next sync's
    conflict surface, always known in advance.
-3. **Auto-PR**: clean merge + new commits → the `sync/auto-upstream` branch is
-   (re)built, the ratchet runs against it, and a PR is opened/updated with the
-   commit list and a review checklist. Conflicted merges never auto-open a PR.
+3. **Ancestry audit**: flags upstream commits that are already applied here but
+   unrecorded (see D below) — and gates step 4 on it.
+4. **Auto-PR**: clean merge + new commits + no ancestry drift → the
+   `sync/auto-upstream` branch is (re)built, the ratchet must pass on the
+   merged result, and a PR is opened/updated with the commit list and a review
+   checklist. Conflicted merges, ratchet failures and drift all suppress the
+   PR rather than producing a misleading one.
 
 [`divergence-ratchet.yml`](../.github/workflows/divergence-ratchet.yml) on
 every push/PR touching `src-tauri/`: the boundary cannot silently erode.
@@ -164,6 +168,44 @@ out forever, with no conflict to warn you. Cherry-picks record no ancestry
 (measured 2026-07-17: 13 cherry-picks, conflict surface unchanged at 57) —
 close-outs are what advance the merge base.
 
+### D. "We're N behind, but we already did those" — ancestry drift
+
+The single most common way this fork's bookkeeping goes wrong. Symptoms:
+
+- `git rev-list --count HEAD..upstream/main` stays stubbornly non-zero;
+- the same file (historically `es/translation.json`) conflicts in *every*
+  trial merge;
+- `Upstream/data.json` says `Merged` for those very commits.
+
+**Cause:** the work was applied by cherry-pick or by hand. Git tracks
+*ancestry*, not content — so the content is in the tree, the ledger is
+correct, and git still believes we never took those commits. It therefore
+replays them (and re-raises their conflicts) into every future merge, forever.
+`git cherry` won't spot it either: an adapted cherry-pick has a different
+patch-id, so it reports the commit as missing.
+
+**Detection (automatic):** `python Upstream/sync_upstream.py` matches unmerged
+upstream commits against our own subjects since the merge base and prints a
+loud `ALREADY APPLIED` block. CI runs this every 2 hours, surfaces it in the
+job summary, and — importantly — **suppresses the auto-sync PR** while drift
+exists, because auto-merging in that state would replay resolved work.
+
+**Fix:** verify the content really is present (spot-check the files each
+commit touched), then record it:
+
+```bash
+git merge -s ours upstream/main      # tree untouched; ancestry says "assessed"
+git diff HEAD~1 --stat               # MUST be empty
+python Upstream/ratchet.py --update  # budgets re-baseline to the new base
+```
+
+Measured 2026-07-20: four i18n commits (#1697, #1701, #1708, #1709) sat
+applied-but-unrecorded. Recording them took the trial merge from "1 conflict,
+4 behind" to **clean, 0 behind** without changing a single line of code.
+
+**Prevention:** prefer `git merge` over `git cherry-pick` for upstream work.
+If you must cherry-pick (a single urgent fix), close it out afterwards.
+
 ### Verification (every sync)
 
 - Rust: `cargo check --lib` then `cargo test --lib` in `src-tauri/`
@@ -208,3 +250,4 @@ same commit.
 | 2026-07-17 | `v0.9.3` closed out | Merge base advanced via `git merge -s ours v0.9.3` (tree unchanged); trial-merge conflicts 57 → **0**. |
 | 2026-07-19/20 | — | **Handy Isolation phases 1-7**: audio chain re-baselined onto upstream text; inert files; Grain code extracted to `grain_*` modules; divergence ratchet CI; folder move to `src/handy/` (R100 renames; merge mapping verified with simulated upstream commits). Divergence 5561 → ~3580 lines / 26 files. Three upstreamable fixes catalogued. |
 | 2026-07-20 | infra | This architecture: auto-sync PRs, shared rerere cache, stray-file guard, `Upstream/` as the single home for all sync machinery. |
+| 2026-07-20 | `cdbc2239` closed out | #1697/#1701/#1708/#1709 were applied by cherry-pick, so git still counted them unmerged — the cause of the recurring `es/translation.json` conflict. Content verified (3 files byte-identical; the 4 keys the Spanish pick dropped belong to upstream's replaced model-list UI and are referenced nowhere in Grain), then recorded with `merge -s ours`. Trial merge: 1 conflict / 4 behind → **clean / 0 behind**. Ancestry-drift detection added so this cannot recur silently. |

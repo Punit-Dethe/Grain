@@ -65,7 +65,7 @@ def main() -> int:
         print(f"[rerere] restored {n} shared resolution(s) into .git/rr-cache")
     elif mode == "save":
         n = merge_tree(LIVE, SHARED)
-        print(f"[rerere] saved {n} new resolution(s) into Upstream/rr-cache — commit them")
+        print(f"[rerere] saved {n} new resolution(s) into Upstream/rr-cache - commit them")
     else:
         print(__doc__)
         return 2

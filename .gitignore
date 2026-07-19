@@ -76,3 +76,7 @@ grain.updater.key*
 
 # Reference projects
 Refrence/
+
+# Python bytecode from the Upstream/ tooling
+__pycache__/
+*.pyc

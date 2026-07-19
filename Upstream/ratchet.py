@@ -165,7 +165,7 @@ def main() -> int:
         allowed = budget.get(path)
         if allowed is None:
             failures.append(
-                f"NEW divergence: {path} ({cost} lines) — no budget entry. "
+                f"NEW divergence: {path} ({cost} lines) - no budget entry. "
                 f"Move the change into a Grain-owned module, or (for a deliberate "
                 f"hook) run ratchet.py --update and justify it in the commit."
             )
@@ -182,13 +182,13 @@ def main() -> int:
 
     for path in strays():
         failures.append(
-            f"STRAY upstream file outside src/handy/: {path} — "
+            f"STRAY upstream file outside src/handy/: {path} - "
             f"`git mv` it into src-tauri/src/handy/ (and add its #[path] "
             f"declaration in lib.rs if it is a new module)."
         )
 
     for note in improvements:
-        print(f"[ratchet] {note} — run ratchet.py --update to lock it in")
+        print(f"[ratchet] {note} - run ratchet.py --update to lock it in")
     if failures:
         print("\n".join(f"[ratchet] FAIL: {f}" for f in failures), file=sys.stderr)
         return 1

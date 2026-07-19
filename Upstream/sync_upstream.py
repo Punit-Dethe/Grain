@@ -1,6 +1,25 @@
+"""Refresh the upstream commit ledger (data.json) and audit ancestry drift.
+
+Two records of "what upstream work have we absorbed" must agree:
+
+  * the LEDGER (data.json) — the human verdict per commit, rendered by
+    index.html;
+  * git ANCESTRY — what `git rev-list HEAD..upstream/main` believes.
+
+They drift apart when work is applied by cherry-pick or by hand, because
+neither records ancestry. The content lands, the ledger says Merged, and git
+still reports us "behind" forever — replaying those commits (and their
+conflicts) into every future merge. This script flags that drift so it gets
+closed out with `git merge -s ours` instead of festering.
+
+Measured 2026-07-20: four i18n commits sat applied-but-unrecorded, which is
+what made every trial merge conflict on es/translation.json.
+"""
+
 import urllib.request
 import json
 import os
+import subprocess
 from datetime import datetime
 import re
 
@@ -75,5 +94,80 @@ def update_data():
     else:
         print("No new commits found.")
 
+def normalize_subject(msg):
+    """Subject with PR numbers/backticks stripped — the join key between the
+    ledger, upstream commits, and our own git log. Adapted cherry-picks keep
+    the subject even when the patch changed, so subject matching finds them
+    where `git cherry` (patch-id based) cannot."""
+    clean = re.sub(r"\(#\d+\)", "", msg)
+    clean = clean.replace("`", "")
+    return clean.strip().lower()
+
+
+def git(*args):
+    return subprocess.run(
+        ["git", *args], capture_output=True, text=True, check=True
+    ).stdout
+
+
+def check_ancestry_drift():
+    """Report upstream commits that git counts as unmerged but whose work is
+    already in our tree (applied by cherry-pick / by hand).
+
+    Returns (unmerged_count, already_applied_subjects). A non-empty second
+    value means: close out with `git merge -s ours upstream/main` so git stops
+    replaying resolved work. See Upstream/UPSTREAM.md → "Closing out".
+    """
+    try:
+        unmerged = [
+            line.split(" ", 1)
+            for line in git(
+                "log", "--format=%h %s", "HEAD..upstream/main"
+            ).splitlines()
+            if line.strip()
+        ]
+    except subprocess.CalledProcessError:
+        print("  (no upstream remote — skipping ancestry check)")
+        return 0, []
+
+    if not unmerged:
+        return 0, []
+
+    # Our own subjects since the merge base: a cherry-picked upstream commit
+    # keeps its subject, so this finds work that landed without ancestry.
+    base = git("merge-base", "HEAD", "upstream/main").strip()
+    ours = {
+        normalize_subject(s)
+        for s in git("log", "--format=%s", f"{base}..HEAD").splitlines()
+    }
+
+    applied = [(sha, subj) for sha, subj in unmerged if normalize_subject(subj) in ours]
+    return len(unmerged), applied
+
+
+def report_ancestry():
+    unmerged_count, applied = check_ancestry_drift()
+    if not unmerged_count:
+        print("Ancestry: in sync with upstream/main (0 unmerged).")
+        return
+    print(f"Ancestry: {unmerged_count} upstream commit(s) not in our history.")
+    if applied:
+        # ASCII only: this runs on the Windows console (cp1252), where a stray
+        # arrow or warning glyph raises UnicodeEncodeError and kills the job.
+        print(
+            f"  WARNING: {len(applied)} of them are ALREADY APPLIED here "
+            f"(cherry-picked - same subject, no ancestry):"
+        )
+        for sha, subj in applied:
+            print(f"      {sha} {subj}")
+        print(
+            "  -> Verify the content, then record it:\n"
+            "        git merge -s ours upstream/main\n"
+            "     Until then git replays these commits - and their conflicts -\n"
+            "     into every merge. See Upstream/UPSTREAM.md."
+        )
+
+
 if __name__ == "__main__":
     update_data()
+    report_ancestry()
