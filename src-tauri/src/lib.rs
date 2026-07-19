@@ -12,6 +12,7 @@ mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
+mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
 // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
 // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;

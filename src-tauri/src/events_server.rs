@@ -137,7 +137,7 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
             {
                 if rm.arm_prompt_record() {
                     ctx.emit(grain_core::DaemonEvent::PromptRecordingChanged {
-                        session_id: crate::actions::current_session_id(),
+                        session_id: crate::grain_actions::current_session_id(),
                         active: true,
                     });
                 }

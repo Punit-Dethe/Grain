@@ -1057,7 +1057,7 @@ impl TranscriptionManager {
         crate::bridge::emit(
             &self.app_handle,
             grain_core::DaemonEvent::AsrStreamText {
-                session_id: crate::actions::current_session_id(),
+                session_id: crate::grain_actions::current_session_id(),
                 committed: committed.to_string(),
                 tentative: tentative.to_string(),
             },
