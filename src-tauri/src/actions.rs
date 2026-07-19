@@ -1,7 +1,7 @@
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::apple_intelligence;
 use crate::audio_feedback::{play_feedback_sound, play_feedback_sound_blocking, SoundType};
-use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error};
+use crate::audio_toolkit::{is_microphone_access_denied, is_no_input_device_error, VadPolicy};
 use crate::llm_client::LlmError;
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::history::HistoryManager;
@@ -769,6 +769,11 @@ impl ShortcutAction for TranscribeAction {
         );
         debug!("Microphone mode - always_on: {}", is_always_on);
 
+        // Batch dictation never streams, so the session runs the offline VAD
+        // profile. [GRAIN] grain-core settings have no `vad_enabled` toggle
+        // (upstream's setting was never ported) — VAD is always on.
+        let vad_policy = VadPolicy::Offline;
+
         let mut recording_error: Option<String> = None;
         if is_always_on {
             // Always-on mode: Play audio feedback immediately, then apply mute after sound finishes
@@ -782,7 +787,7 @@ impl ShortcutAction for TranscribeAction {
                 rm_clone.apply_mute();
             });
 
-            if let Err(e) = rm.try_start_recording(&binding_id) {
+            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
                 debug!("Recording failed: {}", e);
                 recording_error = Some(e);
             }
@@ -791,7 +796,7 @@ impl ShortcutAction for TranscribeAction {
             // This allows the microphone to be activated before playing the sound
             debug!("On-demand mode: Starting recording first, then audio feedback");
             let recording_start_time = Instant::now();
-            match rm.try_start_recording(&binding_id) {
+            match rm.try_start_recording(&binding_id, vad_policy) {
                 Ok(()) => {
                     debug!("Recording started in {:?}", recording_start_time.elapsed());
                     // Small delay to ensure microphone stream is active
@@ -915,7 +920,7 @@ impl ShortcutAction for TranscribeAction {
             );
 
             let stop_recording_time = Instant::now();
-            if let Some(samples) = rm.stop_recording(&binding_id) {
+            if let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) {
                 debug!(
                     "Recording stopped and samples retrieved in {:?}, sample count: {}",
                     stop_recording_time.elapsed(),
@@ -1413,7 +1418,13 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // pill is the only surface, driven by the DaemonEvents below.
 
         let binding_id = binding_id.to_string();
-        let is_always_on = get_settings(app).always_on_microphone;
+        let start_settings = get_settings(app);
+        let is_always_on = start_settings.always_on_microphone;
+        // [GRAIN] Rolling receives EVERY frame via the sample callback no matter
+        // the policy; the policy shapes the batch-fallback buffer and gives the
+        // rolling cursor its per-frame voice decisions. Offline profile — the
+        // `vad_enabled` toggle was never ported into grain-core settings.
+        let vad_policy = VadPolicy::Offline;
         let mut recording_error: Option<String> = None;
         if is_always_on {
             let rm_mute = Arc::clone(&rm);
@@ -1422,11 +1433,11 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 play_feedback_sound_blocking(&app2, SoundType::Start);
                 rm_mute.apply_mute();
             });
-            if let Err(e) = rm.try_start_recording(&binding_id) {
+            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
                 recording_error = Some(e);
             }
         } else {
-            match rm.try_start_recording(&binding_id) {
+            match rm.try_start_recording(&binding_id, vad_policy) {
                 Ok(()) => {
                     let app2 = app.clone();
                     let rm = Arc::clone(&rm);
@@ -1518,11 +1529,16 @@ impl ShortcutAction for RealtimeTranscribeAction {
 
         let binding_id = binding_id.to_string();
         let post_process = self.post_process_override.load(Ordering::Relaxed);
+        // Snapshot before the stop so a cancel landing during the extra
+        // recording buffer (or later, mid-pipeline) is observed.
+        let cancel_generation = rm.cancel_generation();
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
 
             // Full audio (for WAV/history + the batch fallback).
-            let samples = rm.stop_recording(&binding_id).unwrap_or_default();
+            let samples = rm
+                .stop_recording(&binding_id, cancel_generation)
+                .unwrap_or_default();
             // [GRAIN] Prompt Record mark (the pill-click / Alt+1 split point),
             // taken before draining the worker.
             let prompt_mark = rm.take_prompt_mark();
@@ -1680,6 +1696,10 @@ impl ShortcutAction for NativeAsrAction {
 
         let settings = get_settings(app);
         let is_always_on = settings.always_on_microphone;
+        // Streaming-capable model verified above → the streaming VAD profile
+        // (longer post-speech tail). [GRAIN] no `vad_enabled` toggle in
+        // grain-core settings — VAD is always on.
+        let vad_policy = VadPolicy::Streaming;
         let mut recording_error: Option<String> = None;
         if is_always_on {
             let rm_clone = Arc::clone(&rm);
@@ -1688,11 +1708,11 @@ impl ShortcutAction for NativeAsrAction {
                 play_feedback_sound_blocking(&app_clone, SoundType::Start);
                 rm_clone.apply_mute();
             });
-            if let Err(e) = rm.try_start_recording(&binding_id) {
+            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
                 recording_error = Some(e);
             }
         } else {
-            match rm.try_start_recording(&binding_id) {
+            match rm.try_start_recording(&binding_id, vad_policy) {
                 Ok(()) => {
                     let app2 = app.clone();
                     let rm2 = Arc::clone(&rm);
@@ -1767,13 +1787,18 @@ impl ShortcutAction for NativeAsrAction {
         rm.remove_mute();
         play_feedback_sound(app, SoundType::Stop);
 
+        // Snapshot before the stop so a cancel landing during the extra
+        // recording buffer (or later, mid-pipeline) is observed.
+        let cancel_generation = rm.cancel_generation();
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
 
             // The mic frames already reached the stream worker live; keep the
             // captured samples only as the batch-fallback input (mirrors Handy:
             // a model that turned out not to stream still yields a transcript).
-            let samples = rm.stop_recording(&binding_id).unwrap_or_default();
+            let samples = rm
+                .stop_recording(&binding_id, cancel_generation)
+                .unwrap_or_default();
             // [GRAIN] Prompt Record split mark (a pill click on the Studio waveform).
             let prompt_mark = rm.take_prompt_mark();
 

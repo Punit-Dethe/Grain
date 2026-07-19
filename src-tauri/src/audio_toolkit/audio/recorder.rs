@@ -23,7 +23,7 @@ enum Cmd {
     /// Begin capturing. Carries the send timestamp so the consumer can log how
     /// long the command sat in the channel (and how much audio was dropped
     /// before it was seen).
-    Start(Instant),
+    Start(VadPolicy, Instant),
     Stop(mpsc::Sender<Vec<f32>>),
     Shutdown,
 }
@@ -33,19 +33,61 @@ enum AudioChunk {
     EndOfStream,
 }
 
+/// How 16 kHz mono frames should be filtered for one recording session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VadPolicy {
+    /// Bypass VAD and forward every frame.
+    Disabled,
+    /// Current offline-tuned VAD profile.
+    Offline,
+    /// VAD profile with a longer post-speech tail for streaming-capable models.
+    Streaming,
+}
+
+/// A single VAD engine plus the two hangover-tail lengths its smoothing wrapper
+/// should use. The offline and streaming policies are never active
+/// concurrently, so one detector is reconfigured per session (see `Cmd::Start`)
+/// rather than kept as two resident engines.
+#[derive(Clone)]
+struct VadConfig {
+    detector: Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>,
+    offline_hangover_frames: usize,
+    streaming_hangover_frames: usize,
+}
+
+impl VadConfig {
+    /// Post-speech hangover tail (in 30 ms frames) for the given policy.
+    /// `Disabled` never reaches the detector, so it maps to the offline value.
+    fn hangover_for(&self, policy: VadPolicy) -> usize {
+        match policy {
+            VadPolicy::Streaming => self.streaming_hangover_frames,
+            VadPolicy::Offline | VadPolicy::Disabled => self.offline_hangover_frames,
+        }
+    }
+}
+
+/// Callback invoked with each 16 kHz mono frame that passes the active capture
+/// policy while recording. Used to feed a live streaming transcription as audio arrives.
+pub type AudioFrameCallback = Arc<dyn Fn(&[f32]) + Send + Sync + 'static>;
+
+/// [GRAIN] Callback invoked with EVERY resampled 16 kHz mono frame while
+/// recording (not just the frames that pass VAD), plus the frame's
+/// voice-activity decision: `Some(true)` voiced, `Some(false)` non-speech,
+/// `None` when VAD is bypassed. The rolling-window engine keeps a continuous
+/// timeline and only uses the decision for segmentation, so it needs the raw
+/// stream — unlike [`AudioFrameCallback`], which sees post-VAD frames.
+pub type SampleFrameCallback = Arc<dyn Fn(&[f32], Option<bool>) + Send + Sync + 'static>;
+
 pub struct AudioRecorder {
     device: Option<Device>,
     cmd_tx: Option<mpsc::Sender<Cmd>>,
     worker_handle: Option<std::thread::JoinHandle<()>>,
-    vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
+    vad: Option<VadConfig>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
-    // [GRAIN] raw 16 kHz mono frames streamed live while recording, for the
-    // rolling-window engine. Fires after resampling (+ conditioning), only while
-    // recording. The 2nd arg is the frame's voice-activity decision:
-    // `Some(true)` voiced, `Some(false)` non-speech, `None` when VAD is
-    // disabled — the rolling cursor uses it for far better segmentation than a
-    // raw energy gate.
-    sample_cb: Option<Arc<dyn Fn(&[f32], Option<bool>) + Send + Sync + 'static>>,
+    audio_cb: Option<AudioFrameCallback>,
+    // [GRAIN] every-frame callback for the rolling-window engine (see
+    // `SampleFrameCallback`).
+    sample_cb: Option<SampleFrameCallback>,
     // [GRAIN] when true, run voice conditioning (85 Hz high-pass per frame +
     // boost-only AGC on the finalized buffer) before VAD/STT. A live atomic so a
     // settings toggle takes effect immediately on the already-open recorder
@@ -76,6 +118,7 @@ impl AudioRecorder {
             worker_handle: None,
             vad: None,
             level_cb: None,
+            audio_cb: None,
             sample_cb: None,
             conditioning: Arc::new(AtomicBool::new(false)),
             recorded_len: Arc::new(AtomicUsize::new(0)),
@@ -104,8 +147,31 @@ impl AudioRecorder {
         self.conditioning.store(enabled, Ordering::Relaxed);
     }
 
-    pub fn with_vad(mut self, vad: Box<dyn VoiceActivityDetector>) -> Self {
-        self.vad = Some(Arc::new(Mutex::new(vad)));
+    /// [GRAIN] Stream every 16 kHz mono frame live while recording (for the
+    /// rolling-window engine) with its voice-activity decision. Same threading
+    /// rules as [`with_audio_callback`](Self::with_audio_callback): keep it cheap.
+    pub fn with_sample_callback<F>(mut self, cb: F) -> Self
+    where
+        F: Fn(&[f32], Option<bool>) + Send + Sync + 'static,
+    {
+        self.sample_cb = Some(Arc::new(cb));
+        self
+    }
+
+    /// Attach a single VAD engine, reconfigured per session for the offline vs
+    /// streaming hangover tail. The two policies are mutually exclusive within a
+    /// recording, so one engine covers both instead of two resident instances.
+    pub fn with_vad(
+        mut self,
+        detector: Box<dyn VoiceActivityDetector>,
+        offline_hangover_frames: usize,
+        streaming_hangover_frames: usize,
+    ) -> Self {
+        self.vad = Some(VadConfig {
+            detector: Arc::new(Mutex::new(detector)),
+            offline_hangover_frames,
+            streaming_hangover_frames,
+        });
         self
     }
 
@@ -117,14 +183,15 @@ impl AudioRecorder {
         self
     }
 
-    /// [GRAIN] Stream raw 16 kHz mono frames live while recording (for the
-    /// rolling-window engine). The callback fires per resampled frame with the
-    /// frame's voice-activity decision (`None` when VAD is disabled).
-    pub fn with_sample_callback<F>(mut self, cb: F) -> Self
+    /// Register a callback that receives real-time 16 kHz frames after the active
+    /// VAD policy has been applied. Frames arrive in real time, in order, on the
+    /// recorder's consumer thread — keep the callback cheap (e.g. forward to a
+    /// channel) so it never stalls capture.
+    pub fn with_audio_callback<F>(mut self, cb: F) -> Self
     where
-        F: Fn(&[f32], Option<bool>) + Send + Sync + 'static,
+        F: Fn(&[f32]) + Send + Sync + 'static,
     {
-        self.sample_cb = Some(Arc::new(cb));
+        self.audio_cb = Some(Arc::new(cb));
         self
     }
 
@@ -149,6 +216,8 @@ impl AudioRecorder {
         let vad = self.vad.clone();
         // Move the optional level callback into the worker thread
         let level_cb = self.level_cb.clone();
+        // Move the optional real-time audio frame callback into the worker thread
+        let audio_cb = self.audio_cb.clone();
         let sample_cb = self.sample_cb.clone(); // [GRAIN]
         let conditioning = self.conditioning.clone(); // [GRAIN] live atomic
         let recorded_len = self.recorded_len.clone(); // [GRAIN] Prompt Record split mark
@@ -267,6 +336,7 @@ impl AudioRecorder {
                         sample_rx,
                         cmd_rx,
                         level_cb,
+                        audio_cb,
                         sample_cb,
                         conditioning,
                         recorded_len,
@@ -304,17 +374,16 @@ impl AudioRecorder {
             }
             Err(recv_error) => {
                 let _ = worker.join();
-                Err(Box::new(Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to initialize microphone worker: {recv_error}"),
-                )))
+                Err(Box::new(Error::other(format!(
+                    "Failed to initialize microphone worker: {recv_error}"
+                ))))
             }
         }
     }
 
-    pub fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn start(&self, vad_policy: VadPolicy) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start(Instant::now()))?;
+            tx.send(Cmd::Start(vad_policy, Instant::now()))?;
         }
         Ok(())
     }
@@ -380,12 +449,10 @@ impl AudioRecorder {
                 }
             }
 
-            let chunk_to_send = std::mem::replace(
-                &mut output_buffer,
-                Vec::with_capacity(data.len() / channels),
-            );
-
-            if sample_tx.send(AudioChunk::Samples(chunk_to_send)).is_err() {
+            if sample_tx
+                .send(AudioChunk::Samples(output_buffer.clone()))
+                .is_err()
+            {
                 log::error!("Failed to send samples");
             }
         };
@@ -511,15 +578,17 @@ mod tests {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_consumer(
     in_sample_rate: u32,
-    vad: Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
+    vad: Option<VadConfig>,
     sample_rx: mpsc::Receiver<AudioChunk>,
     cmd_rx: mpsc::Receiver<Cmd>,
     level_cb: Option<Arc<dyn Fn(Vec<f32>) + Send + Sync + 'static>>,
-    sample_cb: Option<Arc<dyn Fn(&[f32], Option<bool>) + Send + Sync + 'static>>, // [GRAIN]
-    conditioning: Arc<AtomicBool>,                                                // [GRAIN] live
-    recorded_len: Arc<AtomicUsize>, // [GRAIN] Prompt Record split mark
+    audio_cb: Option<AudioFrameCallback>,
+    sample_cb: Option<SampleFrameCallback>, // [GRAIN] rolling engine feed
+    conditioning: Arc<AtomicBool>,          // [GRAIN] live toggle
+    recorded_len: Arc<AtomicUsize>,         // [GRAIN] Prompt Record split mark
     stop_flag: Arc<AtomicBool>,
     stream_running_at: Instant,
 ) {
@@ -531,6 +600,7 @@ fn run_consumer(
 
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;
+    let mut vad_policy = VadPolicy::Offline;
 
     // [GRAIN] Voice conditioning state. The high-pass runs at 16 kHz (after the
     // FrameResampler), filtering each frame in `scratch` before it reaches VAD,
@@ -566,32 +636,46 @@ fn run_consumer(
         4000.0, // vocal_max_hz
     );
 
-    /// Push one frame through VAD into the batch buffer and report the
-    /// voice-activity decision for the rolling engine. `Some(true)` = voiced,
-    /// `Some(false)` = non-speech, `None` = VAD disabled (or not recording).
-    /// The VAD is stateful, so it is stepped EXACTLY ONCE per frame here — the
-    /// returned decision is reused for rolling (no second `push_frame`).
+    // [GRAIN] Returns the frame's voice-activity decision for the rolling
+    // engine: `Some(true)` voiced, `Some(false)` non-speech, `None` when VAD is
+    // bypassed or not recording. The VAD is stateful, so it is stepped EXACTLY
+    // ONCE per frame here — the returned decision is reused for rolling (no
+    // second `push_frame`). Upstream's version returns nothing else changed.
     fn handle_frame(
         samples: &[f32],
         recording: bool,
-        vad: &Option<Arc<Mutex<Box<dyn vad::VoiceActivityDetector>>>>,
+        vad_policy: VadPolicy,
+        vad: &Option<VadConfig>,
+        audio_cb: &Option<AudioFrameCallback>,
         out_buf: &mut Vec<f32>,
     ) -> Option<bool> {
         if !recording {
             return None;
         }
 
-        if let Some(vad_arc) = vad {
-            let mut det = vad_arc.lock().unwrap();
+        let mut emit = |buf: &[f32]| {
+            out_buf.extend_from_slice(buf);
+            if let Some(cb) = audio_cb {
+                cb(buf);
+            }
+        };
+
+        if vad_policy == VadPolicy::Disabled {
+            emit(samples);
+            return None;
+        }
+
+        if let Some(cfg) = vad {
+            let mut det = cfg.detector.lock().unwrap();
             match det.push_frame(samples).unwrap_or(VadFrame::Speech(samples)) {
                 VadFrame::Speech(buf) => {
-                    out_buf.extend_from_slice(buf);
+                    emit(buf);
                     Some(true)
                 }
                 VadFrame::Noise => Some(false),
             }
         } else {
-            out_buf.extend_from_slice(samples);
+            emit(samples);
             None
         }
     }
@@ -605,21 +689,29 @@ fn run_consumer(
         let mut pending = Some(chunk);
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                Cmd::Start(sent_at) => {
+                Cmd::Start(policy, sent_at) => {
                     log::debug!(
                         "Cmd::Start processed {:?} after send; capture begins with the in-flight chunk",
                         sent_at.elapsed()
                     );
                     awaiting_first_captured_chunk = Some(Instant::now());
                     stop_flag.store(false, Ordering::Relaxed);
+                    vad_policy = policy;
                     processed_samples.clear();
                     recorded_len.store(0, Ordering::Relaxed); // [GRAIN] fresh mark baseline
                     recording = true;
                     highpass.reset(); // [GRAIN] fresh filter state per session
                     visualizer.reset();
                     frame_resampler.reset();
-                    if let Some(v) = &vad {
-                        v.lock().unwrap().reset();
+                    // Reconfigure the single VAD engine for this session's policy
+                    // and clear its smoothing + recurrent state before it sees
+                    // any frames.
+                    if vad_policy != VadPolicy::Disabled {
+                        if let Some(cfg) = &vad {
+                            let mut det = cfg.detector.lock().unwrap();
+                            det.set_hangover_frames(cfg.hangover_for(vad_policy));
+                            det.reset();
+                        }
                     }
                 }
                 Cmd::Stop(reply_tx) => {
@@ -640,7 +732,14 @@ fn run_consumer(
                             } else {
                                 frame
                             };
-                            let _ = handle_frame(f, true, &vad, &mut processed_samples);
+                            let _ = handle_frame(
+                                f,
+                                true,
+                                vad_policy,
+                                &vad,
+                                &audio_cb,
+                                &mut processed_samples,
+                            );
                         });
                     }
 
@@ -660,9 +759,14 @@ fn run_consumer(
                                     } else {
                                         frame
                                     };
-                                    // Drain path: batch buffer only, no rolling
-                                    // callback — discard the VAD decision.
-                                    let _ = handle_frame(f, true, &vad, &mut processed_samples);
+                                    let _ = handle_frame(
+                                        f,
+                                        true,
+                                        vad_policy,
+                                        &vad,
+                                        &audio_cb,
+                                        &mut processed_samples,
+                                    );
                                 });
                             }
                             Ok(AudioChunk::EndOfStream) => break,
@@ -673,7 +777,7 @@ fn run_consumer(
                         }
                     }
 
-                    let conditioning_on = conditioning.load(Ordering::Relaxed);
+                    let conditioning_on = conditioning.load(Ordering::Relaxed); // [GRAIN]
                     frame_resampler.finish(&mut |frame: &[f32]| {
                         let f: &[f32] = if conditioning_on {
                             scratch.clear();
@@ -683,7 +787,14 @@ fn run_consumer(
                         } else {
                             frame
                         };
-                        let _ = handle_frame(f, true, &vad, &mut processed_samples);
+                        let _ = handle_frame(
+                            f,
+                            true,
+                            vad_policy,
+                            &vad,
+                            &audio_cb,
+                            &mut processed_samples,
+                        );
                     });
 
                     // [GRAIN] boost-only noise-gated AGC over the whole capture —
@@ -742,8 +853,14 @@ fn run_consumer(
             } else {
                 frame
             };
-            // Step VAD once here; reuse its decision for the rolling engine.
-            let speech = handle_frame(f, recording, &vad, &mut processed_samples);
+            let speech = handle_frame(
+                f,
+                recording,
+                vad_policy,
+                &vad,
+                &audio_cb,
+                &mut processed_samples,
+            );
             // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
             // engine with its voice-activity decision (rolling keeps EVERY frame
             // for a continuous timeline; `speech` only drives its silence gate).

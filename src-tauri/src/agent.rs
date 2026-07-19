@@ -431,7 +431,9 @@ fn start_dictation(app: &AppHandle) {
             let _ = rm.preload_vad();
         });
     }
-    if let Err(e) = rm.try_start_recording(AGENT_BINDING) {
+    // Agent dictation is a batch-style capture: offline VAD profile (VAD is
+    // always on — grain-core settings have no `vad_enabled` toggle).
+    if let Err(e) = rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
         warn!("[GRAIN] agent: failed to start dictation: {e}");
     }
 }
@@ -981,7 +983,8 @@ pub fn input_submit_voice(app: &AppHandle, quick: bool) {
         };
 
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
-        let samples = match rm.stop_recording(AGENT_BINDING) {
+        let cancel_generation = rm.cancel_generation();
+        let samples = match rm.stop_recording(AGENT_BINDING, cancel_generation) {
             Some(s) if !s.is_empty() => s,
             _ => {
                 no_speech(&app, "Nothing was heard — try again.");
