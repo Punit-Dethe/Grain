@@ -12,6 +12,13 @@ mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
+// [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
+// replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
+// disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
+// cleanly; port anything relevant into `crates/grain-core`. The alias keeps
+// every `crate::settings::` path working.
+mod grain_settings;
+pub(crate) use grain_settings as settings;
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
@@ -36,7 +43,6 @@ mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rot
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
-mod settings;
 mod shortcut;
 mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
