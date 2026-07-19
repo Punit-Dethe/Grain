@@ -805,6 +805,7 @@ pub fn run(cli_args: CliArgs) {
             // bridge): tauri-specta's Event::emit PANICS on an unregistered
             // event, which killed the stream worker mid-lease (no pill text,
             // engine dropped, batch fallback found nothing loaded).
+            managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
         ]);
 

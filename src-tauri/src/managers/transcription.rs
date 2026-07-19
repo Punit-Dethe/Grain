@@ -45,6 +45,35 @@ pub struct StreamTextEvent {
     pub tentative: String,
 }
 
+/// Phase of the streaming overlay card, emitted to drive its UI state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamPhase {
+    /// Receiving audio / live text (or waiting for the stream to begin). Rust
+    /// does not emit this today; the frontend starts in this phase and Rust only
+    /// emits transitions away from it.
+    Listening,
+    /// Finalizing or post-processing — show a spinner.
+    Working,
+}
+
+/// Semantic kind of "working" phase, used to localize the spinner label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "lowercase")]
+pub enum StreamWorkKind {
+    Transcribing,
+    Polishing,
+}
+
+/// Emitted to switch the streaming overlay to a working spinner.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct StreamPhaseEvent {
+    pub phase: StreamPhase,
+    /// Present only when `phase` is `Working`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<StreamWorkKind>,
+}
+
 /// Commands sent to the streaming worker thread. Audio frames and the finalize
 /// request travel the same channel so FIFO ordering guarantees every fed frame
 /// is processed before finalize runs.
@@ -158,10 +187,14 @@ struct StreamWorkerGuard {
     worker_id: u64,
     active_stream_worker: Arc<AtomicU64>,
     active_engine_lease: Arc<AtomicU64>,
+    stream_active: Arc<AtomicBool>,
 }
 
 impl Drop for StreamWorkerGuard {
     fn drop(&mut self) {
+        if self.active_stream_worker.load(Ordering::Acquire) == self.worker_id {
+            self.stream_active.store(false, Ordering::Release);
+        }
         let _ = self.active_engine_lease.compare_exchange(
             self.worker_id,
             0,
@@ -193,9 +226,12 @@ pub struct TranscriptionManager {
     /// [`StreamRouter`]. Shared with the audio recorder so per-frame feeds skip
     /// Tauri state and the manager lock.
     router: Arc<StreamRouter>,
-    /// Streaming uses three independent flags: router open = frames should route,
+    /// True only while a transcribe-cpp `Stream` is actually in flight (set by
+    /// the worker once `stream()` succeeds). Used for overlay/UI decisions.
+    stream_active: Arc<AtomicBool>,
+    /// Streaming uses four independent flags: router open = frames should route,
     /// worker active = no second worker may start, engine lease = engine is out
-    /// of the mutex.
+    /// of the mutex, stream active = UI should show a live session.
     ///
     /// Monotonic id source for stream workers; zero means "no worker".
     next_stream_worker_id: Arc<AtomicU64>,
@@ -223,6 +259,7 @@ impl TranscriptionManager {
             loading_condvar: Arc::new(Condvar::new()),
             reload_model_on_next_use: Arc::new(AtomicBool::new(false)),
             router: Arc::new(StreamRouter::new()),
+            stream_active: Arc::new(AtomicBool::new(false)),
             next_stream_worker_id: Arc::new(AtomicU64::new(1)),
             active_stream_worker: Arc::new(AtomicU64::new(0)),
             active_engine_lease: Arc::new(AtomicU64::new(0)),
@@ -653,6 +690,14 @@ impl TranscriptionManager {
         }
     }
 
+    /// Whether a live streaming run is currently in flight.
+    /// [GRAIN] Kept for upstream parity; upstream's overlay-style decision was
+    /// the only caller and Grain's native pill replaced that surface.
+    #[allow(dead_code)]
+    pub fn is_streaming(&self) -> bool {
+        self.stream_active.load(Ordering::Acquire)
+    }
+
     /// Shared handle to the stream router, used by the audio recorder to feed
     /// real-time frames without going through Tauri state on every frame.
     pub fn stream_router(&self) -> Arc<StreamRouter> {
@@ -684,6 +729,7 @@ impl TranscriptionManager {
             return;
         }
         let rx = self.router.open();
+        self.stream_active.store(false, Ordering::Release);
 
         let manager = self.clone();
         thread::spawn(move || manager.run_stream_worker(rx, worker_id));
@@ -694,6 +740,7 @@ impl TranscriptionManager {
             worker_id,
             active_stream_worker: Arc::clone(&self.active_stream_worker),
             active_engine_lease: Arc::clone(&self.active_engine_lease),
+            stream_active: Arc::clone(&self.stream_active),
         };
 
         // Wait for any in-progress model load to finish (start_stream races the
@@ -813,6 +860,7 @@ impl TranscriptionManager {
                 }
             };
 
+            self.stream_active.store(true, Ordering::Release);
             self.touch_activity();
             info!(
                 "Live streaming transcription started (model '{}', backend '{}')",
@@ -958,6 +1006,7 @@ impl TranscriptionManager {
             Ok(None) => return Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(None),
             Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.stream_active.store(false, Ordering::Release);
                 return Err(anyhow::anyhow!(
                     "Timed out waiting {:?} for live transcription to finalize",
                     STREAM_FINALIZE_REPLY_TIMEOUT
@@ -979,6 +1028,19 @@ impl TranscriptionManager {
         if let Some(tx) = self.router.take() {
             let _ = tx.send(StreamCmd::Cancel);
         }
+        self.stream_active.store(false, Ordering::Release);
+    }
+
+    /// Emit a working-phase event to the streaming overlay (spinner + label).
+    /// [GRAIN] Kept for upstream parity; Grain's native pill drives its own
+    /// processing state from DaemonEvents, so nothing calls this today.
+    #[allow(dead_code)]
+    pub fn emit_stream_working(&self, kind: StreamWorkKind) {
+        let _ = StreamPhaseEvent {
+            phase: StreamPhase::Working,
+            kind: Some(kind),
+        }
+        .emit(&self.app_handle);
     }
 
     fn emit_stream_text(&self, committed: &str, tentative: &str) {
