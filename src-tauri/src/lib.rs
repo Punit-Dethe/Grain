@@ -12,13 +12,22 @@ mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
+// [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
+// single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
+// UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
+// the alias keeps every `crate::llm_client::` path working.
+mod grain_llm_client;
+// [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
+// webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
+// keeps `crate::overlay::` paths (e.g. utils' re-export) working.
+mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
 mod helpers;
 mod input;
-mod llm_client;
+pub(crate) use grain_llm_client as llm_client;
+pub(crate) use grain_overlay as overlay;
 mod managers;
 mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
-mod overlay;
 pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
