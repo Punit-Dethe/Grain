@@ -13,6 +13,10 @@ main -- <file>`. When you resolve a conflict in one of these files, this table
 tells you which side is authoritative. Files not listed here follow the
 default: 3-way merge normally, prefer upstream in the STT core.
 
+> **Paths below are upstream's.** Since the phase-7 folder move the same files
+> live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
+> unchanged). `Handy Isolation/ratchet.py` maps between the two.
+
 ## Rust backend
 
 | File | Divergence | Merge guidance |

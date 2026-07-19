@@ -36,6 +36,20 @@ SCOPE = "src-tauri/"
 # Regenerated artifacts under merge=ours — churn there says nothing about the
 # code boundary this ratchet guards.
 EXCLUDE = {"src-tauri/Cargo.lock"}
+# Phase 7 moved the Handy-derived tree into src-tauri/src/handy/ (declared from
+# lib.rs with #[path]). Upstream still keeps those files at src-tauri/src/, so
+# map our path back to upstream's before deciding whether a file is
+# upstream-derived. Without this every moved file looks Grain-only and silently
+# leaves the ratchet.
+HANDY_DIR = "src-tauri/src/handy/"
+HANDY_PREFIX = "src-tauri/src/"
+
+
+def to_upstream_path(path: str) -> str:
+    """Our path -> the path the same file has in upstream's tree."""
+    if path.startswith(HANDY_DIR):
+        return HANDY_PREFIX + path[len(HANDY_DIR) :]
+    return path
 BUDGET_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "budget.json")
 
 
@@ -46,20 +60,51 @@ def git(*args: str) -> str:
 
 
 def measure() -> dict:
+    """Divergence per file, measured blob-to-blob against the merge base.
+
+    Deliberately NOT a `git diff base HEAD` over the tree: once phase 7 moved the
+    Handy files into `src/handy/`, rename detection pairs each move as R100 and
+    reports zero changed lines, which would silently retire every moved file from
+    the ratchet. Comparing the two blobs by explicit path is immune to that.
+    """
     base = git("merge-base", "HEAD", "upstream/main").strip()
-    upstream_files = set(
-        git("ls-tree", "-r", "--name-only", "upstream/main", "--", SCOPE).splitlines()
+    base_files = set(
+        git("ls-tree", "-r", "--name-only", base, "--", SCOPE).splitlines()
     )
+    our_files = [
+        f
+        for f in git("ls-tree", "-r", "--name-only", "HEAD", "--", SCOPE).splitlines()
+        if f not in EXCLUDE
+    ]
+
     current: dict[str, int] = {}
-    for line in git("diff", "--numstat", base, "HEAD", "--", SCOPE).splitlines():
-        added, removed, path = line.split("\t", 2)
-        if path not in upstream_files or path in EXCLUDE:
+    for path in our_files:
+        upstream_path = to_upstream_path(path)
+        if upstream_path not in base_files:
             continue  # Grain-only file — outside the ratchet by design
+        out = git(
+            "diff",
+            "--numstat",
+            f"{base}:{upstream_path}",
+            f"HEAD:{path}",
+        ).strip()
+        if not out:
+            continue  # byte-identical to upstream
+        added, removed, _ = out.split("\t", 2)
         cost = (0 if added == "-" else int(added)) + (
             0 if removed == "-" else int(removed)
         )
         if cost:
             current[path] = cost
+
+    # A Handy file we deleted outright still counts as divergence.
+    for upstream_path in base_files:
+        if upstream_path in EXCLUDE:
+            continue
+        ours = {to_upstream_path(f) for f in our_files}
+        if upstream_path not in ours:
+            body = git("show", f"{base}:{upstream_path}")
+            current[upstream_path + " (deleted)"] = len(body.splitlines())
     return current
 
 
