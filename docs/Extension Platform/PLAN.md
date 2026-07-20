@@ -96,10 +96,23 @@ platform:
 
 Initial capability vocabulary (extend as needed):
 `events:sessions`, `events:transcripts`, `events:audio-levels`,
+`events:context` + `context:app` (foreground app info — privacy-marked),
 `transform:transcript`, `capture:selection`, `clipboard:read`,
-`clipboard:write`, `storage`, `llm`, `embed`, `net:<host>` (proxied fetch,
-per-host), `shortcuts`, `surface:settings-panel`, `surface:workspace`,
-`surface:overlay`, `pill:slots`, `settings`, `resident`.
+`clipboard:write`, `open:url`, `open:app` (danger-marked, code tiers only),
+`storage`, `llm`, `embed`, `net:<host>` (proxied fetch, per-host),
+`shortcuts`, `surface:settings-panel`, `surface:workspace`,
+`surface:overlay`, `pill:slots`, `settings`, `overrides:<core-setting>`
+(tracked, attributed, reversible — see STRESS-TEST.md Part 1), `resident`.
+
+Two contract concepts refined by [STRESS-TEST.md](STRESS-TEST.md):
+**slots** (exclusive positions — recording overlay, agent reply surface,
+pill theme, output destination — registry-enforced single occupancy with
+explicit takeover prompts; core defaults are occupants too) and
+**activation events** (`onEvent:` / `onShortcut:` / `onSurfaceOpen:` /
+`onPillAction:` / `onTransform` / `onStartup`-requires-`resident` — the
+manifest says when a tier-B extension wakes; the reaper is the inverse).
+New host APIs ship on an **experimental channel** (dev-mode + manifest
+opt-in) and stabilize only after a built-in dogfoods them.
 
 ### D4. Built-in features become extensions by *manifest first*, by *runtime later*
 
@@ -210,12 +223,13 @@ contract (it already speaks it unversioned).
 | Session/pill lifecycle events | `grain_actions.rs` helpers → `bridge::emit` | `events:sessions` (exists) |
 | Live/final transcripts | `AsrStreamText`, `TranscriptionComplete`, … | `events:transcripts` (exists) |
 | Transcript transforms | `voice_actions::intercept`, `apply_snippets`, `strip_scrapped`, `finalize_*` | `transform:transcript` hook; built-ins stay in-proc |
-| Prompt composition layers | `context_detect::compose_prompt` (BASE/CONTEXT/MODE + spoken) | packs: modes/categories; scripted: context *sources* feeding a new layer slot |
+| Prompt composition layers | `context_detect::compose_prompt` (BASE/CONTEXT/MODE + spoken) | `contributes.promptLayer`: fixed insertion point (between CONTEXT and MODE), per-layer token budget, user-visible order — STRESS-TEST 4b |
 | Post-process providers | `post_process_router` + provider list | declarative provider packs (HTTP template) + `llm` host call |
 | STT providers | `stt_router` / `stt_client` | declarative provider packs |
 | Prompt packs / snippets / voice actions | settings vectors | tier-A packs (pure data, ships first) |
 | Pill look & feel | grain-pill (native, winit) | `pill:slots` tokens/params (data); full replacement = tier C |
-| Agent tools & context | `agent.rs` (`run_turn`, summon modes, panel) | `agent:tool` contributions (command + schema), context providers; overlay variants via `surface:overlay` |
+| Agent tools & context | `agent.rs` (`run_turn`, summon modes, panel) | `agent:tool` contributions (command + schema), context providers; reply-surface *look* via surface-variant packs on slot `agent.reply-surface` (STRESS-TEST 4c); behaviorally new surfaces via `surface:overlay` |
+| Core-feature carve-outs (voice actions, app-specific context modes, agent center panel) | `voice_actions.rs`, `AppMode`/`compose_prompt`, `agent_panel_position` | validated decompositions in STRESS-TEST Part 4 — each ships as a built-in extension when converted, with settings migrated `AppSettings` → `ext.grain.*` |
 | Notes/knowledge apps | `grain_space/**` (vault, capture, recall, window) | the Grain Space Test — see Part 5 |
 | Shortcuts | binding registry + `ACTION_MAP` | `contributes.shortcuts` → registry (dispatch machinery untouched) |
 | Settings UI | Extensions settings page (ex-Experimentations) | declarative schema (default) or `surface:settings-panel` iframe — [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md) |

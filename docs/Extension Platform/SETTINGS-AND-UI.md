@@ -113,7 +113,11 @@ Type vocabulary v1 (Raycast-informed, Grain-flavored): `boolean`, `string`,
 binding registry, so conflict detection is inherited), `directory`, `file`,
 `secret` (stored in grain-core's secrets file, masked in UI, readable by the
 extension only at call time, never in `settings.get` bulk reads), `color`,
-`slider`. Anything fancier is Level 3.
+`slider`, and `rows` — a typed column-list (add/edit/delete/reorder rows of
+declared columns). `rows` came out of the STRESS-TEST decompositions:
+snippets, voice actions, app-specific context modes, and custom words are
+all row-lists, so this one type keeps that whole feature family out of
+Level-3 iframes. Anything fancier is Level 3.
 
 Host renders these with Grain's own components — one look everywhere, zero
 extension code executed, works while the extension is **asleep** (rendering
