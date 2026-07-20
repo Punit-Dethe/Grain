@@ -21,6 +21,27 @@
     "pr": "1639"
   },
   {
+    "date": "Jul 20, 2026",
+    "commit": "bump to handy-keys 0.3.1",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "bump tauri global shortcut",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "bump tauri global shortcut package.json",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 18, 2026",
     "commit": "drop 'direct' paste method from the ui for macOS (#1708)",
     "status": "Merged",
