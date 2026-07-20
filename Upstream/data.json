@@ -1,5 +1,19 @@
 [
   {
+    "date": "Jul 20, 2026",
+    "commit": "fix: prevent custom-word correction from losing transcriptions",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "fix update checker overlay",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 18, 2026",
     "commit": "drop 'direct' paste method from the ui for macOS (#1708)",
     "status": "Merged",
@@ -10,7 +24,7 @@
     "date": "Jul 18, 2026",
     "commit": "Add missing translations (#1709)",
     "status": "Merged",
-    "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) — clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) → conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
+    "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) \u2014 clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) \u2192 conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
     "pr": "1709"
   },
   {
