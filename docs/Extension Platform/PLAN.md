@@ -52,7 +52,7 @@ Lifecycle discipline is enforced **by construction**, not by review:
 
 | Surface | What it is | Lifecycle owner behavior |
 |---|---|---|
-| `panel` | a route/card inside the existing Quick Panel (main window) | free — the main window already exists and already dies on close |
+| `settings-panel` | a custom section inside the extension's own detail view in Settings (sandboxed iframe — see [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md)) | exists only while that detail view is open; destroyed on navigate-away |
 | `workspace` | an app-class window (the Grain Space class) | generalization of Grain Space's proven **sleeping-window** pattern (`grain_space/window.rs`): built hidden once, shown on summon, React unmounted + hidden on close, destroyed after an idle timeout. Cap: at most N workspace windows awake (LRU sleeps the rest). |
 | `overlay` | transient HUD near the pill / cursor (agent-panel class) | host-created per invocation, destroyed on dismiss; hard budget on size and lifetime; separate permission |
 | `pill` slots | declarative contributions to the native pill: extra action chips, state→animation mapping, theme tokens | no code runs in the pill process — the pill renders data. Full pill *replacement* is tier C. |
@@ -66,10 +66,13 @@ extension and is *marked* as such in the marketplace — the "allow, review,
 ask to resubmit with better lifecycle handling" policy the marketplace
 section encodes.
 
-**No tab system inside Quick Panel.** Tabs turn the console into a browser
-and invite always-resident UI. Panels for light UI; workspaces for app-class
-UI. **No persistent bottom dock** either — the launcher (Part 4) reuses
-surfaces that already exist.
+**No tab system, no persistent bottom dock.** Tabs and docks are
+always-visible chrome for sometimes-used features. Settings-class UI renders
+in the Extensions detail view; app-class UI is a `workspace`; transient UI is
+an `overlay` — and the launcher (Part 4) reuses surfaces that already exist.
+(The Quick Panel is being retired and appears nowhere in this design; if its
+successor shell wants an extension rail later, surfaces are declared data, so
+it can add one without any manifest change.)
 
 ### D3. Capabilities are enforced in Rust at the process boundary, not by trust in the runtime
 
@@ -95,7 +98,7 @@ Initial capability vocabulary (extend as needed):
 `events:sessions`, `events:transcripts`, `events:audio-levels`,
 `transform:transcript`, `capture:selection`, `clipboard:read`,
 `clipboard:write`, `storage`, `llm`, `embed`, `net:<host>` (proxied fetch,
-per-host), `shortcuts`, `surface:panel`, `surface:workspace`,
+per-host), `shortcuts`, `surface:settings-panel`, `surface:workspace`,
 `surface:overlay`, `pill:slots`, `settings`, `resident`.
 
 ### D4. Built-in features become extensions by *manifest first*, by *runtime later*
@@ -215,7 +218,7 @@ contract (it already speaks it unversioned).
 | Agent tools & context | `agent.rs` (`run_turn`, summon modes, panel) | `agent:tool` contributions (command + schema), context providers; overlay variants via `surface:overlay` |
 | Notes/knowledge apps | `grain_space/**` (vault, capture, recall, window) | the Grain Space Test — see Part 5 |
 | Shortcuts | binding registry + `ACTION_MAP` | `contributes.shortcuts` → registry (dispatch machinery untouched) |
-| Settings UI | Extensions settings page | `surface:panel(kind: settings)` |
+| Settings UI | Extensions settings page (ex-Experimentations) | declarative schema (default) or `surface:settings-panel` iframe — [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md) |
 
 ---
 
@@ -223,10 +226,11 @@ contract (it already speaks it unversioned).
 
 No new persistent surface. Extensions are reachable through what exists:
 
-1. **Quick Panel → Extensions rail**: the settings page's extension cards
-   double as launchers (an "Open" affordance on cards that declare a
-   workspace/panel). This is the user's "squarish things" instinct, placed
-   inside an existing window instead of a new dock.
+1. **Settings → Extensions master list**: each installed extension's row
+   carries an **Open** affordance when it declares a workspace/overlay
+   surface. This is the "squarish launchers" instinct, placed inside a
+   window that already exists instead of a new dock (see
+   [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md) for the master–detail layout).
 2. **Global shortcuts**: `contributes.shortcuts` — the Grain-native way in a
    keyboard-first app.
 3. **Tray submenu**: "Extensions ▸" listing open-able surfaces.
@@ -251,7 +255,7 @@ capability:
 | Embeddings + semantic recall | `embed()` host call | 2 |
 | AI structuring / recall answers | `llm.complete()` via the router (no keys) | 2 |
 | Global shortcuts (open / quick-add / recall) | `contributes.shortcuts` | 2 |
-| Settings page | `surface:panel(kind: settings)` | 3 |
+| Settings page | declarative schema settings; custom `settings-panel` iframe if needed ([SETTINGS-AND-UI.md](SETTINGS-AND-UI.md)) | 3–4 |
 | Recall answering in an overlay | `surface:overlay` | 3 |
 
 Verdict: after Phase 3, yes — a determined author rebuilds ~90% of Grain
@@ -307,11 +311,14 @@ reaper. Dogfood: port **auto-categorization** (piggybacks an LLM call — pure
 logic, no UI) as the first scripted built-in.
 
 **Phase 3 — Surfaces** *(the UI half)*
-`surface:panel` inside Quick Panel; `surface:workspace` extracted from Grain
-Space's window.rs into a host-owned generic (Grain Space becomes its first
-consumer — refactor, not rewrite); `surface:overlay` generalized from the
-agent panel; pill slots (action chips + theme tokens); launcher affordances
-(cards, tray, shortcuts). **The Grain Space Test passes here.**
+The Extensions master–detail UI with Level 1/2 schema-rendered settings
+(per [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md)); `surface:workspace` extracted
+from Grain Space's window.rs into a host-owned generic (Grain Space becomes
+its first consumer — refactor, not rewrite); `surface:overlay` generalized
+from the agent panel; pill slots (action chips + theme tokens); launcher
+affordances (master-list Open buttons, tray, shortcuts). **The Grain Space
+Test passes here.** (Custom `settings-panel` iframes land in Phase 4 with the
+asset protocol + bridge hardening.)
 
 **Phase 4 — Native tier + dogfood re-platforming**
 Tier-C supervisor (generalized pill supervisor: manifest-declared binary,
