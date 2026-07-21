@@ -14,12 +14,56 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 0** — secure transport + grain-sdk | **SHIPPED** (`f05d73a0`). |
 | **Phase 1 chunk 1** — registry, built-ins, Overview tab | **SHIPPED**. |
 | **Phase 1 chunk 2** — .grainpack import/export, prompt packs, centre-variant gating | **SHIPPED**. |
-| Phase 1 remainder | Pill-theme **rendering** (packs already import/store); permission sheet (deliberately deferred until something requests permissions). |
-| **Phase 2 steps 1–3** — protocol frames, extension tokens + scripted manifests, host API router | **SHIPPED** (`11173b4e`, `bbe6a60c`, `457d0f37`). |
-| **Phase 2 steps 4–8** — read-loop refactor + extension_host lifecycle, JS supervisor+worker, transform hook, session:start plumbing, dogfood | **NOT STARTED.** Guide is complete and prescriptive for all five. |
+| Phase 1 remainder | Pill-theme **rendering** (packs already import/store). |
+| **Phase 2 — ALL STEPS** | **SHIPPED.** Steps 1–3 (`11173b4e`, `bbe6a60c`, `457d0f37`), step 4+6 (`b7a22a61`), step 5 (`ddf5f93e`), step 8 (`15d4d633`), Workers refactor + round-trip tests (`29da398d`), step 2's grant flow (the half the first step-2 commit left out). |
+| **⛔ GATE — distribution platform + developer mode** | **OPEN, BLOCKING Phase 4/5.** See [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). Requirements captured 2026-07-21; **no design, no plan yet** — by instruction. Phase 3 is unaffected. |
 
-**Phase 2 progress detail (start the next session at Step 4 of
-[PHASE2-GUIDE.md](PHASE2-GUIDE.md)):**
+**Phase 2 is complete against the guide's definition of done.** What shipped,
+beyond steps 1–3 detailed below:
+
+- **Step 4** — `src-tauri/src/extension_host.rs`: hidden supervisor webview
+  (`extension-host` label, created on first worker need, torn down with the
+  last worker), a `Workers` registry, activation dispatch carrying the
+  triggering event as the injected `activation` payload, host calls under a
+  deadline, and a 30 s-tick reaper killing workers idle > 120 s (token revoked).
+  `events_server::handle` now funnels **every** outbound frame through one mpsc
+  so the socket has a single writer, and routes inbound `HostFrame`s —
+  `Request` → `host_api::dispatch`, `CallResult` → its awaiter. Pill path
+  untouched.
+- **Step 5** — `extension-host.html` (a second Vite entry) + `src/
+  extension-host.ts` (supervisor: one blob-URL Worker per extension, reports
+  `ready`/`died`) + `src/extension-runtime.ts` (`GRAIN_RUNTIME_JS`: the worker
+  shim that opens the extension's own WS, sends its own token, and exposes
+  `grain.*`). **`csp` is `null` in tauri.conf.json**, so the guide's blob-worker
+  / `connect-src` CSP pitfall does not apply here. Capability file
+  `capabilities/extension-host.json` grants only `core:default`.
+- **Step 6** — `run_transforms` in toggle order, 150 ms hard deadline per
+  extension, cold workers skipped (never block the paste), empty reply
+  suppresses, 3 strikes → auto-disable + the new additive
+  `DaemonEvent::ExtensionDisabled`. One `[GRAIN]` call in
+  `process_transcription_output`.
+- **Step 7** — `session:start` is reserved in `KNOWN_CAPABILITIES`,
+  capability-checked in the router, and returns a clean "not implemented yet".
+  **The sessionMode slow stage itself is deliberately chunk 2b** (the guide
+  permits this split; the capability name exists from day one so a Phase-3
+  extension can't discover a gap).
+- **Step 8** — `grain.auto-categorize` seeded at startup as the first scripted
+  built-in (default OFF, pre-granted as first-party).
+- **Step 2's grant flow** (missing from the original step-2 commit):
+  `extension_set_enabled` holds a scripted pack at first enable and returns
+  `{"needsPermissions":[…]}`; `extension_grant` records approval clamped to the
+  manifest; Overview renders the plain-language permission sheet.
+
+**Verification:** 243 src-tauri lib tests (7 in `extension_host`, incl. a
+host-call round-trip against a Rust-level fake worker, deadline expiry, reaper
+victim selection, strike threshold), `tsc` clean, `vite build` emits
+`dist/extension-host.html`, ratchet green, all pushed.
+
+**Still open from Phase 2:** the live smoke test (needs the user's Grain closed
+— port 7124), a real RAM measurement of the reap, and chunk 2b (sessionMode
+slow stage).
+
+**Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/
   `HostCall`/`HostCallResult` wrapped in `HostFrame` (externally-tagged →
   `{"req":…}`/`{"res":…}`/`{"call":…}`/`{"callres":…}`). The
@@ -140,15 +184,16 @@ rolling-window 62), `tsc --noEmit` clean, ratchet green, everything pushed.
    JSON via env at pill spawn + event for live switch. Missing state → Grain's
    default FOR THAT STATE; 3 strikes → default theme. `pill.theme` slot
    occupancy on enable (slots machinery can start minimal: one registry field).
-3. **Phase 2** (re-review first per §10.3): supervisor webview + **one Worker
-   + one WS connection + one token per extension** (SPEC §7.1 — NEVER a shared
-   realm; that was a caught security flaw), extension tokens in
-   `events_auth::TokenRegistry` (revocation already implemented), host API
-   bridge, transform hook (activates at **session start**, not
-   pipeline-reach — 300ms wake vs 150ms budget), idle reaper, **the two
-   structural capabilities** (`session:start` + `contributes.sessionMode` with
-   its slow stage), dogfood = port auto-categorization.
-4. Phase 3+: per SPEC §8 conformance table.
+3. ~~Phase 2~~ — **done** (see above).
+4. **Phase 3** (re-review first per §10.3) — per SPEC §8 row 3: schema settings
+   render (levels 1–2, incl. anchors + ordering); `workspace` extracted from
+   Grain Space's `window.rs` as a host-owned generic with Grain Space as first
+   consumer; `overlay`; pill slots; the store **slide-over shell** (shell only —
+   the index behind it is gated); and the **Grain Space Test** as the acceptance
+   bar. Chunk 2b (sessionMode slow stage) folds in here or before it.
+5. **Then the ⛔ gate** — distribution platform + developer mode
+   ([GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md)) must
+   be designed and given a guide **before Phase 4/5**.
 
 ## 4. Gotchas that will bite you (all learned the hard way)
 
