@@ -23,7 +23,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 58,
   "src-tauri/src/handy/tray.rs": 82,
   "src-tauri/src/handy/utils.rs": 14,
-  "src-tauri/src/lib.rs": 648,
+  "src-tauri/src/lib.rs": 649,
   "src-tauri/src/main.rs": 7,
   "src-tauri/tauri.conf.json": 13
 }
