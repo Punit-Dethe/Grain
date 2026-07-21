@@ -312,9 +312,11 @@ position via `anchor: "snippets.after"` — so the UI does not move twice.
 | Uninstall | dialog, default **keep data**; explicit purge checkbox | row goes; kept data listed under "Orphaned extension data (N)" with per-item purge |
 | Broken manifest | untouched | error row with reason; nothing else degrades |
 
-**Runtime lifecycle:** the extension-host webview is created on first
-activation and destroyed by the idle reaper (no active subscriptions, no open
-surface). `resident` exempts and must be justified on the sheet. Tier-C
+**Runtime lifecycle:** the supervisor webview is created when the first
+tier-B extension activates; each extension's **own Worker** (§7.1) is created
+on its activation and destroyed by the idle reaper (no active subscriptions,
+no open surface); the supervisor itself is destroyed when its last worker
+dies. `resident` exempts and must be justified on the sheet. Tier-C
 processes are spawned on activation, health-checked, killed on disable, never
 orphaned. Uninstall is one transaction: storage wiped (unless kept), token
 revoked, surfaces destroyed, shortcuts unregistered, slots released.
@@ -351,7 +353,10 @@ Therefore:
 - **Tokens** are high-entropy, minted per app run, bound server-side to
   `(extension id → granted capability set)`, and revoked on disable,
   uninstall, or permission change. A worker receives only its own token, at
-  creation, inside its own isolated global.
+  creation, inside its own isolated global. The token is presented **in the
+  first WebSocket frame after connect** — never in the URL (query strings
+  leak into logs); the server drops any connection that hasn't authenticated
+  within a short deadline, and the listener binds to `127.0.0.1` only.
 - **UI surfaces get their own realms too** — a `settings-panel` iframe,
   `workspace`, or `overlay` runs at its own opaque origin with its own token,
   scoped to the same extension.

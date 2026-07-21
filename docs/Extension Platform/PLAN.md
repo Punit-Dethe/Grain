@@ -31,7 +31,7 @@ risk:
 | Tier | Runtime | For | Cost when idle |
 |---|---|---|---|
 | **A. Packs** | none — pure data | prompt packs, snippet sets, voice-action sets, context modes/categories, pill themes (tokens), provider definitions (declarative HTTP) | zero |
-| **B. Scripted** | JS in ONE shared, hidden, on-demand **extension-host webview** | logic + UI: capture flows, transforms, panels, workspace apps (Grain Space class) | zero (webview exists only while an enabled extension needs it; destroyed on idle) |
+| **B. Scripted** | JS under one shared, hidden, on-demand **supervisor webview** — but each extension in **its own Worker with its own authenticated connection** (SPEC §7.1; a truly shared realm would make identity forgeable) | logic + UI: capture flows, transforms, panels, workspace apps (Grain Space class) | zero (supervisor + workers exist only while an enabled extension needs them; destroyed on idle) |
 | **C. Native** | separate process, supervised by the host (the pill model, generalized). Two roles: a **companion** (private to its extension) or a **provider** implementing a host-defined interface for everyone — see [FREEDOM-LADDER.md](FREEDOM-LADDER.md) | screen capture, custom pill renderers, alternative overlays, hardware/OS integrations | zero (not spawned = not running) |
 
 Why JS and not WASM for tier B: Grain's extension ideas are UI-heavy (pill
