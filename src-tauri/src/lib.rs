@@ -814,6 +814,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extensions_overview,
             grain_commands::extension_set_enabled,
             grain_commands::extension_grant,
+            grain_commands::extension_take_slot,
             grain_commands::extension_import_pack,
             grain_commands::extension_export_pack,
             grain_commands::extension_uninstall,
@@ -1107,6 +1108,9 @@ pub fn run(cli_args: CliArgs) {
                 // [GRAIN] Seed built-in scripted packs (auto-categorize dogfood),
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::seed_builtin_packs(&app.handle());
+                // [GRAIN] The Agent's reply-surface slot is the one occupancy
+                // whose truth lives in settings, not the registry (SPEC §10.2).
+                grain_commands::sync_agent_reply_surface_slot(&app.handle());
             }
 
             let mut settings = get_settings(&app.handle());

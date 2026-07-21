@@ -33,6 +33,18 @@ pub const EXTENSIONS_FILE: &str = "extensions.json";
 /// option before the platform existed.
 pub const AGENT_CENTER_VARIANT_ID: &str = "grain.agent-center-layout";
 
+/// Reserved occupant id standing for Grain's own built-in behaviour in a slot.
+/// SPEC §3.2: "core defaults are occupants" — so a slot is never *free*, and the
+/// first extension to claim one still faces an explicit takeover prompt rather
+/// than silently displacing shipped behaviour.
+pub const CORE_DEFAULT: &str = "grain.core";
+
+/// The slot the centre-layout variant occupies when it is the active look
+/// (SPEC §10.2). It has no `.grainpack.json` on disk — it is synthesized by
+/// `load` — so its declared slots are backfilled here or nothing would know it
+/// competes for the Agent's reply surface.
+pub const AGENT_REPLY_SURFACE_SLOT: &str = "agent.reply-surface";
+
 /// Built-in extension ids (enabled state delegates to settings flags).
 pub const BUILTIN_SNIPPETS: &str = "grain.snippets";
 pub const BUILTIN_CONTEXT: &str = "grain.context-awareness";
@@ -51,6 +63,21 @@ pub struct ExtensionRecord {
     /// Granted capability names (empty for A-inert packs, which need none).
     #[serde(default)]
     pub granted: Vec<String>,
+    /// Exclusive positions this pack's manifest *declares* (SPEC §3.2). Copied
+    /// from the manifest at install so occupancy is answerable from memory —
+    /// no pack file is ever read to decide who owns a slot.
+    #[serde(default)]
+    pub slots: Vec<String>,
+}
+
+/// Why an enable was refused: the slot and who holds it (`grain.core` for a
+/// built-in default). Mirrors the `needsPermissions` shape the permission sheet
+/// already uses, so the frontend flow is the familiar one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlotConflict {
+    pub slot: String,
+    pub current_occupant: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -64,6 +91,10 @@ struct RegistryFile {
     builtin_toggle_seq: HashMap<String, u64>,
     #[serde(default)]
     next_toggle_seq: u64,
+    /// Slot → current occupant id (SPEC §3.2). Every known slot is present
+    /// after `load`, holding `CORE_DEFAULT` until an extension takes it.
+    #[serde(default)]
+    slot_claims: HashMap<String, String>,
 }
 
 pub struct ExtensionsRegistry {
@@ -99,6 +130,7 @@ impl ExtensionsRegistry {
                         toggle_seq: 0,
                         installed_version: "1.0.0".into(),
                         granted: Vec::new(),
+                        slots: vec![AGENT_REPLY_SURFACE_SLOT.to_string()],
                     },
                 );
             }
@@ -108,8 +140,34 @@ impl ExtensionsRegistry {
             path,
             state: RwLock::new(state),
         };
+        reg.heal_slots();
         reg.save()?;
         Ok(reg)
+    }
+
+    /// Bring a registry file written before slots existed up to date, and make
+    /// SPEC §3.2's "core defaults are occupants" literally true in storage.
+    ///
+    /// Two repairs, both idempotent:
+    /// 1. Every known slot with no claim is claimed by `CORE_DEFAULT`. A slot is
+    ///    therefore never *free*, so a claim can never look uncontested and
+    ///    silently displace shipped behaviour.
+    /// 2. The centre-layout variant's declared slot is backfilled. It is the one
+    ///    record with no pack file on disk, so nothing else can tell us it
+    ///    competes for `agent.reply-surface`.
+    fn heal_slots(&self) {
+        let mut state = self.state.write().unwrap();
+        for slot in grain_sdk::manifest::KNOWN_SLOTS {
+            state
+                .slot_claims
+                .entry((*slot).to_string())
+                .or_insert_with(|| CORE_DEFAULT.to_string());
+        }
+        if let Some(rec) = state.records.get_mut(AGENT_CENTER_VARIANT_ID) {
+            if rec.slots.is_empty() {
+                rec.slots = vec![AGENT_REPLY_SURFACE_SLOT.to_string()];
+            }
+        }
     }
 
     fn save(&self) -> Result<()> {
@@ -141,22 +199,156 @@ impl ExtensionsRegistry {
             .unwrap_or(false)
     }
 
+    // ── Slots (SPEC §3.2: at most one enabled occupant per slot) ───────────
+
+    /// Who currently holds `slot` — an extension id, or `CORE_DEFAULT` for
+    /// Grain's own behaviour. `None` only for a slot nothing has ever claimed
+    /// and that has no core default (`overrides:*`, `provides:*`).
+    pub fn slot_occupant(&self, slot: &str) -> Option<String> {
+        self.state.read().unwrap().slot_claims.get(slot).cloned()
+    }
+
+    /// Every slot currently held by `id`.
+    pub fn slots_held(&self, id: &str) -> Vec<String> {
+        let state = self.state.read().unwrap();
+        let mut held: Vec<String> = state
+            .slot_claims
+            .iter()
+            .filter(|(_, occupant)| occupant.as_str() == id)
+            .map(|(slot, _)| slot.clone())
+            .collect();
+        held.sort();
+        held
+    }
+
+    /// The first slot this extension declares that somebody else holds, if any.
+    /// The gate for enabling: a conflict must reach the user as a takeover
+    /// prompt, never be resolved silently or by load order.
+    pub fn slot_conflict(&self, id: &str) -> Option<SlotConflict> {
+        let state = self.state.read().unwrap();
+        let rec = state.records.get(id)?;
+        rec.slots.iter().find_map(|slot| {
+            match state.slot_claims.get(slot) {
+                Some(occupant) if occupant != id => Some(SlotConflict {
+                    slot: slot.clone(),
+                    current_occupant: occupant.clone(),
+                }),
+                // Unclaimed and no core default (`overrides:*`): free to take.
+                _ => None,
+            }
+        })
+    }
+
+    /// Hand `slot` to `challenger`, returning whoever was displaced. The
+    /// displaced extension is disabled in the same transaction — SPEC §3.2 has
+    /// no state where two enabled extensions both believe they own a slot.
+    /// Core defaults are displaced without disabling anything (there is no
+    /// record to disable; core simply stops rendering that position).
+    pub fn take_slot(&self, challenger: &str, slot: &str) -> Result<Option<String>> {
+        let displaced = {
+            let mut state = self.state.write().unwrap();
+            let declares = state
+                .records
+                .get(challenger)
+                .map(|r| r.slots.iter().any(|s| s == slot))
+                .unwrap_or(false);
+            if !declares {
+                anyhow::bail!("'{challenger}' does not declare slot '{slot}'");
+            }
+            let previous = state
+                .slot_claims
+                .insert(slot.to_string(), challenger.to_string());
+            match previous {
+                Some(prev) if prev != CORE_DEFAULT && prev != challenger => {
+                    if let Some(rec) = state.records.get_mut(&prev) {
+                        rec.enabled = false;
+                    }
+                    Some(prev)
+                }
+                _ => None,
+            }
+        };
+        self.save()?;
+        Ok(displaced)
+    }
+
+    /// Release every slot `id` holds, back to Grain's default where one exists.
+    /// Called on disable and uninstall — SPEC §6: "slots released".
+    fn release_slots_locked(state: &mut RegistryFile, id: &str) {
+        let held: Vec<String> = state
+            .slot_claims
+            .iter()
+            .filter(|(_, occupant)| occupant.as_str() == id)
+            .map(|(slot, _)| slot.clone())
+            .collect();
+        for slot in held {
+            if grain_sdk::manifest::KNOWN_SLOTS.contains(&slot.as_str()) {
+                state.slot_claims.insert(slot, CORE_DEFAULT.to_string());
+            } else {
+                state.slot_claims.remove(&slot);
+            }
+        }
+    }
+
+    /// Force a slot's occupant without the takeover checks. Only for reconciling
+    /// a slot whose truth lives outside the registry — today just the centre
+    /// variant, whose real state is `agent_panel_position` (SPEC §10.2: enabling
+    /// it adds it to the dropdown; *selecting* it takes the slot).
+    pub fn set_slot_claim(&self, slot: &str, occupant: &str) -> Result<()> {
+        {
+            let mut state = self.state.write().unwrap();
+            if state.slot_claims.get(slot).map(String::as_str) == Some(occupant) {
+                return Ok(());
+            }
+            state
+                .slot_claims
+                .insert(slot.to_string(), occupant.to_string());
+        }
+        self.save()
+    }
+
     /// Enable/disable an installed pack. Enabling assigns the next toggle
-    /// sequence (SPEC §4.4: re-enabling moves to the end of toggle order).
+    /// sequence (SPEC §4.4: re-enabling moves to the end of toggle order) and
+    /// claims the slots the pack declares; disabling releases them.
+    ///
+    /// Enabling into an occupied slot is refused here as well as at the command
+    /// layer, so a caller that forgets to check cannot steal a slot by accident.
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool> {
+        if enabled {
+            if let Some(c) = self.slot_conflict(id) {
+                anyhow::bail!(
+                    "slot '{}' is occupied by '{}'",
+                    c.slot,
+                    c.current_occupant
+                );
+            }
+        }
         let changed = {
             let mut state = self.state.write().unwrap();
             let next = state.next_toggle_seq;
-            match state.records.get_mut(id) {
+            let declared = match state.records.get_mut(id) {
                 Some(rec) if rec.enabled != enabled => {
                     rec.enabled = enabled;
                     if enabled {
                         rec.toggle_seq = next;
+                    }
+                    Some(rec.slots.clone())
+                }
+                _ => None,
+            };
+            match declared {
+                Some(slots) => {
+                    if enabled {
                         state.next_toggle_seq += 1;
+                        for slot in slots {
+                            state.slot_claims.insert(slot, id.to_string());
+                        }
+                    } else {
+                        Self::release_slots_locked(&mut state, id);
                     }
                     true
                 }
-                _ => false,
+                None => false,
             }
         };
         if changed {
@@ -192,16 +384,44 @@ impl ExtensionsRegistry {
     /// Install a pack record (import path lands in the next chunk; the
     /// centre-variant import uses this today via `load`).
     pub fn install(&self, record: ExtensionRecord) -> Result<()> {
-        self.state
-            .write()
-            .unwrap()
-            .records
-            .insert(record.id.clone(), record);
+        {
+            let mut state = self.state.write().unwrap();
+            let id = record.id.clone();
+            let declared = record.slots.clone();
+            state.records.insert(id.clone(), record);
+            // An update may drop a slot it used to declare; holding a claim on
+            // a slot you no longer declare would block everyone else forever.
+            let stale: Vec<String> = state
+                .slot_claims
+                .iter()
+                .filter(|(slot, occupant)| {
+                    occupant.as_str() == id && !declared.contains(slot)
+                })
+                .map(|(slot, _)| slot.clone())
+                .collect();
+            for slot in stale {
+                if grain_sdk::manifest::KNOWN_SLOTS.contains(&slot.as_str()) {
+                    state.slot_claims.insert(slot, CORE_DEFAULT.to_string());
+                } else {
+                    state.slot_claims.remove(&slot);
+                }
+            }
+            // A newly declared slot is NOT auto-claimed on update: an already
+            // enabled pack must not gain a position the user never granted it.
+            // It stays a pending conflict until the user takes the slot.
+        }
         self.save()
     }
 
     pub fn uninstall(&self, id: &str) -> Result<bool> {
-        let removed = self.state.write().unwrap().records.remove(id).is_some();
+        let removed = {
+            let mut state = self.state.write().unwrap();
+            let removed = state.records.remove(id).is_some();
+            if removed {
+                Self::release_slots_locked(&mut state, id);
+            }
+            removed
+        };
         if removed {
             self.save()?;
         }
@@ -240,14 +460,7 @@ mod tests {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         for id in ["a", "b"] {
-            reg.install(ExtensionRecord {
-                id: id.into(),
-                enabled: false,
-                toggle_seq: 0,
-                installed_version: "1".into(),
-                granted: vec![],
-            })
-            .unwrap();
+            reg.install(pack(id, &[])).unwrap();
         }
         reg.set_enabled("a", true).unwrap();
         reg.set_enabled("b", true).unwrap();
@@ -266,19 +479,192 @@ mod tests {
         assert_eq!(reg.toggle_seq("never"), u64::MAX);
     }
 
+    fn pack(id: &str, slots: &[&str]) -> ExtensionRecord {
+        ExtensionRecord {
+            id: id.into(),
+            enabled: false,
+            toggle_seq: 0,
+            installed_version: "1".into(),
+            granted: vec![],
+            slots: slots.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn core_defaults_occupy_every_known_slot() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        for slot in grain_sdk::manifest::KNOWN_SLOTS {
+            assert_eq!(
+                reg.slot_occupant(slot).as_deref(),
+                Some(CORE_DEFAULT),
+                "slot '{slot}' must not start free"
+            );
+        }
+        // A slot with no core default stays unclaimed until someone takes it.
+        assert_eq!(reg.slot_occupant("overrides:always_on_microphone"), None);
+    }
+
+    #[test]
+    fn claim_conflicts_then_takeover_then_release() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("a", &["pill.theme"])).unwrap();
+        reg.install(pack("b", &["pill.theme"])).unwrap();
+
+        // Grain's own theme is the incumbent, so even the FIRST claim conflicts.
+        assert_eq!(
+            reg.slot_conflict("a"),
+            Some(SlotConflict {
+                slot: "pill.theme".into(),
+                current_occupant: CORE_DEFAULT.into(),
+            })
+        );
+        assert!(reg.set_enabled("a", true).is_err(), "no silent steal");
+
+        // Takeover from core displaces nobody, then enabling succeeds.
+        assert_eq!(reg.take_slot("a", "pill.theme").unwrap(), None);
+        assert!(reg.set_enabled("a", true).unwrap());
+        assert_eq!(reg.slot_occupant("pill.theme").as_deref(), Some("a"));
+
+        // A second claimant sees the real occupant, not the core default.
+        assert_eq!(
+            reg.slot_conflict("b").unwrap().current_occupant,
+            "a".to_string()
+        );
+        // Takeover disables the incumbent in the same transaction: SPEC §3.2
+        // has no state where two enabled extensions both own a slot.
+        assert_eq!(reg.take_slot("b", "pill.theme").unwrap().as_deref(), Some("a"));
+        assert!(!reg.is_enabled("a"));
+        assert!(reg.set_enabled("b", true).unwrap());
+
+        // Disable releases back to Grain's default — never to the loser.
+        reg.set_enabled("b", false).unwrap();
+        assert_eq!(reg.slot_occupant("pill.theme").as_deref(), Some(CORE_DEFAULT));
+        assert!(reg.slots_held("b").is_empty());
+    }
+
+    #[test]
+    fn taking_an_undeclared_slot_is_refused() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("a", &["pill.theme"])).unwrap();
+        assert!(reg.take_slot("a", "output.destination").is_err());
+        assert!(reg.take_slot("ghost", "pill.theme").is_err());
+        assert_eq!(
+            reg.slot_occupant("output.destination").as_deref(),
+            Some(CORE_DEFAULT)
+        );
+    }
+
+    #[test]
+    fn center_variant_declares_its_slot_even_without_a_pack_file() {
+        // The centre variant is synthesized by `load` and has NO
+        // `.grainpack.json`, so nothing else can report that it competes for
+        // the Agent's reply surface. Without this backfill the first real claim
+        // would look uncontested and silently displace a shipped feature.
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        assert_eq!(
+            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().slots,
+            vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
+        );
+
+        // …and a registry written before slots existed is healed on load.
+        let stale = format!(
+            r#"{{"records":{{"{id}":{{"id":"{id}","enabled":true,"toggle_seq":0,
+               "installed_version":"1.0.0","granted":[]}}}}}}"#,
+            id = AGENT_CENTER_VARIANT_ID
+        );
+        fs::write(dir.path().join(EXTENSIONS_FILE), stale).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert_eq!(
+            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().slots,
+            vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
+        );
+        assert_eq!(
+            reg.slot_occupant(AGENT_REPLY_SURFACE_SLOT).as_deref(),
+            Some(CORE_DEFAULT),
+            "the sidebar is the built-in default until the centre look is selected"
+        );
+
+        // Selecting the centre look is what takes the slot (SPEC §10.2).
+        reg.set_slot_claim(AGENT_REPLY_SURFACE_SLOT, AGENT_CENTER_VARIANT_ID)
+            .unwrap();
+        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT])).unwrap();
+        assert_eq!(
+            reg.slot_conflict("rival").unwrap().current_occupant,
+            AGENT_CENTER_VARIANT_ID.to_string()
+        );
+    }
+
+    #[test]
+    fn an_update_that_drops_a_slot_releases_it() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("a", &["pill.theme"])).unwrap();
+        reg.take_slot("a", "pill.theme").unwrap();
+        reg.set_enabled("a", true).unwrap();
+
+        // v2 no longer themes the pill, but does want the output slot.
+        let mut v2 = pack("a", &["output.destination"]);
+        v2.enabled = true;
+        reg.install(v2).unwrap();
+        assert_eq!(
+            reg.slot_occupant("pill.theme").as_deref(),
+            Some(CORE_DEFAULT),
+            "a dropped slot must not stay held forever"
+        );
+        // The newly declared slot is not auto-granted — it needs a takeover.
+        assert_eq!(
+            reg.slot_occupant("output.destination").as_deref(),
+            Some(CORE_DEFAULT)
+        );
+        assert!(reg.slot_conflict("a").is_some());
+    }
+
+    #[test]
+    fn uninstall_releases_slots() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(pack("a", &["overlay.recording", "overrides:x"]))
+            .unwrap();
+        reg.take_slot("a", "overlay.recording").unwrap();
+        reg.take_slot("a", "overrides:x").unwrap();
+        assert_eq!(reg.slots_held("a").len(), 2);
+
+        reg.uninstall("a").unwrap();
+        assert_eq!(
+            reg.slot_occupant("overlay.recording").as_deref(),
+            Some(CORE_DEFAULT)
+        );
+        // A slot with no core default disappears entirely rather than being
+        // left pointing at an uninstalled extension.
+        assert_eq!(reg.slot_occupant("overrides:x"), None);
+    }
+
+    #[test]
+    fn slot_claims_survive_a_reload() {
+        let dir = tmp();
+        {
+            let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+            reg.install(pack("a", &["pill.theme"])).unwrap();
+            reg.take_slot("a", "pill.theme").unwrap();
+            reg.set_enabled("a", true).unwrap();
+        }
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        assert_eq!(reg.slot_occupant("pill.theme").as_deref(), Some("a"));
+        assert_eq!(reg.slots_held("a"), vec!["pill.theme".to_string()]);
+    }
+
     #[test]
     fn persistence_roundtrip() {
         let dir = tmp();
         {
             let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
-            reg.install(ExtensionRecord {
-                id: "x".into(),
-                enabled: false,
-                toggle_seq: 0,
-                installed_version: "2.0".into(),
-                granted: vec![],
-            })
-            .unwrap();
+            let mut rec = pack("x", &[]);
+            rec.installed_version = "2.0".into();
+            reg.install(rec).unwrap();
             reg.set_enabled("x", true).unwrap();
         }
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();

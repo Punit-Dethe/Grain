@@ -874,6 +874,7 @@ fn seed_pack(
                 installed_version: env!("CARGO_PKG_VERSION").to_string(),
                 // First-party: pre-grant its declared caps so enabling just works.
                 granted: permissions.iter().map(|s| s.to_string()).collect(),
+                slots: Vec::new(),
             });
         }
     }

@@ -176,7 +176,41 @@ pub fn change_agent_panel_position_setting(
     let mut settings = settings::get_settings(&app);
     settings.agent_panel_position = position;
     settings::write_settings(&app, settings);
+    sync_agent_reply_surface_slot(&app);
     Ok(())
+}
+
+/// [GRAIN] Keep the `agent.reply-surface` slot claim in step with the Agent's
+/// position setting (SPEC §3.2 + §10.2).
+///
+/// The centre-layout variant is the one occupant whose truth lives outside the
+/// registry: enabling it merely adds it to the position dropdown, and
+/// *selecting* it is what takes the slot. Reconciling here means a third-party
+/// reply-surface pack sees the centre variant as the incumbent — rather than
+/// seeing Grain's default and displacing a shipped look nobody mentioned.
+///
+/// A third-party occupant is never overwritten; this only ever moves the slot
+/// between core and the centre variant.
+pub fn sync_agent_reply_surface_slot(app: &AppHandle) {
+    use grain_core::extensions as ext;
+    let Some(reg) = app.try_state::<std::sync::Arc<ext::ExtensionsRegistry>>() else {
+        return;
+    };
+    match reg.slot_occupant(ext::AGENT_REPLY_SURFACE_SLOT).as_deref() {
+        Some(ext::CORE_DEFAULT) | Some(ext::AGENT_CENTER_VARIANT_ID) | None => {}
+        Some(_) => return,
+    }
+    let center = settings::get_settings(app).agent_panel_position
+        == settings::AgentPanelPosition::Center
+        && reg.is_enabled(ext::AGENT_CENTER_VARIANT_ID);
+    let occupant = if center {
+        ext::AGENT_CENTER_VARIANT_ID
+    } else {
+        ext::CORE_DEFAULT
+    };
+    if let Err(e) = reg.set_slot_claim(ext::AGENT_REPLY_SURFACE_SLOT, occupant) {
+        log::warn!("[GRAIN] could not sync the agent reply-surface slot: {e}");
+    }
 }
 
 /// [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
@@ -580,6 +614,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     settings::write_settings(&app, settings);
                 }
             }
+            sync_agent_reply_surface_slot(&app);
             return Ok(());
         }
         // Imported packs: registry bit + payload application.
@@ -604,6 +639,15 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     return Err(
                         serde_json::json!({ "needsPermissions": missing }).to_string()
                     );
+                }
+            }
+            // [GRAIN] SPEC §3.2: at most one enabled occupant per slot, and a
+            // contested claim reaches the user as an explicit takeover — never
+            // a silent steal, never load-order dependent. Same structured-error
+            // shape as the permission sheet above, so the frontend flow matches.
+            if enabled {
+                if let Some(c) = reg.slot_conflict(pack_id) {
+                    return Err(serde_json::json!({ "slotConflict": c }).to_string());
                 }
             }
             reg.set_enabled(pack_id, enabled).map_err(|e| e.to_string())?;
@@ -677,6 +721,7 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: pack.manifest.version.clone(),
         granted: prior.map(|r| r.granted).unwrap_or_default(),
+        slots: pack.manifest.slots.clone(),
     })
     .map_err(|e| e.to_string())?;
     // An enabled pack's payloads refresh in place (apply is idempotent).
@@ -720,6 +765,44 @@ pub fn extension_grant(
         }
     }
     reg.install(rec).map_err(|e| e.to_string())
+}
+
+/// Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
+/// to `id` and disables whoever held it, in one step — the counterpart to
+/// `extension_grant` for the `slotConflict` error. The caller then retries
+/// enable, which now sees the slot as its own.
+///
+/// This is the ONLY path that moves a slot between extensions: `set_enabled`
+/// refuses a contested claim, so a takeover is always something the user chose.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_take_slot(app: AppHandle, id: String, slot: String) -> Result<(), String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let displaced = reg.take_slot(&id, &slot).map_err(|e| e.to_string())?;
+
+    // Displacing the centre layout must also drop the position setting, or the
+    // Agent would keep rendering a look whose slot it no longer owns.
+    let center_lost = displaced.as_deref() == Some(ext::AGENT_CENTER_VARIANT_ID)
+        || (slot == ext::AGENT_REPLY_SURFACE_SLOT && id != ext::AGENT_CENTER_VARIANT_ID);
+    if center_lost {
+        let mut settings = settings::get_settings(&app);
+        if settings.agent_panel_position == settings::AgentPanelPosition::Center {
+            settings.agent_panel_position = settings::AgentPanelPosition::Side;
+            settings::write_settings(&app, settings);
+        }
+    }
+    if let Some(prev) = &displaced {
+        // The loser is disabled by `take_slot`; its payloads must come off too.
+        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+            let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, prev));
+        }
+        log::info!("[GRAIN] slot '{slot}' taken by '{id}' (was '{prev}')");
+    }
+    crate::extension_host::refresh_index(&app);
+    Ok(())
 }
 
 /// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").

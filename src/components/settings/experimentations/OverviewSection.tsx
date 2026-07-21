@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ExternalLink, Package, ShieldCheck, Store } from "lucide-react";
+import { ExternalLink, Package, Replace, ShieldCheck, Store } from "lucide-react";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
@@ -28,6 +28,41 @@ function parseNeedsPermissions(e: unknown): string[] | null {
     return Array.isArray(parsed?.needsPermissions)
       ? (parsed.needsPermissions as string[])
       : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Plain-language name for each exclusive position (SPEC §3.2). The user is
+ * agreeing to hand over a *place in Grain*, so the prompt has to say which. */
+const SLOT_LABELS: Record<string, string> = {
+  "overlay.recording": "the recording overlay",
+  "overlay.pointer": "the pointer overlay",
+  "pill.theme": "the pill's look",
+  "agent.reply-surface": "the Agent's reply panel",
+  "output.destination": "where your text is sent",
+};
+
+const slotLabel = (slot: string) =>
+  SLOT_LABELS[slot] ??
+  (slot.startsWith("overrides:")
+    ? `the “${slot.slice("overrides:".length)}” setting`
+    : slot);
+
+/** Reserved occupant id for Grain's own built-in behaviour (grain-core). */
+const CORE_DEFAULT = "grain.core";
+
+interface SlotConflict {
+  slot: string;
+  currentOccupant: string;
+}
+
+/** The registry refuses a contested slot with `{"slotConflict":{…}}` rather
+ * than letting the newcomer win by load order (SPEC §3.2). */
+function parseSlotConflict(e: unknown): SlotConflict | null {
+  try {
+    const parsed = JSON.parse(String(e)) as { slotConflict?: SlotConflict };
+    return parsed?.slotConflict?.slot ? parsed.slotConflict : null;
   } catch {
     return null;
   }
@@ -75,6 +110,11 @@ export const OverviewSection: React.FC<{
     card: ExtensionCard;
     permissions: string[];
   } | null>(null);
+  /** The extension held at a contested slot, awaiting an explicit takeover. */
+  const [contested, setContested] = useState<{
+    card: ExtensionCard;
+    conflict: SlotConflict;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -101,8 +141,41 @@ export const OverviewSection: React.FC<{
       // A scripted extension enabling for the first time is held until the
       // user approves its capabilities — show the sheet instead of an error.
       const needs = parseNeedsPermissions(e);
+      const conflict = parseSlotConflict(e);
       if (needs) setPending({ card, permissions: needs });
+      else if (conflict) setContested({ card, conflict });
       else setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Who holds a slot, in words. Core defaults have no card to name. */
+  const occupantName = useCallback(
+    (id: string) =>
+      id === CORE_DEFAULT
+        ? "Grain's built-in default"
+        : (cards.find((c) => c.id === id)?.name ?? id),
+    [cards],
+  );
+
+  /** Take over → hand the slot across, then retry the enable that was held.
+   * One more conflict can follow if the extension claims several slots; the
+   * prompt simply reappears for the next one. */
+  const takeOver = async () => {
+    if (!contested) return;
+    const { card, conflict } = contested;
+    setContested(null);
+    setBusy(card.id);
+    try {
+      await invoke("extension_take_slot", { id: card.id, slot: conflict.slot });
+      await invoke("extension_set_enabled", { id: card.id, enabled: true });
+      await refresh();
+    } catch (e) {
+      const next = parseSlotConflict(e);
+      if (next) setContested({ card, conflict: next });
+      else setError(String(e));
+      await refresh();
     } finally {
       setBusy(null);
     }
@@ -119,7 +192,11 @@ export const OverviewSection: React.FC<{
       await invoke("extension_set_enabled", { id: card.id, enabled: true });
       await refresh();
     } catch (e) {
-      setError(String(e));
+      // Permissions are checked before slots, so an approved extension can
+      // still land on a contested position — hand it to that prompt.
+      const conflict = parseSlotConflict(e);
+      if (conflict) setContested({ card, conflict });
+      else setError(String(e));
     } finally {
       setBusy(null);
     }
@@ -256,6 +333,61 @@ export const OverviewSection: React.FC<{
                 className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
               >
                 Allow and enable
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Takeover prompt (SPEC §3.2): one enabled occupant per slot. The
+          incumbent is named and switched off explicitly — never displaced
+          silently, and never by whichever extension happened to load first. */}
+      {contested && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setContested(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-line bg-paper-raised shadow-lg p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <Replace width={16} height={16} className="text-accent" />
+              <h3 className="text-sm font-medium text-ink">
+                Replace {slotLabel(contested.conflict.slot)}?
+              </h3>
+            </div>
+            <p className="text-xs text-ink-faint">
+              Only one extension can control {slotLabel(contested.conflict.slot)}
+              . It is currently{" "}
+              <span className="text-ink">
+                {occupantName(contested.conflict.currentOccupant)}
+              </span>
+              .
+            </p>
+            <p className="text-xs text-ink-faint">
+              Turning on “{contested.card.name}” will switch{" "}
+              {contested.conflict.currentOccupant === CORE_DEFAULT
+                ? "Grain's own version off"
+                : `“${occupantName(contested.conflict.currentOccupant)}” off`}
+              . You can switch back at any time.
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setContested(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+              >
+                Keep current
+              </button>
+              <button
+                type="button"
+                onClick={() => void takeOver()}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                Replace and enable
               </button>
             </div>
           </div>
