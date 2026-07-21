@@ -1,5 +1,12 @@
 [
   {
+    "date": "Jul 21, 2026",
+    "commit": "fix windows not shutting down cleanly because of handy (#1732)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1732"
+  },
+  {
     "date": "Jul 20, 2026",
     "commit": "fix: prevent custom-word correction from losing transcriptions",
     "status": "Pending",
