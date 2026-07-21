@@ -23,8 +23,8 @@
 //! [`crate::host_api`]); this module is the *lifecycle*, not the enforcement.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use grain_core::{AppContext, DaemonEvent};
@@ -240,13 +240,77 @@ struct Supervisor {
     queue: Vec<SpawnPayload>,
 }
 
+/// The hot-path index. **An installed-but-idle extension must cost the native
+/// pipeline nothing**, so the paste path and the event bus consult this — never
+/// the registry (which clones every record) and never the disk (which is where
+/// manifests live). Rebuilt only when the extension set changes.
+#[derive(Default)]
+struct Index {
+    /// Event variant name → extension ids that wake on it.
+    by_event: HashMap<String, Vec<String>>,
+    /// `onTransform` extensions, already sorted into toggle order.
+    transforms: Vec<String>,
+}
+
+/// Guards so the common case — no scripted extension enabled — costs exactly
+/// one relaxed atomic load on the paste path and per broadcast event. These are
+/// free-standing (not behind `HOST`) so the check needs no lock and no
+/// `OnceLock` deref.
+static HAS_ACTIVATIONS: AtomicBool = AtomicBool::new(false);
+static HAS_TRANSFORMS: AtomicBool = AtomicBool::new(false);
+
 struct HostState {
     app: AppHandle,
     workers: Workers,
     supervisor: Mutex<Supervisor>,
+    index: RwLock<Index>,
 }
 
 static HOST: OnceLock<HostState> = OnceLock::new();
+
+/// Rebuild the hot-path index from the registry + on-disk manifests. Called on
+/// startup and whenever the extension set changes (enable/disable/grant/import/
+/// uninstall/auto-disable) — **never** from a hot path.
+pub fn refresh_index(app: &AppHandle) {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
+    let mut transforms: Vec<(String, u64)> = Vec::new();
+
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        for rec in reg.records() {
+            if !rec.enabled {
+                continue;
+            }
+            let pack = match load_manifest(app, &rec.id) {
+                Some(p) if p.is_scripted() => p,
+                _ => continue,
+            };
+            for variant in activation_variants(&pack.manifest.activation) {
+                by_event.entry(variant).or_default().push(rec.id.clone());
+            }
+            if declares_transform(&pack.manifest.activation) {
+                transforms.push((rec.id.clone(), rec.toggle_seq));
+            }
+        }
+    }
+    transforms.sort_by_key(|(_, seq)| *seq);
+    let transforms: Vec<String> = transforms.into_iter().map(|(id, _)| id).collect();
+
+    HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
+    HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
+    log::debug!(
+        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s)",
+        by_event.len(),
+        transforms.len()
+    );
+    *host.index.write().unwrap() = Index {
+        by_event,
+        transforms,
+    };
+}
 
 /// Supervisor → worker: create a Web Worker for this extension.
 #[derive(Clone, Serialize)]
@@ -296,11 +360,16 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
                 ready: false,
                 queue: Vec::new(),
             }),
+            index: RwLock::new(Index::default()),
         })
         .is_err()
     {
         return; // already started
     }
+
+    // Build the hot-path index once up front; the guards stay false (and both
+    // hot paths stay free) until something is actually enabled.
+    refresh_index(&app);
 
     // Supervisor → host: a worker crashed or reported a fatal error.
     app.listen("ext-host://died", move |ev| {
@@ -340,54 +409,68 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
 
 // ── Activation ──────────────────────────────────────────────────────────────
 
-/// The serde (externally-tagged) variant name of an event, used to match
-/// `onEvent:<Variant>` activations. Robust to enum growth — no per-variant
-/// match to keep in sync.
-fn event_variant_name(ev: &DaemonEvent) -> Option<String> {
-    match serde_json::to_value(ev).ok()? {
-        Value::String(s) => Some(s),        // unit variant
-        Value::Object(m) => m.keys().next().cloned(), // struct variant
-        _ => None,
-    }
+/// The event variants an activation list wakes on. `onTransform` warms at
+/// session start (SPEC §3.1: a ~300 ms cold wake cannot fit the 150 ms
+/// transform budget, so the worker must already be up when the transform runs).
+fn activation_variants(activation: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = activation
+        .iter()
+        .filter_map(|a| {
+            if let Some(v) = a.strip_prefix("onEvent:") {
+                Some(v.to_string())
+            } else if a == "onTransform" {
+                Some("RecordingStarted".to_string())
+            } else {
+                None // onStartup / onShortcut are not event-driven
+            }
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
-/// Does any activation clause fire for `variant`? `onTransform` is treated as
-/// `onEvent:RecordingStarted` (warm-at-session-start; SPEC §3.1).
-fn activation_matches(activation: &[String], variant: &str) -> bool {
-    activation.iter().any(|a| {
-        if let Some(v) = a.strip_prefix("onEvent:") {
-            v == variant
-        } else if a == "onTransform" {
-            variant == "RecordingStarted"
-        } else {
-            false
-        }
-    })
+fn declares_transform(activation: &[String]) -> bool {
+    activation.iter().any(|a| a == "onTransform")
 }
 
 fn on_event(app: &AppHandle, ev: &DaemonEvent) {
-    let variant = match event_variant_name(ev) {
-        Some(v) => v,
+    // Zero-cost when no extension declares an event activation: one relaxed
+    // load. This runs for EVERY broadcast, including AudioLevel while
+    // recording, so nothing above this line may allocate or touch the disk.
+    if !HAS_ACTIVATIONS.load(Ordering::Relaxed) {
+        return;
+    }
+    let host = match HOST.get() {
+        Some(h) => h,
         None => return,
     };
+    // Allocation-free tag read, then an index lookup — no registry, no disk.
+    let waking: Vec<String> = {
+        let index = host.index.read().unwrap();
+        match index.by_event.get(ev.variant_name()) {
+            Some(ids) => ids.clone(),
+            None => return,
+        }
+    };
+    let cold: Vec<String> = waking.into_iter().filter(|id| !is_running(id)).collect();
+    if cold.is_empty() {
+        return; // already awake — it gets this event over its own connection
+    }
+    // Only now, on the rare spawn path, is it worth serializing the event to
+    // carry as the activation payload.
+    let activation = serde_json::to_value(ev).ok();
     let reg = match app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         Some(r) => r,
         None => return,
     };
-    for rec in reg.records() {
-        if !rec.enabled || is_running(&rec.id) {
-            continue;
-        }
-        let pack = match load_manifest(app, &rec.id) {
+    for id in cold {
+        let pack = match load_manifest(app, &id) {
             Some(p) => p,
             None => continue,
         };
-        if !pack.is_scripted() || !activation_matches(&pack.manifest.activation, &variant) {
-            continue;
-        }
-        // Carry the triggering event so the worker knows why it woke.
-        let activation = serde_json::to_value(ev).ok();
-        spawn_worker(app, &rec.id, &pack, rec.granted.clone(), activation);
+        let granted = reg.record(&id).map(|r| r.granted).unwrap_or_default();
+        spawn_worker(app, &id, &pack, granted, activation.clone());
     }
 }
 
@@ -594,36 +677,28 @@ pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, Str
 /// documented output-suppression behavior). Never blocks the paste path on a
 /// cold spawn.
 pub async fn run_transforms(app: &AppHandle, text: String) -> String {
-    let reg = match app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        Some(r) => r,
+    // THE paste path. With no transform extension enabled this is one relaxed
+    // atomic load and a return — no registry clone, no disk, no allocation.
+    // Dictation must be exactly as fast as it was before the platform existed.
+    if !HAS_TRANSFORMS.load(Ordering::Relaxed) {
+        return text;
+    }
+    let host = match HOST.get() {
+        Some(h) => h,
         None => return text,
     };
-    let mut transforms: Vec<(String, u64)> = reg
-        .records()
-        .into_iter()
-        .filter(|r| r.enabled)
-        .filter_map(|r| {
-            let pack = load_manifest(app, &r.id)?;
-            let is_transform = pack.is_scripted()
-                && pack.manifest.activation.iter().any(|a| a == "onTransform");
-            is_transform.then_some((r.id, r.toggle_seq))
-        })
-        .collect();
+    // Pre-sorted into toggle order at index-build time.
+    let transforms: Vec<String> = host.index.read().unwrap().transforms.clone();
     if transforms.is_empty() {
         return text;
     }
-    transforms.sort_by_key(|(_, seq)| *seq);
 
     let mut current = text;
-    for (id, _) in transforms {
+    for id in transforms {
         // A cold worker cannot fit the budget; skip rather than block the paste.
         if !is_running(&id) {
             continue;
         }
-        let host = match HOST.get() {
-            Some(h) => h,
-            None => break,
-        };
         match host
             .workers
             .call(&id, "transform", json!({ "text": current }), TRANSFORM_DEADLINE)
@@ -670,6 +745,7 @@ fn auto_disable(app: &AppHandle, ext_id: &str) {
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         let _ = reg.set_enabled(ext_id, false);
     }
+    refresh_index(app); // drop it from the hot-path index immediately
     kill_worker(ext_id, "auto-disabled (3 transform strikes)");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
@@ -808,8 +884,11 @@ mod tests {
     use super::*;
     use grain_core::event::SessionMode;
 
+    /// The index is keyed by `DaemonEvent::variant_name`, so the variants an
+    /// activation expands to must be spelled exactly the way events report
+    /// themselves — otherwise an activation silently never fires.
     #[test]
-    fn variant_name_matches_serde_tag() {
+    fn activation_variants_match_real_event_names() {
         let started = DaemonEvent::RecordingStarted {
             session_id: 1,
             mode: SessionMode::Dictation,
@@ -818,28 +897,37 @@ mod tests {
             session_id: 1,
             text: "hi".into(),
         };
-        assert_eq!(event_variant_name(&started).as_deref(), Some("RecordingStarted"));
+
+        let on_event = vec!["onEvent:TranscriptionComplete".to_string()];
+        assert_eq!(activation_variants(&on_event), vec![done.variant_name()]);
+        assert!(!declares_transform(&on_event));
+
+        // onTransform warms at session start (SPEC §3.1), nothing else.
+        let transform = vec!["onTransform".to_string()];
         assert_eq!(
-            event_variant_name(&done).as_deref(),
-            Some("TranscriptionComplete")
+            activation_variants(&transform),
+            vec![started.variant_name()]
         );
+        assert!(declares_transform(&transform));
+
+        // Non-event clauses contribute nothing to the event index.
+        assert!(activation_variants(&["onStartup".to_string()]).is_empty());
+        assert!(activation_variants(&[]).is_empty());
+
+        // Duplicates collapse (onTransform + an explicit RecordingStarted).
+        let both = vec![
+            "onTransform".to_string(),
+            "onEvent:RecordingStarted".to_string(),
+        ];
+        assert_eq!(activation_variants(&both).len(), 1);
     }
 
+    /// The whole point of the index: with nothing enabled, the paste path and
+    /// the event bus must be a single atomic load — no registry, no disk.
     #[test]
-    fn activation_clauses_fire_correctly() {
-        // onEvent matches its exact variant only.
-        let a = vec!["onEvent:TranscriptionComplete".to_string()];
-        assert!(activation_matches(&a, "TranscriptionComplete"));
-        assert!(!activation_matches(&a, "RecordingStarted"));
-
-        // onTransform warms at session start, nothing else.
-        let t = vec!["onTransform".to_string()];
-        assert!(activation_matches(&t, "RecordingStarted"));
-        assert!(!activation_matches(&t, "TranscriptionComplete"));
-
-        // Unknown/empty clauses never fire.
-        assert!(!activation_matches(&["onStartup".to_string()], "RecordingStarted"));
-        assert!(!activation_matches(&[], "RecordingStarted"));
+    fn hot_paths_are_guarded_off_by_default() {
+        assert!(!HAS_TRANSFORMS.load(Ordering::Relaxed));
+        assert!(!HAS_ACTIVATIONS.load(Ordering::Relaxed));
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {

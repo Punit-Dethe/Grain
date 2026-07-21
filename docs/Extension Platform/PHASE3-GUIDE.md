@@ -21,6 +21,18 @@ identically at every commit; if the user can tell you refactored it, you did it
 wrong.
 
 **Non-negotiables (do not "simplify" these away):**
+- ⚡ **An installed-but-idle extension costs the native pipeline NOTHING.**
+  Grain must be exactly as fast with extensions installed as without — a
+  feature must not become slower *because* it is an extension. Every hot path
+  (the paste path, the event bus, the pill feed) is guarded by a cached index or
+  an atomic flag: **never** a registry clone, **never** a disk read, **never** a
+  per-event allocation. This was violated in Phase 2 — `run_transforms` read and
+  parsed a manifest per enabled extension on every transcription, and `on_event`
+  did the same *plus* serialized every `AudioLevel` — and is now fixed by
+  `extension_host::refresh_index` + `HAS_TRANSFORMS`/`HAS_ACTIVATIONS`. Phase 3
+  must hold the same line: an unoccupied slot, a never-opened surface, and an
+  unrendered settings schema all cost zero. **If you add a hook to a hot path,
+  the first line of it is the guard.**
 - Extensions **never** create windows (SPEC §1.2). They declare a surface; the
   host builds, places, sleeps and destroys it. Any API that hands an extension a
   window handle is wrong.

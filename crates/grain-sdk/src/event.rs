@@ -243,6 +243,86 @@ pub enum DaemonEvent {
     },
 }
 
+impl DaemonEvent {
+    /// The serde (externally-tagged) variant name, **without serializing**.
+    ///
+    /// The extension host matches `onEvent:<Variant>` activations against this
+    /// on every broadcast — including `AudioLevel`, which fires many times a
+    /// second while recording — so it must not allocate. Serializing the event
+    /// just to read its tag was measurably the wrong thing.
+    ///
+    /// The match is exhaustive on purpose: adding a variant without naming it
+    /// here is a compile error, never a silently unmatchable activation.
+    pub fn variant_name(&self) -> &'static str {
+        use DaemonEvent::*;
+        match self {
+            RecordingStarted { .. } => "RecordingStarted",
+            RecordingStopped { .. } => "RecordingStopped",
+            SessionCancelled { .. } => "SessionCancelled",
+            PromptRecordingChanged { .. } => "PromptRecordingChanged",
+            ChunkComplete { .. } => "ChunkComplete",
+            TranscriptionComplete { .. } => "TranscriptionComplete",
+            ProcessingComplete { .. } => "ProcessingComplete",
+            ModelLoading { .. } => "ModelLoading",
+            ModelLoaded { .. } => "ModelLoaded",
+            ModelUnloaded => "ModelUnloaded",
+            ModelError { .. } => "ModelError",
+            ModelDownloadProgress { .. } => "ModelDownloadProgress",
+            AudioLevel { .. } => "AudioLevel",
+            PromptChanged { .. } => "PromptChanged",
+            DictionarySuggestion { .. } => "DictionarySuggestion",
+            DictionarySuggestionClear => "DictionarySuggestionClear",
+            AgentFollowupOffer { .. } => "AgentFollowupOffer",
+            AgentFollowupClear => "AgentFollowupClear",
+            AgentInputShow { .. } => "AgentInputShow",
+            AgentInputHide => "AgentInputHide",
+            AgentInputSaved => "AgentInputSaved",
+            AgentInputSubmitRequest => "AgentInputSubmitRequest",
+            ShowOverlay => "ShowOverlay",
+            HideOverlay => "HideOverlay",
+            PasteError { .. } => "PasteError",
+            OverlayConfig { .. } => "OverlayConfig",
+            AsrStreamText { .. } => "AsrStreamText",
+            AsrPartial { .. } => "AsrPartial",
+            AsrCommit { .. } => "AsrCommit",
+            AsrSegmentFinal { .. } => "AsrSegmentFinal",
+            AsrSessionFinal { .. } => "AsrSessionFinal",
+            AsrError { .. } => "AsrError",
+            ExtensionDisabled { .. } => "ExtensionDisabled",
+        }
+    }
+}
+
+#[cfg(test)]
+mod variant_name_tests {
+    use super::*;
+
+    /// The name must equal serde's own tag, or activations silently never fire.
+    #[test]
+    fn variant_name_matches_the_serde_tag() {
+        let cases = vec![
+            DaemonEvent::RecordingStarted {
+                session_id: 1,
+                mode: SessionMode::Dictation,
+            },
+            DaemonEvent::TranscriptionComplete {
+                session_id: 1,
+                text: "x".into(),
+            },
+            DaemonEvent::ModelUnloaded,
+            DaemonEvent::AudioLevel { levels: vec![] },
+        ];
+        for ev in cases {
+            let tag = match serde_json::to_value(&ev).unwrap() {
+                serde_json::Value::String(s) => s,
+                serde_json::Value::Object(m) => m.keys().next().unwrap().clone(),
+                other => panic!("unexpected shape: {other:?}"),
+            };
+            assert_eq!(ev.variant_name(), tag);
+        }
+    }
+}
+
 /// [GRAIN] The reverse channel: actions the pill sends BACK to the core over the
 /// same local WebSocket (the core's events server reads these). Kept tiny and
 /// self-describing so the transport stays a single duplex JSON stream.

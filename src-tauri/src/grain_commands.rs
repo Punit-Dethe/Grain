@@ -617,6 +617,9 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                 })
                 .map_err(|e| e.to_string())?;
             }
+            // The activation/transform index is what the paste path and event
+            // bus read; it must never lag the registry.
+            crate::extension_host::refresh_index(&app);
             return Ok(());
         }
         other => return Err(format!("unknown extension id '{other}'")),
@@ -683,6 +686,7 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
                 .map_err(|e| e.to_string())?;
         }
     }
+    crate::extension_host::refresh_index(&app);
     Ok(id)
 }
 
@@ -749,5 +753,6 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
     }
+    crate::extension_host::refresh_index(&app);
     Ok(())
 }

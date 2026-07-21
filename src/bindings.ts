@@ -999,6 +999,83 @@ async changeRollingLivePreviewSetting(enabled: boolean) : Promise<Result<null, s
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The Overview tab's data: every extension, enabled and disabled alike.
+ */
+async extensionsOverview() : Promise<Result<ExtensionCard[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extensions_overview") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
+ * settings flag + bump toggle order; packs write the registry. The Agent
+ * toggle re-registers its binding so the change is zero-overhead-when-off.
+ */
+async extensionSetEnabled(id: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_set_enabled", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Record the user's approval of a scripted extension's capabilities (SPEC §6).
+ * Called by the permission sheet on Approve; the caller then retries enable.
+ * 
+ * Grants are clamped to what the manifest actually requests, so neither a
+ * compromised frontend nor a stale sheet can widen an extension's reach beyond
+ * what the user was shown.
+ */
+async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_grant", { id, permissions }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
+ * the extensions dir, registers it DISABLED — enabling is the user's explicit
+ * second step in Overview, where toggle order is assigned.
+ */
+async extensionImportPack(path: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_import_pack", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
+ */
+async extensionExportPack(id: string, dest: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_export_pack", { id, dest }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Uninstall a pack. `purge` also deletes the stored pack file; without it the
+ * file stays for lossless reinstall (SPEC §6 keep-by-default). Applied
+ * payloads are always removed.
+ */
+async extensionUninstall(id: string, purge: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_uninstall", { id, purge }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_lazy_stream_close_setting", { enabled }) };
@@ -1875,6 +1952,27 @@ rolling_live_preview?: boolean;
  */
 context_awareness_enabled?: boolean; 
 /**
+ * [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
+ * switch. OFF by default for NEW installs; the one-time import in
+ * `load_settings` turns it on for existing users who already have snippets
+ * (the upgrade rule — a working feature must not vanish on update).
+ */
+snippets_enabled?: boolean; 
+/**
+ * [GRAIN] Extension platform (SPEC §10.1): the Agent built-in extension's
+ * switch — the on/off the Agent never had. Gates summoning and the
+ * summon-agent binding. OFF by default for NEW installs; the one-time
+ * import turns it on for existing users (the Agent was previously always
+ * available).
+ */
+agent_enabled?: boolean; 
+/**
+ * [GRAIN] One-time marker for the extension-platform settings import above
+ * (SPEC §10.1 upgrade rule). False in files written before the platform;
+ * `load_settings` performs the import exactly once and sets it.
+ */
+extensions_imported_v1?: boolean; 
+/**
  * [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
  * default; only consulted when `context_awareness_enabled` is true.
  */
@@ -2048,6 +2146,21 @@ export type EngineType =
  * the file, so this one variant covers the whole transcribe-cpp family.
  */
 "TranscribeCpp" | "Parakeet" | "Moonshine" | "MoonshineStreaming" | "SenseVoice" | "GigaAM" | "Canary" | "Cohere"
+/**
+ * One row of the Extensions Overview tab. Built-ins delegate their enabled
+ * state to core settings flags (manifest-first, PLAN.md D4); installed packs
+ * read the registry.
+ */
+export type ExtensionCard = { id: string; name: string; description: string; version: string; 
+/**
+ * "builtin" | "pack"
+ */
+tier: string; enabled: boolean; 
+/**
+ * Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
+ * Sent as string — u64 doesn't survive JS numbers.
+ */
+toggle_seq: string; repository: string | null }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 /**
  * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
@@ -2134,6 +2247,11 @@ folder: string | null;
  * list. (Legacy field name kept for the wire schema.)
  */
 readonly: boolean }
+/**
+ * Where the single pill anchors on screen (`None` = never show). Lives in the
+ * SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
+ * also the persisted `overlay_position` setting (grain-core re-exports it).
+ */
 export type OverlayPosition = "none" | "top" | "bottom" | 
 /**
  * [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
