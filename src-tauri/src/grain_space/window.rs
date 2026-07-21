@@ -46,6 +46,8 @@ fn surface() -> Arc<Surface> {
         payload_event: FOCUS_NOTE_EVENT.to_string(),
         decorations: false,
         transparent: true,
+        // Grain's own workspace is never evicted to make room for an extension.
+        capped: false,
         // Asleep, the embedding engine is dead weight — but the Agent panel may
         // still be using it, so ask rather than drop.
         on_sleep: Some(Arc::new(|app| super::embed::shutdown_engine_if_idle(app))),

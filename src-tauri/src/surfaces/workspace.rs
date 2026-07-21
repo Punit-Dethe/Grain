@@ -29,7 +29,7 @@
 //! thread (tauri#3990).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
@@ -37,6 +37,19 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// How long to wait for a frontend ack before forcing the transition anyway.
 const ACK_FALLBACK: Duration = Duration::from_millis(700);
+
+/// How many **capped** workspaces may be awake at once (SPEC §1.2). Grain's own
+/// surfaces are uncapped; this bounds what extensions can keep resident, so a
+/// user who opens five workspaces ends up with one hidden window and four
+/// sleeping ones rather than five live webviews.
+///
+/// Reaching the cap sleeps the least-recently-used workspace — it never refuses
+/// to open. A surface the user explicitly asked for must always appear.
+const MAX_AWAKE_CAPPED: usize = 1;
+
+/// Monotonic tick handed out on each wake, so "least recently used" is ordering
+/// we own rather than wall-clock time (which can jump).
+static USE_CLOCK: AtomicU64 = AtomicU64::new(0);
 
 /// A hook the owning feature runs at a lifecycle moment — Grain Space uses it to
 /// drop its embedding engine once the workspace is asleep.
@@ -65,6 +78,10 @@ pub struct WorkspaceSpec {
     pub payload_event: String,
     pub decorations: bool,
     pub transparent: bool,
+    /// Whether this surface counts against [`MAX_AWAKE_CAPPED`]. Grain's own
+    /// workspaces are uncapped — the cap exists to bound *extensions*, and a
+    /// core feature must never be slept to make room for one.
+    pub capped: bool,
     /// Run after the window is hidden and its renderer suspended.
     pub on_sleep: Option<SurfaceHook>,
     /// Run when the window is truly destroyed.
@@ -81,6 +98,8 @@ pub struct Surface {
     /// stash-then-take pattern as the Agent's selection context, generalized
     /// from Grain Space's focus-note to arbitrary JSON.
     payload: Mutex<Option<serde_json::Value>>,
+    /// Tick of the most recent wake, for LRU eviction.
+    last_used: AtomicU64,
 }
 
 impl Surface {
@@ -115,6 +134,7 @@ pub fn ensure(spec: WorkspaceSpec) -> Arc<Surface> {
             spec,
             awake: AtomicBool::new(false),
             payload: Mutex::new(None),
+            last_used: AtomicU64::new(0),
         })
     }))
 }
@@ -279,12 +299,61 @@ fn finish_sleep(app: &AppHandle, surface: &Arc<Surface>) {
     surface.stash_payload(None);
 }
 
+/// Which capped workspaces must sleep so `incoming` can wake without exceeding
+/// `cap`, least-recently-used first.
+///
+/// Pure, because this is the part with the rule. Note it returns *victims to
+/// sleep*, never "refuse the open": SPEC §1.2 caps residency, not access — a
+/// workspace the user just asked for always appears.
+fn lru_victims(awake: &[(String, u64)], incoming: &str, cap: usize) -> Vec<String> {
+    // Re-waking something already awake displaces nobody.
+    let mut others: Vec<&(String, u64)> = awake.iter().filter(|(id, _)| id != incoming).collect();
+    let over = (others.len() + 1).saturating_sub(cap.max(1));
+    if over == 0 {
+        return Vec::new();
+    }
+    others.sort_by_key(|(_, tick)| *tick);
+    others
+        .into_iter()
+        .take(over)
+        .map(|(id, _)| id.clone())
+        .collect()
+}
+
+/// Sleep the least-recently-used capped workspaces so `incoming` fits under the
+/// cap. Runs before a wake, and only for capped (i.e. extension) surfaces.
+fn enforce_cap(app: &AppHandle, incoming: &Arc<Surface>) {
+    if !incoming.spec.capped {
+        return;
+    }
+    // Snapshot under the lock, then release it — `close` re-locks.
+    let awake: Vec<(String, u64)> = {
+        let map = surfaces().lock().unwrap();
+        map.values()
+            .filter(|s| s.spec.capped && s.is_awake())
+            .map(|s| (s.spec.id.clone(), s.last_used.load(Ordering::SeqCst)))
+            .collect()
+    };
+    for victim in lru_victims(&awake, &incoming.spec.id, MAX_AWAKE_CAPPED) {
+        log::info!(
+            "[GRAIN] surface '{}': sleeping (least recently used) to make room for '{}'",
+            victim,
+            incoming.spec.id
+        );
+        close(app, &victim);
+    }
+}
+
 /// Resume the webview and ask the (purged) frontend to re-mount. The window
 /// stays hidden until `ui_ready`; the fallback shows it even without an ack.
 fn wake(app: &AppHandle, surface: &Arc<Surface>) {
     let Some(win) = app.get_webview_window(&surface.spec.label) else {
         return;
     };
+    enforce_cap(app, surface);
+    surface
+        .last_used
+        .store(USE_CLOCK.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
     set_webview_suspended(&win, false);
     let _ = app.emit(&surface.spec.revive_event, ());
     fallback_show(app, surface);
@@ -361,6 +430,12 @@ fn set_webview_suspended(_win: &tauri::WebviewWindow, _suspend: bool) {}
 
 /// Build the window, hidden. Callers are already on the async runtime.
 fn build(app: &AppHandle, surface: &Arc<Surface>) {
+    // A first open is a wake too — it must respect the cap and take its place
+    // in LRU order, or the newest workspace would look like the oldest.
+    enforce_cap(app, surface);
+    surface
+        .last_used
+        .store(USE_CLOCK.fetch_add(1, Ordering::SeqCst), Ordering::SeqCst);
     let spec = &surface.spec;
     let mut builder = tauri::WebviewWindowBuilder::new(app, &spec.label, spec.url.clone())
         .title(&spec.title)
@@ -430,6 +505,7 @@ mod tests {
             payload_event: format!("{id}://payload"),
             decorations: false,
             transparent: true,
+            capped: false,
             on_sleep: None,
             on_destroy: None,
         }
@@ -472,6 +548,33 @@ mod tests {
 
         a.stash_payload(Some(serde_json::json!(1)));
         assert_eq!(b.take_payload(), None);
+    }
+
+    #[test]
+    fn the_cap_sleeps_the_least_recently_used_never_the_newest() {
+        // (id, last-used tick) — "b" was used most recently.
+        let awake = [("a".to_string(), 1u64), ("b".to_string(), 9)];
+        assert_eq!(lru_victims(&awake, "c", 1), vec!["a", "b"]);
+        assert_eq!(lru_victims(&awake, "c", 2), vec!["a"]);
+        assert!(lru_victims(&awake, "c", 3).is_empty());
+    }
+
+    #[test]
+    fn re_waking_an_awake_workspace_displaces_nobody() {
+        // Toggling back to a workspace you already have open must not sleep it
+        // to make room for itself.
+        let awake = [("a".to_string(), 1u64)];
+        assert!(lru_victims(&awake, "a", 1).is_empty());
+    }
+
+    #[test]
+    fn the_cap_never_refuses_an_open() {
+        // SPEC §1.2 caps residency, not access: even at cap 0 (nonsense input)
+        // the incoming workspace opens — the others just sleep.
+        let awake = [("a".to_string(), 1u64)];
+        let victims = lru_victims(&awake, "b", 0);
+        assert_eq!(victims, vec!["a"], "the incoming surface is never a victim");
+        assert!(!victims.contains(&"b".to_string()));
     }
 
     #[test]
