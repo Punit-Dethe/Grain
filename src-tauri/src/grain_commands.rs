@@ -471,6 +471,9 @@ pub struct ExtensionCard {
     /// Sent as string — u64 doesn't survive JS numbers.
     pub toggle_seq: String,
     pub repository: Option<String>,
+    /// The pack declares settings or shortcuts, so it has a section of its own
+    /// worth opening. Free to compute — Overview already reads every manifest.
+    pub has_detail: bool,
 }
 
 fn builtin_card(
@@ -489,6 +492,8 @@ fn builtin_card(
         enabled,
         toggle_seq: reg.toggle_seq(id).to_string(),
         repository: None,
+        // Built-ins have their own tab; the Overview name jumps there.
+        has_detail: false,
     }
 }
 
@@ -531,15 +536,20 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
         if rec.id == ext::AGENT_CENTER_VARIANT_ID {
             continue;
         }
-        let (name, description, repository) = match load_pack(&app, &rec.id) {
-            Ok(p) => (
-                p.manifest.name,
-                p.manifest.description,
-                p.manifest.repository,
-            ),
+        let (name, description, repository, has_detail) = match load_pack(&app, &rec.id) {
+            Ok(p) => {
+                let has_detail = !p.manifest.contributes.settings.is_empty()
+                    || !p.manifest.contributes.shortcuts.is_empty();
+                (
+                    p.manifest.name,
+                    p.manifest.description,
+                    p.manifest.repository,
+                    has_detail,
+                )
+            }
             // SPEC §6 last row: a broken/missing pack file renders an error
             // card; it never takes the page down.
-            Err(e) => (rec.id.clone(), format!("Unreadable pack: {e}"), None),
+            Err(e) => (rec.id.clone(), format!("Unreadable pack: {e}"), None, false),
         };
         cards.push(ExtensionCard {
             id: rec.id.clone(),
@@ -550,6 +560,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             enabled: rec.enabled,
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
+            has_detail,
         });
     }
     if let Some(rec) = reg.record(ext::AGENT_CENTER_VARIANT_ID) {
@@ -562,6 +573,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             enabled: rec.enabled,
             toggle_seq: rec.toggle_seq.to_string(),
             repository: None,
+            // Its one control is the Agent's position dropdown (SPEC §10.2).
+            has_detail: false,
         });
     }
     Ok(cards)
@@ -830,6 +843,17 @@ fn rows_for(
     rows
 }
 
+/// The live state of one extension's contributed shortcuts (SPEC §3.3), so the
+/// settings section can show a chord that is registered — and name the holder
+/// of one that isn't, rather than leaving a dead hotkey unexplained.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_shortcuts_status(
+    id: String,
+) -> Vec<crate::extension_shortcuts::ShortcutStatus> {
+    crate::extension_shortcuts::status_for(&id)
+}
+
 /// One enabled extension's settings, ready to render.
 #[derive(serde::Serialize, specta::Type)]
 pub struct ExtensionSettingsSection {
@@ -1050,6 +1074,9 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
         let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
     }
     reg.uninstall(&id).map_err(|e| e.to_string())?;
+    // Disable keeps a rebind; uninstall is the transaction that clears it
+    // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
+    crate::extension_shortcuts::forget(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
     }

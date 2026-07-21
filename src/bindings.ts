@@ -1089,6 +1089,14 @@ async extensionSettingsSections() : Promise<Result<ExtensionSettingsSection[], s
 }
 },
 /**
+ * The live state of one extension's contributed shortcuts (SPEC §3.3), so the
+ * settings section can show a chord that is registered — and name the holder
+ * of one that isn't, rather than leaving a dead hotkey unexplained.
+ */
+async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
+    return await TAURI_INVOKE("extension_shortcuts_status", { id });
+},
+/**
  * Write one schema-declared setting from the host's own control.
  * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
@@ -2225,7 +2233,12 @@ tier: string; enabled: boolean;
  * Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
  * Sent as string — u64 doesn't survive JS numbers.
  */
-toggle_seq: string; repository: string | null }
+toggle_seq: string; repository: string | null; 
+/**
+ * The pack declares settings or shortcuts, so it has a section of its own
+ * worth opening. Free to compute — Overview already reads every manifest.
+ */
+has_detail: boolean }
 /**
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
@@ -2411,6 +2424,23 @@ export type ReminderStatus =
 export type SecretMap = Partial<{ [key in string]: string }>
 export type SelectOptionDto = { value: string; label: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
+/**
+ * One declared shortcut's live state, for the extension's settings section.
+ */
+export type ShortcutStatus = { id: string; label: string; 
+/**
+ * The chord currently bound, or empty when the extension suggested none.
+ */
+binding: string; 
+/**
+ * False when the chord is taken — SPEC §3.3: the later registrant is
+ * inactive until rebound, and both rows say so.
+ */
+active: boolean; 
+/**
+ * Who holds the chord, when inactive.
+ */
+conflicts_with: string | null }
 /**
  * [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a
  * final transcript, it is replaced by the expansion text verbatim. Matching is

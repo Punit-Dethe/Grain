@@ -19,7 +19,9 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 step 1** — manifest grows `surfaces`/`slots`/`contributes` | **SHIPPED**, then corrected against SPEC §4.1/§4.3 (see Phase 3 detail below). |
 | **Phase 3 step 2** — the slots registry | **SHIPPED.** Exclusive positions, core defaults as occupants, explicit takeover. |
 | **Phase 3 step 3** — schema settings render | **SHIPPED.** Levels 1–2, all five anchors mounted, auto-categorize dogfoods it. |
-| **Phase 3 steps 4–10** | **NOT STARTED.** [PHASE3-GUIDE.md](PHASE3-GUIDE.md) is prescriptive for all of them; **start at Step 4 (`contributes.shortcuts` + chunk 2b sessionMode)**. |
+| **Phase 3 step 4a** — `contributes.shortcuts` | **SHIPPED.** Namespaced `ext:<id>:<sid>`, toggle-order arbitration, status rows. |
+| **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED.** The guide folds it into step 4; it is genuinely separable and was deferred. |
+| **Phase 3 steps 5–10** | **NOT STARTED.** [PHASE3-GUIDE.md](PHASE3-GUIDE.md) is prescriptive for all of them; **start at Step 4b or Step 5 (`workspace`, the big one)**. |
 | **⛔ GATE — distribution platform + developer mode** | **OPEN, BLOCKING Phase 4/5.** See [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). Requirements captured 2026-07-21; **no design, no plan yet** — by instruction. Phase 3 is unaffected. |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
@@ -115,19 +117,59 @@ flaws worth internalizing, because all three are the *expensive* kind:
 3. An unknown setting `kind` failed to **deserialize**, killing the whole pack.
    `SettingKind` now has `color`/`slider` plus `#[serde(other)] Unsupported`.
 
-**Known gotcha for Step 2 (the slots registry) — read this first.**
+**Step 2 shipped — the centre-variant gotcha is CLOSED.**
 `grain.agent-center-layout` has a registry record but **no `.grainpack.json` on
-disk** (confirmed on the live machine; only `grain.auto-categorize.grainpack.json`
-exists). So any slot logic that reads occupancy from manifests will **miss the
-centre variant entirely**, even though SPEC §10.2 says it occupies
-`agent.reply-surface`. Step 2 must either seed a pack file for it or special-case
-it when backfilling core defaults as occupants — otherwise the first real claim
-on `agent.reply-surface` will look free and silently displace a shipped feature.
+disk**, so nothing manifest-derived can report that it competes for
+`agent.reply-surface`. Resolved three ways, all verified against the live
+registry file:
+- `ExtensionRecord.slots` carries the declared slots, copied at install, so
+  occupancy never needs a disk read. `load()` **backfills** the centre variant's
+  slot (and heals registries written before `slots` existed).
+- `load()` seeds every `KNOWN_SLOTS` entry with `CORE_DEFAULT` (`grain.core`),
+  making SPEC §3.2's "core defaults are occupants" literally true in storage. A
+  slot is therefore never *free*, so even a first claim prompts.
+- The centre variant's **claim** is reconciled from `agent_panel_position`
+  (`grain_commands::sync_agent_reply_surface_slot`, called at boot, on toggle,
+  and on position change) because SPEC §10.2 says enabling it only adds it to
+  the dropdown — *selecting* it takes the slot. That function never overwrites a
+  third-party occupant.
 
-**Open contract question (not yet decided):** `slots` validation accepts any
+`set_enabled` refuses a contested enable (belt and braces behind the command
+layer's structured `{"slotConflict":…}`), and `take_slot` disables the incumbent
+in the same transaction. **If you add a new slot consumer, release on disable
+AND on uninstall** — `release_slots_locked` handles both today.
+
+**Open contract question (still not decided):** `slots` validation accepts any
 `overrides:<setting>`. SPEC §4.2 publishes an allowlist for core-setting
 *reads*, but no allowlist exists yet for override *targets*. Left permissive
-deliberately rather than inventing contract surface — decide it in Step 2.
+deliberately rather than inventing contract surface. Step 2 did not need to
+decide it (nothing consumes `overrides:` yet); **the first consumer must**.
+
+**Step 3 shipped — where the settings contract is actually enforced.**
+`grain-sdk/settings_schema.rs` is the single rule table: `coerce` (write) and
+`resolve` (read). It is called from **two** places and both matter —
+`extension_setting_set` (the host's control) and `host_api`'s `settings.set`
+(the extension writing to its own namespace over the WS). A schema enforced
+only in React is not enforced: the extension can reach the same keys directly.
+If you add a third writer, route it through `coerce` too.
+
+`ExtensionSettingRow` is a deliberately **flat DTO**, not the manifest type —
+`SettingKind` is internally tagged with per-variant fields and crosses the
+bindings boundary badly. `specta` gained its `serde_json` feature so the value
+itself crosses as `JsonValue`.
+
+**Step 4a shipped — contributed shortcuts.** Registered through the *existing*
+binding registry as `ext:<extension-id>:<shortcut-id>`; `handle_shortcut_event`
+gets one `[GRAIN]` hook that prefix-matches before any `ACTION_MAP` lookup.
+Arbitration lives in a **pure** `extension_shortcuts::plan()` (7 tests): core
+always wins, then extensions in **toggle order**, loser inactive-until-rebound
+with the holder named. `sync()` **always** defers onto the async runtime — see
+the deadlock rule below — and is called from inside `refresh_index`, so every
+registry mutation reconciles shortcuts for free.
+
+**Manifest ids and shortcut ids may not contain `:`** (validated at import),
+because that is what makes `ext:<id>:<sid>` unambiguously parseable. Do not
+relax this without changing `parse_binding_id`.
 
 **Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/

@@ -98,6 +98,13 @@ export const GRAIN_RUNTIME_JS = `(function () {
     }
   }
 
+  // A cold worker woken by a shortcut press carries the press as its
+  // activation. It is NOT a DaemonEvent, so onEvent must not replay it.
+  function activationShortcut() {
+    var s = ACTIVATION && ACTIVATION.Shortcut;
+    return s && s.id ? String(s.id) : null;
+  }
+
   var grain = {
     activation: ACTIVATION,
     caps: CAPS,
@@ -127,9 +134,26 @@ export const GRAIN_RUNTIME_JS = `(function () {
     // suppresses the paste (SPEC §3.3).
     onTransform: function (fn) { handlers.transform = function (p) { return fn(p.text); }; },
     onSessionResult: function (fn) { handlers.sessionResult = function (p) { return fn(p.text); }; },
+    // A shortcut press is acknowledged on RECEIPT, not on completion: the
+    // handler runs detached so an extension that opens an LLM call from a
+    // hotkey is never mistaken for an unresponsive one.
+    onShortcut: function (fn) {
+      handlers.shortcut = function (p) {
+        Promise.resolve()
+          .then(function () { return fn(String(p && p.id)); })
+          .catch(function (e) {
+            grain.log.warn("shortcut handler failed: " + ((e && e.message) || e));
+          });
+        return null;
+      };
+      var woke = activationShortcut();
+      if (woke != null) {
+        Promise.resolve().then(function () { handlers.shortcut({ id: woke }); });
+      }
+    },
     onEvent: function (fn) {
       onEventFn = fn;
-      if (ACTIVATION != null) {
+      if (ACTIVATION != null && activationShortcut() == null) {
         // Fire once for the event that woke this worker — the broadcast is
         // already past, so its payload travels in the injected activation.
         Promise.resolve().then(function () { deliverEvent(ACTIVATION); });

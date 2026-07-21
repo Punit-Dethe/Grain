@@ -12,6 +12,7 @@ import {
 import {
   ANCHORS,
   ExtensionSettings,
+  ExtensionShortcuts,
   type SettingRow,
   type SettingsSection,
 } from "./ExtensionSettings";
@@ -94,6 +95,8 @@ interface ExtensionCard {
   /** u64 as string; "18446744073709551615" (u64::MAX) = never toggled. */
   toggle_seq: string;
   repository: string | null;
+  /** The pack declares settings or shortcuts — it has a section of its own. */
+  has_detail: boolean;
 }
 
 const NEVER_TOGGLED = "18446744073709551615";
@@ -242,7 +245,7 @@ export const OverviewSection: React.FC<{
   // The extension's own settings section (SPEC §4.3 fallback). Rendered in
   // place of the list so the tab bar never grows with extension count.
   const openSection = sections.find((s) => s.id === detail);
-  if (detail && openSection) {
+  if (detail) {
     const card = cards.find((c) => c.id === detail);
     return (
       <div className="space-y-3">
@@ -255,16 +258,28 @@ export const OverviewSection: React.FC<{
           All extensions
         </button>
         <div className="px-1">
-          <h2 className="text-sm font-medium text-ink">{openSection.name}</h2>
+          <h2 className="text-sm font-medium text-ink">
+            {openSection?.name ?? card?.name ?? detail}
+          </h2>
           {card?.description && (
             <p className="text-xs text-ink-faint">{card.description}</p>
           )}
         </div>
-        <ExtensionSettings
-          section={openSection}
-          rows={ownRows(detail)}
-          onChanged={() => void refresh()}
-        />
+        {/* An extension may contribute settings, shortcuts, or both; a disabled
+            one contributes neither until it is turned back on (SPEC §6). */}
+        {openSection && (
+          <ExtensionSettings
+            section={openSection}
+            rows={ownRows(detail)}
+            onChanged={() => void refresh()}
+          />
+        )}
+        <ExtensionShortcuts id={detail} />
+        {!openSection && card && !card.enabled && (
+          <p className="px-1 text-xs text-ink-faint">
+            Turn this extension on to see its settings.
+          </p>
+        )}
       </div>
     );
   }
@@ -293,9 +308,7 @@ export const OverviewSection: React.FC<{
               <button
                 type="button"
                 onClick={() =>
-                  ownRows(card.id).length > 0
-                    ? setDetail(card.id)
-                    : onJump(card.id)
+                  card.has_detail ? setDetail(card.id) : onJump(card.id)
                 }
                 className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
               >
@@ -308,7 +321,7 @@ export const OverviewSection: React.FC<{
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
               {card.tier === "builtin" ? "built-in" : "pack"} · v{card.version}
             </span>
-            {ownRows(card.id).length > 0 && (
+            {card.has_detail && (
               <button
                 type="button"
                 onClick={() => setDetail(card.id)}

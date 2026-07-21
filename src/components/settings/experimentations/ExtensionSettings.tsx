@@ -258,6 +258,59 @@ export const ExtensionSettings: React.FC<{
   );
 };
 
+/** Mirror of the Rust `ShortcutStatus` (extension_shortcuts.rs). */
+export interface ShortcutStatus {
+  id: string;
+  label: string;
+  binding: string;
+  active: boolean;
+  conflicts_with: string | null;
+}
+
+/** [GRAIN] An extension's contributed shortcuts (SPEC §3.3). Read-only here:
+ * the chord itself is rebound through the normal binding UI, and this exists so
+ * an inactive hotkey names its holder instead of just failing to fire. */
+export const ExtensionShortcuts: React.FC<{ id: string }> = ({ id }) => {
+  const [rows, setRows] = useState<ShortcutStatus[]>([]);
+
+  useEffect(() => {
+    invoke<ShortcutStatus[]>("extension_shortcuts_status", { id })
+      .then(setRows)
+      .catch(() => setRows([]));
+  }, [id]);
+
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      <h3 className="px-1 text-sm font-medium text-ink-soft">Shortcuts</h3>
+      <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
+        {rows.map((row) => (
+          <div key={row.id} className="flex items-center gap-3 px-4 py-3">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm text-ink">{row.label}</div>
+              {!row.active && (
+                <div className="text-xs text-amber-600">
+                  {row.conflicts_with
+                    ? `Inactive — ${row.conflicts_with} already uses this shortcut. Rebind it to activate.`
+                    : "Inactive — no shortcut is assigned."}
+                </div>
+              )}
+            </div>
+            <kbd
+              className={`px-2 py-1 rounded-lg border border-line bg-paper-sunken text-xs ${
+                row.active ? "text-ink" : "text-ink-faint line-through"
+              }`}
+            >
+              {row.binding || "—"}
+            </kbd>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 /** [GRAIN] The extension settings anchored at one point in a core section
  * (SPEC §4.3) — this is what puts an extension's settings *next to the feature
  * it extends* instead of in a tab of its own.

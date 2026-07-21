@@ -310,6 +310,12 @@ pub fn refresh_index(app: &AppHandle) {
         by_event,
         transforms,
     };
+    // "The extension set changed" is exactly the trigger for reconciling
+    // contributed shortcuts, so every caller of `refresh_index` gets it for
+    // free rather than having to remember a second call. `sync` defers onto
+    // the async runtime, so this stays safe even when the change was caused by
+    // a shortcut press.
+    crate::extension_shortcuts::sync(app);
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.
@@ -722,6 +728,61 @@ pub async fn run_transforms(app: &AppHandle, text: String) -> String {
     current
 }
 
+/// How long the host waits for a worker to *acknowledge* a shortcut. The
+/// runtime acknowledges on receipt and runs the handler detached, so this
+/// covers delivery only — a shortcut that opens an LLM call is not "slow".
+const SHORTCUT_DEADLINE: Duration = Duration::from_secs(2);
+
+/// A contributed shortcut fired (SPEC §3.3). Wakes the extension if it is cold,
+/// otherwise hands the press to the running worker.
+///
+/// Everything happens on the async runtime: the caller is the global-shortcut
+/// dispatch path, where blocking hangs every hotkey in the app.
+pub fn wake_for_shortcut(app: &AppHandle, ext_id: &str, shortcut_id: &str) {
+    let app = app.clone();
+    let ext_id = ext_id.to_string();
+    let shortcut_id = shortcut_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        if is_running(&ext_id) {
+            let host = match HOST.get() {
+                Some(h) => h,
+                None => return,
+            };
+            if let Err(e) = host
+                .workers
+                .call(
+                    &ext_id,
+                    "shortcut",
+                    json!({ "id": shortcut_id }),
+                    SHORTCUT_DEADLINE,
+                )
+                .await
+            {
+                log::warn!("[GRAIN] shortcut '{shortcut_id}' → '{ext_id}' failed: {e}");
+            }
+            return;
+        }
+        // Cold: the press IS the activation, and travels as the payload — the
+        // same device `on_event` uses, since there is no ready handshake to
+        // wait on and a dropped keypress would be indistinguishable from a bug.
+        let Some(pack) = load_manifest(&app, &ext_id) else {
+            return;
+        };
+        let granted = app
+            .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+            .and_then(|reg| reg.record(&ext_id))
+            .map(|r| r.granted)
+            .unwrap_or_default();
+        spawn_worker(
+            &app,
+            &ext_id,
+            &pack,
+            granted,
+            Some(json!({ "Shortcut": { "id": shortcut_id } })),
+        );
+    });
+}
+
 fn clear_strikes(ext_id: &str) {
     if let Some(host) = HOST.get() {
         host.workers.clear_strikes(ext_id);
@@ -757,7 +818,7 @@ fn auto_disable(app: &AppHandle, ext_id: &str) {
 
 /// Load a scripted extension's pack (manifest + embedded `entry_source`) from
 /// its on-disk `.grainpack.json` (SPEC §5.1 storage; same path as tier-A packs).
-fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
+pub fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
     let ctx = app.try_state::<Arc<AppContext>>()?;
     let path = ctx
         .data_dir

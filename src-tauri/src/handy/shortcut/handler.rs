@@ -44,6 +44,18 @@ pub fn handle_shortcut_event(
         return;
     }
 
+    // [GRAIN] Extension-contributed shortcuts are namespaced `ext:<id>:<sid>`,
+    // so they can never collide with a core binding id and this check is a
+    // 4-byte prefix compare before any map lookup. Dispatch is deferred onto
+    // the async runtime — nothing may block or re-enter the shortcut registry
+    // from here.
+    if let Some((ext_id, shortcut_id)) = crate::extension_shortcuts::parse_binding_id(binding_id) {
+        if is_pressed {
+            crate::extension_shortcuts::on_pressed(app, ext_id, shortcut_id);
+        }
+        return;
+    }
+
     let Some(action) = ACTION_MAP.get(binding_id) else {
         warn!(
             "No action defined in ACTION_MAP for shortcut ID '{}'. Shortcut: '{}', Pressed: {}",

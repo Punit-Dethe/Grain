@@ -364,10 +364,20 @@ impl GrainPack {
             }
         }
 
+        // A contributed shortcut is registered as `ext:<extension-id>:<id>`,
+        // parsed by splitting on the first two colons. A colon in either id
+        // would make that ambiguous, so it is rejected at import rather than
+        // producing a binding that routes to the wrong extension.
+        if m.id.contains(':') {
+            return Err("manifest.id must not contain ':'".into());
+        }
         let mut seen_sc = std::collections::HashSet::new();
         for sc in &m.contributes.shortcuts {
             if sc.id.trim().is_empty() {
                 return Err("a shortcut is missing its id".into());
+            }
+            if sc.id.contains(':') {
+                return Err(format!("shortcut id '{}' must not contain ':'", sc.id));
             }
             if !seen_sc.insert(&sc.id) {
                 return Err(format!("duplicate shortcut id '{}'", sc.id));
@@ -490,6 +500,18 @@ mod tests {
         .is_err());
         assert!(scripted(
             r#","contributes":{"settings":[{"key":"a","label":"A","kind":"select","options":[]}]}"#
+        )
+        .is_err());
+        // A colon in either id would make `ext:<extension-id>:<shortcut-id>`
+        // ambiguous, so a press could route to the wrong extension.
+        assert!(scripted(
+            r#","contributes":{"shortcuts":[{"id":"go:now","label":"Go"}]}"#
+        )
+        .is_err());
+        assert!(scripted(r#","contributes":{"shortcuts":[{"id":"go","label":"Go"}]}"#).is_ok());
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x:y","name":"n","version":"1","tier":"scripted",
+                "entry_source":"x","contributes":{"shortcuts":[{"id":"go","label":"Go"}]}}}"#
         )
         .is_err());
         // Data packs have no code, so they cannot declare surfaces or

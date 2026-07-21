@@ -55,6 +55,7 @@ mod grain_llm_client;
 mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
@@ -817,6 +818,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,
+            grain_commands::extension_shortcuts_status,
             grain_commands::extension_setting_set,
             grain_commands::extension_import_pack,
             grain_commands::extension_export_pack,
