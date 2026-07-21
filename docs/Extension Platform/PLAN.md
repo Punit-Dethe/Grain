@@ -145,6 +145,24 @@ actions, snippets, "scrap that", context awareness (+ its modes), auto-
 dictionary, Prompt Record, prompt switcher, auto-categorization, Grain Space
 itself, agent panel variants.
 
+### D4b. Growth is governed, and extensions may implement missing capabilities — to *our* interface
+
+The long tail is the real design problem: every ambitious extension will want
+something that doesn't exist yet. [CAPABILITY-GOVERNANCE.md](CAPABILITY-GOVERNANCE.md)
+is the standing answer — capabilities are classified *structural* (land early
+or never) vs *additive* (built on demand); requests travel a four-lane
+pipeline (workaround triage → request → experimental interface → stabilize)
+against published criteria and a public anti-roadmap of declined capabilities.
+
+An extension that cannot wait **may implement a missing capability itself** —
+but only as a tier-C **provider of a host-defined interface** (`provides:`),
+never as a privileged API of its own invention. Consumers request the
+capability; the Rust broker routes, enforces, and shows provenance; when core
+implements it natively, nothing downstream changes. This is
+xdg-desktop-portal's swappable-backend model, and it is deliberately *not*
+Thunderbird's Experiments model — those bypass the permission system entirely
+and collapse every prompt into "full, unrestricted access to your computer."
+
 ### D5. The marketplace is an index and a policy, not an infrastructure
 
 Obsidian-style: a public `grain-extensions` GitHub repo holding one JSON
@@ -328,6 +346,16 @@ bridge with capability-checked host API: events, storage, llm, embed,
 capture, clipboard, shortcuts; transform hook with the timeout budget; idle
 reaper. Dogfood: port **auto-categorization** (piggybacks an LLM call — pure
 logic, no UI) as the first scripted built-in.
+
+Also in Phase 2 — the two **structural** capabilities
+([CAPABILITY-GOVERNANCE.md](CAPABILITY-GOVERNANCE.md) Part 1), because they
+set the runtime's *shape* and cannot be retrofitted cheaply (the Chrome MV3
+lesson): **`session:start` + `contributes.sessionMode`** (an extension may
+own a serialized capture session) and its **slow stage** (the sanctioned
+place for multi-second model calls, distinct from the fast `transform`
+hook). Everything else CASE-HEYCLICKY found is *additive* and is built on
+demand, never speculatively — names reserved, shapes designed when a real
+consumer exists.
 
 **Phase 3 — Surfaces** *(the UI half)*
 The Extensions master–detail UI with Level 1/2 schema-rendered settings
