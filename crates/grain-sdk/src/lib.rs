@@ -20,7 +20,9 @@
 //! narrowly, widen later).
 
 pub mod event;
+pub mod manifest;
 pub mod protocol;
 
 pub use event::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
+pub use manifest::{ExtensionManifest, GrainPack, PackPayloads, PromptPackEntry, Tier};
 pub use protocol::{ClientHello, ServerWelcome, GRAIN_API_VERSION};

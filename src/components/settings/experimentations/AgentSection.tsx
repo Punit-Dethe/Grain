@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   AgentAutocopy,
   AgentContextMode,
@@ -40,6 +41,24 @@ export const AgentSection: React.FC = () => {
   const typeToExpand = getSetting("agent_input_type_to_expand") ?? true;
   const panelPosition = getSetting("agent_panel_position") ?? "side";
 
+  // [GRAIN] SPEC §10.2: the centre layout is a surface-variant PACK. Its
+  // dropdown option exists only while that extension is installed+enabled
+  // (the built-in side card is the default occupant of the slot). Disabling
+  // the pack elsewhere falls the position back to "side" backend-side.
+  const [centerAvailable, setCenterAvailable] = useState(true);
+  useEffect(() => {
+    invoke<{ id: string; enabled: boolean }[]>("extensions_overview")
+      .then((cards) =>
+        setCenterAvailable(
+          cards.some((c) => c.id === "grain.agent-center-layout" && c.enabled),
+        ),
+      )
+      .catch(() => setCenterAvailable(true)); // never brick the dropdown
+  }, []);
+  const positionOptions = centerAvailable
+    ? POSITION_OPTIONS
+    : POSITION_OPTIONS.filter((o) => o.value !== "center");
+
   return (
     <div className="space-y-6">
       <SettingsGroup
@@ -53,7 +72,7 @@ export const AgentSection: React.FC = () => {
           grouped
         >
           <Dropdown
-            options={POSITION_OPTIONS}
+            options={positionOptions}
             selectedValue={panelPosition}
             disabled={isUpdating("agent_panel_position")}
             onSelect={(v) =>

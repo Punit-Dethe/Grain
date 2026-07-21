@@ -118,6 +118,11 @@ impl ExtensionsRegistry {
         fs::write(&self.path, json).with_context(|| format!("write {}", self.path.display()))
     }
 
+    /// All installed pack records (unordered; callers sort by toggle_seq).
+    pub fn records(&self) -> Vec<ExtensionRecord> {
+        self.state.read().unwrap().records.values().cloned().collect()
+    }
+
     pub fn record(&self, id: &str) -> Option<ExtensionRecord> {
         self.state.read().unwrap().records.get(id).cloned()
     }
@@ -283,5 +288,84 @@ mod tests {
         fs::write(dir.path().join(EXTENSIONS_FILE), "{not json").unwrap();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         assert!(!reg.is_installed("x"));
+    }
+}
+
+// ── Tier-A pack application (Phase 1: prompt packs) ─────────────────────────
+
+/// Apply a prompt pack to settings: entries land in the user's prompt list
+/// under `ext:<extid>:<id>` (SPEC #15 — namespaced, so collisions with user
+/// prompts or other packs are unrepresentable). Idempotent: re-applying the
+/// same pack replaces its own entries.
+pub fn apply_prompt_pack(
+    settings: &mut crate::settings::AppSettings,
+    ext_id: &str,
+    entries: &[grain_sdk::PromptPackEntry],
+) {
+    remove_prompt_pack(settings, ext_id);
+    for e in entries {
+        settings.post_process_prompts.push(crate::settings::LLMPrompt {
+            id: format!("ext:{ext_id}:{}", e.id),
+            name: e.name.clone(),
+            prompt: e.prompt.clone(),
+        });
+    }
+}
+
+/// Remove a pack's prompts (disable/uninstall). If the removed pack's prompt
+/// was the SELECTED one, selection falls back to the first remaining prompt —
+/// never a dangling id (the §10.2 restore principle, applied to prompts).
+pub fn remove_prompt_pack(settings: &mut crate::settings::AppSettings, ext_id: &str) {
+    let prefix = format!("ext:{ext_id}:");
+    settings.post_process_prompts.retain(|p| !p.id.starts_with(&prefix));
+    if let Some(sel) = &settings.post_process_selected_prompt_id {
+        if sel.starts_with(&prefix) {
+            settings.post_process_selected_prompt_id =
+                settings.post_process_prompts.first().map(|p| p.id.clone());
+        }
+    }
+}
+
+#[cfg(test)]
+mod pack_tests {
+    use super::*;
+    use crate::settings::AppSettings;
+    use grain_sdk::PromptPackEntry;
+
+    fn entries() -> Vec<PromptPackEntry> {
+        vec![PromptPackEntry {
+            id: "formal".into(),
+            name: "Formal".into(),
+            prompt: "Rewrite formally.".into(),
+        }]
+    }
+
+    #[test]
+    fn apply_is_namespaced_and_idempotent() {
+        let mut s = AppSettings::default();
+        let before = s.post_process_prompts.len();
+        apply_prompt_pack(&mut s, "com.x.zh", &entries());
+        apply_prompt_pack(&mut s, "com.x.zh", &entries()); // no duplicates
+        assert_eq!(s.post_process_prompts.len(), before + 1);
+        assert!(s
+            .post_process_prompts
+            .iter()
+            .any(|p| p.id == "ext:com.x.zh:formal"));
+    }
+
+    #[test]
+    fn remove_clears_entries_and_heals_selection() {
+        let mut s = AppSettings::default();
+        apply_prompt_pack(&mut s, "com.x.zh", &entries());
+        s.post_process_selected_prompt_id = Some("ext:com.x.zh:formal".into());
+        remove_prompt_pack(&mut s, "com.x.zh");
+        assert!(!s
+            .post_process_prompts
+            .iter()
+            .any(|p| p.id.starts_with("ext:com.x.zh:")));
+        // Selection healed to a real prompt, not left dangling.
+        let sel = s.post_process_selected_prompt_id.clone();
+        assert!(sel.is_none() || s.post_process_prompts.iter().any(|p| Some(&p.id) == sel.as_ref()));
+        assert_ne!(sel.as_deref(), Some("ext:com.x.zh:formal"));
     }
 }

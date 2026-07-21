@@ -491,6 +491,33 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             &reg,
         ),
     ];
+    // Imported packs (everything in the registry that isn't the pre-known
+    // centre variant handled below).
+    for rec in reg.records() {
+        if rec.id == ext::AGENT_CENTER_VARIANT_ID {
+            continue;
+        }
+        let (name, description, repository) = match load_pack(&app, &rec.id) {
+            Ok(p) => (
+                p.manifest.name,
+                p.manifest.description,
+                p.manifest.repository,
+            ),
+            // SPEC §6 last row: a broken/missing pack file renders an error
+            // card; it never takes the page down.
+            Err(e) => (rec.id.clone(), format!("Unreadable pack: {e}"), None),
+        };
+        cards.push(ExtensionCard {
+            id: rec.id.clone(),
+            name,
+            description,
+            version: rec.installed_version.clone(),
+            tier: "pack".to_string(),
+            enabled: rec.enabled,
+            toggle_seq: rec.toggle_seq.to_string(),
+            repository,
+        });
+    }
     if let Some(rec) = reg.record(ext::AGENT_CENTER_VARIANT_ID) {
         cards.push(ExtensionCard {
             id: rec.id.clone(),
@@ -555,10 +582,102 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             }
             return Ok(());
         }
+        // Imported tier-A packs: registry bit + payload application.
+        pack_id if reg.is_installed(pack_id) => {
+            let pack = load_pack(&app, pack_id)?;
+            reg.set_enabled(pack_id, enabled).map_err(|e| e.to_string())?;
+            if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+                ctx.update_settings(|s| {
+                    if enabled {
+                        ext::apply_prompt_pack(s, pack_id, &pack.payloads.prompts);
+                    } else {
+                        ext::remove_prompt_pack(s, pack_id);
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            }
+            return Ok(());
+        }
         other => return Err(format!("unknown extension id '{other}'")),
     }
     if enabled {
         let _ = reg.touch_builtin_toggle(&id);
+    }
+    Ok(())
+}
+
+/// Where imported `.grainpack` files live: `<data>/extensions/<id>.grainpack.json`.
+fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+    let dir = ctx.data_dir.join("extensions");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(format!("{id}.grainpack.json")))
+}
+
+fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
+    let raw = std::fs::read_to_string(pack_path(app, id)?).map_err(|e| e.to_string())?;
+    serde_json::from_str(&raw).map_err(|e| e.to_string())
+}
+
+/// Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
+/// the extensions dir, registers it DISABLED — enabling is the user's explicit
+/// second step in Overview, where toggle order is assigned.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, String> {
+    use grain_core::extensions as ext;
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("read {path}: {e}"))?;
+    let pack: grain_sdk::GrainPack =
+        serde_json::from_str(&raw).map_err(|e| format!("not a valid .grainpack: {e}"))?;
+    pack.validate()?;
+
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let id = pack.manifest.id.clone();
+    std::fs::write(
+        pack_path(&app, &id)?,
+        serde_json::to_string_pretty(&pack).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    reg.install(ext::ExtensionRecord {
+        id: id.clone(),
+        enabled: false,
+        toggle_seq: 0,
+        installed_version: pack.manifest.version.clone(),
+        granted: Vec::new(),
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
+#[tauri::command]
+#[specta::specta]
+pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result<(), String> {
+    std::fs::copy(pack_path(&app, &id)?, &dest)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Uninstall a pack. `purge` also deletes the stored pack file; without it the
+/// file stays for lossless reinstall (SPEC §6 keep-by-default). Applied
+/// payloads are always removed.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+        let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
+    }
+    reg.uninstall(&id).map_err(|e| e.to_string())?;
+    if purge {
+        let _ = std::fs::remove_file(pack_path(&app, &id)?);
     }
     Ok(())
 }

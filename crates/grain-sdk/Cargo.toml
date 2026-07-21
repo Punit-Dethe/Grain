@@ -8,9 +8,9 @@ authors.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+# Opaque payload passthrough (pill themes) in the manifest types.
+serde_json = { workspace = true }
 # Type reflection so settings-visible types (OverlayPosition) keep generating
 # frontend bindings exactly as before the move out of grain-core.
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
 
-[dev-dependencies]
-serde_json = { workspace = true }
