@@ -56,6 +56,13 @@
     "pr": "1231"
   },
   {
+    "date": "Jul 21, 2026",
+    "commit": "update catalog",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 20, 2026",
     "commit": "fix: prevent custom-word correction from losing transcriptions",
     "status": "Pending",
