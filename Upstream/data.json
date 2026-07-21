@@ -7,6 +7,27 @@
     "pr": "1732"
   },
   {
+    "date": "Jul 21, 2026",
+    "commit": "guard vulkan so only available to true x86 host, not emulated (#1731)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1731"
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "dont use hf env",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "release v0.9.4",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 20, 2026",
     "commit": "fix: prevent custom-word correction from losing transcriptions",
     "status": "Pending",
