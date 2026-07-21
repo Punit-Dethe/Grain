@@ -228,7 +228,17 @@ pub enum AgentMode {
 /// Summon the Agent (Assist mode): capture the foreground selection + field
 /// context, present the NATIVE input, start dictation, and pre-warm the reply
 /// panel. See [`summon_inner`].
+///
+/// [GRAIN] Gated on the Agent built-in extension (SPEC §10.1): its binding is
+/// also skipped at registration when disabled, so this guard is defense in
+/// depth for paths that summon programmatically. Grain Space's Recall/Capture
+/// modes are governed by `grain_space_enabled`, not this switch — they are
+/// Grain Space features that reuse the summon surface.
 pub fn summon(app: &AppHandle) {
+    if !crate::settings::get_settings(app).agent_enabled {
+        log::debug!("[GRAIN] summon ignored — Agent extension is disabled");
+        return;
+    }
     summon_inner(app, AgentMode::Assist);
 }
 

@@ -11,12 +11,13 @@
 //! decoupling phase; until then this crate stands alone and tested.
 
 pub mod context;
+pub mod extensions;
 // The event/action wire types moved to grain-sdk (the dependency leaf);
 // this alias keeps every `grain_core::event::X` path compiling unchanged.
 pub use grain_sdk as event;
 pub mod settings;
 
-pub use context::AppContext;
+pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
 pub use settings::{
     ActionTarget, AppMatch, AppMode, AppSettings, DictCandidate, PostProcessProvider, SecretMap,

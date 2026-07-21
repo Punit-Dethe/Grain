@@ -108,6 +108,13 @@ impl AppContext {
     }
 }
 
+/// Whether a settings file already exists in `data_dir` — the "is this an
+/// upgrade?" signal for one-time imports (SPEC §10.1). Call BEFORE
+/// [`AppContext::new`], which persists defaults and makes the file exist.
+pub fn settings_file_exists(data_dir: &Path) -> bool {
+    settings_path(data_dir).exists()
+}
+
 fn settings_path(data_dir: &Path) -> PathBuf {
     data_dir.join(SETTINGS_FILE)
 }
@@ -119,6 +126,10 @@ fn secrets_path(data_dir: &Path) -> PathBuf {
 /// migrations. Returns defaults (persisted) when no settings file exists yet.
 fn load_settings(data_dir: &Path) -> Result<AppSettings> {
     let path = settings_path(data_dir);
+    // Captured BEFORE the fresh-install branch below persists defaults —
+    // afterwards the file always exists, which would misclassify every new
+    // install as an upgrade in `import_extension_flags_v1`.
+    let file_preexisted = path.exists();
     let mut salvaged = false;
     let mut settings = if path.exists() {
         let raw = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
@@ -154,10 +165,33 @@ fn load_settings(data_dir: &Path) -> Result<AppSettings> {
     // Provider/key migrations. A salvaged store is persisted here too — only
     // after the secrets merge, since save_settings rewrites the credential
     // file from the in-memory settings.
-    if ensure_post_process_defaults(&mut settings) || salvaged {
+    let imported = import_extension_flags_v1(&mut settings, file_preexisted);
+    if ensure_post_process_defaults(&mut settings) || salvaged || imported {
         save_settings(data_dir, &settings)?;
     }
     Ok(settings)
+}
+
+/// [GRAIN] SPEC §10.1 upgrade rule, run exactly once per install: built-in
+/// extensions default OFF for NEW installs only — an existing user keeps every
+/// feature they were already using. "Existing" = a settings file predating the
+/// platform (`file_preexisted` && the marker unset). Initial enabled state is
+/// decided from actual usage where a signal exists.
+fn import_extension_flags_v1(settings: &mut AppSettings, file_preexisted: bool) -> bool {
+    if settings.extensions_imported_v1 {
+        return false;
+    }
+    if file_preexisted {
+        // Snippets: they were unconditionally active before; "using it" =
+        // has at least one snippet configured.
+        settings.snippets_enabled = !settings.snippets.is_empty();
+        // Agent: previously always available with no switch — keep it on so
+        // its shortcuts don't silently die on update.
+        settings.agent_enabled = true;
+        // Context awareness already had its own opt-in flag; untouched.
+    }
+    settings.extensions_imported_v1 = true;
+    true
 }
 
 /// Rebuilds settings from a store value that failed to deserialize as a whole.

@@ -752,6 +752,24 @@ pub struct AppSettings {
     /// affects installs that also run post-processing.
     #[serde(default)]
     pub context_awareness_enabled: bool,
+    /// [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
+    /// switch. OFF by default for NEW installs; the one-time import in
+    /// `load_settings` turns it on for existing users who already have snippets
+    /// (the upgrade rule — a working feature must not vanish on update).
+    #[serde(default)]
+    pub snippets_enabled: bool,
+    /// [GRAIN] Extension platform (SPEC §10.1): the Agent built-in extension's
+    /// switch — the on/off the Agent never had. Gates summoning and the
+    /// summon-agent binding. OFF by default for NEW installs; the one-time
+    /// import turns it on for existing users (the Agent was previously always
+    /// available).
+    #[serde(default)]
+    pub agent_enabled: bool,
+    /// [GRAIN] One-time marker for the extension-platform settings import above
+    /// (SPEC §10.1 upgrade rule). False in files written before the platform;
+    /// `load_settings` performs the import exactly once and sets it.
+    #[serde(default)]
+    pub extensions_imported_v1: bool,
     /// [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
     /// default; only consulted when `context_awareness_enabled` is true.
     #[serde(default)]
@@ -1562,6 +1580,11 @@ pub fn get_default_settings() -> AppSettings {
         audio_conditioning: default_audio_conditioning(),
         rolling_live_preview: default_rolling_live_preview(),
         context_awareness_enabled: false,
+        // [GRAIN] Built-in extensions default OFF for new installs (SPEC §10.1);
+        // the upgrade import in context.rs turns them on for existing users.
+        snippets_enabled: false,
+        agent_enabled: false,
+        extensions_imported_v1: false,
         app_modes: Vec::new(),
         context_nearby_terms: false,
         auto_dictionary_enabled: false,

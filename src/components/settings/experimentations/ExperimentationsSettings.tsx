@@ -1,11 +1,12 @@
 import React, { useState } from "react";
-import { Bot, Replace, Sparkles, Zap } from "lucide-react";
+import { Bot, LayoutGrid, Replace, Sparkles } from "lucide-react";
+import { OverviewSection } from "./OverviewSection";
 import { SnippetsSection } from "./SnippetsSection";
 import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
 
-type TabKey = "snippets" | "actions" | "context" | "agent";
+type TabKey = "overview" | "snippets" | "context" | "agent";
 
 // User-facing section name is "Extensions" (the internal folder/route keeps the
 // legacy "experimentations" id). Constant so the i18n lint treats brand chrome
@@ -18,14 +19,14 @@ const TABS: {
   icon: React.ReactNode;
 }[] = [
   {
+    key: "overview",
+    label: "Overview",
+    icon: <LayoutGrid width={15} height={15} />,
+  },
+  {
     key: "snippets",
     label: "Snippets",
     icon: <Replace width={15} height={15} />,
-  },
-  {
-    key: "actions",
-    label: "Actions",
-    icon: <Zap width={15} height={15} />,
   },
   {
     key: "context",
@@ -39,13 +40,24 @@ const TABS: {
   },
 ];
 
-/** [GRAIN] Extensions hub. Each extension is isolated in its own segmented
- * sub-tab so their (growing) content never bleeds together: Snippets (verbatim
- * voice expansions), Actions (spoken trigger → open apps/sites), Context
- * (adaptive post-processing + user modes), and Agent (reply handling, Quick
- * Agent, the follow-up shortcut, and the Agent's own context awareness). */
+/** Where each extension id's settings live (SPEC §5.1: clicking a name in
+ * Overview jumps to its settings). Pack-tier ids without a tab of their own
+ * land on the most related core tab. */
+const JUMP_TARGETS: Record<string, TabKey> = {
+  "grain.snippets": "snippets",
+  "grain.context-awareness": "context",
+  "grain.agent": "agent",
+  "grain.agent-center-layout": "agent",
+};
+
+/** [GRAIN] Extensions hub (SPEC §5). The FIRST tab is Overview — every
+ * installed extension with its toggle; the tab bar itself never grows with
+ * extension count (remaining tabs are core feature groups only). Snippets and
+ * Actions are ONE concept and share a tab (SPEC §5.4): Actions renders below
+ * Snippets, exactly where its extension successor will anchor
+ * (`snippets.after`), so the UI never moves twice. */
 export const ExperimentationsSettings: React.FC = () => {
-  const [tab, setTab] = useState<TabKey>("snippets");
+  const [tab, setTab] = useState<TabKey>("overview");
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
@@ -92,10 +104,18 @@ export const ExperimentationsSettings: React.FC = () => {
         })}
       </div>
 
-      {tab === "snippets" ? (
-        <SnippetsSection />
-      ) : tab === "actions" ? (
-        <ActionsSection />
+      {tab === "overview" ? (
+        <OverviewSection
+          onJump={(id) => setTab(JUMP_TARGETS[id] ?? "overview")}
+        />
+      ) : tab === "snippets" ? (
+        <div className="space-y-8">
+          <SnippetsSection />
+          {/* SPEC §5.4: one thin divider, then Actions — the position its
+              extension form will occupy via anchor "snippets.after". */}
+          <div className="border-t border-line" />
+          <ActionsSection />
+        </div>
       ) : tab === "context" ? (
         <ContextAwareSection />
       ) : (

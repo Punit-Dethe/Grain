@@ -439,6 +439,9 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
         }
         // [GRAIN] Grain Space shortcuts exist only while the feature is on —
         // OFF must be truly zero-overhead (no global hooks for the feature).
+        if id == "summon_agent" && !user_settings.agent_enabled {
+            continue; // [GRAIN] Agent built-in extension disabled (SPEC 10.1)
+        }
         if id.starts_with("grain_space_") && !user_settings.grain_space_enabled {
             continue;
         }

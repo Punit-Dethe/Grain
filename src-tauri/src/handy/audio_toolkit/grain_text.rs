@@ -138,5 +138,10 @@ pub fn finalize_batch_text(
         custom_words_already_prompted,
     );
 
-    super::apply_snippets(&filtered, &settings.snippets)
+    // [GRAIN] Snippets built-in extension gate (SPEC 10.1).
+    if settings.snippets_enabled {
+        super::apply_snippets(&filtered, &settings.snippets)
+    } else {
+        filtered
+    }
 }

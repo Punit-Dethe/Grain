@@ -522,7 +522,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
                             &settings.app_language,
                             &settings.custom_filler_words,
                             false,
-                            &settings.snippets,
+                            // [GRAIN] Snippets built-in extension gate (SPEC 10.1): disabled ->
+                            // empty slice, the zero-cost no-op path.
+                            if settings.snippets_enabled { &settings.snippets } else { &[] },
                             settings.scrap_that_enabled,
                         )
                     } else if !samples.is_empty() {

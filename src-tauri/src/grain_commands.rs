@@ -418,3 +418,147 @@ pub fn change_rolling_live_preview_setting(app: AppHandle, enabled: bool) -> Res
     settings::write_settings(&app, settings);
     Ok(())
 }
+
+// ── [GRAIN] Extension platform, Phase 1 (SPEC §5.1, §10.1) ──────────────────
+
+/// One row of the Extensions Overview tab. Built-ins delegate their enabled
+/// state to core settings flags (manifest-first, PLAN.md D4); installed packs
+/// read the registry.
+#[derive(serde::Serialize, specta::Type, Clone)]
+pub struct ExtensionCard {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub version: String,
+    /// "builtin" | "pack"
+    pub tier: String,
+    pub enabled: bool,
+    /// Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
+    /// Sent as string — u64 doesn't survive JS numbers.
+    pub toggle_seq: String,
+    pub repository: Option<String>,
+}
+
+fn builtin_card(
+    id: &str,
+    name: &str,
+    description: &str,
+    enabled: bool,
+    reg: &grain_core::extensions::ExtensionsRegistry,
+) -> ExtensionCard {
+    ExtensionCard {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: description.to_string(),
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        tier: "builtin".to_string(),
+        enabled,
+        toggle_seq: reg.toggle_seq(id).to_string(),
+        repository: None,
+    }
+}
+
+/// The Overview tab's data: every extension, enabled and disabled alike.
+#[tauri::command]
+#[specta::specta]
+pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let settings = settings::get_settings(&app);
+
+    let mut cards = vec![
+        builtin_card(
+            ext::BUILTIN_SNIPPETS,
+            "Snippets",
+            "Speak a trigger word and Grain expands it into your saved text.",
+            settings.snippets_enabled,
+            &reg,
+        ),
+        builtin_card(
+            ext::BUILTIN_CONTEXT,
+            "Context Awareness",
+            "Detects the app you're dictating into and adapts AI formatting to it.",
+            settings.context_awareness_enabled,
+            &reg,
+        ),
+        builtin_card(
+            ext::BUILTIN_AGENT,
+            "Agent",
+            "Summon a voice-first AI assistant on your current selection.",
+            settings.agent_enabled,
+            &reg,
+        ),
+    ];
+    if let Some(rec) = reg.record(ext::AGENT_CENTER_VARIANT_ID) {
+        cards.push(ExtensionCard {
+            id: rec.id.clone(),
+            name: "Agent — Centre layout".to_string(),
+            description: "An alternative centred look for the Agent's reply panel.".to_string(),
+            version: rec.installed_version.clone(),
+            tier: "pack".to_string(),
+            enabled: rec.enabled,
+            toggle_seq: rec.toggle_seq.to_string(),
+            repository: None,
+        });
+    }
+    Ok(cards)
+}
+
+/// Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
+/// settings flag + bump toggle order; packs write the registry. The Agent
+/// toggle re-registers its binding so the change is zero-overhead-when-off.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Result<(), String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+
+    match id.as_str() {
+        ext::BUILTIN_SNIPPETS => {
+            let mut settings = settings::get_settings(&app);
+            settings.snippets_enabled = enabled;
+            settings::write_settings(&app, settings);
+        }
+        ext::BUILTIN_CONTEXT => {
+            let mut settings = settings::get_settings(&app);
+            settings.context_awareness_enabled = enabled;
+            settings::write_settings(&app, settings);
+        }
+        ext::BUILTIN_AGENT => {
+            let mut settings = settings::get_settings(&app);
+            settings.agent_enabled = enabled;
+            settings::write_settings(&app, settings.clone());
+            // Mirror the Grain Space pattern: the summon binding registers/
+            // unregisters live so disabled truly means no global hook.
+            if let Some(binding) = settings.bindings.get("summon_agent") {
+                if enabled {
+                    let _ = register_shortcut(&app, binding.clone());
+                } else {
+                    let _ = unregister_shortcut(&app, binding.clone());
+                }
+            }
+        }
+        ext::AGENT_CENTER_VARIANT_ID => {
+            reg.set_enabled(&id, enabled).map_err(|e| e.to_string())?;
+            // SPEC §10.2: disabling the variant while it is the active look
+            // falls the position back to the built-in default (side).
+            if !enabled {
+                let mut settings = settings::get_settings(&app);
+                if settings.agent_panel_position == settings::AgentPanelPosition::Center {
+                    settings.agent_panel_position = settings::AgentPanelPosition::Side;
+                    settings::write_settings(&app, settings);
+                }
+            }
+            return Ok(());
+        }
+        other => return Err(format!("unknown extension id '{other}'")),
+    }
+    if enabled {
+        let _ = reg.touch_builtin_toggle(&id);
+    }
+    Ok(())
+}

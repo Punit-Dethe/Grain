@@ -807,6 +807,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_audio_conditioning_setting,
             shortcut::change_append_trailing_space_setting,
             grain_commands::change_rolling_live_preview_setting,
+            grain_commands::extensions_overview,
+            grain_commands::extension_set_enabled,
             shortcut::change_lazy_stream_close_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
@@ -1080,7 +1082,20 @@ pub fn run(cli_args: CliArgs) {
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let data_dir = crate::portable::app_data_dir(&app.handle())
                     .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                app.manage(grain_core::AppContext::new(resource_dir, data_dir));
+                // [GRAIN] Extension platform: capture whether this is an
+                // upgrade BEFORE AppContext persists defaults (SPEC §10.1 —
+                // the registry's one-time import keys off it).
+                let settings_preexisted = grain_core::settings_file_exists(&data_dir);
+                app.manage(grain_core::AppContext::new(resource_dir, data_dir.clone()));
+                match grain_core::extensions::ExtensionsRegistry::load(
+                    &data_dir,
+                    settings_preexisted,
+                ) {
+                    Ok(reg) => {
+                        app.manage(std::sync::Arc::new(reg));
+                    }
+                    Err(e) => log::error!("[GRAIN] extensions registry failed to load: {e}"),
+                }
             }
 
             let mut settings = get_settings(&app.handle());
