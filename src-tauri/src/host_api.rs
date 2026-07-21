@@ -109,14 +109,18 @@ impl ExtStorage {
 
     /// The extension's own settings namespace (a nested object under one
     /// reserved key — never `AppSettings`).
-    fn settings_get(&self, key: &str) -> Value {
+    ///
+    /// Public because the host's settings controls write here too: one store,
+    /// one way in, so the schema cannot be enforced on one path and not the
+    /// other.
+    pub fn settings_get(&self, key: &str) -> Value {
         self.get(SETTINGS_KEY)
             .get(key)
             .cloned()
             .unwrap_or(Value::Null)
     }
 
-    fn settings_set(&self, key: &str, value: Value) -> Result<(), String> {
+    pub fn settings_set(&self, key: &str, value: Value) -> Result<(), String> {
         let mut ns = match self.get(SETTINGS_KEY) {
             Value::Object(m) => m,
             _ => serde_json::Map::new(),
@@ -174,10 +178,33 @@ pub async fn dispatch(
             store.delete(&param_str(&params, "key")?)?;
             Ok(Value::Null)
         }
-        "settings.get" => Ok(store.settings_get(&param_str(&params, "key")?)),
+        "settings.get" => {
+            let key = param_str(&params, "key")?;
+            let stored = store.settings_get(&key);
+            // A declared setting reads back through the schema, so a value left
+            // behind by an older version resolves to something the extension's
+            // own declaration says is legal.
+            Ok(match crate::grain_commands::setting_decl(app, &identity.id, &key) {
+                Some(decl) => grain_sdk::settings_schema::resolve(&decl, Some(&stored)).value,
+                None => stored,
+            })
+        }
         "settings.set" => {
             let key = param_str(&params, "key")?;
             let value = params.get("value").cloned().unwrap_or(Value::Null);
+            // [GRAIN] SPEC §4.1: the schema is enforced HERE, not only in the
+            // settings form — this is the same namespace the host's own
+            // controls write to, and the extension can reach it directly. A
+            // schema policed only in React is not policed at all.
+            //
+            // An *undeclared* key is free-form on purpose: the schema says what
+            // the host renders, not everything the extension may remember.
+            let value = match crate::grain_commands::setting_decl(app, &identity.id, &key) {
+                Some(decl) => grain_sdk::settings_schema::coerce(&decl, &value)
+                    .map_err(|e| format!("'{key}': {e}"))?
+                    .value,
+                None => value,
+            };
             store.settings_set(&key, value)?;
             Ok(Value::Null)
         }

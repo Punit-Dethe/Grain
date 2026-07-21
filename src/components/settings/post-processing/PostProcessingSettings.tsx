@@ -13,6 +13,7 @@ import { Input } from "../../ui/Input";
 
 import { useSettings } from "../../../hooks/useSettings";
 import { PostProcessingPool } from "./pool";
+import { ExtensionAnchor } from "../experimentations/ExtensionSettings";
 
 // [GRAIN] The API section is now the multi-provider rotation pool (key-redacted,
 // driven by the pp_* commands). The legacy single-provider form is superseded.
@@ -313,6 +314,11 @@ export const PostProcessingSettings: React.FC = () => {
       <SettingsGroup title={t("settings.postProcessing.prompts.title")}>
         <PostProcessingSettingsPrompts />
       </SettingsGroup>
+
+      {/* [GRAIN] SPEC §4.3 anchor — extensions that extend the dictation
+          pipeline render here, not in a tab of their own. Nothing renders
+          until an enabled extension anchors here. */}
+      <ExtensionAnchor anchor="dictation.pipeline.after" />
     </div>
   );
 };

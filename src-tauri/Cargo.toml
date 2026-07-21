@@ -105,7 +105,11 @@ hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downl
 handy-keys = "0.3.0"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
-specta = "=2.0.0-rc.22"
+# `serde_json`: lets a command expose a genuinely polymorphic value (an
+# extension setting is a bool, a number, or a string depending on its declared
+# kind) as `JsonValue` in bindings.ts, rather than a JSON-encoded string the
+# frontend would have to parse.
+specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
 specta-typescript = "0.0.9"
 tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
 tauri-plugin-dialog = "2.6"

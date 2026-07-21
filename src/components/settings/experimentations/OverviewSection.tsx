@@ -1,6 +1,20 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ExternalLink, Package, Replace, ShieldCheck, Store } from "lucide-react";
+import {
+  ChevronLeft,
+  ExternalLink,
+  Package,
+  Replace,
+  ShieldCheck,
+  Sliders,
+  Store,
+} from "lucide-react";
+import {
+  ANCHORS,
+  ExtensionSettings,
+  type SettingRow,
+  type SettingsSection,
+} from "./ExtensionSettings";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
@@ -116,14 +130,37 @@ export const OverviewSection: React.FC<{
     conflict: SlotConflict;
   } | null>(null);
 
+  /** Enabled extensions' declared settings, so Overview knows which cards have
+   * a section of their own to open. */
+  const [sections, setSections] = useState<SettingsSection[]>([]);
+  /** The extension whose own settings section is open, if any. */
+  const [detail, setDetail] = useState<string | null>(null);
+
   const refresh = useCallback(async () => {
     try {
-      setCards(sortCards(await invoke<ExtensionCard[]>("extensions_overview")));
+      const [next, secs] = await Promise.all([
+        invoke<ExtensionCard[]>("extensions_overview"),
+        invoke<SettingsSection[]>("extension_settings_sections").catch(
+          () => [] as SettingsSection[],
+        ),
+      ]);
+      setCards(sortCards(next));
+      setSections(secs);
       setError(null);
     } catch (e) {
       setError(String(e));
     }
   }, []);
+
+  /** SPEC §4.3: a setting with no anchor — or an anchor this build doesn't
+   * know — belongs to the extension's own section. Settings are never lost. */
+  const ownRows = useCallback(
+    (id: string): SettingRow[] =>
+      (sections.find((s) => s.id === id)?.rows ?? []).filter(
+        (r) => !r.anchor || !(ANCHORS as readonly string[]).includes(r.anchor),
+      ),
+    [sections],
+  );
 
   useEffect(() => {
     void refresh();
@@ -202,6 +239,36 @@ export const OverviewSection: React.FC<{
     }
   };
 
+  // The extension's own settings section (SPEC §4.3 fallback). Rendered in
+  // place of the list so the tab bar never grows with extension count.
+  const openSection = sections.find((s) => s.id === detail);
+  if (detail && openSection) {
+    const card = cards.find((c) => c.id === detail);
+    return (
+      <div className="space-y-3">
+        <button
+          type="button"
+          onClick={() => setDetail(null)}
+          className="flex items-center gap-1 text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+        >
+          <ChevronLeft width={13} height={13} />
+          All extensions
+        </button>
+        <div className="px-1">
+          <h2 className="text-sm font-medium text-ink">{openSection.name}</h2>
+          {card?.description && (
+            <p className="text-xs text-ink-faint">{card.description}</p>
+          )}
+        </div>
+        <ExtensionSettings
+          section={openSection}
+          rows={ownRows(detail)}
+          onChanged={() => void refresh()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       {error && (
@@ -225,7 +292,11 @@ export const OverviewSection: React.FC<{
             <div className="flex-1 min-w-0">
               <button
                 type="button"
-                onClick={() => onJump(card.id)}
+                onClick={() =>
+                  ownRows(card.id).length > 0
+                    ? setDetail(card.id)
+                    : onJump(card.id)
+                }
                 className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
               >
                 {card.name}
@@ -237,6 +308,17 @@ export const OverviewSection: React.FC<{
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
               {card.tier === "builtin" ? "built-in" : "pack"} · v{card.version}
             </span>
+            {ownRows(card.id).length > 0 && (
+              <button
+                type="button"
+                onClick={() => setDetail(card.id)}
+                className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
+                aria-label={`Settings for ${card.name}`}
+                title="Settings"
+              >
+                <Sliders width={13} height={13} />
+              </button>
+            )}
             {card.repository && (
               <a
                 href={card.repository}

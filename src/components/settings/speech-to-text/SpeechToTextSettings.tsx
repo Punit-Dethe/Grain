@@ -11,6 +11,7 @@ import { AsrModelSection } from "./AsrModelSection";
 import { ProviderPool } from "../ProviderPool";
 import { RollingLivePreview } from "../RollingLivePreview";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
+import { ExtensionAnchor } from "../experimentations/ExtensionSettings";
 
 // [GRAIN] The unified Transcription tab. Top to bottom: the local model
 // (collapsible picker), the local engine settings, then the cloud providers — one
@@ -165,6 +166,10 @@ export const SpeechToTextSettings: React.FC = () => {
           )}
         </ProviderPool>
       </div>
+
+      {/* [GRAIN] SPEC §4.3 anchor — model-related extensions render beside the
+          models they extend. Nothing renders until one anchors here. */}
+      <ExtensionAnchor anchor="models.after" />
     </div>
   );
 };

@@ -17,7 +17,9 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | Phase 1 remainder | Pill-theme **rendering** (packs already import/store). |
 | **Phase 2 — ALL STEPS** | **SHIPPED.** Steps 1–3 (`11173b4e`, `bbe6a60c`, `457d0f37`), step 4+6 (`b7a22a61`), step 5 (`ddf5f93e`), step 8 (`15d4d633`), Workers refactor + round-trip tests (`29da398d`), step 2's grant flow (the half the first step-2 commit left out). |
 | **Phase 3 step 1** — manifest grows `surfaces`/`slots`/`contributes` | **SHIPPED**, then corrected against SPEC §4.1/§4.3 (see Phase 3 detail below). |
-| **Phase 3 steps 2–10** | **NOT STARTED.** [PHASE3-GUIDE.md](PHASE3-GUIDE.md) is prescriptive for all of them; **start at Step 2 (the slots registry)**. |
+| **Phase 3 step 2** — the slots registry | **SHIPPED.** Exclusive positions, core defaults as occupants, explicit takeover. |
+| **Phase 3 step 3** — schema settings render | **SHIPPED.** Levels 1–2, all five anchors mounted, auto-categorize dogfoods it. |
+| **Phase 3 steps 4–10** | **NOT STARTED.** [PHASE3-GUIDE.md](PHASE3-GUIDE.md) is prescriptive for all of them; **start at Step 4 (`contributes.shortcuts` + chunk 2b sessionMode)**. |
 | **⛔ GATE — distribution platform + developer mode** | **OPEN, BLOCKING Phase 4/5.** See [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). Requirements captured 2026-07-21; **no design, no plan yet** — by instruction. Phase 3 is unaffected. |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,

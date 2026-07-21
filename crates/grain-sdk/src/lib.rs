@@ -22,6 +22,7 @@
 pub mod event;
 pub mod manifest;
 pub mod protocol;
+pub mod settings_schema;
 
 pub use event::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
 pub use manifest::{
@@ -29,6 +30,7 @@ pub use manifest::{
     SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
     KNOWN_SLOTS,
 };
+pub use settings_schema::Accepted;
 pub use protocol::{
     ClientHello, ClientRequest, HostCall, HostCallResult, HostFrame, ServerResponse,
     ServerWelcome, GRAIN_API_VERSION,

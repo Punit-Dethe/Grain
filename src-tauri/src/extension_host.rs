@@ -782,7 +782,20 @@ const AUTO_CATEGORIZE_ENTRY: &str = r#"grain.onEvent(async function (ev) {
   var payload = ev && ev.TranscriptionComplete;
   if (!payload || !payload.text) return;
   var text = String(payload.text);
-  if (text.trim().length < 8) return; // too short to be worth a category
+  // Declared settings (SPEC 4.1): the host renders these, validates them on the
+  // way in, and hands back values this code can trust — no defaulting here
+  // beyond the case where the read itself fails.
+  var minLength = 8;
+  var keepPer = 200;
+  try {
+    var a = await grain.settings.get("min_length");
+    var b = await grain.settings.get("max_per_category");
+    if (typeof a === "number") minLength = a;
+    if (typeof b === "number") keepPer = b;
+  } catch (e) {
+    // No `settings` grant (an older install): the declared defaults still apply.
+  }
+  if (text.trim().length < minLength) return;
   var prompt =
     "Classify this dictated note under ONE short lowercase category label " +
     "(1-2 words, e.g. work, personal, ideas, todo, journal). " +
@@ -795,7 +808,7 @@ const AUTO_CATEGORIZE_ENTRY: &str = r#"grain.onEvent(async function (ev) {
     var existing = await grain.storage.get(key);
     if (!Array.isArray(existing)) existing = [];
     existing.push({ at: Date.now(), text: text.slice(0, 280) });
-    if (existing.length > 200) existing = existing.slice(-200);
+    if (existing.length > keepPer) existing = existing.slice(-keepPer);
     await grain.storage.set(key, existing);
     await grain.log.info("auto-categorized into '" + label + "'");
   } catch (e) {
@@ -817,12 +830,42 @@ pub fn seed_builtin_packs(app: &AppHandle) {
         AUTO_CATEGORIZE_ID,
         "Auto-Categorize",
         "Files each dictation under an AI-chosen category, kept in the extension's own storage.",
-        &["storage", "llm", "events:transcripts"],
+        &["storage", "settings", "llm", "events:transcripts"],
         &["onEvent:TranscriptionComplete"],
         AUTO_CATEGORIZE_ENTRY,
+        // [GRAIN] The first dogfood of the schema settings render (SPEC §4.1).
+        // Anchored to the dictation pipeline, so these controls appear beside
+        // post-processing — the feature they extend — rather than in a tab of
+        // their own. The worker reads these same keys back over `settings.get`.
+        json!([
+            {
+                "key": "min_length",
+                "label": "Minimum note length",
+                "description": "Shorter dictations are left uncategorized.",
+                "kind": "number",
+                "min": 1,
+                "max": 500,
+                "default": 8,
+                "anchor": "dictation.pipeline.after",
+                "order": 0
+            },
+            {
+                "key": "max_per_category",
+                "label": "Notes kept per category",
+                "description": "The oldest are dropped once a category is full.",
+                "kind": "slider",
+                "min": 20.0,
+                "max": 1000.0,
+                "step": 20.0,
+                "default": 200,
+                "anchor": "dictation.pipeline.after",
+                "order": 1
+            }
+        ]),
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn seed_pack(
     app: &AppHandle,
     id: &str,
@@ -831,6 +874,7 @@ fn seed_pack(
     permissions: &[&str],
     activation: &[&str],
     entry_source: &str,
+    settings: serde_json::Value,
 ) {
     let ctx = match app.try_state::<Arc<AppContext>>() {
         Some(c) => c,
@@ -851,6 +895,7 @@ fn seed_pack(
             "permissions": permissions,
             "activation": activation,
             "entry_source": entry_source,
+            "contributes": { "settings": settings },
         },
         "payloads": {}
     });
@@ -866,6 +911,27 @@ fn seed_pack(
     }
     // Register DISABLED if absent (SPEC §8: built-in scripted packs default off).
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        if let Some(mut rec) = reg.record(id) {
+            // A shipped built-in that gained a capability in this release: top
+            // up its grants so the upgrade doesn't leave it half-working.
+            //
+            // Safe ONLY because `seed_pack` is called exclusively for
+            // first-party packs whose permissions ship inside Grain itself and
+            // were pre-granted at install. A third-party pack that widens its
+            // permissions goes through the permission diff instead (SPEC §6) —
+            // never through here.
+            debug_assert!(id.starts_with("grain."));
+            let added = permissions
+                .iter()
+                .filter(|p| !rec.granted.iter().any(|g| g == *p))
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>();
+            if !added.is_empty() && id.starts_with("grain.") {
+                log::info!("[GRAIN] built-in '{id}' gained capabilities: {added:?}");
+                rec.granted.extend(added);
+                let _ = reg.install(rec);
+            }
+        }
         if !reg.is_installed(id) {
             let _ = reg.install(grain_core::extensions::ExtensionRecord {
                 id: id.to_string(),

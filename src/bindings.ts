@@ -1040,6 +1040,71 @@ async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, s
 }
 },
 /**
+ * Record the user's answer to a slot takeover prompt (SPEC §3.2). Hands `slot`
+ * to `id` and disables whoever held it, in one step — the counterpart to
+ * `extension_grant` for the `slotConflict` error. The caller then retries
+ * enable, which now sees the slot as its own.
+ * 
+ * This is the ONLY path that moves a slot between extensions: `set_enabled`
+ * refuses a contested claim, so a takeover is always something the user chose.
+ */
+async extensionTakeSlot(id: string, slot: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_take_slot", { id, slot }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The settings an extension declares, resolved against what is stored
+ * (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
+ * the host renders straight down the list.
+ * 
+ * Controls this build doesn't understand are dropped rather than drawn blank;
+ * their stored values stay untouched for a build that does understand them.
+ */
+async extensionSettingsSchema(id: string) : Promise<Result<ExtensionSettingRow[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_settings_schema", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Every **enabled** extension's declared settings, in toggle order.
+ * 
+ * One pass over the packs answers all five anchors, so opening a settings tab
+ * costs one read rather than one per anchor. Disabled extensions are absent
+ * entirely (SPEC §6: disable makes anchored sections disappear) — their values
+ * are retained on disk, just not rendered.
+ */
+async extensionSettingsSections() : Promise<Result<ExtensionSettingsSection[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_settings_sections") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Write one schema-declared setting from the host's own control.
+ * 
+ * Validated against the same schema as `host_api`'s `settings.set`, and
+ * returns the row actually stored — a clamped number or a normalised colour
+ * comes straight back, so the control shows the truth rather than what was
+ * typed.
+ */
+async extensionSettingSet(id: string, key: string, value: JsonValue) : Promise<Result<ExtensionSettingRow, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_setting_set", { id, key, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
  * the extensions dir, registers it DISABLED — enabling is the user's explicit
  * second step in Overview, where toggle order is assigned.
@@ -2161,6 +2226,39 @@ tier: string; enabled: boolean;
  * Sent as string — u64 doesn't survive JS numbers.
  */
 toggle_seq: string; repository: string | null }
+/**
+ * One row of an extension's settings section: the declaration flattened into
+ * exactly what a control needs, plus the value to show.
+ * 
+ * Deliberately NOT the manifest type: `SettingKind` is an internally-tagged
+ * enum with per-variant fields, which crosses the bindings boundary as an
+ * awkward union. The renderer wants `kind` plus optional extras, so that is
+ * what it gets.
+ */
+export type ExtensionSettingRow = { key: string; label: string; description: string; 
+/**
+ * `bool | string | number | select | shortcut | color | slider`.
+ */
+kind: string; 
+/**
+ * Where the section renders (SPEC §4.3). An anchor this build doesn't know
+ * is passed through untouched — the frontend falls back to the extension's
+ * own section, because settings are never lost.
+ */
+anchor: string | null; order: number; 
+/**
+ * The resolved current value: bool, number, or string per `kind`.
+ */
+value: JsonValue; 
+/**
+ * Set when a stored value had to be reset — a change the user did not make
+ * must never be silent.
+ */
+notice: string | null; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[] }
+/**
+ * One enabled extension's settings, ready to render.
+ */
+export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
 export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
 /**
  * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
@@ -2184,6 +2282,7 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
@@ -2310,6 +2409,7 @@ export type ReminderStatus =
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
  */
 export type SecretMap = Partial<{ [key in string]: string }>
+export type SelectOptionDto = { value: string; label: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 /**
  * [GRAIN] A voice snippet: when the (normalized) trigger phrase appears in a

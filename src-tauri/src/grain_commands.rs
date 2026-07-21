@@ -689,6 +689,223 @@ fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> 
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
 
+/// One declared setting, or `None` if the pack doesn't declare that key.
+///
+/// The lookup the schema's two enforcement points share — the host UI below and
+/// `host_api`'s `settings.get/set`, which the extension itself calls. Off the
+/// hot path by construction: settings are read when the page opens and written
+/// when someone moves a control, never per transcription or per event.
+pub(crate) fn setting_decl(
+    app: &AppHandle,
+    ext_id: &str,
+    key: &str,
+) -> Option<grain_sdk::SettingDecl> {
+    load_pack(app, ext_id)
+        .ok()?
+        .manifest
+        .contributes
+        .settings
+        .into_iter()
+        .find(|d| d.key == key)
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct SelectOptionDto {
+    pub value: String,
+    pub label: String,
+}
+
+/// One row of an extension's settings section: the declaration flattened into
+/// exactly what a control needs, plus the value to show.
+///
+/// Deliberately NOT the manifest type: `SettingKind` is an internally-tagged
+/// enum with per-variant fields, which crosses the bindings boundary as an
+/// awkward union. The renderer wants `kind` plus optional extras, so that is
+/// what it gets.
+#[derive(serde::Serialize, specta::Type)]
+pub struct ExtensionSettingRow {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    /// `bool | string | number | select | shortcut | color | slider`.
+    pub kind: String,
+    /// Where the section renders (SPEC §4.3). An anchor this build doesn't know
+    /// is passed through untouched — the frontend falls back to the extension's
+    /// own section, because settings are never lost.
+    pub anchor: Option<String>,
+    pub order: i32,
+    /// The resolved current value: bool, number, or string per `kind`.
+    pub value: serde_json::Value,
+    /// Set when a stored value had to be reset — a change the user did not make
+    /// must never be silent.
+    pub notice: Option<String>,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    pub options: Vec<SelectOptionDto>,
+}
+
+fn setting_row(
+    decl: grain_sdk::SettingDecl,
+    value: serde_json::Value,
+    notice: Option<String>,
+) -> ExtensionSettingRow {
+    use grain_sdk::SettingKind as K;
+    let (kind, min, max, step, options) = match &decl.kind {
+        K::Bool => ("bool", None, None, None, vec![]),
+        K::String => ("string", None, None, None, vec![]),
+        K::Shortcut => ("shortcut", None, None, None, vec![]),
+        K::Color => ("color", None, None, None, vec![]),
+        K::Number { min, max } => ("number", *min, *max, None, vec![]),
+        K::Slider { min, max, step } => ("slider", Some(*min), Some(*max), *step, vec![]),
+        K::Select { options } => (
+            "select",
+            None,
+            None,
+            None,
+            options
+                .iter()
+                .map(|o| SelectOptionDto {
+                    value: o.value.clone(),
+                    label: o.label.clone(),
+                })
+                .collect(),
+        ),
+        K::Unsupported => ("unsupported", None, None, None, vec![]),
+    };
+    ExtensionSettingRow {
+        key: decl.key,
+        label: decl.label,
+        description: decl.description,
+        kind: kind.to_string(),
+        anchor: decl.anchor,
+        order: decl.order,
+        value,
+        notice,
+        min,
+        max,
+        step,
+        options,
+    }
+}
+
+/// The settings an extension declares, resolved against what is stored
+/// (SPEC §4.1, levels 1–2). Ordered by `order`, ties on declaration order, so
+/// the host renders straight down the list.
+///
+/// Controls this build doesn't understand are dropped rather than drawn blank;
+/// their stored values stay untouched for a build that does understand them.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_settings_schema(
+    app: AppHandle,
+    id: String,
+) -> Result<Vec<ExtensionSettingRow>, String> {
+    let pack = load_pack(&app, &id)?;
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+    Ok(rows_for(
+        pack.manifest.contributes.settings,
+        &crate::host_api::ExtStorage::new(&ctx.data_dir, &id),
+    ))
+}
+
+/// Resolve a declaration list against what is stored. Split out so
+/// [`extension_settings_sections`] reads each pack once rather than twice.
+fn rows_for(
+    decls: Vec<grain_sdk::SettingDecl>,
+    store: &crate::host_api::ExtStorage,
+) -> Vec<ExtensionSettingRow> {
+    let mut rows: Vec<ExtensionSettingRow> = decls
+        .into_iter()
+        .filter(|d| !matches!(d.kind, grain_sdk::SettingKind::Unsupported))
+        .map(|decl| {
+            let stored = store.settings_get(&decl.key);
+            let resolved = grain_sdk::settings_schema::resolve(&decl, Some(&stored));
+            setting_row(decl, resolved.value, resolved.notice)
+        })
+        .collect();
+    rows.sort_by_key(|r| r.order);
+    rows
+}
+
+/// One enabled extension's settings, ready to render.
+#[derive(serde::Serialize, specta::Type)]
+pub struct ExtensionSettingsSection {
+    pub id: String,
+    pub name: String,
+    pub rows: Vec<ExtensionSettingRow>,
+}
+
+/// Every **enabled** extension's declared settings, in toggle order.
+///
+/// One pass over the packs answers all five anchors, so opening a settings tab
+/// costs one read rather than one per anchor. Disabled extensions are absent
+/// entirely (SPEC §6: disable makes anchored sections disappear) — their values
+/// are retained on disk, just not rendered.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_settings_sections(
+    app: AppHandle,
+) -> Result<Vec<ExtensionSettingsSection>, String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+
+    let mut enabled: Vec<ext::ExtensionRecord> =
+        reg.records().into_iter().filter(|r| r.enabled).collect();
+    enabled.sort_by_key(|r| r.toggle_seq);
+
+    let mut out = Vec::new();
+    for rec in enabled {
+        let Ok(pack) = load_pack(&app, &rec.id) else {
+            // A broken pack file must not take the settings page down (SPEC §6).
+            continue;
+        };
+        if pack.manifest.contributes.settings.is_empty() {
+            continue;
+        }
+        let store = crate::host_api::ExtStorage::new(&ctx.data_dir, &rec.id);
+        out.push(ExtensionSettingsSection {
+            id: rec.id,
+            name: pack.manifest.name,
+            rows: rows_for(pack.manifest.contributes.settings, &store),
+        });
+    }
+    Ok(out)
+}
+
+/// Write one schema-declared setting from the host's own control.
+///
+/// Validated against the same schema as `host_api`'s `settings.set`, and
+/// returns the row actually stored — a clamped number or a normalised colour
+/// comes straight back, so the control shows the truth rather than what was
+/// typed.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_setting_set(
+    app: AppHandle,
+    id: String,
+    key: String,
+    value: serde_json::Value,
+) -> Result<ExtensionSettingRow, String> {
+    let decl = setting_decl(&app, &id, &key)
+        .ok_or_else(|| format!("'{key}' is not a declared setting of '{id}'"))?;
+    let accepted = grain_sdk::settings_schema::coerce(&decl, &value)?;
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+    crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
+        .settings_set(&key, accepted.value.clone())?;
+    Ok(setting_row(decl, accepted.value, accepted.notice))
+}
+
 /// Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
 /// the extensions dir, registers it DISABLED — enabling is the user's explicit
 /// second step in Overview, where toggle order is assigned.

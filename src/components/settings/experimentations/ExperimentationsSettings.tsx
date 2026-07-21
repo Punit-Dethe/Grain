@@ -5,6 +5,7 @@ import { SnippetsSection } from "./SnippetsSection";
 import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
+import { ExtensionAnchor } from "./ExtensionSettings";
 
 type TabKey = "overview" | "snippets" | "context" | "agent";
 
@@ -115,11 +116,20 @@ export const ExperimentationsSettings: React.FC = () => {
               extension form will occupy via anchor "snippets.after". */}
           <div className="border-t border-line" />
           <ActionsSection />
+          {/* SPEC §4.3: an extension's settings render next to the feature they
+              extend. Renders nothing when nothing anchors here. */}
+          <ExtensionAnchor anchor="snippets.after" />
         </div>
       ) : tab === "context" ? (
-        <ContextAwareSection />
+        <div className="space-y-8">
+          <ContextAwareSection />
+          <ExtensionAnchor anchor="context.after" />
+        </div>
       ) : (
-        <AgentSection />
+        <div className="space-y-8">
+          <AgentSection />
+          <ExtensionAnchor anchor="agent.after" />
+        </div>
       )}
     </div>
   );
