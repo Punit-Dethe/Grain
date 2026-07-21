@@ -13,10 +13,77 @@
 //! query strings leak into logs.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// The contract's version, sent back in [`ServerWelcome`]. Clients decide for
 /// themselves whether they can speak it (additive changes bump the minor).
 pub const GRAIN_API_VERSION: &str = "1.0";
+
+// ── Host-API framing (Phase 2, SPEC §7.1) ───────────────────────────────────
+//
+// After the hello/welcome handshake, an extension worker and the host exchange
+// four message shapes over the same duplex text channel. They are wrapped in
+// [`HostFrame`] — an externally-tagged enum, so each serializes with an
+// unambiguous top-level key (`req` / `res` / `call` / `callres`) that cannot
+// collide with a `DaemonEvent` variant name, `PillAction`'s `action` tag, or
+// the hello/welcome field sets. The `protocol_frames_are_mutually_exclusive`
+// test is the guarantee.
+
+/// Worker → server: an API call (`grain.storage.get`, `grain.llm.complete`, …).
+/// `id` correlates the [`ServerResponse`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ClientRequest {
+    pub id: u64,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+/// Server → worker: the answer to a [`ClientRequest`]. Exactly one of `ok`/`err`
+/// is set.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ServerResponse {
+    pub id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ok: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub err: Option<String>,
+}
+
+/// Server → worker: a host-initiated call (a transform step, an event
+/// notification, a session result). The worker must answer with a
+/// [`HostCallResult`] carrying the same `call_id` before the host's deadline.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HostCall {
+    pub call_id: u64,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+/// Worker → server: the answer to a [`HostCall`].
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct HostCallResult {
+    pub call_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ok: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub err: Option<String>,
+}
+
+/// The wire wrapper. Externally tagged → serializes as `{"req":{…}}`,
+/// `{"res":{…}}`, `{"call":{…}}`, `{"callres":{…}}`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum HostFrame {
+    #[serde(rename = "req")]
+    Request(ClientRequest),
+    #[serde(rename = "res")]
+    Response(ServerResponse),
+    #[serde(rename = "call")]
+    Call(HostCall),
+    #[serde(rename = "callres")]
+    CallResult(HostCallResult),
+}
 
 /// First frame on every connection, client → server.
 ///
@@ -76,5 +143,62 @@ mod tests {
         // Old clients parse incoming frames as DaemonEvent and ignore failures;
         // the welcome must therefore never deserialize as one.
         assert!(serde_json::from_str::<crate::DaemonEvent>(&json).is_err());
+    }
+
+    #[test]
+    fn host_frames_roundtrip_and_wrap() {
+        let req = HostFrame::Request(ClientRequest {
+            id: 7,
+            method: "storage.get".into(),
+            params: serde_json::json!({"key": "k"}),
+        });
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.starts_with(r#"{"req":"#), "wrapper key: {json}");
+        matches!(
+            serde_json::from_str::<HostFrame>(&json).unwrap(),
+            HostFrame::Request(_)
+        );
+
+        // ok/err omitted when None (clean wire form).
+        let res = serde_json::to_string(&HostFrame::Response(ServerResponse {
+            id: 7,
+            ok: Some(serde_json::json!("v")),
+            err: None,
+        }))
+        .unwrap();
+        assert!(res.contains(r#""ok":"v""#) && !res.contains("err"));
+    }
+
+    #[test]
+    fn protocol_frames_are_mutually_exclusive() {
+        // The five wire shapes that share the duplex channel must never parse
+        // as one another, so the read loop can discriminate by trying each.
+        let host_req = serde_json::to_string(&HostFrame::Request(ClientRequest {
+            id: 1,
+            method: "log.info".into(),
+            params: Value::Null,
+        }))
+        .unwrap();
+        let host_callres = serde_json::to_string(&HostFrame::CallResult(HostCallResult {
+            call_id: 1,
+            ok: None,
+            err: None,
+        }))
+        .unwrap();
+        let event = serde_json::to_string(&crate::DaemonEvent::RecordingStopped { session_id: 1 })
+            .unwrap();
+        let action = serde_json::to_string(&crate::PillAction::PromptRecord).unwrap();
+        let hello = r#"{"token":"abc"}"#.to_string();
+
+        // A HostFrame is nothing else.
+        assert!(serde_json::from_str::<crate::DaemonEvent>(&host_req).is_err());
+        assert!(serde_json::from_str::<crate::PillAction>(&host_req).is_err());
+        assert!(serde_json::from_str::<ClientHello>(&host_req).is_err());
+        assert!(serde_json::from_str::<HostFrame>(&host_callres).is_ok());
+
+        // …and nothing else is a HostFrame.
+        assert!(serde_json::from_str::<HostFrame>(&event).is_err());
+        assert!(serde_json::from_str::<HostFrame>(&action).is_err());
+        assert!(serde_json::from_str::<HostFrame>(&hello).is_err());
     }
 }
