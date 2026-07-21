@@ -1,5 +1,75 @@
 [
   {
+    "date": "Jul 21, 2026",
+    "commit": "fix windows not shutting down cleanly because of handy (#1732)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1732"
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "guard vulkan so only available to true x86 host, not emulated (#1731)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1731"
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "dont use hf env",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "release v0.9.4",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "fix: prevent custom-word correction from losing transcriptions",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "fix update checker overlay",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "fix(linux): install app-private libs to /usr/lib/Handy (#1639) (#1727)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1639"
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "bump to handy-keys 0.3.1",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "bump tauri global shortcut",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
+    "date": "Jul 20, 2026",
+    "commit": "bump tauri global shortcut package.json",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 18, 2026",
     "commit": "drop 'direct' paste method from the ui for macOS (#1708)",
     "status": "Merged",
@@ -10,7 +80,7 @@
     "date": "Jul 18, 2026",
     "commit": "Add missing translations (#1709)",
     "status": "Merged",
-    "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) — clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) → conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
+    "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) \u2014 clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) \u2192 conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
     "pr": "1709"
   },
   {
