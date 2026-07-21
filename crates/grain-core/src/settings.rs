@@ -360,17 +360,10 @@ fn default_stt_api_keys() -> SecretMap {
     SecretMap::default()
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "lowercase")]
-pub enum OverlayPosition {
-    None,
-    Top,
-    Bottom,
-    /// [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
-    /// (a tall content box reads poorly hugging an edge); also selectable for
-    /// the small pill.
-    Center,
-}
+// OverlayPosition moved to grain-sdk (it crosses the wire in
+// DaemonEvent::OverlayConfig); re-exported here so `settings::OverlayPosition`
+// paths — and the generated bindings — are unchanged.
+pub use grain_sdk::OverlayPosition;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]

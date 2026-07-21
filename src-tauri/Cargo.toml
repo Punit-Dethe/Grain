@@ -31,6 +31,7 @@ serde = { version = "1", features = ["derive"] }
 [dependencies]
 grain-pill = { path = "../crates/grain-pill" } # [GRAIN] overlay/HUD logic
 grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned settings + event bus
+grain-sdk = { path = "../crates/grain-sdk" } # [GRAIN] the wire contract: events, actions, WS auth handshake
 rolling-window = { path = "../crates/rolling-window" } # [GRAIN] pure cursor + assembler
 provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotation: cooldowns + headroom ordering
 once_cell = "1"

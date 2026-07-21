@@ -684,6 +684,7 @@ name = "grain-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "grain-sdk",
  "log",
  "serde",
  "serde_json",
@@ -700,7 +701,7 @@ dependencies = [
  "cpal",
  "fontdue",
  "futures-util",
- "grain-core",
+ "grain-sdk",
  "raw-window-handle",
  "serde_json",
  "tiny-skia",
@@ -708,6 +709,15 @@ dependencies = [
  "tokio-tungstenite",
  "windows 0.58.0",
  "winit",
+]
+
+[[package]]
+name = "grain-sdk"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "specta",
 ]
 
 [[package]]

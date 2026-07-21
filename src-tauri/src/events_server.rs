@@ -20,6 +20,49 @@ use tokio_tungstenite::tungstenite::Message;
 pub const EVENTS_PORT: u16 = 7124;
 static EVENTS_READY: AtomicBool = AtomicBool::new(false);
 
+/// [GRAIN] SPEC §7.1: the server-side token → identity table. Minted per app
+/// run; the pill's token is injected into its environment at spawn. A
+/// connection that hasn't authenticated with a registered token within
+/// [`AUTH_DEADLINE`] receives nothing and is dropped.
+static TOKENS: std::sync::OnceLock<crate::events_auth::TokenRegistry> = std::sync::OnceLock::new();
+static PILL_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+const AUTH_DEADLINE: Duration = Duration::from_secs(3);
+
+fn registry() -> &'static crate::events_auth::TokenRegistry {
+    TOKENS.get_or_init(crate::events_auth::TokenRegistry::new)
+}
+
+/// The pill's full-trust token for this app run (minted + registered lazily).
+fn pill_token() -> &'static str {
+    PILL_TOKEN.get_or_init(|| {
+        // Two v4 UUIDs = 244 bits of randomness; hex, env-safe.
+        let token = format!(
+            "{}{}",
+            uuid::Uuid::new_v4().simple(),
+            uuid::Uuid::new_v4().simple()
+        );
+        registry().register(
+            token.clone(),
+            crate::events_auth::ClientIdentity {
+                id: "pill".into(),
+                caps: crate::events_auth::CapabilitySet::All,
+            },
+        );
+        // Dev ergonomics (debug builds ONLY): a manually-run pill
+        // (`cargo run -p grain-pill`) has no spawn environment, so accept the
+        // documented dev token too. Release builds accept only the minted one.
+        #[cfg(debug_assertions)]
+        registry().register(
+            "grain-dev".into(),
+            crate::events_auth::ClientIdentity {
+                id: "pill".into(),
+                caps: crate::events_auth::CapabilitySet::All,
+            },
+        );
+        token
+    })
+}
+
 /// Spawn the event WS server on the Tauri async runtime.
 ///
 /// `app` is carried alongside the headless `ctx` because the reverse channel now
@@ -87,11 +130,50 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         }
     };
     let (mut write, mut read) = ws.split();
+
+    // [GRAIN] SPEC §7.1: the connection is nobody until its FIRST frame
+    // authenticates. No events flow before this; a slow, silent, or unknown
+    // client is dropped on the deadline. Identity comes from the server-side
+    // registry — nothing a later message claims can change it.
+    let identity = match tokio::time::timeout(AUTH_DEADLINE, read.next()).await {
+        Ok(Some(Ok(Message::Text(txt)))) => match registry().authenticate(&txt) {
+            Some(id) => id,
+            None => {
+                log::warn!("[GRAIN] events WS: rejected unauthenticated client");
+                return;
+            }
+        },
+        Ok(_) => {
+            log::warn!("[GRAIN] events WS: client closed before authenticating");
+            return;
+        }
+        Err(_) => {
+            log::warn!("[GRAIN] events WS: auth deadline expired — dropping client");
+            return;
+        }
+    };
+    log::info!("[GRAIN] events WS: '{}' authenticated", identity.id);
+
+    // Contract handshake: tell the client which grainApi we speak. Clients
+    // that predate the handshake ignore this frame (it isn't a DaemonEvent).
+    if let Ok(json) = serde_json::to_string(&grain_sdk::ServerWelcome {
+        grain_api: grain_sdk::GRAIN_API_VERSION.into(),
+    }) {
+        if write.send(Message::Text(json.into())).await.is_err() {
+            return;
+        }
+    }
+
     let mut rx = ctx.subscribe();
     loop {
         tokio::select! {
             ev = rx.recv() => match ev {
                 Ok(ev) => {
+                    // Capability filter: an identity without the grant never
+                    // receives the event at all (SPEC §1.3).
+                    if !crate::events_auth::allows_event(&identity, &ev) {
+                        continue;
+                    }
                     if let Ok(json) = serde_json::to_string(&ev) {
                         if write.send(Message::Text(json.into())).await.is_err() {
                             break; // client gone
@@ -102,12 +184,16 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                 Err(RecvError::Closed) => break,        // bus closed (shutdown)
             },
             // Reverse channel: the pill sends back small JSON actions (e.g. the
-            // user clicked the dictionary suggestion). Anything unrecognized is
-            // ignored; a closed/errored read ends the connection.
+            // user clicked the dictionary suggestion). Gated on identity —
+            // extension workers (Phase 2) get their own namespaced commands,
+            // never the pill's. Anything unrecognized is ignored; a closed or
+            // errored read ends the connection.
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
-                    if let Ok(action) = serde_json::from_str::<grain_core::PillAction>(&txt) {
-                        handle_pill_action(&ctx, &app, action);
+                    if crate::events_auth::allows_reverse(&identity) {
+                        if let Ok(action) = serde_json::from_str::<grain_core::PillAction>(&txt) {
+                            handle_pill_action(&ctx, &app, action);
+                        }
                     }
                 }
                 Some(Ok(_)) => {}
@@ -220,6 +306,10 @@ pub fn spawn_pill_supervisor() {
         loop {
             let mut cmd = std::process::Command::new(&exe);
             cmd.arg("--pill");
+            // [GRAIN] SPEC §7.1: the pill authenticates with a token minted for
+            // this app run, delivered through its spawn environment — the one
+            // channel no other local process can read.
+            cmd.env("GRAIN_EVENTS_TOKEN", pill_token());
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             #[cfg(windows)]
             cmd.creation_flags(CREATE_NO_WINDOW);

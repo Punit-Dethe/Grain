@@ -23,8 +23,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use grain_core::settings::OverlayPosition;
-use grain_core::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
+use grain_sdk::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
 
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use winit::application::ApplicationHandler;
@@ -2297,6 +2296,29 @@ fn spawn_event_client(
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
+            };
+
+            // [GRAIN] SPEC §7.1: authenticate in the FIRST frame. The core minted
+            // this token at spawn and passed it in the environment; without it the
+            // server sends nothing and drops the connection on a deadline.
+            let ws_stream = if let Some(mut ws) = ws_stream {
+                let token = std::env::var("GRAIN_EVENTS_TOKEN").unwrap_or_default();
+                let hello = grain_sdk::ClientHello {
+                    token,
+                    client: "pill".into(),
+                    grain_api: grain_sdk::GRAIN_API_VERSION.into(),
+                };
+                match serde_json::to_string(&hello) {
+                    Ok(json) => {
+                        if let Err(e) = ws.send(Message::Text(json.into())).await {
+                            eprintln!("ws: hello send failed ({e})");
+                        }
+                        Some(ws)
+                    }
+                    Err(_) => Some(ws),
+                }
+            } else {
+                None
             };
 
             if let Some(ws) = ws_stream {

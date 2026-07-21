@@ -1,0 +1,16 @@
+[package]
+name = "grain-sdk"
+version = "0.1.0"
+description = "Grain's public wire contract: the typed event stream, reverse actions, and the authenticated-connection protocol. Dependency LEAF — depends only on serde/specta, never on Grain internals."
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+# Type reflection so settings-visible types (OverlayPosition) keep generating
+# frontend bindings exactly as before the move out of grain-core.
+specta = { version = "=2.0.0-rc.22", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

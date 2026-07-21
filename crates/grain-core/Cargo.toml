@@ -7,6 +7,9 @@ authors.workspace = true
 description = "Headless, Tauri-free core for Grain: AppContext (owned settings + event bus + paths), the DaemonEvent stream, and the production settings store (owned JSON, secrets in a separate credential file)."
 
 [dependencies]
+# The public wire contract (dependency LEAF - SPEC 7.3): events, actions,
+# handshake. grain-core re-exports its types so existing paths keep working.
+grain-sdk = { path = "../grain-sdk" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

@@ -25,6 +25,21 @@ pub enum AgentInputKind {
     Recall,
 }
 
+/// Where the single pill anchors on screen (`None` = never show). Lives in the
+/// SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
+/// also the persisted `overlay_position` setting (grain-core re-exports it).
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum OverlayPosition {
+    None,
+    Top,
+    Bottom,
+    /// [GRAIN] Vertically centered — the Native ASR Studio Window's natural home
+    /// (a tall content box reads poorly hugging an edge); also selectable for
+    /// the small pill.
+    Center,
+}
+
 /// What a recording session is for. Drives the "what you end with wins" logic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionMode {
@@ -168,7 +183,7 @@ pub enum DaemonEvent {
     /// (`OverlayPosition::None` = never show). Emitted on session start and when
     /// the user changes the position setting, so the pill can place/hide itself.
     OverlayConfig {
-        position: crate::settings::OverlayPosition,
+        position: OverlayPosition,
     },
 
     // -- Native ASR (real-time streaming dictation) --
