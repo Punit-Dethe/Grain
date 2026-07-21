@@ -16,6 +16,8 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 1 chunk 2** — .grainpack import/export, prompt packs, centre-variant gating | **SHIPPED**. |
 | Phase 1 remainder | Pill-theme **rendering** (packs already import/store). |
 | **Phase 2 — ALL STEPS** | **SHIPPED.** Steps 1–3 (`11173b4e`, `bbe6a60c`, `457d0f37`), step 4+6 (`b7a22a61`), step 5 (`ddf5f93e`), step 8 (`15d4d633`), Workers refactor + round-trip tests (`29da398d`), step 2's grant flow (the half the first step-2 commit left out). |
+| **Phase 3 step 1** — manifest grows `surfaces`/`slots`/`contributes` | **SHIPPED**, then corrected against SPEC §4.1/§4.3 (see Phase 3 detail below). |
+| **Phase 3 steps 2–10** | **NOT STARTED.** [PHASE3-GUIDE.md](PHASE3-GUIDE.md) is prescriptive for all of them; **start at Step 2 (the slots registry)**. |
 | **⛔ GATE — distribution platform + developer mode** | **OPEN, BLOCKING Phase 4/5.** See [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). Requirements captured 2026-07-21; **no design, no plan yet** — by instruction. Phase 3 is unaffected. |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
@@ -59,9 +61,71 @@ host-call round-trip against a Rust-level fake worker, deadline expiry, reaper
 victim selection, strike threshold), `tsc` clean, `vite build` emits
 `dist/extension-host.html`, ratchet green, all pushed.
 
-**Still open from Phase 2:** the live smoke test (needs the user's Grain closed
-— port 7124), a real RAM measurement of the reap, and chunk 2b (sessionMode
-slow stage).
+**Live smoke test — DONE 2026-07-21** (user closed their Grain; `bun run tauri
+dev`). Verified: app starts clean; `events WS: 'pill' authenticated` (the token
+path works end to end); `grain.auto-categorize` seeded to
+`<data>/extensions/` with `enabled:false` + pre-granted caps;
+`extension-host.html` serves from the Vite dev server and its supervisor
+transpiles with `@tauri-apps/api/event` resolved; **`bindings.ts` regenerated**
+(+118 lines, all extension commands now typed — `OverviewSection` may switch to
+typed bindings whenever convenient). **Still unproven: an actual worker spawn
+end to end** — that needs a real dictation (mic + configured LLM provider).
+Expect `ext-host: spawning 'grain.auto-categorize'` then a reap ~120 s later.
+
+**Still open from Phase 2:** a real RAM measurement of the reap, and chunk 2b
+(sessionMode slow stage, folded into Phase 3 step 4).
+
+---
+
+## 1b. Phase 3 progress + what the next session must know
+
+**⚡ The performance rule now governs everything (user requirement, and a real
+bug that shipped).** A feature must never be slower *because* it is an
+extension. The smoke test exposed that `grain.agent-center-layout` ships
+**enabled with no pack file**, so "nothing installed" is never the real runtime
+state — there is always an enabled record to iterate. Consequently
+`run_transforms` was reading+parsing a manifest from **disk on every
+transcription**, and `on_event` did the same **plus** `serde_json::to_value` on
+**every** broadcast including `AudioLevel` (many/second while recording).
+
+Fixed by `extension_host::refresh_index()` building a cached index
+(`by_event: variant → ids`, `transforms` pre-sorted by toggle order) behind
+`HAS_ACTIVATIONS` / `HAS_TRANSFORMS` atomics. Both hot paths are now **one
+relaxed load and a return** when nothing is enabled. The event tag comes from
+`DaemonEvent::variant_name()` — an **exhaustive** match, so adding a variant is
+a compile error rather than a silently dead activation. `refresh_index` is
+called from `start()` and from every registry mutation
+(enable/disable/grant/import/uninstall/auto-disable) — **if you add another
+registry mutation, call it too, or the hot paths go stale.** Recorded as a
+Phase 3 non-negotiable in the guide and as the `extensions-must-feel-native`
+memory.
+
+**Step 1 shipped, then corrected.** The manifest grew `surfaces` (workspace /
+overlay), `slots`, and `contributes` (settings schema + shortcuts); `ANCHORS`
+and `KNOWN_SLOTS` are pinned contract surface. A SPEC re-read then caught three
+flaws worth internalizing, because all three are the *expensive* kind:
+1. The v1 anchor list **contradicted SPEC §4.3** (invented `space.after`,
+   omitted `dictation.pipeline.after` and `models.after`). Now verbatim, with a
+   test pinning it.
+2. Unknown anchors were **rejected**; §4.3 requires **fallback to the
+   extension's own section** (settings are never lost). `ANCHORS` drives
+   rendering, not validation.
+3. An unknown setting `kind` failed to **deserialize**, killing the whole pack.
+   `SettingKind` now has `color`/`slider` plus `#[serde(other)] Unsupported`.
+
+**Known gotcha for Step 2 (the slots registry) — read this first.**
+`grain.agent-center-layout` has a registry record but **no `.grainpack.json` on
+disk** (confirmed on the live machine; only `grain.auto-categorize.grainpack.json`
+exists). So any slot logic that reads occupancy from manifests will **miss the
+centre variant entirely**, even though SPEC §10.2 says it occupies
+`agent.reply-surface`. Step 2 must either seed a pack file for it or special-case
+it when backfilling core defaults as occupants — otherwise the first real claim
+on `agent.reply-surface` will look free and silently displace a shipped feature.
+
+**Open contract question (not yet decided):** `slots` validation accepts any
+`overrides:<setting>`. SPEC §4.2 publishes an allowlist for core-setting
+*reads*, but no allowlist exists yet for override *targets*. Left permissive
+deliberately rather than inventing contract surface — decide it in Step 2.
 
 **Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/
