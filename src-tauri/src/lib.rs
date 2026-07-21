@@ -54,6 +54,7 @@ mod grain_llm_client;
 // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
 mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
+mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
@@ -368,6 +369,8 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] start the local WebSocket event transport + launch/supervise the pill.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
         events_server::start(ctx.inner().clone(), app_handle.clone());
+        // [GRAIN] extension worker lifecycle: activation dispatch + idle reaper.
+        extension_host::start(app_handle.clone(), ctx.inner().clone());
     }
     events_server::spawn_pill_supervisor();
 

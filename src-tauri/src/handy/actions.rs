@@ -226,6 +226,12 @@ pub(crate) async fn process_transcription_output(
         final_text = converted_text;
     }
 
+    // [GRAIN] extension transform pipeline (SPEC §3.1): enabled scripted
+    // extensions rewrite the finalized text here — after Grain's fast stages,
+    // before the slow LLM stage and paste. Each runs under a hard 150 ms
+    // deadline; a cold/slow/failing worker leaves the text untouched.
+    final_text = crate::extension_host::run_transforms(app, final_text).await;
+
     if post_process {
         if let Some(processed_text) = crate::grain_post_process::post_process_transcription(
             app,

@@ -38,7 +38,6 @@ fn registry() -> &'static crate::events_auth::TokenRegistry {
 /// lived, never long-lived. The `Named` set is exactly the extension's grants,
 /// so the same server-side filter that gates the pill (`events_auth`) gates the
 /// worker: no grant → the message never reaches it.
-#[allow(dead_code)] // wired by extension_host in Phase 2 step 4
 pub fn mint_extension_token(
     ext_id: &str,
     caps: std::collections::HashSet<String>,
@@ -60,7 +59,6 @@ pub fn mint_extension_token(
 
 /// Revoke a token so its connection is rejected on reconnect and no new one can
 /// authenticate with it (worker reaped, extension disabled/uninstalled).
-#[allow(dead_code)] // wired by extension_host in Phase 2 step 4
 pub fn revoke_token(token: &str) {
     registry().revoke(token);
 }
@@ -197,6 +195,24 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         }
     }
 
+    // [GRAIN] SPEC §7.1: one writer per connection. Broadcast events, host-API
+    // responses, and host-initiated calls all funnel through this mpsc so `write`
+    // is touched from exactly one place (the `outgoing` arm) — no interleaved
+    // partial frames, no borrow fight. `write` is only used here from now on.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+
+    // A `Named` identity is an extension worker (the pill is `All`); it speaks
+    // the HostFrame protocol and is tracked by the extension host for reaping.
+    let is_ext = matches!(identity.caps, crate::events_auth::CapabilitySet::Named(_));
+    let last_activity = if is_ext {
+        Some(crate::extension_host::attach_connection(
+            &identity.id,
+            out_tx.clone(),
+        ))
+    } else {
+        None
+    };
+
     let mut rx = ctx.subscribe();
     loop {
         tokio::select! {
@@ -208,22 +224,79 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                         continue;
                     }
                     if let Ok(json) = serde_json::to_string(&ev) {
-                        if write.send(Message::Text(json.into())).await.is_err() {
-                            break; // client gone
+                        if out_tx.send(Message::Text(json.into())).is_err() {
+                            break; // writer arm gone
                         }
                     }
                 }
                 Err(RecvError::Lagged(_)) => continue, // dropped some; keep streaming
                 Err(RecvError::Closed) => break,        // bus closed (shutdown)
             },
-            // Reverse channel: the pill sends back small JSON actions (e.g. the
-            // user clicked the dictionary suggestion). Gated on identity —
-            // extension workers (Phase 2) get their own namespaced commands,
-            // never the pill's. Anything unrecognized is ignored; a closed or
-            // errored read ends the connection.
+            // The single writer: everything bound for this socket passes here.
+            outgoing = out_rx.recv() => match outgoing {
+                Some(m) => {
+                    if write.send(m).await.is_err() {
+                        break; // client gone
+                    }
+                }
+                None => break, // all senders dropped
+            },
+            // Inbound frames. Extensions speak HostFrame (host-API requests +
+            // answers to host calls); the pill speaks PillAction. Identity
+            // decides which — a worker can never reach the pill's surface, and
+            // the pill never sends HostFrames.
             msg = read.next() => match msg {
                 Some(Ok(Message::Text(txt))) => {
-                    if crate::events_auth::allows_reverse(&identity) {
+                    if let Some(la) = &last_activity {
+                        // Touch: feeds the extension host's idle reaper.
+                        let now = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        la.store(now, Ordering::Relaxed);
+                    }
+                    if is_ext {
+                        match serde_json::from_str::<grain_sdk::HostFrame>(&txt) {
+                            Ok(grain_sdk::HostFrame::Request(req)) => {
+                                // Capability-checked host API. Dispatch off the
+                                // read loop; the reply returns via the writer arm.
+                                let app = app.clone();
+                                let identity = identity.clone();
+                                let out_tx = out_tx.clone();
+                                tokio::spawn(async move {
+                                    let resp = match crate::host_api::dispatch(
+                                        &app, &identity, &req.method, req.params,
+                                    )
+                                    .await
+                                    {
+                                        Ok(ok) => grain_sdk::ServerResponse {
+                                            id: req.id, ok: Some(ok), err: None,
+                                        },
+                                        Err(e) => grain_sdk::ServerResponse {
+                                            id: req.id, ok: None, err: Some(e),
+                                        },
+                                    };
+                                    if let Ok(json) =
+                                        serde_json::to_string(&grain_sdk::HostFrame::Response(resp))
+                                    {
+                                        let _ = out_tx.send(Message::Text(json.into()));
+                                    }
+                                });
+                            }
+                            Ok(grain_sdk::HostFrame::CallResult(r)) => {
+                                let result = match r.err {
+                                    Some(e) => Err(e),
+                                    None => Ok(r.ok.unwrap_or(serde_json::Value::Null)),
+                                };
+                                crate::extension_host::resolve_call_result(
+                                    &identity.id, r.call_id, result,
+                                );
+                            }
+                            // Response/Call are server→worker; a worker echoing
+                            // them (or any non-HostFrame) is ignored.
+                            _ => {}
+                        }
+                    } else if crate::events_auth::allows_reverse(&identity) {
                         if let Ok(action) = serde_json::from_str::<grain_core::PillAction>(&txt) {
                             handle_pill_action(&ctx, &app, action);
                         }
@@ -233,6 +306,9 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                 _ => break,
             },
         }
+    }
+    if is_ext {
+        crate::extension_host::detach_connection(&identity.id);
     }
 }
 

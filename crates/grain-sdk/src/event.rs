@@ -233,6 +233,14 @@ pub enum DaemonEvent {
         recoverable: bool,
         message: String,
     },
+
+    /// [GRAIN] Extension platform (SPEC §3.3): a scripted extension was
+    /// auto-disabled after repeatedly failing its transform deadline (3 strikes).
+    /// The Overview UI shows the reason; the user re-enables explicitly.
+    ExtensionDisabled {
+        id: String,
+        reason: String,
+    },
 }
 
 /// [GRAIN] The reverse channel: actions the pill sends BACK to the core over the

@@ -1,0 +1,678 @@
+//! [GRAIN] The extension host (SPEC §3.1, §7.1) — Phase 2, the scripted runtime.
+//!
+//! Owns the lifecycle of tier-B (scripted) extension workers. One hidden
+//! supervisor webview runs Grain's own code and spawns one Web Worker per
+//! extension; each worker opens its **own** WebSocket with its **own** token
+//! (SPEC §7.1 — never a shared realm, which would make identity forgeable).
+//!
+//! Responsibilities:
+//! - **Activation dispatch**: subscribe to the event bus; wake a worker when a
+//!   broadcast matches its manifest `activation` (`onEvent:<Variant>`,
+//!   `onTransform` → warm on `RecordingStarted`), carrying the triggering event
+//!   as the injected `activation` payload (the broadcast is already past when
+//!   the worker connects, so the wake reason must travel with the spawn).
+//! - **Worker registry**: per-extension token, strikes, last-activity, and the
+//!   connection channel (set when its WS attaches in `events_server`).
+//! - **Host calls**: [`call_worker`] issues a `HostCall` and awaits the worker's
+//!   `HostCallResult` under a deadline; [`run_transforms`] is the transform
+//!   pipeline built on it (150 ms hard deadline, 3-strike auto-disable).
+//! - **Reaper**: idle (> 120 s, no pending calls, not resident) workers are
+//!   killed and their tokens revoked — "destroy if not in use".
+//!
+//! The security wall is the Rust WS boundary ([`crate::events_auth`] +
+//! [`crate::host_api`]); this module is the *lifecycle*, not the enforcement.
+
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
+
+use grain_core::{AppContext, DaemonEvent};
+use grain_sdk::{GrainPack, HostCall, HostFrame};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tokio::sync::{mpsc, oneshot};
+use tokio_tungstenite::tungstenite::Message;
+
+/// The hidden supervisor webview: Grain's code, one per app run, created on the
+/// first worker need and torn down when the last worker dies.
+const SUPERVISOR_LABEL: &str = "extension-host";
+/// A dedicated frontend route (Step 5) — NOT the SPA root, so no extension code
+/// ever shares Grain's main global.
+const SUPERVISOR_URL: &str = "extension-host.html";
+
+/// Reaper policy (SPEC §3: workers are ephemeral).
+const IDLE_REAP_SECS: u64 = 120;
+const REAP_INTERVAL_SECS: u64 = 30;
+
+/// Transform budget (SPEC §3.1): a cold worker cannot fit this, which is why
+/// `onTransform` extensions warm on `RecordingStarted`.
+const TRANSFORM_DEADLINE: Duration = Duration::from_millis(150);
+/// Consecutive transform failures before auto-disable (SPEC §3.3).
+const MAX_STRIKES: u32 = 3;
+
+/// One extension worker's live connection channel. Populated by
+/// [`attach_connection`] when the worker's WS authenticates in `events_server`.
+struct WorkerConn {
+    /// The single-writer funnel to this worker's socket (owned by its `handle`
+    /// task; every frame the host sends goes through here).
+    out_tx: mpsc::UnboundedSender<Message>,
+    /// In-flight host calls: `call_id` → the awaiter's oneshot. `Arc` so
+    /// [`call_worker`]/[`resolve_call_result`] can operate on it without holding
+    /// the `workers` lock across an await.
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>>,
+    next_call_id: Arc<AtomicU64>,
+}
+
+struct Worker {
+    /// The token minted for this worker; revoked at reap (SPEC §7.1).
+    token: String,
+    /// `onStartup` workers are never reaped for idleness.
+    resident: bool,
+    /// Consecutive transform-deadline failures (SPEC §3.3).
+    strikes: u32,
+    /// Epoch seconds of the last frame from this worker; the reaper's clock.
+    /// `Arc` so the connection can bump it directly (no lock per frame).
+    last_activity: Arc<AtomicU64>,
+    conn: Option<WorkerConn>,
+}
+
+/// Supervisor readiness gate: Tauri events are not buffered, so a `spawn` emit
+/// before the page's `listen` is registered would be lost. Spawns issued before
+/// the page reports `ext-host://ready` are queued and flushed on ready.
+struct Supervisor {
+    exists: bool,
+    ready: bool,
+    queue: Vec<SpawnPayload>,
+}
+
+struct HostState {
+    app: AppHandle,
+    workers: Mutex<HashMap<String, Worker>>,
+    supervisor: Mutex<Supervisor>,
+}
+
+static HOST: OnceLock<HostState> = OnceLock::new();
+
+/// Supervisor → worker: create a Web Worker for this extension.
+#[derive(Clone, Serialize)]
+struct SpawnPayload {
+    ext_id: String,
+    /// The worker's own WS token (SPEC §7.1) — its sole credential.
+    token: String,
+    /// The extension's JS, embedded in its pack (guide Step 4).
+    entry_source: String,
+    /// The granted capability names, injected so the shim can expose only the
+    /// matching `grain.*` surface (the wall is still Rust-side).
+    caps: Vec<String>,
+    /// The event that woke this worker (`{"Variant": {...}}`), or absent for a
+    /// non-event spawn.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    activation: Option<Value>,
+}
+
+#[derive(Clone, Serialize)]
+struct KillPayload {
+    ext_id: String,
+}
+
+#[derive(Deserialize)]
+struct DiedPayload {
+    ext_id: String,
+    #[serde(default)]
+    reason: String,
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Start the host: register the supervisor↔host event bridge, the activation
+/// dispatcher, and the reaper. Idempotent (a second call is a no-op).
+pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
+    if HOST
+        .set(HostState {
+            app: app.clone(),
+            workers: Mutex::new(HashMap::new()),
+            supervisor: Mutex::new(Supervisor {
+                exists: false,
+                ready: false,
+                queue: Vec::new(),
+            }),
+        })
+        .is_err()
+    {
+        return; // already started
+    }
+
+    // Supervisor → host: a worker crashed or reported a fatal error.
+    app.listen("ext-host://died", move |ev| {
+        if let Ok(p) = serde_json::from_str::<DiedPayload>(ev.payload()) {
+            log::warn!("[GRAIN] ext-host: worker '{}' died: {}", p.ext_id, p.reason);
+            kill_worker(&p.ext_id, "worker reported death");
+        }
+    });
+
+    // Supervisor → host: the page loaded and its listeners are live → flush any
+    // spawns queued while it was starting.
+    app.listen("ext-host://ready", move |_| on_supervisor_ready());
+
+    // Activation dispatch: wake workers on their declared events. A dedicated
+    // subscriber so the wake path is independent of any connected worker.
+    let app_act = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut rx = ctx.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(ev) => on_event(&app_act, &ev),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    // Reaper: return RAM when a worker goes idle.
+    tauri::async_runtime::spawn(async move {
+        let mut tick = tokio::time::interval(Duration::from_secs(REAP_INTERVAL_SECS));
+        loop {
+            tick.tick().await;
+            reap_idle();
+        }
+    });
+}
+
+// ── Activation ──────────────────────────────────────────────────────────────
+
+/// The serde (externally-tagged) variant name of an event, used to match
+/// `onEvent:<Variant>` activations. Robust to enum growth — no per-variant
+/// match to keep in sync.
+fn event_variant_name(ev: &DaemonEvent) -> Option<String> {
+    match serde_json::to_value(ev).ok()? {
+        Value::String(s) => Some(s),        // unit variant
+        Value::Object(m) => m.keys().next().cloned(), // struct variant
+        _ => None,
+    }
+}
+
+/// Does any activation clause fire for `variant`? `onTransform` is treated as
+/// `onEvent:RecordingStarted` (warm-at-session-start; SPEC §3.1).
+fn activation_matches(activation: &[String], variant: &str) -> bool {
+    activation.iter().any(|a| {
+        if let Some(v) = a.strip_prefix("onEvent:") {
+            v == variant
+        } else if a == "onTransform" {
+            variant == "RecordingStarted"
+        } else {
+            false
+        }
+    })
+}
+
+fn on_event(app: &AppHandle, ev: &DaemonEvent) {
+    let variant = match event_variant_name(ev) {
+        Some(v) => v,
+        None => return,
+    };
+    let reg = match app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        Some(r) => r,
+        None => return,
+    };
+    for rec in reg.records() {
+        if !rec.enabled || is_running(&rec.id) {
+            continue;
+        }
+        let pack = match load_manifest(app, &rec.id) {
+            Some(p) => p,
+            None => continue,
+        };
+        if !pack.is_scripted() || !activation_matches(&pack.manifest.activation, &variant) {
+            continue;
+        }
+        // Carry the triggering event so the worker knows why it woke.
+        let activation = serde_json::to_value(ev).ok();
+        spawn_worker(app, &rec.id, &pack, rec.granted.clone(), activation);
+    }
+}
+
+// ── Worker lifecycle ────────────────────────────────────────────────────────
+
+fn is_running(ext_id: &str) -> bool {
+    HOST.get()
+        .map(|h| h.workers.lock().unwrap().contains_key(ext_id))
+        .unwrap_or(false)
+}
+
+fn spawn_worker(
+    app: &AppHandle,
+    ext_id: &str,
+    pack: &GrainPack,
+    caps: Vec<String>,
+    activation: Option<Value>,
+) {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
+    // same server-side filter that gates the pill now gates this worker.
+    let token = crate::events_server::mint_extension_token(ext_id, caps.iter().cloned().collect());
+    let resident = pack.manifest.activation.iter().any(|a| a == "onStartup");
+    host.workers.lock().unwrap().insert(
+        ext_id.to_string(),
+        Worker {
+            token: token.clone(),
+            resident,
+            strikes: 0,
+            last_activity: Arc::new(AtomicU64::new(now_secs())),
+            conn: None,
+        },
+    );
+    let payload = SpawnPayload {
+        ext_id: ext_id.to_string(),
+        token,
+        entry_source: pack.manifest.entry_source.clone(),
+        caps,
+        activation,
+    };
+    log::info!("[GRAIN] ext-host: spawning '{ext_id}' (resident={resident})");
+    ensure_supervisor(app);
+    let mut sup = host.supervisor.lock().unwrap();
+    if sup.ready {
+        let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
+    } else {
+        sup.queue.push(payload); // flushed by on_supervisor_ready
+    }
+}
+
+/// Create the supervisor webview if it isn't up yet. Window creation is posted
+/// to the main thread (tauri#3990: never build a window on a shortcut/event
+/// thread) and returns immediately.
+fn ensure_supervisor(app: &AppHandle) {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    {
+        let mut sup = host.supervisor.lock().unwrap();
+        if sup.exists {
+            return;
+        }
+        sup.exists = true;
+    }
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if app2.get_webview_window(SUPERVISOR_LABEL).is_some() {
+            return;
+        }
+        let mut builder = WebviewWindowBuilder::new(
+            &app2,
+            SUPERVISOR_LABEL,
+            WebviewUrl::App(SUPERVISOR_URL.into()),
+        )
+        .title("Grain Extension Host")
+        .inner_size(1.0, 1.0)
+        .visible(false)
+        .skip_taskbar(true);
+        if let Some(data_dir) = crate::portable::data_dir() {
+            builder = builder.data_directory(data_dir.join("webview"));
+        }
+        if let Err(e) = builder.build() {
+            log::error!("[GRAIN] ext-host: supervisor window failed: {e}");
+            if let Some(h) = HOST.get() {
+                h.supervisor.lock().unwrap().exists = false; // allow a retry
+            }
+        }
+    });
+}
+
+fn on_supervisor_ready() {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let (app, queued) = {
+        let mut sup = host.supervisor.lock().unwrap();
+        sup.ready = true;
+        (host.app.clone(), std::mem::take(&mut sup.queue))
+    };
+    for payload in queued {
+        let _ = app.emit_to(SUPERVISOR_LABEL, "ext-host://spawn", payload);
+    }
+}
+
+/// Terminate a worker: drop its registry entry, revoke its token, tell the
+/// supervisor to kill the Web Worker, and fail any in-flight host calls so their
+/// awaiters don't hang. Tears down the supervisor when the last worker dies.
+fn kill_worker(ext_id: &str, reason: &str) {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let (removed, empty) = {
+        let mut workers = host.workers.lock().unwrap();
+        let removed = workers.remove(ext_id);
+        (removed, workers.is_empty())
+    };
+    let worker = match removed {
+        Some(w) => w,
+        None => return,
+    };
+    log::info!("[GRAIN] ext-host: reaping '{ext_id}' ({reason})");
+    crate::events_server::revoke_token(&worker.token);
+    let _ = host.app.emit_to(
+        SUPERVISOR_LABEL,
+        "ext-host://kill",
+        KillPayload {
+            ext_id: ext_id.to_string(),
+        },
+    );
+    if let Some(conn) = &worker.conn {
+        for (_, tx) in conn.pending.lock().unwrap().drain() {
+            let _ = tx.send(Err("worker terminated".into()));
+        }
+    }
+    if empty {
+        teardown_supervisor();
+    }
+}
+
+fn teardown_supervisor() {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    {
+        let mut sup = host.supervisor.lock().unwrap();
+        if !sup.exists {
+            return;
+        }
+        sup.exists = false;
+        sup.ready = false;
+        sup.queue.clear();
+    }
+    let app = host.app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        if let Some(w) = app.get_webview_window(SUPERVISOR_LABEL) {
+            let _ = w.close();
+        }
+    });
+}
+
+fn reap_idle() {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let now = now_secs();
+    let victims: Vec<String> = {
+        let workers = host.workers.lock().unwrap();
+        workers
+            .iter()
+            .filter_map(|(id, w)| {
+                if w.resident {
+                    return None;
+                }
+                let idle = now.saturating_sub(w.last_activity.load(Ordering::Relaxed));
+                let busy = w
+                    .conn
+                    .as_ref()
+                    .map(|c| !c.pending.lock().unwrap().is_empty())
+                    .unwrap_or(false);
+                (idle > IDLE_REAP_SECS && !busy).then(|| id.clone())
+            })
+            .collect()
+    };
+    for id in victims {
+        kill_worker(&id, "idle timeout");
+    }
+}
+
+// ── Connection surface (called from events_server on the worker's WS) ────────
+
+/// A worker's WS authenticated: register its outbound channel and return the
+/// shared last-activity clock for the connection to bump on each frame. Upserts,
+/// so a worker that connects without a prior spawn record still gets tracked.
+pub fn attach_connection(ext_id: &str, out_tx: mpsc::UnboundedSender<Message>) -> Arc<AtomicU64> {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return Arc::new(AtomicU64::new(now_secs())),
+    };
+    let mut workers = host.workers.lock().unwrap();
+    let w = workers.entry(ext_id.to_string()).or_insert_with(|| Worker {
+        token: String::new(),
+        resident: false,
+        strikes: 0,
+        last_activity: Arc::new(AtomicU64::new(now_secs())),
+        conn: None,
+    });
+    w.last_activity.store(now_secs(), Ordering::Relaxed);
+    w.conn = Some(WorkerConn {
+        out_tx,
+        pending: Arc::new(Mutex::new(HashMap::new())),
+        next_call_id: Arc::new(AtomicU64::new(1)),
+    });
+    w.last_activity.clone()
+}
+
+/// The worker's WS closed → the worker process is gone; reap it.
+pub fn detach_connection(ext_id: &str) {
+    kill_worker(ext_id, "connection closed");
+}
+
+/// Route a `HostCallResult` back to its awaiter (the transform/session caller).
+pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, String>) {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let pending = {
+        let workers = host.workers.lock().unwrap();
+        workers
+            .get(ext_id)
+            .and_then(|w| w.conn.as_ref())
+            .map(|c| c.pending.clone())
+    };
+    if let Some(pending) = pending {
+        if let Some(tx) = pending.lock().unwrap().remove(&call_id) {
+            let _ = tx.send(result);
+        }
+    }
+}
+
+// ── Host-initiated calls + the transform pipeline ────────────────────────────
+
+/// Issue a `HostCall` to a connected worker and await its answer under
+/// `deadline`. Errors (not connected, channel closed, timeout) never panic and
+/// never block past the deadline.
+async fn call_worker(
+    ext_id: &str,
+    method: &str,
+    params: Value,
+    deadline: Duration,
+) -> Result<Value, String> {
+    let host = HOST.get().ok_or("extension host not started")?;
+    let (out_tx, pending, next_call_id) = {
+        let workers = host.workers.lock().unwrap();
+        let conn = workers
+            .get(ext_id)
+            .and_then(|w| w.conn.as_ref())
+            .ok_or("worker not connected")?;
+        (
+            conn.out_tx.clone(),
+            conn.pending.clone(),
+            conn.next_call_id.clone(),
+        )
+    };
+    let call_id = next_call_id.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = oneshot::channel();
+    pending.lock().unwrap().insert(call_id, tx);
+    let frame = HostFrame::Call(HostCall {
+        call_id,
+        method: method.to_string(),
+        params,
+    });
+    let json = serde_json::to_string(&frame).map_err(|e| e.to_string())?;
+    if out_tx.send(Message::Text(json.into())).is_err() {
+        pending.lock().unwrap().remove(&call_id);
+        return Err("worker channel closed".into());
+    }
+    match tokio::time::timeout(deadline, rx).await {
+        Ok(Ok(res)) => res,
+        Ok(Err(_)) => Err("worker dropped the call".into()),
+        Err(_) => {
+            pending.lock().unwrap().remove(&call_id);
+            Err("deadline exceeded".into())
+        }
+    }
+}
+
+/// The transform pipeline (SPEC §3.1, §3.3). Runs every enabled `onTransform`
+/// extension in **toggle order**, each under a hard 150 ms deadline. A worker
+/// that is cold, slow, or errors leaves the text unchanged and takes a strike
+/// (3 → auto-disable). An empty-string reply suppresses the paste (the
+/// documented output-suppression behavior). Never blocks the paste path on a
+/// cold spawn.
+pub async fn run_transforms(app: &AppHandle, text: String) -> String {
+    let reg = match app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        Some(r) => r,
+        None => return text,
+    };
+    let mut transforms: Vec<(String, u64)> = reg
+        .records()
+        .into_iter()
+        .filter(|r| r.enabled)
+        .filter_map(|r| {
+            let pack = load_manifest(app, &r.id)?;
+            let is_transform = pack.is_scripted()
+                && pack.manifest.activation.iter().any(|a| a == "onTransform");
+            is_transform.then_some((r.id, r.toggle_seq))
+        })
+        .collect();
+    if transforms.is_empty() {
+        return text;
+    }
+    transforms.sort_by_key(|(_, seq)| *seq);
+
+    let mut current = text;
+    for (id, _) in transforms {
+        // A cold worker cannot fit the budget; skip rather than block the paste.
+        if !is_running(&id) {
+            continue;
+        }
+        match call_worker(&id, "transform", json!({ "text": current }), TRANSFORM_DEADLINE).await {
+            Ok(v) => {
+                // Accept either `{ "text": "…" }` or a bare string.
+                if let Some(s) = v.get("text").and_then(|t| t.as_str()) {
+                    current = s.to_string();
+                } else if let Some(s) = v.as_str() {
+                    current = s.to_string();
+                }
+                clear_strikes(&id);
+            }
+            Err(e) => {
+                log::warn!("[GRAIN] transform '{id}' failed ({e}) — text unchanged");
+                record_strike(app, &id);
+            }
+        }
+    }
+    current
+}
+
+fn clear_strikes(ext_id: &str) {
+    if let Some(host) = HOST.get() {
+        if let Some(w) = host.workers.lock().unwrap().get_mut(ext_id) {
+            w.strikes = 0;
+        }
+    }
+}
+
+fn record_strike(app: &AppHandle, ext_id: &str) {
+    let host = match HOST.get() {
+        Some(h) => h,
+        None => return,
+    };
+    let over_limit = {
+        let mut workers = host.workers.lock().unwrap();
+        match workers.get_mut(ext_id) {
+            Some(w) => {
+                w.strikes += 1;
+                w.strikes >= MAX_STRIKES
+            }
+            None => false,
+        }
+    };
+    if over_limit {
+        auto_disable(app, ext_id);
+    }
+}
+
+/// SPEC §3.3: a persistently failing transform is disabled (not left slowing
+/// every paste). The user re-enables explicitly from Overview.
+fn auto_disable(app: &AppHandle, ext_id: &str) {
+    log::warn!("[GRAIN] ext-host: auto-disabling '{ext_id}' after {MAX_STRIKES} transform strikes");
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        let _ = reg.set_enabled(ext_id, false);
+    }
+    kill_worker(ext_id, "auto-disabled (3 transform strikes)");
+    if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
+        ctx.emit(DaemonEvent::ExtensionDisabled {
+            id: ext_id.to_string(),
+            reason: "It repeatedly missed the 150 ms transform deadline.".to_string(),
+        });
+    }
+}
+
+/// Load a scripted extension's pack (manifest + embedded `entry_source`) from
+/// its on-disk `.grainpack.json` (SPEC §5.1 storage; same path as tier-A packs).
+fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
+    let ctx = app.try_state::<Arc<AppContext>>()?;
+    let path = ctx
+        .data_dir
+        .join("extensions")
+        .join(format!("{id}.grainpack.json"));
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use grain_core::event::SessionMode;
+
+    #[test]
+    fn variant_name_matches_serde_tag() {
+        let started = DaemonEvent::RecordingStarted {
+            session_id: 1,
+            mode: SessionMode::Dictation,
+        };
+        let done = DaemonEvent::TranscriptionComplete {
+            session_id: 1,
+            text: "hi".into(),
+        };
+        assert_eq!(event_variant_name(&started).as_deref(), Some("RecordingStarted"));
+        assert_eq!(
+            event_variant_name(&done).as_deref(),
+            Some("TranscriptionComplete")
+        );
+    }
+
+    #[test]
+    fn activation_clauses_fire_correctly() {
+        // onEvent matches its exact variant only.
+        let a = vec!["onEvent:TranscriptionComplete".to_string()];
+        assert!(activation_matches(&a, "TranscriptionComplete"));
+        assert!(!activation_matches(&a, "RecordingStarted"));
+
+        // onTransform warms at session start, nothing else.
+        let t = vec!["onTransform".to_string()];
+        assert!(activation_matches(&t, "RecordingStarted"));
+        assert!(!activation_matches(&t, "TranscriptionComplete"));
+
+        // Unknown/empty clauses never fire.
+        assert!(!activation_matches(&["onStartup".to_string()], "RecordingStarted"));
+        assert!(!activation_matches(&[], "RecordingStarted"));
+    }
+}
