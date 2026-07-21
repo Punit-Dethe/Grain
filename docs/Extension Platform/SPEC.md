@@ -39,7 +39,8 @@ places, sleeps and destroys them.
 | `workspace` | app-class window; generalization of Grain Space's sleeping-window pattern (built hidden once, shown on summon, UI unmounted + hidden on close, destroyed after idle). LRU cap on awake windows |
 | `overlay` | transient HUD; created per invocation, destroyed on dismiss; size + lifetime budget |
 | `pointer` | full-screen click-through marker layer. Host owns the window, coordinate transforms, animation, teardown; extension only sends `pointer.point({x, y, screen, label})` |
-| `pill` slots | declarative contributions to the native pill (action chips, theme tokens). No extension code runs in the pill process |
+| `pill` slots | declarative contributions to the native pill: action chips, and **theme packs** that restyle its background and dot-grid animation (§9). No extension code ever runs in the pill process |
+| `agent.reply-surface` variants | declarative layout packs for the Agent's reply surface (§10.2) |
 
 ### 1.3 Capabilities
 
@@ -231,9 +232,13 @@ feature**, not in a distant list.
 
 ### 4.4 Ordering when several extensions share an anchor
 
-1. **Default order is deterministic: install order.** Never load order, never
-   author-declared priority integers (priority wars are why the transform
-   pipeline is user-ordered too).
+1. **Default order is toggle order** — the order the user *enabled* them in.
+   First enabled sits top, next below it, and so on. This is what a user
+   expects and can predict; install order is not (you may install five things
+   and enable one). Disabling and re-enabling moves an extension to the end,
+   which is the natural reading of "I just turned this on". Never load order,
+   never author-declared priority integers (priority wars are why the
+   transform pipeline is user-ordered too).
 2. **The user can reorder**, by drag, at the anchor itself — that is where
    they are seen together. Order persists in the registry, per anchor.
 3. **Crowding**: up to 2 groups render expanded; from the 3rd onward each
@@ -345,8 +350,157 @@ Each phase is done when its checks pass.
 | Phase | Done means |
 |---|---|
 | **0** | WS rejects tokenless clients; pill works through the token path; `grain-sdk` publishes manifest + event/command types + `grainApi` handshake; capability filter unit-tested |
-| **1** | Registry persists installed/grants/enabled; Overview tab renders from manifests; built-ins have manifests; **A-inert** packs import/export; no code executes |
+| **1** | Registry persists installed/grants/enabled **+ toggle order**; Overview tab renders from manifests; Snippets / Context Awareness / Agent ship as toggleable built-ins with the upgrade rule honoured (§10.1); **A-inert** packs import/export incl. **pill themes** (§9) and the Agent centre-layout variant (§10.2); no code executes |
 | **2** | Host webview created on activation and reaped when idle (verified by RAM measurement); capability-checked host API (events/storage/llm/embed/capture/clipboard/shortcuts); transform hook with timeout + strikes; **`session:start` + `sessionMode` slow stage**; auto-categorization ported as the first scripted built-in |
 | **3** | Schema settings render (levels 1–2) incl. anchors + ordering; `workspace` extracted from Grain Space's window.rs as a host-owned generic with Grain Space as first consumer; `overlay`; pill slots; store slide-over; **Grain Space Test passes** |
 | **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed |
 | **5** | Index repo live; browse/install/update/remove; hash verification; trust badges; review checklist incl. lifecycle measurement |
+
+---
+
+## 9. Pill theme packs
+
+The main pill is the most visible surface in Grain and the cheapest to make
+personal, because it is fundamentally a **25 × 8 grid of dots** (`COLS=25`,
+`ROWS=8`, `DOT_D=3.0` in `crates/grain-pill`) plus a background. Restyling it
+needs no code execution, no webview, and no process — so it is a **tier-A
+pack** occupying the `pill.theme` slot.
+
+### 9.1 What a theme may and may not change
+
+| Themeable | Fixed by the host (v1) |
+|---|---|
+| Background per state (colour / gradient / alpha) | Pill **size** and grid geometry (25×8, dot diameter) |
+| Dot colours (base + emphasis) | Position, anchoring, show/hide lifecycle |
+| The animation for each of the four states | **Interactivity** — the pill is not clickable or hoverable |
+| Whether the animation reacts to the microphone at all | The set of states themselves |
+
+Size and interactivity stay locked deliberately, and this is recorded as a
+restriction to revisit — not a principle. A future pass may open them once
+the interaction model is settled.
+
+### 9.2 All four states, or a per-state fallback
+
+Grain's pill has exactly four states: **`idle`, `recording`, `processing`,
+`fallback`**. A theme should define all four.
+
+- A **missing state falls back to Grain's built-in animation for that state
+  only** — never the whole theme, so a partial theme is still usable. The card
+  states it plainly: *"Defines 3 of 4 states; Grain's default is used for
+  Processing."*
+- **Any failure falls back the same way**: an expression that fails to compile
+  is rejected at install with a line-referenced error; one that misbehaves at
+  runtime (NaN, non-finite, budget overrun) drops that state to the built-in
+  animation, shows a one-time notice, and counts a strike. Three strikes
+  disable the theme and restore the default. **The pill must always render.**
+
+### 9.3 Reactivity is optional
+
+`"reactive": false` means the animation ignores the microphone entirely — a
+purely aesthetic design. This is explicitly allowed: a user who prefers a
+beautiful non-reactive pill understands they are trading away the visual
+"is my mic hearing me" cue, and the tray icon plus the recording sound still
+signal state. The card labels it: *"Does not react to your voice."*
+
+### 9.4 Format
+
+```jsonc
+"pillTheme": {
+  "reactive": true,
+  "background": { "idle": "#0b0a09e6", "recording": "#141312f2",
+                  "processing": "#141312f2", "fallback": "#0b0a09cc" },
+  "dot":        { "base": "#6c665a", "accent": "#d6a44c" },
+  "states": {
+    "idle":       { "pattern": "breathe", "params": { "period": 4.0 } },
+    "recording":  { "expr": "clamp(level * (0.5 + 0.5*sin(t*3 + x*6)), 0, 1)" },
+    "processing": { "pattern": "sweep",   "params": { "speed": 1.5 } },
+    "fallback":   { "pattern": "static",  "params": { "brightness": 0.25 } }
+  }
+}
+```
+
+Each state is either a **named built-in pattern** with parameters (the easy
+path — no expression knowledge needed) or an **expression** evaluated per dot
+per frame.
+
+**Expression environment** — a pure function, nothing else:
+
+| Variable | Meaning |
+|---|---|
+| `x`, `y` | normalised position across the grid (0..1) |
+| `col`, `row` | integer grid coordinates |
+| `t` | seconds since entering this state |
+| `level` | mic energy 0..1 (`self.energy`); **always 0 when `reactive:false`** |
+| `elapsed` | seconds since recording began |
+
+Whitelisted operators and functions only (`+ - * / %`, comparisons,
+`sin cos abs clamp min max floor fract sqrt pow smoothstep noise`). No
+variables outside this table, no state between frames, no I/O, no allocation.
+Returns dot brightness 0..1 (and optionally a colour mix factor).
+
+**Implementation note:** compile to a small bytecode at install; evaluate in
+the pill process with a per-frame time budget. 25×8 = 200 evaluations per
+frame is trivial, and the evaluator is a few hundred lines — this is a
+calculator, deliberately **not** a scripting engine (Grain's "no unnecessary
+engines" rule). No JS, no webview, no extra process: a theme's idle cost is
+its JSON.
+
+### 9.5 Scope: the main pill only
+
+Themeable now: the main capsule (idle / recording / processing / fallback).
+
+**Not themeable yet** — the Studio streaming window, the Agent input card, the
+Grain Space surfaces. Those are still being designed in-house; freezing a
+theming contract over a moving target would either block our own iteration or
+break every theme when we change something. They open up once their designs
+settle, and the `pill.theme` mechanism generalises to them unchanged.
+
+---
+
+## 10. Built-in extensions and shipped defaults
+
+### 10.1 What ships pre-installed
+
+Three of today's features become **built-in extensions**: pre-installed,
+listed in Overview like any other, individually toggleable.
+
+| Extension | Ships | Default (new installs) | Notes |
+|---|---|---|---|
+| **Snippets** | pre-installed | **off** | text snippets only |
+| **Context Awareness** | pre-installed | **off** | generic app-category context |
+| **Agent** | pre-installed | **off** | needs a real on/off switch — one does not exist today and must be added |
+| **Snippet Actions** | *not* installed | — | recommended in the store; the "say a phrase → open an app/site" half, anchored at `snippets.after` |
+| **Agent — Center layout** | *not* installed | — | see §10.2 |
+
+> **Upgrade rule (required).** Defaulting to *off* applies to **new installs
+> only**. An existing user who already has snippets configured, context
+> awareness enabled, or the agent in use keeps them **on** through the
+> migration — their features must not silently vanish. The one-time importer
+> that moves each feature's settings from `AppSettings` into `ext.grain.*`
+> also decides its initial enabled state from whether the user was using it.
+
+### 10.2 Agent reply-surface variants
+
+The Agent has two shipped looks today (`agent_panel_position`): the sidebar
+and the centre panel. They become the first test of surface-variant packs:
+
+- **Sidebar ships as the built-in default**, occupying slot
+  `agent.reply-surface`.
+- **The centre layout ships as an installable pack.** Installing it adds its
+  name to the existing agent-position dropdown; selecting it takes the slot.
+  Uninstalling returns the dropdown to the built-in options.
+
+This is deliberately chosen as a **dogfood**: it answers "can the Agent's look
+really be varied by an extension?" using a variant we have already built and
+can compare against, before any third party depends on the mechanism. A
+variant pack declares layout parameters only (anchor, max height, grow
+behaviour); the async window-resize rule stays host-side where it already
+lives.
+
+### 10.3 Standing rule — re-review each phase before building it
+
+Before starting any phase, re-check that its plan is still the best available
+approach given what the previous phase taught. Phases are a route, not a
+contract; a phase that no longer makes sense should be re-planned rather than
+executed faithfully. Record the outcome of that review (kept / changed / why)
+in the phase's commit, so the reasoning survives.
