@@ -642,14 +642,26 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         serde_json::to_string_pretty(&pack).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
+    // Re-import/update of an installed pack must PRESERVE the user's state
+    // (SPEC §6 update row) — resetting enabled/toggle order on update would
+    // silently disable a working pack.
+    let prior = reg.record(&id);
+    let was_enabled = prior.as_ref().map(|r| r.enabled).unwrap_or(false);
     reg.install(ext::ExtensionRecord {
         id: id.clone(),
-        enabled: false,
-        toggle_seq: 0,
+        enabled: was_enabled,
+        toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: pack.manifest.version.clone(),
-        granted: Vec::new(),
+        granted: prior.map(|r| r.granted).unwrap_or_default(),
     })
     .map_err(|e| e.to_string())?;
+    // An enabled pack's payloads refresh in place (apply is idempotent).
+    if was_enabled {
+        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+            ctx.update_settings(|s| ext::apply_prompt_pack(s, &id, &pack.payloads.prompts))
+                .map_err(|e| e.to_string())?;
+        }
+    }
     Ok(id)
 }
 
@@ -669,6 +681,11 @@ pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result
 #[specta::specta]
 pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
     use grain_core::extensions as ext;
+    if id == ext::AGENT_CENTER_VARIANT_ID || id.starts_with("grain.") {
+        // Built-in-shipped entries have no reinstall source until the store
+        // ships; disabling is their supported off-switch.
+        return Err("built-in extensions can be disabled, not uninstalled".into());
+    }
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
