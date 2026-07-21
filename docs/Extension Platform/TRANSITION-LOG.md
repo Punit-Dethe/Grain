@@ -185,7 +185,8 @@ rolling-window 62), `tsc --noEmit` clean, ratchet green, everything pushed.
    default FOR THAT STATE; 3 strikes → default theme. `pill.theme` slot
    occupancy on enable (slots machinery can start minimal: one registry field).
 3. ~~Phase 2~~ — **done** (see above).
-4. **Phase 3** (re-review first per §10.3) — per SPEC §8 row 3: schema settings
+4. **Phase 3** — follow [PHASE3-GUIDE.md](PHASE3-GUIDE.md) (written 2026-07-21,
+   prescriptive, 10 ordered steps; start at Step 0). Per SPEC §8 row 3: schema settings
    render (levels 1–2, incl. anchors + ordering); `workspace` extracted from
    Grain Space's `window.rs` as a host-owned generic with Grain Space as first
    consumer; `overlay`; pill slots; the store **slide-over shell** (shell only —
