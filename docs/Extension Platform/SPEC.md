@@ -418,6 +418,15 @@ Each phase is done when its checks pass.
 | **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed |
 | **5** | Index repo live; browse/install/update/remove; hash verification; trust badges; review checklist incl. lifecycle measurement |
 
+> ⛔ **GATE before Phase 4/5 — see
+> [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md).**
+> Rows 4 and 5 assume two things this project has never designed: a **hosting +
+> submission + review + trust-progression platform** (with the guarantee that an
+> author cannot forge "verified"), and a **developer mode** giving extension
+> authors a real build/run/debug loop. Phase 3 is unaffected and proceeds. Row 5
+> and the trust-dependent parts of row 4 do not start until that gate produces a
+> design and a guide.
+
 ---
 
 ## 9. Pill theme packs

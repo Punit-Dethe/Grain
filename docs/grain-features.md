@@ -67,6 +67,22 @@ Unlike Handy, Grain removes WebView memory pre-allocation entirely. This adds a 
 
 ## Features
 
+### Optional Features and Extensions
+
+Grain is moving its optional workflow features onto a public extension
+contract. **Snippets, Snippet Actions, Context Awareness, Agent, and Grain
+Space** will all be extensions: Grain owns the secure lifecycle, permissions,
+settings, shortcuts, and surfaces; a feature owns only its declared behavior.
+This keeps specialised workflows out of the core runtime and makes room for
+first- and third-party alternatives without forks.
+
+The basic built-in **Snippets**, **Context Awareness**, and **Agent**
+extensions will ship with Grain, but are **disabled by default on new
+installs**. Disabled extensions register no listeners, windows, or background
+runtime. Existing users retain their current enabled features during the
+migration. Snippet Actions and Grain Space follow the same extension model as
+their public contracts mature.
+
 ### 1. Rolling Window Transcription
 
 Production-grade, model-agnostic rolling window architecture. A 10-minute dictation that takes 3–4 minutes in batch processes in **under a second**, with no loss in model accuracy. Includes **live transcription** — text appears on screen as you speak (3–5× compute cost, opt-in).
@@ -158,6 +174,11 @@ Assign keywords to frequently used text. When the keyword is spoken, Grain insta
 **Snippet Actions:** Keywords can also trigger actions — opening applications, files, or websites. Multiple actions can be tied to a single keyword, making it easy to set up a full workflow trigger (e.g. say "start workflow" → opens your apps, websites, and files all at once).
 
 
+Snippets and Snippet Actions are being separated into extensions: the basic
+text-expansion experience ships as the optional built-in Snippets extension,
+while action-oriented workflows can evolve independently without adding cost
+to ordinary dictation.
+
 ---
 
 ### 6. Context Aware
@@ -174,9 +195,17 @@ Uses the LLM post-processor to adapt transcription output based on what the user
 
 **Image-based context (planned):** Captures the screen and sends it to the LLM for even richer context. Still under consideration — privacy and user need will determine inclusion. Since Grain is open-source and fully user-controlled in LLM selection, the risk is low, but it has not been committed to yet.
 
+Context Awareness is becoming an optional built-in extension. Its basic
+app-aware behavior will ship with Grain but remain off by default on new
+installs, so it never observes application context unless the user enables it.
+
 ---
 
 ### 7. Agent
+
+The Agent is becoming an optional built-in extension. It ships with Grain but
+is disabled by default on new installs; when disabled, its panel, shortcuts,
+and supporting runtime do not stay resident.
 
 Select any text, trigger the agent shortcut, and give an instruction — by voice or by typing. The agent processes the selection and returns a result in a compact window in the bottom-right corner.
 
@@ -246,13 +275,19 @@ Grain Space supports both text and voice input, and it can capture information i
 - **The Magic Appender:** When a note is already open, use the microphone action or typed input to append new thoughts directly into that note.
 - **Context-aware saving:** Select text on your screen and save it by voice or text, with context attached. For example, you can say "save this for later reference" or "save this for the essay I'll be writing later," and Grain stores both the selection and the reason it matters so retrieval is easier later.
 
+Notes can be edited as Markdown, organized into folders, pinned, and given
+reminders. The workspace includes an upcoming-reminders view and calendar;
+optional AI-assisted categorization can suggest where a capture belongs and
+help describe a folder's purpose.
+
 #### Automated Personal Assistant
 
 Grain Space can extract reminders and timers from captured notes. A spoken instruction like “Remind me to call David at 3 PM” can be turned into an actionable reminder inside the system.
 
 #### Search That Understands Meaning
 
-Grain Space uses semantic search so users do not need exact keyword recall.
+Grain Space offers fast exact search and optional semantic search, so users do
+not need exact keyword recall.
 
 - Search by meaning, not literal phrasing
 - Recent notes are prioritized naturally
@@ -262,6 +297,24 @@ Grain Space uses semantic search so users do not need exact keyword recall.
 
 Voice-first retrieval allows users to ask questions like “What was the Wi-Fi password Lawrence gave me?” and get an answer surfaced from prior notes.
 
+Recall also supports typed questions. Its conversation cites source notes,
+opens them directly when needed, and can start fresh without carrying an old
+thread forward.
+
+#### Obsidian Vaults
+
+Grain Space can use either its native local store or a user-selected Obsidian
+vault. With the vault backend, captures are ordinary Markdown files with YAML
+frontmatter inside a configurable `Grain/` folder. Grain-owned notes remain
+editable in Grain; notes elsewhere in the vault are indexed for Recall and
+opened read-only, with an option to open the source in Obsidian.
+
+Grain does not run a separate sync service or require an Obsidian plugin. It
+inherits whatever sync the vault already uses, such as Obsidian Sync, iCloud,
+or Syncthing. It reconciles the vault only when a Grain Space surface needs
+fresh data, preserves user frontmatter, and uses conflict-safe writes so it
+does not keep a watcher or indexing daemon alive while idle.
+
 #### A Stunning, Distraction-Free Design
 
 The interface is designed around Grain's floating pill language.
@@ -270,6 +323,11 @@ The interface is designed around Grain's floating pill language.
 - Minimal distraction
 - Fast transitions
 - Compact note viewing and retrieval experience
+
+Grain Space itself is moving onto the extension contract. Its current
+workspace, capture, storage, semantic retrieval, shortcuts, and settings are
+the acceptance test for making the public platform capable enough for a
+third-party memory extension.
 
 #### In Short
 
