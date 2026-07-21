@@ -1,7 +1,11 @@
 # Extension Platform — Stress Test & Arbitration Design
 
+> **Rationale, not instructions.** The normative spec is [SPEC.md](SPEC.md) —
+> build from that. This document records *why* the rules are what they are;
+> where it differs in detail, SPEC.md wins.
+
 Third document of the set ([PLAN.md](PLAN.md) → architecture,
-[SETTINGS-AND-UI.md](SETTINGS-AND-UI.md) → settings/UI). This one pressure-
+[SPEC.md](SPEC.md) → settings/UI). This one pressure-
 tests the contract *before* implementation: core-setting dependencies,
 exclusive-resource collisions, shared-resource fairness, and three real
 decompositions of shipped Grain features. Amendments it forces are listed at
@@ -20,7 +24,7 @@ Motivation is the Handy-isolation lesson: retrofitting an architecture costs
 | **VS Code** | Deliberately never exposed the DOM ("the structure can change and extensions tightly coupled to the UI would break"); extensions run in a separate host so the user is "always in control"; **lazy activation events**; **proposed APIs** gated to Insiders until stabilized | **R2. Activation events, not resident processes** (formalized below). **R3. An `experimental` API channel**: new host APIs ship gated behind a dev-mode flag + manifest opt-in, stabilize only after dogfooding — so v1 mistakes are correctable without breaking anyone. |
 | **Figma plugins** | Whitelist sandbox, small auditable surface; logic sandbox split from UI iframe; their clever Realms shim still produced a security vulnerability → moved to a QuickJS VM. Lesson: JS-side cleverness is not a security boundary | **R4. The boundary is Rust** (already D3 in PLAN.md — this is the independent confirmation). Whitelist calls; keep the bridge surface small enough to audit in one sitting. |
 | **Chrome MV2 → MV3** | Permission/lifecycle model bolted on later ⇒ ecosystem-wide forced migration, years of hostility | **R5. Permissions, slots, and lifecycle semantics must be right in v1.** This document exists because of R5. |
-| **Obsidian** (from SETTINGS-AND-UI research) | Code-rendered settings + per-plugin sidebar = unsearchable, unscalable | Already applied in SETTINGS-AND-UI.md. |
+| **Obsidian** (from SETTINGS-AND-UI research) | Code-rendered settings + per-plugin sidebar = unsearchable, unscalable | Already applied in SPEC.md. |
 
 **R2 concretely — activation events.** The manifest declares *when* a tier-B
 extension wakes: `onEvent:<name>` (a subscribed DaemonEvent fires),

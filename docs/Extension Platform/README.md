@@ -1,7 +1,7 @@
 # Grain Extensions — start here
 
-Plain-language guide to the design. Seven documents; this page says what they
-decide and why, without jargon.
+Plain-language guide to the design — no jargon, no prior context assumed.
+Read this page, then [SPEC.md](SPEC.md) if you are implementing it.
 
 **The goal in one sentence:** if Grain Space didn't exist, someone outside the
 team should be able to *build* it — without forking Grain.
@@ -94,15 +94,23 @@ actual picture-taking is a separate thing.
 
 ## The documents
 
-| Document | What it decides |
+**If you are building this, read [SPEC.md](SPEC.md) and build from it.** It is
+the single normative document: manifest schema, every capability, the settings
+system, the UI, lifecycle, security, and a per-phase "done means" checklist.
+Everything decided in earlier passes — including all corrections — is folded
+into it, so you never have to reconcile two files.
+
+The rest are **rationale**. Read them to understand *why* a rule exists;
+never to decide what to build.
+
+| Document | Role |
 |---|---|
-| [PLAN.md](PLAN.md) | The architecture: three tiers, surfaces, capabilities, build order |
-| [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md) | Where extension settings appear and how the UI changes when extensions come and go |
-| [STRESS-TEST.md](STRESS-TEST.md) | What happens when two extensions want the same thing; three of our own features rebuilt as extensions to prove the contract works |
-| [CASE-HEYCLICKY.md](CASE-HEYCLICKY.md) | A real outside app tested against the design — what it would need that we don't have |
-| [CAPABILITY-GOVERNANCE.md](CAPABILITY-GOVERNANCE.md) | How the platform grows: which gaps get filled early, which wait, and how requests are decided |
-| [FREEDOM-LADDER.md](FREEDOM-LADDER.md) | The four levels of power an extension can have, and how to build past the contract |
-| [FINAL-REVIEW.md](FINAL-REVIEW.md) | Eight flaws found in the above, and their fixes |
+| **[SPEC.md](SPEC.md)** | **Normative.** What to build. |
+| [PLAN.md](PLAN.md) | Why the architecture is shaped this way (the five decisions) + phases |
+| [STRESS-TEST.md](STRESS-TEST.md) | Contract tested against three of our own features; how clashes are arbitrated |
+| [CASE-HEYCLICKY.md](CASE-HEYCLICKY.md) | Contract tested against a real outside app |
+| [CAPABILITY-GOVERNANCE.md](CAPABILITY-GOVERNANCE.md) | How the platform grows: which gaps get filled early, and how requests are decided |
+| [FREEDOM-LADDER.md](FREEDOM-LADDER.md) | The four levels of power, and how to build past the contract |
 
 ---
 

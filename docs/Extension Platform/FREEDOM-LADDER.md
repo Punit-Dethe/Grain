@@ -1,6 +1,10 @@
 # The Freedom Ladder — building beyond the contract
 
-Sixth document ([PLAN.md](PLAN.md), [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md),
+> **Rationale, not instructions.** The normative spec is [SPEC.md](SPEC.md) —
+> build from that. This document records *why* the rules are what they are;
+> where it differs in detail, SPEC.md wins.
+
+Sixth document ([PLAN.md](PLAN.md), [SPEC.md](SPEC.md),
 [STRESS-TEST.md](STRESS-TEST.md), [CASE-HEYCLICKY.md](CASE-HEYCLICKY.md),
 [CAPABILITY-GOVERNANCE.md](CAPABILITY-GOVERNANCE.md)).
 

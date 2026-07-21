@@ -1,6 +1,10 @@
 # Capability Governance — how the platform grows
 
-Fifth document of the set ([PLAN.md](PLAN.md), [SETTINGS-AND-UI.md](SETTINGS-AND-UI.md),
+> **Rationale, not instructions.** The normative spec is [SPEC.md](SPEC.md) —
+> build from that. This document records *why* the rules are what they are;
+> where it differs in detail, SPEC.md wins.
+
+Fifth document of the set ([PLAN.md](PLAN.md), [SPEC.md](SPEC.md),
 [STRESS-TEST.md](STRESS-TEST.md), [CASE-HEYCLICKY.md](CASE-HEYCLICKY.md)).
 
 HeyClicky was one test case and it exposed six gaps. There will be hundreds

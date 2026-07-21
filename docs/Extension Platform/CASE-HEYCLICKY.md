@@ -1,7 +1,11 @@
 # Case Study — Could HeyClicky be built on Grain's extension platform?
 
+> **Rationale, not instructions.** The normative spec is [SPEC.md](SPEC.md) —
+> build from that. This document records *why* the rules are what they are;
+> where it differs in detail, SPEC.md wins.
+
 Fourth document of the set ([PLAN.md](PLAN.md) → architecture,
-[SETTINGS-AND-UI.md](SETTINGS-AND-UI.md) → settings/UI,
+[SPEC.md](SPEC.md) → settings/UI,
 [STRESS-TEST.md](STRESS-TEST.md) → arbitration). The three carve-outs in
 STRESS-TEST were *our* features decomposed. This is the harder test: a
 **real third-party app nobody designed our contract around**.
