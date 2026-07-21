@@ -147,6 +147,19 @@ pub enum SettingKind {
         options: Vec<SelectOption>,
     },
     Shortcut,
+    Color,
+    Slider {
+        min: f64,
+        max: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        step: Option<f64>,
+    },
+    /// A kind this build doesn't know (SPEC §4.1 also defines `rows`, and the
+    /// list will grow). Without this, one unknown kind makes the WHOLE pack
+    /// fail to deserialize — a manifest written against a newer contract must
+    /// still install with its known subset. The host skips rendering it.
+    #[serde(other)]
+    Unsupported,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -165,14 +178,21 @@ pub struct ShortcutDecl {
     pub default_binding: Option<String>,
 }
 
-/// Anchors an extension may attach a settings section to (SPEC §4).
-/// **Contract surface: few, semantic, versioned.** An anchor cannot be renamed
-/// once shipped — packs in the wild reference it by name.
+/// Anchors an extension may attach a settings section to (SPEC §4.3 v1).
+///
+/// **Contract surface: few, semantic, versioned.** Adding one is a promise;
+/// removing one is a breaking change — so this list is copied from the SPEC
+/// verbatim and must not be extended casually.
+///
+/// An anchor OUTSIDE this list is **not an error**: per SPEC §4.3 the group
+/// falls back to the extension's own settings section, because settings are
+/// never lost. [`ANCHORS`] therefore drives rendering, not validation.
 pub const ANCHORS: &[&str] = &[
     "snippets.after",
+    "dictation.pipeline.after",
     "context.after",
     "agent.after",
-    "space.after",
+    "models.after",
 ];
 
 /// Exclusive positions (SPEC §3). Core defaults are occupants too, so a claim
@@ -334,11 +354,9 @@ impl GrainPack {
             if !seen.insert(&s.key) {
                 return Err(format!("duplicate setting key '{}'", s.key));
             }
-            if let Some(a) = &s.anchor {
-                if !ANCHORS.contains(&a.as_str()) {
-                    return Err(format!("unknown anchor '{a}'"));
-                }
-            }
+            // NOTE: an unknown `anchor` is deliberately NOT an error — SPEC
+            // §4.3 requires the group to fall back to the extension's own
+            // section so settings are never lost.
             if let SettingKind::Select { options } = &s.kind {
                 if options.is_empty() {
                     return Err(format!("select setting '{}' has no options", s.key));
@@ -467,10 +485,6 @@ mod tests {
         assert!(scripted(r#","slots":["not.a.slot"]"#).is_err());
         assert!(scripted(r#","slots":["pill.theme"]"#).is_ok());
         assert!(scripted(
-            r#","contributes":{"settings":[{"key":"a","label":"A","kind":"bool","anchor":"nope.after"}]}"#
-        )
-        .is_err());
-        assert!(scripted(
             r#","contributes":{"settings":[{"key":"a","label":"A","kind":"bool"},{"key":"a","label":"B","kind":"bool"}]}"#
         )
         .is_err());
@@ -490,6 +504,44 @@ mod tests {
                 r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack","slots":["pill.theme"]}}"#
             ),
             Ok(())
+        );
+    }
+
+    /// Forward-compatibility (SPEC §4.1/§4.3): a pack written against a NEWER
+    /// contract must still install with its known subset — never be rejected
+    /// and never lose settings.
+    #[test]
+    fn newer_contract_settings_degrade_instead_of_failing() {
+        let json = r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted",
+            "entry_source":"x","contributes":{"settings":[
+                {"key":"hue","label":"Hue","kind":"color"},
+                {"key":"mix","label":"Mix","kind":"slider","min":0,"max":1,"step":0.1},
+                {"key":"cols","label":"Cols","kind":"rows"},
+                {"key":"far","label":"Far","kind":"bool","anchor":"some.future.anchor"}
+            ]}}}"#;
+        let p: GrainPack = serde_json::from_str(json).expect("unknown kinds must still parse");
+        // An unknown kind degrades to Unsupported rather than killing the pack.
+        assert_eq!(p.manifest.contributes.settings[2].kind, SettingKind::Unsupported);
+        assert_eq!(p.manifest.contributes.settings[0].kind, SettingKind::Color);
+        // An unknown anchor is accepted; the host falls back to the extension's
+        // own section (SPEC §4.3 — settings are never lost).
+        assert_eq!(p.validate(), Ok(()));
+        assert!(!ANCHORS.contains(&"some.future.anchor"));
+    }
+
+    /// The v1 anchor list is contract surface copied from SPEC §4.3 — a typo or
+    /// an invented anchor here is a promise we cannot take back.
+    #[test]
+    fn anchor_list_matches_the_spec_v1_set() {
+        assert_eq!(
+            ANCHORS,
+            &[
+                "snippets.after",
+                "dictation.pipeline.after",
+                "context.after",
+                "agent.after",
+                "models.after",
+            ]
         );
     }
 }

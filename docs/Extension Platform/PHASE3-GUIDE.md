@@ -82,10 +82,21 @@ Extend `KNOWN_CAPABILITIES` with `surface:workspace`, `surface:overlay`,
 `output.destination`, `overrides:<setting>`); a declared surface requires the
 matching `surface:*` permission; setting keys must be unique.
 
-**Pitfall — anchors are contract surface** (SPEC §4). Keep the anchor list
-*few, semantic and versioned* — `snippets.after`, `context.after`,
-`agent.after`, `space.after`. An anchor is a promise you cannot rename later.
-Put the list in one `pub const ANCHORS: &[&str]` and validate against it.
+**Pitfall — anchors are contract surface** (SPEC §4.3). The v1 list is fixed by
+the SPEC and must be copied verbatim: `snippets.after`,
+`dictation.pipeline.after`, `context.after`, `agent.after`, `models.after`.
+Adding one is a promise; removing one is a breaking change. **An unknown anchor
+is NOT a validation error** — SPEC §4.3 requires the group to fall back to the
+extension's own section, because settings are never lost. `ANCHORS` therefore
+drives *rendering*, not validation. (Both mistakes were made and fixed in
+Step 1: an invented `space.after`, and rejecting unknown anchors.)
+
+**Pitfall — forward compatibility of `kind`.** `SettingKind` is internally
+tagged, so an unrecognized `kind` would otherwise fail the WHOLE pack at
+deserialize. It carries `#[serde(other)] Unsupported` so a manifest written
+against a newer contract still installs with its known subset; the host skips
+rendering unsupported controls. SPEC §4.1 already names `rows` (typed column
+list), which is deliberately not implemented yet.
 
 ## Step 2 — The slots registry
 
