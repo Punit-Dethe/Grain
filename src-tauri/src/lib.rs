@@ -54,6 +54,7 @@ mod grain_llm_client;
 // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
 mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
+mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
 #[path = "handy/input.rs"]

@@ -369,3 +369,53 @@ pub(crate) async fn run_one_provider(
         }
     }
 }
+
+/// [GRAIN] Extension host `llm.complete` (SPEC §1.3 `llm` capability): run an
+/// arbitrary prompt through the user's ACTIVE post-process provider. The
+/// extension supplies only the text — the provider id, model, and API key are
+/// resolved here and never cross the WS boundary. Reuses the single-provider
+/// resolution + timeout wrapper (no rotation; extensions are `background`
+/// priority by default, SPEC §3.4).
+pub(crate) async fn complete_for_extension(
+    app: &tauri::AppHandle,
+    prompt: &str,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let settings = crate::settings::get_settings(app);
+    let provider = settings
+        .active_post_process_provider()
+        .cloned()
+        .ok_or("no post-processing provider is configured")?;
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    if model.trim().is_empty() {
+        return Err("the active provider has no model configured".into());
+    }
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    let http_client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("shared HTTP client unavailable")?
+        .inner()
+        .clone();
+    // The extension's text is the USER message; no system prompt.
+    match crate::post_process_router::run_one_provider_with_timeout(
+        &http_client,
+        &provider,
+        model,
+        api_key,
+        "",
+        prompt,
+    )
+    .await
+    {
+        CallOutcome::Ok { text, .. } => Ok(text),
+        _ => Err("the LLM call failed or returned nothing".into()),
+    }
+}
