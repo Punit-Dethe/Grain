@@ -2,7 +2,7 @@
   "src-tauri/Cargo.toml": 86,
   "src-tauri/capabilities/default.json": 14,
   "src-tauri/capabilities/desktop.json": 2,
-  "src-tauri/src/handy/actions.rs": 548,
+  "src-tauri/src/handy/actions.rs": 554,
   "src-tauri/src/handy/audio_toolkit/audio/mod.rs": 2,
   "src-tauri/src/handy/audio_toolkit/audio/recorder.rs": 197,
   "src-tauri/src/handy/audio_toolkit/audio/resampler.rs": 179,
@@ -22,7 +22,7 @@
   "src-tauri/src/handy/transcription_coordinator.rs": 58,
   "src-tauri/src/handy/tray.rs": 82,
   "src-tauri/src/handy/utils.rs": 14,
-  "src-tauri/src/lib.rs": 632,
+  "src-tauri/src/lib.rs": 635,
   "src-tauri/src/main.rs": 7,
   "src-tauri/tauri.conf.json": 13
 }
