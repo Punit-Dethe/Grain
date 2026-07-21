@@ -74,6 +74,7 @@ mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 #[path = "handy/shortcut/mod.rs"]
 mod shortcut;
+mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
 #[path = "handy/signal_handle.rs"]
 mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
