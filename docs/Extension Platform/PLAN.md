@@ -97,12 +97,17 @@ platform:
 Initial capability vocabulary (extend as needed):
 `events:sessions`, `events:transcripts`, `events:audio-levels`,
 `events:context` + `context:app` (foreground app info — privacy-marked),
-`transform:transcript`, `capture:selection`, `clipboard:read`,
-`clipboard:write`, `open:url`, `open:app` (danger-marked, code tiers only),
+`transform:transcript` (fast hook), `session:start` (own a serialized
+capture session with a *slow* stage — see CASE-HEYCLICKY.md), `capture:selection`,
+`clipboard:read`, `clipboard:write`, `open:url`, `open:app` (danger-marked,
+code tiers only), `screen:capture` (session-scoped, indicator-backed,
+egress-named — the platform's most dangerous capability), `audio:play`,
 `storage`, `llm`, `embed`, `net:<host>` (proxied fetch, per-host),
 `shortcuts`, `surface:settings-panel`, `surface:workspace`,
-`surface:overlay`, `pill:slots`, `settings`, `overrides:<core-setting>`
-(tracked, attributed, reversible — see STRESS-TEST.md Part 1), `resident`.
+`surface:overlay`, `surface:pointer` (host-rendered pointing from
+declarative commands), `pill:slots`, `settings`,
+`overrides:<core-setting>` (tracked, attributed, reversible — see
+STRESS-TEST.md Part 1), `resident`.
 
 Two contract concepts refined by [STRESS-TEST.md](STRESS-TEST.md):
 **slots** (exclusive positions — recording overlay, agent reply surface,
