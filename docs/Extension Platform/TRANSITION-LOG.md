@@ -15,7 +15,36 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 1 chunk 1** — registry, built-ins, Overview tab | **SHIPPED**. |
 | **Phase 1 chunk 2** — .grainpack import/export, prompt packs, centre-variant gating | **SHIPPED**. |
 | Phase 1 remainder | Pill-theme **rendering** (packs already import/store); permission sheet (deliberately deferred until something requests permissions). |
-| Phases 2–5 | Not started. Phase 2 = scripted runtime + the two structural capabilities. |
+| **Phase 2 steps 1–3** — protocol frames, extension tokens + scripted manifests, host API router | **SHIPPED** (`11173b4e`, `bbe6a60c`, `457d0f37`). |
+| **Phase 2 steps 4–8** — read-loop refactor + extension_host lifecycle, JS supervisor+worker, transform hook, session:start plumbing, dogfood | **NOT STARTED.** Guide is complete and prescriptive for all five. |
+
+**Phase 2 progress detail (start the next session at Step 4 of
+[PHASE2-GUIDE.md](PHASE2-GUIDE.md)):**
+- **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/
+  `HostCall`/`HostCallResult` wrapped in `HostFrame` (externally-tagged →
+  `{"req":…}`/`{"res":…}`/`{"call":…}`/`{"callres":…}`). The
+  `protocol_frames_are_mutually_exclusive` test guards discrimination.
+- **Step 2 done** — `events_server::mint_extension_token(id, caps)` +
+  `revoke_token` (both `#[allow(dead_code)]` until Step 4 calls them).
+  `manifest.rs`: `activation` + `entry_source` fields; `validate()` branches by
+  tier (Scripted requires entry_source + `KNOWN_CAPABILITIES`; Native rejected;
+  Pack rejects entry_source). `is_scripted()`. `KNOWN_CAPABILITIES` lists
+  `session:start` though undogfooded.
+- **Step 3 done** — `src-tauri/host_api.rs`: `dispatch(app, identity, method,
+  params)`, capability check first. Methods: log.info/warn, storage.*,
+  settings.* (own `ext.<id>.*` namespace, no AppSettings path), llm.complete
+  (via new `grain_post_process::complete_for_extension` — keys stay host-side),
+  embed + session.start return clean "not implemented". Pure/tested:
+  `has_capability`, `required_capability`, `ExtStorage` (quota, settings
+  isolation).
+- **Step 4 is next.** Its two hard parts, both in the guide: (a) the
+  `events_server::handle` read-loop refactor to a **single-writer mpsc** so
+  responses/host-calls and event broadcasts share the `write` half without
+  borrow fights (add a third select arm); route `HostFrame::Request` →
+  `host_api::dispatch` (spawn, reply via the mpsc). (b) `extension_host.rs`:
+  supervisor-webview lifecycle, worker registry, activation dispatch (carry the
+  triggering event as `activation_event`), the 120 s idle reaper. Rate-limiting
+  lives here (per-connection frame counter), NOT in host_api.
 
 Verification state at handoff: 233 src-tauri lib tests, 5 workspace suites
 (grain-core 14 · grain-pill 13 · grain-sdk 4 · provider-router 22 ·
