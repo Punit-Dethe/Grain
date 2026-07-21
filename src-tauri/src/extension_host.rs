@@ -637,6 +637,119 @@ fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
     serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
 }
 
+// ── Built-in scripted packs (the dogfood) ────────────────────────────────────
+
+/// The auto-categorization built-in (guide Step 8) — the first scripted
+/// built-in, proving the runtime end to end: worker spawn on an event, the
+/// injected activation payload, `llm` + `storage` host calls, capability
+/// enforcement, and the idle reaper.
+const AUTO_CATEGORIZE_ID: &str = "grain.auto-categorize";
+
+/// Its worker source. On each finalized transcript it asks the user's active LLM
+/// for a one-word category and appends the note to that category's list in the
+/// extension's OWN storage (no path to app data). Authored as a raw string so
+/// the JS reads naturally.
+const AUTO_CATEGORIZE_ENTRY: &str = r#"grain.onEvent(async function (ev) {
+  var payload = ev && ev.TranscriptionComplete;
+  if (!payload || !payload.text) return;
+  var text = String(payload.text);
+  if (text.trim().length < 8) return; // too short to be worth a category
+  var prompt =
+    "Classify this dictated note under ONE short lowercase category label " +
+    "(1-2 words, e.g. work, personal, ideas, todo, journal). " +
+    "Reply with ONLY the label, nothing else.\n\nNote:\n" + text;
+  try {
+    var label = (await grain.llm.complete(prompt) || "").trim().toLowerCase();
+    label = label.split("\n")[0].replace(/[^a-z0-9 _-]/g, "").trim();
+    if (!label) return;
+    var key = "category:" + label;
+    var existing = await grain.storage.get(key);
+    if (!Array.isArray(existing)) existing = [];
+    existing.push({ at: Date.now(), text: text.slice(0, 280) });
+    if (existing.length > 200) existing = existing.slice(-200);
+    await grain.storage.set(key, existing);
+    await grain.log.info("auto-categorized into '" + label + "'");
+  } catch (e) {
+    await grain.log.warn("auto-categorize failed: " + ((e && e.message) || e));
+  }
+});
+"#;
+
+/// Seed Grain's built-in scripted packs at startup. Idempotent: the pack FILE is
+/// (re)written so shipped code upgrades reach existing users, while the registry
+/// RECORD is installed only when absent so the user's enabled/toggle state
+/// survives (SPEC §6, §10.1). Built-ins default **off** and, being first-party,
+/// arrive pre-granted their declared capabilities (no permission sheet).
+///
+/// Call once after `AppContext` + `ExtensionsRegistry` are managed.
+pub fn seed_builtin_packs(app: &AppHandle) {
+    seed_pack(
+        app,
+        AUTO_CATEGORIZE_ID,
+        "Auto-Categorize",
+        "Files each dictation under an AI-chosen category, kept in the extension's own storage.",
+        &["storage", "llm", "events:transcripts"],
+        &["onEvent:TranscriptionComplete"],
+        AUTO_CATEGORIZE_ENTRY,
+    );
+}
+
+fn seed_pack(
+    app: &AppHandle,
+    id: &str,
+    name: &str,
+    description: &str,
+    permissions: &[&str],
+    activation: &[&str],
+    entry_source: &str,
+) {
+    let ctx = match app.try_state::<Arc<AppContext>>() {
+        Some(c) => c,
+        None => return,
+    };
+    let dir = ctx.data_dir.join("extensions");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let pack = json!({
+        "manifest": {
+            "id": id,
+            "name": name,
+            "version": env!("CARGO_PKG_VERSION"),
+            "grain_api": grain_sdk::GRAIN_API_VERSION,
+            "tier": "scripted",
+            "description": description,
+            "permissions": permissions,
+            "activation": activation,
+            "entry_source": entry_source,
+        },
+        "payloads": {}
+    });
+    if let Ok(new_content) = serde_json::to_string_pretty(&pack) {
+        let path = dir.join(format!("{id}.grainpack.json"));
+        // Write only when changed — ship upgrades without a redundant write.
+        let changed = std::fs::read_to_string(&path)
+            .map(|old| old != new_content)
+            .unwrap_or(true);
+        if changed {
+            let _ = std::fs::write(&path, new_content);
+        }
+    }
+    // Register DISABLED if absent (SPEC §8: built-in scripted packs default off).
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        if !reg.is_installed(id) {
+            let _ = reg.install(grain_core::extensions::ExtensionRecord {
+                id: id.to_string(),
+                enabled: false,
+                toggle_seq: 0,
+                installed_version: env!("CARGO_PKG_VERSION").to_string(),
+                // First-party: pre-grant its declared caps so enabling just works.
+                granted: permissions.iter().map(|s| s.to_string()).collect(),
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

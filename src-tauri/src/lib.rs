@@ -1103,6 +1103,9 @@ pub fn run(cli_args: CliArgs) {
                     }
                     Err(e) => log::error!("[GRAIN] extensions registry failed to load: {e}"),
                 }
+                // [GRAIN] Seed built-in scripted packs (auto-categorize dogfood),
+                // now that AppContext + the registry are managed. Default off.
+                extension_host::seed_builtin_packs(&app.handle());
             }
 
             let mut settings = get_settings(&app.handle());
