@@ -28,6 +28,34 @@
     "pr": ""
   },
   {
+    "date": "Jul 21, 2026",
+    "commit": "Refactor Sidebar settings structure (#1720)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1720"
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "feat: windows single left click on tray icon opens handy window (#369)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "369"
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "Add Danish translations (#1747)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1747"
+  },
+  {
+    "date": "Jul 21, 2026",
+    "commit": "fix: restore clipboard images after paste (#1231)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1231"
+  },
+  {
     "date": "Jul 20, 2026",
     "commit": "fix: prevent custom-word correction from losing transcriptions",
     "status": "Pending",
