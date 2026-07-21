@@ -53,7 +53,137 @@ pub struct ExtensionManifest {
     /// stays a single shareable file (guide Step 4). Empty for tier-A.
     #[serde(default)]
     pub entry_source: String,
+    /// [GRAIN] Phase 3 (SPEC §1.2): surfaces the extension DECLARES. Extensions
+    /// never create windows — the host builds, places, sleeps and destroys them.
+    #[serde(default)]
+    pub surfaces: Surfaces,
+    /// [GRAIN] Phase 3 (SPEC §3): exclusive positions claimed. At most one
+    /// enabled occupant per slot; claiming an occupied slot prompts a takeover.
+    #[serde(default)]
+    pub slots: Vec<String>,
+    /// [GRAIN] Phase 3 (SPEC §4): declarative contributions the host renders or
+    /// registers on the extension's behalf.
+    #[serde(default)]
+    pub contributes: Contributes,
 }
+
+/// Surfaces an extension may declare (SPEC §1.2). Each requires the matching
+/// `surface:*` capability — declaring one without it is rejected at import.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Surfaces {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceDecl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub overlay: Option<OverlayDecl>,
+}
+
+/// An app-class window: built hidden once, shown on summon, UI unmounted +
+/// hidden on close, destroyed after idle (the generalized Grain Space pattern).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WorkspaceDecl {
+    pub title: String,
+    /// `[width, height]`; the host clamps to what the display can show.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<[u32; 2]>,
+}
+
+/// A transient HUD: created per invocation, destroyed on dismiss. The host
+/// enforces the size and lifetime budget — an overlay cannot linger.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OverlayDecl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<[u32; 2]>,
+    /// Auto-dismiss budget; the host caps this regardless of what is asked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Contributes {
+    /// Level 1–2 settings schema — the host renders the controls; the values
+    /// live in the extension's own namespace (never `AppSettings`).
+    #[serde(default)]
+    pub settings: Vec<SettingDecl>,
+    /// Global shortcuts, registered as `ext:<id>:<shortcut-id>`.
+    #[serde(default)]
+    pub shortcuts: Vec<ShortcutDecl>,
+}
+
+/// One schema-declared setting (SPEC §4, levels 1–2).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SettingDecl {
+    pub key: String,
+    pub label: String,
+    #[serde(flatten)]
+    pub kind: SettingKind,
+    #[serde(default)]
+    pub default: serde_json::Value,
+    #[serde(default)]
+    pub description: String,
+    /// Where this section renders (SPEC §4). An anchor is a **versioned
+    /// contract promise** — see [`ANCHORS`]. Absent = the extension's own
+    /// section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    /// Sort position within its group; ties break on declaration order.
+    #[serde(default)]
+    pub order: i32,
+}
+
+/// The control the host renders. Internally tagged, so a declaration reads
+/// `{"key":…, "kind":"select", "options":[…]}`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SettingKind {
+    Bool,
+    String,
+    Number {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+    },
+    Select {
+        options: Vec<SelectOption>,
+    },
+    Shortcut,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct SelectOption {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ShortcutDecl {
+    pub id: String,
+    pub label: String,
+    /// Suggested binding; the user's choice always wins, and a conflict with an
+    /// existing binding is resolved by the host, not the extension.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_binding: Option<String>,
+}
+
+/// Anchors an extension may attach a settings section to (SPEC §4).
+/// **Contract surface: few, semantic, versioned.** An anchor cannot be renamed
+/// once shipped — packs in the wild reference it by name.
+pub const ANCHORS: &[&str] = &[
+    "snippets.after",
+    "context.after",
+    "agent.after",
+    "space.after",
+];
+
+/// Exclusive positions (SPEC §3). Core defaults are occupants too, so a claim
+/// on any of these can displace a shipped feature — never silently.
+pub const KNOWN_SLOTS: &[&str] = &[
+    "overlay.recording",
+    "overlay.pointer",
+    "pill.theme",
+    "agent.reply-surface",
+    "output.destination",
+];
 
 /// Capabilities a scripted pack may request in Phase 2. Anything outside this
 /// set is rejected at import (R1: grant narrowly, widen with each consumer).
@@ -68,6 +198,11 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "settings",
     "llm",
     "embed",
+    // Phase 3 (SPEC §1.2): host-owned surfaces. Declaring a surface without
+    // its capability is rejected — the grant is what the user actually approves.
+    "surface:workspace",
+    "surface:overlay",
+    "pill:slots",
 ];
 
 /// One prompt in a prompt pack. Applied to the user's prompt list under the
@@ -151,6 +286,75 @@ impl GrainPack {
                 return Err(format!("prompt entry '{}' is incomplete", p.id));
             }
         }
+        self.validate_phase3()?;
+        Ok(())
+    }
+
+    /// Phase 3 contract checks (SPEC §1.2, §3, §4). Split out so the tier
+    /// branch above stays readable.
+    fn validate_phase3(&self) -> Result<(), String> {
+        let m = &self.manifest;
+
+        // Slots may be claimed by any tier (a pill theme is tier-A), but only
+        // from the known list — an unknown slot is a silent no-op otherwise.
+        for slot in &m.slots {
+            let known = KNOWN_SLOTS.contains(&slot.as_str())
+                || slot.starts_with("overrides:"); // `overrides:<core-setting>`
+            if !known {
+                return Err(format!("unknown slot '{slot}'"));
+            }
+        }
+
+        // Surfaces and code-backed contributions need code to back them.
+        let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
+        let contributes_code =
+            !m.contributes.settings.is_empty() || !m.contributes.shortcuts.is_empty();
+        if (declares_surface || contributes_code) && m.tier != Tier::Scripted {
+            return Err(
+                "surfaces and contributes require tier 'scripted' (there is no code to back them)"
+                    .into(),
+            );
+        }
+
+        // A declared surface must be backed by the capability the user grants.
+        for (declared, cap) in [
+            (m.surfaces.workspace.is_some(), "surface:workspace"),
+            (m.surfaces.overlay.is_some(), "surface:overlay"),
+        ] {
+            if declared && !m.permissions.iter().any(|p| p == cap) {
+                return Err(format!("declaring this surface requires the '{cap}' permission"));
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        for s in &m.contributes.settings {
+            if s.key.trim().is_empty() {
+                return Err("a setting is missing its key".into());
+            }
+            if !seen.insert(&s.key) {
+                return Err(format!("duplicate setting key '{}'", s.key));
+            }
+            if let Some(a) = &s.anchor {
+                if !ANCHORS.contains(&a.as_str()) {
+                    return Err(format!("unknown anchor '{a}'"));
+                }
+            }
+            if let SettingKind::Select { options } = &s.kind {
+                if options.is_empty() {
+                    return Err(format!("select setting '{}' has no options", s.key));
+                }
+            }
+        }
+
+        let mut seen_sc = std::collections::HashSet::new();
+        for sc in &m.contributes.shortcuts {
+            if sc.id.trim().is_empty() {
+                return Err("a shortcut is missing its id".into());
+            }
+            if !seen_sc.insert(&sc.id) {
+                return Err(format!("duplicate shortcut id '{}'", sc.id));
+            }
+        }
         Ok(())
     }
 
@@ -211,6 +415,80 @@ mod tests {
         // unknown fields from a newer contract are tolerated
         assert_eq!(
             pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","futureField":1}}"#),
+            Ok(())
+        );
+    }
+
+    /// A full Phase-3 scripted manifest parses and validates, and the settings
+    /// schema keeps its internally-tagged shape.
+    #[test]
+    fn phase3_declarations_parse_and_validate() {
+        let json = r#"{"manifest":{
+            "id":"com.x.spaces","name":"Spaces","version":"1","tier":"scripted",
+            "permissions":["storage","surface:workspace"],
+            "activation":["onStartup"],
+            "entry_source":"grain.log.info('hi')",
+            "surfaces":{"workspace":{"title":"Spaces","min_size":[900,600]}},
+            "slots":["agent.reply-surface","overrides:overlay_position"],
+            "contributes":{
+                "settings":[
+                    {"key":"tone","label":"Tone","kind":"select",
+                     "options":[{"value":"warm","label":"Warm"}],
+                     "anchor":"space.after","order":2},
+                    {"key":"auto","label":"Auto","kind":"bool","default":true}
+                ],
+                "shortcuts":[{"id":"open","label":"Open Spaces","default_binding":"Alt+S"}]
+            }}}"#;
+        let p: GrainPack = serde_json::from_str(json).unwrap();
+        assert_eq!(p.validate(), Ok(()));
+        assert_eq!(p.manifest.surfaces.workspace.unwrap().min_size, Some([900, 600]));
+        assert!(matches!(
+            p.manifest.contributes.settings[0].kind,
+            SettingKind::Select { .. }
+        ));
+        assert_eq!(p.manifest.contributes.shortcuts[0].id, "open");
+    }
+
+    #[test]
+    fn phase3_guards_hold() {
+        let scripted = |extra: &str| {
+            pack(&format!(
+                r#"{{"manifest":{{"id":"com.x.y","name":"n","version":"1","tier":"scripted",
+                    "entry_source":"x"{extra}}}}}"#
+            ))
+        };
+        // A surface without its capability is rejected — the grant is the point.
+        assert!(scripted(r#","surfaces":{"workspace":{"title":"T"}}"#).is_err());
+        assert!(scripted(
+            r#","permissions":["surface:workspace"],"surfaces":{"workspace":{"title":"T"}}"#
+        )
+        .is_ok());
+        // Unknown slot / anchor, duplicate keys, empty select.
+        assert!(scripted(r#","slots":["not.a.slot"]"#).is_err());
+        assert!(scripted(r#","slots":["pill.theme"]"#).is_ok());
+        assert!(scripted(
+            r#","contributes":{"settings":[{"key":"a","label":"A","kind":"bool","anchor":"nope.after"}]}"#
+        )
+        .is_err());
+        assert!(scripted(
+            r#","contributes":{"settings":[{"key":"a","label":"A","kind":"bool"},{"key":"a","label":"B","kind":"bool"}]}"#
+        )
+        .is_err());
+        assert!(scripted(
+            r#","contributes":{"settings":[{"key":"a","label":"A","kind":"select","options":[]}]}"#
+        )
+        .is_err());
+        // Data packs have no code, so they cannot declare surfaces or
+        // contributions — but they CAN claim a slot (a pill theme does).
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack",
+                "contributes":{"shortcuts":[{"id":"a","label":"A"}]}}}"#
+        )
+        .is_err());
+        assert_eq!(
+            pack(
+                r#"{"manifest":{"id":"com.x.t","name":"T","version":"1","tier":"pack","slots":["pill.theme"]}}"#
+            ),
             Ok(())
         );
     }

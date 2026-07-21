@@ -24,7 +24,11 @@ pub mod manifest;
 pub mod protocol;
 
 pub use event::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
-pub use manifest::{ExtensionManifest, GrainPack, PackPayloads, PromptPackEntry, Tier};
+pub use manifest::{
+    Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry,
+    SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
+    KNOWN_SLOTS,
+};
 pub use protocol::{
     ClientHello, ClientRequest, HostCall, HostCallResult, HostFrame, ServerResponse,
     ServerWelcome, GRAIN_API_VERSION,
