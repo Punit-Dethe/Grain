@@ -78,6 +78,159 @@ struct Worker {
     conn: Option<WorkerConn>,
 }
 
+/// The worker registry: the map plus every operation over it. Deliberately free
+/// of any `AppHandle`/Tauri coupling, so the async call/resolve correlation, the
+/// strike accounting, and the reaper's victim selection are unit-tested directly
+/// (the Tauri-side spawn/kill/emit stay as free functions above it).
+struct Workers {
+    map: Mutex<HashMap<String, Worker>>,
+}
+
+impl Workers {
+    fn new() -> Self {
+        Self {
+            map: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn is_running(&self, ext_id: &str) -> bool {
+        self.map.lock().unwrap().contains_key(ext_id)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.map.lock().unwrap().is_empty()
+    }
+
+    fn insert(&self, ext_id: &str, worker: Worker) {
+        self.map.lock().unwrap().insert(ext_id.to_string(), worker);
+    }
+
+    fn remove(&self, ext_id: &str) -> Option<Worker> {
+        self.map.lock().unwrap().remove(ext_id)
+    }
+
+    /// Register (or refresh) a worker's connection and return the shared
+    /// last-activity clock for the caller to bump on each inbound frame.
+    fn attach(&self, ext_id: &str, out_tx: mpsc::UnboundedSender<Message>) -> Arc<AtomicU64> {
+        let mut map = self.map.lock().unwrap();
+        let w = map.entry(ext_id.to_string()).or_insert_with(|| Worker {
+            token: String::new(),
+            resident: false,
+            strikes: 0,
+            last_activity: Arc::new(AtomicU64::new(now_secs())),
+            conn: None,
+        });
+        w.last_activity.store(now_secs(), Ordering::Relaxed);
+        w.conn = Some(WorkerConn {
+            out_tx,
+            pending: Arc::new(Mutex::new(HashMap::new())),
+            next_call_id: Arc::new(AtomicU64::new(1)),
+        });
+        w.last_activity.clone()
+    }
+
+    /// Issue a `HostCall` to a connected worker and await its answer under
+    /// `deadline`. Never holds the registry lock across the await.
+    async fn call(
+        &self,
+        ext_id: &str,
+        method: &str,
+        params: Value,
+        deadline: Duration,
+    ) -> Result<Value, String> {
+        let (out_tx, pending, next_call_id) = {
+            let map = self.map.lock().unwrap();
+            let conn = map
+                .get(ext_id)
+                .and_then(|w| w.conn.as_ref())
+                .ok_or("worker not connected")?;
+            (
+                conn.out_tx.clone(),
+                conn.pending.clone(),
+                conn.next_call_id.clone(),
+            )
+        };
+        let call_id = next_call_id.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        pending.lock().unwrap().insert(call_id, tx);
+        let frame = HostFrame::Call(HostCall {
+            call_id,
+            method: method.to_string(),
+            params,
+        });
+        let json = serde_json::to_string(&frame).map_err(|e| e.to_string())?;
+        if out_tx.send(Message::Text(json.into())).is_err() {
+            pending.lock().unwrap().remove(&call_id);
+            return Err("worker channel closed".into());
+        }
+        match tokio::time::timeout(deadline, rx).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(_)) => Err("worker dropped the call".into()),
+            Err(_) => {
+                pending.lock().unwrap().remove(&call_id);
+                Err("deadline exceeded".into())
+            }
+        }
+    }
+
+    /// Route a `HostCallResult` back to the awaiter of its `call_id` (no-op if
+    /// the worker/call is unknown or already timed out).
+    fn resolve(&self, ext_id: &str, call_id: u64, result: Result<Value, String>) {
+        let pending = self
+            .map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .and_then(|w| w.conn.as_ref())
+            .map(|c| c.pending.clone());
+        if let Some(pending) = pending {
+            if let Some(tx) = pending.lock().unwrap().remove(&call_id) {
+                let _ = tx.send(result);
+            }
+        }
+    }
+
+    /// Ids of workers idle longer than `idle_secs` with no pending calls and not
+    /// resident — the reaper's kill list.
+    fn idle_victims(&self, now: u64, idle_secs: u64) -> Vec<String> {
+        self.map
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, w)| {
+                if w.resident {
+                    return None;
+                }
+                let idle = now.saturating_sub(w.last_activity.load(Ordering::Relaxed));
+                let busy = w
+                    .conn
+                    .as_ref()
+                    .map(|c| !c.pending.lock().unwrap().is_empty())
+                    .unwrap_or(false);
+                (idle > idle_secs && !busy).then(|| id.clone())
+            })
+            .collect()
+    }
+
+    fn clear_strikes(&self, ext_id: &str) {
+        if let Some(w) = self.map.lock().unwrap().get_mut(ext_id) {
+            w.strikes = 0;
+        }
+    }
+
+    /// Record a transform failure; returns true once the worker hits the strike
+    /// limit (caller then auto-disables).
+    fn record_strike(&self, ext_id: &str, limit: u32) -> bool {
+        match self.map.lock().unwrap().get_mut(ext_id) {
+            Some(w) => {
+                w.strikes += 1;
+                w.strikes >= limit
+            }
+            None => false,
+        }
+    }
+}
+
 /// Supervisor readiness gate: Tauri events are not buffered, so a `spawn` emit
 /// before the page's `listen` is registered would be lost. Spawns issued before
 /// the page reports `ext-host://ready` are queued and flushed on ready.
@@ -89,7 +242,7 @@ struct Supervisor {
 
 struct HostState {
     app: AppHandle,
-    workers: Mutex<HashMap<String, Worker>>,
+    workers: Workers,
     supervisor: Mutex<Supervisor>,
 }
 
@@ -137,7 +290,7 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
     if HOST
         .set(HostState {
             app: app.clone(),
-            workers: Mutex::new(HashMap::new()),
+            workers: Workers::new(),
             supervisor: Mutex::new(Supervisor {
                 exists: false,
                 ready: false,
@@ -242,7 +395,7 @@ fn on_event(app: &AppHandle, ev: &DaemonEvent) {
 
 fn is_running(ext_id: &str) -> bool {
     HOST.get()
-        .map(|h| h.workers.lock().unwrap().contains_key(ext_id))
+        .map(|h| h.workers.is_running(ext_id))
         .unwrap_or(false)
 }
 
@@ -261,8 +414,8 @@ fn spawn_worker(
     // same server-side filter that gates the pill now gates this worker.
     let token = crate::events_server::mint_extension_token(ext_id, caps.iter().cloned().collect());
     let resident = pack.manifest.activation.iter().any(|a| a == "onStartup");
-    host.workers.lock().unwrap().insert(
-        ext_id.to_string(),
+    host.workers.insert(
+        ext_id,
         Worker {
             token: token.clone(),
             resident,
@@ -352,15 +505,11 @@ fn kill_worker(ext_id: &str, reason: &str) {
         Some(h) => h,
         None => return,
     };
-    let (removed, empty) = {
-        let mut workers = host.workers.lock().unwrap();
-        let removed = workers.remove(ext_id);
-        (removed, workers.is_empty())
-    };
-    let worker = match removed {
+    let worker = match host.workers.remove(ext_id) {
         Some(w) => w,
         None => return,
     };
+    let empty = host.workers.is_empty();
     log::info!("[GRAIN] ext-host: reaping '{ext_id}' ({reason})");
     crate::events_server::revoke_token(&worker.token);
     let _ = host.app.emit_to(
@@ -407,26 +556,7 @@ fn reap_idle() {
         Some(h) => h,
         None => return,
     };
-    let now = now_secs();
-    let victims: Vec<String> = {
-        let workers = host.workers.lock().unwrap();
-        workers
-            .iter()
-            .filter_map(|(id, w)| {
-                if w.resident {
-                    return None;
-                }
-                let idle = now.saturating_sub(w.last_activity.load(Ordering::Relaxed));
-                let busy = w
-                    .conn
-                    .as_ref()
-                    .map(|c| !c.pending.lock().unwrap().is_empty())
-                    .unwrap_or(false);
-                (idle > IDLE_REAP_SECS && !busy).then(|| id.clone())
-            })
-            .collect()
-    };
-    for id in victims {
+    for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
         kill_worker(&id, "idle timeout");
     }
 }
@@ -437,25 +567,10 @@ fn reap_idle() {
 /// shared last-activity clock for the connection to bump on each frame. Upserts,
 /// so a worker that connects without a prior spawn record still gets tracked.
 pub fn attach_connection(ext_id: &str, out_tx: mpsc::UnboundedSender<Message>) -> Arc<AtomicU64> {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return Arc::new(AtomicU64::new(now_secs())),
-    };
-    let mut workers = host.workers.lock().unwrap();
-    let w = workers.entry(ext_id.to_string()).or_insert_with(|| Worker {
-        token: String::new(),
-        resident: false,
-        strikes: 0,
-        last_activity: Arc::new(AtomicU64::new(now_secs())),
-        conn: None,
-    });
-    w.last_activity.store(now_secs(), Ordering::Relaxed);
-    w.conn = Some(WorkerConn {
-        out_tx,
-        pending: Arc::new(Mutex::new(HashMap::new())),
-        next_call_id: Arc::new(AtomicU64::new(1)),
-    });
-    w.last_activity.clone()
+    match HOST.get() {
+        Some(h) => h.workers.attach(ext_id, out_tx),
+        None => Arc::new(AtomicU64::new(now_secs())),
+    }
 }
 
 /// The worker's WS closed → the worker process is gone; reap it.
@@ -465,70 +580,12 @@ pub fn detach_connection(ext_id: &str) {
 
 /// Route a `HostCallResult` back to its awaiter (the transform/session caller).
 pub fn resolve_call_result(ext_id: &str, call_id: u64, result: Result<Value, String>) {
-    let host = match HOST.get() {
-        Some(h) => h,
-        None => return,
-    };
-    let pending = {
-        let workers = host.workers.lock().unwrap();
-        workers
-            .get(ext_id)
-            .and_then(|w| w.conn.as_ref())
-            .map(|c| c.pending.clone())
-    };
-    if let Some(pending) = pending {
-        if let Some(tx) = pending.lock().unwrap().remove(&call_id) {
-            let _ = tx.send(result);
-        }
+    if let Some(host) = HOST.get() {
+        host.workers.resolve(ext_id, call_id, result);
     }
 }
 
 // ── Host-initiated calls + the transform pipeline ────────────────────────────
-
-/// Issue a `HostCall` to a connected worker and await its answer under
-/// `deadline`. Errors (not connected, channel closed, timeout) never panic and
-/// never block past the deadline.
-async fn call_worker(
-    ext_id: &str,
-    method: &str,
-    params: Value,
-    deadline: Duration,
-) -> Result<Value, String> {
-    let host = HOST.get().ok_or("extension host not started")?;
-    let (out_tx, pending, next_call_id) = {
-        let workers = host.workers.lock().unwrap();
-        let conn = workers
-            .get(ext_id)
-            .and_then(|w| w.conn.as_ref())
-            .ok_or("worker not connected")?;
-        (
-            conn.out_tx.clone(),
-            conn.pending.clone(),
-            conn.next_call_id.clone(),
-        )
-    };
-    let call_id = next_call_id.fetch_add(1, Ordering::Relaxed);
-    let (tx, rx) = oneshot::channel();
-    pending.lock().unwrap().insert(call_id, tx);
-    let frame = HostFrame::Call(HostCall {
-        call_id,
-        method: method.to_string(),
-        params,
-    });
-    let json = serde_json::to_string(&frame).map_err(|e| e.to_string())?;
-    if out_tx.send(Message::Text(json.into())).is_err() {
-        pending.lock().unwrap().remove(&call_id);
-        return Err("worker channel closed".into());
-    }
-    match tokio::time::timeout(deadline, rx).await {
-        Ok(Ok(res)) => res,
-        Ok(Err(_)) => Err("worker dropped the call".into()),
-        Err(_) => {
-            pending.lock().unwrap().remove(&call_id);
-            Err("deadline exceeded".into())
-        }
-    }
-}
 
 /// The transform pipeline (SPEC §3.1, §3.3). Runs every enabled `onTransform`
 /// extension in **toggle order**, each under a hard 150 ms deadline. A worker
@@ -563,7 +620,15 @@ pub async fn run_transforms(app: &AppHandle, text: String) -> String {
         if !is_running(&id) {
             continue;
         }
-        match call_worker(&id, "transform", json!({ "text": current }), TRANSFORM_DEADLINE).await {
+        let host = match HOST.get() {
+            Some(h) => h,
+            None => break,
+        };
+        match host
+            .workers
+            .call(&id, "transform", json!({ "text": current }), TRANSFORM_DEADLINE)
+            .await
+        {
             Ok(v) => {
                 // Accept either `{ "text": "…" }` or a bare string.
                 if let Some(s) = v.get("text").and_then(|t| t.as_str()) {
@@ -584,9 +649,7 @@ pub async fn run_transforms(app: &AppHandle, text: String) -> String {
 
 fn clear_strikes(ext_id: &str) {
     if let Some(host) = HOST.get() {
-        if let Some(w) = host.workers.lock().unwrap().get_mut(ext_id) {
-            w.strikes = 0;
-        }
+        host.workers.clear_strikes(ext_id);
     }
 }
 
@@ -595,17 +658,7 @@ fn record_strike(app: &AppHandle, ext_id: &str) {
         Some(h) => h,
         None => return,
     };
-    let over_limit = {
-        let mut workers = host.workers.lock().unwrap();
-        match workers.get_mut(ext_id) {
-            Some(w) => {
-                w.strikes += 1;
-                w.strikes >= MAX_STRIKES
-            }
-            None => false,
-        }
-    };
-    if over_limit {
+    if host.workers.record_strike(ext_id, MAX_STRIKES) {
         auto_disable(app, ext_id);
     }
 }
@@ -787,5 +840,117 @@ mod tests {
         // Unknown/empty clauses never fire.
         assert!(!activation_matches(&["onStartup".to_string()], "RecordingStarted"));
         assert!(!activation_matches(&[], "RecordingStarted"));
+    }
+
+    fn worker(last_activity: u64, resident: bool) -> Worker {
+        Worker {
+            token: "tok".into(),
+            resident,
+            strikes: 0,
+            last_activity: Arc::new(AtomicU64::new(last_activity)),
+            conn: None,
+        }
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// The host-call round-trip: `call` sends a `{"call":…}` frame down the
+    /// worker's channel and blocks until the matching `resolve(call_id, …)`
+    /// answers it — proving call-id correlation over the mpsc/oneshot pair (the
+    /// Rust-level fake worker the DoD asks for).
+    #[test]
+    fn call_roundtrips_through_a_fake_worker() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+            workers.attach("com.x.a", out_tx);
+
+            // The fake worker: read the outbound HostCall, answer via resolve().
+            let responder = async {
+                let msg = out_rx.recv().await.expect("host emits a call frame");
+                let txt = match msg {
+                    Message::Text(t) => t.to_string(),
+                    _ => panic!("expected a text frame"),
+                };
+                let call_id = match serde_json::from_str::<HostFrame>(&txt).unwrap() {
+                    HostFrame::Call(c) => {
+                        assert_eq!(c.method, "transform");
+                        assert_eq!(c.params, json!({ "text": "hi" }));
+                        c.call_id
+                    }
+                    _ => panic!("expected a Call frame"),
+                };
+                workers.resolve("com.x.a", call_id, Ok(json!({ "text": "HI" })));
+            };
+
+            let (res, _) = tokio::join!(
+                workers.call(
+                    "com.x.a",
+                    "transform",
+                    json!({ "text": "hi" }),
+                    Duration::from_secs(2),
+                ),
+                responder,
+            );
+            assert_eq!(res.unwrap(), json!({ "text": "HI" }));
+        });
+    }
+
+    #[test]
+    fn call_errors_when_silent_or_unconnected() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            // Not connected → immediate error, no hang.
+            assert_eq!(
+                workers
+                    .call("ghost", "transform", json!({}), Duration::from_millis(20))
+                    .await
+                    .unwrap_err(),
+                "worker not connected"
+            );
+            // Connected but silent → the deadline fires (never blocks the paste).
+            let (out_tx, _keep) = mpsc::unbounded_channel::<Message>();
+            workers.attach("com.x.a", out_tx);
+            assert_eq!(
+                workers
+                    .call("com.x.a", "transform", json!({}), Duration::from_millis(20))
+                    .await
+                    .unwrap_err(),
+                "deadline exceeded"
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_unknown_call_is_a_noop() {
+        let workers = Workers::new();
+        workers.resolve("nobody", 7, Ok(Value::Null)); // must not panic
+    }
+
+    #[test]
+    fn reaper_picks_only_stale_free_nonresident_workers() {
+        let workers = Workers::new();
+        workers.insert("stale", worker(0, false)); // ancient
+        workers.insert("fresh", worker(now_secs(), false)); // just active
+        workers.insert("resident", worker(0, true)); // never reaped
+        let victims = workers.idle_victims(now_secs(), IDLE_REAP_SECS);
+        assert_eq!(victims, vec!["stale".to_string()]);
+    }
+
+    #[test]
+    fn strikes_trip_at_the_limit_and_reset() {
+        let workers = Workers::new();
+        workers.insert("a", worker(0, false));
+        assert!(!workers.record_strike("a", MAX_STRIKES));
+        assert!(!workers.record_strike("a", MAX_STRIKES));
+        assert!(workers.record_strike("a", MAX_STRIKES)); // 3rd strike → trip
+        workers.clear_strikes("a");
+        assert!(!workers.record_strike("a", MAX_STRIKES)); // counter reset
+        assert!(!workers.record_strike("missing", MAX_STRIKES)); // unknown never trips
     }
 }
