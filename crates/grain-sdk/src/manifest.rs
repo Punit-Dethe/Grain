@@ -40,10 +40,35 @@ pub struct ExtensionManifest {
     pub repository: Option<String>,
     /// Capability names (SPEC §1.3). Tier-A-inert packs must have none — the
     /// import path rejects otherwise (egress packs arrive with their consent
-    /// surface, not before).
+    /// surface, not before). Scripted packs may request from
+    /// [`KNOWN_CAPABILITIES`]; the user grants them at first enable.
     #[serde(default)]
     pub permissions: Vec<String>,
+    /// [GRAIN] SPEC §2 activation events (tier B): when the worker wakes —
+    /// `onEvent:<DaemonEventVariant>`, `onTransform`, `onShortcut:<id>`,
+    /// `onStartup` (requires `resident`). The reaper is the inverse.
+    #[serde(default)]
+    pub activation: Vec<String>,
+    /// [GRAIN] Tier-B only: the extension's JS, embedded so a scripted pack
+    /// stays a single shareable file (guide Step 4). Empty for tier-A.
+    #[serde(default)]
+    pub entry_source: String,
 }
+
+/// Capabilities a scripted pack may request in Phase 2. Anything outside this
+/// set is rejected at import (R1: grant narrowly, widen with each consumer).
+/// `session:start` is reserved + plumbed even though no built-in dogfoods it
+/// yet (structural capabilities land early or never).
+pub const KNOWN_CAPABILITIES: &[&str] = &[
+    "events:sessions",
+    "events:transcripts",
+    "transform:transcript",
+    "session:start",
+    "storage",
+    "settings",
+    "llm",
+    "embed",
+];
 
 /// One prompt in a prompt pack. Applied to the user's prompt list under the
 /// namespaced id `ext:<extension-id>:<id>` (SPEC chokepoint #15 — collisions
@@ -76,28 +101,50 @@ pub struct GrainPack {
 }
 
 impl GrainPack {
-    /// Structural validation for Phase 1 (tier-A-inert only).
+    /// Structural validation (Phase 2: tier-A packs and tier-B scripted;
+    /// `native` still rejected — it arrives with the tier-C supervisor).
     pub fn validate(&self) -> Result<(), String> {
         let m = &self.manifest;
         if m.id.is_empty() || !m.id.contains('.') {
             return Err("manifest.id must be a reverse-dns identifier".into());
         }
+        // NOTE: `grain.`-prefixed ids are built-in-only for USER imports; the
+        // startup seed of built-in scripted packs (e.g. auto-categorize) calls
+        // its own path, not this validator, so the prefix stays reserved here.
         if m.id.starts_with("grain.") {
             return Err("the 'grain.' id prefix is reserved for built-ins".into());
         }
         if m.name.trim().is_empty() {
             return Err("manifest.name is required".into());
         }
-        if m.tier != Tier::Pack {
-            return Err("only tier-A packs can be imported in this version".into());
-        }
-        if !m.permissions.is_empty() {
-            // A-inert by definition (SPEC §1.1): data consumed locally needs no
-            // grants. Egress packs (providers) ship with their consent surface.
-            return Err(format!(
-                "packs requesting permissions ({}) are not supported yet",
-                m.permissions.join(", ")
-            ));
+        match m.tier {
+            Tier::Native => {
+                return Err("native extensions are not supported yet".into());
+            }
+            Tier::Pack => {
+                if !m.permissions.is_empty() {
+                    // A-inert by definition (SPEC §1.1): data consumed locally
+                    // needs no grants. Egress/provider packs arrive with their
+                    // consent surface later.
+                    return Err(format!(
+                        "tier-A packs requesting permissions ({}) are not supported yet",
+                        m.permissions.join(", ")
+                    ));
+                }
+                if !m.entry_source.is_empty() {
+                    return Err("tier-A packs must not carry entry_source".into());
+                }
+            }
+            Tier::Scripted => {
+                if m.entry_source.trim().is_empty() {
+                    return Err("scripted extensions require entry_source".into());
+                }
+                for cap in &m.permissions {
+                    if !KNOWN_CAPABILITIES.contains(&cap.as_str()) {
+                        return Err(format!("unknown capability '{cap}'"));
+                    }
+                }
+            }
         }
         for p in &self.payloads.prompts {
             if p.id.is_empty() || p.name.trim().is_empty() || p.prompt.trim().is_empty() {
@@ -105,6 +152,11 @@ impl GrainPack {
             }
         }
         Ok(())
+    }
+
+    /// True for tier-B extensions (drive a worker), false for data packs.
+    pub fn is_scripted(&self) -> bool {
+        self.manifest.tier == Tier::Scripted
     }
 }
 
@@ -130,11 +182,28 @@ mod tests {
     }
 
     #[test]
+    fn scripted_pack_passes_with_entry_and_known_caps() {
+        assert_eq!(
+            pack(
+                r#"{"manifest":{"id":"com.x.cat","name":"Cat","version":"1","tier":"scripted",
+                    "permissions":["storage","llm"],"activation":["onEvent:TranscriptionComplete"],
+                    "entry_source":"grain.log.info('hi')"}}"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn guards_hold() {
-        // reserved prefix, bad id, wrong tier, permissions on an inert pack
+        // reserved prefix, bad id, native tier, permissions on an inert pack
         assert!(pack(r#"{"manifest":{"id":"grain.x","name":"n","version":"1","tier":"pack"}}"#).is_err());
         assert!(pack(r#"{"manifest":{"id":"noreversedns","name":"n","version":"1","tier":"pack"}}"#).is_err());
+        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"native"}}"#).is_err());
+        // scripted without entry_source, and with an unknown capability
         assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted"}}"#).is_err());
+        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["root"]}}"#).is_err());
+        // tier-A pack must not carry code
+        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","entry_source":"x"}}"#).is_err());
         assert!(
             pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","permissions":["llm"]}}"#)
                 .is_err()

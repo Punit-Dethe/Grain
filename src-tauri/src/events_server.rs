@@ -32,6 +32,39 @@ fn registry() -> &'static crate::events_auth::TokenRegistry {
     TOKENS.get_or_init(crate::events_auth::TokenRegistry::new)
 }
 
+/// [GRAIN] SPEC §7.1: mint a per-worker token for an extension, bound to its id
+/// and the capability set the user granted. Called at **worker spawn** (not at
+/// enable) and paired with [`revoke_token`] at reap/disable — tokens are short-
+/// lived, never long-lived. The `Named` set is exactly the extension's grants,
+/// so the same server-side filter that gates the pill (`events_auth`) gates the
+/// worker: no grant → the message never reaches it.
+#[allow(dead_code)] // wired by extension_host in Phase 2 step 4
+pub fn mint_extension_token(
+    ext_id: &str,
+    caps: std::collections::HashSet<String>,
+) -> String {
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    registry().register(
+        token.clone(),
+        crate::events_auth::ClientIdentity {
+            id: ext_id.to_string(),
+            caps: crate::events_auth::CapabilitySet::Named(caps),
+        },
+    );
+    token
+}
+
+/// Revoke a token so its connection is rejected on reconnect and no new one can
+/// authenticate with it (worker reaped, extension disabled/uninstalled).
+#[allow(dead_code)] // wired by extension_host in Phase 2 step 4
+pub fn revoke_token(token: &str) {
+    registry().revoke(token);
+}
+
 /// The pill's full-trust token for this app run (minted + registered lazily).
 fn pill_token() -> &'static str {
     PILL_TOKEN.get_or_init(|| {
