@@ -171,6 +171,52 @@ registry mutation reconciles shortcuts for free.
 because that is what makes `ext:<id>:<sid>` unambiguously parseable. Do not
 relax this without changing `parse_binding_id`.
 
+**A slot bug the tests could not have caught — read before touching slots.**
+Toggling the Agent centre layout on failed live with *"agent.reply-surface is
+occupied by grain.core"*. Both halves of Step 2 were individually right and
+together wrong: every slot is seeded with core as occupant (so no claim looks
+uncontested), and `set_enabled` claimed every declared slot — which makes the
+one pack whose design is "enabling only adds it to the dropdown" impossible to
+enable. Fixed by splitting the record's declaration in two:
+- `slots` are **claimed on enable** (a pill theme, an output destination);
+- `variant_slots` are **offered** (SPEC §10.2 surface variants) — enabling adds
+  the pack to a host-owned chooser and a core setting decides occupancy, so it
+  changes no occupant and cannot be a takeover.
+
+`slot_conflict` reads `slots` only; `take_slot` accepts either; release is by
+**occupancy**, so a selected variant still hands the slot back on disable.
+`heal_slots` migrates old registries. **No manifest syntax offers a variant slot
+yet** — the name is reserved, the shape waits for a real third-party consumer,
+so `install` preserves what `heal_slots` backfilled instead of clearing it.
+
+**Step 5a shipped — `workspace` extracted, behaviour and RAM unchanged.**
+`surfaces/workspace.rs` is the host-owned generic keyed by surface id;
+`grain_space/window.rs` is a 105-line caller holding only Grain-Space facts
+(geometry, event names, the `is_enabled` gate, "payload is a note id"). Carried
+over *verbatim* because they are the load-bearing parts: the unmount-then-hide
+handshake, **both** fallback timers, the stale-ack guard, the async-runtime hop
+(tauri#3990), and the WebView2 TrySuspend work. Generalized: per-surface `AWAKE`
+(was a module static) and a JSON payload stash (was `FOCUS_NOTE`). Grain Space's
+embedding-engine teardown is now an `on_sleep` hook, so the generic knows nothing
+about embeddings.
+
+Verified by driving the real hotkey — the only way to check a RAM profile:
+build 763→906 MB (+1 webview process), sleep 906→762.7 MB (process retained),
+wake 763→826 MB (cheaper than a cold build), focused re-sleep 826→763 MB exact
+baseline. **Zero "ack timed out" warnings**, which is the proof the frontend
+handshake still round-trips rather than the fallback quietly covering for it.
+
+**Step 5b shipped — the LRU cap.** `lru_victims` is pure (3 tests). Residency is
+capped, access is not: at cap, the least-recently-used sleeps and the incoming
+workspace always opens. Only `capped: true` surfaces count and **Grain's own are
+not capped** — a core feature is never evicted for an extension.
+
+**Step 5c NOT started** — the extension-facing half: `surface:workspace` host
+calls (`workspace.open`/`close`), building a spec from the manifest's
+`WorkspaceDecl`, and the surface's **own realm + token** (SPEC §7.1 — a
+workspace is not the supervisor and not the main window). That is where the
+security work lives; the machinery underneath it is done and verified.
+
 **Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/
   `HostCall`/`HostCallResult` wrapped in `HostFrame` (externally-tagged →
