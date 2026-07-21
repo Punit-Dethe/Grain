@@ -23,7 +23,7 @@ Start at [README.md](README.md) if you have no context at all.
 |---|---|---|---|
 | **A-inert** | none (data) | zero | prompts, snippets, voice-action sets, context modes, themes, surface variants |
 | **A-egress** | none (data) | zero | provider definitions (STT / post-process / LLM). **Data leaves the machine** → must declare `net:<host>`; consent required |
-| **B scripted** | JS in one shared, hidden extension-host webview | zero (created on activation, destroyed by the reaper) | logic + UI extensions |
+| **B scripted** | JS in **its own Worker** under a shared hidden supervisor webview — one isolated realm and one authenticated connection per extension (§7.1) | zero (created on activation, destroyed by the reaper) | logic + UI extensions |
 | **C native** | own process, host-supervised | zero (not spawned = not running) | `companion` (private ability) or `provider` (implements a host interface for all) |
 
 Tier A-egress and tier C require human review before marketplace listing.
@@ -323,18 +323,75 @@ revoked, surfaces destroyed, shortcuts unregistered, slots released.
 
 ## 7. Security & distribution
 
-- **Transport:** the local WebSocket requires a per-client token
-  (pill: generated at spawn; extension host: injected at creation; tier C:
-  passed in env). No token → no events. *Today this port has no auth at all;
-  Phase 0 fixes that.*
+### 7.1 Identity and isolation (one realm, one connection, one extension)
+
+**A shared JavaScript global would break the entire security model.** If
+several extensions ran in one page with one connection, they would share a
+global object (extension A could patch the bridge B calls), and Rust would see
+a single caller — so identity would have to be *asserted in the message*,
+which any extension could forge. Capability enforcement would become
+fiction. Figma's history is the warning: JS-side cleverness is not a boundary.
+
+Therefore:
+
+- **One isolated realm per extension.** Each tier-B extension runs in its own
+  **Web Worker** — its own global scope, no DOM, message-passing only, and no
+  reference to any other extension's worker. Workers cannot see or patch each
+  other. (Workers, not iframes, for headless logic: no DOM is needed and they
+  are far cheaper.)
+- **The shared webview is only a supervisor.** It is Grain's own code whose
+  sole job is to spawn, terminate and relay for workers. **No extension code
+  ever executes in the supervisor's global.**
+- **One WebSocket connection per extension, each with its own token.**
+  Identity is therefore bound to the *channel*, not claimed in the payload —
+  Rust always knows exactly which extension is calling, and forging another's
+  identity is not expressible. This is the same reason Chrome pins native
+  messaging hosts to specific extension ids rather than trusting a self-
+  reported name.
+- **Tokens** are high-entropy, minted per app run, bound server-side to
+  `(extension id → granted capability set)`, and revoked on disable,
+  uninstall, or permission change. A worker receives only its own token, at
+  creation, inside its own isolated global.
+- **UI surfaces get their own realms too** — a `settings-panel` iframe,
+  `workspace`, or `overlay` runs at its own opaque origin with its own token,
+  scoped to the same extension.
+- **RAM is unaffected:** one supervisor webview plus N workers costs far less
+  than N webviews, and workers exist only while their extension is activated
+  (the idle reaper is unchanged).
+
+### 7.2 Boundary
+
 - **Capability filtering happens in Rust**, per connection, on every message
-  and every command. The JS sandbox is not a security assumption.
+  and every command. The JS sandbox is not a security assumption — it is
+  defence in depth on top of the Rust check.
 - **Providers** (`provides:`): the host defines the interface; the
   implementation may be core or a tier-C extension; the broker still enforces
   the consumer's grants. Provenance is shown to the consumer's user. Absence
   fails with a typed "capability unavailable".
 - **Extensions may never inject APIs into Grain's runtime.** Native code runs
   in the extension's own process only.
+### 7.3 Crate layout — `grain-sdk` is the dependency leaf
+
+The contract must not depend on Grain's internals, or it cannot be versioned
+independently and every internal change ripples into the public API.
+
+```
+grain-sdk   ← wire types + manifest schema + capability names + error codes
+   ▲   ▲        (depends only on serde/specta — nothing Grain-specific)
+   │   └── grain-pill
+   └────── grain-core ── tauri shell
+```
+
+- **`grain-sdk` owns** `DaemonEvent`, `PillAction`, the manifest schema, the
+  capability vocabulary, typed errors, and the `grainApi` version handshake.
+- **`grain-core` depends on `grain-sdk`**, never the reverse. Phase 0 work
+  item: move `crates/grain-core/src/event.rs` into `grain-sdk` and invert the
+  dependency — cheap now, painful once anything third-party consumes it.
+- A third party pulling `grain-sdk` therefore gets the contract and nothing
+  else: no settings substrate, no Grain internals.
+
+### 7.4 Distribution
+
 - **Distribution:** a GitHub index repo, one JSON entry per extension (id,
   repo, version, manifest hash, tier, trust). Trust levels: `builtin` /
   `verified` / `community` / `dev` (local folder, badged). Tier A-inert lints
@@ -349,9 +406,9 @@ Each phase is done when its checks pass.
 
 | Phase | Done means |
 |---|---|
-| **0** | WS rejects tokenless clients; pill works through the token path; `grain-sdk` publishes manifest + event/command types + `grainApi` handshake; capability filter unit-tested |
+| **0** | `grain-sdk` extracted as the dependency **leaf** (event.rs moved out of grain-core; dependency inverted, §7.3); WS rejects tokenless clients; **per-connection identity** proven by test (a client with extension A's token cannot act as B); pill works through the token path; `grainApi` handshake; capability filter unit-tested |
 | **1** | Registry persists installed/grants/enabled **+ toggle order**; Overview tab renders from manifests; Snippets / Context Awareness / Agent ship as toggleable built-ins with the upgrade rule honoured (§10.1); **A-inert** packs import/export incl. **pill themes** (§9) and the Agent centre-layout variant (§10.2); no code executes |
-| **2** | Host webview created on activation and reaped when idle (verified by RAM measurement); capability-checked host API (events/storage/llm/embed/capture/clipboard/shortcuts); transform hook with timeout + strikes; **`session:start` + `sessionMode` slow stage**; auto-categorization ported as the first scripted built-in |
+| **2** | Supervisor webview + **one Worker and one authenticated connection per extension** (§7.1), created on activation and reaped when idle (verified by RAM measurement); capability-checked host API (events/storage/llm/embed/capture/clipboard/shortcuts); transform hook with timeout + strikes; **`session:start` + `sessionMode` slow stage**; auto-categorization ported as the first scripted built-in |
 | **3** | Schema settings render (levels 1–2) incl. anchors + ordering; `workspace` extracted from Grain Space's window.rs as a host-owned generic with Grain Space as first consumer; `overlay`; pill slots; store slide-over; **Grain Space Test passes** |
 | **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed |
 | **5** | Index repo live; browse/install/update/remove; hash verification; trust badges; review checklist incl. lifecycle measurement |
