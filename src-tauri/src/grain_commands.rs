@@ -961,8 +961,11 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         enabled: was_enabled,
         toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: pack.manifest.version.clone(),
-        granted: prior.map(|r| r.granted).unwrap_or_default(),
+        granted: prior.as_ref().map(|r| r.granted.clone()).unwrap_or_default(),
         slots: pack.manifest.slots.clone(),
+        // No manifest syntax offers a variant slot yet; preserve what heal_slots
+        // backfilled rather than clearing it on a reinstall.
+        variant_slots: prior.map(|r| r.variant_slots).unwrap_or_default(),
     })
     .map_err(|e| e.to_string())?;
     // An enabled pack's payloads refresh in place (apply is idempotent).

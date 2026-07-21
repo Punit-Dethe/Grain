@@ -1002,6 +1002,7 @@ fn seed_pack(
                 // First-party: pre-grant its declared caps so enabling just works.
                 granted: permissions.iter().map(|s| s.to_string()).collect(),
                 slots: Vec::new(),
+                variant_slots: Vec::new(),
             });
         }
     }

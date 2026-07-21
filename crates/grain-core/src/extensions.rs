@@ -66,8 +66,22 @@ pub struct ExtensionRecord {
     /// Exclusive positions this pack's manifest *declares* (SPEC §3.2). Copied
     /// from the manifest at install so occupancy is answerable from memory —
     /// no pack file is ever read to decide who owns a slot.
+    ///
+    /// These are **claimed on enable**: turning the pack on takes the position,
+    /// which is what a pill theme or an output destination should do.
     #[serde(default)]
     pub slots: Vec<String>,
+    /// Positions this pack *offers* itself for rather than claims — SPEC §10.2's
+    /// **surface variant**. Enabling adds the pack as a choice in a host-owned
+    /// chooser; a core setting decides who actually occupies the slot, so
+    /// enabling alone is not a takeover and must not raise a conflict.
+    ///
+    /// Today the centre-layout variant is the only member (its occupancy is
+    /// `agent_panel_position`). No manifest syntax expresses this yet —
+    /// deliberately: per the capability-governance doctrine, the name is
+    /// reserved and the shape waits for a real third-party consumer.
+    #[serde(default)]
+    pub variant_slots: Vec<String>,
 }
 
 /// Why an enable was refused: the slot and who holds it (`grain.core` for a
@@ -130,7 +144,9 @@ impl ExtensionsRegistry {
                         toggle_seq: 0,
                         installed_version: "1.0.0".into(),
                         granted: Vec::new(),
-                        slots: vec![AGENT_REPLY_SURFACE_SLOT.to_string()],
+                        slots: Vec::new(),
+                        // Offered, not claimed: the dropdown decides (SPEC §10.2).
+                        variant_slots: vec![AGENT_REPLY_SURFACE_SLOT.to_string()],
                     },
                 );
             }
@@ -152,9 +168,13 @@ impl ExtensionsRegistry {
     /// 1. Every known slot with no claim is claimed by `CORE_DEFAULT`. A slot is
     ///    therefore never *free*, so a claim can never look uncontested and
     ///    silently displace shipped behaviour.
-    /// 2. The centre-layout variant's declared slot is backfilled. It is the one
-    ///    record with no pack file on disk, so nothing else can tell us it
-    ///    competes for `agent.reply-surface`.
+    /// 2. The centre-layout variant's slot is backfilled as a **variant** slot
+    ///    (offered, not claimed). It is the one record with no pack file on
+    ///    disk, so nothing else can tell us it competes for
+    ///    `agent.reply-surface` — and it is offered rather than claimed because
+    ///    SPEC §10.2 makes enabling it merely add it to the position dropdown.
+    ///    Registries written by the first slots build recorded it under `slots`,
+    ///    where enabling it collided with core's own default; move it.
     fn heal_slots(&self) {
         let mut state = self.state.write().unwrap();
         for slot in grain_sdk::manifest::KNOWN_SLOTS {
@@ -164,8 +184,9 @@ impl ExtensionsRegistry {
                 .or_insert_with(|| CORE_DEFAULT.to_string());
         }
         if let Some(rec) = state.records.get_mut(AGENT_CENTER_VARIANT_ID) {
-            if rec.slots.is_empty() {
-                rec.slots = vec![AGENT_REPLY_SURFACE_SLOT.to_string()];
+            rec.slots.retain(|s| s != AGENT_REPLY_SURFACE_SLOT);
+            if rec.variant_slots.is_empty() {
+                rec.variant_slots = vec![AGENT_REPLY_SURFACE_SLOT.to_string()];
             }
         }
     }
@@ -221,9 +242,13 @@ impl ExtensionsRegistry {
         held
     }
 
-    /// The first slot this extension declares that somebody else holds, if any.
+    /// The first slot this extension *claims* that somebody else holds, if any.
     /// The gate for enabling: a conflict must reach the user as a takeover
     /// prompt, never be resolved silently or by load order.
+    ///
+    /// Reads `slots` only. A `variant_slots` entry is an offer, not a claim —
+    /// enabling a surface variant adds it to a chooser and changes no occupant,
+    /// so raising a conflict there would block a pack from ever being turned on.
     pub fn slot_conflict(&self, id: &str) -> Option<SlotConflict> {
         let state = self.state.read().unwrap();
         let rec = state.records.get(id)?;
@@ -250,7 +275,9 @@ impl ExtensionsRegistry {
             let declares = state
                 .records
                 .get(challenger)
-                .map(|r| r.slots.iter().any(|s| s == slot))
+                .map(|r| {
+                    r.slots.iter().chain(r.variant_slots.iter()).any(|s| s == slot)
+                })
                 .unwrap_or(false);
             if !declares {
                 anyhow::bail!("'{challenger}' does not declare slot '{slot}'");
@@ -387,7 +414,14 @@ impl ExtensionsRegistry {
         {
             let mut state = self.state.write().unwrap();
             let id = record.id.clone();
-            let declared = record.slots.clone();
+            // Both lists count as declared: a variant still legitimately holds
+            // the slot while it is the selected look.
+            let declared: Vec<String> = record
+                .slots
+                .iter()
+                .chain(record.variant_slots.iter())
+                .cloned()
+                .collect();
             state.records.insert(id.clone(), record);
             // An update may drop a slot it used to declare; holding a claim on
             // a slot you no longer declare would block everyone else forever.
@@ -487,6 +521,7 @@ mod tests {
             installed_version: "1".into(),
             granted: vec![],
             slots: slots.iter().map(|s| s.to_string()).collect(),
+            variant_slots: vec![],
         }
     }
 
@@ -566,7 +601,7 @@ mod tests {
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
         assert_eq!(
-            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().slots,
+            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().variant_slots,
             vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
         );
 
@@ -579,7 +614,7 @@ mod tests {
         fs::write(dir.path().join(EXTENSIONS_FILE), stale).unwrap();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         assert_eq!(
-            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().slots,
+            reg.record(AGENT_CENTER_VARIANT_ID).unwrap().variant_slots,
             vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
         );
         assert_eq!(
@@ -595,6 +630,46 @@ mod tests {
         assert_eq!(
             reg.slot_conflict("rival").unwrap().current_occupant,
             AGENT_CENTER_VARIANT_ID.to_string()
+        );
+    }
+
+    #[test]
+    fn enabling_a_surface_variant_is_not_a_takeover() {
+        // Regression (reported live): toggling the centre layout on failed with
+        // "agent.reply-surface is occupied by grain.core". Enabling a variant
+        // only adds it to the position dropdown (SPEC §10.2) — it changes no
+        // occupant, so treating the declaration as a claim made the pack
+        // impossible to turn on at all.
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        reg.set_enabled(AGENT_CENTER_VARIANT_ID, false).unwrap();
+
+        assert_eq!(reg.slot_conflict(AGENT_CENTER_VARIANT_ID), None);
+        reg.set_enabled(AGENT_CENTER_VARIANT_ID, true)
+            .expect("enabling a variant must not be refused");
+        assert_eq!(
+            reg.slot_occupant(AGENT_REPLY_SURFACE_SLOT).as_deref(),
+            Some(CORE_DEFAULT),
+            "enabling offers the look; it does not select it"
+        );
+
+        // A pack that genuinely CLAIMS the same slot still faces the prompt.
+        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT])).unwrap();
+        assert!(reg.set_enabled("rival", true).is_err());
+    }
+
+    #[test]
+    fn a_selected_variant_still_releases_its_slot_on_disable() {
+        // Occupancy is what releases, not declaration — so switching the
+        // centre look off hands the reply surface back to core.
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        reg.set_slot_claim(AGENT_REPLY_SURFACE_SLOT, AGENT_CENTER_VARIANT_ID)
+            .unwrap();
+        reg.set_enabled(AGENT_CENTER_VARIANT_ID, false).unwrap();
+        assert_eq!(
+            reg.slot_occupant(AGENT_REPLY_SURFACE_SLOT).as_deref(),
+            Some(CORE_DEFAULT)
         );
     }
 
