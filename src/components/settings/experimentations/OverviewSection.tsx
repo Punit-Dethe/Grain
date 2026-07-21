@@ -1,6 +1,37 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ExternalLink, Package, Store } from "lucide-react";
+import { ExternalLink, Package, ShieldCheck, Store } from "lucide-react";
+
+/** Plain-language capability wording for the permission sheet (SPEC §1.3).
+ * One map, phrased as what the extension can DO to the user — never the raw
+ * capability name, which means nothing to the person approving it. */
+const CAPABILITY_LABELS: Record<string, string> = {
+  "events:sessions": "See when recording starts and stops",
+  "events:transcripts": "Read what you dictate",
+  "events:audio-levels": "See live microphone levels",
+  "transform:transcript": "Rewrite your text before it is pasted",
+  "session:start": "Start a recording session itself",
+  storage: "Store its own data on this device",
+  settings: "Save its own settings",
+  llm: "Send text to your configured AI provider",
+  embed: "Turn text into embeddings",
+};
+
+const capabilityLabel = (cap: string) => CAPABILITY_LABELS[cap] ?? cap;
+
+/** The backend holds a scripted extension at first enable and answers with a
+ * structured `{"needsPermissions":[…]}` error (grain_commands.rs). Anything
+ * else is a real failure and surfaces as one. */
+function parseNeedsPermissions(e: unknown): string[] | null {
+  try {
+    const parsed = JSON.parse(String(e)) as { needsPermissions?: unknown };
+    return Array.isArray(parsed?.needsPermissions)
+      ? (parsed.needsPermissions as string[])
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Mirror of the Rust `ExtensionCard` (grain_commands.rs). Local type until the
  * next dev run regenerates bindings.ts — never hand-edit bindings. */
@@ -39,6 +70,11 @@ export const OverviewSection: React.FC<{
   const [cards, setCards] = useState<ExtensionCard[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  /** The extension held at first enable, awaiting the user's approval. */
+  const [pending, setPending] = useState<{
+    card: ExtensionCard;
+    permissions: string[];
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -60,6 +96,27 @@ export const OverviewSection: React.FC<{
         id: card.id,
         enabled: !card.enabled,
       });
+      await refresh();
+    } catch (e) {
+      // A scripted extension enabling for the first time is held until the
+      // user approves its capabilities — show the sheet instead of an error.
+      const needs = parseNeedsPermissions(e);
+      if (needs) setPending({ card, permissions: needs });
+      else setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /** Approve → record the grants, then retry the enable that was held. */
+  const approve = async () => {
+    if (!pending) return;
+    const { card, permissions } = pending;
+    setPending(null);
+    setBusy(card.id);
+    try {
+      await invoke("extension_grant", { id: card.id, permissions });
+      await invoke("extension_set_enabled", { id: card.id, enabled: true });
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -114,8 +171,9 @@ export const OverviewSection: React.FC<{
                 <ExternalLink width={13} height={13} />
               </a>
             )}
-            {/* Inline enable toggle (first-enable permission sheet arrives with
-                packs that actually request permissions). */}
+            {/* Inline enable toggle. A scripted extension's first enable is
+                held by the backend until the permission sheet below is
+                approved (SPEC §6). */}
             <button
               type="button"
               role="switch"
@@ -152,6 +210,57 @@ export const OverviewSection: React.FC<{
         <Store width={14} height={14} />
         Browse extensions — coming soon
       </button>
+
+      {/* Permission sheet (SPEC §6, the Chrome model): a scripted extension
+          runs code, so nothing starts until the user approves what it asked
+          for. Cancel simply leaves it disabled. */}
+      {pending && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setPending(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-xl border border-line bg-paper-raised shadow-lg p-4 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2">
+              <ShieldCheck width={16} height={16} className="text-accent" />
+              <h3 className="text-sm font-medium text-ink">
+                Allow “{pending.card.name}”?
+              </h3>
+            </div>
+            <p className="text-xs text-ink-faint">
+              This extension runs its own code on your device. It is asking to:
+            </p>
+            <ul className="space-y-1.5">
+              {pending.permissions.map((p) => (
+                <li key={p} className="flex items-start gap-2 text-xs text-ink">
+                  <span className="mt-[5px] w-1 h-1 rounded-full bg-accent shrink-0" />
+                  <span>{capabilityLabel(p)}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPending(null)}
+                className="px-3 py-1.5 rounded-lg text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void approve()}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
+              >
+                Allow and enable
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

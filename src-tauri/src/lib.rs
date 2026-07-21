@@ -813,6 +813,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_rolling_live_preview_setting,
             grain_commands::extensions_overview,
             grain_commands::extension_set_enabled,
+            grain_commands::extension_grant,
             grain_commands::extension_import_pack,
             grain_commands::extension_export_pack,
             grain_commands::extension_uninstall,

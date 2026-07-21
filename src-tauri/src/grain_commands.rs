@@ -582,9 +582,30 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             }
             return Ok(());
         }
-        // Imported tier-A packs: registry bit + payload application.
+        // Imported packs: registry bit + payload application.
         pack_id if reg.is_installed(pack_id) => {
             let pack = load_pack(&app, pack_id)?;
+            // [GRAIN] SPEC §6 (the Chrome model): a scripted extension is HELD
+            // at first enable until the user approves the capabilities its
+            // manifest requests. Never grant implicitly — the whole point is
+            // that code cannot start running on capabilities nobody approved.
+            // The frontend catches this structured error, shows the permission
+            // sheet, calls `extension_grant`, and retries.
+            if enabled && pack.is_scripted() {
+                let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
+                let missing: Vec<String> = pack
+                    .manifest
+                    .permissions
+                    .iter()
+                    .filter(|p| !granted.contains(p))
+                    .cloned()
+                    .collect();
+                if !missing.is_empty() {
+                    return Err(
+                        serde_json::json!({ "needsPermissions": missing }).to_string()
+                    );
+                }
+            }
             reg.set_enabled(pack_id, enabled).map_err(|e| e.to_string())?;
             if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
                 ctx.update_settings(|s| {
@@ -663,6 +684,38 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         }
     }
     Ok(id)
+}
+
+/// Record the user's approval of a scripted extension's capabilities (SPEC §6).
+/// Called by the permission sheet on Approve; the caller then retries enable.
+///
+/// Grants are clamped to what the manifest actually requests, so neither a
+/// compromised frontend nor a stale sheet can widen an extension's reach beyond
+/// what the user was shown.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_grant(
+    app: AppHandle,
+    id: String,
+    permissions: Vec<String>,
+) -> Result<(), String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let mut rec = reg
+        .record(&id)
+        .ok_or_else(|| format!("'{id}' is not installed"))?;
+    let requested = load_pack(&app, &id)?.manifest.permissions;
+    if let Some(extra) = permissions.iter().find(|p| !requested.contains(p)) {
+        return Err(format!("'{extra}' is not requested by this extension"));
+    }
+    for p in permissions {
+        if !rec.granted.contains(&p) {
+            rec.granted.push(p);
+        }
+    }
+    reg.install(rec).map_err(|e| e.to_string())
 }
 
 /// Export an installed pack to `dest` (SPEC §5.1 "shareable data packs").
