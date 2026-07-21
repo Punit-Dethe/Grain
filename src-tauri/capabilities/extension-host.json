@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "extension-host",
+  "description": "Capabilities for the hidden extension-host supervisor window (SPEC §3.1, §7.1). It runs ONLY Grain's own code: it listens for ext-host://spawn / ext-host://kill and emits ext-host://ready / ext-host://died. Extension workers reach Rust exclusively through their own WebSocket — never Tauri IPC — so this surface needs nothing beyond core events.",
+  "windows": ["extension-host"],
+  "permissions": ["core:default"]
+}

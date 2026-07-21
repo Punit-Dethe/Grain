@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Grain Extension Host</title>
+    <!-- [GRAIN] The hidden supervisor surface (SPEC §3.1). It renders nothing —
+         it exists only to host one Web Worker per extension. No React, no fonts,
+         no styling: keep it as light as a blank page. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module" src="/src/extension-host.ts"></script>
+  </body>
+</html>
