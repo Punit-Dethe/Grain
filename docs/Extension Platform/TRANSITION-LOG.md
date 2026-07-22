@@ -256,6 +256,32 @@ worker runtime's backtick template (`GRAIN_RUNTIME_JS = \`…\``) used backticks
 its own and silently terminated the template string. The whole runtime shim is a
 template literal — **no backticks anywhere in its comments or code**.
 
+**Step 7 shipped — pill theme rendering (SPEC §9).** Declarative, data-only; no
+extension code runs in the pill.
+- **Contract** (`grain-sdk/pill_theme.rs`): `PillTheme` = optional `PillStateTheme`
+  per state (idle/recording/processing/fallback); each has `background?`, `dot?`,
+  `pattern` ∈ static/breathe/sweep + `#[serde(other)] Unsupported`. Every field
+  optional → every gap falls back to Grain's look. **No theme can blank the
+  pill** — that SPEC rule is structural, not a check.
+- **Rendering** (`grain-pill`): theme mirrors Remote→App, read ONLY by the
+  collapsed-pill roll (Studio/agent surfaces stay Grain's — "main pill only").
+  `roll_themed_field` paints the whole inner field in the theme colour via three
+  pattern renderers; `false` return routes every gap to the existing default
+  rolls. Capsule background themed at one site. Verified by a **PNG render test**
+  I eyeballed (all three patterns correct, silhouette respected).
+- **Delivery** (`src-tauri/pill_theme.rs`): `current()` reads the `pill.theme`
+  slot occupant's pack payload → `PillTheme`, `None` for core/garbage. Sent to
+  the pill in its **welcome** (connects late, misses broadcasts) AND broadcast on
+  change via `refresh_index` (every registry mutation, like the shortcut sync).
+- **Pack format**: `payloads.pill_theme` stays opaque `Value` on the wire;
+  `validate()` now rejects a malformed theme AND a theme with no `pill.theme`
+  slot claim at import.
+- **DELIBERATELY DEFERRED, name reserved** (capability-governance doctrine — no
+  consumer yet): the per-dot **expression evaluator** and its **3-strike →
+  default** (a named pattern can't error per-frame, so there's nothing to
+  strike); and **`pill:slots` action chips** (`pill:slots` cap already in
+  KNOWN_CAPABILITIES). Build these when a real theme/chip extension needs them.
+
 **Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/
   `HostCall`/`HostCallResult` wrapped in `HostFrame` (externally-tagged →
