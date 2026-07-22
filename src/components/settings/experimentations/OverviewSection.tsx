@@ -105,7 +105,9 @@ const NEVER_TOGGLED = "18446744073709551615";
  * user enabled them in; never-toggled sorts last, stable by name. */
 function sortCards(cards: ExtensionCard[]): ExtensionCard[] {
   const seq = (c: ExtensionCard) =>
-    c.toggle_seq === NEVER_TOGGLED ? Number.MAX_SAFE_INTEGER : Number(c.toggle_seq);
+    c.toggle_seq === NEVER_TOGGLED
+      ? Number.MAX_SAFE_INTEGER
+      : Number(c.toggle_seq);
   return [...cards].sort((a, b) => {
     if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
     const d = seq(a) - seq(b);
@@ -138,6 +140,10 @@ export const OverviewSection: React.FC<{
   const [sections, setSections] = useState<SettingsSection[]>([]);
   /** The extension whose own settings section is open, if any. */
   const [detail, setDetail] = useState<string | null>(null);
+  /** The store slide-over (SPEC §5.3). A SHELL only for now — the index,
+   * install-from-remote, and trust badges are gated behind
+   * GATE-DISTRIBUTION-AND-DEVMODE.md, so this opens onto an honest empty state. */
+  const [storeOpen, setStoreOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -353,7 +359,9 @@ export const OverviewSection: React.FC<{
               disabled={busy === card.id}
               onClick={() => void toggle(card)}
               className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
-                card.enabled ? "bg-accent" : "bg-paper-sunken border border-line"
+                card.enabled
+                  ? "bg-accent"
+                  : "bg-paper-sunken border border-line"
               } ${busy === card.id ? "opacity-50" : ""}`}
             >
               <span
@@ -371,17 +379,19 @@ export const OverviewSection: React.FC<{
         )}
       </div>
 
-      {/* Store entry point (SPEC §5.3) — the slide-over ships with the
-          marketplace phase; the affordance exists now so the layout is final. */}
+      {/* Store entry point (SPEC §5.3) — opens the slide-over. The panel is a
+          shell (empty state) until the marketplace phase; the affordance and
+          layout are final now. */}
       <button
         type="button"
-        disabled
-        title="The extension store arrives in a later update"
-        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-dashed border-line text-sm text-ink-faint cursor-not-allowed"
+        onClick={() => setStoreOpen(true)}
+        className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-dashed border-line text-sm text-ink-soft hover:text-ink hover:border-ink-faint transition-colors"
       >
         <Store width={14} height={14} />
-        Browse extensions — coming soon
+        Browse extensions
       </button>
+
+      {storeOpen && <StoreSlideOver onClose={() => setStoreOpen(false)} />}
 
       {/* Permission sheet (SPEC §6, the Chrome model): a scripted extension
           runs code, so nothing starts until the user approves what it asked
@@ -455,8 +465,8 @@ export const OverviewSection: React.FC<{
               </h3>
             </div>
             <p className="text-xs text-ink-faint">
-              Only one extension can control {slotLabel(contested.conflict.slot)}
-              . It is currently{" "}
+              Only one extension can control{" "}
+              {slotLabel(contested.conflict.slot)}. It is currently{" "}
               <span className="text-ink">
                 {occupantName(contested.conflict.currentOccupant)}
               </span>
@@ -488,6 +498,76 @@ export const OverviewSection: React.FC<{
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+/** [GRAIN] The store slide-over (SPEC §5.3): a Zen-Mods-style panel that slides
+ * in from the right INSIDE the settings window — no new window, backdrop/Esc to
+ * dismiss.
+ *
+ * This is deliberately a SHELL. The index, install-from-remote, submission flow,
+ * and trust badges are gated behind GATE-DISTRIBUTION-AND-DEVMODE.md and MUST
+ * NOT be built here — the whole point of the gate is that hosting and the
+ * "verified" guarantee are designed before any of that ships. So the panel opens
+ * onto an honest empty state and an Import-from-file affordance, which is the
+ * only install path that exists today. */
+const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Extension store"
+      onClick={onClose}
+    >
+      <div
+        className="h-full w-full max-w-md bg-paper-raised border-l border-line shadow-xl flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
+          <div className="flex items-center gap-2 text-sm font-medium text-ink">
+            <Store width={15} height={15} />
+            Extension store
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+            aria-label="Close"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-8 text-center">
+          <Package width={28} height={28} className="text-ink-faint" />
+          <div className="text-sm font-medium text-ink">
+            The store is on its way
+          </div>
+          <p className="text-xs text-ink-faint leading-relaxed">
+            Browsing and one-click installs from the community index arrive in a
+            later update, once submission, review, and the “verified” guarantee
+            are in place. Until then you can install an extension you trust from
+            a file.
+          </p>
+        </div>
+
+        <div className="px-4 py-3 border-t border-line">
+          <p className="text-[11px] text-ink-faint text-center">
+            Import a <span className="font-mono">.grainpack</span> from the
+            Extensions header to add one now.
+          </p>
+        </div>
+      </div>
     </div>
   );
 };
