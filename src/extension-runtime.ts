@@ -66,8 +66,24 @@ export const GRAIN_RUNTIME_JS = `(function () {
     var p = pending.get(res.id);
     if (!p) return;
     pending.delete(res.id);
-    if (res.err != null) p.reject(new Error(res.err));
+    if (res.err != null) p.reject(asGrainError(res.err));
     else p.resolve(res.ok);
+  }
+
+  function asGrainError(raw) {
+    var info = raw && typeof raw === "object" ? raw : {
+      code: "E_INTERNAL",
+      message: String(raw),
+      hint: "Retry the call and copy the Developer log if it keeps failing.",
+      docs: ""
+    };
+    var error = new Error(String(info.message || "Host call failed"));
+    error.name = "GrainError";
+    error.code = String(info.code || "E_INTERNAL");
+    error.hint = String(info.hint || "");
+    error.docs = String(info.docs || "");
+    if (info.capability != null) error.capability = String(info.capability);
+    return error;
   }
 
   function req(method, params) {

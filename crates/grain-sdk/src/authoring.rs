@@ -32,6 +32,25 @@ pub const GRAIN_API_TYPESCRIPT: &str = r#"export type JsonValue =
 
 export type GrainActivation = DaemonEvent | { Shortcut: { id: string } };
 
+export type GrainErrorCode =
+  | "E_CAPABILITY_DENIED"
+  | "E_TIMEOUT"
+  | "E_QUOTA"
+  | "E_INVALID_MANIFEST"
+  | "E_INVALID_ARGUMENT"
+  | "E_NOT_IMPLEMENTED"
+  | "E_UNKNOWN_METHOD"
+  | "E_UNAVAILABLE"
+  | "E_INTERNAL";
+
+export interface GrainError extends Error {
+  readonly name: "GrainError";
+  readonly code: GrainErrorCode;
+  readonly hint: string;
+  readonly docs: string;
+  readonly capability?: string;
+}
+
 export interface GrainApi {
   readonly activation: GrainActivation | null;
   readonly caps: readonly GrainCapability[];

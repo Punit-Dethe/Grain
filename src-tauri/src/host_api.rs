@@ -16,8 +16,10 @@
 //! has no connection to meter.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::PathBuf;
 
+use grain_sdk::{HostError, HostErrorCode};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
@@ -35,6 +37,31 @@ const EMBED_MAX_BATCH: usize = 64;
 /// namespace (`ext.<id>.*`). There is no path to `AppSettings` — this is the
 /// entire "settings" surface an extension has (SPEC §4.2).
 const SETTINGS_KEY: &str = "__settings";
+
+type HostResult<T> = Result<T, HostError>;
+
+#[derive(Debug)]
+pub enum ExtStorageError {
+    InvalidArgument(String),
+    Quota(String),
+    Io(String),
+    Serialization(String),
+}
+
+impl fmt::Display for ExtStorageError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidArgument(message)
+            | Self::Quota(message)
+            | Self::Io(message)
+            | Self::Serialization(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for ExtStorageError {}
+
+type StorageResult<T> = Result<T, ExtStorageError>;
 
 /// Does this identity hold `cap`? `All` (the pill) holds everything; a worker
 /// holds exactly its granted `Named` set.
@@ -87,13 +114,17 @@ impl ExtStorage {
     /// could escape the store's directory or collide across keys — the whole
     /// point of a per-document file is undone if a key can be `../../secrets`.
     /// Pure and total, so it is exhaustively unit-tested.
-    pub fn safe_doc_name(key: &str) -> Result<String, String> {
+    pub fn safe_doc_name(key: &str) -> StorageResult<String> {
         let key = key.trim();
         if key.is_empty() {
-            return Err("a document key must not be empty".into());
+            return Err(ExtStorageError::InvalidArgument(
+                "a document key must not be empty".into(),
+            ));
         }
         if key.len() > 200 {
-            return Err("a document key is at most 200 characters".into());
+            return Err(ExtStorageError::InvalidArgument(
+                "a document key is at most 200 characters".into(),
+            ));
         }
         // Allowlist, not denylist: only characters that are unambiguously safe
         // in a filename on every platform, and never a path separator or dot-run.
@@ -101,114 +132,141 @@ impl ExtStorage {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         {
-            return Err("a document key may contain only letters, digits, '-', '_' and '.'".into());
+            return Err(ExtStorageError::InvalidArgument(
+                "a document key may contain only letters, digits, '-', '_' and '.'".into(),
+            ));
         }
         // `.` and `..` (and any all-dots name) are path traversal, not documents.
         if key.chars().all(|c| c == '.') {
-            return Err("a document key must not be all dots".into());
+            return Err(ExtStorageError::InvalidArgument(
+                "a document key must not be all dots".into(),
+            ));
         }
         Ok(format!("{key}.json"))
     }
 
-    fn doc_path(&self, key: &str) -> Result<PathBuf, String> {
+    fn doc_path(&self, key: &str) -> StorageResult<PathBuf> {
         Ok(self.docs_dir.join(Self::safe_doc_name(key)?))
     }
 
     /// Total bytes the document store currently occupies (for the quota).
-    fn docs_bytes(&self) -> u64 {
-        std::fs::read_dir(&self.docs_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| e.metadata().ok())
-            .map(|m| m.len())
-            .sum()
+    fn docs_bytes(&self) -> StorageResult<u64> {
+        let entries = match std::fs::read_dir(&self.docs_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
+        };
+        let mut total = 0_u64;
+        for entry in entries {
+            let entry = entry.map_err(|error| ExtStorageError::Io(error.to_string()))?;
+            let metadata = entry
+                .metadata()
+                .map_err(|error| ExtStorageError::Io(error.to_string()))?;
+            total = total.saturating_add(metadata.len());
+        }
+        Ok(total)
     }
 
-    pub fn doc_get(&self, key: &str) -> Result<Value, String> {
+    pub fn doc_get(&self, key: &str) -> StorageResult<Value> {
         let path = self.doc_path(key)?;
         match std::fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
-            Err(_) => Ok(Value::Null), // absent document reads as null, like KV
+            Ok(raw) => serde_json::from_str(&raw)
+                .map_err(|error| ExtStorageError::Serialization(error.to_string())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Value::Null),
+            Err(error) => Err(ExtStorageError::Io(error.to_string())),
         }
     }
 
-    pub fn doc_put(&self, key: &str, value: Value) -> Result<(), String> {
+    pub fn doc_put(&self, key: &str, value: Value) -> StorageResult<()> {
         let path = self.doc_path(key)?;
-        let json = serde_json::to_string(&value).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(&value)
+            .map_err(|error| ExtStorageError::Serialization(error.to_string()))?;
         // Quota covers the doc store as a whole; charge the NEW size of this doc
         // against the total minus whatever this key used to occupy.
         let prev = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        let projected = self.docs_bytes().saturating_sub(prev) + json.len() as u64;
+        let projected = self.docs_bytes()?.saturating_sub(prev) + json.len() as u64;
         if projected > STORAGE_QUOTA_BYTES {
-            return Err(format!(
+            return Err(ExtStorageError::Quota(format!(
                 "document storage quota exceeded ({} MB max)",
                 STORAGE_QUOTA_BYTES / (1024 * 1024)
-            ));
+            )));
         }
-        std::fs::create_dir_all(&self.docs_dir).map_err(|e| e.to_string())?;
-        std::fs::write(&path, json).map_err(|e| e.to_string())
+        std::fs::create_dir_all(&self.docs_dir)
+            .map_err(|error| ExtStorageError::Io(error.to_string()))?;
+        std::fs::write(&path, json).map_err(|error| ExtStorageError::Io(error.to_string()))
     }
 
-    pub fn doc_delete(&self, key: &str) -> Result<(), String> {
+    pub fn doc_delete(&self, key: &str) -> StorageResult<()> {
         let path = self.doc_path(key)?;
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.to_string()),
+            Err(error) => Err(ExtStorageError::Io(error.to_string())),
         }
     }
 
     /// Every document key currently stored (without the `.json` suffix), sorted.
-    pub fn doc_list(&self) -> Vec<String> {
-        let mut keys: Vec<String> = std::fs::read_dir(&self.docs_dir)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter_map(|e| {
-                e.file_name()
-                    .to_str()
-                    .and_then(|n| n.strip_suffix(".json"))
-                    .map(str::to_string)
-            })
-            .collect();
-        keys.sort();
-        keys
-    }
-
-    fn load(&self) -> BTreeMap<String, Value> {
-        std::fs::read_to_string(&self.path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
-    }
-
-    fn save(&self, map: &BTreeMap<String, Value>) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    pub fn doc_list(&self) -> StorageResult<Vec<String>> {
+        let entries = match std::fs::read_dir(&self.docs_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
+        };
+        let mut keys = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| ExtStorageError::Io(error.to_string()))?;
+            if let Some(key) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_suffix(".json"))
+            {
+                keys.push(key.to_string());
+            }
         }
-        let json = serde_json::to_string(map).map_err(|e| e.to_string())?;
+        keys.sort();
+        Ok(keys)
+    }
+
+    fn load(&self) -> StorageResult<BTreeMap<String, Value>> {
+        let raw = match std::fs::read_to_string(&self.path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(BTreeMap::new())
+            }
+            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
+        };
+        serde_json::from_str(&raw)
+            .map_err(|error| ExtStorageError::Serialization(error.to_string()))
+    }
+
+    fn save(&self, map: &BTreeMap<String, Value>) -> StorageResult<()> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| ExtStorageError::Io(error.to_string()))?;
+        }
+        let json = serde_json::to_string(map)
+            .map_err(|error| ExtStorageError::Serialization(error.to_string()))?;
         if json.len() as u64 > STORAGE_QUOTA_BYTES {
-            return Err(format!(
+            return Err(ExtStorageError::Quota(format!(
                 "storage quota exceeded ({} MB max)",
                 STORAGE_QUOTA_BYTES / (1024 * 1024)
-            ));
+            )));
         }
-        std::fs::write(&self.path, json).map_err(|e| e.to_string())
+        std::fs::write(&self.path, json).map_err(|error| ExtStorageError::Io(error.to_string()))
     }
 
-    pub fn get(&self, key: &str) -> Value {
-        self.load().get(key).cloned().unwrap_or(Value::Null)
+    pub fn get(&self, key: &str) -> StorageResult<Value> {
+        Ok(self.load()?.get(key).cloned().unwrap_or(Value::Null))
     }
 
-    pub fn set(&self, key: &str, value: Value) -> Result<(), String> {
-        let mut map = self.load();
+    pub fn set(&self, key: &str, value: Value) -> StorageResult<()> {
+        let mut map = self.load()?;
         map.insert(key.to_string(), value);
         self.save(&map)
     }
 
-    pub fn delete(&self, key: &str) -> Result<(), String> {
-        let mut map = self.load();
+    pub fn delete(&self, key: &str) -> StorageResult<()> {
+        let mut map = self.load()?;
         map.remove(key);
         self.save(&map)
     }
@@ -219,15 +277,16 @@ impl ExtStorage {
     /// Public because the host's settings controls write here too: one store,
     /// one way in, so the schema cannot be enforced on one path and not the
     /// other.
-    pub fn settings_get(&self, key: &str) -> Value {
-        self.get(SETTINGS_KEY)
+    pub fn settings_get(&self, key: &str) -> StorageResult<Value> {
+        Ok(self
+            .get(SETTINGS_KEY)?
             .get(key)
             .cloned()
-            .unwrap_or(Value::Null)
+            .unwrap_or(Value::Null))
     }
 
-    pub fn settings_set(&self, key: &str, value: Value) -> Result<(), String> {
-        let mut ns = match self.get(SETTINGS_KEY) {
+    pub fn settings_set(&self, key: &str, value: Value) -> StorageResult<()> {
+        let mut ns = match self.get(SETTINGS_KEY)? {
             Value::Object(m) => m,
             _ => serde_json::Map::new(),
         };
@@ -236,12 +295,170 @@ impl ExtStorage {
     }
 }
 
-fn param_str(params: &Value, key: &str) -> Result<String, String> {
+fn typed_error(
+    code: HostErrorCode,
+    message: impl Into<String>,
+    hint: impl Into<String>,
+) -> HostError {
+    HostError::new(code, message, hint)
+}
+
+fn invalid_argument(message: impl Into<String>) -> HostError {
+    typed_error(
+        HostErrorCode::InvalidArgument,
+        message,
+        "Correct the call arguments and try again.",
+    )
+}
+
+fn internal_error(message: impl Into<String>) -> HostError {
+    typed_error(
+        HostErrorCode::Internal,
+        message,
+        "Retry the call. If it keeps failing, copy the Extensions > Developer log.",
+    )
+}
+
+fn unavailable(message: impl Into<String>, hint: impl Into<String>) -> HostError {
+    typed_error(HostErrorCode::Unavailable, message, hint)
+}
+
+fn service_error(service: &str, message: String) -> HostError {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timeout") || lower.contains("timed out") {
+        typed_error(
+            HostErrorCode::Timeout,
+            format!("{service} timed out: {message}"),
+            "Retry the call or reduce the request size.",
+        )
+    } else {
+        unavailable(
+            format!("{service} is unavailable: {message}"),
+            format!("Check the {service} configuration, then retry the call."),
+        )
+    }
+}
+
+fn storage_error(error: ExtStorageError) -> HostError {
+    match error {
+        ExtStorageError::InvalidArgument(message) => invalid_argument(message),
+        ExtStorageError::Quota(message) => typed_error(
+            HostErrorCode::Quota,
+            message,
+            "Delete extension storage you no longer need, then retry the write.",
+        ),
+        ExtStorageError::Io(message) | ExtStorageError::Serialization(message) => {
+            internal_error(format!("extension storage failed: {message}"))
+        }
+    }
+}
+
+fn param_str(params: &Value, key: &str) -> HostResult<String> {
     params
         .get(key)
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| format!("missing string param '{key}'"))
+        .ok_or_else(|| invalid_argument(format!("'{key}' must be a string")))
+}
+
+fn param_value(params: &Value, key: &str) -> HostResult<Value> {
+    params
+        .get(key)
+        .cloned()
+        .ok_or_else(|| invalid_argument(format!("missing required '{key}' value")))
+}
+
+fn param_nonempty_str(params: &Value, key: &str) -> HostResult<String> {
+    let value = param_str(params, key)?;
+    if value.trim().is_empty() {
+        Err(invalid_argument(format!("'{key}' must not be empty")))
+    } else {
+        Ok(value)
+    }
+}
+
+fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
+    let values = params
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_argument(format!("'{key}' must be an array of strings")))?;
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| invalid_argument(format!("'{key}[{index}]' must be a string")))
+        })
+        .collect()
+}
+
+fn authorize(identity: &ClientIdentity, method: &str) -> HostResult<()> {
+    match required_capability(method) {
+        Some("__unknown__") => Err(unknown_method(method)),
+        Some(capability) if !has_capability(identity, capability) => {
+            Err(HostError::capability_denied(capability, method))
+        }
+        _ => Ok(()),
+    }
+}
+
+fn unknown_method(method: &str) -> HostError {
+    typed_error(
+        HostErrorCode::UnknownMethod,
+        format!("Unknown host method '{method}'."),
+        "Use a method declared by the current grain.d.ts SDK.",
+    )
+}
+
+/// Validate every request field before touching app state. This is the refusal
+/// boundary: malformed calls always receive a typed error, never `ok: null`.
+fn validate_request(method: &str, params: &Value) -> HostResult<()> {
+    match method {
+        "log.info" | "log.warn" => {
+            param_str(params, "msg")?;
+        }
+        "storage.get" | "storage.delete" | "doc.get" | "doc.delete" | "settings.get" => {
+            param_nonempty_str(params, "key")?;
+        }
+        "storage.set" | "doc.put" | "settings.set" => {
+            param_nonempty_str(params, "key")?;
+            param_value(params, "value")?;
+        }
+        "llm.complete" => {
+            param_nonempty_str(params, "prompt")?;
+        }
+        "embed" => {
+            let texts = param_strings(params, "texts")?;
+            if texts.len() > EMBED_MAX_BATCH {
+                return Err(invalid_argument(format!(
+                    "'texts' accepts at most {EMBED_MAX_BATCH} items"
+                )));
+            }
+        }
+        "doc.list" | "session.start" | "capture.selection" | "workspace.open"
+        | "workspace.close" | "overlay.show" | "overlay.dismiss" => {}
+        _ => return Err(unknown_method(method)),
+    }
+    Ok(())
+}
+
+fn not_implemented(method: &str) -> HostError {
+    typed_error(
+        HostErrorCode::NotImplemented,
+        format!("{method} is not implemented in this Grain build."),
+        format!("Wait for Grain API support before depending on {method}."),
+    )
+}
+
+fn preflight(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
+    authorize(identity, method)?;
+    validate_request(method, params)?;
+    if method == "session.start" {
+        return Err(not_implemented(method));
+    }
+    Ok(())
 }
 
 /// Route one worker API call. Capability check FIRST; on failure return the
@@ -251,17 +468,13 @@ pub async fn dispatch(
     identity: &ClientIdentity,
     method: &str,
     params: Value,
-) -> Result<Value, String> {
-    if let Some(cap) = required_capability(method) {
-        if !has_capability(identity, cap) {
-            return Err(format!("capability '{cap}' not granted"));
-        }
-    }
+) -> HostResult<Value> {
+    preflight(identity, method, &params)?;
 
     let data_dir = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .map(|c| c.data_dir.clone())
-        .ok_or("app context unavailable")?;
+        .ok_or_else(|| internal_error("app context unavailable"))?;
     let store = ExtStorage::new(&data_dir, &identity.id);
 
     match method {
@@ -273,37 +486,52 @@ pub async fn dispatch(
             log::warn!("[ext:{}] {}", identity.id, param_str(&params, "msg")?);
             Ok(Value::Null)
         }
-        "storage.get" => Ok(store.get(&param_str(&params, "key")?)),
+        "storage.get" => store
+            .get(&param_str(&params, "key")?)
+            .map_err(storage_error),
         "storage.set" => {
             let key = param_str(&params, "key")?;
-            let value = params.get("value").cloned().unwrap_or(Value::Null);
-            store.set(&key, value)?;
+            let value = param_value(&params, "value")?;
+            store.set(&key, value).map_err(storage_error)?;
             Ok(Value::Null)
         }
         "storage.delete" => {
-            store.delete(&param_str(&params, "key")?)?;
+            store
+                .delete(&param_str(&params, "key")?)
+                .map_err(storage_error)?;
             Ok(Value::Null)
         }
         // [GRAIN] SPEC §3.4: the document store — one file per key, so a large
         // note collection is not one blob rewritten on every edit. Same
         // `storage` grant, same quota; the key is a path-safe filename.
-        "doc.get" => store.doc_get(&param_str(&params, "key")?),
+        "doc.get" => store
+            .doc_get(&param_str(&params, "key")?)
+            .map_err(storage_error),
         "doc.put" => {
             let key = param_str(&params, "key")?;
-            let value = params.get("value").cloned().unwrap_or(Value::Null);
-            store.doc_put(&key, value)?;
+            let value = param_value(&params, "value")?;
+            store.doc_put(&key, value).map_err(storage_error)?;
             Ok(Value::Null)
         }
         "doc.delete" => {
-            store.doc_delete(&param_str(&params, "key")?)?;
+            store
+                .doc_delete(&param_str(&params, "key")?)
+                .map_err(storage_error)?;
             Ok(Value::Null)
         }
-        "doc.list" => Ok(json!({ "keys": store.doc_list() })),
+        "doc.list" => Ok(json!({ "keys": store.doc_list().map_err(storage_error)? })),
         // [GRAIN] SPEC §1.2: the extension asks for ITS OWN workspace and gets
         // nothing else — there is no id parameter to point at another
         // extension's surface, because identity comes from the channel.
         "workspace.open" => {
-            crate::surfaces::extension::open(app, &identity.id, params.get("payload").cloned())?;
+            crate::surfaces::extension::open(app, &identity.id, params.get("payload").cloned())
+                .map_err(|error| {
+                    typed_error(
+                        HostErrorCode::InvalidManifest,
+                        format!("workspace.open failed: {error}"),
+                        "Declare a valid workspace surface in manifest.json, then reload the extension.",
+                    )
+                })?;
             Ok(Value::Null)
         }
         "workspace.close" => {
@@ -313,7 +541,14 @@ pub async fn dispatch(
         // [GRAIN] SPEC §1.2: a transient HUD for THIS extension, host-budgeted
         // in size and lifetime — same channel-derived identity as workspace.
         "overlay.show" => {
-            crate::surfaces::overlay::show(app, &identity.id, params.get("payload").cloned())?;
+            crate::surfaces::overlay::show(app, &identity.id, params.get("payload").cloned())
+                .map_err(|error| {
+                    typed_error(
+                        HostErrorCode::InvalidManifest,
+                        format!("overlay.show failed: {error}"),
+                        "Declare a valid overlay surface in manifest.json, then reload the extension.",
+                    )
+                })?;
             Ok(Value::Null)
         }
         "overlay.dismiss" => {
@@ -322,7 +557,7 @@ pub async fn dispatch(
         }
         "settings.get" => {
             let key = param_str(&params, "key")?;
-            let stored = store.settings_get(&key);
+            let stored = store.settings_get(&key).map_err(storage_error)?;
             // A declared setting reads back through the schema, so a value left
             // behind by an older version resolves to something the extension's
             // own declaration says is legal.
@@ -335,7 +570,7 @@ pub async fn dispatch(
         }
         "settings.set" => {
             let key = param_str(&params, "key")?;
-            let value = params.get("value").cloned().unwrap_or(Value::Null);
+            let value = param_value(&params, "value")?;
             // [GRAIN] SPEC §4.1: the schema is enforced HERE, not only in the
             // settings form — this is the same namespace the host's own
             // controls write to, and the extension can reach it directly. A
@@ -346,17 +581,19 @@ pub async fn dispatch(
             let value = match crate::grain_commands::setting_decl(app, &identity.id, &key) {
                 Some(decl) => {
                     grain_sdk::settings_schema::coerce(&decl, &value)
-                        .map_err(|e| format!("'{key}': {e}"))?
+                        .map_err(|error| invalid_argument(format!("'{key}': {error}")))?
                         .value
                 }
                 None => value,
             };
-            store.settings_set(&key, value)?;
+            store.settings_set(&key, value).map_err(storage_error)?;
             Ok(Value::Null)
         }
         "llm.complete" => {
             let prompt = param_str(&params, "prompt")?;
-            let text = crate::grain_post_process::complete_for_extension(app, &prompt).await?;
+            let text = crate::grain_post_process::complete_for_extension(app, &prompt)
+                .await
+                .map_err(|error| service_error("LLM provider", error))?;
             Ok(json!({ "text": text }))
         }
         "embed" => {
@@ -366,25 +603,12 @@ pub async fn dispatch(
             // without shipping its own model. Blocking (model inference), so it
             // runs on the blocking pool; failure to load the model is surfaced
             // verbatim rather than pretended around.
-            let texts: Vec<String> = params
-                .get("texts")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .map(|v| v.as_str().unwrap_or_default().to_string())
-                        .collect()
-                })
-                .ok_or("embed requires a 'texts' array of strings")?;
-            if texts.len() > EMBED_MAX_BATCH {
-                return Err(format!(
-                    "embed accepts at most {EMBED_MAX_BATCH} texts per call"
-                ));
-            }
+            let texts = param_strings(&params, "texts")?;
             let vectors =
                 tokio::task::spawn_blocking(move || crate::grain_space::embed::embed(texts))
                     .await
-                    .map_err(|e| format!("embed task failed: {e}"))?
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|error| internal_error(format!("embed task failed: {error}")))?
+                    .map_err(|error| service_error("embedding model", error.to_string()))?;
             Ok(json!({ "vectors": vectors }))
         }
         "capture.selection" => {
@@ -394,9 +618,16 @@ pub async fn dispatch(
             // use. Blocking (it polls the clipboard), so off the async thread;
             // `null` when there was nothing selected.
             let app2 = app.clone();
-            let text = tokio::task::spawn_blocking(move || crate::agent::capture_selection(&app2))
-                .await
-                .map_err(|e| format!("capture task failed: {e}"))?;
+            let text =
+                tokio::task::spawn_blocking(move || crate::agent::capture_selection_result(&app2))
+                    .await
+                    .map_err(|error| internal_error(format!("capture task failed: {error}")))?
+                    .map_err(|error| {
+                        unavailable(
+                            format!("selection capture failed: {error}"),
+                            "Focus an app with selectable text and retry the call.",
+                        )
+                    })?;
             Ok(json!({ "text": text }))
         }
         "session.start" => {
@@ -404,9 +635,9 @@ pub async fn dispatch(
             // exists in the vocabulary and the router from day one, so a
             // Phase-3 extension never discovers the gap. Returns a clear
             // unimplemented until the coordinator wiring lands.
-            Err("session.start is not implemented yet".into())
+            Err(not_implemented("session.start"))
         }
-        other => Err(format!("unknown method '{other}'")),
+        other => Err(unknown_method(other)),
     }
 }
 
@@ -454,20 +685,101 @@ mod tests {
         ));
     }
 
+    fn assert_typed(error: &HostError) {
+        assert!(!error.message.trim().is_empty());
+        assert!(!error.hint.trim().is_empty());
+        assert!(error.docs.starts_with("https://"));
+    }
+
+    #[test]
+    fn every_preflight_refusal_is_typed_and_never_an_empty_success() {
+        let no_caps = named(&[]);
+        for (method, capability) in [
+            ("storage.get", "storage"),
+            ("doc.list", "storage"),
+            ("settings.get", "settings"),
+            ("llm.complete", "llm"),
+            ("embed", "embed"),
+            ("capture.selection", "capture:selection"),
+            ("workspace.open", "surface:workspace"),
+            ("overlay.show", "surface:overlay"),
+        ] {
+            let error = preflight(&no_caps, method, &json!({})).unwrap_err();
+            assert_eq!(error.code, HostErrorCode::CapabilityDenied, "{method}");
+            assert_eq!(error.capability.as_deref(), Some(capability));
+            assert_typed(&error);
+        }
+
+        let all_caps = named(&[
+            "storage",
+            "settings",
+            "llm",
+            "embed",
+            "session:start",
+            "capture:selection",
+            "surface:workspace",
+            "surface:overlay",
+        ]);
+        for (method, params) in [
+            ("log.info", json!({})),
+            ("storage.get", json!({})),
+            ("storage.set", json!({"key": "k"})),
+            ("doc.put", json!({"key": "k"})),
+            ("settings.set", json!({"key": "k"})),
+            ("llm.complete", json!({"prompt": 4})),
+            ("embed", json!({"texts": ["ok", 4]})),
+        ] {
+            let error = preflight(&all_caps, method, &params).unwrap_err();
+            assert_eq!(error.code, HostErrorCode::InvalidArgument, "{method}");
+            assert_typed(&error);
+        }
+
+        for (method, params) in [
+            ("log.info", json!({"msg": "ready"})),
+            ("log.warn", json!({"msg": "careful"})),
+            ("storage.get", json!({"key": "k"})),
+            ("storage.set", json!({"key": "k", "value": null})),
+            ("storage.delete", json!({"key": "k"})),
+            ("doc.get", json!({"key": "k"})),
+            ("doc.put", json!({"key": "k", "value": null})),
+            ("doc.delete", json!({"key": "k"})),
+            ("doc.list", json!({})),
+            ("settings.get", json!({"key": "k"})),
+            ("settings.set", json!({"key": "k", "value": null})),
+            ("llm.complete", json!({"prompt": "hello"})),
+            ("embed", json!({"texts": ["hello"]})),
+            ("capture.selection", json!({})),
+            ("workspace.open", json!({})),
+            ("workspace.close", json!({})),
+            ("overlay.show", json!({})),
+            ("overlay.dismiss", json!({})),
+        ] {
+            assert!(preflight(&all_caps, method, &params).is_ok(), "{method}");
+        }
+
+        let unknown = preflight(&all_caps, "os.exec", &json!({})).unwrap_err();
+        assert_eq!(unknown.code, HostErrorCode::UnknownMethod);
+        assert_typed(&unknown);
+
+        let pending = preflight(&all_caps, "session.start", &json!({})).unwrap_err();
+        assert_eq!(pending.code, HostErrorCode::NotImplemented);
+        assert_typed(&pending);
+    }
+
     #[test]
     fn storage_roundtrip_and_settings_namespace() {
         let dir = tempfile::tempdir().unwrap();
         let s = ExtStorage::new(dir.path(), "com.example.a");
-        assert_eq!(s.get("k"), Value::Null);
+        assert_eq!(s.get("k").unwrap(), Value::Null);
         s.set("k", json!({"n": 1})).unwrap();
-        assert_eq!(s.get("k"), json!({"n": 1}));
+        assert_eq!(s.get("k").unwrap(), json!({"n": 1}));
         s.delete("k").unwrap();
-        assert_eq!(s.get("k"), Value::Null);
+        assert_eq!(s.get("k").unwrap(), Value::Null);
 
         // Settings namespace is isolated under its own reserved key.
         s.settings_set("theme", json!("dark")).unwrap();
-        assert_eq!(s.settings_get("theme"), json!("dark"));
-        assert_eq!(s.get("theme"), Value::Null); // not a top-level key
+        assert_eq!(s.settings_get("theme").unwrap(), json!("dark"));
+        assert_eq!(s.get("theme").unwrap(), Value::Null); // not a top-level key
     }
 
     #[test]
@@ -475,9 +787,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = ExtStorage::new(dir.path(), "big");
         let huge = "x".repeat((STORAGE_QUOTA_BYTES + 1) as usize);
-        assert!(s.set("k", json!(huge)).is_err());
+        let error = storage_error(s.set("k", json!(huge)).unwrap_err());
+        assert_eq!(error.code, HostErrorCode::Quota);
+        assert_typed(&error);
         // A normal value still writes.
         assert!(s.set("k", json!("small")).is_ok());
+    }
+
+    #[test]
+    fn corrupt_storage_is_an_error_not_a_fake_missing_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = ExtStorage::new(dir.path(), "corrupt");
+        std::fs::create_dir_all(s.path.parent().unwrap()).unwrap();
+        std::fs::write(&s.path, "not json").unwrap();
+        let error = storage_error(s.get("k").unwrap_err());
+        assert_eq!(error.code, HostErrorCode::Internal);
+        assert_typed(&error);
     }
 
     #[test]
@@ -512,19 +837,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let s = ExtStorage::new(dir.path(), "com.example.docs");
         assert_eq!(s.doc_get("a").unwrap(), Value::Null); // absent → null
-        assert!(s.doc_list().is_empty());
+        assert!(s.doc_list().unwrap().is_empty());
 
         s.doc_put("a", json!({"body": "one"})).unwrap();
         s.doc_put("b", json!({"body": "two"})).unwrap();
         assert_eq!(s.doc_get("a").unwrap(), json!({"body": "one"}));
-        assert_eq!(s.doc_list(), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            s.doc_list().unwrap(),
+            vec!["a".to_string(), "b".to_string()]
+        );
 
         // A document is its own file — the KV store is untouched by doc writes.
-        assert_eq!(s.get("a"), Value::Null);
+        assert_eq!(s.get("a").unwrap(), Value::Null);
 
         s.doc_delete("a").unwrap();
         assert_eq!(s.doc_get("a").unwrap(), Value::Null);
-        assert_eq!(s.doc_list(), vec!["b".to_string()]);
+        assert_eq!(s.doc_list().unwrap(), vec!["b".to_string()]);
         // Deleting an absent document is not an error.
         assert!(s.doc_delete("gone").is_ok());
     }

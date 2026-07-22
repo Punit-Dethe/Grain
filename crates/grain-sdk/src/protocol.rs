@@ -15,6 +15,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::HostError;
+
 /// The contract's version, sent back in [`ServerWelcome`]. Clients decide for
 /// themselves whether they can speak it (additive changes bump the minor).
 pub const GRAIN_API_VERSION: &str = "1.0";
@@ -47,7 +49,7 @@ pub struct ServerResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ok: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub err: Option<String>,
+    pub err: Option<HostError>,
 }
 
 /// Server → worker: a host-initiated call (a transform step, an event
@@ -196,6 +198,15 @@ mod tests {
         }))
         .unwrap();
         assert!(res.contains(r#""ok":"v""#) && !res.contains("err"));
+
+        let denied = serde_json::to_string(&HostFrame::Response(ServerResponse {
+            id: 8,
+            ok: None,
+            err: Some(HostError::capability_denied("storage", "storage.get")),
+        }))
+        .unwrap();
+        assert!(denied.contains(r#""code":"E_CAPABILITY_DENIED""#));
+        assert!(denied.contains(r#""hint":"#));
     }
 
     #[test]

@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–6 shipped 2026-07-23:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, source-mapped developer worker errors, and the filtered developer log console. **Step 7 (typed errors) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–7 shipped 2026-07-23:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, source-mapped developer worker errors, the filtered developer log console, and typed host errors. **Step 8 (`grain-ext doctor`) is next.** |
 
 **Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
 the project's build command alive in incremental `--watch` mode, watches its
@@ -69,6 +69,19 @@ streaming remains off in normal use and is active when either Debug or extension
 Developer mode owns the console. Verification: 277 backend tests, production
 frontend build, and focused ESLint passed; an isolated real WebView2 run proved
 Developer-mode activation and the new tab without touching the installed app.
+
+**Phase 3.5 step 7 detail.** Host refusals now cross the protocol as structured
+`HostError` values with a stable `E_*` code, message, hint, documentation link,
+and the missing capability where applicable. Both injected JavaScript bridges
+surface those values as enriched `GrainError` instances, and generated SDK
+types expose the same contract. Host argument validation happens before app
+state access; unknown, unavailable, timeout, quota, invalid-manifest, and
+internal failures no longer collapse into bare strings or empty successes.
+Extension storage now distinguishes missing data from corrupt/unreadable data,
+while the host UI remains resilient if an extension's settings cannot be read.
+Verification: 279 backend tests, the full `grain-ext` suite, SDK tests, the
+production frontend build, focused formatting checks, and a graph impact review
+all passed. The refusal matrix test covers every routed host method.
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -531,13 +544,13 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–5 (`Origin` hardening,
-   `grain-ext init`, load-unpacked, authenticated hot reload, and source maps)
-   are shipped. The live step-4 latency/RSS and step-5 authored-stack gates
-   passed. Continue with developer panel → typed errors → `doctor`
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–7 (`Origin` hardening,
+   `grain-ext init`, load-unpacked, authenticated hot reload, source maps,
+   developer log console, and typed errors) are shipped. The live step-4
+   latency/RSS and step-5 authored-stack gates passed. Continue with `doctor`
    → author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks step 6.*
+   *Nothing blocks step 8.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`

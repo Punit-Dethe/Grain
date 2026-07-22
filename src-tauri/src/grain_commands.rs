@@ -1074,7 +1074,10 @@ fn rows_for(
         .into_iter()
         .filter(|d| !matches!(d.kind, grain_sdk::SettingKind::Unsupported))
         .map(|decl| {
-            let stored = store.settings_get(&decl.key);
+            let stored = store.settings_get(&decl.key).unwrap_or_else(|error| {
+                log::warn!("[GRAIN] extension settings storage read failed: {error}");
+                serde_json::Value::Null
+            });
             let resolved = grain_sdk::settings_schema::resolve(&decl, Some(&stored));
             setting_row(decl, resolved.value, resolved.notice)
         })
@@ -1164,7 +1167,8 @@ pub fn extension_setting_set(
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("app context unavailable")?;
     crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
-        .settings_set(&key, accepted.value.clone())?;
+        .settings_set(&key, accepted.value.clone())
+        .map_err(|error| error.to_string())?;
     Ok(setting_row(decl, accepted.value, accepted.notice))
 }
 

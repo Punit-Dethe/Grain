@@ -705,18 +705,23 @@ fn place_panel_center(window: &tauri::WebviewWindow, height: f64) {
 /// Returns `None` if nothing usable was selected, input simulation is unavailable,
 /// or the clipboard didn't change.
 // pub(crate): Grain Space quick-add reuses the same invisible selection grab.
-pub(crate) fn capture_selection(app: &AppHandle) -> Option<String> {
-    let enigo_state = app.try_state::<EnigoState>()?;
+pub(crate) fn capture_selection_result(app: &AppHandle) -> Result<Option<String>, String> {
+    let enigo_state = app
+        .try_state::<EnigoState>()
+        .ok_or("input controller unavailable")?;
     let clipboard = app.clipboard();
     let saved = clipboard.read_text().ok();
 
     {
-        let mut enigo = enigo_state.0.lock().ok()?;
+        let mut enigo = enigo_state
+            .0
+            .lock()
+            .map_err(|_| "input controller lock failed".to_string())?;
         crate::input::release_modifiers(&mut enigo);
         std::thread::sleep(std::time::Duration::from_millis(40));
         if let Err(e) = crate::input::send_copy_ctrl_c(&mut enigo) {
             warn!("[GRAIN] agent: simulated copy failed: {e}");
-            return None;
+            return Err(format!("simulated copy failed: {e}"));
         }
     } // release the enigo lock before sleeping/polling
 
@@ -746,9 +751,19 @@ pub(crate) fn capture_selection(app: &AppHandle) -> Option<String> {
         None => {}
     }
 
-    captured
+    Ok(captured
         .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty()))
+}
+
+pub(crate) fn capture_selection(app: &AppHandle) -> Option<String> {
+    match capture_selection_result(app) {
+        Ok(selection) => selection,
+        Err(error) => {
+            warn!("[GRAIN] selection capture failed: {error}");
+            None
+        }
+    }
 }
 
 /// [GRAIN] Agent context awareness: read the still-focused field at summon.

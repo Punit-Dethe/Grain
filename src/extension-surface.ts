@@ -42,6 +42,21 @@ const BRIDGE = `<script>(function(){
     });
   }
   var listeners = [];
+  function asGrainError(raw){
+    var info = raw && typeof raw === "object" ? raw : {
+      code: "E_INTERNAL",
+      message: String(raw),
+      hint: "Retry the call and copy the Developer log if it keeps failing.",
+      docs: ""
+    };
+    var error = new Error(String(info.message || "Host call failed"));
+    error.name = "GrainError";
+    error.code = String(info.code || "E_INTERNAL");
+    error.hint = String(info.hint || "");
+    error.docs = String(info.docs || "");
+    if (info.capability != null) error.capability = String(info.capability);
+    return error;
+  }
   window.addEventListener("message", function(e){
     var d = e.data;
     if (!d) return;
@@ -49,7 +64,7 @@ const BRIDGE = `<script>(function(){
       var p = pending[d.id];
       if (!p) return;
       delete pending[d.id];
-      if (d.err != null) p.reject(new Error(d.err)); else p.resolve(d.ok);
+      if (d.err != null) p.reject(asGrainError(d.err)); else p.resolve(d.ok);
       return;
     }
     if (d.__grainevent === 1) {
@@ -79,7 +94,7 @@ const BRIDGE = `<script>(function(){
       get: function(k){ return call("settings.get", { key: k }); },
       set: function(k, v){ return call("settings.set", { key: k, value: v }); }
     },
-    llm: { complete: function(p){ return call("llm.complete", p || {}); } },
+    llm: { complete: function(p){ return call("llm.complete", { prompt: String(p) }); } },
     workspace: { close: function(){ return call("workspace.close", {}); } },
     overlay: { dismiss: function(){ return call("overlay.dismiss", {}); } },
     onEvent: function(fn){ listeners.push(fn); },

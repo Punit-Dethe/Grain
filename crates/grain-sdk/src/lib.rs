@@ -20,6 +20,7 @@
 //! narrowly, widen later).
 
 pub mod authoring;
+pub mod error;
 pub mod event;
 pub mod manifest;
 pub mod pill_theme;
@@ -27,6 +28,7 @@ pub mod protocol;
 pub mod settings_schema;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
+pub use error::{HostError, HostErrorCode};
 pub use event::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
 pub use manifest::{
     Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry,
