@@ -44,6 +44,31 @@ Context Awareness, Agent, Grain Space) are being moved onto this same contract.
 piece lands in the roadmap, and a step-by-step guide an implementer can follow
 without asking anyone anything.
 
+### 0.1 Operating assumptions — read these before judging any decision below
+
+These are the project owner's stated expectations (2026-07-22), and several
+decisions only make sense in their light:
+
+- **Volume: 10–20 new extensions per month, for the first three to four months**,
+  growing gradually. Grain's extensions are functional *and* visual, which is the
+  slower-growing kind: Zen Browser, a large project, has ~77 mods in total.
+- **Therefore: every extension is reviewed by a human. 100%.** No auto-publish
+  rung. At this volume it is affordable, and it is a far stronger promise than
+  any badge — *if it is in the store, a person read its source*.
+- **One reviewer** (the project owner). This is the real capacity constraint, and
+  the reason §3.4 exists at all.
+- **Budget: zero.** Hosting must cost nothing until donations change that. The
+  public site runs on a free Vercel deployment with its auto-assigned
+  `*.vercel.app` domain; a purchased domain comes later.
+- **Signing keys live on removable media** (an encrypted pen drive), sometimes
+  on the owner's computer. No hardware security module, no key ceremony with
+  multiple custodians. §2.2 is designed for *that*, not for an idealised setup.
+
+**When to revisit:** if the review queue's median wait exceeds ~5 working days,
+or submissions exceed ~40/month including updates, the `experimental` rung in
+§3.1 gets switched on. It is built and left disabled precisely so that growing
+past one reviewer is a policy change, not a redesign.
+
 ---
 
 ## 1. The decisions, on one page
@@ -51,15 +76,16 @@ without asking anyone anything.
 | Question | Decision | Why (finding) |
 |---|---|---|
 | Where does the index live? | A new public GitHub repo, `grain-extensions`. Submissions are pull requests. | Obsidian, Raycast and Zed all do this and none runs a submission service (**F-1**) |
-| What does the app talk to? | **Static signed JSON on a CDN** (Cloudflare R2 + Pages), never the git repo | Git-as-database degrades; static is CDN-cacheable and works offline (**F-1**, **F-12**) |
+| What does the app talk to? | **Static signed JSON + artifacts on GitHub Releases** of that repo, never the git tree, and **never the website** | Git-as-database degrades; releases have no pausing bandwidth cap; signing makes the host untrusted anyway (**F-1**, **F-12**, §2.3) |
+| Is there a public website? | Yes, on **Vercel** with its free `*.vercel.app` domain — but it is a *shop window only*. The app never depends on it. | Vercel's free tier hard-caps at 100 GB and then **pauses the deployment**; the in-app store must not be able to go offline (§2.3) |
 | Who builds the artifact? | **We do.** The registry's CI builds from a pinned commit. Authors submit source, never bytes. | The only way "reviewed" and "installed" are provably the same thing (**F-2**) |
 | How does the app know it is genuine? | Ed25519 signature over the index, **root public key pinned in the binary** — the same shape as Grain's own updater | Already proven in this codebase; no new crypto (**F-3**, **F-24**) |
 | How is "verified" made unforgeable? | Trust exists **only** inside signed index metadata. No manifest field, no domain check, no author input. | Domain-ownership "verified" is theatre (**F-5**, **F-22**) |
 | What stops review-then-swap? | Trust is **per version**, bound to `(id, version, sha256)`; we built the bytes ourselves | GlassWorm shipped clean, then updated dirty (**F-6**) |
-| How does review stay fast? | Risk score computed from the manifest → three lanes: auto / auto+audit / human | Grain's capabilities make risk *machine-computable*, unlike Chrome or VS Code (**F-14**, **F-15**) |
+| Who reviews? | **A human reads every extension, and every update.** The risk score sets the queue order and the depth of the read, not whether one happens. | 10–20/month is one reviewer's day per week; "we read everything" beats any badge (§0.1, **F-14**) |
+| How does that stay sustainable? | We build the bytes, so an update's review surface is a **source diff**, not a codebase | Diff-only re-review is the difference between 20 reviews and 20 re-reads (**F-2**, §3.4) |
 | Where is our dashboard? | A generated static page over GitHub PRs + labels. GitHub is the database. | Zero infra, free auth, complete audit trail (**F-14**) |
-| Is there a public website? | Yes — a static site generated from the same index. Free, and it is how people share links. | Cost is ~zero (**F-4**) |
-| What does hosting cost? | Effectively $0 — R2 has no egress charge, Pages has no bandwidth cap, Actions is free for public repos | (**F-4**) |
+| What does hosting cost? | $0 — GitHub Releases and Actions are free for public repos; Vercel Hobby is free for the site | (**F-4**, §2.3) |
 | How do people build extensions? | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`) + in-app developer mode with load-unpacked, sub-second reload, and a developer panel | Raycast's DX is the bar; Zed's load-unpacked is the model (**F-16**, **F-17**) |
 | What ships first? | **Developer mode, before Phase 4.** | Nothing else can be authored or verified without it (**F-19**) |
 
@@ -79,7 +105,8 @@ without asking anyone anything.
                             │    no secrets, no network egress         │ PINNED root key
                             ├─ CI job 2: CHECK (lint, risk score)      ▼
                             ├─ human review IF the lane says so   fetch blob/<sha256>
-                            └─ CI job 3: SIGN + PUBLISH ──▶ R2     verify hash → unpack
+                            ├─ human review — EVERY submission
+                            └─ CI job 3: SIGN + PUBLISH ─▶ Releases verify hash → unpack
                                  (never runs untrusted code)       → atomic install
 ```
 
@@ -98,13 +125,17 @@ Three separations carry the whole design:
 ```
 /v1/index.json               signed catalogue — small fields only
 /v1/index.json.minisig
-/v1/roots.json               signed by the offline root key: the current publishing key
+/v1/roots.json               signed by the offline root key: publishing key + the mirror list
 /v1/roots.json.minisig
 /v1/ext/<id>.json            full detail: long description, screenshots, changelog, version history
 /v1/blob/<sha256>.grainpack  content-addressed artifacts (immutable, cache-forever)
 /v1/revocations.json         kill switch
 /v1/revocations.json.minisig
 ```
+
+Paths are **relative**. Absolute bases come from `roots.json`, which is signed —
+so moving hosts, or adding a mirror, is a signed metadata change rather than an
+app update. The app ships a hard-coded bootstrap list as a last resort.
 
 `index.json` is the only file the app must have. One entry:
 
@@ -122,7 +153,9 @@ Three separations carry the whole design:
   "min_grain_api": "1.0",
   "repo": "https://github.com/example/spaces",
   "source_commit": "a1b2c3…",       // what we built
+  "author": "example",               // the GitHub account that submitted it
   "reviewed_at": "2026-07-20",
+  "reviewed_commit": "a1b2c3…",     // shown on the card: what a human actually read
   "updated_at": "2026-07-20",
   "stars": 214                       // fetched by CI, never by the client
 }
@@ -141,21 +174,76 @@ The envelope carries the anti-tamper properties (**F-11**):
 → one signature covers the whole catalogue, so entries cannot be mixed across
 generations (**mix-and-match**).
 
-### 2.2 Keys
+Four edge cases that would otherwise be shipped bugs:
 
-| Key | Where it lives | What it signs | Rotation |
+- **The seed index is exempt from expiry until the first successful refresh.**
+  An app installed a year after its release has a long-expired seed; without this
+  rule its store is dead on arrival.
+- **Expiry allows generous clock skew** (24 h) and never hard-fails an install
+  that is already underway. A wrong system clock must not brick the store.
+- **An unknown `spec` major is not an error, it is a message**: "update Grain to
+  browse the store". Forward compatibility is what lets the index evolve.
+- **`min_grain_api` above the running app** shows the card greyed with "needs
+  Grain *x.y*" rather than hiding it — a missing extension is a support ticket, a
+  labelled one is not.
+
+### 2.2 Keys — designed for a pen drive, because that is the truth
+
+| Key | Where it lives | What it signs | How often it is used |
 |---|---|---|---|
-| **Root** (Ed25519, 3 keys, threshold 2) | Offline. Hardware or paper-backed, never on a build machine. | `roots.json` only | Manually, rarely; a new app build re-pins |
-| **Publishing** (Ed25519) | A GitHub Actions secret used *only* in the signing job | `index.json`, `revocations.json`, artifacts | Sign a new `roots.json` — **no app update needed** |
+| **Root A** (Ed25519, passphrase-encrypted) | Encrypted removable media. **Never on a build machine, never in CI.** | `roots.json` only | Almost never — publishing-key rotation |
+| **Root B** (the spare) | A *second* piece of media, stored separately | The same, if A is lost | Ideally never |
+| **Publishing** (Ed25519) | A GitHub Actions secret, used *only* in the signing job | `index.json`, `revocations.json`, artifacts | Every publish |
 
-Two levels, ~150 lines of verification code, and the properties of TUF that
-matter without operating a TUF repository (**F-11**). Practical guidance for a
-team this size is 3–5 offline keys with a threshold of 2; if there is ever more
-than one signer, the upgrade path is Sigstore's transparency log, not a bigger
-homegrown scheme.
+**Both root public keys are pinned in the app from day one.** That is the whole
+recovery story: losing one root key is an inconvenience, not a re-release.
+Minisign secret keys are passphrase-encrypted by default, so "encrypted pen
+drive + strong passphrase" is a coherent custody model for one maintainer — the
+thing to get right is that the **passphrase is written down somewhere the drive
+is not**.
+
+Two levels, ~150 lines of verification code, and the TUF properties that matter
+without operating a TUF repository (**F-11**). Multi-custodian thresholds and
+hardware tokens are the right answer for a team; for one person they add a
+failure mode (lost quorum) without removing one.
+
+**What this protects against, stated honestly:**
+
+| Threat | Covered? |
+|---|---|
+| Someone tampering with the index or an artifact in transit or at rest | **Yes** — signature + hash, verified before use |
+| A stolen GitHub Actions publishing key | **Yes** — sign a new `roots.json` with a root key; no app update |
+| An author faking `verified` | **Yes** — they never touch signed metadata (§3.2) |
+| The owner's machine compromised *while the root drive is plugged in and unlocked* | **No.** Mitigation is behavioural: plug it in only to rotate, which is a once-a-year event |
+| Both root drives lost **and** the passphrase forgotten | **No** — recovery is an app release with a new pinned key. Documented, not catastrophic |
 
 > **Bootstrapping note.** Until the root keys exist, everything downstream is
 > theatre. Generating them is **Step 5A.1**, before any code that verifies them.
+
+### 2.3 Where the files actually live — and why not on the website
+
+| What | Host | Why |
+|---|---|---|
+| `index.json`, `roots.json`, `revocations.json`, artifacts | **GitHub Releases** on the `grain-extensions` repo | Free, built for binary distribution, no bandwidth cap that can pause, permanent URLs, and it is already where the source of truth lives |
+| The public website | **Vercel**, free tier, `*.vercel.app` | Zero cost, instant deploys, and it is generated from the same index |
+
+**The app must never fetch anything from the website.** Vercel's Hobby tier is
+capped at 100 GB/month and, on hitting the cap, **pauses the deployment** rather
+than throttling — the site simply goes offline. That is an acceptable failure for
+a shop window and an unacceptable one for the store inside a user's app. It is
+also non-commercial-use-only, which is fine for a donation-funded project but is
+one more reason not to build a dependency on it.
+
+Because every file is **signed and content-addressed, the host is untrusted by
+construction**. That makes this reversible: adding a mirror, or moving to a
+purchased domain, or moving to R2 later, is a `roots.json` change. Nothing in the
+client cares where bytes came from — only that they verify.
+
+**Publishing the site early: yes.** It costs nothing, it gives authors somewhere
+to read the rules before submitting, and shipping it before the in-app store
+means the first real submission arrives with documentation already public. The
+only thing to avoid is putting an "Install" button on it that does anything other
+than open a page in Grain (§5.2).
 
 ---
 
@@ -166,9 +254,16 @@ homegrown scheme.
 | Rung | What it means | How you get there | What it changes |
 |---|---|---|---|
 | `dev` | Loaded from a local folder by a human, in developer mode | Load unpacked | Permanent badge; never in the store; cannot be promoted; capability wall identical |
-| `experimental` | Automation passed. **No human has read this.** | Merged submission in lane 0 or 1 | Install sheet says so plainly; not featured; fully searchable and installable |
-| `verified` | **A human read this exact version's source.** | Lane 2, or a promotion request | Badge; featured-eligible; shown as reviewed with a date |
+| `verified` | **A human read this exact version's source.** | Every accepted submission and every accepted update | The store's baseline. Shown as "reviewed on *date*, at commit *sha*" |
 | `core` | Written and maintained by us | Built from the `grain` repo by our own CI | May pre-install; may claim core slots |
+| `experimental` | Automation passed; **no human read it** | **Currently unreachable — the policy is off** (§0.1) | Reserved so that outgrowing one reviewer is a config change, not a redesign |
+
+**At launch the store has exactly one promise, and it is a strong one: *if it is
+listed, a person read its source*.** That is deliberately simpler than a ladder.
+The badge therefore does not distinguish between listed extensions — what varies
+per card is *evidence*: the review date, the reviewed commit, the capability
+list, and the risk score. Age is shown as a fact ("first published *date*"), never
+as trust.
 
 Two negative states, both delivered by the signed `revocations.json`:
 
@@ -223,38 +318,54 @@ the app, the CLI and CI cannot disagree:
 **Forced-human combinations** (score irrelevant): `screen:capture` + `net:*`
 (already the SPEC's rule) · `events:transcripts` + `net:*` · any `native` + `net:*`.
 
-| Lane | Trigger | Path | Target |
+**Every submission is read by a human** (§0.1). The score does not decide
+*whether* — it decides **queue order and how deep the read goes**:
+
+| Band | Score | The read | Target |
 |---|---|---|---|
-| **0 — auto** | tier `pack`, zero capabilities | Lint + build + publish, no human | minutes |
-| **1 — auto + audit** | score ≤ 5, no forced combination | Auto-publish as `experimental`; a sampled share get read later | hours |
-| **2 — human** | score > 5, any forced combination, or a promotion request | Queued, risk-sorted | days |
+| **Low** | 0 (data packs, no capabilities) | Payload sanity, no code to read. Automation carries most of it. | same day |
+| **Medium** | 1–5 | Full source read, focused on the declared capabilities | 2–3 days |
+| **High** | > 5, or any forced combination | Full source read **plus** an explicit written justification from the author for each high-risk capability, and a runtime observation in developer mode | up to a week, and it may be refused |
 
-This mirrors AMO (risk-weighted queue, auto-approve the low end, sample the
-middle) and Chrome (automate everything, humans on sensitive permissions) — with
-the advantage that our inputs are exact rather than heuristic (**F-14**, **F-15**).
+The queue is sorted highest-first, so the riskiest thing waiting always gets the
+freshest attention — AMO's risk-weighted queue, with the advantage that our
+inputs are exact rather than heuristic (**F-14**, **F-15**). Automation does not
+replace the reviewer here; it does the mechanical parts (lint, Unicode scan,
+capability diff, build, hash) so the human spends their time reading logic.
 
-### 3.4 The fast lane — how an extension gets verified *quickly*
+**Published expectations.** The review policy page states the target turnaround
+per band and says plainly that there is one reviewer. If the queue stalls —
+illness, travel — submissions go to a **paused** state with a visible banner
+rather than silently ageing. One reviewer is a real bus factor; the mitigation is
+honesty about latency, not a promise we cannot keep.
 
-Four mechanics, each of which removes work rather than rushing it:
+### 3.4 How one reviewer survives — and how authors get verified *quickly*
 
-1. **We built the bytes.** There is no "did the uploaded binary come from this
-   source" question to answer, because there is no upload (**F-2**).
-2. **Diff-only re-review.** Both versions were built from pinned commits, so an
-   update's review surface is the *source diff*. Identical capability set +
-   all-green checks + a diff under the review threshold → **keeps its rung
-   automatically**. Any capability change → straight back to lane 2. This is
-   what makes "verified" survivable for an actively-developed extension instead
-   of a tax on every release.
-3. **`grain-ext doctor` runs the exact CI suite locally.** Same code path, same
-   version, same output. Most submissions then pass first time, which is the
-   single biggest determinant of how long verification *feels*.
-4. **Zero-capability packs skip the queue entirely** (lane 0). A prompt pack or
-   a pill theme has no code and no powers; it does not deserve a human's day.
+Reviewing 100% only works if each review is small. **The real load is not the
+20 new extensions a month — it is their updates.** Twenty extensions each
+shipping monthly is another twenty reviews, and that is the number that grows
+without bound. Four mechanics keep it flat, none of which rushes the human:
+
+1. **We built the bytes.** There is no "did this binary come from that source"
+   question to answer, because there is no upload (**F-2**). That question is
+   otherwise the most tedious part of reviewing an update.
+2. **Diff-only re-review — the load-bearing one.** Both versions were built from
+   pinned commits, so an update's review surface is the *source diff*. Identical
+   capability set + all-green checks → **the reviewer reads a diff, not a
+   codebase**, and the extension keeps its rung. Any capability change, or a diff
+   past the threshold, means a full read again. A mature extension's monthly
+   update becomes a five-minute job instead of an hour.
+3. **`grain-ext doctor` runs the exact CI suite locally.** Same code, same
+   version, same output. Submissions then pass first time, and *round-trips* —
+   not review itself — are what make verification feel slow.
+4. **Automation does the mechanical reading.** Lint, invisible-Unicode scan,
+   capability diff, size, build, hash, typosquat check — all presented as a
+   summary at the top of the review page, so the human opens the source already
+   knowing where to look.
 
 **For our own extensions:** anything built from the `grain` repo by our own CI is
-`core` by construction — same signing job, no queue, no review round-trip. That
-is not a shortcut in the trust model; it is the same rule applied to a publisher
-who is us.
+`core` by construction — same signing job, no queue. Not a shortcut in the trust
+model; the same rule applied to a publisher who happens to be us.
 
 ---
 
@@ -288,7 +399,8 @@ a built artifact, an account, a signing key, a payment method.
 |---|---|---|---|
 | **build** | The author's build (untrusted code, `npm ci` and friends) | **nothing** | egress **blocked** |
 | **check** | Lint, manifest validation, risk score, Unicode scan, size caps, diff summary | nothing | none |
-| **sign** | Hash, sign, upload, regenerate index | the publishing key | upload only |
+| *(human review — always, §3.3)* | — | — | — |
+| **sign** | Hash, sign, publish the release, regenerate index | the publishing key | upload only |
 
 Job **sign** never executes untrusted code; job **build** never holds a
 credential. They communicate only by artifact hand-off. Open VSX was compromised
@@ -312,7 +424,7 @@ registry (**F-7**).
 
 **GitHub is the database.** PRs are submissions, labels are state, checks are
 evidence, comments are the audit trail. On top sits a **generated static
-dashboard** (Cloudflare Pages, access-restricted) showing:
+dashboard** (deployed alongside the site, access-restricted) showing:
 
 - the queue **sorted by risk weight**, highest first (AMO's model — **F-14**)
 - per submission: risk score *with its breakdown*, capability diff against the
@@ -324,6 +436,12 @@ dashboard** (Cloudflare Pages, access-restricted) showing:
 **Why not build it inside Grain:** nobody but us would ever open it, and it would
 ship in every user's binary. That is precisely the "destroy if not in use" rule
 the project runs on.
+
+**One thing the dashboard must show that is easy to forget: the revocation
+button.** Finding out an extension is malicious is the moment the whole system is
+tested, and it must not be the moment someone reads a runbook for the first time.
+Publish a security contact address next to the review policy, and rehearse a
+revocation against a fixture before the store opens (5A step 6, 5B step 5).
 
 ---
 
@@ -611,10 +729,13 @@ hid C-1.
 
 ### Phase 5A — Trust rails (client)
 
-**1. Key ceremony (C-10).** Generate root keys offline (3, threshold 2), publish
-the public keys, pin them in the app, sign the first `roots.json`. Write the
-runbook — including recovery — before using the keys.
-*Done:* a fixture `roots.json` verifies against the pinned key in a unit test.
+**1. Key ceremony (C-10).** Generate **two** root keys, passphrase-encrypted, on
+media that is not a build machine; store them separately; pin **both** public
+keys in the app; sign the first `roots.json` (publishing key + base URLs + mirror
+list). Write the runbook — rotation *and* recovery — before the keys are used in
+anger.
+*Done:* a fixture `roots.json` verifies against either pinned key in a unit test,
+and the runbook has been followed once end to end on throwaway keys.
 
 **2. Index verification + the trust invariant (C-3).** Signature check, rollback
 check, expiry handling, revocation application, and the four tests from §3.2.
@@ -647,12 +768,13 @@ and the review policy (including what gets rejected, published openly).
 **2.** The three CI jobs with the secret/egress boundary of §4.2 — **build the
 isolation before the convenience** (**F-7**).
 **3.** Risk scoring in `grain-sdk`, consumed by CI, the dashboard and the store
-card, so the number a user sees is the number that routed the review.
-**4.** Publish pipeline: build → hash → sign → upload to R2 → regenerate
-`index.json` and `ext/<id>.json` → bump `version`, set `expires`.
-**5.** The review dashboard of §4.3, risk-sorted, decisions as labels.
-**6.** The fast lane of §3.4: lane routing, diff-only re-review, auto-verify for
-zero-capability packs, `core` for our own CI-built extensions.
+card, so the number a user sees is the number that ordered the review.
+**4.** Publish pipeline: build → hash → sign → publish to a GitHub Release →
+regenerate `index.json` and `ext/<id>.json` → bump `version`, set `expires`.
+**5.** The review dashboard of §4.3, risk-sorted, decisions as labels, revocation
+rehearsed once against a fixture.
+**6.** The sustainability mechanics of §3.4: diff-only re-review, the automated
+summary at the top of each review page, `core` for our own CI-built extensions.
 **7.** Store UI: fill the existing slide-over shell — search, cards, capability
 sheet before first enable, trust badge, install/update/remove.
 **8.** The public static site, generated from the same index.
@@ -679,16 +801,32 @@ Recorded so nobody re-opens them without a reason:
 
 ---
 
-## 12. Open questions for the user
+## 12. Questions that were open, and how they were answered
 
-Small, and none blocks starting Phase 3.5:
+Settled by the project owner on 2026-07-22. Recorded here so the reasoning is not
+lost, and so a future reader can tell a decision from an assumption.
 
-1. **Domain.** The index, the public site and the dashboard want a domain
-   (`extensions.grain.app/v1/…` or similar). Which one?
-2. **Root-key custody.** Three offline keys with a threshold of two is the
-   recommendation; where they physically live is your call (hardware token,
-   encrypted offline media, or both).
-3. **Public site now or later?** It is nearly free and generated from the same
-   data, but it can land after the in-app store without changing anything.
-4. **Lane 1's audit rate.** What share of auto-published `experimental`
-   extensions gets read later — and by whom, at what cadence.
+1. **Scale → 10–20 extensions/month for the first few months.** Everything in
+   §0.1 follows from this, most of all the choice to review 100%.
+2. **Review coverage → every extension, every update, read by a human.** The
+   `experimental` rung stays built but switched off (§3.1), so growth is a policy
+   change rather than a redesign.
+3. **Domain → none yet.** A free `*.vercel.app` deployment until donations fund a
+   purchased one. This is why absolute base URLs live in signed `roots.json`
+   (§2.1) and why nothing the app depends on is served by the website (§2.3) —
+   the eventual move costs one signed file, not an app release.
+4. **Key custody → encrypted removable media, one maintainer.** §2.2 is written
+   for exactly that, including two pinned root keys so losing one drive is
+   recoverable, and an explicit statement of what it does *not* protect against.
+5. **Publish the site early → yes.** It costs nothing, and it puts the rules and
+   the review policy in public before the first submission arrives.
+
+**Still genuinely open** (neither blocks Phase 3.5):
+
+- The `id` namespace convention for first-party extensions once `grain.*` is
+  reserved — cosmetic, decide when 5B starts.
+- Whether install counts are collected at all. §7 says they may never carry
+  authority; not collecting them at launch is the simpler and more private
+  default, and nothing breaks if we never add them.
+
+

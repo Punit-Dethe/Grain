@@ -404,9 +404,13 @@ contract.
 - **Source of truth:** a GitHub submission repo (`grain-extensions`), one
   directory per extension holding a source-repo pointer and a pinned commit —
   **never a binary**. Submission is a pull request.
-- **What the app reads:** static signed JSON on a CDN, never the repo. The
+- **What the app reads:** static signed JSON and artifacts published as GitHub
+  Releases of that repo — never the git tree, and **never the public website**
+  (a free-tier site can be paused; the in-app store may not go offline). The
   catalogue carries a monotonic `version` and an `expires`, and one signature
   covers the whole file (rollback, freeze and mix-and-match protection).
+  Absolute base URLs live in the signed `roots.json`, so changing host or domain
+  costs one signed file rather than an app release.
 - **Artifacts are built by our CI** from the pinned commit and served
   content-addressed by SHA-256. The job that runs untrusted build code holds no
   credentials and has no network egress; the job that signs runs no untrusted
@@ -420,11 +424,13 @@ contract.
   revocation list. **Trust exists only inside signed index metadata.** A manifest
   has no trust field, the installer cannot read one from pack bytes, and trust
   is bound to `(id, version, sha256)` — a verified 1.0 confers nothing on 1.1.
-- **Review routing** is a risk score computed from the manifest: zero-capability
-  packs auto-publish; low-risk scripted extensions auto-publish with sampled
-  audit; high-risk goes to a human. `screen:capture` + `net:` together always
-  triggers human review, as do `events:transcripts` + `net:` and any native tier
-  with `net:`.
+- **Review: 100% human.** Every extension and every update is read by a person
+  before it is published. A risk score computed from the manifest sets the queue
+  order and the depth of the read, never whether one happens; `screen:capture` +
+  `net:`, `events:transcripts` + `net:`, and any native tier with `net:` demand
+  a written justification per capability and a runtime observation. Updates are
+  reviewed as a **source diff** (we built both versions from pinned commits),
+  which is what makes full coverage affordable.
 - **Never:** transitive install (installing A never installs B), runtime
   dependency installation, or install triggered from outside the app.
 
@@ -443,7 +449,7 @@ Each phase is done when its checks pass.
 | **3.5** | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`); developer mode with load-unpacked, `dev` badge and override display; **hot reload under 300 ms with no restart and no leaked workers** (RAM-measured); source-mapped stacks; developer panel (activity, host calls, denials, budget, resources, console) built **only** when developer mode is on; typed errors with `hint` + `docs`; `Origin` validation on the WS handshake; author docs proven by an outsider shipping an extension unaided; **Phase 3's surface handshake verified end-to-end with a real dev extension** |
 | **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed; per-worker memory ceiling with strike semantics; secret settings in the OS keychain. **Native extensions are dev-mode-only until 5A.** |
 | **5A** | Root keys generated and pinned; signed index verified with rollback + expiry handling; the four anti-forgery tests of the plan's §3.2 pass; pack format v2 with **path-safe extraction tested before the extractor exists**; install/update/remove transaction incl. permission-diff gating and previous-version retention; signed revocation disables an installed extension |
-| **5B** | `grain-extensions` repo live with the three-job CI (untrusted build holds no secrets); risk lanes routing review; review dashboard risk-sorted; publish pipeline signing to the CDN; store UI filled in; public site; **one real third-party extension shipped end to end** |
+| **5B** | `grain-extensions` repo live with the three-job CI (untrusted build holds no secrets); risk score ordering a **100%-human** review queue; review dashboard risk-sorted with revocation rehearsed; publish pipeline signing to GitHub Releases; store UI filled in; public site; **one real third-party extension shipped end to end** |
 
 > ✅ **The gate that blocked rows 4 and 5 is lifted (2026-07-22).** It demanded a
 > designed hosting + submission + review + trust platform (with the guarantee
