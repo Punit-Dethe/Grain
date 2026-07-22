@@ -109,6 +109,7 @@ never to decide what to build.
 | **[SPEC.md](SPEC.md)** | **Normative.** What to build. |
 | **[DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md)** | **Normative for the store and developer mode.** Hosting, submission, review, trust, install, and the authoring loop. Self-contained — assumes no prior reading. |
 | **[PHASE3.5-GUIDE.md](PHASE3.5-GUIDE.md)** | **Start here to build.** The ten steps of developer mode, with this repo's file paths, build commands and gotchas. |
+| **[PHASE4-GUIDE.md](PHASE4-GUIDE.md)** | **Phase 4.** Session ownership, network access, secrets, memory limits and the companion tier — with an explicit list of what is deliberately left out, and why. |
 | [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md) | The evidence the plan is built on: prior art compared, real attacks from 2023–2026, and what each forces on us |
 | [PLAN.md](PLAN.md) | Why the architecture is shaped this way (the five decisions) + phases |
 | [STRESS-TEST.md](STRESS-TEST.md) | Contract tested against three of our own features; how clashes are arbitrated |
