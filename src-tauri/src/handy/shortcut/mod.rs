@@ -181,6 +181,8 @@ pub fn change_binding(
     if let Err(e) = unregister_shortcut(&app, binding_to_modify.clone()) {
         let error_msg = format!("Failed to unregister shortcut: {}", e);
         error!("change_binding error: {}", error_msg);
+    } else {
+        crate::extension_shortcuts::note_unregistered(&binding_to_modify.id); // [GRAIN]
     }
 
     // Validate the new shortcut for the current keyboard implementation
@@ -204,6 +206,7 @@ pub fn change_binding(
             error: Some(error_msg),
         });
     }
+    crate::extension_shortcuts::note_registered(&updated_binding); // [GRAIN]
 
     // Update the binding in the settings
     settings.bindings.insert(id, updated_binding.clone());
@@ -232,10 +235,11 @@ pub fn reset_binding(app: AppHandle, id: String) -> Result<BindingResponse, Stri
 #[specta::specta]
 pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
-        if let Err(e) = unregister_shortcut(&app, b) {
+        if let Err(e) = unregister_shortcut(&app, b.clone()) {
             error!("suspend_binding error for id '{}': {}", id, e);
             return Err(e);
         }
+        crate::extension_shortcuts::note_unregistered(&b.id); // [GRAIN]
     }
     Ok(())
 }
@@ -245,10 +249,11 @@ pub fn suspend_binding(app: AppHandle, id: String) -> Result<(), String> {
 #[specta::specta]
 pub fn resume_binding(app: AppHandle, id: String) -> Result<(), String> {
     if let Some(b) = settings::get_bindings(&app).get(&id).cloned() {
-        if let Err(e) = register_shortcut(&app, b) {
+        if let Err(e) = register_shortcut(&app, b.clone()) {
             error!("resume_binding error for id '{}': {}", id, e);
             return Err(e);
         }
+        crate::extension_shortcuts::note_registered(&b); // [GRAIN]
     }
     Ok(())
 }
@@ -294,6 +299,7 @@ pub fn change_keyboard_implementation_setting(
 
     // Unregister all shortcuts from the current implementation
     unregister_all_shortcuts(&app, current_impl);
+    crate::extension_shortcuts::reset_live(); // [GRAIN]
 
     // Update the setting
     let mut settings = settings::get_settings(&app);
@@ -304,6 +310,7 @@ pub fn change_keyboard_implementation_setting(
     if new_impl == KeyboardImplementation::HandyKeys {
         if initialize_handy_keys_with_rollback(&app)? {
             // Shortcuts already registered during init
+            crate::extension_shortcuts::sync(&app); // [GRAIN]
             return Ok(ImplementationChangeResult {
                 success: true,
                 reset_bindings: vec![],
@@ -313,6 +320,7 @@ pub fn change_keyboard_implementation_setting(
 
     // Register all shortcuts with new implementation, resetting invalid ones
     let reset_bindings = register_all_shortcuts_for_implementation(&app, new_impl);
+    crate::extension_shortcuts::sync(&app); // [GRAIN]
 
     // Emit event to notify frontend of the change
     let _ = app.emit(

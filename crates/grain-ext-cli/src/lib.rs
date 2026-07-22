@@ -299,7 +299,7 @@ impl BuildWatcher {
     fn start(root: &Path) -> Result<Self> {
         let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
         let child = std::process::Command::new(npm)
-            .args(["run", "build", "--", "--watch"])
+            .args(["run", "build", "--", "--watch=forever"])
             .current_dir(root)
             .spawn()
             .context("start incremental npm build")?;

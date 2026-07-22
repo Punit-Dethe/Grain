@@ -37,9 +37,14 @@ without tearing down its supervisor, and remounts sandboxed surface iframes.
 Worker/surface/pill/dev-control roles are now explicit; stale worker sockets
 cannot detach a replacement generation. Ten-generation tests hold worker and
 token registry counts constant. The CLI prints reload latency and both counts;
-the final live `<300 ms` and process-RSS acceptance measurement still requires
-running the newly built app (do not launch a second instance over the user's
-running Grain).
+the live gate passed in an isolated portable app: ten distinct edits reloaded
+in 3–4 ms, worker/token counts stayed at 1/4, and the app process tree stayed at
+11 processes. Private memory moved from 331.9 MB after the first stable reload
+to 333.7 MB after ten, then settled flat at 333.7 MB (allocator noise, not
+per-generation growth). The live pass also fixed two lifecycle defects it
+exposed: esbuild now uses `--watch=forever` when the CLI has no interactive
+stdin, and extension shortcut reconciliation retries after the core shortcut
+backend initializes while remaining idempotent across every hot reload.
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -504,11 +509,11 @@ step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
 1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–4 (`Origin` hardening,
    `grain-ext init`, load-unpacked, and authenticated hot reload) are shipped.
-   Complete the live step-4 latency/RSS acceptance measurement, then continue:
-   source maps → developer panel → typed errors → `doctor`
+   The live step-4 latency/RSS gate passed. Continue with source maps →
+   developer panel → typed errors → `doctor`
    → author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks the step-4 live measurement or step 5.*
+   *Nothing blocks step 5.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`

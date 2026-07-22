@@ -58,8 +58,54 @@ pub struct ShortcutStatus {
 /// [`sync`], which runs off the hot path.
 static STATUS: OnceLock<Mutex<HashMap<String, Vec<ShortcutStatus>>>> = OnceLock::new();
 
+/// Extension bindings successfully registered with the active shortcut
+/// backend. Keeping this separate from settings makes reconciliation
+/// idempotent and lets a changed chord unregister the exact previous binding.
+static LIVE: OnceLock<Mutex<HashMap<String, ShortcutBinding>>> = OnceLock::new();
+
 fn status_map() -> &'static Mutex<HashMap<String, Vec<ShortcutStatus>>> {
     STATUS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn live_map() -> &'static Mutex<HashMap<String, ShortcutBinding>> {
+    LIVE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Keep reconciliation state aligned with shortcut commands that operate
+/// directly on a binding (recording, rebinding, and backend switches).
+pub fn note_registered(binding: &ShortcutBinding) {
+    let Some((ext_id, sid)) = parse_binding_id(&binding.id) else {
+        return;
+    };
+    live_map()
+        .lock()
+        .unwrap()
+        .insert(binding.id.clone(), binding.clone());
+    if let Some(rows) = status_map().lock().unwrap().get_mut(ext_id) {
+        if let Some(row) = rows.iter_mut().find(|row| row.id == sid) {
+            row.binding = binding.current_binding.clone();
+            row.active = true;
+            row.conflicts_with = None;
+        }
+    }
+}
+
+pub fn note_unregistered(binding_id: &str) {
+    let Some((ext_id, sid)) = parse_binding_id(binding_id) else {
+        return;
+    };
+    live_map().lock().unwrap().remove(binding_id);
+    if let Some(rows) = status_map().lock().unwrap().get_mut(ext_id) {
+        if let Some(row) = rows.iter_mut().find(|row| row.id == sid) {
+            row.active = false;
+        }
+    }
+}
+
+/// The active shortcut backend was replaced, so none of the registrations in
+/// the old backend remain authoritative.
+pub fn reset_live() {
+    live_map().lock().unwrap().clear();
 }
 
 pub fn status_for(ext_id: &str) -> Vec<ShortcutStatus> {
@@ -238,14 +284,30 @@ fn sync_now(app: &AppHandle) {
         settings::write_settings(app, settings.clone());
     }
 
-    // Unregister first, so a chord freed by one extension is available to the
-    // next in the same pass.
-    for (id, b) in settings.bindings.iter() {
-        if id.starts_with(PREFIX) && !desired.contains_key(id) {
-            let _ = unregister_shortcut(app, b.clone());
-        }
+    // Unregister removed or changed live bindings first, so a chord freed by
+    // one extension is available to the next in the same pass. Settings cannot
+    // supply the old chord after a rebind; LIVE deliberately retains it.
+    let mut live = live_map().lock().unwrap();
+    let stale: Vec<ShortcutBinding> = live
+        .iter()
+        .filter(|(id, current)| {
+            desired
+                .get(*id)
+                .is_none_or(|next| next.current_binding != current.current_binding)
+        })
+        .map(|(_, binding)| binding.clone())
+        .collect();
+    for binding in stale {
+        let _ = unregister_shortcut(app, binding.clone());
+        live.remove(&binding.id);
     }
     for (id, b) in &desired {
+        if live
+            .get(id)
+            .is_some_and(|current| current.current_binding == b.current_binding)
+        {
+            continue;
+        }
         if let Err(e) = register_shortcut(app, b.clone()) {
             log::warn!("[GRAIN] could not register extension shortcut '{id}': {e}");
             if let Some((ext_id, sid)) = parse_binding_id(id) {
@@ -255,8 +317,11 @@ fn sync_now(app: &AppHandle) {
                     }
                 }
             }
+        } else {
+            live.insert(id.clone(), b.clone());
         }
     }
+    drop(live);
 
     let active = status.values().flatten().filter(|r| r.active).count();
     log::debug!(
@@ -280,10 +345,13 @@ pub fn forget(app: &AppHandle, ext_id: &str) {
     if doomed.is_empty() {
         return;
     }
+    let mut live = live_map().lock().unwrap();
     for b in &doomed {
-        let _ = unregister_shortcut(app, b.clone());
+        let registered = live.remove(&b.id).unwrap_or_else(|| b.clone());
+        let _ = unregister_shortcut(app, registered);
         settings.bindings.remove(&b.id);
     }
+    drop(live);
     settings::write_settings(app, settings);
     status_map().lock().unwrap().remove(ext_id);
 }

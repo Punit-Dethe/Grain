@@ -185,6 +185,11 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     // Mark as initialized
     app.manage(ShortcutsInitialized);
 
+    // [GRAIN] Extension shortcuts reconcile once during registry startup, which
+    // precedes HandyKeysState. Retry at the exact point core shortcuts become
+    // available so enabled extension bindings do not remain falsely inactive.
+    crate::extension_shortcuts::sync(&app);
+
     log::info!("Shortcuts initialized successfully");
     Ok(())
 }
