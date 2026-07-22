@@ -84,9 +84,9 @@ past one reviewer is a policy change, not a redesign.
 | What stops review-then-swap? | Trust is **per version**, bound to `(id, version, sha256)`; we built the bytes ourselves | GlassWorm shipped clean, then updated dirty (**F-6**) |
 | Who reviews? | **A human reads every extension, and every update.** No auto-publish, so no risk *score* — just a flagged-combination list that says how deep to read. | 10–20/month is one reviewer's day per week; "we read everything" beats any badge (§0.1, **F-14**) |
 | How does that stay sustainable? | We build the bytes, so an update's review surface is a **source diff**, not a codebase | Diff-only re-review is the difference between 20 reviews and 20 re-reads (**F-2**, §3.4) |
-| Where is our dashboard? | **GitHub's own PR UI**, plus one bot comment per submission carrying the review briefing | Zero infra, free auth, complete audit trail — and at ~20/month there is no queue to sort (§13) |
+| Where is our dashboard? | **GitHub's own PR UI.** No web app, and the briefing comment is deferred until raw check output annoys us | Zero infra, free auth, complete audit trail — and a dashboard reviews nothing (§13) |
 | What does hosting cost? | $0 — GitHub Releases and Actions are free for public repos; Vercel Hobby is free for the site | (**F-4**, §2.3) |
-| How do people build extensions? | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`) + in-app developer mode with load-unpacked, sub-second reload, and a developer panel | Raycast's DX is the bar; Zed's load-unpacked is the model (**F-16**, **F-17**) |
+| How do people build extensions? | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`) + in-app developer mode with load-unpacked, sub-second reload, and extension events in the **existing** Debug-tab log console | Raycast's DX is the bar; Zed's load-unpacked is the model (**F-16**, **F-17**) |
 | What ships first? | **Developer mode, before Phase 4.** | Nothing else can be authored or verified without it (**F-19**) |
 
 ---
@@ -103,7 +103,7 @@ past one reviewer is a policy change, not a redesign.
                             │                                  └──────┬───────┘
                             ├─ JOB 1  build + check (untrusted code)   │ verify with
                             │    NO secrets, egress blocked            │ PINNED root key
-                            │    posts the review briefing comment      ▼
+                            │    reports pass/fail in the PR checks     ▼
                             ├─ human review — EVERY submission    fetch blob/<sha256>
                             └─ JOB 2  sign + publish ──▶ Releases  verify hash → unpack
                                  on merge; runs no untrusted code   → atomic install
@@ -333,11 +333,18 @@ auto-published, a *numeric* score has no routing job left to do — so it is cut
 | **Ordinary** | anything else | Full source read, focused on the declared capabilities | 2–3 days |
 | **Flagged** | one of the combinations below | Full read **plus** a written justification from the author for each flagged capability, and a runtime observation in developer mode | up to a week, and it may be refused |
 
-**The flagged combinations** — a `const` list in `grain-sdk`, checked by CI and
-shown in the bot comment: `screen:capture` + `net:*` (already the SPEC's rule) ·
-`events:transcripts` + `net:*` · any `native` tier with `net:*`. Each says "this
-extension can see something private *and* can send it somewhere", which is the
-only question a risk number was ever really answering.
+**The flagged combinations** — a `const` list in `grain-sdk`, checked by CI:
+`screen:capture` + `net:*` (already the SPEC's rule) · `events:transcripts` +
+`net:*` · any `native` tier with `net:*`. Each says "this extension can see
+something private *and* can send it somewhere", which is the only question a risk
+number was ever really answering.
+
+> **A flag blocks nothing.** It is a note to the reviewer saying *read this part
+> carefully*, and a line on the store card telling the user what the extension
+> can do. Nothing is auto-rejected, no capability is forbidden, and an extension
+> that legitimately needs to send transcripts somewhere is entirely publishable —
+> it just gets read properly first, and the user gets told plainly. The only
+> thing a flag costs an honest author is a sentence explaining why they need it.
 
 Automation does not replace the reviewer; it does the mechanical parts (lint,
 Unicode scan, capability diff, build, hash) so the human spends their time
@@ -456,22 +463,36 @@ audit trail — and at ~20 submissions a month there is no queue to sort, so the
 one thing a custom dashboard would have added over GitHub's own UI is the thing
 scale hasn't demanded yet.
 
-What replaces it is **one bot comment per pull request**, posted by the check job
-and updated in place — the review briefing, where the review already happens:
+**The review briefing is deferred too, and costs nothing to skip.** The check job
+already fails loudly in the PR's checks panel with its output attached; a
+formatted summary comment is a convenience, not a capability. Build it the first
+time reading raw check output actually annoys you.
 
-- **capability diff** against the previous version (the single most important
-  line: "this update newly requests `net:`")
-- lint findings, invisible-Unicode scan, size, typosquat check
-- build status and the artifact hash we produced
-- source diff link, and for an update the **diff-only** verdict (§3.4)
-- any forced-human flag (`screen:capture` + `net:` and friends)
+**When you do build it, make it public — deliberately.** On a public repo a bot
+comment is visible to everyone, and that cannot be changed: PR comments, check
+output and Actions job summaries are all public on public repos. Making it
+private would mean routing it somewhere else entirely (a private repo issue, an
+email, a webhook) — more machinery, for a worse outcome. A public briefing means
+the author reads *"this update newly requests `net:`"* and fixes it before you
+ever look, which removes a round-trip from **your** workload. Keep private only
+what is genuinely a judgement — and the way to keep that private is not to type
+it into a public PR.
 
-Decisions stay labels (`decision:verified`, `hold:security`, `decision:reject`)
-executed by a workflow on merge, so the audit trail is intact and free.
+The briefing, when it exists: capability diff against the previous version
+(the single most important line) · lint, Unicode scan, size, typosquat · build
+status and the artifact hash we produced · source-diff link and the diff-only
+verdict (§3.4) · any flagged combination.
 
-**Add a real dashboard when** GitHub's filters stop being enough — realistically
-past ~40 open submissions. It is a generator over the same labels, so nothing
-built now is wasted.
+**What must be done from day one, because it cannot be reconstructed later:**
+keep the state **structured** — a machine-readable `submission.toml` per
+extension, consistent labels (`decision:*`, `hold:*`), and CI outputs saved as
+workflow artifacts. Do that, and a dashboard built at any point in the future can
+be generated retroactively across the entire history. Skip it, and the dashboard
+you eventually want starts with no data. **This is the whole cost of deferring
+the dashboard, and it is a naming convention.**
+
+**Build the dashboard when** GitHub's filters stop coping — realistically past
+~40 open submissions.
 
 **Why it is not inside Grain either:** nobody but us would ever open it, and it
 would ship in every user's binary — the "destroy if not in use" rule.
@@ -481,6 +502,34 @@ button.** Finding out an extension is malicious is the moment the whole system i
 tested, and it must not be the moment someone reads a runbook for the first time.
 Publish a security contact address next to the review policy, and rehearse a
 revocation against a fixture before the store opens (5A step 6, 5B step 5).
+
+### 4.4 How long publishing actually takes — end to end
+
+There is **no queue after the decision. Merging the pull request *is* the
+publish.** There is no second approval stage, no release board, no batching
+window, and nothing an author waits on once you have clicked merge.
+
+| Stage | Time |
+|---|---|
+| Author opens the PR → CI build + checks report | ~1–3 min |
+| Waiting for a human to read it | the only variable part — hours to a few days (§3.3) |
+| **Merge → signed, published, live in the index** | ~1–2 min, automatic |
+| **Live in the index → visible to a user** | **the next time they open the store** — the app fetches the index at that moment |
+
+So a benign extension's whole path is: open PR, CI goes green, you skim it, you
+merge, and it is installable within a couple of minutes. **The waiting is the
+reading, and nothing else** — which is exactly why §3.4 spends its effort on
+making the reading small rather than on process.
+
+Two operational notes that keep that last row honest:
+
+- Serve `index.json` with a **short cache TTL** (about 5 minutes). Artifacts are
+  content-addressed, so they can be cached forever; only the index needs to move.
+- This is also why the store fetches on open rather than on a timer (§5.3):
+  fetching at the moment of use *is* the freshest possible answer. The background
+  timer that was cut was never about publish latency — it only concerned pushing
+  **revocations** to users who never open the store, which now rides the existing
+  update check.
 
 ---
 
@@ -615,20 +664,19 @@ extension capabilities.
 
 ### 6.4 The developer panel — where the DX is won
 
-A Grain-owned workspace surface, **built only when developer mode is on**, and
-sleeping like every other surface.
+**Reuse the log console Grain already has** (simplified 2026-07-23, §13).
+`LiveLogViewer.tsx` in the Debug tab (Ctrl/Cmd+Shift+D) is already a buffered,
+level-coloured live console with pause, clear, copy and scroll-pinning. So the
+host **emits extension events into the existing log stream** with an
+`[ext:<id>]` prefix — `log`, `error` (source-mapped), `denied` (naming the
+capability *and the manifest line to add*), `call` with duration, `slow` against
+the 150 ms budget, `life` (spawn/reap/reload) — and the panel becomes that same
+component with a filter prop and a chip row (**All · Calls · Denials · Errors**),
+mounted in Extensions ▸ Developer.
 
-**One chronological event stream, not a dashboard** (simplified 2026-07-23,
-§13). A developer chasing a bug reads a timeline; six panes is more code and a
-worse debugger. Entry kinds: `log` (the author's output) · `error`
-(source-mapped stack) · `denied` (**red**, naming the capability, the refused
-call, and the manifest line to add) · `call` (`storage.get → ok (3 ms)`) ·
-`slow` (`transform took 187 ms, budget 150 ms — strike 1 of 3`) · `life`
-(spawn / reap / reload / activation).
-
-Filter chips **All · Calls · Denials · Errors**, and one **"Copy diagnostics"**
-button producing a paste-able report — the thing that turns a bug report into a
-fix.
+No new window, no workspace surface, no sleep/wake plumbing. And the author sees
+their events *interleaved with Grain's own logs*, which a purpose-built panel
+would have hidden.
 
 ### 6.5 Errors
 
@@ -888,17 +936,26 @@ lost, and so a future reader can tell a decision from an assumption.
 
 ---
 
-## 13. Deliberate simplifications for low volume
+## 13. Deferred effort — what is not built yet, and why that is safe
 
-Decided 2026-07-23, mid-Phase-3.5. The plan was written against the *shape* of
-the problem; this pass cuts the parts that were sized for a scale we do not have
-(§0.1: 10–20 extensions/month, one reviewer). **Each cut names what brings it
-back**, so a future maintainer can tell a deferral from an oversight.
+Decided 2026-07-23, mid-Phase-3.5.
+
+**The axis is effort, not volume.** Low volume was how the question arrived, but
+it is not the principle. The principle is: *the product is the application —
+everything around it is scaffolding that should be built when it starts earning
+its keep, not in advance.* A review dashboard reviews nothing. A risk number
+decides nothing. Neither makes an extension work.
+
+**Nothing below removes functionality.** Every row either reuses something that
+already exists, defers a convenience, or deletes machinery that had no consumer.
+**Each row names what brings it back** — so a future maintainer can tell a
+deferral from an oversight — and §13.1 states what must be true *now* for each
+one to be reinstatable cheaply later.
 
 | Cut | Was | Now | Reinstate when |
 |---|---|---|---|
-| **Developer panel** | Six live panes (activity, calls, denials, budget percentiles, memory) | **One chronological event stream** + four filter chips | Never, probably — a timeline is the better debugger. Add a memory entry when the C-7 ceiling lands |
-| **Review dashboard** | A generated, access-restricted static web app with a risk-sorted queue | **GitHub's own PR UI** + one bot comment carrying the review briefing | GitHub's filters stop coping — realistically past ~40 open submissions |
+| **Developer panel** | A new workspace-surface window with six live panes | **Reuse `LiveLogViewer`** (the existing Debug-tab console) + an `[ext:<id>]` prefix and a filter chip row | Never — it is strictly better. Add a memory line when the C-7 ceiling lands |
+| **Review dashboard** | A generated, access-restricted static web app with a risk-sorted queue | **GitHub's own PR UI.** The briefing comment is deferred too — check output already reports failures | GitHub's filters stop coping — realistically past ~40 open submissions |
 | **CI jobs** | Three (build / check / sign) | **Two** — check folds into build; both are secretless | Never. The 2-job split is a boundary, not a structure (§4.2) |
 | **Risk score** | Weighted table, numeric score, three routing lanes | **A flagged-combination lookup**; everything is human-reviewed anyway | The `experimental` rung is switched on — a number is only needed when something publishes without a human |
 | **Index layout** | `index.json` + per-extension `ext/<id>.json` (sparse) | **One `index.json` with everything** | `index.json` passes ~500 KB |
@@ -923,7 +980,30 @@ back**, so a future maintainer can tell a deferral from an oversight.
 - **Two pinned root keys** — generating a second key at the same ceremony is
   free; needing one later is not.
 
-The pattern: **cut anything sized for volume; keep everything sized for an
-adversary.** Volume we do not have yet. An adversary needs one user.
+The pattern: **defer anything whose only job is to manage scale; keep everything
+whose job is to stop an attacker.** Scale we do not have yet. An attacker needs
+one user.
+
+### 13.1 What must be true now, so none of this hurts later
+
+A deferral is only cheap if reinstating it does not need data we failed to keep
+or a client we cannot change. Three obligations, all of them free today:
+
+1. **Keep registry state structured from the first submission** — a
+   machine-readable `submission.toml`, consistent `decision:*` / `hold:*` labels,
+   CI outputs saved as artifacts. Then a dashboard built at any future point can
+   be generated **retroactively over the whole history**. This is the only cut
+   with a real prerequisite, and it is a naming convention (§4.3).
+2. **Never remove a field from `index.json`.** If it is ever split for size, the
+   split *adds* a lighter file for new clients while `index.json` stays complete
+   — so an app built today keeps working against a registry built in three years.
+   Growth must never strand an old client.
+3. **Keep the flagged-combination list where a risk score would go** (a `const`
+   in `grain-sdk`, consumed by CI and the store card). Reinstating a numeric
+   score is then adding weights to a table that is already wired to every surface
+   that would display it — not threading a new concept through three codebases.
+
+Everything else on the list is reinstatable by writing the thing, with no
+archaeology and no migration.
 
 ---

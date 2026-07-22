@@ -192,43 +192,56 @@ to the author's files before they reach the developer panel.
 with full stack traces *in the UI the developer is already looking at*, and it is
 the single most-praised thing about their platform (F-16).
 
-**Where.** Build it as a **workspace surface** using the existing host-owned
-generic in `src-tauri/src/surfaces/workspace.rs`, so it sleeps like everything
-else. **Build it only when developer mode is on** — an unused window is a
-violation of this project's core rule.
+### Do NOT build a new panel. Grain already has this component.
 
-### Build ONE chronological event stream, not a six-pane dashboard
+`src/components/settings/debug/LiveLogViewer.tsx` (260 lines, inherited from
+Handy) is already a live log console: it listens to `log://log` from
+`tauri-plugin-log`'s Webview target, buffers incoming lines in a ref and flushes
+on a 250 ms cadence so a burst cannot cause a render per line, keeps a 1000-line
+ring, colours by level, and has live/paused, line count, clear, copy, and
+scroll-pinning that releases when the user scrolls up. It lives in the Debug tab,
+which is toggled by **Ctrl/Cmd+Shift+D** (`src/App.tsx`, the `debug_mode`
+setting).
 
-This was over-specified for our scale and, more importantly, for how debugging
-actually works. A developer chasing a bug reads a **timeline**, not six widgets
-that each answer a different question. So: a single scrolling log, newest at the
-bottom, with a filter chip row above it.
+**So step 6 is not "build a panel". It is two much smaller jobs:**
 
-**One entry type, six kinds:**
+#### 6a — Emit extension events into the log stream Rust already has
 
-| Kind | An entry looks like | Why it earns its place |
+Log each of these from the host with a **stable, filterable prefix** —
+`[ext:<extension-id>]` — so they can be picked out of Grain's own logs:
+
+| Kind | The line | Level |
 |---|---|---|
-| `log` | the author's `log.*` output | the thing they will actually stare at |
-| `error` | message + **source-mapped stack** (step 5 already produces this) | file and line, not `entry_source:1` |
-| `denied` | **red**, naming the capability, the refused call, and the manifest line to add | the highest-value entry in the whole panel |
-| `call` | `storage.get → ok (3 ms)` | the extension's whole conversation with Rust |
-| `slow` | `transform took 187 ms (budget 150 ms) — strike 1 of 3` | flags the budget inline; no percentile maths |
-| `life` | worker spawned / reaped / reloaded, activation event | the context that makes the rest legible |
+| `log` | the author's `log.*` output, verbatim | as sent |
+| `error` | message + **source-mapped stack** (step 5 already produces this) | ERROR |
+| `denied` | the missing capability, the refused call, **and the manifest line to add** | ERROR |
+| `call` | `storage.get → ok (3 ms)` | DEBUG |
+| `slow` | `transform took 187 ms (budget 150 ms) — strike 1 of 3` | WARN |
+| `life` | worker spawned / reaped / reloaded, activation event | INFO |
 
-Filter chips: **All · Calls · Denials · Errors**. Plus one **"Copy
-diagnostics"** button that dumps the visible stream as text.
+They then appear in the existing viewer **for free**, and — this is the part a
+purpose-built panel would have lost — *interleaved with Grain's own log lines*,
+which is exactly what you want when debugging an integration.
 
-**Cut deliberately** (add back when there is a reason, not before): p50/p95
-percentile statistics — a `slow` entry says it better; a memory pane — the
-per-worker ceiling it would chart does not exist yet (that is C-7, Phase 4), so
-add the line to the stream when the ceiling lands; separate panes per concern —
-one stream with filters is less code and a better debugger.
+#### 6b — Add filtering to `LiveLogViewer`, and mount it in the Developer section
 
-This is roughly a third of the original step and loses nothing an author needs.
+The one thing the component lacks is a filter. Add an optional prop (a substring
+or prefix, plus a level floor) and a small chip row: **All · Calls · Denials ·
+Errors**. Then render it inside Extensions ▸ Developer with the filter preset to
+the loaded dev extension's `[ext:<id>]` prefix. Keep the existing Debug-tab usage
+unfiltered — same component, two call sites.
 
-**Done means.** An intentional capability denial appears in the stream within a
-second, in red, naming the capability and the fix. With developer mode **off**,
-no panel window exists and idle RAM is unchanged — measure both.
+That is roughly **20% of the original step**, adds a filter the Debug tab wanted
+anyway, and needs no new window, no workspace surface, no sleep/wake plumbing,
+and no idle-RAM argument (React unmounts it with the tab).
+
+**Cut deliberately** — p50/p95 percentiles (a `slow` line says it better) and a
+memory pane (the per-worker ceiling it would chart does not exist yet; that is
+C-7, Phase 4 — add a `life` line when it lands).
+
+**Done means.** With a dev extension loaded, an intentional capability denial
+appears in the stream within a second, in red, naming the capability and the fix;
+the chip row filters to it; and the Debug tab's existing behaviour is unchanged.
 
 ---
 
