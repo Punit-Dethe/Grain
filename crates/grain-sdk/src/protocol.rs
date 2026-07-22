@@ -185,8 +185,8 @@ mod tests {
             err: None,
         }))
         .unwrap();
-        let event = serde_json::to_string(&crate::DaemonEvent::RecordingStopped { session_id: 1 })
-            .unwrap();
+        let event =
+            serde_json::to_string(&crate::DaemonEvent::RecordingStopped { session_id: 1 }).unwrap();
         let action = serde_json::to_string(&crate::PillAction::PromptRecord).unwrap();
         let hello = r#"{"token":"abc"}"#.to_string();
 
