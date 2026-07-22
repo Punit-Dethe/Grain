@@ -5,7 +5,7 @@
 //! This is the seed of the future local server (the OpenAI-compatible endpoints
 //! grow on the same listener later).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,11 +14,20 @@ use grain_core::AppContext;
 use tauri::{AppHandle, Manager};
 use tokio::net::TcpStream;
 use tokio::sync::broadcast::error::RecvError;
-use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{
+    accept_hdr_async,
+    tungstenite::{
+        handshake::server::{ErrorResponse, Request, Response},
+        http::{header::ORIGIN, StatusCode, Uri},
+        Message,
+    },
+};
 
 /// Fixed loopback port the pill connects to (`ws://127.0.0.1:EVENTS_PORT`).
 pub const EVENTS_PORT: u16 = 7124;
 static EVENTS_READY: AtomicBool = AtomicBool::new(false);
+static UNAUTHENTICATED_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 64;
 
 /// [GRAIN] SPEC §7.1: the server-side token → identity table. Minted per app
 /// run; the pill's token is injected into its environment at spawn. A
@@ -27,6 +36,69 @@ static EVENTS_READY: AtomicBool = AtomicBool::new(false);
 static TOKENS: std::sync::OnceLock<crate::events_auth::TokenRegistry> = std::sync::OnceLock::new();
 static PILL_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 const AUTH_DEADLINE: Duration = Duration::from_secs(3);
+
+/// A connection occupies one pre-authentication slot from accept until its
+/// first frame proves an identity. The guard makes every early return release
+/// the slot, including handshake failures and authentication timeouts.
+struct PreAuthGuard<'a> {
+    count: &'a AtomicUsize,
+    active: bool,
+}
+
+impl<'a> PreAuthGuard<'a> {
+    fn acquire(count: &'a AtomicUsize, limit: usize) -> Option<Self> {
+        count
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < limit).then_some(current + 1)
+            })
+            .ok()
+            .map(|_| Self {
+                count,
+                active: true,
+            })
+    }
+
+    fn release(&mut self) {
+        if self.active {
+            self.count.fetch_sub(1, Ordering::AcqRel);
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for PreAuthGuard<'_> {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
+/// Browsers do not apply same-origin policy to WebSockets, so the local server
+/// must reject browser handshakes from arbitrary sites. Native clients (the
+/// pill and, later, native extensions) omit Origin and remain valid.
+fn origin_allowed(origin: Option<&str>) -> bool {
+    let Some(origin) = origin else {
+        return true;
+    };
+    let Ok(uri) = origin.parse::<Uri>() else {
+        return false;
+    };
+
+    match uri.scheme_str() {
+        Some(scheme) if scheme.eq_ignore_ascii_case("tauri") => uri.authority().is_some(),
+        Some(scheme)
+            if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") =>
+        {
+            uri.host().is_some_and(|host| {
+                host.eq_ignore_ascii_case("tauri.localhost")
+                    || host.eq_ignore_ascii_case("localhost")
+                    || host == "127.0.0.1"
+                    || host == "::1"
+                    || host == "[::1]"
+            })
+        }
+        _ => false,
+    }
+}
 
 fn registry() -> &'static crate::events_auth::TokenRegistry {
     TOKENS.get_or_init(crate::events_auth::TokenRegistry::new)
@@ -153,7 +225,41 @@ pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
 }
 
 async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
-    let ws = match tokio_tungstenite::accept_async(stream).await {
+    let mut pre_auth = match PreAuthGuard::acquire(
+        &UNAUTHENTICATED_CONNECTIONS,
+        MAX_UNAUTHENTICATED_CONNECTIONS,
+    ) {
+        Some(guard) => guard,
+        None => {
+            log::warn!(
+                "[GRAIN] events WS: unauthenticated connection limit reached ({MAX_UNAUTHENTICATED_CONNECTIONS})"
+            );
+            return;
+        }
+    };
+
+    let ws = match accept_hdr_async(stream, |request: &Request, response: Response| {
+        let origin = request.headers().get(ORIGIN);
+        let allowed = match origin {
+            None => origin_allowed(None),
+            Some(value) => value
+                .to_str()
+                .is_ok_and(|value| origin_allowed(Some(value))),
+        };
+        if allowed {
+            return Ok(response);
+        }
+
+        let offending = origin
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("<invalid Origin header>");
+        log::warn!("[GRAIN] events WS: rejected Origin '{offending}'");
+        let mut error = ErrorResponse::new(Some("WebSocket Origin not allowed".into()));
+        *error.status_mut() = StatusCode::FORBIDDEN;
+        Err(error)
+    })
+    .await
+    {
         Ok(ws) => ws,
         Err(e) => {
             log::warn!("[GRAIN] events WS handshake failed: {e}");
@@ -183,6 +289,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             return;
         }
     };
+    pre_auth.release();
     log::info!("[GRAIN] events WS: '{}' authenticated", identity.id);
 
     // Contract handshake: tell the client which grainApi we speak. Clients
@@ -666,5 +773,67 @@ fn kill_stray_pills() {
             .arg("-f")
             .arg("--pill")
             .output();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_allowlist_covers_native_and_grain_clients() {
+        let allowed = [
+            None,
+            Some("tauri://localhost"),
+            Some("tauri://grain"),
+            Some("http://tauri.localhost"),
+            Some("https://tauri.localhost"),
+            Some("http://localhost:1420"),
+            Some("https://127.0.0.1:1420"),
+            Some("http://[::1]:1420"),
+        ];
+
+        for origin in allowed {
+            assert!(origin_allowed(origin), "expected {origin:?} to be allowed");
+        }
+    }
+
+    #[test]
+    fn origin_allowlist_rejects_web_and_malformed_origins() {
+        let rejected = [
+            "null",
+            "https://evil.example",
+            "https://localhost.evil.example",
+            "ws://localhost:7124",
+            "file://localhost",
+            "tauri:",
+            "not an origin",
+        ];
+
+        for origin in rejected {
+            assert!(
+                !origin_allowed(Some(origin)),
+                "expected {origin:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn pre_auth_guard_caps_and_releases_slots() {
+        let count = AtomicUsize::new(0);
+        let first = PreAuthGuard::acquire(&count, 2).expect("first slot");
+        let mut second = PreAuthGuard::acquire(&count, 2).expect("second slot");
+        assert!(PreAuthGuard::acquire(&count, 2).is_none());
+        assert_eq!(count.load(Ordering::Acquire), 2);
+
+        drop(first);
+        assert_eq!(count.load(Ordering::Acquire), 1);
+        let third = PreAuthGuard::acquire(&count, 2).expect("released slot");
+
+        second.release();
+        second.release();
+        assert_eq!(count.load(Ordering::Acquire), 1);
+        drop(third);
+        assert_eq!(count.load(Ordering::Acquire), 0);
     }
 }
