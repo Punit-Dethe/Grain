@@ -15,6 +15,7 @@ const HELP: &str = "grain-ext — build Grain extensions
 Usage:
   grain-ext init <name> [--id <reverse-dns-id>]
   grain-ext dev [--token-file <path>]
+  grain-ext doctor
   grain-ext --help
   grain-ext --version";
 
@@ -77,6 +78,17 @@ where
             dev_project(cwd, token_file.as_deref())?;
             Ok("development watcher stopped".into())
         }
+        "doctor" => {
+            if let Some(argument) = args.next() {
+                bail!("unknown doctor option '{argument}'");
+            }
+            let report = grain_extension_checks::doctor(cwd);
+            if report.is_clean() {
+                Ok(report.to_string())
+            } else {
+                bail!(report.to_string())
+            }
+        }
         _ => bail!("unknown command '{command}'\n\n{HELP}"),
     }
 }
@@ -119,7 +131,7 @@ pub fn init_project(cwd: &Path, name: &str, id: Option<&str>) -> Result<InitResu
     Ok(InitResult {
         root: root.clone(),
         output: format!(
-            "Created {}\n\nScripted extensions use Node.js and esbuild for bundling.\n\nNext:\n  cd {}\n  npm install\n  npm run build\n  Add this folder in Grain > Extensions > Developer mode\n  grain-ext dev",
+            "Created {}\n\nScripted extensions use Node.js and esbuild for bundling.\n\nNext:\n  cd {}\n  npm install\n  npm run build\n  grain-ext doctor\n  Add this folder in Grain > Extensions > Developer mode\n  grain-ext dev",
             root.display(),
             slug
         ),
@@ -507,7 +519,7 @@ fn tsconfig_json() -> serde_json::Value {
 
 fn readme(name: &str, id: &str) -> String {
     format!(
-        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Enable Developer mode in Grain and add this folder as an unpacked extension.\n4. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK.\n"
+        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Run `grain-ext doctor`.\n4. Enable Developer mode in Grain and add this folder as an unpacked extension.\n5. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK.\n"
     )
 }
 
@@ -613,6 +625,30 @@ mod tests {
         let raw = fs::read_to_string(temp.path().join("my-tool/manifest.json")).unwrap();
         let project: ExtensionProjectManifest = serde_json::from_str(&raw).unwrap();
         assert_eq!(project.manifest.id, "dev.example.my-tool");
+    }
+
+    #[test]
+    fn doctor_accepts_a_fresh_unbuilt_scaffold() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = init_project(temp.path(), "Doctor Test", None).unwrap();
+        let output = run(["doctor".into()], &project.root).unwrap();
+        assert!(output.starts_with("doctor: 0 findings"));
+    }
+
+    #[test]
+    fn doctor_failure_preserves_precise_unicode_diagnostic() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = init_project(temp.path(), "Doctor Test", None).unwrap();
+        fs::write(
+            project.root.join("src/main.ts"),
+            "const visible = true;\nconst hidden = '\u{200b}';\n",
+        )
+        .unwrap();
+
+        let error = run(["doctor".into()], &project.root).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("src/main.ts:2:17"));
+        assert!(message.contains("U+200B"));
     }
 
     #[test]

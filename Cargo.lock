@@ -708,6 +708,7 @@ name = "grain-ext-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "grain-extension-checks",
  "grain-sdk",
  "notify",
  "serde",
@@ -716,6 +717,15 @@ dependencies = [
  "specta-typescript",
  "tempfile",
  "tungstenite",
+]
+
+[[package]]
+name = "grain-extension-checks"
+version = "0.1.0"
+dependencies = [
+ "grain-sdk",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

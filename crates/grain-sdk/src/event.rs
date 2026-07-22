@@ -7,6 +7,47 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Serde variant names accepted by `onEvent:<Variant>` activations.
+///
+/// This vocabulary lives beside [`DaemonEvent`] so author tooling and registry
+/// CI do not maintain their own copies of the public event contract.
+pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
+    "RecordingStarted",
+    "RecordingStopped",
+    "SessionCancelled",
+    "PromptRecordingChanged",
+    "ChunkComplete",
+    "TranscriptionComplete",
+    "ProcessingComplete",
+    "ModelLoading",
+    "ModelLoaded",
+    "ModelUnloaded",
+    "ModelError",
+    "ModelDownloadProgress",
+    "AudioLevel",
+    "PromptChanged",
+    "DictionarySuggestion",
+    "DictionarySuggestionClear",
+    "AgentFollowupOffer",
+    "AgentFollowupClear",
+    "AgentInputShow",
+    "AgentInputHide",
+    "AgentInputSaved",
+    "AgentInputSubmitRequest",
+    "ShowOverlay",
+    "HideOverlay",
+    "PasteError",
+    "OverlayConfig",
+    "AsrStreamText",
+    "AsrPartial",
+    "AsrCommit",
+    "AsrSegmentFinal",
+    "AsrSessionFinal",
+    "AsrError",
+    "ExtensionDisabled",
+    "PillTheme",
+];
+
 /// [GRAIN] Which brain the NATIVE agent input card serves — purely
 /// presentational (the core routes submits by its own `AgentState.mode`). It
 /// lets the ONE pill surface render the right variant without a second window:

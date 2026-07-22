@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+grain-extension-checks = { path = "../grain-extension-checks" }
 grain-sdk = { path = "../grain-sdk" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–7 shipped 2026-07-23:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, source-mapped developer worker errors, the filtered developer log console, and typed host errors. **Step 8 (`grain-ext doctor`) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–8 shipped 2026-07-23:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, source-mapped developer worker errors, the filtered developer log console, typed host errors, and the shared `grain-ext doctor` suite. **Step 9 (author documentation) is next.** |
 
 **Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
 the project's build command alive in incremental `--watch` mode, watches its
@@ -82,6 +82,21 @@ while the host UI remains resilient if an extension's settings cannot be read.
 Verification: 279 backend tests, the full `grain-ext` suite, SDK tests, the
 production frontend build, focused formatting checks, and a graph impact review
 all passed. The refusal matrix test covers every routed host method.
+
+**Phase 3.5 step 8 detail.** `grain-extension-checks` is the one filesystem-only
+checker consumed by `grain-ext doctor` now and by registry CI in Phase 5B. It
+validates the SDK manifest/capability contract, API version, project-relative
+entry and 1 MB/5 MB file budgets; checks activation names against the SDK-owned
+daemon-event vocabulary and contributed shortcuts; and rejects overlay requests
+outside the host's size/lifetime budgets. It walks submitted source without
+following symlinks or retaining a project tree in RAM, skips generated/dependency
+trees, and rejects zero-width, bidirectional, format-control, and variation-
+selector codepoints. Findings are deterministic and identify the relative file,
+line, column, and `U+` codepoint. A fresh unbuilt scaffold returns zero findings,
+so `init` can be checked before the first dependency install. Verification: all
+170 workspace tests, 279 backend tests, focused Clippy, formatting, diff checks,
+and graph impact review passed; CLI integration tests cover both clean and
+zero-width failure paths.
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -544,13 +559,13 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–7 (`Origin` hardening,
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–8 (`Origin` hardening,
    `grain-ext init`, load-unpacked, authenticated hot reload, source maps,
-   developer log console, and typed errors) are shipped. The live step-4
-   latency/RSS and step-5 authored-stack gates passed. Continue with `doctor`
-   → author docs → **verify the Phase 3 surface handshake end-to-end with a
+   developer log console, typed errors, and `doctor`) are shipped. The live
+   step-4 latency/RSS and step-5 authored-stack gates passed. Continue with
+   author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks step 8.*
+   *Nothing blocks step 9.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`
@@ -586,8 +601,9 @@ record (full ledger: DISTRIBUTION-PLAN §8).
   at 64 with drop-safe slot cleanup.
 - **C-3/C-9 — trust and no-transitive-install are true by accident.** Both need
   to become tested invariants (5A steps 2 and 5).
-- **C-4 — invisible/bidi Unicode is unscreened.** The exact GlassWorm hiding
-  technique. → `doctor` lint (3.5) + CI gate (5B) + import path.
+- **C-4 — invisible/bidi Unicode.** The shared `doctor` lint is shipped in 3.5
+  with precise file/line/column/codepoint findings. Phase 5B consumes that same
+  crate as its CI gate; the distribution import path remains to be wired.
 - **C-5 — archive extraction does not exist yet**, so its traversal/zip-bomb
   tests get written *first* (5A step 4). Zed shipped a CVSS 7.4 Zip Slip in
   exactly this code.

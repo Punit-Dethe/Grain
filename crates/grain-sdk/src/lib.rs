@@ -29,7 +29,9 @@ pub mod settings_schema;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use error::{HostError, HostErrorCode};
-pub use event::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
+pub use event::{
+    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode, DAEMON_EVENT_VARIANTS,
+};
 pub use manifest::{
     Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry,
     SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
