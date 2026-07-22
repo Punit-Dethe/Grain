@@ -588,6 +588,9 @@ mod tests {
         let declarations = fs::read_to_string(result.root.join("grain.d.ts")).unwrap();
         assert!(declarations.contains("export type DaemonEvent"));
         assert!(declarations.contains("interface GrainError extends Error"));
+        assert!(declarations
+            .split_once("declare global")
+            .is_some_and(|(_, global)| global.contains("interface GrainError extends Error")));
         assert!(declarations.contains("E_CAPABILITY_DENIED"));
         assert!(declarations.contains("const grain: GrainApi"));
         for capability in KNOWN_CAPABILITIES {

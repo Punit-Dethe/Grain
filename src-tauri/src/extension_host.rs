@@ -20,7 +20,9 @@
 //!   killed and their tokens revoked — "destroy if not in use".
 //!
 //! The security wall is the Rust WS boundary ([`crate::events_auth`] +
-//! [`crate::host_api`]); this module is the *lifecycle*, not the enforcement.
+//! [`crate::host_api`]). This lifecycle index also requires the corresponding
+//! grant before a declared activation can wake a worker, so the carried wake
+//! payload cannot bypass the connection's live-event filter.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,7 +31,7 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
-use grain_sdk::{GrainPack, HostCall, HostFrame};
+use grain_sdk::{daemon_event_capability, GrainPack, HostCall, HostFrame};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -311,6 +313,7 @@ pub fn refresh_index(app: &AppHandle) {
     };
     let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
     let mut transforms: Vec<(String, u64)> = Vec::new();
+    let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         for rec in reg.records() {
@@ -321,11 +324,38 @@ pub fn refresh_index(app: &AppHandle) {
                 Some(p) if p.is_scripted() => p,
                 _ => continue,
             };
-            for variant in activation_variants(&pack.manifest.activation) {
+            let mut granted_variants = Vec::new();
+            for variant in declared_event_variants(&pack.manifest.activation) {
+                let Some(capability) = daemon_event_capability(&variant) else {
+                    continue;
+                };
+                if has_grant(&rec.granted, capability) {
+                    granted_variants.push(variant);
+                } else {
+                    log::warn!(
+                        "[ext:{}] deny activation onEvent:{variant} missing capability {capability}",
+                        rec.id
+                    );
+                }
+            }
+            if declares_transform(&pack.manifest.activation)
+                && has_grant(&rec.granted, "transform:transcript")
+            {
+                transforms.push((rec.id.clone(), rec.toggle_seq));
+                granted_variants.push("RecordingStarted".to_string());
+            } else if declares_transform(&pack.manifest.activation) {
+                log::warn!(
+                    "[ext:{}] deny activation onTransform missing capability transform:transcript",
+                    rec.id
+                );
+            }
+            granted_variants.sort();
+            granted_variants.dedup();
+            for variant in granted_variants {
                 by_event.entry(variant).or_default().push(rec.id.clone());
             }
-            if declares_transform(&pack.manifest.activation) {
-                transforms.push((rec.id.clone(), rec.toggle_seq));
+            if declares_startup(&pack.manifest.activation) && !is_running(&rec.id) {
+                startup_workers.push((rec.id.clone(), pack, rec.granted.clone()));
             }
         }
     }
@@ -354,6 +384,12 @@ pub fn refresh_index(app: &AppHandle) {
     // one. The broadcast reaches a connected pill; a pill that connects later
     // gets the theme in its welcome instead.
     crate::pill_theme::broadcast(app);
+    for (id, pack, granted) in startup_workers {
+        if !is_running(&id) {
+            log::info!("[ext:{id}] life activation startup");
+            spawn_worker(app, &id, &pack, granted, None);
+        }
+    }
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.
@@ -559,19 +595,16 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
 
 // ── Activation ──────────────────────────────────────────────────────────────
 
-/// The event variants an activation list wakes on. `onTransform` warms at
-/// session start (SPEC §3.1: a ~300 ms cold wake cannot fit the 150 ms
-/// transform budget, so the worker must already be up when the transform runs).
-fn activation_variants(activation: &[String]) -> Vec<String> {
+/// Explicit daemon-event variants an activation list wakes on. `onTransform`
+/// warming is added separately only after its own capability grant is checked.
+fn declared_event_variants(activation: &[String]) -> Vec<String> {
     let mut out: Vec<String> = activation
         .iter()
         .filter_map(|a| {
             if let Some(v) = a.strip_prefix("onEvent:") {
                 Some(v.to_string())
-            } else if a == "onTransform" {
-                Some("RecordingStarted".to_string())
             } else {
-                None // onStartup / onShortcut are not event-driven
+                None // onStartup / onShortcut / onTransform are handled elsewhere
             }
         })
         .collect();
@@ -582,6 +615,14 @@ fn activation_variants(activation: &[String]) -> Vec<String> {
 
 fn declares_transform(activation: &[String]) -> bool {
     activation.iter().any(|a| a == "onTransform")
+}
+
+fn declares_startup(activation: &[String]) -> bool {
+    activation.iter().any(|a| a == "onStartup")
+}
+
+fn has_grant(granted: &[String], capability: &str) -> bool {
+    granted.iter().any(|grant| grant == capability)
 }
 
 fn on_event(app: &AppHandle, ev: &DaemonEvent) {
@@ -1097,7 +1138,7 @@ pub fn reload_dev_extension(
         kill_worker_inner(id, "developer hot reload", None, true);
     }
     refresh_index(app);
-    if had_worker && enabled {
+    if had_worker && enabled && !is_running(id) {
         spawn_worker(app, id, &loaded.pack, granted, None);
     }
     let remounted_surfaces = if enabled && !permissions_changed {
@@ -1309,44 +1350,49 @@ fn seed_pack(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use grain_core::event::SessionMode;
 
     /// The index is keyed by `DaemonEvent::variant_name`, so the variants an
     /// activation expands to must be spelled exactly the way events report
     /// themselves — otherwise an activation silently never fires.
     #[test]
     fn activation_variants_match_real_event_names() {
-        let started = DaemonEvent::RecordingStarted {
-            session_id: 1,
-            mode: SessionMode::Dictation,
-        };
         let done = DaemonEvent::TranscriptionComplete {
             session_id: 1,
             text: "hi".into(),
         };
 
         let on_event = vec!["onEvent:TranscriptionComplete".to_string()];
-        assert_eq!(activation_variants(&on_event), vec![done.variant_name()]);
+        assert_eq!(
+            declared_event_variants(&on_event),
+            vec![done.variant_name()]
+        );
         assert!(!declares_transform(&on_event));
 
-        // onTransform warms at session start (SPEC §3.1), nothing else.
+        // onTransform warming is indexed separately after its grant check.
         let transform = vec!["onTransform".to_string()];
-        assert_eq!(
-            activation_variants(&transform),
-            vec![started.variant_name()]
-        );
+        assert!(declared_event_variants(&transform).is_empty());
         assert!(declares_transform(&transform));
+        assert!(!declares_startup(&transform));
 
         // Non-event clauses contribute nothing to the event index.
-        assert!(activation_variants(&["onStartup".to_string()]).is_empty());
-        assert!(activation_variants(&[]).is_empty());
+        assert!(declared_event_variants(&["onStartup".to_string()]).is_empty());
+        assert!(declares_startup(&["onStartup".to_string()]));
+        assert!(declared_event_variants(&[]).is_empty());
 
-        // Duplicates collapse (onTransform + an explicit RecordingStarted).
+        // Duplicate explicit declarations collapse before indexing.
         let both = vec![
-            "onTransform".to_string(),
+            "onEvent:RecordingStarted".to_string(),
             "onEvent:RecordingStarted".to_string(),
         ];
-        assert_eq!(activation_variants(&both).len(), 1);
+        assert_eq!(declared_event_variants(&both).len(), 1);
+    }
+
+    #[test]
+    fn activation_index_requires_the_matching_user_grant() {
+        let granted = vec!["events:sessions".to_string()];
+        assert!(has_grant(&granted, "events:sessions"));
+        assert!(!has_grant(&granted, "events:transcripts"));
+        assert!(!has_grant(&granted, "transform:transcript"));
     }
 
     /// The whole point of the index: with nothing enabled, the paste path and

@@ -48,6 +48,25 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "PillTheme",
 ];
 
+/// Capability required to receive (or be woken by) a daemon event variant.
+/// Unknown names return `None` so manifest tooling can reject them rather than
+/// silently assigning a broad capability.
+pub fn daemon_event_capability(variant: &str) -> Option<&'static str> {
+    match variant {
+        "ChunkComplete"
+        | "TranscriptionComplete"
+        | "ProcessingComplete"
+        | "AsrStreamText"
+        | "AsrPartial"
+        | "AsrCommit"
+        | "AsrSegmentFinal"
+        | "AsrSessionFinal" => Some("events:transcripts"),
+        "AudioLevel" => Some("events:audio-levels"),
+        known if DAEMON_EVENT_VARIANTS.contains(&known) => Some("events:sessions"),
+        _ => None,
+    }
+}
+
 /// [GRAIN] Which brain the NATIVE agent input card serves — purely
 /// presentational (the core routes submits by its own `AgentState.mode`). It
 /// lets the ONE pill surface render the right variant without a second window:
@@ -370,7 +389,25 @@ mod variant_name_tests {
                 other => panic!("unexpected shape: {other:?}"),
             };
             assert_eq!(ev.variant_name(), tag);
+            assert!(daemon_event_capability(&tag).is_some());
         }
+    }
+
+    #[test]
+    fn event_capability_mapping_distinguishes_payload_classes() {
+        assert_eq!(
+            daemon_event_capability("TranscriptionComplete"),
+            Some("events:transcripts")
+        );
+        assert_eq!(
+            daemon_event_capability("RecordingStarted"),
+            Some("events:sessions")
+        );
+        assert_eq!(
+            daemon_event_capability("AudioLevel"),
+            Some("events:audio-levels")
+        );
+        assert_eq!(daemon_event_capability("NotARealEvent"), None);
     }
 }
 

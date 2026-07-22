@@ -10,8 +10,8 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use grain_sdk::{
-    ExtensionProjectManifest, GrainPack, PackPayloads, Tier, DAEMON_EVENT_VARIANTS,
-    GRAIN_API_VERSION,
+    daemon_event_capability, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
+    DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
 };
 
 pub const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -295,7 +295,10 @@ fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorRepo
             continue;
         }
         match activation.as_str() {
-            "onTransform" | "onStartup" => {}
+            "onTransform" => {
+                require_activation_capability(project, activation, "transform:transcript", report)
+            }
+            "onStartup" => {}
             value if value.starts_with("onEvent:") => {
                 let event = &value["onEvent:".len()..];
                 if !DAEMON_EVENT_VARIANTS.contains(&event) {
@@ -304,6 +307,8 @@ fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorRepo
                         "manifest.json",
                         format!("unknown daemon event '{event}'"),
                     ));
+                } else if let Some(capability) = daemon_event_capability(event) {
+                    require_activation_capability(project, activation, capability, report);
                 }
             }
             value if value.starts_with("onShortcut:") => {
@@ -322,6 +327,26 @@ fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorRepo
                 format!("unsupported activation '{activation}'"),
             )),
         }
+    }
+}
+
+fn require_activation_capability(
+    project: &ExtensionProjectManifest,
+    activation: &str,
+    capability: &str,
+    report: &mut DoctorReport,
+) {
+    if !project
+        .manifest
+        .permissions
+        .iter()
+        .any(|permission| permission == capability)
+    {
+        report.findings.push(Finding::project(
+            "E_CAPABILITY",
+            "manifest.json",
+            format!("activation '{activation}' requires permission '{capability}'"),
+        ));
     }
 }
 
@@ -639,6 +664,40 @@ mod tests {
                 "missing {code}: {report}"
             );
         }
+    }
+
+    #[test]
+    fn event_and_transform_activations_require_their_permissions() {
+        let directory = scaffold();
+        fs::write(
+            directory.path().join("manifest.json"),
+            r#"{
+              "id":"com.example.unguarded","name":"Unguarded","version":"0.1.0",
+              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+              "permissions":[],
+              "activation":["onEvent:TranscriptionComplete","onTransform"]
+            }"#,
+        )
+        .unwrap();
+        let report = doctor(directory.path());
+        let messages = report
+            .findings
+            .iter()
+            .filter(|finding| finding.code == "E_CAPABILITY")
+            .map(|finding| finding.message.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("events:transcripts")),
+            "{report}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.contains("transform:transcript")),
+            "{report}"
+        );
     }
 
     #[test]

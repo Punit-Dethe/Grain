@@ -43,14 +43,6 @@ export type GrainErrorCode =
   | "E_UNAVAILABLE"
   | "E_INTERNAL";
 
-export interface GrainError extends Error {
-  readonly name: "GrainError";
-  readonly code: GrainErrorCode;
-  readonly hint: string;
-  readonly docs: string;
-  readonly capability?: string;
-}
-
 export interface GrainApi {
   readonly activation: GrainActivation | null;
   readonly caps: readonly GrainCapability[];
@@ -96,6 +88,13 @@ export interface GrainApi {
 }
 
 declare global {
+  interface GrainError extends Error {
+    readonly name: "GrainError";
+    readonly code: GrainErrorCode;
+    readonly hint: string;
+    readonly docs: string;
+    readonly capability?: string;
+  }
   const grain: GrainApi;
 }
 "#;

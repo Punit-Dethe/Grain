@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 use grain_core::DaemonEvent;
-use grain_sdk::ClientHello;
+use grain_sdk::{daemon_event_capability, ClientHello};
 
 /// What a connected client may receive/do. The pill is `All`; extension
 /// workers (Phase 2) get `Named` sets derived from user-granted manifests.
@@ -105,19 +105,8 @@ impl TokenRegistry {
 /// events, the high-frequency level feed, and everything else as session/UI
 /// signals. Refined in Phase 2 when `Named` consumers exist.
 fn required_capability(ev: &DaemonEvent) -> &'static str {
-    use DaemonEvent::*;
-    match ev {
-        ChunkComplete { .. }
-        | TranscriptionComplete { .. }
-        | ProcessingComplete { .. }
-        | AsrStreamText { .. }
-        | AsrPartial { .. }
-        | AsrCommit { .. }
-        | AsrSegmentFinal { .. }
-        | AsrSessionFinal { .. } => "events:transcripts",
-        AudioLevel { .. } => "events:audio-levels",
-        _ => "events:sessions",
-    }
+    daemon_event_capability(ev.variant_name())
+        .expect("every DaemonEvent variant must have a capability mapping")
 }
 
 /// May this identity receive this event? (Filtered = never sent, not blanked.)
@@ -162,9 +151,7 @@ mod tests {
             ClientIdentity {
                 id: "com.example.a".into(),
                 role: ClientRole::Worker,
-                caps: CapabilitySet::Named(
-                    ["events:sessions".to_string()].into_iter().collect(),
-                ),
+                caps: CapabilitySet::Named(["events:sessions".to_string()].into_iter().collect()),
             },
         );
         reg
