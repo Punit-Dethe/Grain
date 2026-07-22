@@ -178,7 +178,7 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                 shortcuts: vec![ShortcutDecl {
                     id: "open".into(),
                     label: format!("Open {name}"),
-                    default_binding: None,
+                    default_binding: Some("Ctrl+Alt+Shift+G".into()),
                 }],
             },
         },
@@ -583,6 +583,12 @@ mod tests {
         assert_eq!(project.manifest.id, "com.example.focus-notes");
         assert_eq!(project.manifest.grain_api, "^1.0");
         assert_eq!(project.entry, "dist/main.js");
+        assert_eq!(
+            project.manifest.contributes.shortcuts[0]
+                .default_binding
+                .as_deref(),
+            Some("Ctrl+Alt+Shift+G")
+        );
         validate_scaffold(&project).unwrap();
 
         let declarations = fs::read_to_string(result.root.join("grain.d.ts")).unwrap();

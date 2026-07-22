@@ -106,8 +106,9 @@ log stream without creating a second logging service.
 ## 5. Make the first change
 
 The generated shortcut logs a message. Change that message in `src/main.ts`,
-save, and watch `grain-ext dev` report a reload. Trigger the extension's shortcut
-from its card or assign a binding in Grain.
+save, and watch `grain-ext dev` report a reload. Press its suggested
+`Ctrl+Alt+Shift+G` shortcut. Change `default_binding` in `manifest.json` if that
+chord conflicts with another enabled extension.
 
 Host calls are promises. Treat failures as typed `GrainError` values:
 

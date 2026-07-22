@@ -60,7 +60,13 @@ contributed shortcut:
 "permissions": ["storage"],
 "activation": ["onShortcut:count"],
 "contributes": {
-  "shortcuts": [{ "id": "count", "label": "Count a press" }]
+  "shortcuts": [
+    {
+      "id": "count",
+      "label": "Count a press",
+      "default_binding": "Ctrl+Alt+Shift+C"
+    }
+  ]
 }
 ```
 
@@ -84,8 +90,8 @@ grain-ext doctor
 grain-ext dev
 ```
 
-Assign the contributed shortcut in Grain. Each press increments the same value
-even after the worker is reaped or Grain restarts.
+Press `Ctrl+Alt+Shift+C`. Each press increments the same value even after the
+worker is reaped or Grain restarts.
 
 ## 3. Workspace surface
 
@@ -113,6 +119,9 @@ The declaration and permission must appear together:
   }
 }
 ```
+
+After loading and enabling the checked example, press its suggested
+`Ctrl+Alt+Shift+W` shortcut.
 
 The worker opens only its own workspace; there is no extension id parameter to
 spoof:

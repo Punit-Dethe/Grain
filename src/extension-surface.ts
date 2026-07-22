@@ -27,6 +27,7 @@ type SurfaceInit = {
   sleepEvent: string;
   reviveEvent: string;
   payloadEvent: string;
+  reloadEvent: string;
 };
 
 /** Injected ahead of the extension's markup: the `grain` API, as a postMessage
@@ -256,7 +257,7 @@ async function boot() {
   await listen<{
     workspaceUiSource?: string | null;
     overlayUiSource?: string | null;
-  }>(`ext-surface://${cfg.extensionId}/reload`, (e) => {
+  }>(cfg.reloadEvent, (e) => {
     if (!init) return;
     const overlay = cfg.sleepEvent.startsWith("ext-overlay://");
     const source = overlay

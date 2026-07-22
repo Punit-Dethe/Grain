@@ -44,7 +44,7 @@ const MAX_TIMEOUT: Duration = Duration::from_millis(15000);
 static EPOCH: AtomicU64 = AtomicU64::new(0);
 
 fn base_label(ext_id: &str) -> String {
-    format!("ext-overlay-{}", ext_id.replace(['.', ':'], "-"))
+    format!("ext-overlay-{}", extension::safe_component(ext_id))
 }
 
 fn label_for(ext_id: &str, epoch: u64) -> String {
@@ -54,7 +54,10 @@ fn label_for(ext_id: &str, epoch: u64) -> String {
 /// The overlay is transient, so its events are unused today; still distinct from
 /// the workspace's, so the shared wrapper page listens for the right names.
 fn payload_event(ext_id: &str) -> String {
-    format!("ext-overlay://{ext_id}/payload")
+    format!(
+        "ext-overlay://{}/payload",
+        extension::safe_component(ext_id)
+    )
 }
 
 fn clamp_size(requested: Option<[u32; 2]>) -> (f64, f64) {
@@ -125,8 +128,8 @@ pub fn show(
         &ui_source,
         // No sleep/revive for an overlay; give the wrapper harmless names it
         // will simply never receive.
-        &format!("ext-overlay://{ext_id}/sleep"),
-        &format!("ext-overlay://{ext_id}/revive"),
+        &format!("ext-overlay://{}/sleep", extension::safe_component(ext_id)),
+        &format!("ext-overlay://{}/revive", extension::safe_component(ext_id)),
         &payload_event(ext_id),
     )?;
     // The payload rides in the shared surface stash; the wrapper delivers it to
@@ -273,8 +276,9 @@ mod tests {
 
     #[test]
     fn labels_never_collide_with_workspace_or_each_other() {
-        assert_eq!(base_label("com.x.y"), "ext-overlay-com-x-y");
+        assert_eq!(base_label("com.x.y"), "ext-overlay-636f6d2e782e79");
         assert_ne!(base_label("com.x.a"), base_label("com.x.b"));
+        assert_ne!(base_label("com.x.a-b"), base_label("com.x.a.b"));
         // A workspace and an overlay for the SAME extension are different windows.
         assert_ne!(
             base_label("com.x.y"),

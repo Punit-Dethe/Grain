@@ -19,7 +19,8 @@
     "shortcuts": [
       {
         "id": "open",
-        "label": "Open example workspace"
+        "label": "Open example workspace",
+        "default_binding": "Ctrl+Alt+Shift+W"
       }
     ]
   }

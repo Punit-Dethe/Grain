@@ -18,6 +18,7 @@
 //! gone must not leave a usable credential behind.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
@@ -48,6 +49,7 @@ pub struct SurfaceInit {
     pub sleep_event: String,
     pub revive_event: String,
     pub payload_event: String,
+    pub reload_event: String,
 }
 
 /// window label → the init a surface page is waiting for.
@@ -102,21 +104,36 @@ pub fn take_payload(label: &str) -> Option<serde_json::Value> {
     payloads().lock().unwrap().remove(label)
 }
 
-/// Tauri window labels accept `a-zA-Z0-9-/:_` — an extension id is reverse-DNS
-/// and carries dots, so the label is derived rather than reused. The surface id
-/// stays the real extension id; only the OS-facing label is sanitized.
+/// Encode a reverse-DNS id into a collision-free component accepted by Tauri
+/// window labels and event names. Character replacement is insufficient:
+/// `com.example.a-b` and `com.example.a.b` must remain different identities.
+pub(crate) fn safe_component(ext_id: &str) -> String {
+    let mut encoded = String::with_capacity(ext_id.len() * 2);
+    for byte in ext_id.as_bytes() {
+        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    encoded
+}
+
 pub fn label_for(ext_id: &str) -> String {
-    format!("ext-surface-{}", ext_id.replace(['.', ':'], "-"))
+    format!("ext-surface-{}", safe_component(ext_id))
+}
+
+fn event_name(ext_id: &str, leaf: &str) -> String {
+    format!("ext-surface://{}/{leaf}", safe_component(ext_id))
 }
 
 fn sleep_event(ext_id: &str) -> String {
-    format!("ext-surface://{ext_id}/sleep")
+    event_name(ext_id, "sleep")
 }
 fn revive_event(ext_id: &str) -> String {
-    format!("ext-surface://{ext_id}/revive")
+    event_name(ext_id, "revive")
 }
 fn payload_event(ext_id: &str) -> String {
-    format!("ext-surface://{ext_id}/payload")
+    event_name(ext_id, "payload")
+}
+fn reload_event(ext_id: &str) -> String {
+    event_name(ext_id, "reload")
 }
 
 #[derive(Clone, Serialize)]
@@ -144,7 +161,7 @@ pub fn reload(app: &AppHandle, ext_id: &str, pack: &grain_sdk::GrainPack) -> boo
             .map(|decl| decl.ui_source.clone()),
     };
     let has_surface = payload.workspace_ui_source.is_some() || payload.overlay_ui_source.is_some();
-    let _ = app.emit(&format!("ext-surface://{ext_id}/reload"), payload);
+    let _ = app.emit(&reload_event(ext_id), payload);
     has_surface
 }
 
@@ -301,6 +318,7 @@ pub(crate) fn stage(
         sleep_event: sleep_event.to_string(),
         revive_event: revive_event.to_string(),
         payload_event: payload_event.to_string(),
+        reload_event: reload_event(ext_id),
     };
     labels()
         .lock()
@@ -334,11 +352,30 @@ mod tests {
 
     #[test]
     fn labels_are_window_safe_and_collision_free() {
-        // Tauri labels reject dots; two extensions must still never collide.
+        // Tauri labels reject dots; replacements must not collapse distinct ids.
         let a = label_for("com.example.spaces");
-        assert_eq!(a, "ext-surface-com-example-spaces");
+        assert_eq!(a, "ext-surface-636f6d2e6578616d706c652e737061636573");
         assert!(!a.contains('.'));
         assert_ne!(label_for("com.example.a"), label_for("com.example.b"));
+        assert_ne!(label_for("com.example.a-b"), label_for("com.example.a.b"));
+    }
+
+    #[test]
+    fn event_names_accept_reverse_dns_ids() {
+        let allowed = |event: &str| {
+            event
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '/' | ':' | '_'))
+        };
+        for event in [
+            sleep_event("com.example.surface"),
+            revive_event("com.example.surface"),
+            payload_event("com.example.surface"),
+            reload_event("com.example.surface"),
+        ] {
+            assert!(allowed(&event), "invalid Tauri event name: {event}");
+            assert!(!event.contains('.'));
+        }
     }
 
     #[test]
@@ -363,6 +400,7 @@ mod tests {
             sleep_event: "s".into(),
             revive_event: "r".into(),
             payload_event: "p".into(),
+            reload_event: "x".into(),
         };
         pending()
             .lock()

@@ -12,7 +12,8 @@
     "shortcuts": [
       {
         "id": "count",
-        "label": "Count a press"
+        "label": "Count a press",
+        "default_binding": "Ctrl+Alt+Shift+C"
       }
     ]
   }

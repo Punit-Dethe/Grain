@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–8 shipped; step 9 implemented 2026-07-23:** the author quickstart, capability reference, three checked examples, and debugging guide are complete. **Step 9's outside-author walkthrough and step 10's real surface lifecycle proof remain.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–10 are implemented and step 10's real surface lifecycle is proven.** The author quickstart, capability reference, three checked examples, and debugging guide are complete. **Only step 9's literal outside-author walkthrough remains as a manual acceptance gate.** |
 
 **Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
 the project's build command alive in incremental `--watch` mode, watches its
@@ -117,6 +117,26 @@ and generated declarations expose `GrainError` in the global author namespace.
 Verification: 174 workspace tests, 280 backend tests, focused ESLint, production
 frontend build, example bundling, formatting, diff checks, and link checks pass.
 The guide's literal outside-author walkthrough is still a manual acceptance gate.
+
+**Phase 3.5 step 10 detail.** The checked workspace example now has a default
+shortcut and was loaded through the real Developer mode folder picker. The first
+runtime pass reproduced the class of failure C-1 was meant to catch: Tauri
+rejected surface event names containing the dots from a reverse-DNS extension
+id, so the surface appeared only through the 700 ms fallback. Surface and
+overlay window/event components now use collision-free hex encoding (also
+removing the `a-b` / `a.b` window-label collision), and the backend hands the
+wrapper its reload event instead of making JavaScript derive it.
+
+The fixed build opened the sandboxed iframe without the fallback, delivered
+`Opened by com.example.workspace-surface`, slept with the iframe removed,
+revived the same host window with the payload delivered again, and re-slept with
+zero `ack timed out` or invalid-event warnings. A separate RAM pass without a
+CDP debugger measured the full Grain process tree at 587.5 MB working set before
+open, 686.3 MB open, 634.4 MB immediately asleep, and 586.4 MB after the normal
+120-second worker reap. The sleeping renderer remains for instant revive while
+total RAM returns slightly below baseline. Verification: 281 backend tests, 174
+workspace tests, the production frontend build, and the checked-example doctor
+pass.
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -579,14 +599,10 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–8 (`Origin` hardening,
-   `grain-ext init`, load-unpacked, authenticated hot reload, source maps,
-   developer log console, typed errors, and `doctor`) are shipped. The live
-   step-4 latency/RSS and step-5 authored-stack gates passed. Step 9's author
-   docs and checked examples are implemented; run the literal outside-author
-   walkthrough, then **verify the Phase 3 surface handshake end-to-end with the
-   worked surface extension** (this is what would have caught C-1, below).
-   *Nothing blocks either remaining manual gate.*
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–10 are implemented, and the
+   step-10 workspace-surface lifecycle/RAM proof passed. Run the literal
+   outside-author walkthrough for step 9; it is the phase's only remaining
+   manual acceptance gate.
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`
@@ -615,7 +631,9 @@ record (full ledger: DISTRIBUTION-PLAN §8).
   `invoke` calls looked fine and the gap hid. **Fixed** (`9e0d8db2`,
   `capabilities/extension-surface.json`, scoped to `core:event:default` only —
   a surface must never be able to move, resize or close its own window).
-  Runtime proof is Phase 3.5 step 10.
+  **Runtime-proven in Phase 3.5 step 10.** That pass also found and fixed the
+  follow-on invalid-event-name bug for dotted reverse-DNS ids; see the step 10
+  detail above.
 - **C-2 — fixed in Phase 3.5 step 1.** The WS handshake now accepts only Grain's
   Tauri/loopback origins (or an absent `Origin` for native clients), rejects
   other browser origins with 403, and caps concurrent unauthenticated clients
