@@ -182,6 +182,7 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                 }],
                 session_mode: None,
             },
+            companion: None,
         },
         entry: "dist/main.js".into(),
     }

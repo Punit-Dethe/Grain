@@ -157,3 +157,46 @@ globals.
 For an overlay, replace the declaration/permission with `surface:overlay` and
 call `grain.overlay.show(payload)`. Overlays are created per invocation,
 auto-dismiss, and cannot exceed the documented size/lifetime budgets.
+
+## 4. Extension-owned voice note
+
+The [voice-note example](examples/voice-note/) is the complete session-mode
+acceptance extension. It declares one host-owned recording mode:
+
+```json
+"permissions": ["session:start", "llm", "storage"],
+"contributes": {
+  "sessionMode": {
+    "id": "note",
+    "label": "Dictate a voice note",
+    "default_binding": "Ctrl+Shift+N"
+  }
+}
+```
+
+Its contributed shortcut starts and stops the serialized recorder. Grain shows
+the extension name in the pill, wakes the worker for the bounded slow stage,
+and supplies an `AbortSignal`. The handler structures and stores the note, then
+suppresses the normal paste:
+
+```ts
+grain.onSessionStage(async (text, { signal }) => {
+  const note = await grain.llm.complete(`Structure this note:\n\n${text}`);
+  if (signal.aborted) return text;
+  await grain.doc.put(`voice-note-${Date.now()}`, { original: text, note });
+  return { handled: true };
+});
+```
+
+The stage has a 30-second ceiling. A crash, timeout, disable, or hot reload
+cancels the wait and restores the exact input text; owning a stage may change
+the user's words but cannot lose them.
+
+## 5. Developer-only native companion
+
+The [native-companion example](examples/native-companion/) connects a separate
+Rust process through the same authenticated WebSocket and capability filter as
+a scripted worker. Native manifests use `tier: "native"` and a per-platform
+`companion` map. Grain accepts them only from a human-selected unpacked folder
+while Developer mode is enabled; native packages are not distributable before
+Phase 5A trust rails.

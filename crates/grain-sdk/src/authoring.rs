@@ -15,6 +15,7 @@ pub struct ExtensionProjectManifest {
     #[serde(flatten)]
     pub manifest: ExtensionManifest,
     /// Project-relative TypeScript/JavaScript entry file.
+    #[serde(default)]
     pub entry: String,
 }
 
@@ -30,7 +31,10 @@ pub const GRAIN_API_TYPESCRIPT: &str = r#"export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export type GrainActivation = DaemonEvent | { Shortcut: { id: string } };
+export type GrainActivation =
+  | DaemonEvent
+  | { Shortcut: { id: string } }
+  | { Session: { mode: string } };
 
 export type GrainErrorCode =
   | "E_CAPABILITY_DENIED"

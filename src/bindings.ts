@@ -1024,6 +1024,53 @@ async extensionSetEnabled(id: string, enabled: boolean) : Promise<Result<null, s
 }
 },
 /**
+ * Developer mode is a distinct, explicit product setting. Reporting loaded
+ * projects separately keeps the Overview card model focused on effective
+ * extensions while still making every local path visible to the author.
+ */
+async extensionDeveloperStatus() : Promise<Result<ExtensionDeveloperStatus, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_developer_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Toggle developer mode from the in-app settings surface. Turning it off is
+ * also the cleanup boundary: all local projects are unloaded, workers and
+ * surfaces die, and any parked installed versions are restored.
+ */
+async extensionSetDeveloperMode(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_set_developer_mode", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Human-only load-unpacked entry point. The frontend cannot provide a path:
+ * the backend always opens a native folder picker after confirming developer
+ * mode, so links, downloads, and extensions cannot trigger a load.
+ */
+async extensionLoadUnpacked() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_load_unpacked") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionUnloadDev(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_unload_dev", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Record the user's approval of a scripted extension's capabilities (SPEC §6).
  * Called by the permission sheet on Approve; the caller then retries enable.
  * 
@@ -2074,6 +2121,12 @@ agent_enabled?: boolean;
  */
 extensions_imported_v1?: boolean; 
 /**
+ * [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
+ * separate from diagnostic `debug_mode`: only this switch allows native
+ * folder selection and load-unpacked projects. OFF by default.
+ */
+extension_developer_mode?: boolean; 
+/**
  * [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
  * default; only consulted when `context_awareness_enabled` is true.
  */
@@ -2223,6 +2276,7 @@ name: string;
  * URL reader resolved it. `None` otherwise.
  */
 url_host: string | null }
+export type DeveloperExtension = { id: string; path: string }
 /**
  * [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
  * repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
@@ -2254,9 +2308,19 @@ export type EngineType =
  */
 export type ExtensionCard = { id: string; name: string; description: string; version: string; 
 /**
- * "builtin" | "pack"
+ * "builtin" | "pack" | "scripted" | "native"
  */
-tier: string; enabled: boolean; 
+tier: string; 
+/**
+ * "core" | "community" | "dev". Dev is permanent while loaded and is
+ * never allowed to masquerade as verified.
+ */
+trust: string; 
+/**
+ * A separately installed copy with this id is parked beneath the active
+ * load-unpacked project.
+ */
+overrides_installed: boolean; overridden_version: string | null; enabled: boolean; 
 /**
  * Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
  * Sent as string — u64 doesn't survive JS numbers.
@@ -2267,6 +2331,7 @@ toggle_seq: string; repository: string | null;
  * worth opening. Free to compute — Overview already reads every manifest.
  */
 has_detail: boolean }
+export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
@@ -2555,7 +2620,7 @@ export type SurfaceInit = { extensionId: string; token: string;
 /**
  * The extension's HTML, rendered into a sandboxed iframe.
  */
-uiSource: string; sleepEvent: string; reviveEvent: string; payloadEvent: string }
+uiSource: string; sleepEvent: string; reviveEvent: string; payloadEvent: string; reloadEvent: string }
 export type TodoTag = { text: string; done: boolean }
 /**
  * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.

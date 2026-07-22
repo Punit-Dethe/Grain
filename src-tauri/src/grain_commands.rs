@@ -676,7 +676,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             // that code cannot start running on capabilities nobody approved.
             // The frontend catches this structured error, shows the permission
             // sheet, calls `extension_grant`, and retries.
-            if enabled && pack.is_scripted() {
+            if enabled && pack.has_runtime() {
                 let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
                 let missing: Vec<String> = pack
                     .manifest

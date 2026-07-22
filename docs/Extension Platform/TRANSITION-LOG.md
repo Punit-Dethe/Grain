@@ -21,9 +21,10 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 step 3** — schema settings render | **SHIPPED.** Levels 1–2, all five anchors mounted, auto-categorize dogfoods it. |
 | **Phase 3 step 4a** — `contributes.shortcuts` | **SHIPPED.** Namespaced `ext:<id>:<sid>`, toggle-order arbitration, status rows. |
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
-| **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
+| **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **SHIPPED in Phase 4 (`e100741b`).** Serialized host-owned recording, visible ownership, cancellable 30-second slow stage, and exact-text fallback. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–10 are implemented and step 10's real surface lifecycle is proven.** The author quickstart, capability reference, three checked examples, and debugging guide are complete. **Only step 9's literal outside-author walkthrough remains as a manual acceptance gate.** |
+| **Phase 3.5 — Developer Mode & SDK** | **SHIPPED.** Steps 1–10, the author quickstart/capability/debugging docs, checked examples, hot reload, and the real surface lifecycle are implemented and verified. |
+| **Phase 4 — contract completion** | **SHIPPED 2026-07-23.** Extension-owned sessions + owner indicator; exact-host network proxy; write-only credential-file secrets; per-worker heap strikes; dev-only native companion supervisor; checked voice-note acceptance example. Native distribution remains blocked on 5A trust rails. |
 
 **Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
 the project's build command alive in incremental `--watch` mode, watches its
@@ -596,20 +597,20 @@ verified through that loop, so it goes first.
 
 ## 3. Next work, in order
 
-Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
-step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
+Phases 0–4 are shipped; the gate is lifted. Distribution work is specified
+step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–10 are implemented, and the
-   step-10 workspace-surface lifecycle/RAM proof passed. Run the literal
-   outside-author walkthrough for step 9; it is the phase's only remaining
-   manual acceptance gate.
-2. **Phase 4 — contract completion.** Top item is the one structural gap:
-   `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
-   currently returns "not implemented"). Then tier-C native, `settings-panel`
-   iframes, pill action chips, re-platformed built-ins, plus C-7 (per-worker
-   memory ceiling) and C-8 (secrets in the OS keychain).
-   **Native extensions run in developer mode but are not distributable until
-   5A** — trust rails ship before anything that executes a binary travels.
+1. **Phase 3.5 — Developer Mode & SDK: shipped.** Steps 1–10 are implemented;
+   the workspace-surface lifecycle/RAM proof and author fixture pass.
+2. **Phase 4 — contract completion: shipped 2026-07-23.** `session:start` and
+   `contributes.sessionMode` now share one serialized host-owned capture path;
+   the pill names the owner; the slow stage is cancellable, bounded to 30
+   seconds, and exact-text safe on failure. `net:<host>` is exact-host and
+   redirect-checked, secret settings stay write-only in Grain's credential
+   file, leaking workers receive 128 MiB/three-strike enforcement, and native
+   companions run through the same authenticated protocol with process-tree
+   cleanup and bounded restart. The voice-note example closes the 10/10 Grain
+   Space Test. **Native remains developer-only and non-distributable until 5A.**
 3. **Phase 5A — trust rails in the client.** Key ceremony → signed-index
    verification (rollback + expiry) → store data path → pack format v2 with
    path-safe extraction (**tests before the extractor**) → install/update/remove

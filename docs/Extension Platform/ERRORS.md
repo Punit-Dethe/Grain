@@ -23,10 +23,21 @@ the new permission.
 
 A bounded host operation exceeded its deadline. Retry or reduce the request.
 
+## E_SESSION_BUSY
+
+Another Grain or extension-owned recording is already active. Wait for that
+session to stop; extension sessions are serialized and never queue or interrupt
+the current recording.
+
 ## E_QUOTA
 
 The extension's storage write would exceed its quota. Delete data the extension
 no longer needs before retrying.
+
+## E_RESPONSE_TOO_LARGE
+
+A proxied network response exceeded the 2 MiB host limit. Request a smaller
+representation or use a paginated endpoint.
 
 ## E_INVALID_MANIFEST
 

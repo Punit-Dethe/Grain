@@ -793,8 +793,16 @@ pub fn spawn_pill_supervisor() {
 
 /// Opaque handle wrapper for the Job Object (same layout as HANDLE).
 #[cfg(windows)]
-#[derive(Copy, Clone)]
-struct JobHandle(isize);
+pub(crate) struct JobHandle(isize);
+
+#[cfg(windows)]
+impl Drop for JobHandle {
+    fn drop(&mut self) {
+        unsafe {
+            job_ffi::CloseHandle(self.0);
+        }
+    }
+}
 
 #[cfg(windows)]
 mod job_ffi {
@@ -875,7 +883,7 @@ mod job_ffi {
 /// every process still assigned to the job. This is the production-grade
 /// mechanism used by Chrome, VS Code, etc.
 #[cfg(windows)]
-fn create_job_object() -> Option<JobHandle> {
+pub(crate) fn create_job_object() -> Option<JobHandle> {
     use std::ptr;
 
     unsafe {
@@ -907,7 +915,7 @@ fn create_job_object() -> Option<JobHandle> {
             return None;
         }
 
-        log::info!("[GRAIN] pill Job Object created (KILL_ON_JOB_CLOSE)");
+        log::info!("[GRAIN] child Job Object created (KILL_ON_JOB_CLOSE)");
         Some(JobHandle(job))
     }
 }
@@ -915,7 +923,7 @@ fn create_job_object() -> Option<JobHandle> {
 /// Assign a child process to the Job Object so it is automatically killed
 /// when the main process exits.
 #[cfg(windows)]
-fn assign_child_to_job(job: &JobHandle, child: &std::process::Child) {
+pub(crate) fn assign_child_to_job(job: &JobHandle, child: &std::process::Child) {
     use std::os::windows::io::AsRawHandle;
 
     unsafe {
@@ -923,11 +931,11 @@ fn assign_child_to_job(job: &JobHandle, child: &std::process::Child) {
         let ok = job_ffi::AssignProcessToJobObject(job.0, child_handle);
         if ok == 0 {
             log::warn!(
-                "[GRAIN] failed to assign pill to Job Object (win32 error {})",
+                "[GRAIN] failed to assign child to Job Object (win32 error {})",
                 job_ffi::GetLastError()
             );
         } else {
-            log::info!("[GRAIN] pill assigned to Job Object (pid {})", child.id());
+            log::info!("[GRAIN] child assigned to Job Object (pid {})", child.id());
         }
     }
 }

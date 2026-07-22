@@ -268,7 +268,12 @@ fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorRepo
     if project.manifest.tier != Tier::Scripted {
         return;
     }
-    if project.manifest.activation.is_empty() {
+    // A declared session mode is itself an activation path: the host registers
+    // its contributed shortcut and wakes the owner for the slow stage without
+    // an `activation` array entry (Phase 4).
+    if project.manifest.activation.is_empty()
+        && project.manifest.contributes.session_mode.is_none()
+    {
         report.findings.push(Finding::project(
             "E_ACTIVATION",
             "manifest.json",

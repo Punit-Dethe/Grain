@@ -17,7 +17,7 @@ fn checked_in_data_pack_is_valid() {
 
 #[test]
 fn checked_in_scripted_examples_pass_doctor() {
-    for name in ["click-counter", "workspace-surface"] {
+    for name in ["click-counter", "workspace-surface", "voice-note"] {
         let report = doctor(&examples_root().join(name));
         assert!(report.is_clean(), "{name}: {report}");
     }

@@ -86,6 +86,12 @@ struct WorkerConn {
     next_call_id: Arc<AtomicU64>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeKind {
+    Scripted,
+    Companion,
+}
+
 struct Worker {
     /// The token minted for this worker; revoked at reap (SPEC §7.1).
     token: String,
@@ -96,6 +102,7 @@ struct Worker {
     /// Consecutive over-budget samples. Separate from transform strikes so a
     /// healthy heap sample cannot forgive a slow transform (or vice versa).
     memory_strikes: u32,
+    kind: RuntimeKind,
     /// Epoch seconds of the last frame from this worker; the reaper's clock.
     /// `Arc` so the connection can bump it directly (no lock per frame).
     last_activity: Arc<AtomicU64>,
@@ -290,13 +297,39 @@ impl Workers {
         })
     }
 
-    fn connected_ids(&self) -> Vec<String> {
+    fn scripted_connected_ids(&self) -> Vec<String> {
         self.map
             .lock()
             .unwrap()
             .iter()
-            .filter_map(|(id, worker)| worker.conn.as_ref().map(|_| id.clone()))
+            .filter_map(|(id, worker)| {
+                (worker.kind == RuntimeKind::Scripted && worker.conn.is_some()).then(|| id.clone())
+            })
             .collect()
+    }
+
+    fn is_companion(&self, ext_id: &str) -> bool {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .is_some_and(|worker| worker.kind == RuntimeKind::Companion)
+    }
+
+    fn detach_companion(&self, ext_id: &str, token: &str) -> bool {
+        let mut map = self.map.lock().unwrap();
+        let Some(worker) = map.get_mut(ext_id) else {
+            return false;
+        };
+        if worker.kind != RuntimeKind::Companion || worker.token != token {
+            return false;
+        }
+        if let Some(conn) = worker.conn.take() {
+            for (_, sender) in conn.pending.lock().unwrap().drain() {
+                let _ = sender.send(Err("companion connection closed".into()));
+            }
+        }
+        true
     }
 
     /// Send a host notification that intentionally has no response waiter.
@@ -394,7 +427,7 @@ pub fn refresh_index(app: &AppHandle) {
                 continue;
             }
             let pack = match load_manifest(app, &rec.id) {
-                Some(p) if p.is_scripted() => p,
+                Some(p) if p.has_runtime() => p,
                 _ => continue,
             };
             let mut granted_variants = Vec::new();
@@ -759,18 +792,37 @@ fn spawn_worker(
         Some(h) => h,
         None => return,
     };
+    let dev_project = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.dev_path(ext_id))
+        .and_then(|root| crate::dev_extensions::load_project(&root).ok());
+    let companion_launch = if pack.manifest.tier == grain_sdk::Tier::Native {
+        if !crate::settings::get_settings(app).extension_developer_mode {
+            log::error!("[ext:{ext_id}] deny native companion outside developer mode");
+            return;
+        }
+        let Some(project) = dev_project.as_ref() else {
+            log::error!("[ext:{ext_id}] deny native companion outside load-unpacked project");
+            return;
+        };
+        let Some(binary) = project.companion_path.clone() else {
+            log::error!("[ext:{ext_id}] native project has no current-platform companion");
+            return;
+        };
+        Some((project.root.clone(), binary))
+    } else {
+        None
+    };
     // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
     // same server-side filter that gates the pill now gates this worker.
     let token = crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
     let resident = pack.manifest.activation.iter().any(|a| a == "onStartup");
-    let dev_source = app
-        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
-        .and_then(|registry| registry.dev_path(ext_id))
-        .and_then(|root| crate::dev_extensions::load_project(&root).ok())
-        .map(|project| DevSource {
+    let dev_source = dev_project.and_then(|project| {
+        project.entry_path.map(|entry| DevSource {
             root: project.root,
-            entry: project.entry_path,
-        });
+            entry,
+        })
+    });
     host.workers.insert(
         ext_id,
         Worker {
@@ -778,11 +830,29 @@ fn spawn_worker(
             resident,
             strikes: 0,
             memory_strikes: 0,
+            kind: if pack.manifest.tier == grain_sdk::Tier::Native {
+                RuntimeKind::Companion
+            } else {
+                RuntimeKind::Scripted
+            },
             last_activity: Arc::new(AtomicU64::new(now_secs())),
             conn: None,
             dev_source,
         },
     );
+    if let Some((root, binary)) = companion_launch {
+        log::info!("[ext:{ext_id}] life native companion activation");
+        if let Err(error) =
+            crate::extension_companion::start(ext_id, &token, root, binary, activation)
+        {
+            companion_gave_up(
+                ext_id,
+                &token,
+                format!("Native companion could not start: {error}"),
+            );
+        }
+        return;
+    }
     let payload = SpawnPayload {
         ext_id: ext_id.to_string(),
         token,
@@ -874,6 +944,9 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
     };
     let empty = host.workers.is_empty();
     log::info!("[ext:{ext_id}] life worker reaped ({reason})");
+    if worker.kind == RuntimeKind::Companion {
+        crate::extension_companion::stop(ext_id, reason);
+    }
     // A reload/disable may reap the worker while its session-owned slow stage
     // is awaiting a result. Give the worker's AbortSignal one best-effort turn
     // before closing the socket, then release the host-side waiter below.
@@ -981,7 +1054,7 @@ async fn sample_worker_heaps() {
     let Some(host) = HOST.get() else {
         return;
     };
-    let ids = host.workers.connected_ids();
+    let ids = host.workers.scripted_connected_ids();
     let samples = futures_util::future::join_all(ids.iter().map(|id| {
         host.workers
             .call(id, "memory.sample", Value::Null, MEMORY_SAMPLE_DEADLINE)
@@ -1039,6 +1112,17 @@ pub fn attach_connection(
 
 /// The worker's WS closed → the worker process is gone; reap it.
 pub fn detach_connection(ext_id: &str, token: &str) {
+    if HOST
+        .get()
+        .is_some_and(|host| host.workers.is_companion(ext_id))
+    {
+        if let Some(host) = HOST.get() {
+            if host.workers.detach_companion(ext_id, token) {
+                log::warn!("[ext:{ext_id}] life companion connection closed");
+            }
+        }
+        return;
+    }
     kill_worker_inner(ext_id, "connection closed", Some(token), false);
 }
 
@@ -1299,6 +1383,38 @@ fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
     refresh_index(app); // drop it from the hot-path index immediately
     kill_worker(ext_id, "auto-disabled after repeated resource violations");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
+        ctx.emit(DaemonEvent::ExtensionDisabled {
+            id: ext_id.to_string(),
+            reason,
+        });
+    }
+}
+
+/// The native supervisor exhausted its restart budget. The token guard keeps a
+/// stale supervisor from disabling a freshly reloaded replacement generation.
+pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Some(worker) = host.workers.remove_if_token(ext_id, token) else {
+        return;
+    };
+    crate::events_server::revoke_token(&worker.token);
+    if let Some(conn) = worker.conn {
+        let _ = conn.out_tx.send(Message::Close(None));
+        for (_, sender) in conn.pending.lock().unwrap().drain() {
+            let _ = sender.send(Err(reason.clone()));
+        }
+    }
+    log::error!("[ext:{ext_id}] life companion disabled: {reason}");
+    if let Some(registry) = host
+        .app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+    {
+        let _ = registry.set_enabled(ext_id, false);
+    }
+    refresh_index(&host.app);
+    if let Some(ctx) = host.app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
             id: ext_id.to_string(),
             reason,
@@ -1660,6 +1776,7 @@ mod tests {
             resident,
             strikes: 0,
             memory_strikes: 0,
+            kind: RuntimeKind::Scripted,
             last_activity: Arc::new(AtomicU64::new(last_activity)),
             conn: None,
             dev_source: None,
@@ -1847,6 +1964,22 @@ mod tests {
         assert_eq!(workers.len(), 1);
         assert!(workers.remove_if_token("a", "new-token").is_some());
         assert_eq!(workers.len(), 0);
+    }
+
+    #[test]
+    fn companion_disconnect_keeps_identity_for_supervised_restart() {
+        let workers = Workers::new();
+        let mut companion = worker(now_secs(), false);
+        companion.kind = RuntimeKind::Companion;
+        workers.insert("native", companion);
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
+        workers.attach("native", "tok", out_tx).unwrap();
+        assert!(workers.scripted_connected_ids().is_empty());
+        assert!(workers.detach_companion("native", "tok"));
+        assert_eq!(workers.len(), 1);
+
+        let (replacement_tx, _replacement_rx) = mpsc::unbounded_channel::<Message>();
+        assert!(workers.attach("native", "tok", replacement_tx).is_some());
     }
 
     #[test]

@@ -65,6 +65,37 @@ pub struct ExtensionManifest {
     /// registers on the extension's behalf.
     #[serde(default)]
     pub contributes: Contributes,
+    /// [GRAIN] Phase 4 Tier-C companion binaries. Native manifests remain
+    /// developer-only until signed distribution lands in Phase 5.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion: Option<CompanionDecl>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CompanionDecl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub macos: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub linux: Option<String>,
+}
+
+impl CompanionDecl {
+    pub fn current_platform(&self) -> Option<&str> {
+        #[cfg(target_os = "windows")]
+        return self.windows.as_deref();
+        #[cfg(target_os = "macos")]
+        return self.macos.as_deref();
+        #[cfg(target_os = "linux")]
+        return self.linux.as_deref();
+        #[allow(unreachable_code)]
+        None
+    }
+
+    fn has_any(&self) -> bool {
+        self.windows.is_some() || self.macos.is_some() || self.linux.is_some()
+    }
 }
 
 /// Surfaces an extension may declare (SPEC §1.2). Each requires the matching
@@ -252,10 +283,9 @@ pub const KNOWN_SLOTS: &[&str] = &[
     "output.destination",
 ];
 
-/// Capabilities a scripted pack may request in Phase 2. Anything outside this
+/// Capabilities a scripted pack may request in API 1.0. Anything outside this
 /// set is rejected at import (R1: grant narrowly, widen with each consumer).
-/// `session:start` is reserved + plumbed even though no built-in dogfoods it
-/// yet (structural capabilities land early or never).
+/// Parameterised `net:<host>` grants are validated separately below.
 pub const KNOWN_CAPABILITIES: &[&str] = &[
     "events:sessions",
     "events:transcripts",
@@ -344,6 +374,16 @@ impl GrainPack {
     /// Structural validation (Phase 2: tier-A packs and tier-B scripted;
     /// `native` still rejected — it arrives with the tier-C supervisor).
     pub fn validate(&self) -> Result<(), String> {
+        self.validate_inner(false)
+    }
+
+    /// Load-unpacked validation is the only Phase-4 path allowed to admit a
+    /// native companion. Installed/imported packs continue through `validate`.
+    pub fn validate_dev(&self) -> Result<(), String> {
+        self.validate_inner(true)
+    }
+
+    fn validate_inner(&self, allow_native: bool) -> Result<(), String> {
         let m = &self.manifest;
         if m.id.is_empty() || !m.id.contains('.') {
             return Err("manifest.id must be a reverse-dns identifier".into());
@@ -359,7 +399,22 @@ impl GrainPack {
         }
         match m.tier {
             Tier::Native => {
-                return Err("native extensions are not supported yet".into());
+                if !allow_native {
+                    return Err("native extensions are developer-mode only".into());
+                }
+                if !m.entry_source.is_empty() {
+                    return Err("native extensions must not carry entry_source".into());
+                }
+                if !m.companion.as_ref().is_some_and(CompanionDecl::has_any) {
+                    return Err("native extensions require a companion binary map".into());
+                }
+                for cap in &m.permissions {
+                    if !KNOWN_CAPABILITIES.contains(&cap.as_str())
+                        && network_capability_host(cap).is_none()
+                    {
+                        return Err(format!("unknown capability '{cap}'"));
+                    }
+                }
             }
             Tier::Pack => {
                 if !m.permissions.is_empty() {
@@ -374,10 +429,16 @@ impl GrainPack {
                 if !m.entry_source.is_empty() {
                     return Err("tier-A packs must not carry entry_source".into());
                 }
+                if m.companion.is_some() {
+                    return Err("tier-A packs must not declare a companion".into());
+                }
             }
             Tier::Scripted => {
                 if m.entry_source.trim().is_empty() {
                     return Err("scripted extensions require entry_source".into());
+                }
+                if m.companion.is_some() {
+                    return Err("scripted extensions must not declare a companion".into());
                 }
                 for cap in &m.permissions {
                     if !KNOWN_CAPABILITIES.contains(&cap.as_str())
@@ -416,11 +477,8 @@ impl GrainPack {
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
             || m.contributes.session_mode.is_some();
-        if (declares_surface || contributes_code) && m.tier != Tier::Scripted {
-            return Err(
-                "surfaces and contributes require tier 'scripted' (there is no code to back them)"
-                    .into(),
-            );
+        if (declares_surface || contributes_code) && m.tier == Tier::Pack {
+            return Err("surfaces and contributes require a scripted or native runtime".into());
         }
 
         // A declared surface must be backed by the capability the user grants.
@@ -543,6 +601,10 @@ impl GrainPack {
     /// True for tier-B extensions (drive a worker), false for data packs.
     pub fn is_scripted(&self) -> bool {
         self.manifest.tier == Tier::Scripted
+    }
+
+    pub fn has_runtime(&self) -> bool {
+        matches!(self.manifest.tier, Tier::Scripted | Tier::Native)
     }
 }
 
@@ -846,6 +908,22 @@ mod tests {
             r#"{"manifest":{"id":"com.x.secret","name":"n","version":"1","tier":"scripted","entry_source":"x","contributes":{"settings":[{"key":"api_key","label":"API key","kind":"secret","default":"shipped-key"}]}}}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn native_companions_validate_only_through_the_developer_boundary() {
+        let native: GrainPack = serde_json::from_str(
+            r#"{"manifest":{"id":"com.x.native","name":"Native","version":"1","tier":"native","permissions":["storage"],"activation":["onStartup"],"companion":{"windows":"bin/native.exe","macos":"bin/native","linux":"bin/native"}}}"#,
+        )
+        .unwrap();
+        assert!(native.validate().is_err());
+        native.validate_dev().unwrap();
+
+        let missing: GrainPack = serde_json::from_str(
+            r#"{"manifest":{"id":"com.x.native","name":"Native","version":"1","tier":"native"}}"#,
+        )
+        .unwrap();
+        assert!(missing.validate_dev().is_err());
     }
 
     /// Forward-compatibility (SPEC §4.1/§4.3): a pack written against a NEWER

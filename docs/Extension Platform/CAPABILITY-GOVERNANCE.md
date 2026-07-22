@@ -70,6 +70,23 @@ Per your priorities, this classifies cleanly:
 | `surface:pointer` | additive | on demand |
 | `audio:play` / TTS | additive | not now |
 
+### Phase 4 status (2026-07-23)
+
+The structural contract is now live: `session:start`,
+`contributes.sessionMode`, and the bounded/cancellable slow stage. Exact-host
+`net:<host>` and write-only `secret` settings are also live because the
+voice-note/network paths supplied concrete consumers and testable shapes.
+Per-worker heap enforcement and the developer-only native `companion` tier are
+runtime safeguards/shapes rather than requestable capability names.
+
+The following names remain reserved and intentionally undesigned until a real
+consumer exists: `provides:`/the provider broker,
+`surface:settings-panel`, `screen:capture`, `surface:pointer`, `audio:play`,
+`open:url`, `open:app`, `clipboard:read`, `clipboard:write`, pill action chips,
+`contributes.promptLayer`, `overrides:*`, and `resident`. A native companion is
+the current escape hatch for OS work; it does not create a new privileged Grain
+API or confer capabilities on another extension.
+
 ---
 
 ## Part 2 — May an extension implement a missing capability itself?
@@ -217,10 +234,10 @@ The promise we can put in the docs, honestly:
   check Lane 0 first.
 - **If you hit a wall, there is a queue, not a void** — with published
   criteria and a visible decision.
-- **If you can't wait, you may build it yourself** as a tier-C provider of a
-  host-defined interface. You'll get a review, a trust badge, and users will
-  see that your extension provides it. When Grain implements it natively,
-  every extension built on your interface keeps working — including yours.
+- **If you can't wait, you may build the OS-facing part yourself** as a tier-C
+  companion. It is an ordinary separate program at the OS boundary and still
+  enters Grain through the same authenticated, capability-checked protocol.
+  Companions are developer-only until Phase 5A adds distribution trust rails.
 - **What you may never do** is invent your own privileged API surface. That
   road ends in an extinction event, and we have read the postmortems.
 
@@ -242,6 +259,11 @@ Appended to STRESS-TEST's ten and CASE-HEYCLICKY's six:
 20. **Structural capabilities promoted into Phase 2** (`session:start`,
     `contributes.sessionMode` with its slow stage) — they set the runtime's
     shape and cannot be retrofitted cheaply.
+21. **Phase 4 correction.** The structural session contract, exact-host network
+    proxy, secrets, worker memory ceiling, and developer-only companion are
+    live. Amendment 18's provider broker remains a reserved proposal with zero
+    consumers; no `provides:` manifest field or extension-to-extension routing
+    was shipped.
 
 ---
 

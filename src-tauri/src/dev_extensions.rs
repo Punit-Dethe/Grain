@@ -16,7 +16,9 @@ pub struct LoadedDevProject {
     pub root: PathBuf,
     /// Canonical built JavaScript entry. The worker host keeps only this path
     /// and resolves its source-map reference lazily if the worker throws.
-    pub entry_path: PathBuf,
+    pub entry_path: Option<PathBuf>,
+    /// Canonical current-platform companion executable for native projects.
+    pub companion_path: Option<PathBuf>,
     pub pack: GrainPack,
 }
 
@@ -39,9 +41,6 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
     let mut project: ExtensionProjectManifest =
         serde_json::from_str(&raw).map_err(|error| format!("parse manifest.json: {error}"))?;
 
-    if project.manifest.tier != Tier::Scripted {
-        return Err("load unpacked currently supports scripted extensions".into());
-    }
     if !project.manifest.entry_source.is_empty() {
         return Err("manifest.json must use 'entry', not embedded 'entry_source'".into());
     }
@@ -52,43 +51,87 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         ));
     }
 
-    let relative_entry = Path::new(&project.entry);
-    if relative_entry.as_os_str().is_empty()
-        || relative_entry.components().any(|component| {
+    let (entry_path, companion_path) = match project.manifest.tier {
+        Tier::Scripted => {
+            let entry_path = canonical_project_file(&root, &project.entry, "entry")?;
+            let entry_meta = std::fs::metadata(&entry_path)
+                .map_err(|error| format!("inspect entry '{}': {error}", project.entry))?;
+            if entry_meta.len() > MAX_ENTRY_BYTES {
+                return Err("extension entry is larger than 5 MB".into());
+            }
+            project.manifest.entry_source = std::fs::read_to_string(&entry_path)
+                .map_err(|error| format!("read entry '{}': {error}", project.entry))?;
+            (Some(entry_path), None)
+        }
+        Tier::Native => {
+            if !project.entry.trim().is_empty() {
+                return Err("native extensions use 'companion', not 'entry'".into());
+            }
+            let companion = project
+                .manifest
+                .companion
+                .as_ref()
+                .ok_or("native extensions require a companion binary map")?;
+            for path in [
+                companion.windows.as_deref(),
+                companion.macos.as_deref(),
+                companion.linux.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                validate_relative_path(path, "companion binary")?;
+            }
+            let current = companion.current_platform().ok_or_else(|| {
+                "native extension has no companion binary for this platform".to_string()
+            })?;
+            (
+                None,
+                Some(canonical_project_file(&root, current, "companion binary")?),
+            )
+        }
+        Tier::Pack => return Err("load unpacked does not accept data-only packs".into()),
+    };
+
+    let pack = GrainPack {
+        manifest: project.manifest,
+        payloads: PackPayloads::default(),
+    };
+    pack.validate_dev()
+        .map_err(|error| format!("invalid extension: {error}"))?;
+    Ok(LoadedDevProject {
+        root,
+        entry_path,
+        companion_path,
+        pack,
+    })
+}
+
+fn validate_relative_path(value: &str, label: &str) -> Result<(), String> {
+    let path = Path::new(value);
+    if path.as_os_str().is_empty()
+        || path.components().any(|component| {
             matches!(
                 component,
                 Component::ParentDir | Component::RootDir | Component::Prefix(_)
             )
         })
     {
-        return Err("manifest entry must be a project-relative file".into());
+        return Err(format!("manifest {label} must be a project-relative file"));
     }
-    let entry_path = root
-        .join(relative_entry)
-        .canonicalize()
-        .map_err(|error| format!("open entry '{}': {error}", project.entry))?;
-    if !entry_path.starts_with(&root) || !entry_path.is_file() {
-        return Err("manifest entry must stay inside the project".into());
-    }
-    let entry_meta = std::fs::metadata(&entry_path)
-        .map_err(|error| format!("inspect entry '{}': {error}", project.entry))?;
-    if entry_meta.len() > MAX_ENTRY_BYTES {
-        return Err("extension entry is larger than 5 MB".into());
-    }
-    project.manifest.entry_source = std::fs::read_to_string(&entry_path)
-        .map_err(|error| format!("read entry '{}': {error}", project.entry))?;
+    Ok(())
+}
 
-    let pack = GrainPack {
-        manifest: project.manifest,
-        payloads: PackPayloads::default(),
-    };
-    pack.validate()
-        .map_err(|error| format!("invalid extension: {error}"))?;
-    Ok(LoadedDevProject {
-        root,
-        entry_path,
-        pack,
-    })
+fn canonical_project_file(root: &Path, value: &str, label: &str) -> Result<PathBuf, String> {
+    validate_relative_path(value, label)?;
+    let path = root
+        .join(value)
+        .canonicalize()
+        .map_err(|error| format!("open {label} '{value}': {error}"))?;
+    if !path.starts_with(root) || !path.is_file() {
+        return Err(format!("manifest {label} must stay inside the project"));
+    }
+    Ok(path)
 }
 
 fn api_requirement_supported(requirement: &str, current: &str) -> bool {
@@ -151,8 +194,9 @@ mod tests {
         assert_eq!(loaded.root, dir.path().canonicalize().unwrap());
         assert_eq!(
             loaded.entry_path,
-            dir.path().join("src/main.ts").canonicalize().unwrap()
+            Some(dir.path().join("src/main.ts").canonicalize().unwrap())
         );
+        assert!(loaded.companion_path.is_none());
     }
 
     #[test]
@@ -176,5 +220,40 @@ mod tests {
         assert!(load_project(dir.path())
             .unwrap_err()
             .contains("project-relative"));
+    }
+
+    #[test]
+    fn native_companion_is_dev_only_and_resolves_inside_the_chosen_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = if cfg!(windows) {
+            "companion.exe"
+        } else {
+            "companion"
+        };
+        std::fs::write(dir.path().join(binary), b"fixture").unwrap();
+        let platform = if cfg!(windows) {
+            "windows"
+        } else if cfg!(target_os = "macos") {
+            "macos"
+        } else {
+            "linux"
+        };
+        std::fs::write(
+            dir.path().join("manifest.json"),
+            format!(
+                r#"{{"id":"com.example.native","name":"Native","version":"0.1.0","grainApi":"^1.0","tier":"native","permissions":[],"activation":["onStartup"],"companion":{{"{platform}":"{binary}"}}}}"#
+            ),
+        )
+        .unwrap();
+
+        let loaded = load_project(dir.path()).unwrap();
+        assert!(loaded.entry_path.is_none());
+        assert_eq!(
+            loaded.companion_path,
+            Some(dir.path().join(binary).canonicalize().unwrap())
+        );
+        // The regular import validator remains a hard distribution boundary.
+        assert!(loaded.pack.validate().is_err());
+        loaded.pack.validate_dev().unwrap();
     }
 }
