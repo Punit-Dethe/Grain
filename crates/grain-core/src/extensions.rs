@@ -86,6 +86,19 @@ pub struct ExtensionRecord {
     /// reserved and the shape waits for a real third-party consumer.
     #[serde(default)]
     pub variant_slots: Vec<String>,
+    /// A load-unpacked project currently overriding this id. The effective
+    /// record stays at the normal map key, so every capability/slot/lifecycle
+    /// path sees exactly one extension. Any installed version is parked here
+    /// verbatim and restored on unload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dev: Option<DevOverride>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DevOverride {
+    pub path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<Box<ExtensionRecord>>,
 }
 
 /// Why an enable was refused: the slot and who holds it (`grain.core` for a
@@ -151,6 +164,7 @@ impl ExtensionsRegistry {
                         slots: Vec::new(),
                         // Offered, not claimed: the dropdown decides (SPEC §10.2).
                         variant_slots: vec![AGENT_REPLY_SURFACE_SLOT.to_string()],
+                        dev: None,
                     },
                 );
             }
@@ -216,6 +230,17 @@ impl ExtensionsRegistry {
         self.state.read().unwrap().records.get(id).cloned()
     }
 
+    /// The installed record beneath a dev override, or the normal record when
+    /// no override is active. A dev-only project has no installed record.
+    pub fn installed_record(&self, id: &str) -> Option<ExtensionRecord> {
+        let state = self.state.read().unwrap();
+        let record = state.records.get(id)?;
+        match &record.dev {
+            Some(dev) => dev.replaced.as_deref().cloned(),
+            None => Some(record.clone()),
+        }
+    }
+
     pub fn is_installed(&self, id: &str) -> bool {
         self.state.read().unwrap().records.contains_key(id)
     }
@@ -228,6 +253,41 @@ impl ExtensionsRegistry {
             .get(id)
             .map(|r| r.enabled)
             .unwrap_or(false)
+    }
+
+    pub fn dev_path(&self, id: &str) -> Option<PathBuf> {
+        self.state
+            .read()
+            .unwrap()
+            .records
+            .get(id)
+            .and_then(|record| record.dev.as_ref())
+            .map(|dev| dev.path.clone())
+    }
+
+    pub fn dev_overrides_installed(&self, id: &str) -> bool {
+        self.state
+            .read()
+            .unwrap()
+            .records
+            .get(id)
+            .and_then(|record| record.dev.as_ref())
+            .is_some_and(|dev| dev.replaced.is_some())
+    }
+
+    pub fn dev_records(&self) -> Vec<(String, PathBuf)> {
+        self.state
+            .read()
+            .unwrap()
+            .records
+            .values()
+            .filter_map(|record| {
+                record
+                    .dev
+                    .as_ref()
+                    .map(|dev| (record.id.clone(), dev.path.clone()))
+            })
+            .collect()
     }
 
     // ── Slots (SPEC §3.2: at most one enabled occupant per slot) ───────────
@@ -423,6 +483,30 @@ impl ExtensionsRegistry {
         {
             let mut state = self.state.write().unwrap();
             let id = record.id.clone();
+            // A store/manual install arriving while this id is overridden
+            // updates the parked installed record, never the effective dev
+            // record. The author can keep testing without losing the update.
+            if state
+                .records
+                .get(&id)
+                .is_some_and(|active| active.dev.is_some())
+            {
+                if record.dev.is_some() {
+                    // Mutating the effective dev record (for example after a
+                    // capability grant) must not turn it into its own parked
+                    // installed version.
+                    state.records.insert(id, record);
+                } else {
+                    state
+                        .records
+                        .get_mut(&id)
+                        .and_then(|active| active.dev.as_mut())
+                        .expect("dev record exists")
+                        .replaced = Some(Box::new(record));
+                }
+                drop(state);
+                return self.save();
+            }
             // Both lists count as declared: a variant still legitimately holds
             // the slot while it is the selected look.
             let declared: Vec<String> = record
@@ -454,14 +538,96 @@ impl ExtensionsRegistry {
         self.save()
     }
 
+    /// Make `record` the effective load-unpacked extension for its id. Any
+    /// installed record is parked verbatim; replacing one dev path preserves
+    /// that original backup rather than nesting overrides.
+    pub fn load_dev(&self, mut record: ExtensionRecord, path: PathBuf) -> Result<()> {
+        {
+            let mut state = self.state.write().unwrap();
+            let id = record.id.clone();
+            let replaced =
+                state
+                    .records
+                    .remove(&id)
+                    .and_then(|mut previous| match previous.dev.take() {
+                        Some(dev) => dev.replaced,
+                        None => Some(Box::new(previous)),
+                    });
+            Self::release_slots_locked(&mut state, &id);
+            record.dev = Some(DevOverride { path, replaced });
+            state.records.insert(id, record);
+        }
+        self.save()
+    }
+
+    /// Remove a load-unpacked override and restore its parked installed record,
+    /// if any. A restored enabled record reclaims only still-free slots; if a
+    /// different extension took one meanwhile, it is restored disabled so no
+    /// takeover happens silently.
+    pub fn unload_dev(&self, id: &str) -> Result<bool> {
+        let changed = {
+            let mut state = self.state.write().unwrap();
+            let Some(mut active) = state.records.remove(id) else {
+                return Ok(false);
+            };
+            let Some(dev) = active.dev.take() else {
+                state.records.insert(id.to_string(), active);
+                return Ok(false);
+            };
+            Self::release_slots_locked(&mut state, id);
+
+            if let Some(mut replaced) = dev.replaced.map(|record| *record) {
+                if replaced.enabled {
+                    let contested = replaced.slots.iter().any(|slot| {
+                        state
+                            .slot_claims
+                            .get(slot)
+                            .is_some_and(|occupant| occupant != CORE_DEFAULT && occupant != id)
+                    });
+                    if contested {
+                        replaced.enabled = false;
+                    } else {
+                        for slot in &replaced.slots {
+                            state.slot_claims.insert(slot.clone(), id.to_string());
+                        }
+                    }
+                }
+                state.records.insert(id.to_string(), replaced);
+            }
+            true
+        };
+        if changed {
+            self.save()?;
+        }
+        Ok(changed)
+    }
+
     pub fn uninstall(&self, id: &str) -> Result<bool> {
         let removed = {
             let mut state = self.state.write().unwrap();
-            let removed = state.records.remove(id).is_some();
-            if removed {
-                Self::release_slots_locked(&mut state, id);
+            let dev_active = state
+                .records
+                .get(id)
+                .is_some_and(|record| record.dev.is_some());
+            if dev_active {
+                // Uninstalling while a load-unpacked copy is effective removes
+                // only the parked installed version. The local project and its
+                // live slot state are a separate, explicit developer action.
+                state
+                    .records
+                    .get_mut(id)
+                    .and_then(|record| record.dev.as_mut())
+                    .expect("dev record exists")
+                    .replaced
+                    .take()
+                    .is_some()
+            } else {
+                let removed = state.records.remove(id).is_some();
+                if removed {
+                    Self::release_slots_locked(&mut state, id);
+                }
+                removed
             }
-            removed
         };
         if removed {
             self.save()?;
@@ -532,7 +698,114 @@ mod tests {
             granted: vec![],
             slots: slots.iter().map(|s| s.to_string()).collect(),
             variant_slots: vec![],
+            dev: None,
         }
+    }
+
+    #[test]
+    fn dev_only_record_disappears_on_unload() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("project"))
+            .unwrap();
+
+        let expected = dir.path().join("project");
+        assert_eq!(
+            reg.dev_path("com.x.dev").as_deref(),
+            Some(expected.as_path())
+        );
+        assert!(!reg.dev_overrides_installed("com.x.dev"));
+        assert!(reg.unload_dev("com.x.dev").unwrap());
+        assert!(!reg.is_installed("com.x.dev"));
+    }
+
+    #[test]
+    fn dev_override_restores_the_installed_record_verbatim() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut installed = pack("com.x.dev", &[]);
+        installed.enabled = true;
+        installed.toggle_seq = 7;
+        installed.granted = vec!["storage".into()];
+        reg.install(installed).unwrap();
+
+        let mut dev = pack("com.x.dev", &[]);
+        dev.installed_version = "dev-2".into();
+        reg.load_dev(dev, dir.path().join("project")).unwrap();
+        assert!(reg.dev_overrides_installed("com.x.dev"));
+        assert_eq!(reg.record("com.x.dev").unwrap().installed_version, "dev-2");
+
+        assert!(reg.unload_dev("com.x.dev").unwrap());
+        let restored = reg.record("com.x.dev").unwrap();
+        assert!(restored.enabled);
+        assert_eq!(restored.toggle_seq, 7);
+        assert_eq!(restored.granted, vec!["storage"]);
+        assert!(restored.dev.is_none());
+    }
+
+    #[test]
+    fn replacing_a_dev_path_does_not_nest_or_lose_the_installed_backup() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut installed = pack("com.x.dev", &[]);
+        installed.installed_version = "store".into();
+        reg.install(installed).unwrap();
+
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("one"))
+            .unwrap();
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("two"))
+            .unwrap();
+        assert!(reg.unload_dev("com.x.dev").unwrap());
+        assert_eq!(reg.record("com.x.dev").unwrap().installed_version, "store");
+    }
+
+    #[test]
+    fn replacing_a_dev_only_path_still_disappears_on_unload() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("one"))
+            .unwrap();
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("two"))
+            .unwrap();
+
+        assert!(reg.unload_dev("com.x.dev").unwrap());
+        assert!(!reg.is_installed("com.x.dev"));
+    }
+
+    #[test]
+    fn uninstall_during_dev_override_removes_only_installed_copy() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut installed = pack("com.x.dev", &[]);
+        installed.installed_version = "store".into();
+        reg.install(installed).unwrap();
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("project"))
+            .unwrap();
+
+        assert!(reg.uninstall("com.x.dev").unwrap());
+        assert!(reg.dev_path("com.x.dev").is_some());
+        assert!(!reg.dev_overrides_installed("com.x.dev"));
+        assert!(reg.unload_dev("com.x.dev").unwrap());
+        assert!(!reg.is_installed("com.x.dev"));
+    }
+
+    #[test]
+    fn updating_effective_dev_record_preserves_its_installed_backup() {
+        let dir = tmp();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        let mut installed = pack("com.x.dev", &[]);
+        installed.installed_version = "store".into();
+        reg.install(installed).unwrap();
+        reg.load_dev(pack("com.x.dev", &[]), dir.path().join("project"))
+            .unwrap();
+
+        let mut active = reg.record("com.x.dev").unwrap();
+        active.granted.push("storage".into());
+        reg.install(active).unwrap();
+        assert_eq!(reg.record("com.x.dev").unwrap().granted, vec!["storage"]);
+
+        reg.unload_dev("com.x.dev").unwrap();
+        assert_eq!(reg.record("com.x.dev").unwrap().installed_version, "store");
     }
 
     #[test]

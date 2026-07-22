@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–2 shipped 2026-07-22:** WS `Origin` hardening and the `grain-ext init` scaffold with SDK-generated TypeScript types. **Step 3 (load unpacked) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–3 shipped 2026-07-22:** WS `Origin` hardening, the `grain-ext init` scaffold with SDK-generated TypeScript types, and in-app developer mode with load-unpacked/dev overrides. **Step 4 (`grain-ext dev` + hot reload) is next.** |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -376,6 +376,31 @@ verified through that loop, so it goes first.
 - The scaffold states the Node + esbuild requirement up front. A real generated
   fixture passes `tsc` and bundles with an external source map.
 
+### Phase 3.5 step 3 — load unpacked
+- `ExtensionsRegistry` persists one effective identity per id. A dev record
+  parks any installed record verbatim and restores it on unload; replacing a
+  dev folder never nests or loses that backup. Slots are released while the
+  dev copy is disabled, and a restored installed copy never silently retakes a
+  slot that another extension acquired meanwhile.
+- `dev_extensions.rs` canonicalizes the human-picked folder, bounds manifest
+  and entry sizes, enforces project containment and Grain API compatibility,
+  then injects the real entry source through the same `GrainPack::validate`
+  wall as installed extensions.
+- The only Tauri load command takes **no path argument**. It checks the
+  separately persisted developer-mode setting, opens a native folder picker,
+  and loads only that result. Every mutating developer command also rejects
+  callers outside Grain's main settings window. Turning developer mode off
+  unloads every dev project and destroys workers, tokens, surfaces, and prompt
+  payloads.
+- Overview shows a persistent developer-mode chip, permanent `dev` trust
+  badges, local paths with explicit unload controls, and the installed copy as
+  **“Overridden by dev extension”** when ids collide. Dev extensions use the
+  unchanged permission and slot-takeover flows.
+- Verification: 29 grain-core tests, 272 src-tauri tests plus both streaming
+  smoke tests, and a production frontend build. Repository-wide ESLint and
+  `clippy -D warnings` remain red on pre-existing configuration/lints; filtered
+  Clippy reported no warnings in the new load-unpacked code.
+
 ### `crates/grain-sdk` (NEW — the public contract, dependency LEAF)
 - `authoring.rs` — source-project `ExtensionProjectManifest` (`manifest.json` +
   real entry path) and the author-facing `grain` API declaration copied by the
@@ -402,8 +427,12 @@ verified through that loop, so it goes first.
   `AGENT_CENTER_VARIANT_ID` (`grain.agent-center-layout`).
   `apply_prompt_pack`/`remove_prompt_pack`: `ext:<extid>:<id>` namespacing,
   idempotent apply, selection-healing removal.
+- `extensions.rs` also owns `DevOverride`: the active local folder plus an
+  optional boxed installed record, with tested load/replace/unload/uninstall
+  semantics.
 - `settings.rs` — new fields `snippets_enabled`, `agent_enabled`,
-  `extensions_imported_v1` (all default **false** = new-install default OFF).
+  `extensions_imported_v1`, and `extension_developer_mode` (all default
+  **false** = new-install default OFF).
 - `context.rs` — `import_extension_flags_v1` inside `load_settings`: the
   **§10.1 upgrade rule**, once per install. Existing users (file pre-existed):
   snippets on iff any configured; agent on always. **`file_preexisted` is
@@ -457,12 +486,12 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–2 (`Origin` hardening and
-   `grain-ext init`) are shipped. Continue in order: load-unpacked → `dev`
-   + hot reload → source maps → developer panel → typed errors → `doctor`
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–3 (`Origin` hardening,
+   `grain-ext init`, and load-unpacked) are shipped. Continue in order:
+   `grain-ext dev` + hot reload → source maps → developer panel → typed errors → `doctor`
    → author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks step 3. Start there.*
+   *Nothing blocks step 4. Start there.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`

@@ -2,12 +2,15 @@ import React, { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronLeft,
+  Code2,
   ExternalLink,
+  FolderOpen,
   Package,
   Replace,
   ShieldCheck,
   Sliders,
   Store,
+  X,
 } from "lucide-react";
 import {
   ANCHORS,
@@ -90,13 +93,21 @@ interface ExtensionCard {
   name: string;
   description: string;
   version: string;
-  tier: "builtin" | "pack";
+  tier: "builtin" | "pack" | "scripted" | "native";
+  trust: "core" | "community" | "dev";
+  overrides_installed: boolean;
+  overridden_version: string | null;
   enabled: boolean;
   /** u64 as string; "18446744073709551615" (u64::MAX) = never toggled. */
   toggle_seq: string;
   repository: string | null;
   /** The pack declares settings or shortcuts — it has a section of its own. */
   has_detail: boolean;
+}
+
+interface ExtensionDeveloperStatus {
+  enabled: boolean;
+  loaded: Array<{ id: string; path: string }>;
 }
 
 const NEVER_TOGGLED = "18446744073709551615";
@@ -120,8 +131,14 @@ function sortCards(cards: ExtensionCard[]): ExtensionCard[] {
  * hover, repository link, tier chip, and the (future) store entry point. */
 export const OverviewSection: React.FC<{
   onJump: (id: string) => void;
-}> = ({ onJump }) => {
+  onDeveloperModeChange: (enabled: boolean) => void;
+}> = ({ onJump, onDeveloperModeChange }) => {
   const [cards, setCards] = useState<ExtensionCard[]>([]);
+  const [developer, setDeveloper] = useState<ExtensionDeveloperStatus>({
+    enabled: false,
+    loaded: [],
+  });
+  const [developerBusy, setDeveloperBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** The extension held at first enable, awaiting the user's approval. */
@@ -147,19 +164,22 @@ export const OverviewSection: React.FC<{
 
   const refresh = useCallback(async () => {
     try {
-      const [next, secs] = await Promise.all([
+      const [next, secs, dev] = await Promise.all([
         invoke<ExtensionCard[]>("extensions_overview"),
         invoke<SettingsSection[]>("extension_settings_sections").catch(
           () => [] as SettingsSection[],
         ),
+        invoke<ExtensionDeveloperStatus>("extension_developer_status"),
       ]);
       setCards(sortCards(next));
       setSections(secs);
+      setDeveloper(dev);
+      onDeveloperModeChange(dev.enabled);
       setError(null);
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [onDeveloperModeChange]);
 
   /** SPEC §4.3: a setting with no anchor — or an anchor this build doesn't
    * know — belongs to the extension's own section. Settings are never lost. */
@@ -193,6 +213,42 @@ export const OverviewSection: React.FC<{
       else setError(String(e));
     } finally {
       setBusy(null);
+    }
+  };
+
+  const setDeveloperMode = async (enabled: boolean) => {
+    setDeveloperBusy(true);
+    try {
+      await invoke("extension_set_developer_mode", { enabled });
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDeveloperBusy(false);
+    }
+  };
+
+  const loadUnpacked = async () => {
+    setDeveloperBusy(true);
+    try {
+      await invoke<string | null>("extension_load_unpacked");
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDeveloperBusy(false);
+    }
+  };
+
+  const unloadDev = async (id: string) => {
+    setDeveloperBusy(true);
+    try {
+      await invoke("extension_unload_dev", { id });
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDeveloperBusy(false);
     }
   };
 
@@ -298,6 +354,97 @@ export const OverviewSection: React.FC<{
         </div>
       )}
 
+      <div className="rounded-xl border border-line bg-paper-raised">
+        <div className="flex items-center gap-3 px-4 py-3">
+          <Code2 width={15} height={15} className="text-ink-faint" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-ink">Developer mode</div>
+            <div className="text-xs text-ink-faint">
+              Load extension code from a folder on this device.
+            </div>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={developer.enabled}
+            disabled={developerBusy}
+            onClick={() => void setDeveloperMode(!developer.enabled)}
+            className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
+              developer.enabled
+                ? "bg-accent"
+                : "bg-paper-sunken border border-line"
+            } ${developerBusy ? "opacity-50" : ""}`}
+          >
+            <span
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
+                developer.enabled ? "left-[18px]" : "left-0.5"
+              }`}
+            />
+          </button>
+        </div>
+
+        {developer.enabled && (
+          <div className="border-t border-line px-4 py-3 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-medium text-ink">
+                  Load unpacked
+                </div>
+                <div className="text-[11px] text-ink-faint">
+                  Local code has the same permission checks as installed
+                  extensions.
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={developerBusy}
+                onClick={() => void loadUnpacked()}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs text-ink hover:border-ink-faint disabled:opacity-50 cursor-pointer"
+              >
+                <FolderOpen width={13} height={13} />
+                Choose folder…
+              </button>
+            </div>
+
+            {developer.loaded.length > 0 && (
+              <div className="space-y-1.5">
+                {developer.loaded.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-center gap-2 rounded-lg bg-paper-sunken px-2.5 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium text-ink truncate">
+                        {entry.id}
+                      </div>
+                      <div
+                        className="text-[10px] text-ink-faint truncate"
+                        title={entry.path}
+                      >
+                        {entry.path}
+                      </div>
+                    </div>
+                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                      dev
+                    </span>
+                    <button
+                      type="button"
+                      disabled={developerBusy}
+                      onClick={() => void unloadDev(entry.id)}
+                      className="text-ink-faint hover:text-ink disabled:opacity-50 cursor-pointer"
+                      aria-label={`Unload ${entry.id}`}
+                      title="Unload"
+                    >
+                      <X width={13} height={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
       <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
         {cards.map((card) => (
           <div
@@ -323,9 +470,24 @@ export const OverviewSection: React.FC<{
               <div className="text-xs text-ink-faint truncate">
                 {card.description}
               </div>
+              {card.overrides_installed && (
+                <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                  Installed
+                  {card.overridden_version
+                    ? ` v${card.overridden_version}`
+                    : ""}{" "}
+                  · Overridden by dev extension
+                </div>
+              )}
             </div>
+            {card.trust === "dev" && (
+              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                dev
+              </span>
+            )}
             <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
-              {card.tier === "builtin" ? "built-in" : "pack"} · v{card.version}
+              {card.tier === "builtin" ? "built-in" : card.tier} · v
+              {card.version}
             </span>
             {card.has_detail && (
               <button

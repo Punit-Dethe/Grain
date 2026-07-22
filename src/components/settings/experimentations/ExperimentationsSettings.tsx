@@ -1,5 +1,6 @@
-import React, { useState } from "react";
-import { Bot, LayoutGrid, Replace, Sparkles } from "lucide-react";
+import React, { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { Bot, Code2, LayoutGrid, Replace, Sparkles } from "lucide-react";
 import { OverviewSection } from "./OverviewSection";
 import { SnippetsSection } from "./SnippetsSection";
 import { ActionsSection } from "./ActionsSection";
@@ -13,6 +14,7 @@ type TabKey = "overview" | "snippets" | "context" | "agent";
 // legacy "experimentations" id). Constant so the i18n lint treats brand chrome
 // as an identifier, not translatable copy.
 const SECTION_TITLE = "Extensions";
+const DEVELOPER_MODE_LABEL = "Developer mode";
 
 const TABS: {
   key: TabKey;
@@ -59,14 +61,29 @@ const JUMP_TARGETS: Record<string, TabKey> = {
  * (`snippets.after`), so the UI never moves twice. */
 export const ExperimentationsSettings: React.FC = () => {
   const [tab, setTab] = useState<TabKey>("overview");
+  const [developerMode, setDeveloperMode] = useState(false);
+
+  useEffect(() => {
+    void invoke<{ enabled: boolean }>("extension_developer_status")
+      .then((status) => setDeveloperMode(status.enabled))
+      .catch(() => undefined);
+  }, []);
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       {/* Page title — set larger than the other consoles; the tabs sit directly
           beneath it, no subtitle, so the section opens clean. */}
-      <h1 className="px-1 text-[1.7rem] font-semibold tracking-tight leading-none">
-        {SECTION_TITLE}
-      </h1>
+      <div className="flex items-center justify-between gap-3 px-1">
+        <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
+          {SECTION_TITLE}
+        </h1>
+        {developerMode && (
+          <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+            <Code2 width={12} height={12} />
+            {DEVELOPER_MODE_LABEL}
+          </div>
+        )}
+      </div>
 
       {/* Segmented sub-tab selector — a recessed track of instrument buttons;
           the active one fills solid (ink) with an accent icon. */}
@@ -108,6 +125,7 @@ export const ExperimentationsSettings: React.FC = () => {
       {tab === "overview" ? (
         <OverviewSection
           onJump={(id) => setTab(JUMP_TARGETS[id] ?? "overview")}
+          onDeveloperModeChange={setDeveloperMode}
         />
       ) : tab === "snippets" ? (
         <div className="space-y-8">

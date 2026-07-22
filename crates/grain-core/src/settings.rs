@@ -770,6 +770,11 @@ pub struct AppSettings {
     /// `load_settings` performs the import exactly once and sets it.
     #[serde(default)]
     pub extensions_imported_v1: bool,
+    /// [GRAIN] Explicit human-controlled authoring mode (Phase 3.5). This is
+    /// separate from diagnostic `debug_mode`: only this switch allows native
+    /// folder selection and load-unpacked projects. OFF by default.
+    #[serde(default)]
+    pub extension_developer_mode: bool,
     /// [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
     /// default; only consulted when `context_awareness_enabled` is true.
     #[serde(default)]
@@ -1585,6 +1590,7 @@ pub fn get_default_settings() -> AppSettings {
         snippets_enabled: false,
         agent_enabled: false,
         extensions_imported_v1: false,
+        extension_developer_mode: false,
         app_modes: Vec::new(),
         context_nearby_terms: false,
         auto_dictionary_enabled: false,

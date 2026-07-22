@@ -623,6 +623,12 @@ fn kill_worker(ext_id: &str, reason: &str) {
     }
 }
 
+/// Public lifecycle hook for registry operations such as unloading a dev
+/// override. It is a no-op when the extension has no live worker.
+pub fn stop_extension(ext_id: &str, reason: &str) {
+    kill_worker(ext_id, reason);
+}
+
 fn teardown_supervisor() {
     let host = match HOST.get() {
         Some(h) => h,
@@ -821,15 +827,30 @@ fn auto_disable(app: &AppHandle, ext_id: &str) {
     }
 }
 
-/// Load a scripted extension's pack (manifest + embedded `entry_source`) from
-/// its on-disk `.grainpack.json` (SPEC §5.1 storage; same path as tier-A packs).
-pub fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
-    let ctx = app.try_state::<Arc<AppContext>>()?;
+/// Load the effective extension source. A dev project is re-read from its
+/// canonical folder; otherwise this reads the installed `.grainpack.json`.
+pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, String> {
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        if let Some(path) = reg.dev_path(id) {
+            if !crate::settings::get_settings(app).extension_developer_mode {
+                return Err("developer mode is disabled".into());
+            }
+            return crate::dev_extensions::load_project(&path).map(|project| project.pack);
+        }
+    }
+    let ctx = app
+        .try_state::<Arc<AppContext>>()
+        .ok_or("app context unavailable")?;
     let path = ctx
         .data_dir
         .join("extensions")
         .join(format!("{id}.grainpack.json"));
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+    serde_json::from_str(&raw).map_err(|error| error.to_string())
+}
+
+pub fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
+    load_manifest_result(app, id).ok()
 }
 
 // ── Built-in scripted packs (the dogfood) ────────────────────────────────────
@@ -1008,6 +1029,7 @@ fn seed_pack(
                 granted: permissions.iter().map(|s| s.to_string()).collect(),
                 slots: Vec::new(),
                 variant_slots: Vec::new(),
+                dev: None,
             });
         }
     }

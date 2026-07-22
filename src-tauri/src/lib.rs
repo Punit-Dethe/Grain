@@ -32,6 +32,7 @@ mod clipboard;
 mod commands;
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
+mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
@@ -816,6 +817,10 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_rolling_live_preview_setting,
             grain_commands::extensions_overview,
             grain_commands::extension_set_enabled,
+            grain_commands::extension_developer_status,
+            grain_commands::extension_set_developer_mode,
+            grain_commands::extension_load_unpacked,
+            grain_commands::extension_unload_dev,
             grain_commands::extension_grant,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,

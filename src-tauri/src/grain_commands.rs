@@ -464,8 +464,15 @@ pub struct ExtensionCard {
     pub name: String,
     pub description: String,
     pub version: String,
-    /// "builtin" | "pack"
+    /// "builtin" | "pack" | "scripted" | "native"
     pub tier: String,
+    /// "core" | "community" | "dev". Dev is permanent while loaded and is
+    /// never allowed to masquerade as verified.
+    pub trust: String,
+    /// A separately installed copy with this id is parked beneath the active
+    /// load-unpacked project.
+    pub overrides_installed: bool,
+    pub overridden_version: Option<String>,
     pub enabled: bool,
     /// Toggle-order position (SPEC §4.4); u64::MAX = never toggled (sorts last).
     /// Sent as string — u64 doesn't survive JS numbers.
@@ -489,6 +496,9 @@ fn builtin_card(
         description: description.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         tier: "builtin".to_string(),
+        trust: "core".to_string(),
+        overrides_installed: false,
+        overridden_version: None,
         enabled,
         toggle_seq: reg.toggle_seq(id).to_string(),
         repository: None,
@@ -536,27 +546,51 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
         if rec.id == ext::AGENT_CENTER_VARIANT_ID {
             continue;
         }
-        let (name, description, repository, has_detail) = match load_pack(&app, &rec.id) {
+        let (name, description, repository, has_detail, tier) = match load_pack(&app, &rec.id) {
             Ok(p) => {
                 let has_detail = !p.manifest.contributes.settings.is_empty()
                     || !p.manifest.contributes.shortcuts.is_empty();
+                let tier = match p.manifest.tier {
+                    grain_sdk::Tier::Pack => "pack",
+                    grain_sdk::Tier::Scripted => "scripted",
+                    grain_sdk::Tier::Native => "native",
+                };
                 (
                     p.manifest.name,
                     p.manifest.description,
                     p.manifest.repository,
                     has_detail,
+                    tier,
                 )
             }
             // SPEC §6 last row: a broken/missing pack file renders an error
             // card; it never takes the page down.
-            Err(e) => (rec.id.clone(), format!("Unreadable pack: {e}"), None, false),
+            Err(e) => (
+                rec.id.clone(),
+                format!("Unreadable pack: {e}"),
+                None,
+                false,
+                "pack",
+            ),
         };
         cards.push(ExtensionCard {
             id: rec.id.clone(),
             name,
             description,
             version: rec.installed_version.clone(),
-            tier: "pack".to_string(),
+            tier: tier.to_string(),
+            trust: if rec.dev.is_some() {
+                "dev"
+            } else {
+                "community"
+            }
+            .to_string(),
+            overrides_installed: reg.dev_overrides_installed(&rec.id),
+            overridden_version: rec
+                .dev
+                .as_ref()
+                .and_then(|_| reg.installed_record(&rec.id))
+                .map(|installed| installed.installed_version),
             enabled: rec.enabled,
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
@@ -570,6 +604,9 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             description: "An alternative centred look for the Agent's reply panel.".to_string(),
             version: rec.installed_version.clone(),
             tier: "pack".to_string(),
+            trust: "core".to_string(),
+            overrides_installed: false,
+            overridden_version: None,
             enabled: rec.enabled,
             toggle_seq: rec.toggle_seq.to_string(),
             repository: None,
@@ -676,6 +713,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             // SPEC §6: a disabled extension keeps no window and no live
             // credential — every surface is destroyed, not merely slept.
             if !enabled {
+                crate::extension_host::stop_extension(pack_id, "extension disabled");
                 crate::surfaces::extension::destroy(&app, pack_id);
                 crate::surfaces::overlay::dismiss(&app, pack_id);
             }
@@ -703,8 +741,194 @@ fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
 }
 
 fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
-    let raw = std::fs::read_to_string(pack_path(app, id)?).map_err(|e| e.to_string())?;
-    serde_json::from_str(&raw).map_err(|e| e.to_string())
+    crate::extension_host::load_manifest_result(app, id)
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct DeveloperExtension {
+    pub id: String,
+    pub path: String,
+}
+
+#[derive(serde::Serialize, specta::Type)]
+pub struct ExtensionDeveloperStatus {
+    pub enabled: bool,
+    pub loaded: Vec<DeveloperExtension>,
+}
+
+/// Developer mode is a distinct, explicit product setting. Reporting loaded
+/// projects separately keeps the Overview card model focused on effective
+/// extensions while still making every local path visible to the author.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_developer_status(app: AppHandle) -> Result<ExtensionDeveloperStatus, String> {
+    use grain_core::extensions::ExtensionsRegistry;
+    let reg = app
+        .try_state::<std::sync::Arc<ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let mut loaded: Vec<DeveloperExtension> = reg
+        .dev_records()
+        .into_iter()
+        .map(|(id, path)| DeveloperExtension {
+            id,
+            path: path.to_string_lossy().into_owned(),
+        })
+        .collect();
+    loaded.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(ExtensionDeveloperStatus {
+        enabled: settings::get_settings(&app).extension_developer_mode,
+        loaded,
+    })
+}
+
+fn stop_extension_runtime(app: &AppHandle, id: &str, reason: &str) {
+    use grain_core::extensions as ext;
+    crate::extension_host::stop_extension(id, reason);
+    crate::surfaces::extension::destroy(app, id);
+    crate::surfaces::overlay::dismiss(app, id);
+    if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+        let _ = ctx.update_settings(|state| ext::remove_prompt_pack(state, id));
+    }
+}
+
+fn restore_enabled_extension(app: &AppHandle, id: &str) -> Result<(), String> {
+    use grain_core::extensions as ext;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    if !reg.is_enabled(id) {
+        return Ok(());
+    }
+    let pack = load_pack(app, id)?;
+    if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+        ctx.update_settings(|state| ext::apply_prompt_pack(state, id, &pack.payloads.prompts))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn require_main_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    (window.label() == "main")
+        .then_some(())
+        .ok_or_else(|| "developer mode can only be managed from Grain settings".to_string())
+}
+
+/// Toggle developer mode from the in-app settings surface. Turning it off is
+/// also the cleanup boundary: all local projects are unloaded, workers and
+/// surfaces die, and any parked installed versions are restored.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_set_developer_mode(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<(), String> {
+    use grain_core::extensions::ExtensionsRegistry;
+    require_main_window(&window)?;
+    let reg = app
+        .try_state::<std::sync::Arc<ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    if !enabled {
+        let ids: Vec<String> = reg.dev_records().into_iter().map(|(id, _)| id).collect();
+        for id in ids {
+            stop_extension_runtime(&app, &id, "developer mode disabled");
+            reg.unload_dev(&id).map_err(|error| error.to_string())?;
+            restore_enabled_extension(&app, &id)?;
+        }
+    }
+    let mut current = settings::get_settings(&app);
+    current.extension_developer_mode = enabled;
+    settings::write_settings(&app, current);
+    crate::extension_host::refresh_index(&app);
+    Ok(())
+}
+
+fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<String, String> {
+    use grain_core::extensions as ext;
+    if !settings::get_settings(app).extension_developer_mode {
+        return Err("Developer mode is disabled".into());
+    }
+    let loaded = crate::dev_extensions::load_project(root)?;
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let id = loaded.pack.manifest.id.clone();
+    let prior = reg.record(&id);
+    let requested = &loaded.pack.manifest.permissions;
+    let granted = prior
+        .as_ref()
+        .map(|record| {
+            record
+                .granted
+                .iter()
+                .filter(|permission| requested.contains(permission))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    let record = ext::ExtensionRecord {
+        id: id.clone(),
+        enabled: false,
+        toggle_seq: prior.as_ref().map(|record| record.toggle_seq).unwrap_or(0),
+        installed_version: loaded.pack.manifest.version.clone(),
+        granted,
+        slots: loaded.pack.manifest.slots.clone(),
+        variant_slots: Vec::new(),
+        dev: None,
+    };
+    reg.load_dev(record, loaded.root)
+        .map_err(|error| error.to_string())?;
+    stop_extension_runtime(app, &id, "load-unpacked project replaced");
+    crate::extension_host::refresh_index(app);
+    Ok(id)
+}
+
+/// Human-only load-unpacked entry point. The frontend cannot provide a path:
+/// the backend always opens a native folder picker after confirming developer
+/// mode, so links, downloads, and extensions cannot trigger a load.
+#[tauri::command]
+#[specta::specta]
+pub async fn extension_load_unpacked(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    require_main_window(&window)?;
+    if !settings::get_settings(&app).extension_developer_mode {
+        return Err("Developer mode is disabled".into());
+    }
+    let picker_app = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        picker_app.dialog().file().blocking_pick_folder()
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let Some(folder) = picked.and_then(|path| path.into_path().ok()) else {
+        return Ok(None);
+    };
+    load_unpacked_project(&app, &folder).map(Some)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn extension_unload_dev(
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+) -> Result<(), String> {
+    use grain_core::extensions::ExtensionsRegistry;
+    require_main_window(&window)?;
+    let reg = app
+        .try_state::<std::sync::Arc<ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    if reg.dev_path(&id).is_none() {
+        return Err(format!("'{id}' is not a load-unpacked extension"));
+    }
+    stop_extension_runtime(&app, &id, "load-unpacked project unloaded");
+    reg.unload_dev(&id).map_err(|error| error.to_string())?;
+    restore_enabled_extension(&app, &id)?;
+    crate::extension_host::refresh_index(&app);
+    Ok(())
 }
 
 /// One declared setting, or `None` if the pack doesn't declare that key.
@@ -957,7 +1181,8 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
     // Re-import/update of an installed pack must PRESERVE the user's state
     // (SPEC §6 update row) — resetting enabled/toggle order on update would
     // silently disable a working pack.
-    let prior = reg.record(&id);
+    let dev_active = reg.dev_path(&id).is_some();
+    let prior = reg.installed_record(&id);
     let was_enabled = prior.as_ref().map(|r| r.enabled).unwrap_or(false);
     reg.install(ext::ExtensionRecord {
         id: id.clone(),
@@ -972,10 +1197,11 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // No manifest syntax offers a variant slot yet; preserve what heal_slots
         // backfilled rather than clearing it on a reinstall.
         variant_slots: prior.map(|r| r.variant_slots).unwrap_or_default(),
+        dev: None,
     })
     .map_err(|e| e.to_string())?;
     // An enabled pack's payloads refresh in place (apply is idempotent).
-    if was_enabled {
+    if was_enabled && !dev_active {
         if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
             ctx.update_settings(|s| ext::apply_prompt_pack(s, &id, &pack.payloads.prompts))
                 .map_err(|e| e.to_string())?;
@@ -1042,9 +1268,7 @@ pub fn extension_take_slot(app: AppHandle, id: String, slot: String) -> Result<(
     }
     if let Some(prev) = &displaced {
         // The loser is disabled by `take_slot`; its payloads must come off too.
-        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
-            let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, prev));
-        }
+        stop_extension_runtime(&app, prev, "extension lost an exclusive slot");
         log::info!("[GRAIN] slot '{slot}' taken by '{id}' (was '{prev}')");
     }
     crate::extension_host::refresh_index(&app);
@@ -1075,12 +1299,23 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
+    let dev_active = reg.dev_path(&id).is_some();
+    let removed = reg.uninstall(&id).map_err(|e| e.to_string())?;
+    if !removed {
+        return Err(format!("'{id}' is not installed"));
+    }
+    if dev_active {
+        if purge {
+            let _ = std::fs::remove_file(pack_path(&app, &id)?);
+        }
+        return Ok(());
+    }
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
         let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
     }
-    reg.uninstall(&id).map_err(|e| e.to_string())?;
     // Disable keeps a rebind; uninstall is the transaction that clears it
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
+    crate::extension_host::stop_extension(&id, "extension uninstalled");
     crate::extension_shortcuts::forget(&app, &id);
     crate::surfaces::extension::destroy(&app, &id);
     crate::surfaces::overlay::dismiss(&app, &id);
