@@ -1,5 +1,12 @@
 [
   {
+    "date": "Jul 22, 2026",
+    "commit": "fix: place Windows overlay on secondary monitors (#1733)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1733"
+  },
+  {
     "date": "Jul 21, 2026",
     "commit": "fix windows not shutting down cleanly because of handy (#1732)",
     "status": "Pending",
