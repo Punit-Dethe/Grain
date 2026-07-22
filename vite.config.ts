@@ -25,6 +25,9 @@ export default defineConfig(async () => ({
       input: {
         main: resolve(__dirname, "index.html"),
         extensionHost: resolve(__dirname, "extension-host.html"),
+        // The wrapper around an extension's workspace UI (SPEC §7.1) — its own
+        // page so extension markup never shares Grain's main global.
+        extensionSurface: resolve(__dirname, "extension-surface.html"),
       },
     },
   },

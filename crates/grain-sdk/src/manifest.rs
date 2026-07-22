@@ -85,6 +85,16 @@ pub struct WorkspaceDecl {
     /// `[width, height]`; the host clamps to what the display can show.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_size: Option<[u32; 2]>,
+    /// The workspace UI as a self-contained HTML document, embedded so a
+    /// scripted pack stays one shareable file.
+    ///
+    /// It is loaded into a **sandboxed iframe** — opaque origin, no Tauri IPC,
+    /// no reach into the page around it (SPEC §7.1: a UI surface gets its own
+    /// realm). That surrounding page is Grain's code and is the only thing
+    /// holding the surface token, so the extension's own markup cannot forge an
+    /// identity by asserting one in a payload.
+    #[serde(default)]
+    pub ui_source: String,
 }
 
 /// A transient HUD: created per invocation, destroyed on dismiss. The host
@@ -318,8 +328,7 @@ impl GrainPack {
         // Slots may be claimed by any tier (a pill theme is tier-A), but only
         // from the known list — an unknown slot is a silent no-op otherwise.
         for slot in &m.slots {
-            let known = KNOWN_SLOTS.contains(&slot.as_str())
-                || slot.starts_with("overrides:"); // `overrides:<core-setting>`
+            let known = KNOWN_SLOTS.contains(&slot.as_str()) || slot.starts_with("overrides:"); // `overrides:<core-setting>`
             if !known {
                 return Err(format!("unknown slot '{slot}'"));
             }
@@ -342,7 +351,17 @@ impl GrainPack {
             (m.surfaces.overlay.is_some(), "surface:overlay"),
         ] {
             if declared && !m.permissions.iter().any(|p| p == cap) {
-                return Err(format!("declaring this surface requires the '{cap}' permission"));
+                return Err(format!(
+                    "declaring this surface requires the '{cap}' permission"
+                ));
+            }
+        }
+
+        // A workspace with nothing to render is a window that opens blank and
+        // cannot be explained to the user — reject it at import, not at open.
+        if let Some(w) = &m.surfaces.workspace {
+            if w.ui_source.trim().is_empty() {
+                return Err("a workspace surface requires ui_source".into());
             }
         }
 
@@ -428,11 +447,23 @@ mod tests {
     #[test]
     fn guards_hold() {
         // reserved prefix, bad id, native tier, permissions on an inert pack
-        assert!(pack(r#"{"manifest":{"id":"grain.x","name":"n","version":"1","tier":"pack"}}"#).is_err());
-        assert!(pack(r#"{"manifest":{"id":"noreversedns","name":"n","version":"1","tier":"pack"}}"#).is_err());
-        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"native"}}"#).is_err());
+        assert!(
+            pack(r#"{"manifest":{"id":"grain.x","name":"n","version":"1","tier":"pack"}}"#)
+                .is_err()
+        );
+        assert!(pack(
+            r#"{"manifest":{"id":"noreversedns","name":"n","version":"1","tier":"pack"}}"#
+        )
+        .is_err());
+        assert!(
+            pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"native"}}"#)
+                .is_err()
+        );
         // scripted without entry_source, and with an unknown capability
-        assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted"}}"#).is_err());
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted"}}"#
+        )
+        .is_err());
         assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["root"]}}"#).is_err());
         // tier-A pack must not carry code
         assert!(pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","entry_source":"x"}}"#).is_err());
@@ -442,7 +473,9 @@ mod tests {
         );
         // unknown fields from a newer contract are tolerated
         assert_eq!(
-            pack(r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","futureField":1}}"#),
+            pack(
+                r#"{"manifest":{"id":"com.x.y","name":"n","version":"1","tier":"pack","futureField":1}}"#
+            ),
             Ok(())
         );
     }
@@ -456,7 +489,8 @@ mod tests {
             "permissions":["storage","surface:workspace"],
             "activation":["onStartup"],
             "entry_source":"grain.log.info('hi')",
-            "surfaces":{"workspace":{"title":"Spaces","min_size":[900,600]}},
+            "surfaces":{"workspace":{"title":"Spaces","min_size":[900,600],
+                "ui_source":"<h1>Spaces</h1>"}},
             "slots":["agent.reply-surface","overrides:overlay_position"],
             "contributes":{
                 "settings":[
@@ -469,7 +503,10 @@ mod tests {
             }}}"#;
         let p: GrainPack = serde_json::from_str(json).unwrap();
         assert_eq!(p.validate(), Ok(()));
-        assert_eq!(p.manifest.surfaces.workspace.unwrap().min_size, Some([900, 600]));
+        assert_eq!(
+            p.manifest.surfaces.workspace.unwrap().min_size,
+            Some([900, 600])
+        );
         assert!(matches!(
             p.manifest.contributes.settings[0].kind,
             SettingKind::Select { .. }
@@ -486,11 +523,18 @@ mod tests {
             ))
         };
         // A surface without its capability is rejected — the grant is the point.
-        assert!(scripted(r#","surfaces":{"workspace":{"title":"T"}}"#).is_err());
+        assert!(scripted(r#","surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#).is_err());
+        assert!(scripted(
+            r#","permissions":["surface:workspace"],
+               "surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#
+        )
+        .is_ok());
+        // …and a workspace with no UI would open a blank window nobody can
+        // explain, so it is refused at import rather than at open.
         assert!(scripted(
             r#","permissions":["surface:workspace"],"surfaces":{"workspace":{"title":"T"}}"#
         )
-        .is_ok());
+        .is_err());
         // Unknown slot / anchor, duplicate keys, empty select.
         assert!(scripted(r#","slots":["not.a.slot"]"#).is_err());
         assert!(scripted(r#","slots":["pill.theme"]"#).is_ok());
@@ -504,10 +548,9 @@ mod tests {
         .is_err());
         // A colon in either id would make `ext:<extension-id>:<shortcut-id>`
         // ambiguous, so a press could route to the wrong extension.
-        assert!(scripted(
-            r#","contributes":{"shortcuts":[{"id":"go:now","label":"Go"}]}"#
-        )
-        .is_err());
+        assert!(
+            scripted(r#","contributes":{"shortcuts":[{"id":"go:now","label":"Go"}]}"#).is_err()
+        );
         assert!(scripted(r#","contributes":{"shortcuts":[{"id":"go","label":"Go"}]}"#).is_ok());
         assert!(pack(
             r#"{"manifest":{"id":"com.x:y","name":"n","version":"1","tier":"scripted",
@@ -543,7 +586,10 @@ mod tests {
             ]}}}"#;
         let p: GrainPack = serde_json::from_str(json).expect("unknown kinds must still parse");
         // An unknown kind degrades to Unsupported rather than killing the pack.
-        assert_eq!(p.manifest.contributes.settings[2].kind, SettingKind::Unsupported);
+        assert_eq!(
+            p.manifest.contributes.settings[2].kind,
+            SettingKind::Unsupported
+        );
         assert_eq!(p.manifest.contributes.settings[0].kind, SettingKind::Color);
         // An unknown anchor is accepted; the host falls back to the extension's
         // own section (SPEC §4.3 — settings are never lost).

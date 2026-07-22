@@ -649,9 +649,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     .cloned()
                     .collect();
                 if !missing.is_empty() {
-                    return Err(
-                        serde_json::json!({ "needsPermissions": missing }).to_string()
-                    );
+                    return Err(serde_json::json!({ "needsPermissions": missing }).to_string());
                 }
             }
             // [GRAIN] SPEC §3.2: at most one enabled occupant per slot, and a
@@ -663,7 +661,8 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     return Err(serde_json::json!({ "slotConflict": c }).to_string());
                 }
             }
-            reg.set_enabled(pack_id, enabled).map_err(|e| e.to_string())?;
+            reg.set_enabled(pack_id, enabled)
+                .map_err(|e| e.to_string())?;
             if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
                 ctx.update_settings(|s| {
                     if enabled {
@@ -673,6 +672,11 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     }
                 })
                 .map_err(|e| e.to_string())?;
+            }
+            // SPEC §6: a disabled extension keeps no window and no live
+            // credential — the surface is destroyed, not merely slept.
+            if !enabled {
+                crate::surfaces::extension::destroy(&app, pack_id);
             }
             // The activation/transform index is what the paste path and event
             // bus read; it must never lag the registry.
@@ -848,9 +852,7 @@ fn rows_for(
 /// of one that isn't, rather than leaving a dead hotkey unexplained.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_shortcuts_status(
-    id: String,
-) -> Vec<crate::extension_shortcuts::ShortcutStatus> {
+pub fn extension_shortcuts_status(id: String) -> Vec<crate::extension_shortcuts::ShortcutStatus> {
     crate::extension_shortcuts::status_for(&id)
 }
 
@@ -961,7 +963,10 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         enabled: was_enabled,
         toggle_seq: prior.as_ref().map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: pack.manifest.version.clone(),
-        granted: prior.as_ref().map(|r| r.granted.clone()).unwrap_or_default(),
+        granted: prior
+            .as_ref()
+            .map(|r| r.granted.clone())
+            .unwrap_or_default(),
         slots: pack.manifest.slots.clone(),
         // No manifest syntax offers a variant slot yet; preserve what heal_slots
         // backfilled rather than clearing it on a reinstall.
@@ -987,11 +992,7 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
 /// what the user was shown.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_grant(
-    app: AppHandle,
-    id: String,
-    permissions: Vec<String>,
-) -> Result<(), String> {
+pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> Result<(), String> {
     use grain_core::extensions as ext;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
@@ -1080,9 +1081,46 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     // Disable keeps a rebind; uninstall is the transaction that clears it
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
     crate::extension_shortcuts::forget(&app, &id);
+    crate::surfaces::extension::destroy(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
     }
     crate::extension_host::refresh_index(&app);
     Ok(())
+}
+
+// ── Extension workspace surfaces (SPEC §1.2, §7.1) ────────────────────────────
+//
+// These three are called by `extension-surface.html` — Grain's wrapper page —
+// and never by extension code, which sits in a sandboxed iframe with no Tauri
+// IPC. Every one of them derives WHICH extension is calling from the calling
+// window's own label, so there is no argument to point at somebody else's
+// surface.
+
+/// The wrapper page collecting its identity and the markup to render. Handed
+/// over once per open; a second asker gets nothing rather than a live token.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_surface_init(
+    window: tauri::WebviewWindow,
+) -> Option<crate::surfaces::extension::SurfaceInit> {
+    crate::surfaces::extension::take_init(window.label())
+}
+
+/// Frontend ack: the surface UI is mounted — reveal the window.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_surface_ui_ready(app: AppHandle, window: tauri::WebviewWindow) {
+    if let Some(id) = crate::surfaces::extension::id_for_label(window.label()) {
+        crate::surfaces::workspace::ui_ready(&app, &id);
+    }
+}
+
+/// Frontend ack: the surface UI is unmounted — hide and suspend now.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_surface_sleep_ready(app: AppHandle, window: tauri::WebviewWindow) {
+    if let Some(id) = crate::surfaces::extension::id_for_label(window.label()) {
+        crate::surfaces::workspace::sleep_ready(&app, &id);
+    }
 }

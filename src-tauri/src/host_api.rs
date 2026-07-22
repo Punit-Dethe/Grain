@@ -50,6 +50,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "llm.complete" => Some("llm"),
         "embed" => Some("embed"),
         "session.start" => Some("session:start"),
+        "workspace.open" | "workspace.close" => Some("surface:workspace"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
     }
 }
@@ -178,16 +179,29 @@ pub async fn dispatch(
             store.delete(&param_str(&params, "key")?)?;
             Ok(Value::Null)
         }
+        // [GRAIN] SPEC §1.2: the extension asks for ITS OWN workspace and gets
+        // nothing else — there is no id parameter to point at another
+        // extension's surface, because identity comes from the channel.
+        "workspace.open" => {
+            crate::surfaces::extension::open(app, &identity.id, params.get("payload").cloned())?;
+            Ok(Value::Null)
+        }
+        "workspace.close" => {
+            crate::surfaces::extension::close(app, &identity.id);
+            Ok(Value::Null)
+        }
         "settings.get" => {
             let key = param_str(&params, "key")?;
             let stored = store.settings_get(&key);
             // A declared setting reads back through the schema, so a value left
             // behind by an older version resolves to something the extension's
             // own declaration says is legal.
-            Ok(match crate::grain_commands::setting_decl(app, &identity.id, &key) {
-                Some(decl) => grain_sdk::settings_schema::resolve(&decl, Some(&stored)).value,
-                None => stored,
-            })
+            Ok(
+                match crate::grain_commands::setting_decl(app, &identity.id, &key) {
+                    Some(decl) => grain_sdk::settings_schema::resolve(&decl, Some(&stored)).value,
+                    None => stored,
+                },
+            )
         }
         "settings.set" => {
             let key = param_str(&params, "key")?;
@@ -200,9 +214,11 @@ pub async fn dispatch(
             // An *undeclared* key is free-form on purpose: the schema says what
             // the host renders, not everything the extension may remember.
             let value = match crate::grain_commands::setting_decl(app, &identity.id, &key) {
-                Some(decl) => grain_sdk::settings_schema::coerce(&decl, &value)
-                    .map_err(|e| format!("'{key}': {e}"))?
-                    .value,
+                Some(decl) => {
+                    grain_sdk::settings_schema::coerce(&decl, &value)
+                        .map_err(|e| format!("'{key}': {e}"))?
+                        .value
+                }
                 None => value,
             };
             store.settings_set(&key, value)?;

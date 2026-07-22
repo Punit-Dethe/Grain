@@ -130,6 +130,14 @@ export const GRAIN_RUNTIME_JS = `(function () {
       }
     },
     embed: function (texts) { return req("embed", { texts: texts }); },
+    // The extension asks for ITS OWN workspace surface (SPEC §1.2) — there is
+    // no id to pass, because the host derives which extension is calling from
+    // the channel, not from an argument. The payload reaches the surface UI on
+    // mount (and an already-open surface via its payload event).
+    workspace: {
+      open: function (payload) { return req("workspace.open", { payload: payload == null ? null : payload }); },
+      close: function () { return req("workspace.close", {}); }
+    },
     // A transform returns the rewritten text (a string); an empty string
     // suppresses the paste (SPEC §3.3).
     onTransform: function (fn) { handlers.transform = function (p) { return fn(p.text); }; },

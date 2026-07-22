@@ -6,4 +6,5 @@
 //! opens is the one Grain Space already proved, not a second-class imitation of
 //! it.
 
+pub mod extension;
 pub mod workspace;

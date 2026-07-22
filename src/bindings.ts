@@ -1113,6 +1113,25 @@ async extensionSettingSet(id: string, key: string, value: JsonValue) : Promise<R
 }
 },
 /**
+ * The wrapper page collecting its identity and the markup to render. Handed
+ * over once per open; a second asker gets nothing rather than a live token.
+ */
+async extensionSurfaceInit() : Promise<SurfaceInit | null> {
+    return await TAURI_INVOKE("extension_surface_init");
+},
+/**
+ * Frontend ack: the surface UI is mounted — reveal the window.
+ */
+async extensionSurfaceUiReady() : Promise<void> {
+    await TAURI_INVOKE("extension_surface_ui_ready");
+},
+/**
+ * Frontend ack: the surface UI is unmounted — hide and suspend now.
+ */
+async extensionSurfaceSleepReady() : Promise<void> {
+    await TAURI_INVOKE("extension_surface_sleep_ready");
+},
+/**
  * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
  * the extensions dir, registers it DISABLED — enabling is the user's explicit
  * second step in Overview, where toggle order is assigned.
@@ -2518,6 +2537,16 @@ export type SttProviderKind =
  * Generic OpenAI-compatible `/v1/audio/transcriptions`.
  */
 "openai" | "deepgram" | "assemblyai"
+/**
+ * What the wrapper page needs to boot. Handed over once, in response to the
+ * page asking for it — never placed in the URL, where it would be readable
+ * from the window title bar, logs and crash dumps.
+ */
+export type SurfaceInit = { extensionId: string; token: string; 
+/**
+ * The extension's HTML, rendered into a sandboxed iframe.
+ */
+uiSource: string; sleepEvent: string; reviveEvent: string; payloadEvent: string }
 export type TodoTag = { text: string; done: boolean }
 /**
  * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Grain Extension Surface</title>
+    <!-- [GRAIN] The wrapper around an extension's workspace UI (SPEC §1.2, §7.1).
+         This page is GRAIN's code: it holds the surface token and speaks to the
+         host. The extension's own markup goes in a sandboxed iframe below, on an
+         opaque origin with no Tauri IPC and no reach into this document. Keep
+         this page free of extension-supplied script — the sandbox is the wall. -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #0b0b0c;
+        color: #e7e7ea;
+        font:
+          13px/1.5 system-ui,
+          sans-serif;
+      }
+      #frame {
+        display: block;
+        width: 100%;
+        height: 100%;
+        border: 0;
+      }
+      #fallback {
+        display: none;
+        padding: 24px;
+      }
+      #fallback.show {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="fallback"></div>
+    <script type="module" src="/src/extension-surface.ts"></script>
+  </body>
+</html>
