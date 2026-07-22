@@ -23,7 +23,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use grain_sdk::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
+use grain_sdk::{
+    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillPattern, PillStateTheme,
+    PillTheme, SessionMode,
+};
 
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
 use winit::application::ApplicationHandler;
@@ -89,9 +92,9 @@ const STUDIO_TOP_PILL_H: f32 = 30.0;
 const STUDIO_TOP_GAP: f32 = 9.0; // gap between the top capsule and the card
 const STUDIO_TOP_RESERVE: f32 = STUDIO_TOP_PILL_H + STUDIO_TOP_GAP + 6.0; // canvas above the card
 const STUDIO_TOP_ARROW_INSET: f32 = 22.0; // ‹ › inset from each capsule end
-// Present (and ease the riser/hover) at ~60 fps so motion is smooth; the dot
-// field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
-// instead of turning into 60 fps static.
+                                          // Present (and ease the riser/hover) at ~60 fps so motion is smooth; the dot
+                                          // field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
+                                          // instead of turning into 60 fps static.
 const TICK: Duration = Duration::from_millis(16);
 const ROLL_INTERVAL: Duration = Duration::from_millis(80);
 /// [GRAIN] After the pill has been continuously hidden this long, its parsed
@@ -397,8 +400,15 @@ fn wrap_plain(font: &fontdue::Font, text: &str, px: f32, max_w: f32) -> Vec<Stri
         let mut cur_w = 0.0f32;
         let space_w = font.metrics(' ', px).advance_width;
         for word in paragraph.split(' ') {
-            let word_w: f32 = word.chars().map(|c| font.metrics(c, px).advance_width).sum();
-            let add = if cur.is_empty() { word_w } else { word_w + space_w };
+            let word_w: f32 = word
+                .chars()
+                .map(|c| font.metrics(c, px).advance_width)
+                .sum();
+            let add = if cur.is_empty() {
+                word_w
+            } else {
+                word_w + space_w
+            };
             if !cur.is_empty() && cur_w + add > max_w {
                 lines.push(std::mem::take(&mut cur));
                 cur_w = 0.0;
@@ -665,9 +675,9 @@ impl Aura {
                 }
                 let shade = self.rng.f32();
                 let (rr, gg, bb) = if shade < 0.40 {
-                    (255, 93, 30)   // deep orange
+                    (255, 93, 30) // deep orange
                 } else if shade < 0.72 {
-                    (255, 145, 70)  // mid orange
+                    (255, 145, 70) // mid orange
                 } else {
                     (255, 185, 110) // light orange
                 };
@@ -702,10 +712,10 @@ impl Aura {
 
         // Center column is 12.0 (between cols 12 and 13 for a 25-wide grid).
         let center = (STUDIO_MTX_C0 + STUDIO_MTX_C1) as f32 / 2.0; // 12.0
-        // Maximum distance from center to an edge column.
+                                                                   // Maximum distance from center to an edge column.
         let max_dist = center - STUDIO_MTX_C0 as f32; // 12.0
-        // Square-root curve: amplifies low volumes (0.1 → 0.32, 0.25 → 0.50)
-        // while keeping medium/high volumes natural (0.5 → 0.71, 1.0 → 1.0).
+                                                      // Square-root curve: amplifies low volumes (0.1 → 0.32, 0.25 → 0.50)
+                                                      // while keeping medium/high volumes natural (0.5 → 0.71, 1.0 → 1.0).
         let shaped = level.sqrt();
         let reach = shaped * max_dist;
 
@@ -772,8 +782,22 @@ impl Aura {
         }
     }
 
-    fn roll(&mut self, state: PillState, amp: f32) {
+    // (theme lookup lives at module scope as `theme_for_state`.)
+
+    fn roll(&mut self, state: PillState, amp: f32, theme: Option<&PillStateTheme>) {
         self.phase += 1.0;
+        // [GRAIN] SPEC §9: a themed state renders a named pattern in the theme's
+        // dot colour; an unthemed one — or a theme that set no dot colour, or a
+        // pattern this build doesn't know — keeps Grain's own motion for that
+        // state. This is why no theme can blank the pill: every gap is a
+        // fallback, never a skipped render.
+        if self.roll_themed_field(theme) {
+            // Recording keeps its button overlay even when themed.
+            if state == PillState::Recording {
+                self.roll_button();
+            }
+            return;
+        }
         match state {
             PillState::Idle => self.roll_idle(),
             PillState::Processing => {
@@ -785,6 +809,73 @@ impl Aura {
             }
             // [GRAIN] B4: placeholder — calm dim grid (reuse idle until designed).
             PillState::Fallback => self.roll_idle(),
+        }
+    }
+
+    /// Render one of the named theme patterns into the dot field. Returns whether
+    /// it drew anything — `false` means "no usable theme for this state, use the
+    /// default." A themed state with no `dot` colour keeps Grain's dots, and an
+    /// `Unsupported` pattern keeps Grain's motion.
+    fn roll_themed_field(&mut self, theme: Option<&PillStateTheme>) -> bool {
+        let Some(t) = theme else { return false };
+        let Some(dot) = t.dot else { return false };
+        match t.pattern {
+            PillPattern::Static => self.roll_pattern_static(dot),
+            PillPattern::Breathe => self.roll_pattern_breathe(dot),
+            PillPattern::Sweep => self.roll_pattern_sweep(dot),
+            PillPattern::Unsupported => return false,
+        }
+        true
+    }
+
+    /// A solid field at the theme colour over a slow breathing base.
+    fn roll_pattern_static(&mut self, dot: [u8; 3]) {
+        let a = 0.55 + 0.10 * (self.phase * 0.05).sin();
+        self.fill_field(dot, a);
+    }
+
+    /// The whole field pulses together — a calm, uniform breath.
+    fn roll_pattern_breathe(&mut self, dot: [u8; 3]) {
+        // 0.5±0.5·sin maps to 0..1; scale into a visible, non-black band.
+        let a = 0.18 + 0.57 * (0.5 + 0.5 * (self.phase * 0.05).sin());
+        self.fill_field(dot, a);
+    }
+
+    /// A soft band crosses the field — Grain's idle motion, in the theme colour.
+    fn roll_pattern_sweep(&mut self, dot: [u8; 3]) {
+        let sweep = (self.phase * 0.02).rem_euclid(1.0);
+        let breath = 0.07 + 0.04 * (self.phase * 0.06).sin();
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                let idx = r * COLS + c;
+                if is_edge(c, r) {
+                    self.dots[idx] = NONE;
+                    continue;
+                }
+                let p = c as f32 / COLS as f32;
+                let mut dist = (p - sweep).abs();
+                if dist > 0.5 {
+                    dist = 1.0 - dist;
+                }
+                let bump = (-(dist * 8.0).powi(2)).exp();
+                let a = (breath + 0.40 * bump).clamp(0.0, 0.80);
+                self.dots[idx] = [dot[0], dot[1], dot[2], (a * 255.0) as u8];
+            }
+        }
+    }
+
+    /// Fill every non-edge dot with `dot` at alpha `a`.
+    fn fill_field(&mut self, dot: [u8; 3], a: f32) {
+        let alpha = (a.clamp(0.0, 1.0) * 255.0) as u8;
+        for r in 0..ROWS {
+            for c in 0..COLS {
+                let idx = r * COLS + c;
+                self.dots[idx] = if is_edge(c, r) {
+                    NONE
+                } else {
+                    [dot[0], dot[1], dot[2], alpha]
+                };
+            }
         }
     }
 
@@ -897,6 +988,19 @@ impl Aura {
             }
         }
         self.energy = (self.energy * 0.74).max(0.0);
+    }
+}
+
+/// [GRAIN] The theme entry for a pill state (SPEC §9), or `None` for Grain's own
+/// look. Maps the pill's own `PillState` onto the SDK theme's per-state fields —
+/// the SDK stays UI-agnostic, the mapping lives here.
+fn theme_for_state(theme: Option<&PillTheme>, state: PillState) -> Option<&PillStateTheme> {
+    let t = theme?;
+    match state {
+        PillState::Idle => t.idle.as_ref(),
+        PillState::Recording => t.recording.as_ref(),
+        PillState::Processing => t.processing.as_ref(),
+        PillState::Fallback => t.fallback.as_ref(),
     }
 }
 
@@ -2071,6 +2175,11 @@ struct Remote {
     /// user releases the shortcut, even though the worker's drain can still
     /// emit a few trailing `Asr*` events while finalizing.
     asr: AsrDisplay,
+    /// [GRAIN] Active pill theme (SPEC §9), or `None` for Grain's own look. Set
+    /// by `PillTheme`; scope is the COLLAPSED pill only (the Studio field and
+    /// the agent card stay Grain's). Every gap falls back per-state, so no theme
+    /// can blank the pill.
+    theme: Option<PillTheme>,
 }
 
 impl Default for Remote {
@@ -2091,6 +2200,7 @@ impl Default for Remote {
             agent_submit_req_seq: 0,
             agent_input_saved_seq: 0,
             asr: AsrDisplay::default(),
+            theme: None,
         }
     }
 }
@@ -2121,7 +2231,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.mode = PillMode::Collapsed;
             r.streaming = mode == SessionMode::NativeAsr;
             r.prompt_recording = false; // fresh session — never carry a prior mark's tint.
-            // A new session supersedes any lingering Quick-Agent follow-up offer.
+                                        // A new session supersedes any lingering Quick-Agent follow-up offer.
             if r.agent_offer.take().is_some() {
                 r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
             }
@@ -2233,6 +2343,11 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.asr.finished.push(text);
             r.asr.committed.clear();
             r.asr.partial.clear();
+        }
+        // [GRAIN] SPEC §9: adopt (or clear) the pill theme. Data only — nothing
+        // here executes theme-supplied code; the renderer reads the colours.
+        DaemonEvent::PillTheme { theme } => {
+            r.theme = theme;
         }
         _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
     }
@@ -2353,6 +2468,10 @@ fn spawn_event_client(
                                             | DaemonEvent::AgentInputHide
                                             | DaemonEvent::AgentInputSaved
                                             | DaemonEvent::AgentInputSubmitRequest
+                                            // A theme can arrive while the pill is
+                                            // hidden (on connect); wake so the next
+                                            // reveal already wears it.
+                                            | DaemonEvent::PillTheme { .. }
                                     );
                                     apply_event(&remote, ev);
                                     if is_session_event {
@@ -2492,6 +2611,9 @@ struct App {
     window: Option<Rc<Window>>,
     aura: Aura,
     state: PillState,
+    /// [GRAIN] Active pill theme (mirrors `Remote::theme`, SPEC §9). Read by the
+    /// collapsed-pill roll; `None` is Grain's own look.
+    theme: Option<PillTheme>,
     /// [GRAIN] Prompt Record active for this session (mirrors `Remote`). Drives the
     /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint — the
     /// sole visual indicator of Prompt Record.
@@ -2596,6 +2718,7 @@ impl App {
             window: None,
             aura: Aura::new(),
             state: PillState::Idle,
+            theme: None,
             prompt_recording: false,
             amp,
             _mic: None,
@@ -2841,8 +2964,7 @@ impl App {
             Key::Character("v") | Key::Character("V") if ctrl => {
                 if let Some(window) = &self.window {
                     if let Some(pasted) = present::read_clipboard_text(window) {
-                        let clean: String =
-                            pasted.chars().filter(|c| !c.is_control()).collect();
+                        let clean: String = pasted.chars().filter(|c| !c.is_control()).collect();
                         if !clean.is_empty() {
                             if !ui.expanded {
                                 ui.expanded = true;
@@ -3053,8 +3175,10 @@ impl App {
         let text_font = ui_font.map(|f| font_for(f, fallback_ref, &ui.text));
 
         // Compact width hugs its content: pad + 2 + wave + 14 + label + pad.
-        let wave_w = AIN_WAVE_COLS as f32 * AIN_WAVE_DOT + (AIN_WAVE_COLS - 1) as f32 * AIN_WAVE_GAP;
-        let wave_h = AIN_WAVE_ROWS as f32 * AIN_WAVE_DOT + (AIN_WAVE_ROWS - 1) as f32 * AIN_WAVE_GAP;
+        let wave_w =
+            AIN_WAVE_COLS as f32 * AIN_WAVE_DOT + (AIN_WAVE_COLS - 1) as f32 * AIN_WAVE_GAP;
+        let wave_h =
+            AIN_WAVE_ROWS as f32 * AIN_WAVE_DOT + (AIN_WAVE_ROWS - 1) as f32 * AIN_WAVE_GAP;
         let listen_w = ui_font.map(|f| text_width(f, cue, 11.5)).unwrap_or(64.0);
         let compact_w = AIN_PAD_X + 2.0 + wave_w + 14.0 + listen_w + AIN_PAD_X;
         let compact_h = AIN_PAD_Y_COMPACT * 2.0 + wave_h.max(16.0) + 2.0;
@@ -3167,11 +3291,26 @@ impl App {
                 let dy = wy + r as f32 * (AIN_WAVE_DOT + AIN_WAVE_GAP) + AIN_WAVE_DOT / 2.0;
                 if let Some(circle) = PathBuilder::from_circle(dx, dy, AIN_WAVE_DOT / 2.0) {
                     paint.set_color(Color::from_rgba8(green[0], green[1], green[2], a));
-                    pixmap.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+                    pixmap.fill_path(
+                        &circle,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
                 }
             }
             if let Some(f) = ui_font {
-                draw_text_left(&mut pixmap, f, label, gx + wave_w + 14.0, cy, 12.5, green, 1.0);
+                draw_text_left(
+                    &mut pixmap,
+                    f,
+                    label,
+                    gx + wave_w + 14.0,
+                    cy,
+                    12.5,
+                    green,
+                    1.0,
+                );
             }
             ui.confirm_rect = (0.0, 0.0, 0.0, 0.0);
             if let Some(presenter) = &self.presenter {
@@ -3219,7 +3358,13 @@ impl App {
                         bb as u8,
                         (opacity * 255.0) as u8,
                     ));
-                    pixmap.fill_path(&circle, &paint, FillRule::Winding, Transform::identity(), None);
+                    pixmap.fill_path(
+                        &circle,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
                 }
             }
             if let Some(f) = ui_font {
@@ -3269,9 +3414,20 @@ impl App {
                             shown = &shown[it.next().map(|(i, _)| i).unwrap_or(shown.len())..];
                         }
                     }
-                    let color = if empty { [0x66, 0x66, 0x66] } else { [0xff, 0xff, 0xff] };
+                    let color = if empty {
+                        [0x66, 0x66, 0x66]
+                    } else {
+                        [0xff, 0xff, 0xff]
+                    };
                     let tw = draw_text_left(
-                        &mut pixmap, tf, shown, inner_x, title_cy, CAP_TITLE_PX, color, typ_alpha,
+                        &mut pixmap,
+                        tf,
+                        shown,
+                        inner_x,
+                        title_cy,
+                        CAP_TITLE_PX,
+                        color,
+                        typ_alpha,
                     );
                     if ui.focus_title && caret_on {
                         let cx = if empty { inner_x } else { inner_x + tw + 1.0 };
@@ -3281,13 +3437,24 @@ impl App {
 
                 // Body: wrapped, growing, tail-scrolled at the visible cap.
                 let body_first_cy = title_cy + 22.0;
-                body_rect = (inner_x, body_first_cy - 12.0, inner_x + inner_w, foot_cy - 12.0);
+                body_rect = (
+                    inner_x,
+                    body_first_cy - 12.0,
+                    inner_x + inner_w,
+                    foot_cy - 12.0,
+                );
                 if let Some(f) = ui_font {
                     let bf = text_font.unwrap_or(f);
                     if ui.text.is_empty() {
                         draw_text_left(
-                            &mut pixmap, bf, placeholder, inner_x, body_first_cy, CAP_BODY_PX,
-                            [0x66, 0x66, 0x66], typ_alpha,
+                            &mut pixmap,
+                            bf,
+                            placeholder,
+                            inner_x,
+                            body_first_cy,
+                            CAP_BODY_PX,
+                            [0x66, 0x66, 0x66],
+                            typ_alpha,
                         );
                         if !ui.focus_title && caret_on {
                             draw_caret(&mut pixmap, &mut paint, inner_x, body_first_cy, typ_alpha);
@@ -3300,153 +3467,179 @@ impl App {
                         for (i, line) in visible.iter().enumerate() {
                             let ly = body_first_cy + i as f32 * CAP_BODY_LINE_H;
                             last_tw = draw_text_left(
-                                &mut pixmap, bf, line, inner_x, ly, CAP_BODY_PX,
-                                [0xff, 0xff, 0xff], typ_alpha,
+                                &mut pixmap,
+                                bf,
+                                line,
+                                inner_x,
+                                ly,
+                                CAP_BODY_PX,
+                                [0xff, 0xff, 0xff],
+                                typ_alpha,
                             );
                         }
                         if !ui.focus_title && caret_on {
                             let ly = body_first_cy
                                 + visible.len().saturating_sub(1) as f32 * CAP_BODY_LINE_H;
-                            draw_caret(&mut pixmap, &mut paint, inner_x + last_tw + 1.0, ly, typ_alpha);
+                            draw_caret(
+                                &mut pixmap,
+                                &mut paint,
+                                inner_x + last_tw + 1.0,
+                                ly,
+                                typ_alpha,
+                            );
                         }
                     }
                 }
             } else {
-            let head_cy = card_y + AIN_PAD_Y_EXPANDED + 9.0;
-            let input_cy = head_cy + 9.0 + 16.0 + 12.0;
+                let head_cy = card_y + AIN_PAD_Y_EXPANDED + 9.0;
+                let input_cy = head_cy + 9.0 + 16.0 + 12.0;
 
-            // Header: GRAIN (semibold, letter-spaced) + the selection chip.
-            if let Some(f) = sb_font {
-                let mut x = inner_x;
-                for ch in "GRAIN".chars() {
-                    let s = ch.to_string();
-                    x += draw_text_left(
-                        &mut pixmap,
-                        f,
-                        &s,
-                        x,
-                        head_cy,
-                        13.0,
-                        [0xa0, 0xa0, 0xa0],
-                        typ_alpha,
-                    ) + 0.5;
+                // Header: GRAIN (semibold, letter-spaced) + the selection chip.
+                if let Some(f) = sb_font {
+                    let mut x = inner_x;
+                    for ch in "GRAIN".chars() {
+                        let s = ch.to_string();
+                        x += draw_text_left(
+                            &mut pixmap,
+                            f,
+                            &s,
+                            x,
+                            head_cy,
+                            13.0,
+                            [0xa0, 0xa0, 0xa0],
+                            typ_alpha,
+                        ) + 0.5;
+                    }
                 }
-            }
-            // Selection chip (top-right). Shown ONLY when there is actually a
-            // selection; an empty state shows nothing (Recall never selects;
-            // Capture/Assist with nothing highlighted stay clean).
-            if let (Some(f), true) = (ui_font, ui.selection_chars > 0) {
-                let chip_text = format!("{} chars", ui.selection_chars);
-                let tw = text_width(f, &chip_text, 11.0);
-                let chip_w = tw + 20.0;
-                let chip_h = 21.0;
-                let chip_x = inner_x + inner_w - chip_w;
-                let chip_y = head_cy - chip_h / 2.0;
-                paint.set_color(Color::from_rgba8(
-                    0x33,
-                    0x33,
-                    0x33,
-                    (typ_alpha * 255.0) as u8,
-                ));
-                if let Some(p) = rounded(chip_x, chip_y, chip_w, chip_h, 6.0) {
-                    pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
-                }
-                paint.set_color(Color::from_rgba8(
-                    0x2a,
-                    0x2a,
-                    0x2a,
-                    (typ_alpha * 255.0) as u8,
-                ));
-                if let Some(p) = rounded(chip_x + 1.0, chip_y + 1.0, chip_w - 2.0, chip_h - 2.0, 5.0)
-                {
-                    pixmap.fill_path(&p, &paint, FillRule::Winding, Transform::identity(), None);
-                }
-                draw_text_left(
-                    &mut pixmap,
-                    f,
-                    &chip_text,
-                    chip_x + 10.0,
-                    head_cy,
-                    11.0,
-                    [0xa0, 0xa0, 0xa0],
-                    typ_alpha,
-                );
-            }
-
-            // Input line: typed text (18px white) or the placeholder; caret.
-            if let Some(f) = ui_font {
-                let max_text_w = inner_w - 6.0;
-                let caret_on = (phase % 1.0) < 0.6;
-                if ui.text.is_empty() {
+                // Selection chip (top-right). Shown ONLY when there is actually a
+                // selection; an empty state shows nothing (Recall never selects;
+                // Capture/Assist with nothing highlighted stay clean).
+                if let (Some(f), true) = (ui_font, ui.selection_chars > 0) {
+                    let chip_text = format!("{} chars", ui.selection_chars);
+                    let tw = text_width(f, &chip_text, 11.0);
+                    let chip_w = tw + 20.0;
+                    let chip_h = 21.0;
+                    let chip_x = inner_x + inner_w - chip_w;
+                    let chip_y = head_cy - chip_h / 2.0;
+                    paint.set_color(Color::from_rgba8(
+                        0x33,
+                        0x33,
+                        0x33,
+                        (typ_alpha * 255.0) as u8,
+                    ));
+                    if let Some(p) = rounded(chip_x, chip_y, chip_w, chip_h, 6.0) {
+                        pixmap.fill_path(
+                            &p,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                    }
+                    paint.set_color(Color::from_rgba8(
+                        0x2a,
+                        0x2a,
+                        0x2a,
+                        (typ_alpha * 255.0) as u8,
+                    ));
+                    if let Some(p) =
+                        rounded(chip_x + 1.0, chip_y + 1.0, chip_w - 2.0, chip_h - 2.0, 5.0)
+                    {
+                        pixmap.fill_path(
+                            &p,
+                            &paint,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                    }
                     draw_text_left(
                         &mut pixmap,
                         f,
-                        placeholder,
-                        inner_x,
-                        input_cy,
-                        18.0,
-                        [0x66, 0x66, 0x66],
+                        &chip_text,
+                        chip_x + 10.0,
+                        head_cy,
+                        11.0,
+                        [0xa0, 0xa0, 0xa0],
                         typ_alpha,
                     );
-                    if caret_on {
-                        paint.set_color(Color::from_rgba8(
-                            0xff,
-                            0x55,
-                            0x00,
-                            (typ_alpha * 255.0) as u8,
-                        ));
-                        if let Some(rect) = Rect::from_xywh(inner_x - 1.0, input_cy - 10.0, 1.6, 20.0)
-                        {
-                            pixmap.fill_path(
-                                &PathBuilder::from_rect(rect),
-                                &paint,
-                                FillRule::Winding,
-                                Transform::identity(),
-                                None,
-                            );
+                }
+
+                // Input line: typed text (18px white) or the placeholder; caret.
+                if let Some(f) = ui_font {
+                    let max_text_w = inner_w - 6.0;
+                    let caret_on = (phase % 1.0) < 0.6;
+                    if ui.text.is_empty() {
+                        draw_text_left(
+                            &mut pixmap,
+                            f,
+                            placeholder,
+                            inner_x,
+                            input_cy,
+                            18.0,
+                            [0x66, 0x66, 0x66],
+                            typ_alpha,
+                        );
+                        if caret_on {
+                            paint.set_color(Color::from_rgba8(
+                                0xff,
+                                0x55,
+                                0x00,
+                                (typ_alpha * 255.0) as u8,
+                            ));
+                            if let Some(rect) =
+                                Rect::from_xywh(inner_x - 1.0, input_cy - 10.0, 1.6, 20.0)
+                            {
+                                pixmap.fill_path(
+                                    &PathBuilder::from_rect(rect),
+                                    &paint,
+                                    FillRule::Winding,
+                                    Transform::identity(),
+                                    None,
+                                );
+                            }
                         }
-                    }
-                } else {
-                    // Typed text may be non-Latin → use the fallback-aware face.
-                    let f = text_font.unwrap_or(f);
-                    // Show the TAIL when the text overflows (caret always visible).
-                    let mut shown: &str = &ui.text;
-                    while text_width(f, shown, 18.0) > max_text_w && !shown.is_empty() {
-                        let mut it = shown.char_indices();
-                        it.next();
-                        shown = &shown[it.next().map(|(i, _)| i).unwrap_or(shown.len())..];
-                    }
-                    let tw = draw_text_left(
-                        &mut pixmap,
-                        f,
-                        shown,
-                        inner_x,
-                        input_cy,
-                        18.0,
-                        [0xff, 0xff, 0xff],
-                        typ_alpha,
-                    );
-                    if caret_on {
-                        paint.set_color(Color::from_rgba8(
-                            0xff,
-                            0x55,
-                            0x00,
-                            (typ_alpha * 255.0) as u8,
-                        ));
-                        if let Some(rect) =
-                            Rect::from_xywh(inner_x + tw + 1.0, input_cy - 10.0, 1.6, 20.0)
-                        {
-                            pixmap.fill_path(
-                                &PathBuilder::from_rect(rect),
-                                &paint,
-                                FillRule::Winding,
-                                Transform::identity(),
-                                None,
-                            );
+                    } else {
+                        // Typed text may be non-Latin → use the fallback-aware face.
+                        let f = text_font.unwrap_or(f);
+                        // Show the TAIL when the text overflows (caret always visible).
+                        let mut shown: &str = &ui.text;
+                        while text_width(f, shown, 18.0) > max_text_w && !shown.is_empty() {
+                            let mut it = shown.char_indices();
+                            it.next();
+                            shown = &shown[it.next().map(|(i, _)| i).unwrap_or(shown.len())..];
+                        }
+                        let tw = draw_text_left(
+                            &mut pixmap,
+                            f,
+                            shown,
+                            inner_x,
+                            input_cy,
+                            18.0,
+                            [0xff, 0xff, 0xff],
+                            typ_alpha,
+                        );
+                        if caret_on {
+                            paint.set_color(Color::from_rgba8(
+                                0xff,
+                                0x55,
+                                0x00,
+                                (typ_alpha * 255.0) as u8,
+                            ));
+                            if let Some(rect) =
+                                Rect::from_xywh(inner_x + tw + 1.0, input_cy - 10.0, 1.6, 20.0)
+                            {
+                                pixmap.fill_path(
+                                    &PathBuilder::from_rect(rect),
+                                    &paint,
+                                    FillRule::Winding,
+                                    Transform::identity(),
+                                    None,
+                                );
+                            }
                         }
                     }
                 }
-            }
             } // end else (single-field query card)
 
             // Footer: "Tab to record" · "Esc to close" + the Confirm button.
@@ -3568,7 +3761,19 @@ impl App {
                 anti_alias: true,
                 ..Default::default()
             };
-            body.set_color(Color::from_rgba8(0, 0, 0, 240));
+            // [GRAIN] SPEC §9: a themed state may recolour the capsule; an
+            // unthemed one (or a theme that set only dot colours) keeps Grain's
+            // near-black body. Collapsed pill only — the Studio card is not
+            // themeable.
+            let body_rgba = theme_for_state(self.theme.as_ref(), self.state)
+                .and_then(|t| t.background)
+                .unwrap_or([0, 0, 0, 240]);
+            body.set_color(Color::from_rgba8(
+                body_rgba[0],
+                body_rgba[1],
+                body_rgba[2],
+                body_rgba[3],
+            ));
             if let Some(rect) = Rect::from_ltrb(x0 + r, y_off, x1 - r, y_off + pill_h) {
                 pixmap.fill_path(
                     &PathBuilder::from_rect(rect),
@@ -3827,15 +4032,10 @@ impl App {
             return SIB_W;
         };
         let font = font_for(font, self.fallback_font.as_ref(), "Ask follow-up");
-        let shortcut = self
-            .agent_offer
-            .as_deref()
-            .unwrap_or("")
-            .to_uppercase();
+        let shortcut = self.agent_offer.as_deref().unwrap_or("").to_uppercase();
         let label = "Ask follow-up";
         let label_w = text_width(font, label, PROMPT_LABEL_PX);
-        let key_w =
-            text_width(font, &shortcut, PROMPT_LABEL_PX) + 2.0 * OFFER_KEY_PAD_X;
+        let key_w = text_width(font, &shortcut, PROMPT_LABEL_PX) + 2.0 * OFFER_KEY_PAD_X;
         OFFER_CAPSULE_PAD + label_w + OFFER_LABEL_KEY_GAP + key_w + OFFER_CAPSULE_PAD
     }
 
@@ -3859,18 +4059,12 @@ impl App {
             return;
         };
         let font = font_for(font, self.fallback_font.as_ref(), "Ask follow-up");
-        let shortcut = self
-            .agent_offer
-            .as_deref()
-            .unwrap_or("")
-            .to_uppercase();
+        let shortcut = self.agent_offer.as_deref().unwrap_or("").to_uppercase();
         let label = "Ask follow-up";
 
         let label_w = text_width(font, label, PROMPT_LABEL_PX);
-        let key_w =
-            text_width(font, &shortcut, PROMPT_LABEL_PX) + 2.0 * OFFER_KEY_PAD_X;
-        let cap_w =
-            OFFER_CAPSULE_PAD + label_w + OFFER_LABEL_KEY_GAP + key_w + OFFER_CAPSULE_PAD;
+        let key_w = text_width(font, &shortcut, PROMPT_LABEL_PX) + 2.0 * OFFER_KEY_PAD_X;
+        let cap_w = OFFER_CAPSULE_PAD + label_w + OFFER_LABEL_KEY_GAP + key_w + OFFER_CAPSULE_PAD;
         let left = 0.0_f32;
 
         let fill_a = (alpha * 244.0) as u8;
@@ -3936,7 +4130,13 @@ impl App {
             key_h - 2.0,
             (key_rr - 1.0).max(0.0),
         ) {
-            pixmap.fill_path(&path, &key_fill, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &path,
+                &key_fill,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
 
         // 4) Shortcut text — bright cream, centered inside the key-cap.
@@ -4126,9 +4326,8 @@ impl ApplicationHandler<UserEvent> for App {
                 // [GRAIN] Agent input: click-to-expand (compact) / Confirm (expanded).
                 if let Some(ui) = &mut self.agent_input {
                     let (cx, cy) = self.cursor_pos;
-                    let hit = |r: (f32, f32, f32, f32)| {
-                        cx >= r.0 && cx <= r.2 && cy >= r.1 && cy <= r.3
-                    };
+                    let hit =
+                        |r: (f32, f32, f32, f32)| cx >= r.0 && cx <= r.2 && cy >= r.1 && cy <= r.3;
                     if ui.expanded && hit(ui.confirm_rect) {
                         // Confirm / Save button — a mouse click is a normal
                         // submit (never Quick Agent).
@@ -4170,10 +4369,11 @@ impl ApplicationHandler<UserEvent> for App {
             // shortcuts instead — these are the fallback when those failed to
             // register.) Handled BEFORE the dev-preview keys below.
             WindowEvent::KeyboardInput {
-                event: ref key_event @ KeyEvent {
-                    state: ElementState::Pressed,
-                    ..
-                },
+                event:
+                    ref key_event @ KeyEvent {
+                        state: ElementState::Pressed,
+                        ..
+                    },
                 ..
             } if self.agent_input.is_some() => {
                 self.agent_input_key(key_event.clone());
@@ -4251,15 +4451,12 @@ impl ApplicationHandler<UserEvent> for App {
             // and the body renders off-center).
             let prev_state = self.state;
             self.state = r.state;
-            let session_started_from_overlay = matches!(
-                self.state,
-                PillState::Recording | PillState::Processing
-            ) && !matches!(
-                prev_state,
-                PillState::Recording | PillState::Processing
-            ) && (self.prompt_preview_until.is_some()
-                || self.agent_offer.is_some()
-                || self.riser_progress > 0.01);
+            let session_started_from_overlay =
+                matches!(self.state, PillState::Recording | PillState::Processing)
+                    && !matches!(prev_state, PillState::Recording | PillState::Processing)
+                    && (self.prompt_preview_until.is_some()
+                        || self.agent_offer.is_some()
+                        || self.riser_progress > 0.01);
             if session_started_from_overlay {
                 // Drop the riser immediately so no capsule renders beside the
                 // recording body, and clear the preview so it stops driving
@@ -4272,6 +4469,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.offer_fade_close = false;
             }
             self.prompt_recording = r.prompt_recording;
+            self.theme = r.theme.clone();
             self.asr = r.asr.clone();
 
             // [GRAIN] Native agent input shown/hidden by the core. Adopt it
@@ -4532,7 +4730,8 @@ impl ApplicationHandler<UserEvent> for App {
                             _ => self.aura.roll_studio(amp),
                         }
                     } else {
-                        self.aura.roll(self.state, amp);
+                        let state_theme = theme_for_state(self.theme.as_ref(), self.state);
+                        self.aura.roll(self.state, amp, state_theme);
                     }
                     self.next_roll = now + ROLL_INTERVAL;
                 }
@@ -4634,8 +4833,7 @@ impl ApplicationHandler<UserEvent> for App {
                         || self.pixmap.is_some() =>
                     {
                         self.free_idle_at = Some(now + IDLE_FREE_AFTER);
-                        event_loop
-                            .set_control_flow(ControlFlow::WaitUntil(now + IDLE_FREE_AFTER));
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(now + IDLE_FREE_AFTER));
                     }
                     Some(deadline) if now >= deadline => {
                         self.font = None;
@@ -4684,6 +4882,101 @@ pub fn run_pill() {
 mod tests {
     use super::*;
 
+    /// Non-edge dots the field can light — the cells a pattern actually paints.
+    fn lit_count(a: &Aura) -> usize {
+        (0..ROWS * COLS)
+            .filter(|&i| {
+                let c = i % COLS;
+                let r = i / COLS;
+                !is_edge(c, r) && a.dots[i][3] > 0
+            })
+            .count()
+    }
+
+    fn state_theme(dot: [u8; 3], pattern: PillPattern) -> PillStateTheme {
+        PillStateTheme {
+            background: None,
+            dot: Some(dot),
+            pattern,
+        }
+    }
+
+    /// A themed state paints the WHOLE inner field in the theme's colour — so a
+    /// custom look is unmistakably applied, never a faint tweak on Grain's dots.
+    #[test]
+    fn a_themed_field_paints_every_inner_dot_in_the_theme_colour() {
+        for pattern in [PillPattern::Static, PillPattern::Breathe] {
+            let mut a = Aura::new();
+            a.phase = 3.0; // a phase where every pattern is mid-swing, not a zero
+            let t = state_theme([10, 220, 90], pattern);
+            assert!(
+                a.roll_themed_field(Some(&t)),
+                "a colour+pattern must render"
+            );
+            let inner = (ROWS * COLS)
+                - a.dots
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| is_edge(i % COLS, i / COLS))
+                    .count();
+            assert_eq!(lit_count(&a), inner, "static/breathe light the whole field");
+            let lit = a.dots.iter().find(|d| d[3] > 0).unwrap();
+            assert_eq!([lit[0], lit[1], lit[2]], [10, 220, 90]);
+        }
+    }
+
+    /// The three named patterns actually differ — `breathe` moves the whole
+    /// field between two phases; a bad copy-paste that made them identical would
+    /// fail here.
+    #[test]
+    fn breathe_alpha_changes_between_phases() {
+        let dot = [200, 50, 50];
+        let mut a = Aura::new();
+        a.phase = 0.0;
+        a.roll_pattern_breathe(dot);
+        let first = a.dots.iter().find(|d| d[3] > 0).map(|d| d[3]).unwrap();
+        a.phase = 31.0; // ~half a breathe period later (0.05 rad/frame)
+        a.roll_pattern_breathe(dot);
+        let later = a.dots.iter().find(|d| d[3] > 0).map(|d| d[3]).unwrap();
+        assert_ne!(first, later, "breathe must animate, not sit static");
+    }
+
+    /// No theme, an Unsupported pattern, or a theme that set no dot colour all
+    /// mean "keep Grain's own motion" — the guarantee that no theme blanks the
+    /// pill by leaving a state unrendered.
+    #[test]
+    fn a_gap_falls_back_rather_than_rendering_nothing() {
+        let mut a = Aura::new();
+        assert!(!a.roll_themed_field(None), "no theme → default");
+        let unknown = state_theme([1, 2, 3], PillPattern::Unsupported);
+        assert!(
+            !a.roll_themed_field(Some(&unknown)),
+            "unknown pattern → default"
+        );
+        let no_dot = PillStateTheme {
+            background: Some([0, 0, 0, 255]),
+            dot: None,
+            pattern: PillPattern::Static,
+        };
+        assert!(
+            !a.roll_themed_field(Some(&no_dot)),
+            "no dot colour → default"
+        );
+    }
+
+    /// The state→theme mapping is the load-bearing wiring: a theme that styles
+    /// only Recording must not accidentally style Idle.
+    #[test]
+    fn theme_for_state_maps_each_state_independently() {
+        let theme = PillTheme {
+            recording: Some(state_theme([9, 9, 9], PillPattern::Sweep)),
+            ..Default::default()
+        };
+        assert!(theme_for_state(Some(&theme), PillState::Recording).is_some());
+        assert!(theme_for_state(Some(&theme), PillState::Idle).is_none());
+        assert!(theme_for_state(None, PillState::Recording).is_none());
+    }
+
     fn font() -> fontdue::Font {
         // The primary face is now bundled (subset Space Grotesk), so this always
         // succeeds — no system-font dependency in tests or at runtime.
@@ -4696,9 +4989,10 @@ mod tests {
     #[test]
     fn bundled_font_has_pill_glyphs() {
         let f = load_font().expect("bundled primary font must parse");
-        for ch in ['A', 'z', '0', '9', 'é', 'ñ', 'ł', '\u{2039}', '\u{203a}', '\u{b7}',
-            '\u{2026}', '\u{201c}', '\u{2022}', ' ', '.', '·']
-        {
+        for ch in [
+            'A', 'z', '0', '9', 'é', 'ñ', 'ł', '\u{2039}', '\u{203a}', '\u{b7}', '\u{2026}',
+            '\u{201c}', '\u{2022}', ' ', '.', '·',
+        ] {
             assert_ne!(
                 f.lookup_glyph_index(ch),
                 0,

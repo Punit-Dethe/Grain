@@ -241,6 +241,15 @@ pub enum DaemonEvent {
         id: String,
         reason: String,
     },
+
+    /// [GRAIN] Pill theme (SPEC §9): the look the pill should render, sent when
+    /// the pill authenticates and whenever the `pill.theme` slot occupant
+    /// changes. `None` means Grain's own default theme (the slot reverted to
+    /// core). Data only — no extension code runs in the pill.
+    PillTheme {
+        #[serde(default)]
+        theme: Option<crate::PillTheme>,
+    },
 }
 
 impl DaemonEvent {
@@ -289,6 +298,7 @@ impl DaemonEvent {
             AsrSessionFinal { .. } => "AsrSessionFinal",
             AsrError { .. } => "AsrError",
             ExtensionDisabled { .. } => "ExtensionDisabled",
+            PillTheme { .. } => "PillTheme",
         }
     }
 }
