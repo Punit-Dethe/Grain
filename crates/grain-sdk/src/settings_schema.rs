@@ -63,7 +63,9 @@ pub fn fallback(decl: &SettingDecl) -> Value {
     }
     match &decl.kind {
         SettingKind::Bool => Value::Bool(false),
-        SettingKind::String | SettingKind::Shortcut => Value::String(String::new()),
+        SettingKind::String | SettingKind::Secret | SettingKind::Shortcut => {
+            Value::String(String::new())
+        }
         SettingKind::Color => Value::String("#000000".into()),
         SettingKind::Number { min, .. } => number(min.unwrap_or(0.0)),
         SettingKind::Slider { min, .. } => number(*min),
@@ -129,6 +131,11 @@ fn check(decl: &SettingDecl, value: &Value) -> Result<Accepted, String> {
             .as_str()
             .map(|s| Accepted::plain(Value::String(s.to_string())))
             .ok_or_else(|| "expected text".into()),
+
+        SettingKind::Secret => value
+            .as_str()
+            .map(|s| Accepted::plain(Value::String(s.to_string())))
+            .ok_or_else(|| "expected a secret value".into()),
 
         SettingKind::Shortcut => {
             let s = value.as_str().ok_or("expected a shortcut")?;

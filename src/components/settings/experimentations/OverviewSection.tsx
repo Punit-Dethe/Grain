@@ -35,7 +35,10 @@ const CAPABILITY_LABELS: Record<string, string> = {
   embed: "Turn text into embeddings",
 };
 
-const capabilityLabel = (cap: string) => CAPABILITY_LABELS[cap] ?? cap;
+const capabilityLabel = (cap: string) =>
+  cap.startsWith("net:")
+    ? `Send data to ${cap.slice("net:".length)}`
+    : (CAPABILITY_LABELS[cap] ?? cap);
 
 /** The backend holds a scripted extension at first enable and answers with a
  * structured `{"needsPermissions":[…]}` error (grain_commands.rs). Anything

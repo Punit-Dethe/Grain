@@ -58,6 +58,11 @@ const TRANSFORM_DEADLINE: Duration = Duration::from_millis(150);
 const SESSION_STAGE_DEADLINE: Duration = Duration::from_secs(30);
 /// Consecutive transform failures before auto-disable (SPEC §3.3).
 const MAX_STRIKES: u32 = 3;
+/// Generous pathology guard, not accounting: Chromium's reported JS heap is
+/// not the worker process footprint. It is still the right signal for a runaway
+/// extension allocation, which is the failure this ceiling is meant to stop.
+const WORKER_HEAP_LIMIT_BYTES: u64 = 128 * 1024 * 1024;
+const MEMORY_SAMPLE_DEADLINE: Duration = Duration::from_secs(2);
 /// Source maps are read only after a dev worker fails. Bound the exceptional
 /// allocation independently from the 5 MB generated-entry limit.
 const MAX_SOURCE_MAP_BYTES: u64 = 10 * 1024 * 1024;
@@ -88,6 +93,9 @@ struct Worker {
     resident: bool,
     /// Consecutive transform-deadline failures (SPEC §3.3).
     strikes: u32,
+    /// Consecutive over-budget samples. Separate from transform strikes so a
+    /// healthy heap sample cannot forgive a slow transform (or vice versa).
+    memory_strikes: u32,
     /// Epoch seconds of the last frame from this worker; the reaper's clock.
     /// `Arc` so the connection can bump it directly (no lock per frame).
     last_activity: Arc<AtomicU64>,
@@ -267,6 +275,28 @@ impl Workers {
             }
             None => None,
         }
+    }
+
+    fn clear_memory_strikes(&self, ext_id: &str) {
+        if let Some(worker) = self.map.lock().unwrap().get_mut(ext_id) {
+            worker.memory_strikes = 0;
+        }
+    }
+
+    fn record_memory_strike(&self, ext_id: &str) -> Option<u32> {
+        self.map.lock().unwrap().get_mut(ext_id).map(|worker| {
+            worker.memory_strikes += 1;
+            worker.memory_strikes
+        })
+    }
+
+    fn connected_ids(&self) -> Vec<String> {
+        self.map
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(id, worker)| worker.conn.as_ref().map(|_| id.clone()))
+            .collect()
     }
 
     /// Send a host notification that intentionally has no response waiter.
@@ -631,6 +661,7 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
         let mut tick = tokio::time::interval(Duration::from_secs(REAP_INTERVAL_SECS));
         loop {
             tick.tick().await;
+            sample_worker_heaps().await;
             reap_idle();
         }
     });
@@ -746,6 +777,7 @@ fn spawn_worker(
             token: token.clone(),
             resident,
             strikes: 0,
+            memory_strikes: 0,
             last_activity: Arc::new(AtomicU64::new(now_secs())),
             conn: None,
             dev_source,
@@ -918,6 +950,74 @@ fn reap_idle() {
             continue;
         }
         kill_worker(&id, "idle timeout");
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum HeapSample {
+    Unsupported,
+    Bytes(u64),
+}
+
+fn parse_heap_sample(value: Value) -> Result<HeapSample, String> {
+    if value
+        .get("supported")
+        .and_then(Value::as_bool)
+        .is_some_and(|supported| !supported)
+    {
+        return Ok(HeapSample::Unsupported);
+    }
+    value
+        .get("usedBytes")
+        .and_then(Value::as_u64)
+        .map(HeapSample::Bytes)
+        .ok_or_else(|| "worker returned an invalid heap sample".to_string())
+}
+
+/// Sample live realms on the existing reaper tick. `performance.memory` is a
+/// Chromium engine estimate, not process RSS; it catches runaway allocations
+/// without pretending to be a billing-grade memory accountant.
+async fn sample_worker_heaps() {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let ids = host.workers.connected_ids();
+    let samples = futures_util::future::join_all(ids.iter().map(|id| {
+        host.workers
+            .call(id, "memory.sample", Value::Null, MEMORY_SAMPLE_DEADLINE)
+    }))
+    .await;
+
+    for (id, sample) in ids.into_iter().zip(samples) {
+        let Ok(sample) = sample.and_then(parse_heap_sample) else {
+            // Missing engine support or a transient worker failure is not an
+            // over-budget reading and therefore never earns a strike.
+            continue;
+        };
+        match sample {
+            HeapSample::Unsupported => {}
+            HeapSample::Bytes(bytes) if bytes <= WORKER_HEAP_LIMIT_BYTES => {
+                host.workers.clear_memory_strikes(&id);
+            }
+            HeapSample::Bytes(bytes) => {
+                let strike = host.workers.record_memory_strike(&id).unwrap_or(0);
+                log::warn!(
+                    "[ext:{id}] life worker heap {} MiB exceeds {} MiB (strike {strike} of {MAX_STRIKES})",
+                    bytes / (1024 * 1024),
+                    WORKER_HEAP_LIMIT_BYTES / (1024 * 1024),
+                );
+                if strike >= MAX_STRIKES {
+                    auto_disable(
+                        &host.app,
+                        &id,
+                        format!(
+                            "It repeatedly exceeded the {} MiB extension worker heap ceiling.",
+                            WORKER_HEAP_LIMIT_BYTES / (1024 * 1024)
+                        ),
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -1171,7 +1271,11 @@ fn record_strike(app: &AppHandle, ext_id: &str) -> u32 {
     };
     let strikes = host.workers.record_strike(ext_id).unwrap_or(0);
     if strikes >= MAX_STRIKES {
-        auto_disable(app, ext_id);
+        auto_disable(
+            app,
+            ext_id,
+            "It repeatedly missed the 150 ms transform deadline.".to_string(),
+        );
     }
     strikes
 }
@@ -1187,17 +1291,17 @@ pub fn is_dev_extension(app: &AppHandle, id: &str) -> bool {
 
 /// SPEC §3.3: a persistently failing transform is disabled (not left slowing
 /// every paste). The user re-enables explicitly from Overview.
-fn auto_disable(app: &AppHandle, ext_id: &str) {
-    log::warn!("[GRAIN] ext-host: auto-disabling '{ext_id}' after {MAX_STRIKES} transform strikes");
+fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
+    log::warn!("[ext:{ext_id}] life auto-disabled: {reason}");
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         let _ = reg.set_enabled(ext_id, false);
     }
     refresh_index(app); // drop it from the hot-path index immediately
-    kill_worker(ext_id, "auto-disabled (3 transform strikes)");
+    kill_worker(ext_id, "auto-disabled after repeated resource violations");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
             id: ext_id.to_string(),
-            reason: "It repeatedly missed the 150 ms transform deadline.".to_string(),
+            reason,
         });
     }
 }
@@ -1555,6 +1659,7 @@ mod tests {
             token: "tok".into(),
             resident,
             strikes: 0,
+            memory_strikes: 0,
             last_activity: Arc::new(AtomicU64::new(last_activity)),
             conn: None,
             dev_source: None,
@@ -1705,6 +1810,29 @@ mod tests {
         workers.clear_strikes("a");
         assert_eq!(workers.record_strike("a"), Some(1)); // counter reset
         assert_eq!(workers.record_strike("missing"), None); // unknown never trips
+    }
+
+    #[test]
+    fn heap_samples_are_typed_and_memory_strikes_are_independent() {
+        assert_eq!(
+            parse_heap_sample(json!({"supported": true, "usedBytes": 42})).unwrap(),
+            HeapSample::Bytes(42)
+        );
+        assert_eq!(
+            parse_heap_sample(json!({"supported": false, "usedBytes": null})).unwrap(),
+            HeapSample::Unsupported
+        );
+        assert!(parse_heap_sample(json!({"supported": true})).is_err());
+
+        let workers = Workers::new();
+        workers.insert("leak", worker(0, false));
+        assert_eq!(workers.record_memory_strike("leak"), Some(1));
+        assert_eq!(workers.record_memory_strike("leak"), Some(2));
+        assert_eq!(workers.record_strike("leak"), Some(1));
+        workers.clear_memory_strikes("leak");
+        assert_eq!(workers.record_memory_strike("leak"), Some(1));
+        // The transform counter was not forgiven by a healthy heap sample.
+        assert_eq!(workers.record_strike("leak"), Some(2));
     }
 
     #[test]

@@ -14,6 +14,8 @@ pub enum HostErrorCode {
     SessionBusy,
     #[serde(rename = "E_QUOTA")]
     Quota,
+    #[serde(rename = "E_RESPONSE_TOO_LARGE")]
+    ResponseTooLarge,
     #[serde(rename = "E_INVALID_MANIFEST")]
     InvalidManifest,
     #[serde(rename = "E_INVALID_ARGUMENT")]
@@ -35,6 +37,7 @@ impl HostErrorCode {
             Self::Timeout => "E_TIMEOUT",
             Self::SessionBusy => "E_SESSION_BUSY",
             Self::Quota => "E_QUOTA",
+            Self::ResponseTooLarge => "E_RESPONSE_TOO_LARGE",
             Self::InvalidManifest => "E_INVALID_MANIFEST",
             Self::InvalidArgument => "E_INVALID_ARGUMENT",
             Self::NotImplemented => "E_NOT_IMPLEMENTED",

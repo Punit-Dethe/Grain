@@ -96,6 +96,15 @@ const BRIDGE = `<script>(function(){
       set: function(k, v){ return call("settings.set", { key: k, value: v }); }
     },
     llm: { complete: function(p){ return call("llm.complete", { prompt: String(p) }); } },
+    net: {
+      fetch: function(url, options){
+        options = options || {};
+        var request = { url: String(url), method: options.method == null ? "GET" : String(options.method), headers: options.headers == null ? {} : options.headers };
+        if (options.body != null) request.body = String(options.body);
+        if (options.secret != null) request.secret = options.secret;
+        return call("net.fetch", request);
+      }
+    },
     workspace: { close: function(){ return call("workspace.close", {}); } },
     overlay: { dismiss: function(){ return call("overlay.dismiss", {}); } },
     onEvent: function(fn){ listeners.push(fn); },

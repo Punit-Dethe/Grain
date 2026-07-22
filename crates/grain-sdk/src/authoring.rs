@@ -37,6 +37,7 @@ export type GrainErrorCode =
   | "E_TIMEOUT"
   | "E_SESSION_BUSY"
   | "E_QUOTA"
+  | "E_RESPONSE_TOO_LARGE"
   | "E_INVALID_MANIFEST"
   | "E_INVALID_ARGUMENT"
   | "E_NOT_IMPLEMENTED"
@@ -71,6 +72,23 @@ export interface GrainApi {
   };
   readonly llm: {
     complete(prompt: string): Promise<string>;
+  };
+  readonly net: {
+    fetch(
+      url: string,
+      options?: {
+        method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+        headers?: Record<string, string>;
+        body?: string;
+        secret?: { key: string; header: string; prefix?: string };
+      },
+    ): Promise<{
+      status: number;
+      ok: boolean;
+      headers: Record<string, string>;
+      body: string;
+      url: string;
+    }>;
   };
   embed(texts: string[]): Promise<number[][]>;
   readonly workspace: {

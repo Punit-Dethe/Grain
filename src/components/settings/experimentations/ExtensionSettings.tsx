@@ -10,6 +10,7 @@ export interface SettingRow {
   kind:
     | "bool"
     | "string"
+    | "secret"
     | "number"
     | "select"
     | "shortcut"
@@ -55,11 +56,12 @@ const Control: React.FC<{
   // Text-like controls edit locally and commit on blur, so the backend isn't
   // asked to validate every keystroke.
   const [draft, setDraft] = useState<string>(
-    typeof row.value === "string" ? row.value : "",
+    row.kind !== "secret" && typeof row.value === "string" ? row.value : "",
   );
   useEffect(() => {
-    if (typeof row.value === "string") setDraft(row.value);
-  }, [row.value]);
+    if (row.kind === "secret") setDraft("");
+    else if (typeof row.value === "string") setDraft(row.value);
+  }, [row.kind, row.value]);
 
   const inputClass =
     "px-2 py-1 rounded-lg bg-paper-sunken border border-line text-sm text-ink outline-none focus:border-accent/50 disabled:opacity-50";
@@ -153,6 +155,35 @@ const Control: React.FC<{
           onChange={(e) => onCommit(e.target.value)}
           className="w-9 h-6 rounded border border-line bg-transparent cursor-pointer disabled:opacity-50"
         />
+      );
+
+    case "secret":
+      return (
+        <div className="flex items-center gap-2">
+          <input
+            type="password"
+            autoComplete="new-password"
+            aria-label={row.label}
+            disabled={disabled}
+            value={draft}
+            placeholder={row.value === "[REDACTED]" ? "Saved" : "Not set"}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              if (draft !== "") onCommit(draft);
+            }}
+            className={`${inputClass} w-48`}
+          />
+          {row.value === "[REDACTED]" && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onCommit("")}
+              className="text-xs text-ink-faint hover:text-ink disabled:opacity-50 cursor-pointer"
+            >
+              Clear
+            </button>
+          )}
+        </div>
       );
 
     // A shortcut is a string here: the binding registry owns chord capture and

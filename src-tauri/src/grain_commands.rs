@@ -980,7 +980,7 @@ pub struct ExtensionSettingRow {
     pub key: String,
     pub label: String,
     pub description: String,
-    /// `bool | string | number | select | shortcut | color | slider`.
+    /// `bool | string | secret | number | select | shortcut | color | slider`.
     pub kind: String,
     /// Where the section renders (SPEC §4.3). An anchor this build doesn't know
     /// is passed through untouched — the frontend falls back to the extension's
@@ -1007,6 +1007,7 @@ fn setting_row(
     let (kind, min, max, step, options) = match &decl.kind {
         K::Bool => ("bool", None, None, None, vec![]),
         K::String => ("string", None, None, None, vec![]),
+        K::Secret => ("secret", None, None, None, vec![]),
         K::Shortcut => ("shortcut", None, None, None, vec![]),
         K::Color => ("color", None, None, None, vec![]),
         K::Number { min, max } => ("number", *min, *max, None, vec![]),
@@ -1061,6 +1062,8 @@ pub fn extension_settings_schema(
     Ok(rows_for(
         pack.manifest.contributes.settings,
         &crate::host_api::ExtStorage::new(&ctx.data_dir, &id),
+        &ctx,
+        &id,
     ))
 }
 
@@ -1069,15 +1072,29 @@ pub fn extension_settings_schema(
 fn rows_for(
     decls: Vec<grain_sdk::SettingDecl>,
     store: &crate::host_api::ExtStorage,
+    ctx: &grain_core::AppContext,
+    ext_id: &str,
 ) -> Vec<ExtensionSettingRow> {
     let mut rows: Vec<ExtensionSettingRow> = decls
         .into_iter()
         .filter(|d| !matches!(d.kind, grain_sdk::SettingKind::Unsupported))
         .map(|decl| {
-            let stored = store.settings_get(&decl.key).unwrap_or_else(|error| {
-                log::warn!("[GRAIN] extension settings storage read failed: {error}");
-                serde_json::Value::Null
-            });
+            let stored = if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
+                let marker = if ctx
+                    .extension_secret(&crate::host_api::extension_secret_key(ext_id, &decl.key))
+                    .is_some()
+                {
+                    crate::host_api::SECRET_REDACTED
+                } else {
+                    ""
+                };
+                serde_json::Value::String(marker.to_string())
+            } else {
+                store.settings_get(&decl.key).unwrap_or_else(|error| {
+                    log::warn!("[GRAIN] extension settings storage read failed: {error}");
+                    serde_json::Value::Null
+                })
+            };
             let resolved = grain_sdk::settings_schema::resolve(&decl, Some(&stored));
             setting_row(decl, resolved.value, resolved.notice)
         })
@@ -1137,10 +1154,11 @@ pub fn extension_settings_sections(
             continue;
         }
         let store = crate::host_api::ExtStorage::new(&ctx.data_dir, &rec.id);
+        let rows = rows_for(pack.manifest.contributes.settings, &store, &ctx, &rec.id);
         out.push(ExtensionSettingsSection {
             id: rec.id,
             name: pack.manifest.name,
-            rows: rows_for(pack.manifest.contributes.settings, &store),
+            rows,
         });
     }
     Ok(out)
@@ -1166,6 +1184,24 @@ pub fn extension_setting_set(
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("app context unavailable")?;
+    if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
+        let secret = accepted.value.as_str().ok_or("secret value must be text")?;
+        ctx.set_extension_secret(
+            crate::host_api::extension_secret_key(&id, &key),
+            secret.to_string(),
+        )
+        .map_err(|error| error.to_string())?;
+        let marker = if secret.is_empty() {
+            ""
+        } else {
+            crate::host_api::SECRET_REDACTED
+        };
+        return Ok(setting_row(
+            decl,
+            serde_json::Value::String(marker.to_string()),
+            accepted.notice,
+        ));
+    }
     crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
         .settings_set(&key, accepted.value.clone())
         .map_err(|error| error.to_string())?;
@@ -1327,6 +1363,11 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     }
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
         let _ = ctx.update_settings(|s| ext::remove_prompt_pack(s, &id));
+        crate::host_api::ExtStorage::new(&ctx.data_dir, &id)
+            .purge()
+            .map_err(|error| error.to_string())?;
+        ctx.purge_extension_secrets(&id)
+            .map_err(|error| error.to_string())?;
     }
     // Disable keeps a rebind; uninstall is the transaction that clears it
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
@@ -1383,8 +1424,6 @@ pub fn extension_surface_sleep_ready(app: AppHandle, window: tauri::WebviewWindo
 /// one.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_surface_payload(
-    window: tauri::WebviewWindow,
-) -> Option<serde_json::Value> {
+pub fn extension_surface_payload(window: tauri::WebviewWindow) -> Option<serde_json::Value> {
     crate::surfaces::extension::take_payload(window.label())
 }

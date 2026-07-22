@@ -18,8 +18,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::time::Duration;
 
+use futures_util::StreamExt;
 use grain_sdk::{HostError, HostErrorCode};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, LOCATION};
+use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
@@ -33,10 +38,25 @@ const STORAGE_QUOTA_BYTES: u64 = 200 * 1024 * 1024;
 /// low-RAM device would rather the extension chunk its work.
 const EMBED_MAX_BATCH: usize = 64;
 
+/// Extension egress is intentionally small and bounded. API-shaped responses
+/// fit comfortably; bulk transfer belongs in a purpose-built host capability.
+const NET_TIMEOUT: Duration = Duration::from_secs(15);
+const NET_MAX_REDIRECTS: usize = 5;
+const NET_MAX_REQUEST_BYTES: usize = 1024 * 1024;
+const NET_MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+const NET_MAX_HEADERS: usize = 64;
+
+static EXTENSION_HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+
 /// Reserved key inside the storage file for the extension's own settings
 /// namespace (`ext.<id>.*`). There is no path to `AppSettings` — this is the
 /// entire "settings" surface an extension has (SPEC §4.2).
 const SETTINGS_KEY: &str = "__settings";
+pub(crate) const SECRET_REDACTED: &str = "[REDACTED]";
+
+pub(crate) fn extension_secret_key(ext_id: &str, key: &str) -> String {
+    format!("ext.{ext_id}.{key}")
+}
 
 type HostResult<T> = Result<T, HostError>;
 
@@ -81,6 +101,8 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "doc.get" | "doc.put" | "doc.delete" | "doc.list" => Some("storage"),
         "settings.get" | "settings.set" => Some("settings"),
         "llm.complete" => Some("llm"),
+        // The real grant is derived from the parsed URL (`net:<exact-host>`).
+        "net.fetch" => Some("__dynamic_net__"),
         "embed" => Some("embed"),
         "session.start" => Some("session:start"),
         "capture.selection" => Some("capture:selection"),
@@ -108,6 +130,22 @@ impl ExtStorage {
             path: ext_dir.join(format!("{ext_id}.storage.json")),
             docs_dir: ext_dir.join(format!("{ext_id}.docs")),
         }
+    }
+
+    /// Uninstall boundary: remove both KV/settings and document storage. Missing
+    /// paths are already clean and therefore succeed.
+    pub fn purge(&self) -> StorageResult<()> {
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
+        }
+        match std::fs::remove_dir_all(&self.docs_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(ExtStorageError::Io(error.to_string())),
+        }
+        Ok(())
     }
 
     /// A document key sanitized to a single safe filename. Rejects anything that
@@ -339,6 +377,33 @@ fn service_error(service: &str, message: String) -> HostError {
     }
 }
 
+fn net_url_and_capability(raw_url: &str) -> HostResult<(Url, String)> {
+    let url =
+        Url::parse(raw_url).map_err(|error| invalid_argument(format!("invalid URL: {error}")))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(invalid_argument("network URLs must use http or https"));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid_argument(
+            "network URLs must not contain credentials",
+        ));
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| invalid_argument("network URL must contain a host"))?
+        .to_ascii_lowercase();
+    Ok((url, format!("net:{host}")))
+}
+
+fn authorize_net_url(identity: &ClientIdentity, raw_url: &str) -> HostResult<Url> {
+    let (url, capability) = net_url_and_capability(raw_url)?;
+    if has_capability(identity, &capability) {
+        Ok(url)
+    } else {
+        Err(HostError::capability_denied(&capability, "net.fetch"))
+    }
+}
+
 fn storage_error(error: ExtStorageError) -> HostError {
     match error {
         ExtStorageError::InvalidArgument(message) => invalid_argument(message),
@@ -394,7 +459,11 @@ fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
         .collect()
 }
 
-fn authorize(identity: &ClientIdentity, method: &str) -> HostResult<()> {
+fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
+    if method == "net.fetch" {
+        authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
+        return Ok(());
+    }
     match required_capability(method) {
         Some("__unknown__") => Err(unknown_method(method)),
         Some(capability) if !has_capability(identity, capability) => {
@@ -429,6 +498,50 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
         "llm.complete" => {
             param_nonempty_str(params, "prompt")?;
         }
+        "net.fetch" => {
+            param_nonempty_str(params, "url")?;
+            if let Some(method) = params.get("method") {
+                if !method.is_string() {
+                    return Err(invalid_argument("'method' must be a string"));
+                }
+            }
+            if let Some(headers) = params.get("headers") {
+                let headers = headers
+                    .as_object()
+                    .ok_or_else(|| invalid_argument("'headers' must be an object"))?;
+                if headers.len() > NET_MAX_HEADERS {
+                    return Err(invalid_argument(format!(
+                        "'headers' accepts at most {NET_MAX_HEADERS} entries"
+                    )));
+                }
+                if headers.values().any(|value| !value.is_string()) {
+                    return Err(invalid_argument("every header value must be a string"));
+                }
+            }
+            if let Some(body) = params.get("body") {
+                let body = body
+                    .as_str()
+                    .ok_or_else(|| invalid_argument("'body' must be a string"))?;
+                if body.len() > NET_MAX_REQUEST_BYTES {
+                    return Err(invalid_argument(format!(
+                        "'body' exceeds the {NET_MAX_REQUEST_BYTES}-byte request limit"
+                    )));
+                }
+            }
+            if let Some(secret) = params.get("secret") {
+                let secret = secret
+                    .as_object()
+                    .ok_or_else(|| invalid_argument("'secret' must be an object"))?;
+                for key in ["key", "header"] {
+                    if !secret.get(key).is_some_and(Value::is_string) {
+                        return Err(invalid_argument(format!("'secret.{key}' must be a string")));
+                    }
+                }
+                if secret.get("prefix").is_some_and(|value| !value.is_string()) {
+                    return Err(invalid_argument("'secret.prefix' must be a string"));
+                }
+            }
+        }
         "embed" => {
             let texts = param_strings(params, "texts")?;
             if texts.len() > EMBED_MAX_BATCH {
@@ -448,9 +561,238 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
 }
 
 fn preflight(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
-    authorize(identity, method)?;
+    authorize(identity, method, params)?;
     validate_request(method, params)?;
     Ok(())
+}
+
+fn extension_http_client() -> &'static reqwest::Client {
+    EXTENSION_HTTP.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(NET_TIMEOUT)
+            // Redirects are followed manually so every Location is checked
+            // against the same exact-host grant before any bytes are sent.
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent("Grain-Extension-Proxy/1")
+            .build()
+            .expect("extension HTTP client configuration is valid")
+    })
+}
+
+fn response_too_large() -> HostError {
+    typed_error(
+        HostErrorCode::ResponseTooLarge,
+        format!("network response exceeds the {NET_MAX_RESPONSE_BYTES}-byte limit"),
+        "Request a smaller response or use an endpoint with pagination.",
+    )
+}
+
+fn net_method(params: &Value) -> HostResult<Method> {
+    let raw = params
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("GET")
+        .to_ascii_uppercase();
+    match raw.as_str() {
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => {
+            Method::from_bytes(raw.as_bytes())
+                .map_err(|error| invalid_argument(format!("invalid HTTP method: {error}")))
+        }
+        _ => Err(invalid_argument(format!(
+            "HTTP method '{raw}' is not supported"
+        ))),
+    }
+}
+
+fn header_is_host_controlled(name: &HeaderName) -> bool {
+    matches!(
+        name.as_str(),
+        "host"
+            | "content-length"
+            | "transfer-encoding"
+            | "connection"
+            | "proxy-authorization"
+            | "proxy-connection"
+            | "upgrade"
+    )
+}
+
+fn net_headers(params: &Value) -> HostResult<HeaderMap> {
+    let Some(values) = params.get("headers") else {
+        return Ok(HeaderMap::new());
+    };
+    let values = values
+        .as_object()
+        .ok_or_else(|| invalid_argument("'headers' must be an object"))?;
+    let mut headers = HeaderMap::with_capacity(values.len());
+    for (raw_name, raw_value) in values {
+        let name = HeaderName::from_bytes(raw_name.as_bytes())
+            .map_err(|error| invalid_argument(format!("invalid header '{raw_name}': {error}")))?;
+        if header_is_host_controlled(&name) {
+            return Err(invalid_argument(format!(
+                "header '{}' is controlled by the host",
+                name.as_str()
+            )));
+        }
+        let value =
+            HeaderValue::from_str(raw_value.as_str().unwrap_or_default()).map_err(|error| {
+                invalid_argument(format!("invalid value for header '{raw_name}': {error}"))
+            })?;
+        headers.insert(name, value);
+    }
+    Ok(headers)
+}
+
+fn resolve_net_secret(
+    app: &AppHandle,
+    ctx: &grain_core::AppContext,
+    identity: &ClientIdentity,
+    params: &Value,
+) -> HostResult<Option<(HeaderName, HeaderValue)>> {
+    let Some(secret) = params.get("secret") else {
+        return Ok(None);
+    };
+    let secret = secret
+        .as_object()
+        .ok_or_else(|| invalid_argument("'secret' must be an object"))?;
+    let key = secret
+        .get("key")
+        .and_then(Value::as_str)
+        .filter(|key| !key.trim().is_empty())
+        .ok_or_else(|| invalid_argument("'secret.key' must not be empty"))?;
+    let declaration = crate::grain_commands::setting_decl(app, &identity.id, key)
+        .filter(|decl| matches!(decl.kind, grain_sdk::SettingKind::Secret))
+        .ok_or_else(|| invalid_argument(format!("'{key}' is not a declared secret setting")))?;
+    drop(declaration);
+    let value = ctx
+        .extension_secret(&extension_secret_key(&identity.id, key))
+        .ok_or_else(|| {
+            unavailable(
+                format!("secret setting '{key}' has no value"),
+                "Set the credential in the extension's settings, then retry the call.",
+            )
+        })?;
+    let raw_header = secret
+        .get("header")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let header = HeaderName::from_bytes(raw_header.as_bytes())
+        .map_err(|error| invalid_argument(format!("invalid secret header: {error}")))?;
+    if header_is_host_controlled(&header) {
+        return Err(invalid_argument(format!(
+            "header '{}' is controlled by the host",
+            header.as_str()
+        )));
+    }
+    let prefix = secret.get("prefix").and_then(Value::as_str).unwrap_or("");
+    let header_value = HeaderValue::from_str(&format!("{prefix}{value}"))
+        .map_err(|_| invalid_argument("secret prefix produced an invalid header value"))?;
+    Ok(Some((header, header_value)))
+}
+
+async fn proxy_fetch(
+    identity: &ClientIdentity,
+    params: &Value,
+    secret_header: Option<(HeaderName, HeaderValue)>,
+) -> HostResult<Value> {
+    let mut url = authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
+    let mut method = net_method(params)?;
+    let mut headers = net_headers(params)?;
+    if let Some((name, value)) = secret_header {
+        headers.insert(name, value);
+    }
+    let mut body = params
+        .get("body")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+
+    for redirect_count in 0..=NET_MAX_REDIRECTS {
+        let mut request = extension_http_client()
+            .request(method.clone(), url.clone())
+            .headers(headers.clone());
+        if let Some(body) = &body {
+            request = request.body(body.clone());
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| service_error("network request", error.to_string()))?;
+        let status = response.status();
+
+        if status.is_redirection() {
+            let location = response.headers().get(LOCATION).ok_or_else(|| {
+                unavailable(
+                    "network redirect omitted its Location header",
+                    "Retry the call or contact the endpoint owner.",
+                )
+            })?;
+            if redirect_count == NET_MAX_REDIRECTS {
+                return Err(typed_error(
+                    HostErrorCode::Timeout,
+                    "network request exceeded the redirect limit",
+                    "Use an endpoint with a stable URL.",
+                ));
+            }
+            let location = location
+                .to_str()
+                .map_err(|_| invalid_argument("redirect Location is not valid text"))?;
+            let next = url
+                .join(location)
+                .map_err(|error| invalid_argument(format!("invalid redirect URL: {error}")))?;
+            url = authorize_net_url(identity, next.as_str())?;
+
+            // Match browser fetch semantics for the common method-changing
+            // redirects. 307/308 retain the original method and body.
+            if status == StatusCode::SEE_OTHER
+                || ((status == StatusCode::MOVED_PERMANENTLY || status == StatusCode::FOUND)
+                    && method == Method::POST)
+            {
+                method = Method::GET;
+                body = None;
+                headers.remove(CONTENT_LENGTH);
+                headers.remove(reqwest::header::CONTENT_TYPE);
+            }
+            continue;
+        }
+
+        if response
+            .content_length()
+            .is_some_and(|length| length > NET_MAX_RESPONSE_BYTES as u64)
+        {
+            return Err(response_too_large());
+        }
+        let response_headers = response
+            .headers()
+            .iter()
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|value| (name.as_str().to_string(), value.to_string()))
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk =
+                chunk.map_err(|error| service_error("network response", error.to_string()))?;
+            if bytes.len().saturating_add(chunk.len()) > NET_MAX_RESPONSE_BYTES {
+                return Err(response_too_large());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        let body = String::from_utf8(bytes)
+            .map_err(|_| invalid_argument("network response body is not UTF-8 text"))?;
+        return Ok(json!({
+            "status": status.as_u16(),
+            "ok": status.is_success(),
+            "headers": response_headers,
+            "body": body,
+            "url": url.as_str(),
+        }));
+    }
+    unreachable!("redirect loop always returns or continues within its bound")
 }
 
 /// Route one worker API call. Capability check FIRST; on failure return the
@@ -463,10 +805,10 @@ pub async fn dispatch(
 ) -> HostResult<Value> {
     preflight(identity, method, &params)?;
 
-    let data_dir = app
+    let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
-        .map(|c| c.data_dir.clone())
         .ok_or_else(|| internal_error("app context unavailable"))?;
+    let data_dir = ctx.data_dir.clone();
     let store = ExtStorage::new(&data_dir, &identity.id);
 
     match method {
@@ -549,6 +891,19 @@ pub async fn dispatch(
         }
         "settings.get" => {
             let key = param_str(&params, "key")?;
+            if crate::grain_commands::setting_decl(app, &identity.id, &key)
+                .is_some_and(|decl| matches!(decl.kind, grain_sdk::SettingKind::Secret))
+            {
+                let marker = if ctx
+                    .extension_secret(&extension_secret_key(&identity.id, &key))
+                    .is_some()
+                {
+                    SECRET_REDACTED
+                } else {
+                    ""
+                };
+                return Ok(Value::String(marker.to_string()));
+            }
             let stored = store.settings_get(&key).map_err(storage_error)?;
             // A declared setting reads back through the schema, so a value left
             // behind by an older version resolves to something the extension's
@@ -572,9 +927,21 @@ pub async fn dispatch(
             // the host renders, not everything the extension may remember.
             let value = match crate::grain_commands::setting_decl(app, &identity.id, &key) {
                 Some(decl) => {
-                    grain_sdk::settings_schema::coerce(&decl, &value)
+                    let accepted = grain_sdk::settings_schema::coerce(&decl, &value)
                         .map_err(|error| invalid_argument(format!("'{key}': {error}")))?
-                        .value
+                        .value;
+                    if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
+                        let secret = accepted
+                            .as_str()
+                            .ok_or_else(|| invalid_argument("secret value must be text"))?;
+                        ctx.set_extension_secret(
+                            extension_secret_key(&identity.id, &key),
+                            secret.to_string(),
+                        )
+                        .map_err(|error| internal_error(format!("secret write failed: {error}")))?;
+                        return Ok(Value::Null);
+                    }
+                    accepted
                 }
                 None => value,
             };
@@ -587,6 +954,10 @@ pub async fn dispatch(
                 .await
                 .map_err(|error| service_error("LLM provider", error))?;
             Ok(json!({ "text": text }))
+        }
+        "net.fetch" => {
+            let secret = resolve_net_secret(app, &ctx, identity, &params)?;
+            proxy_fetch(identity, &params, secret).await
         }
         "embed" => {
             // [GRAIN] SPEC §1.3 / Grain Space Test: the same on-device BGE
@@ -666,6 +1037,7 @@ mod tests {
         // Method → capability mapping.
         assert_eq!(required_capability("storage.set"), Some("storage"));
         assert_eq!(required_capability("llm.complete"), Some("llm"));
+        assert_eq!(required_capability("net.fetch"), Some("__dynamic_net__"));
         assert_eq!(required_capability("session.start"), Some("session:start"));
         assert_eq!(
             required_capability("capture.selection"),
@@ -723,6 +1095,7 @@ mod tests {
             "capture:selection",
             "surface:workspace",
             "surface:overlay",
+            "net:api.example.com",
         ]);
         for (method, params) in [
             ("log.info", json!({})),
@@ -733,6 +1106,7 @@ mod tests {
             ("llm.complete", json!({"prompt": 4})),
             ("embed", json!({"texts": ["ok", 4]})),
             ("session.start", json!({})),
+            ("net.fetch", json!({})),
         ] {
             let error = preflight(&all_caps, method, &params).unwrap_err();
             assert_eq!(error.code, HostErrorCode::InvalidArgument, "{method}");
@@ -759,6 +1133,10 @@ mod tests {
             ("workspace.close", json!({})),
             ("overlay.show", json!({})),
             ("overlay.dismiss", json!({})),
+            (
+                "net.fetch",
+                json!({"url": "https://api.example.com/v1", "method": "GET"}),
+            ),
         ] {
             assert!(preflight(&all_caps, method, &params).is_ok(), "{method}");
         }
@@ -766,6 +1144,83 @@ mod tests {
         let unknown = preflight(&all_caps, "os.exec", &json!({})).unwrap_err();
         assert_eq!(unknown.code, HostErrorCode::UnknownMethod);
         assert_typed(&unknown);
+    }
+
+    #[test]
+    fn network_grants_match_the_parsed_host_exactly() {
+        let identity = named(&["net:api.example.com"]);
+        assert!(authorize_net_url(&identity, "https://api.example.com/v1").is_ok());
+        for url in [
+            "https://api.example.com.evil.test/v1",
+            "https://evil.test/api.example.com",
+            "https://user:pass@api.example.com/v1",
+        ] {
+            let error = authorize_net_url(&identity, url).unwrap_err();
+            assert!(matches!(
+                error.code,
+                HostErrorCode::CapabilityDenied | HostErrorCode::InvalidArgument
+            ));
+            assert_typed(&error);
+        }
+    }
+
+    async fn serve_once(response: String) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0_u8; 2048];
+            let _ = socket.read(&mut request).await;
+            socket.write_all(response.as_bytes()).await.unwrap();
+            let _ = socket.shutdown().await;
+        });
+        format!("http://{address}")
+    }
+
+    #[tokio::test]
+    async fn network_proxy_allows_granted_host_and_refuses_large_responses() {
+        let identity = named(&["net:127.0.0.1"]);
+        let body = "weather-ready";
+        let url = serve_once(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ))
+        .await;
+        let result = proxy_fetch(&identity, &json!({"url": url}), None)
+            .await
+            .unwrap();
+        assert_eq!(result["status"], 200);
+        assert_eq!(result["body"], body);
+
+        let url = serve_once(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            NET_MAX_RESPONSE_BYTES + 1
+        ))
+        .await;
+        let error = proxy_fetch(&identity, &json!({"url": url}), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HostErrorCode::ResponseTooLarge);
+        assert_typed(&error);
+    }
+
+    #[tokio::test]
+    async fn network_proxy_revalidates_redirect_hosts() {
+        let identity = named(&["net:127.0.0.1"]);
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = target.local_addr().unwrap().port();
+        drop(target);
+        let url = serve_once(format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/off-grant\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ))
+        .await;
+        let error = proxy_fetch(&identity, &json!({"url": url}), None)
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, HostErrorCode::CapabilityDenied);
+        assert_eq!(error.capability.as_deref(), Some("net:localhost"));
     }
 
     #[test]
@@ -782,6 +1237,23 @@ mod tests {
         s.settings_set("theme", json!("dark")).unwrap();
         assert_eq!(s.settings_get("theme").unwrap(), json!("dark"));
         assert_eq!(s.get("theme").unwrap(), Value::Null); // not a top-level key
+    }
+
+    #[test]
+    fn uninstall_purge_removes_kv_settings_and_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ExtStorage::new(dir.path(), "com.example.removed");
+        store.set("key", json!("value")).unwrap();
+        store.settings_set("theme", json!("dark")).unwrap();
+        store.doc_put("note", json!({"text": "hello"})).unwrap();
+        assert!(store.path.exists());
+        assert!(store.docs_dir.exists());
+
+        store.purge().unwrap();
+        assert!(!store.path.exists());
+        assert!(!store.docs_dir.exists());
+        // Idempotent cleanup keeps uninstall retries safe.
+        store.purge().unwrap();
     }
 
     #[test]

@@ -96,6 +96,19 @@ export const GRAIN_RUNTIME_JS = `(function () {
   }
 
   function onHostCall(call) {
+    if (call.method === "memory.sample") {
+      // Chromium/WebView2 exposes this engine estimate. It is intentionally
+      // sampled inside the worker realm; unsupported engines report that fact
+      // and are never treated as over-budget.
+      var memory = self.performance && self.performance.memory;
+      var used = memory && Number(memory.usedJSHeapSize);
+      var supported = Number.isFinite(used) && used >= 0;
+      send({ callres: { call_id: call.call_id, ok: {
+        supported: supported,
+        usedBytes: supported ? Math.floor(used) : null
+      } } });
+      return;
+    }
     if (call.method === "session.cancel") {
       if (sessionAbort) sessionAbort.abort();
       if (call.call_id) send({ callres: { call_id: call.call_id, ok: null } });
@@ -164,6 +177,21 @@ export const GRAIN_RUNTIME_JS = `(function () {
         return req("llm.complete", { prompt: String(prompt) }).then(function (r) {
           return r && r.text != null ? r.text : r;
         });
+      }
+    },
+    // Network access is always host-proxied and requires an exact net:<host>
+    // grant. The worker itself never receives a browser fetch capability.
+    net: {
+      fetch: function (url, options) {
+        options = options || {};
+        var request = {
+          url: String(url),
+          method: options.method == null ? "GET" : String(options.method),
+          headers: options.headers == null ? {} : options.headers
+        };
+        if (options.body != null) request.body = String(options.body);
+        if (options.secret != null) request.secret = options.secret;
+        return req("net.fetch", request);
       }
     },
     // On-device embeddings (the same BGE model Grain Space uses). Resolves to an

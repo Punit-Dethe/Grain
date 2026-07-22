@@ -176,6 +176,9 @@ pub struct SettingDecl {
 pub enum SettingKind {
     Bool,
     String,
+    /// Write-only credential. The host stores it outside extension settings
+    /// and returns only a redacted marker to UI and extension code.
+    Secret,
     Number {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         min: Option<f64>,
@@ -274,6 +277,39 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "capture:selection",
 ];
 
+/// Parameterised network grants are deliberately narrower than URLs: exactly
+/// one canonical host, with no scheme, port, path, wildcard, or suffix match.
+pub fn network_capability_host(capability: &str) -> Option<&str> {
+    let host = capability.strip_prefix("net:")?;
+    if host.is_empty()
+        || host.len() > 253
+        || host != host.to_ascii_lowercase()
+        || host.contains('*')
+        || host.ends_with('.')
+    {
+        return None;
+    }
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return Some(host);
+    }
+    let valid = host.split('.').all(|label| {
+        !label.is_empty()
+            && label.len() <= 63
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            && label
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphanumeric)
+            && label
+                .as_bytes()
+                .last()
+                .is_some_and(u8::is_ascii_alphanumeric)
+    });
+    valid.then_some(host)
+}
+
 /// One prompt in a prompt pack. Applied to the user's prompt list under the
 /// namespaced id `ext:<extension-id>:<id>` (SPEC chokepoint #15 — collisions
 /// unrepresentable), and removed by that prefix on disable.
@@ -344,7 +380,9 @@ impl GrainPack {
                     return Err("scripted extensions require entry_source".into());
                 }
                 for cap in &m.permissions {
-                    if !KNOWN_CAPABILITIES.contains(&cap.as_str()) {
+                    if !KNOWN_CAPABILITIES.contains(&cap.as_str())
+                        && network_capability_host(cap).is_none()
+                    {
                         return Err(format!("unknown capability '{cap}'"));
                     }
                 }
@@ -425,6 +463,14 @@ impl GrainPack {
                 if options.is_empty() {
                     return Err(format!("select setting '{}' has no options", s.key));
                 }
+            }
+            if matches!(s.kind, SettingKind::Secret)
+                && s.default.as_str().is_some_and(|value| !value.is_empty())
+            {
+                return Err(format!(
+                    "secret setting '{}' cannot declare a non-empty default",
+                    s.key
+                ));
             }
         }
 
@@ -747,6 +793,57 @@ mod tests {
         assert!(base(
             r#"["session:start"]"#,
             r#"{"shortcuts":[{"id":"note","label":"Other"}],"sessionMode":{"id":"note","label":"Mode"}}"#,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn network_grants_accept_one_canonical_host_and_reject_wildcards_or_urls() {
+        for capability in ["net:api.example.com", "net:127.0.0.1"] {
+            assert_eq!(
+                network_capability_host(capability),
+                capability.strip_prefix("net:")
+            );
+        }
+        for capability in [
+            "net:*",
+            "net:*.example.com",
+            "net:https://api.example.com",
+            "net:api.example.com:443",
+            "net:api.example.com/path",
+            "net:API.example.com",
+            "net:api.example.com.",
+            "net:-api.example.com",
+        ] {
+            assert!(
+                network_capability_host(capability).is_none(),
+                "accepted {capability}"
+            );
+        }
+
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["net:api.example.com"]}}"#
+        )
+        .is_ok());
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["net:*.example.com"]}}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn secret_settings_cannot_smuggle_credentials_in_manifest_defaults() {
+        let valid: GrainPack = serde_json::from_str(
+            r#"{"manifest":{"id":"com.x.secret","name":"n","version":"1","tier":"scripted","entry_source":"x","contributes":{"settings":[{"key":"api_key","label":"API key","kind":"secret"}]}}}"#,
+        )
+        .unwrap();
+        valid.validate().unwrap();
+        assert!(matches!(
+            valid.manifest.contributes.settings[0].kind,
+            SettingKind::Secret
+        ));
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.secret","name":"n","version":"1","tier":"scripted","entry_source":"x","contributes":{"settings":[{"key":"api_key","label":"API key","kind":"secret","default":"shipped-key"}]}}}"#
         )
         .is_err());
     }
