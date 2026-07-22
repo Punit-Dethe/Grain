@@ -22,8 +22,8 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 step 4a** — `contributes.shortcuts` | **SHIPPED.** Namespaced `ext:<id>:<sid>`, toggle-order arbitration, status rows. |
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
-| **⛔ GATE (distribution + dev mode)** | Untouched, still required before Phase 4/5 — `GATE-DISTRIBUTION-AND-DEVMODE.md`. The store step 9 is a SHELL only. |
-| **⛔ GATE — distribution platform + developer mode** | **OPEN, BLOCKING Phase 4/5.** See [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). Requirements captured 2026-07-21; **no design, no plan yet** — by instruction. Phase 3 is unaffected. |
+| **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
+| **Phase 3.5 — Developer Mode & SDK** | **NEXT. Not started.** Ten steps in DISTRIBUTION-PLAN §10. Nothing blocks it. |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -332,6 +332,41 @@ Verification state at handoff: 233 src-tauri lib tests, 5 workspace suites
 (grain-core 14 · grain-pill 13 · grain-sdk 4 · provider-router 22 ·
 rolling-window 62), `tsc --noEmit` clean, ratchet green, everything pushed.
 
+## 1c. Session log — 2026-07-22, the gate design pass
+
+No feature code was written this session (one bug fix aside). What happened:
+
+1. **Phase 3 was closed out** — steps 5–10 shipped and pushed, the Grain Space
+   Test walked in [PHASE3-REVIEW.md](PHASE3-REVIEW.md) with two gaps recorded
+   honestly (`session:start` structural, `pill:slots` chips additive).
+2. **The user lifted the hold on the gate** and asked for deep, multi-source
+   research before any planning — covering where the store is hosted, how
+   authors publish, how it is kept secure, our review dashboard, a way to get
+   things verified quickly, a clean install path, and a genuinely good developer
+   experience. They also asked that the research be turned back on our *own*
+   prior decisions, and that anything we got wrong be corrected and placed in
+   the plan.
+3. **Research** (~25 sources, primary docs where they exist) is written up in
+   [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md) as 24 numbered findings:
+   prior art compared across seven platforms, the 2023–2026 attack record
+   (Open VSX token takeover, GlassWorm, Zed's Zip Slip, download pumping,
+   domain-ownership "verified"), the mechanisms worth stealing (TUF's four
+   properties, trusted publishing, registry-side builds, sparse static indexes),
+   and what makes authoring enjoyable (Raycast, Zed).
+4. **The design** is [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) — written to be
+   read cold, with no prior knowledge of Grain assumed. It answers every
+   question the gate raised and places the work as **3.5 → 4 → 5A → 5B**.
+5. **One shipped bug was found and fixed** (C-1, `9e0d8db2`) plus nine further
+   corrections recorded and placed (§3 above).
+
+**The one judgement call worth knowing about:** developer mode was moved *ahead*
+of Phase 4 rather than shipped alongside the store. The reason is C-1 — a defect
+that survived Phase 3 because the only way to exercise an extension surface is
+to be an extension author, and nobody can be one yet. Every later phase is
+verified through that loop, so it goes first.
+
+---
+
 ## 2. What was built, file by file
 
 ### `crates/grain-sdk` (NEW — the public contract, dependency LEAF)
@@ -409,30 +444,59 @@ rolling-window 62), `tsc --noEmit` clean, ratchet green, everything pushed.
 
 ## 3. Next work, in order
 
-1. **Live smoke test on a dev run** (blocked this session: a second app
-   instance fights the user's running Grain for port 7124). Verify: pill
-   connects through the token path (log line `events WS: 'pill'
-   authenticated`), Overview tab renders/toggles, tab merge looks right,
-   bindings.ts regenerates (then optionally swap OverviewSection to typed
-   bindings).
-2. **Phase 1 finish — pill-theme rendering** (SPEC §9): named patterns first
-   (`breathe`/`sweep`/`static` + per-state backgrounds/dot colours), the
-   expression evaluator later. Delivery route to decide: likely a
-   `DaemonEvent::PillTheme` (additive) emitted on connect + change, or theme
-   JSON via env at pill spawn + event for live switch. Missing state → Grain's
-   default FOR THAT STATE; 3 strikes → default theme. `pill.theme` slot
-   occupancy on enable (slots machinery can start minimal: one registry field).
-3. ~~Phase 2~~ — **done** (see above).
-4. **Phase 3** — follow [PHASE3-GUIDE.md](PHASE3-GUIDE.md) (written 2026-07-21,
-   prescriptive, 10 ordered steps; start at Step 0). Per SPEC §8 row 3: schema settings
-   render (levels 1–2, incl. anchors + ordering); `workspace` extracted from
-   Grain Space's `window.rs` as a host-owned generic with Grain Space as first
-   consumer; `overlay`; pill slots; the store **slide-over shell** (shell only —
-   the index behind it is gated); and the **Grain Space Test** as the acceptance
-   bar. Chunk 2b (sessionMode slow stage) folds in here or before it.
-5. **Then the ⛔ gate** — distribution platform + developer mode
-   ([GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md)) must
-   be designed and given a guide **before Phase 4/5**.
+Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
+step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
+
+1. **Phase 3.5 — Developer Mode & SDK.** Ten steps, in order: `Origin`
+   validation on the WS handshake → `grain-ext init` → load-unpacked → `dev`
+   + hot reload → source maps → developer panel → typed errors → `doctor`
+   → author docs → **verify the Phase 3 surface handshake end-to-end with a
+   real dev extension** (this is what would have caught C-1, below).
+   *Nothing blocks this. Start here.*
+2. **Phase 4 — contract completion.** Top item is the one structural gap:
+   `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
+   currently returns "not implemented"). Then tier-C native, `settings-panel`
+   iframes, pill action chips, re-platformed built-ins, plus C-7 (per-worker
+   memory ceiling) and C-8 (secrets in the OS keychain).
+   **Native extensions run in developer mode but are not distributable until
+   5A** — trust rails ship before anything that executes a binary travels.
+3. **Phase 5A — trust rails in the client.** Key ceremony → signed-index
+   verification (rollback + expiry) → store data path → pack format v2 with
+   path-safe extraction (**tests before the extractor**) → install/update/remove
+   transaction → revocation UX.
+4. **Phase 5B — the registry.** `grain-extensions` repo → three-job CI with the
+   secret/egress boundary → risk lanes → publish pipeline → review dashboard →
+   fast lane → store UI → public site → **one real third-party extension end to
+   end**.
+
+### Corrections carried into those phases
+
+Found 2026-07-22 by researching our own code against the 2023–2026 incident
+record (full ledger: DISTRIBUTION-PLAN §8).
+
+- **C-1 — surface windows had no Tauri capability.** `ext-surface-*` /
+  `ext-overlay-*` matched no capability file, so `listen()` would have been
+  denied and the sleep/revive/payload handshake would have failed at runtime.
+  App commands are allowed on every window by default, which is why the
+  `invoke` calls looked fine and the gap hid. **Fixed** (`9e0d8db2`,
+  `capabilities/extension-surface.json`, scoped to `core:event:default` only —
+  a surface must never be able to move, resize or close its own window).
+  Runtime proof is Phase 3.5 step 10.
+- **C-2 — the WS server does not validate `Origin`.** Browsers do not apply
+  same-origin to WebSockets, so any web page can open a connection to
+  `127.0.0.1:7124`. Token auth means classic hijacking does not apply, but
+  presence fingerprinting and drive-by pre-auth traffic do. → 3.5 step 1.
+- **C-3/C-9 — trust and no-transitive-install are true by accident.** Both need
+  to become tested invariants (5A steps 2 and 5).
+- **C-4 — invisible/bidi Unicode is unscreened.** The exact GlassWorm hiding
+  technique. → `doctor` lint (3.5) + CI gate (5B) + import path.
+- **C-5 — archive extraction does not exist yet**, so its traversal/zip-bomb
+  tests get written *first* (5A step 4). Zed shipped a CVSS 7.4 Zip Slip in
+  exactly this code.
+- **C-6 — `entry_source` as an embedded string** blocks source maps and hides
+  payloads → registry-built artifacts + dev source maps.
+- **C-10 — Grain's own updater is live with a pinned minisign key.** Reuse that
+  crypto shape for the index; do not invent one.
 
 ## 4. Gotchas that will bite you (all learned the hard way)
 

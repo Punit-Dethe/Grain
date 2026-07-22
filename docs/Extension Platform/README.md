@@ -106,6 +106,8 @@ never to decide what to build.
 | Document | Role |
 |---|---|
 | **[SPEC.md](SPEC.md)** | **Normative.** What to build. |
+| **[DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md)** | **Normative for the store and developer mode.** Hosting, submission, review, trust, install, and the authoring loop. Self-contained — assumes no prior reading. |
+| [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md) | The evidence the plan is built on: prior art compared, real attacks from 2023–2026, and what each forces on us |
 | [PLAN.md](PLAN.md) | Why the architecture is shaped this way (the five decisions) + phases |
 | [STRESS-TEST.md](STRESS-TEST.md) | Contract tested against three of our own features; how clashes are arbitrated |
 | [CASE-HEYCLICKY.md](CASE-HEYCLICKY.md) | Contract tested against a real outside app |
@@ -121,6 +123,11 @@ never to decide what to build.
 | **0** | Lock the door: the local connection gets authentication and permission checks. *(This is a security fix Grain needs anyway — right now any program on your computer can read your transcripts.)* |
 | **1** | Extensions become visible: an installed list, permission sheets, and shareable data packs. |
 | **2** | Real extensions run: the JavaScript runtime, plus the two abilities that decide the *shape* of everything later (an extension owning a voice session, and a stage slow enough for an AI call). |
-| **3** | Extensions get faces: settings sections, app-like windows, pointer overlays. **This is where the Grain Space test passes.** |
-| **4** | Native programs, custom pill looks, and moving some built-in features onto the public contract. |
-| **5** | The marketplace. |
+| **3** | Extensions get faces: settings sections, app-like windows, pointer overlays. **This is where the Grain Space test passes.** *(done)* |
+| **3.5** | **Anyone can build one.** A command-line tool, "load from a folder", reload-in-under-a-second, and a panel that shows an author exactly what their extension is doing. Nothing here needs the store, and everything after this is built and tested *through* it. |
+| **4** | Native programs, custom pill looks, and moving some built-in features onto the public contract. Native extensions run in developer mode but cannot be shared until 5A. |
+| **5A** | The app learns to trust: signed catalogue, install/update/remove, and a kill switch for something that turns bad. |
+| **5B** | The marketplace: the submission repo, automated review, our review dashboard, and the in-app store. |
+
+Phases 3.5, 5A and 5B are specified in
+**[DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md)**.

@@ -397,11 +397,36 @@ grain-sdk   ← wire types + manifest schema + capability names + error codes
 
 ### 7.4 Distribution
 
-- **Distribution:** a GitHub index repo, one JSON entry per extension (id,
-  repo, version, manifest hash, tier, trust). Trust levels: `builtin` /
-  `verified` / `community` / `dev` (local folder, badged). Tier A-inert lints
-  automatically; A-egress, B and C get human review. `screen:capture` + `net:`
-  together always triggers human review.
+**Specified in full by [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), which is
+normative for this section.** The summary below is the shape; the plan is the
+contract.
+
+- **Source of truth:** a GitHub submission repo (`grain-extensions`), one
+  directory per extension holding a source-repo pointer and a pinned commit —
+  **never a binary**. Submission is a pull request.
+- **What the app reads:** static signed JSON on a CDN, never the repo. The
+  catalogue carries a monotonic `version` and an `expires`, and one signature
+  covers the whole file (rollback, freeze and mix-and-match protection).
+- **Artifacts are built by our CI** from the pinned commit and served
+  content-addressed by SHA-256. The job that runs untrusted build code holds no
+  credentials and has no network egress; the job that signs runs no untrusted
+  code.
+- **Verification is mandatory at install:** Ed25519 over the index with the
+  **root public key pinned in the binary** (the same shape as Grain's own
+  updater), then a hash check against the index entry.
+- **Trust levels:** `dev` (local folder, badged, never promotable) /
+  `experimental` (automation only) / `verified` (a human read *this version's*
+  source) / `core` (ours), plus `deprecated` and `revoked` delivered by a signed
+  revocation list. **Trust exists only inside signed index metadata.** A manifest
+  has no trust field, the installer cannot read one from pack bytes, and trust
+  is bound to `(id, version, sha256)` — a verified 1.0 confers nothing on 1.1.
+- **Review routing** is a risk score computed from the manifest: zero-capability
+  packs auto-publish; low-risk scripted extensions auto-publish with sampled
+  audit; high-risk goes to a human. `screen:capture` + `net:` together always
+  triggers human review, as do `events:transcripts` + `net:` and any native tier
+  with `net:`.
+- **Never:** transitive install (installing A never installs B), runtime
+  dependency installation, or install triggered from outside the app.
 
 ---
 
@@ -415,17 +440,21 @@ Each phase is done when its checks pass.
 | **1** | Registry persists installed/grants/enabled **+ toggle order**; Overview tab renders from manifests; Snippets / Context Awareness / Agent ship as toggleable built-ins with the upgrade rule honoured (§10.1); **A-inert** packs import/export incl. **pill themes** (§9) and the Agent centre-layout variant (§10.2); no code executes |
 | **2** | Supervisor webview + **one Worker and one authenticated connection per extension** (§7.1), created on activation and reaped when idle (verified by RAM measurement); capability-checked host API (events/storage/llm/embed/capture/clipboard/shortcuts); transform hook with timeout + strikes; **`session:start` + `sessionMode` slow stage**; auto-categorization ported as the first scripted built-in |
 | **3** | Schema settings render (levels 1–2) incl. anchors + ordering; `workspace` extracted from Grain Space's window.rs as a host-owned generic with Grain Space as first consumer; `overlay`; pill slots; store slide-over; **Grain Space Test passes** |
-| **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed |
-| **5** | Index repo live; browse/install/update/remove; hash verification; trust badges; review checklist incl. lifecycle measurement |
+| **3.5** | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`); developer mode with load-unpacked, `dev` badge and override display; **hot reload under 300 ms with no restart and no leaked workers** (RAM-measured); source-mapped stacks; developer panel (activity, host calls, denials, budget, resources, console) built **only** when developer mode is on; typed errors with `hint` + `docs`; `Origin` validation on the WS handshake; author docs proven by an outsider shipping an extension unaided; **Phase 3's surface handshake verified end-to-end with a real dev extension** |
+| **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed; per-worker memory ceiling with strike semantics; secret settings in the OS keychain. **Native extensions are dev-mode-only until 5A.** |
+| **5A** | Root keys generated and pinned; signed index verified with rollback + expiry handling; the four anti-forgery tests of the plan's §3.2 pass; pack format v2 with **path-safe extraction tested before the extractor exists**; install/update/remove transaction incl. permission-diff gating and previous-version retention; signed revocation disables an installed extension |
+| **5B** | `grain-extensions` repo live with the three-job CI (untrusted build holds no secrets); risk lanes routing review; review dashboard risk-sorted; publish pipeline signing to the CDN; store UI filled in; public site; **one real third-party extension shipped end to end** |
 
-> ⛔ **GATE before Phase 4/5 — see
-> [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md).**
-> Rows 4 and 5 assume two things this project has never designed: a **hosting +
-> submission + review + trust-progression platform** (with the guarantee that an
-> author cannot forge "verified"), and a **developer mode** giving extension
-> authors a real build/run/debug loop. Phase 3 is unaffected and proceeds. Row 5
-> and the trust-dependent parts of row 4 do not start until that gate produces a
-> design and a guide.
+> ✅ **The gate that blocked rows 4 and 5 is lifted (2026-07-22).** It demanded a
+> designed hosting + submission + review + trust platform (with the guarantee
+> that an author cannot forge "verified") and a real developer mode. Both are
+> specified in **[DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md)**, evidenced by
+> [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md), with the original
+> requirements preserved in
+> [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md).
+> **Build order: 3.5 → 4 → 5A → 5B.** Phase 3.5 comes first because Phase 3's
+> acceptance test is otherwise only passable by us, and every later phase is
+> authored and verified through it.
 
 ---
 

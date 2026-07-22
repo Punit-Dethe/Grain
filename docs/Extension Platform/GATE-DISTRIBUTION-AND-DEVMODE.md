@@ -1,15 +1,19 @@
 # GATE — Distribution platform + Developer mode
 
-> **STATUS: BLOCKING GATE. NOT DESIGNED. NOT PLANNED.**
+> **STATUS: LIFTED 2026-07-22.** The design pass this gate demanded is
+> [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), backed by the evidence in
+> [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md).
 >
-> This document is a **requirements capture only**. It deliberately contains no
-> decisions, no architecture, and no implementation plan. Nothing in here may be
-> built until this gate has been through its own design pass and produced a real
-> plan (the way [PHASE2-GUIDE.md](PHASE2-GUIDE.md) did for Phase 2).
+> **This page is now the requirements record, kept unchanged**, so the plan can
+> be audited against what was actually asked for. Every question below is
+> answered in the plan; §5's exit condition is met by its §§2–7 (hosting,
+> submission/review, trust ladder with the anti-forgery guarantee, metrics,
+> install/update/remove, developer mode and debugging) plus the step-by-step
+> guide in its §10.
 >
 > **Raised by the user 2026-07-21.** The instruction was explicit: *think about
 > it, record it, do not plan it yet, and hold the roadmap until it is worked
-> out.*
+> out.* It has now been worked out.
 
 ---
 
