@@ -26,12 +26,29 @@ pub enum CapabilitySet {
     Named(HashSet<String>),
 }
 
+/// The protocol a token may speak. Keeping this separate from capabilities
+/// prevents a surface or developer client from ever being treated as a worker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClientRole {
+    Pill,
+    Worker,
+    Surface,
+    DevControl,
+}
+
 /// A resolved identity: the registry entry the presented token mapped to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientIdentity {
     /// Stable id ("pill", or an extension id). From the registry, never the wire.
     pub id: String,
+    pub role: ClientRole,
     pub caps: CapabilitySet,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AuthenticatedSession {
+    pub identity: ClientIdentity,
+    pub token: String,
 }
 
 /// token → identity. Static for the life of the app run; tokens are minted at
@@ -61,12 +78,26 @@ impl TokenRegistry {
     /// Rejects: non-JSON, JSON that isn't a [`ClientHello`], empty tokens, and
     /// tokens not in the registry. The returned identity is the registry's —
     /// the hello's `client` field is used for nothing but logs upstream.
+    #[cfg(test)]
     pub fn authenticate(&self, first_frame: &str) -> Option<ClientIdentity> {
+        self.authenticate_session(first_frame)
+            .map(|session| session.identity)
+    }
+
+    pub fn authenticate_session(&self, first_frame: &str) -> Option<AuthenticatedSession> {
         let hello: ClientHello = serde_json::from_str(first_frame).ok()?;
         if hello.token.is_empty() {
             return None;
         }
-        self.map.read().unwrap().get(&hello.token).cloned()
+        let identity = self.map.read().unwrap().get(&hello.token).cloned()?;
+        Some(AuthenticatedSession {
+            identity,
+            token: hello.token,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.read().unwrap().len()
     }
 }
 
@@ -91,6 +122,9 @@ fn required_capability(ev: &DaemonEvent) -> &'static str {
 
 /// May this identity receive this event? (Filtered = never sent, not blanked.)
 pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
+    if identity.role == ClientRole::DevControl {
+        return false;
+    }
     match &identity.caps {
         CapabilitySet::All => true,
         CapabilitySet::Named(caps) => caps.contains(required_capability(ev)),
@@ -100,6 +134,9 @@ pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
 /// May this identity use the reverse channel (PillAction)? Pill-only surface;
 /// extensions get their own namespaced commands in Phase 2.
 pub fn allows_reverse(identity: &ClientIdentity) -> bool {
+    if identity.role != ClientRole::Pill {
+        return false;
+    }
     match &identity.caps {
         CapabilitySet::All => true,
         CapabilitySet::Named(caps) => caps.contains("reverse:pill"),
@@ -116,6 +153,7 @@ mod tests {
             "pill-secret".into(),
             ClientIdentity {
                 id: "pill".into(),
+                role: ClientRole::Pill,
                 caps: CapabilitySet::All,
             },
         );
@@ -123,6 +161,7 @@ mod tests {
             "ext-a-secret".into(),
             ClientIdentity {
                 id: "com.example.a".into(),
+                role: ClientRole::Worker,
                 caps: CapabilitySet::Named(
                     ["events:sessions".to_string()].into_iter().collect(),
                 ),
@@ -180,5 +219,38 @@ mod tests {
         assert!(reg.authenticate(r#"{"token":"ext-a-secret"}"#).is_some());
         reg.revoke("ext-a-secret");
         assert!(reg.authenticate(r#"{"token":"ext-a-secret"}"#).is_none());
+    }
+
+    #[test]
+    fn authenticated_session_preserves_the_presented_token_and_role() {
+        let reg = registry_with_pill_and_ext();
+        let session = reg
+            .authenticate_session(r#"{"token":"ext-a-secret","client":"pill"}"#)
+            .unwrap();
+        assert_eq!(session.token, "ext-a-secret");
+        assert_eq!(session.identity.role, ClientRole::Worker);
+        assert_eq!(reg.len(), 2);
+    }
+
+    #[test]
+    fn repeated_token_rotation_has_constant_registry_size() {
+        let reg = TokenRegistry::new();
+        let mut prior: Option<String> = None;
+        for generation in 0..10 {
+            if let Some(token) = prior.take() {
+                reg.revoke(&token);
+            }
+            let token = format!("token-{generation}");
+            reg.register(
+                token.clone(),
+                ClientIdentity {
+                    id: "com.example.dev".into(),
+                    role: ClientRole::Worker,
+                    caps: CapabilitySet::Named(Default::default()),
+                },
+            );
+            prior = Some(token);
+            assert_eq!(reg.len(), 1);
+        }
     }
 }

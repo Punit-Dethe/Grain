@@ -375,6 +375,13 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         events_server::start(ctx.inner().clone(), app_handle.clone());
         // [GRAIN] extension worker lifecycle: activation dispatch + idle reaper.
         extension_host::start(app_handle.clone(), ctx.inner().clone());
+        if get_settings(app_handle).extension_developer_mode {
+            if let Err(error) = events_server::enable_dev_control(&ctx.data_dir) {
+                log::error!("[GRAIN] failed to expose developer control token: {error}");
+            }
+        } else {
+            events_server::disable_dev_control(&ctx.data_dir);
+        }
     }
     events_server::spawn_pill_supervisor();
 
@@ -1288,6 +1295,11 @@ pub fn run(cli_args: CliArgs) {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
                 if !app.state::<CliArgs>().no_tray && !INTENTIONAL_QUIT.load(Ordering::Relaxed) {
                     api.prevent_exit();
+                }
+            }
+            if let tauri::RunEvent::Exit = &event {
+                if let Some(ctx) = app.try_state::<Arc<grain_core::AppContext>>() {
+                    events_server::disable_dev_control(&ctx.data_dir);
                 }
             }
             let _ = (app, event); // suppress unused warnings on non-macOS

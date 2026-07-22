@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use grain_sdk::{
@@ -13,6 +14,7 @@ const HELP: &str = "grain-ext — build Grain extensions
 
 Usage:
   grain-ext init <name> [--id <reverse-dns-id>]
+  grain-ext dev [--token-file <path>]
   grain-ext --help
   grain-ext --version";
 
@@ -57,6 +59,24 @@ where
 
             Ok(init_project(cwd, &name, id.as_deref())?.output)
         }
+        "dev" => {
+            let mut token_file = None;
+            while let Some(flag) = args.next() {
+                match flag.as_str() {
+                    "--token-file" => {
+                        if token_file.is_some() {
+                            bail!("--token-file may be supplied only once");
+                        }
+                        token_file = Some(PathBuf::from(
+                            args.next().context("--token-file requires a path")?,
+                        ));
+                    }
+                    _ => bail!("unknown dev option '{flag}'"),
+                }
+            }
+            dev_project(cwd, token_file.as_deref())?;
+            Ok("development watcher stopped".into())
+        }
         _ => bail!("unknown command '{command}'\n\n{HELP}"),
     }
 }
@@ -99,7 +119,7 @@ pub fn init_project(cwd: &Path, name: &str, id: Option<&str>) -> Result<InitResu
     Ok(InitResult {
         root: root.clone(),
         output: format!(
-            "Created {}\n\nScripted extensions use Node.js and esbuild for bundling.\n\nNext:\n  cd {}\n  npm install\n  grain-ext dev",
+            "Created {}\n\nScripted extensions use Node.js and esbuild for bundling.\n\nNext:\n  cd {}\n  npm install\n  npm run build\n  Add this folder in Grain > Extensions > Developer mode\n  grain-ext dev",
             root.display(),
             slug
         ),
@@ -150,7 +170,262 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                 }],
             },
         },
-        entry: "src/main.ts".into(),
+        entry: "dist/main.js".into(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DevTokenFile {
+    url: String,
+    token: String,
+}
+
+struct DevClient {
+    socket: tungstenite::WebSocket<tungstenite::stream::MaybeTlsStream<std::net::TcpStream>>,
+    next_request: u64,
+}
+
+impl DevClient {
+    fn connect(file: &Path) -> Result<Self> {
+        let raw = fs::read_to_string(file).with_context(|| {
+            format!(
+                "read developer token {}; enable Developer mode in Grain first",
+                file.display()
+            )
+        })?;
+        let config: DevTokenFile = serde_json::from_str(&raw).context("parse developer token")?;
+        let (mut socket, _) = tungstenite::connect(config.url.as_str())
+            .context("connect to Grain developer channel")?;
+        socket.send(tungstenite::Message::Text(
+            serde_json::to_string(&grain_sdk::ClientHello {
+                token: config.token,
+                client: "grain-ext".into(),
+                grain_api: GRAIN_API_VERSION.into(),
+            })?
+            .into(),
+        ))?;
+        let tungstenite::Message::Text(welcome) = socket.read()? else {
+            bail!("Grain returned an invalid developer handshake");
+        };
+        serde_json::from_str::<grain_sdk::ServerWelcome>(&welcome)
+            .context("Grain rejected the developer token")?;
+        Ok(Self {
+            socket,
+            next_request: 1,
+        })
+    }
+
+    fn reload(&mut self, extension_id: &str) -> Result<grain_sdk::DevReloadResult> {
+        let request_id = self.next_request;
+        self.next_request += 1;
+        self.socket.send(tungstenite::Message::Text(
+            serde_json::to_string(&grain_sdk::DevControlFrame::DevReload {
+                request_id,
+                extension_id: extension_id.into(),
+            })?
+            .into(),
+        ))?;
+        loop {
+            let tungstenite::Message::Text(raw) = self.socket.read()? else {
+                continue;
+            };
+            let Ok(grain_sdk::DevControlFrame::DevResult {
+                request_id: response_id,
+                result,
+                error,
+            }) = serde_json::from_str(&raw)
+            else {
+                continue;
+            };
+            if response_id != request_id {
+                continue;
+            }
+            if let Some(error) = error {
+                bail!(error);
+            }
+            return result.context("Grain returned an empty reload result");
+        }
+    }
+}
+
+fn reload_with_reconnect(
+    client: &mut DevClient,
+    token_file: &Path,
+    extension_id: &str,
+) -> Result<grain_sdk::DevReloadResult> {
+    match client.reload(extension_id) {
+        Ok(result) => Ok(result),
+        Err(first_error) => {
+            *client = DevClient::connect(token_file).with_context(|| first_error.to_string())?;
+            client.reload(extension_id)
+        }
+    }
+}
+
+fn default_token_file() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("GRAIN_APP_DATA_DIR") {
+        return Ok(PathBuf::from(path).join("extension-dev-token.json"));
+    }
+    #[cfg(target_os = "windows")]
+    let base = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA is not set")?);
+    #[cfg(target_os = "macos")]
+    let base = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?)
+        .join("Library/Application Support");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
+        });
+    Ok(base.join("com.grain.app").join("extension-dev-token.json"))
+}
+
+fn build_project(root: &Path) -> Result<()> {
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let status = std::process::Command::new(npm)
+        .args(["run", "build"])
+        .current_dir(root)
+        .status()
+        .context("run npm build")?;
+    if !status.success() {
+        bail!("npm build failed");
+    }
+    Ok(())
+}
+
+struct BuildWatcher(std::process::Child);
+
+impl BuildWatcher {
+    fn start(root: &Path) -> Result<Self> {
+        let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+        let child = std::process::Command::new(npm)
+            .args(["run", "build", "--", "--watch"])
+            .current_dir(root)
+            .spawn()
+            .context("start incremental npm build")?;
+        Ok(Self(child))
+    }
+}
+
+impl Drop for BuildWatcher {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        let _ = std::process::Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &self.0.id().to_string()])
+            .output();
+        #[cfg(not(windows))]
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn ignored_watch_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .components()
+        .any(|component| {
+            matches!(
+                component.as_os_str().to_str(),
+                Some("node_modules" | ".git")
+            )
+        })
+}
+
+fn reload_watch_path(root: &Path, path: &Path, entry: &Path) -> bool {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    relative == Path::new("manifest.json") || relative == entry
+}
+
+/// Build once, reload, then rebuild and hot-reload on source changes.
+pub fn dev_project(root: &Path, token_file: Option<&Path>) -> Result<()> {
+    use notify::Watcher;
+
+    let manifest_path = root.join("manifest.json");
+    let read_project = || -> Result<ExtensionProjectManifest> {
+        let raw = fs::read_to_string(&manifest_path)
+            .with_context(|| format!("read {}", manifest_path.display()))?;
+        serde_json::from_str(&raw).context("parse manifest.json")
+    };
+    let token_file = token_file
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(default_token_file)?;
+    let started = Instant::now();
+    build_project(root)?;
+    let mut client = DevClient::connect(&token_file)?;
+    let project = read_project()?;
+    let result = reload_with_reconnect(&mut client, &token_file, &project.manifest.id)?;
+    println!(
+        "Reloaded in {} ms (workers {}, tokens {})",
+        started.elapsed().as_millis(),
+        result.worker_count,
+        result.token_count
+    );
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = tx.send(event);
+    })?;
+    watcher.watch(root, notify::RecursiveMode::Recursive)?;
+    let mut build_watcher = BuildWatcher::start(root)?;
+    println!("Watching {}", root.display());
+    loop {
+        if let Some(status) = build_watcher.0.try_wait()? {
+            bail!("incremental npm build stopped ({status})");
+        }
+        let event: notify::Result<notify::Event> = match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(event) => event,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => bail!("file watcher stopped"),
+        };
+        let event = match event {
+            Ok(event) => event,
+            Err(error) => {
+                eprintln!("grain-ext: watch error: {error}");
+                continue;
+            }
+        };
+        if event
+            .paths
+            .iter()
+            .all(|path| ignored_watch_path(root, path))
+        {
+            continue;
+        }
+        let project = match read_project() {
+            Ok(project) => project,
+            Err(error) => {
+                eprintln!("grain-ext: {error:#}");
+                continue;
+            }
+        };
+        let entry = Path::new(&project.entry);
+        let mut should_reload = event
+            .paths
+            .iter()
+            .any(|path| reload_watch_path(root, path, entry));
+        while let Ok(next) = rx.recv_timeout(Duration::from_millis(40)) {
+            if let Ok(next) = next {
+                should_reload |= next
+                    .paths
+                    .iter()
+                    .any(|path| reload_watch_path(root, path, entry));
+            }
+        }
+        if !should_reload {
+            continue;
+        }
+        let started = Instant::now();
+        let reload = reload_with_reconnect(&mut client, &token_file, &project.manifest.id);
+        match reload {
+            Ok(result) => println!(
+                "Reloaded in {} ms (workers {}, tokens {})",
+                started.elapsed().as_millis(),
+                result.worker_count,
+                result.token_count
+            ),
+            Err(error) => eprintln!("grain-ext: {error:#}"),
+        }
     }
 }
 
@@ -232,7 +507,7 @@ fn tsconfig_json() -> serde_json::Value {
 
 fn readme(name: &str, id: &str) -> String {
     format!(
-        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js.\n2. Run `npm install` (this installs esbuild locally).\n3. Run `grain-ext dev` for build, load, watch, and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK.\n"
+        "# {name}\n\nGrain extension id: `{id}`\n\n## Develop\n\n1. Install Node.js and run `npm install`.\n2. Run `npm run build` once.\n3. Enable Developer mode in Grain and add this folder as an unpacked extension.\n4. Run `grain-ext dev` for incremental builds and hot reload.\n\nEdit `src/main.ts`; `grain.d.ts` is generated from the Grain SDK.\n"
     )
 }
 
@@ -295,7 +570,7 @@ mod tests {
         let project: ExtensionProjectManifest = serde_json::from_str(&raw).unwrap();
         assert_eq!(project.manifest.id, "com.example.focus-notes");
         assert_eq!(project.manifest.grain_api, "^1.0");
-        assert_eq!(project.entry, "src/main.ts");
+        assert_eq!(project.entry, "dist/main.js");
         validate_scaffold(&project).unwrap();
 
         let declarations = fs::read_to_string(result.root.join("grain.d.ts")).unwrap();
@@ -336,5 +611,27 @@ mod tests {
         let raw = fs::read_to_string(temp.path().join("my-tool/manifest.json")).unwrap();
         let project: ExtensionProjectManifest = serde_json::from_str(&raw).unwrap();
         assert_eq!(project.manifest.id, "dev.example.my-tool");
+    }
+
+    #[test]
+    fn watcher_ignores_generated_and_dependency_trees() {
+        let root = Path::new("project");
+        assert!(!ignored_watch_path(root, &root.join("dist/main.js")));
+        assert!(ignored_watch_path(
+            root,
+            &root.join("node_modules/pkg/index.js")
+        ));
+        assert!(ignored_watch_path(root, &root.join(".git/index")));
+        assert!(!ignored_watch_path(root, &root.join("src/main.ts")));
+        assert!(!ignored_watch_path(root, &root.join("manifest.json")));
+        let entry = Path::new("dist/main.js");
+        assert!(reload_watch_path(root, &root.join("dist/main.js"), entry));
+        assert!(reload_watch_path(root, &root.join("manifest.json"), entry));
+        assert!(!reload_watch_path(
+            root,
+            &root.join("dist/main.js.map"),
+            entry
+        ));
+        assert!(!reload_watch_path(root, &root.join("src/main.ts"), entry));
     }
 }

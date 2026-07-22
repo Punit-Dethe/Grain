@@ -112,6 +112,35 @@ pub struct ServerWelcome {
     pub grain_api: String,
 }
 
+/// Developer CLI -> host control message. This channel is deliberately tiny:
+/// the CLI may request a reload of an already human-approved unpacked project,
+/// but it cannot send source, alter grants, or invoke extension host APIs.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum DevControlFrame {
+    DevReload {
+        request_id: u64,
+        extension_id: String,
+    },
+    DevResult {
+        request_id: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result: Option<DevReloadResult>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DevReloadResult {
+    pub restarted_worker: bool,
+    pub remounted_surfaces: bool,
+    pub enabled: bool,
+    pub worker_count: usize,
+    pub token_count: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,5 +229,15 @@ mod tests {
         assert!(serde_json::from_str::<HostFrame>(&event).is_err());
         assert!(serde_json::from_str::<HostFrame>(&action).is_err());
         assert!(serde_json::from_str::<HostFrame>(&hello).is_err());
+
+        let dev = serde_json::to_string(&DevControlFrame::DevReload {
+            request_id: 4,
+            extension_id: "com.example.dev".into(),
+        })
+        .unwrap();
+        assert!(serde_json::from_str::<DevControlFrame>(&dev).is_ok());
+        assert!(dev.contains("requestId") && dev.contains("extensionId"));
+        assert!(serde_json::from_str::<HostFrame>(&dev).is_err());
+        assert!(serde_json::from_str::<crate::PillAction>(&dev).is_err());
     }
 }

@@ -836,6 +836,16 @@ pub fn extension_set_developer_mode(
             restore_enabled_extension(&app, &id)?;
         }
     }
+    let data_dir = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?
+        .data_dir
+        .clone();
+    if enabled {
+        crate::events_server::enable_dev_control(&data_dir)?;
+    } else {
+        crate::events_server::disable_dev_control(&data_dir);
+    }
     let mut current = settings::get_settings(&app);
     current.extension_developer_mode = enabled;
     settings::write_settings(&app, current);

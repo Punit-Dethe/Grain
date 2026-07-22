@@ -109,24 +109,38 @@ impl Workers {
         self.map.lock().unwrap().remove(ext_id)
     }
 
-    /// Register (or refresh) a worker's connection and return the shared
-    /// last-activity clock for the caller to bump on each inbound frame.
-    fn attach(&self, ext_id: &str, out_tx: mpsc::UnboundedSender<Message>) -> Arc<AtomicU64> {
+    fn remove_if_token(&self, ext_id: &str, token: &str) -> Option<Worker> {
         let mut map = self.map.lock().unwrap();
-        let w = map.entry(ext_id.to_string()).or_insert_with(|| Worker {
-            token: String::new(),
-            resident: false,
-            strikes: 0,
-            last_activity: Arc::new(AtomicU64::new(now_secs())),
-            conn: None,
-        });
+        if !map.get(ext_id).is_some_and(|worker| worker.token == token) {
+            return None;
+        }
+        map.remove(ext_id)
+    }
+
+    fn len(&self) -> usize {
+        self.map.lock().unwrap().len()
+    }
+
+    /// Register a spawned worker's matching connection and return its shared
+    /// last-activity clock. A stale or unspawned token is rejected.
+    fn attach(
+        &self,
+        ext_id: &str,
+        token: &str,
+        out_tx: mpsc::UnboundedSender<Message>,
+    ) -> Option<Arc<AtomicU64>> {
+        let mut map = self.map.lock().unwrap();
+        let w = map.get_mut(ext_id)?;
+        if w.token != token {
+            return None;
+        }
         w.last_activity.store(now_secs(), Ordering::Relaxed);
         w.conn = Some(WorkerConn {
             out_tx,
             pending: Arc::new(Mutex::new(HashMap::new())),
             next_call_id: Arc::new(AtomicU64::new(1)),
         });
-        w.last_activity.clone()
+        Some(w.last_activity.clone())
     }
 
     /// Issue a `HostCall` to a connected worker and await its answer under
@@ -506,7 +520,7 @@ fn spawn_worker(
     };
     // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
     // same server-side filter that gates the pill now gates this worker.
-    let token = crate::events_server::mint_extension_token(ext_id, caps.iter().cloned().collect());
+    let token = crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
     let resident = pack.manifest.activation.iter().any(|a| a == "onStartup");
     host.workers.insert(
         ext_id,
@@ -594,12 +608,16 @@ fn on_supervisor_ready() {
 /// Terminate a worker: drop its registry entry, revoke its token, tell the
 /// supervisor to kill the Web Worker, and fail any in-flight host calls so their
 /// awaiters don't hang. Tears down the supervisor when the last worker dies.
-fn kill_worker(ext_id: &str, reason: &str) {
+fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_supervisor: bool) {
     let host = match HOST.get() {
         Some(h) => h,
         None => return,
     };
-    let worker = match host.workers.remove(ext_id) {
+    let worker = match token {
+        Some(token) => host.workers.remove_if_token(ext_id, token),
+        None => host.workers.remove(ext_id),
+    };
+    let worker = match worker {
         Some(w) => w,
         None => return,
     };
@@ -614,13 +632,18 @@ fn kill_worker(ext_id: &str, reason: &str) {
         },
     );
     if let Some(conn) = &worker.conn {
+        let _ = conn.out_tx.send(Message::Close(None));
         for (_, tx) in conn.pending.lock().unwrap().drain() {
             let _ = tx.send(Err("worker terminated".into()));
         }
     }
-    if empty {
+    if empty && !preserve_supervisor {
         teardown_supervisor();
     }
+}
+
+fn kill_worker(ext_id: &str, reason: &str) {
+    kill_worker_inner(ext_id, reason, None, false);
 }
 
 /// Public lifecycle hook for registry operations such as unloading a dev
@@ -664,18 +687,22 @@ fn reap_idle() {
 // ── Connection surface (called from events_server on the worker's WS) ────────
 
 /// A worker's WS authenticated: register its outbound channel and return the
-/// shared last-activity clock for the connection to bump on each frame. Upserts,
-/// so a worker that connects without a prior spawn record still gets tracked.
-pub fn attach_connection(ext_id: &str, out_tx: mpsc::UnboundedSender<Message>) -> Arc<AtomicU64> {
+/// shared last-activity clock for the connection to bump on each frame. The
+/// token must match the current generation, so a stale socket cannot replace it.
+pub fn attach_connection(
+    ext_id: &str,
+    token: &str,
+    out_tx: mpsc::UnboundedSender<Message>,
+) -> Option<Arc<AtomicU64>> {
     match HOST.get() {
-        Some(h) => h.workers.attach(ext_id, out_tx),
-        None => Arc::new(AtomicU64::new(now_secs())),
+        Some(h) => h.workers.attach(ext_id, token, out_tx),
+        None => None,
     }
 }
 
 /// The worker's WS closed → the worker process is gone; reap it.
-pub fn detach_connection(ext_id: &str) {
-    kill_worker(ext_id, "connection closed");
+pub fn detach_connection(ext_id: &str, token: &str) {
+    kill_worker_inner(ext_id, "connection closed", Some(token), false);
 }
 
 /// Route a `HostCallResult` back to its awaiter (the transform/session caller).
@@ -851,6 +878,89 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
 
 pub fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
     load_manifest_result(app, id).ok()
+}
+
+/// Re-read and atomically activate an already-approved load-unpacked project.
+/// The developer channel supplies only the id; source and capabilities remain
+/// rooted in the canonical folder and registry selected through Grain's UI.
+pub fn reload_dev_extension(
+    app: &AppHandle,
+    id: &str,
+) -> Result<grain_sdk::DevReloadResult, String> {
+    if !crate::settings::get_settings(app).extension_developer_mode {
+        return Err("Developer mode is disabled".into());
+    }
+    let reg = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .ok_or("extensions registry unavailable")?;
+    let path = reg.dev_path(id).ok_or_else(|| {
+        format!("'{id}' is not loaded unpacked; add it from Grain settings first")
+    })?;
+    let loaded = crate::dev_extensions::load_project(&path)?;
+    if loaded.pack.manifest.id != id {
+        return Err(format!(
+            "manifest id changed from '{id}' to '{}'; unload and add the project again",
+            loaded.pack.manifest.id
+        ));
+    }
+
+    let prior = reg.record(id).ok_or("developer extension record missing")?;
+    let slots_changed = prior.slots != loaded.pack.manifest.slots;
+    if slots_changed && prior.enabled {
+        reg.set_enabled(id, false)
+            .map_err(|error| error.to_string())?;
+    }
+    let enabled = prior.enabled && !slots_changed;
+    let requested = &loaded.pack.manifest.permissions;
+    let granted = prior
+        .granted
+        .iter()
+        .filter(|permission| requested.contains(permission))
+        .cloned()
+        .collect::<Vec<_>>();
+    let permissions_changed = granted != prior.granted;
+    reg.install(grain_core::extensions::ExtensionRecord {
+        id: id.to_string(),
+        enabled,
+        toggle_seq: prior.toggle_seq,
+        installed_version: loaded.pack.manifest.version.clone(),
+        granted: granted.clone(),
+        slots: loaded.pack.manifest.slots.clone(),
+        variant_slots: prior.variant_slots,
+        dev: prior.dev,
+    })
+    .map_err(|error| error.to_string())?;
+
+    let had_worker = is_running(id);
+    if had_worker {
+        kill_worker_inner(id, "developer hot reload", None, true);
+    }
+    refresh_index(app);
+    if had_worker && enabled {
+        spawn_worker(app, id, &loaded.pack, granted, None);
+    }
+    let remounted_surfaces = if enabled && !permissions_changed {
+        if loaded.pack.manifest.surfaces.workspace.is_none() {
+            crate::surfaces::extension::destroy(app, id);
+        }
+        if loaded.pack.manifest.surfaces.overlay.is_none() {
+            crate::surfaces::overlay::dismiss(app, id);
+        }
+        crate::surfaces::extension::reload(app, id, &loaded.pack)
+    } else {
+        crate::surfaces::extension::destroy(app, id);
+        crate::surfaces::overlay::dismiss(app, id);
+        false
+    };
+
+    let worker_count = HOST.get().map(|host| host.workers.len()).unwrap_or(0);
+    Ok(grain_sdk::DevReloadResult {
+        restarted_worker: had_worker && enabled,
+        remounted_surfaces,
+        enabled,
+        worker_count,
+        token_count: crate::events_server::token_count(),
+    })
 }
 
 // ── Built-in scripted packs (the dogfood) ────────────────────────────────────
@@ -1112,7 +1222,8 @@ mod tests {
         rt().block_on(async {
             let workers = Workers::new();
             let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
-            workers.attach("com.x.a", out_tx);
+            workers.insert("com.x.a", worker(now_secs(), false));
+            workers.attach("com.x.a", "tok", out_tx).unwrap();
 
             // The fake worker: read the outbound HostCall, answer via resolve().
             let responder = async {
@@ -1159,7 +1270,8 @@ mod tests {
             );
             // Connected but silent → the deadline fires (never blocks the paste).
             let (out_tx, _keep) = mpsc::unbounded_channel::<Message>();
-            workers.attach("com.x.a", out_tx);
+            workers.insert("com.x.a", worker(now_secs(), false));
+            workers.attach("com.x.a", "tok", out_tx).unwrap();
             assert_eq!(
                 workers
                     .call("com.x.a", "transform", json!({}), Duration::from_millis(20))
@@ -1196,5 +1308,33 @@ mod tests {
         workers.clear_strikes("a");
         assert!(!workers.record_strike("a", MAX_STRIKES)); // counter reset
         assert!(!workers.record_strike("missing", MAX_STRIKES)); // unknown never trips
+    }
+
+    #[test]
+    fn stale_worker_token_cannot_attach_or_remove_replacement() {
+        let workers = Workers::new();
+        let mut replacement = worker(now_secs(), false);
+        replacement.token = "new-token".into();
+        workers.insert("a", replacement);
+        let (out_tx, _out_rx) = mpsc::unbounded_channel::<Message>();
+        assert!(workers.attach("a", "old-token", out_tx).is_none());
+        assert!(workers.remove_if_token("a", "old-token").is_none());
+        assert_eq!(workers.len(), 1);
+        assert!(workers.remove_if_token("a", "new-token").is_some());
+        assert_eq!(workers.len(), 0);
+    }
+
+    #[test]
+    fn ten_worker_replacements_leave_one_live_worker() {
+        let workers = Workers::new();
+        for generation in 0..10 {
+            if generation > 0 {
+                assert!(workers.remove("dev").is_some());
+            }
+            let mut next = worker(now_secs(), false);
+            next.token = format!("token-{generation}");
+            workers.insert("dev", next);
+            assert_eq!(workers.len(), 1);
+        }
     }
 }

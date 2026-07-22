@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::workspace::{self, Surface, WorkspaceSpec};
 
@@ -52,9 +52,14 @@ pub struct SurfaceInit {
 
 /// window label → the init a surface page is waiting for.
 static PENDING: OnceLock<Mutex<HashMap<String, SurfaceInit>>> = OnceLock::new();
+static ACTIVE_TOKENS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
 
 fn pending() -> &'static Mutex<HashMap<String, SurfaceInit>> {
     PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn active_tokens() -> &'static Mutex<HashMap<String, String>> {
+    ACTIVE_TOKENS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// window label → extension id. The label is a lossy sanitization, so this is
@@ -112,6 +117,35 @@ fn revive_event(ext_id: &str) -> String {
 }
 fn payload_event(ext_id: &str) -> String {
     format!("ext-surface://{ext_id}/payload")
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReloadPayload {
+    workspace_ui_source: Option<String>,
+    overlay_ui_source: Option<String>,
+}
+
+/// Replace the sandboxed iframe realm in every live surface for this extension.
+/// Sleeping workspaces receive the new source too and use it on their next wake.
+pub fn reload(app: &AppHandle, ext_id: &str, pack: &grain_sdk::GrainPack) -> bool {
+    let payload = ReloadPayload {
+        workspace_ui_source: pack
+            .manifest
+            .surfaces
+            .workspace
+            .as_ref()
+            .map(|decl| decl.ui_source.clone()),
+        overlay_ui_source: pack
+            .manifest
+            .surfaces
+            .overlay
+            .as_ref()
+            .map(|decl| decl.ui_source.clone()),
+    };
+    let has_surface = payload.workspace_ui_source.is_some() || payload.overlay_ui_source.is_some();
+    let _ = app.emit(&format!("ext-surface://{ext_id}/reload"), payload);
+    has_surface
 }
 
 /// Clamp a pack's requested minimum size into something a window can actually
@@ -252,7 +286,14 @@ pub(crate) fn stage(
     let rec = reg.record(ext_id).ok_or("not installed")?;
 
     let token =
-        crate::events_server::mint_extension_token(ext_id, rec.granted.iter().cloned().collect());
+        crate::events_server::mint_surface_token(ext_id, rec.granted.iter().cloned().collect());
+    if let Some(old) = active_tokens()
+        .lock()
+        .unwrap()
+        .insert(label.to_string(), token.clone())
+    {
+        crate::events_server::revoke_token(&old);
+    }
     let init = SurfaceInit {
         extension_id: ext_id.to_string(),
         token,
@@ -265,9 +306,7 @@ pub(crate) fn stage(
         .lock()
         .unwrap()
         .insert(label.to_string(), ext_id.to_string());
-    if let Some(old) = pending().lock().unwrap().insert(label.to_string(), init) {
-        crate::events_server::revoke_token(&old.token);
-    }
+    pending().lock().unwrap().insert(label.to_string(), init);
     Ok(())
 }
 
@@ -283,8 +322,9 @@ pub fn take_init(label: &str) -> Option<SurfaceInit> {
 pub(crate) fn revoke_for_label(label: &str) {
     labels().lock().unwrap().remove(label);
     payloads().lock().unwrap().remove(label);
-    if let Some(init) = pending().lock().unwrap().remove(label) {
-        crate::events_server::revoke_token(&init.token);
+    pending().lock().unwrap().remove(label);
+    if let Some(token) = active_tokens().lock().unwrap().remove(label) {
+        crate::events_server::revoke_token(&token);
     }
 }
 

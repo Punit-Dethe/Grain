@@ -35,7 +35,7 @@ pub use manifest::{
 };
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
 pub use protocol::{
-    ClientHello, ClientRequest, HostCall, HostCallResult, HostFrame, ServerResponse, ServerWelcome,
-    GRAIN_API_VERSION,
+    ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,
+    HostFrame, ServerResponse, ServerWelcome, GRAIN_API_VERSION,
 };
 pub use settings_schema::Accepted;

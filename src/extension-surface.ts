@@ -116,6 +116,7 @@ function send(obj: unknown) {
  *  is what produces the opaque origin — do not add it. */
 function mount() {
   if (frame || !init) return;
+  document.getElementById("fallback")?.classList.remove("show");
   const el = document.createElement("iframe");
   el.id = "frame";
   el.setAttribute("sandbox", "allow-scripts");
@@ -236,6 +237,23 @@ async function boot() {
       { __grainevent: 1, event: e.payload },
       "*",
     );
+  });
+  await listen<{
+    workspaceUiSource?: string | null;
+    overlayUiSource?: string | null;
+  }>(`ext-surface://${cfg.extensionId}/reload`, (e) => {
+    if (!init) return;
+    const overlay = cfg.sleepEvent.startsWith("ext-overlay://");
+    const source = overlay
+      ? e.payload.overlayUiSource
+      : e.payload.workspaceUiSource;
+    unmount();
+    if (source == null) {
+      fail("This surface was removed by the latest extension build.");
+      return;
+    }
+    init.uiSource = source;
+    mount();
   });
 
   mount();

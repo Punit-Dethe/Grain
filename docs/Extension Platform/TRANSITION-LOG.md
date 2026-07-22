@@ -23,7 +23,23 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–3 shipped 2026-07-22:** WS `Origin` hardening, the `grain-ext init` scaffold with SDK-generated TypeScript types, and in-app developer mode with load-unpacked/dev overrides. **Step 4 (`grain-ext dev` + hot reload) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–4 shipped 2026-07-22:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, and `grain-ext dev` incremental build + authenticated hot reload. **Step 5 (source maps) is next.** |
+
+**Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
+the project's build command alive in incremental `--watch` mode, watches its
+`dist/` output and `manifest.json`, and reuses one developer WebSocket. The
+credential is a role-bound dev-control token in
+`<app-data>/extension-dev-token.json`; it is created only while Developer mode
+is enabled (mode `0600` on Unix), revoked/removed on disable or exit, and cannot
+invoke extension host APIs. Reload re-reads the already human-approved folder,
+revalidates the pack, intersects grants, replaces a live worker generation
+without tearing down its supervisor, and remounts sandboxed surface iframes.
+Worker/surface/pill/dev-control roles are now explicit; stale worker sockets
+cannot detach a replacement generation. Ten-generation tests hold worker and
+token registry counts constant. The CLI prints reload latency and both counts;
+the final live `<300 ms` and process-RSS acceptance measurement still requires
+running the newly built app (do not launch a second instance over the user's
+running Grain).
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -486,12 +502,13 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–3 (`Origin` hardening,
-   `grain-ext init`, and load-unpacked) are shipped. Continue in order:
-   `grain-ext dev` + hot reload → source maps → developer panel → typed errors → `doctor`
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–4 (`Origin` hardening,
+   `grain-ext init`, load-unpacked, and authenticated hot reload) are shipped.
+   Complete the live step-4 latency/RSS acceptance measurement, then continue:
+   source maps → developer panel → typed errors → `doctor`
    → author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks step 4. Start there.*
+   *Nothing blocks the step-4 live measurement or step 5.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`

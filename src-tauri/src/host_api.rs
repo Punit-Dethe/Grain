@@ -418,6 +418,7 @@ mod tests {
     fn named(caps: &[&str]) -> ClientIdentity {
         ClientIdentity {
             id: "com.example.a".into(),
+            role: crate::events_auth::ClientRole::Worker,
             caps: CapabilitySet::Named(caps.iter().map(|s| s.to_string()).collect::<HashSet<_>>()),
         }
     }
@@ -446,6 +447,7 @@ mod tests {
         assert!(!has_capability(
             &ClientIdentity {
                 id: "x".into(),
+                role: crate::events_auth::ClientRole::Worker,
                 caps: CapabilitySet::Named(HashSet::new())
             },
             "__unknown__"
