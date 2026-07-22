@@ -849,6 +849,7 @@ pub fn extension_set_developer_mode(
     let mut current = settings::get_settings(&app);
     current.extension_developer_mode = enabled;
     settings::write_settings(&app, current);
+    crate::refresh_webview_log_streaming(&app);
     crate::extension_host::refresh_index(&app);
     Ok(())
 }

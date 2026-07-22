@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–5 shipped 2026-07-22:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, and source-mapped developer worker errors. **Step 6 (developer panel) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–6 shipped 2026-07-23:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, source-mapped developer worker errors, and the filtered developer log console. **Step 7 (typed errors) is next.** |
 
 **Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
 the project's build command alive in incremental `--watch` mode, watches its
@@ -56,6 +56,19 @@ extensions and healthy workers pay no map-memory cost. A real WebView2 worker
 throw in bundled `dist/main.js` reported `src/main.ts:3:1`; the pure mapper has
 the same authored-file assertion. Raw stacks remain the fallback when a custom
 build supplies no valid map.
+
+**Phase 3.5 step 6 detail.** No new panel or window was added. Rust emits stable
+`[ext:<id>]` lifecycle, source-mapped error, capability-denial, host-call, and
+slow-transform lines through the existing log stream; detailed call traffic is
+limited to load-unpacked projects. A denial names the refused method, missing
+capability, and exact `manifest.json` permissions entry. The existing
+`LiveLogViewer` now accepts an optional prefix/substring/level filter and
+optional chips, and is reused unchanged in Debug plus filtered in the new
+Extensions > Developer tab (`All`, `Calls`, `Denials`, `Errors`). Webview log
+streaming remains off in normal use and is active when either Debug or extension
+Developer mode owns the console. Verification: 277 backend tests, production
+frontend build, and focused ESLint passed; an isolated real WebView2 run proved
+Developer-mode activation and the new tab without touching the installed app.
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:

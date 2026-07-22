@@ -6,9 +6,10 @@ import { SnippetsSection } from "./SnippetsSection";
 import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
+import { DeveloperSection } from "./DeveloperSection";
 import { ExtensionAnchor } from "./ExtensionSettings";
 
-type TabKey = "overview" | "snippets" | "context" | "agent";
+type TabKey = "overview" | "snippets" | "context" | "agent" | "developer";
 
 // User-facing section name is "Extensions" (the internal folder/route keeps the
 // legacy "experimentations" id). Constant so the i18n lint treats brand chrome
@@ -43,6 +44,12 @@ const TABS: {
   },
 ];
 
+const DEVELOPER_TAB = {
+  key: "developer" as const,
+  label: "Developer",
+  icon: <Code2 width={15} height={15} />,
+};
+
 /** Where each extension id's settings live (SPEC §5.1: clicking a name in
  * Overview jumps to its settings). Pack-tier ids without a tab of their own
  * land on the most related core tab. */
@@ -69,6 +76,12 @@ export const ExperimentationsSettings: React.FC = () => {
       .catch(() => undefined);
   }, []);
 
+  useEffect(() => {
+    if (!developerMode && tab === "developer") setTab("overview");
+  }, [developerMode, tab]);
+
+  const tabs = developerMode ? [...TABS, DEVELOPER_TAB] : TABS;
+
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       {/* Page title — set larger than the other consoles; the tabs sit directly
@@ -92,7 +105,7 @@ export const ExperimentationsSettings: React.FC = () => {
         aria-label={SECTION_TITLE}
         className="flex items-center gap-1 p-1 rounded-xl bg-paper-sunken border border-line"
       >
-        {TABS.map((tb) => {
+        {tabs.map((tb) => {
           const isActive = tab === tb.key;
           return (
             <button
@@ -143,11 +156,13 @@ export const ExperimentationsSettings: React.FC = () => {
           <ContextAwareSection />
           <ExtensionAnchor anchor="context.after" />
         </div>
-      ) : (
+      ) : tab === "agent" ? (
         <div className="space-y-8">
           <AgentSection />
           <ExtensionAnchor anchor="agent.after" />
         </div>
+      ) : (
+        <DeveloperSection />
       )}
     </div>
   );

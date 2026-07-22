@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
 use grain_sdk::{GrainPack, HostCall, HostFrame};
@@ -252,15 +252,14 @@ impl Workers {
         }
     }
 
-    /// Record a transform failure; returns true once the worker hits the strike
-    /// limit (caller then auto-disables).
-    fn record_strike(&self, ext_id: &str, limit: u32) -> bool {
+    /// Record a transform failure and return its new consecutive-strike count.
+    fn record_strike(&self, ext_id: &str) -> Option<u32> {
         match self.map.lock().unwrap().get_mut(ext_id) {
             Some(w) => {
                 w.strikes += 1;
-                w.strikes >= limit
+                Some(w.strikes)
             }
-            None => false,
+            None => None,
         }
     }
 }
@@ -525,7 +524,7 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
                 .and_then(|source| map_worker_error(&source, &p))
                 .or_else(|| p.stack.clone())
                 .unwrap_or_else(|| p.reason.clone());
-            log::warn!("[GRAIN] ext-host: worker '{}' died: {detail}", p.ext_id);
+            log::error!("[ext:{}] error {detail}", p.ext_id);
             kill_worker(&p.ext_id, "worker reported death");
         }
     });
@@ -616,6 +615,7 @@ fn on_event(app: &AppHandle, ev: &DaemonEvent) {
         None => return,
     };
     for id in cold {
+        log::info!("[ext:{id}] life activation {}", ev.variant_name());
         let pack = match load_manifest(app, &id) {
             Some(p) => p,
             None => continue,
@@ -674,7 +674,7 @@ fn spawn_worker(
         caps,
         activation,
     };
-    log::info!("[GRAIN] ext-host: spawning '{ext_id}' (resident={resident})");
+    log::info!("[ext:{ext_id}] life worker spawned (resident={resident})");
     ensure_supervisor(app);
     let mut sup = host.supervisor.lock().unwrap();
     if sup.ready {
@@ -757,7 +757,7 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
         None => return,
     };
     let empty = host.workers.is_empty();
-    log::info!("[GRAIN] ext-host: reaping '{ext_id}' ({reason})");
+    log::info!("[ext:{ext_id}] life worker reaped ({reason})");
     crate::events_server::revoke_token(&worker.token);
     let _ = host.app.emit_to(
         SUPERVISOR_LABEL,
@@ -878,9 +878,15 @@ pub async fn run_transforms(app: &AppHandle, text: String) -> String {
         if !is_running(&id) {
             continue;
         }
+        let started = Instant::now();
         match host
             .workers
-            .call(&id, "transform", json!({ "text": current }), TRANSFORM_DEADLINE)
+            .call(
+                &id,
+                "transform",
+                json!({ "text": current }),
+                TRANSFORM_DEADLINE,
+            )
             .await
         {
             Ok(v) => {
@@ -894,7 +900,14 @@ pub async fn run_transforms(app: &AppHandle, text: String) -> String {
             }
             Err(e) => {
                 log::warn!("[GRAIN] transform '{id}' failed ({e}) — text unchanged");
-                record_strike(app, &id);
+                let strikes = record_strike(app, &id);
+                if e == "deadline exceeded" {
+                    log::warn!(
+                        "[ext:{id}] slow transform took {} ms (budget {} ms) — strike {strikes} of {MAX_STRIKES}",
+                        started.elapsed().as_millis(),
+                        TRANSFORM_DEADLINE.as_millis(),
+                    );
+                }
             }
         }
     }
@@ -916,6 +929,7 @@ pub fn wake_for_shortcut(app: &AppHandle, ext_id: &str, shortcut_id: &str) {
     let ext_id = ext_id.to_string();
     let shortcut_id = shortcut_id.to_string();
     tauri::async_runtime::spawn(async move {
+        log::info!("[ext:{ext_id}] life activation shortcut:{shortcut_id}");
         if is_running(&ext_id) {
             let host = match HOST.get() {
                 Some(h) => h,
@@ -962,14 +976,25 @@ fn clear_strikes(ext_id: &str) {
     }
 }
 
-fn record_strike(app: &AppHandle, ext_id: &str) {
+fn record_strike(app: &AppHandle, ext_id: &str) -> u32 {
     let host = match HOST.get() {
         Some(h) => h,
-        None => return,
+        None => return 0,
     };
-    if host.workers.record_strike(ext_id, MAX_STRIKES) {
+    let strikes = host.workers.record_strike(ext_id).unwrap_or(0);
+    if strikes >= MAX_STRIKES {
         auto_disable(app, ext_id);
     }
+    strikes
+}
+
+/// Whether `id` is an explicitly loaded-unpacked project. Diagnostic call
+/// logging uses this cheap registry lookup so installed extensions add no log
+/// traffic or formatting work to the host-API path.
+pub fn is_dev_extension(app: &AppHandle, id: &str) -> bool {
+    app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.dev_path(id))
+        .is_some()
 }
 
 /// SPEC §3.3: a persistently failing transform is disabled (not left slowing
@@ -1067,6 +1092,7 @@ pub fn reload_dev_extension(
     .map_err(|error| error.to_string())?;
 
     let had_worker = is_running(id);
+    log::info!("[ext:{id}] life developer reload");
     if had_worker {
         kill_worker_inner(id, "developer hot reload", None, true);
     }
@@ -1438,12 +1464,12 @@ mod tests {
     fn strikes_trip_at_the_limit_and_reset() {
         let workers = Workers::new();
         workers.insert("a", worker(0, false));
-        assert!(!workers.record_strike("a", MAX_STRIKES));
-        assert!(!workers.record_strike("a", MAX_STRIKES));
-        assert!(workers.record_strike("a", MAX_STRIKES)); // 3rd strike → trip
+        assert_eq!(workers.record_strike("a"), Some(1));
+        assert_eq!(workers.record_strike("a"), Some(2));
+        assert_eq!(workers.record_strike("a"), Some(3)); // 3rd strike → trip
         workers.clear_strikes("a");
-        assert!(!workers.record_strike("a", MAX_STRIKES)); // counter reset
-        assert!(!workers.record_strike("missing", MAX_STRIKES)); // unknown never trips
+        assert_eq!(workers.record_strike("a"), Some(1)); // counter reset
+        assert_eq!(workers.record_strike("missing"), None); // unknown never trips
     }
 
     #[test]

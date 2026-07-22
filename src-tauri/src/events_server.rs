@@ -526,17 +526,65 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                                 let identity = identity.clone();
                                 let out_tx = out_tx.clone();
                                 tokio::spawn(async move {
+                                    let developer_logging =
+                                        crate::extension_host::is_dev_extension(
+                                            &app,
+                                            &identity.id,
+                                        );
+                                    let started = developer_logging
+                                        .then(std::time::Instant::now);
+                                    let method = developer_logging
+                                        .then(|| req.method.replace(['\r', '\n'], " "));
+                                    let denied_capability = developer_logging
+                                        .then(|| crate::host_api::required_capability(&req.method))
+                                        .flatten()
+                                        .filter(|capability| {
+                                            *capability != "__unknown__"
+                                                && !crate::host_api::has_capability(
+                                                    &identity,
+                                                    capability,
+                                                )
+                                        });
                                     let resp = match crate::host_api::dispatch(
                                         &app, &identity, &req.method, req.params,
                                     )
                                     .await
                                     {
-                                        Ok(ok) => grain_sdk::ServerResponse {
-                                            id: req.id, ok: Some(ok), err: None,
-                                        },
-                                        Err(e) => grain_sdk::ServerResponse {
-                                            id: req.id, ok: None, err: Some(e),
-                                        },
+                                        Ok(ok) => {
+                                            if developer_logging {
+                                                log::debug!(
+                                                    "[ext:{}] call {} → ok ({} ms)",
+                                                    identity.id,
+                                                    method.as_deref().unwrap_or_default(),
+                                                    started.map(|time| time.elapsed().as_millis()).unwrap_or(0),
+                                                );
+                                            }
+                                            grain_sdk::ServerResponse {
+                                                id: req.id, ok: Some(ok), err: None,
+                                            }
+                                        }
+                                        Err(e) => {
+                                            if developer_logging {
+                                                if let Some(capability) = denied_capability {
+                                                    log::error!(
+                                                        "[ext:{}] denied {} — missing capability '{}'; add \"permissions\": [\"{}\"] to manifest.json",
+                                                        identity.id,
+                                                        method.as_deref().unwrap_or_default(),
+                                                        capability,
+                                                        capability,
+                                                    );
+                                                }
+                                                log::debug!(
+                                                    "[ext:{}] call {} → error ({} ms)",
+                                                    identity.id,
+                                                    method.as_deref().unwrap_or_default(),
+                                                    started.map(|time| time.elapsed().as_millis()).unwrap_or(0),
+                                                );
+                                            }
+                                            grain_sdk::ServerResponse {
+                                                id: req.id, ok: None, err: Some(e),
+                                            }
+                                        }
                                     };
                                     if let Ok(json) =
                                         serde_json::to_string(&grain_sdk::HostFrame::Response(resp))

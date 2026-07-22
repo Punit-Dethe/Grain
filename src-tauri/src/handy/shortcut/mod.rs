@@ -596,7 +596,9 @@ pub fn change_debug_mode_setting(app: AppHandle, enabled: bool) -> Result<(), St
     settings.debug_mode = enabled;
     settings::write_settings(&app, settings);
 
-    crate::WEBVIEW_LOG_STREAMING.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    // [GRAIN] The stream is shared by Debug and Extensions > Developer; turning
+    // off one owner must not silence the other.
+    crate::refresh_webview_log_streaming(&app);
 
     // Emit event to notify frontend of debug mode change
     let _ = app.emit(

@@ -1,5 +1,6 @@
 ﻿import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useMemo } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { SettingContainer } from "../../ui/SettingContainer";
 import { Button } from "../../ui/Button";
@@ -9,6 +10,7 @@ const MAX_LINES = 1000;
 // Incoming logs are buffered and flushed on this cadence so a burst of log
 // activity can never trigger a render per line.
 const FLUSH_INTERVAL_MS = 250;
+const LOG_META_SEPARATOR = "\u00b7";
 
 // Payload emitted by tauri-plugin-log's `Webview` target on the `log://log`
 // event. `level` is the numeric LogLevel repr: Trace=1, Debug=2, Info=3,
@@ -73,25 +75,58 @@ const formatTime = (date: Date): string => {
   )}`;
 };
 
+export interface LiveLogFilter {
+  prefix?: string;
+  substring?: string;
+  minLevel?: number;
+}
+
+export interface LiveLogFilterChip extends LiveLogFilter {
+  id: string;
+  label: string;
+}
+
 interface LiveLogViewerProps {
   descriptionMode?: "tooltip" | "inline";
   grouped?: boolean;
+  filter?: LiveLogFilter;
+  filterChips?: readonly LiveLogFilterChip[];
 }
+
+const matchesFilter = (line: LogLine, filter?: LiveLogFilter): boolean =>
+  (!filter?.prefix || line.message.startsWith(filter.prefix)) &&
+  (!filter?.substring || line.message.includes(filter.substring)) &&
+  (!filter?.minLevel || line.level >= filter.minLevel);
 
 export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
   descriptionMode = "tooltip",
   grouped = false,
+  filter,
+  filterChips,
 }) => {
   const { t } = useTranslation();
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [paused, setPaused] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [activeChip, setActiveChip] = useState(
+    () => filterChips?.[0]?.id ?? "",
+  );
 
   const pendingRef = useRef<LogLine[]>([]);
   const idRef = useRef(0);
   const pausedRef = useRef(false);
   const pinnedRef = useRef(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const selectedChip = filterChips?.find((chip) => chip.id === activeChip);
+  const visibleLogs = useMemo(
+    () =>
+      logs.filter(
+        (line) =>
+          matchesFilter(line, filter) && matchesFilter(line, selectedChip),
+      ),
+    [filter, logs, selectedChip],
+  );
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -141,7 +176,7 @@ export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
     if (pinnedRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [logs]);
+  }, [visibleLogs]);
 
   const handleScroll = useCallback(() => {
     const el = scrollRef.current;
@@ -157,7 +192,7 @@ export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
   }, []);
 
   const handleCopy = useCallback(async () => {
-    const text = logs
+    const text = visibleLogs
       .map((l) => `${l.time} ${metaFor(l.level).tag} ${l.message}`)
       .join("\n");
     try {
@@ -167,7 +202,7 @@ export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
     } catch (error) {
       console.error("Failed to copy logs:", error);
     }
-  }, [logs]);
+  }, [visibleLogs]);
 
   return (
     <SettingContainer
@@ -189,9 +224,11 @@ export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
               ? t("settings.debug.liveLogs.paused")
               : t("settings.debug.liveLogs.live")}
           </span>
-          <span className="shrink-0">┬À</span>
+          <span className="shrink-0">{LOG_META_SEPARATOR}</span>
           <span className="truncate">
-            {t("settings.debug.liveLogs.lineCount", { count: logs.length })}
+            {t("settings.debug.liveLogs.lineCount", {
+              count: visibleLogs.length,
+            })}
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -208,7 +245,7 @@ export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
             variant="secondary"
             size="sm"
             onClick={handleCopy}
-            disabled={logs.length === 0}
+            disabled={visibleLogs.length === 0}
           >
             {copied ? t("settings.debug.liveLogs.copied") : t("common.copy")}
           </Button>
@@ -223,17 +260,40 @@ export const LiveLogViewer: React.FC<LiveLogViewerProps> = ({
         </div>
       </div>
 
+      {filterChips && filterChips.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          {filterChips.map((chip) => {
+            const selected = chip.id === activeChip;
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setActiveChip(chip.id)}
+                className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors ${
+                  selected
+                    ? "border-accent/40 bg-accent/10 text-accent"
+                    : "border-line bg-paper text-ink-soft hover:text-ink"
+                }`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       <div
         ref={scrollRef}
         onScroll={handleScroll}
         className="h-72 overflow-y-auto rounded-lg border border-mid-gray/30 bg-[var(--color-log-surface)] p-3 font-mono text-xs leading-relaxed select-text"
       >
-        {logs.length === 0 ? (
+        {visibleLogs.length === 0 ? (
           <div className="text-mid-gray select-none">
             {t("settings.debug.liveLogs.empty")}
           </div>
         ) : (
-          logs.map((line) => {
+          visibleLogs.map((line) => {
             const meta = metaFor(line.level);
             return (
               <div key={line.id} className="flex gap-2">
