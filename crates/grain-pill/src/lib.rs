@@ -4964,6 +4964,62 @@ mod tests {
         );
     }
 
+    /// [GRAIN] Render the three themed patterns to a PNG for the eye (SPEC §9).
+    /// Not an assertion — it draws each named pattern in a distinct colour so a
+    /// human can confirm the field is filled, coloured, and shaped as intended.
+    #[test]
+    fn themed_patterns_render_to_png() {
+        let cell = 14u32;
+        let pad = 10u32;
+        let field_w = COLS as u32 * cell;
+        let field_h = ROWS as u32 * cell;
+        let rows: [(&str, [u8; 3], PillPattern); 3] = [
+            ("static", [0, 220, 120], PillPattern::Static),
+            ("breathe", [120, 170, 255], PillPattern::Breathe),
+            ("sweep", [255, 120, 60], PillPattern::Sweep),
+        ];
+        let bw = field_w + pad * 2;
+        let bh = (field_h + pad) * rows.len() as u32 + pad;
+        let mut bg = Pixmap::new(bw, bh).unwrap();
+        bg.fill(Color::from_rgba8(8, 8, 10, 255));
+
+        for (i, (_name, dot, pattern)) in rows.into_iter().enumerate() {
+            let mut a = Aura::new();
+            a.phase = 7.0; // a lit phase for every pattern
+            assert!(a.roll_themed_field(Some(&state_theme(dot, pattern))));
+            let y0 = pad + i as u32 * (field_h + pad);
+            for r in 0..ROWS {
+                for c in 0..COLS {
+                    let px = a.dots[r * COLS + c];
+                    if px[3] == 0 {
+                        continue;
+                    }
+                    let mut p = Paint::default();
+                    p.set_color(Color::from_rgba8(px[0], px[1], px[2], px[3]));
+                    let x = pad + c as u32 * cell;
+                    let yy = y0 + r as u32 * cell;
+                    if let Some(rect) = Rect::from_xywh(
+                        x as f32 + 1.0,
+                        yy as f32 + 1.0,
+                        cell as f32 - 2.0,
+                        cell as f32 - 2.0,
+                    ) {
+                        bg.fill_path(
+                            &PathBuilder::from_rect(rect),
+                            &p,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+        let path = std::env::temp_dir().join("grain_pill_theme_preview.png");
+        bg.save_png(&path).expect("save png");
+        eprintln!("PILL_THEME_PREVIEW_PNG={}", path.display());
+    }
+
     /// The state→theme mapping is the load-bearing wiring: a theme that styles
     /// only Recording must not accidentally style Idle.
     #[test]

@@ -412,6 +412,23 @@ impl GrainPack {
                 return Err(format!("duplicate shortcut id '{}'", sc.id));
             }
         }
+
+        // A pill theme (SPEC §9) is stored opaque so its schema can evolve, but
+        // it is checked HERE so a malformed one is rejected at import rather than
+        // silently ignored at delivery. It still degrades field-by-field once
+        // valid — an unknown pattern or a partial theme is fine; a wrong shape
+        // (a string, a number) is not.
+        if let Some(theme) = &self.payloads.pill_theme {
+            if serde_json::from_value::<crate::PillTheme>(theme.clone()).is_err() {
+                return Err("payloads.pill_theme is not a valid pill theme".into());
+            }
+            // A theme only takes effect while the pack holds the `pill.theme`
+            // slot; a theme with no claim would install and do nothing, which is
+            // a packaging mistake worth catching early.
+            if !m.slots.iter().any(|s| s == "pill.theme") {
+                return Err("a pack shipping a pill theme must claim the 'pill.theme' slot".into());
+            }
+        }
         Ok(())
     }
 
@@ -440,6 +457,32 @@ mod tests {
             ),
             Ok(())
         );
+    }
+
+    #[test]
+    fn pill_theme_pack_validates() {
+        // A data pack claiming the pill.theme slot and carrying a partial theme.
+        assert_eq!(
+            pack(
+                r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack",
+                    "slots":["pill.theme"]},
+                    "payloads":{"pill_theme":{"recording":{"dot":[0,255,120],"pattern":"breathe"}}}}"#
+            ),
+            Ok(())
+        );
+        // A theme with no slot claim would install and do nothing — rejected.
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack"},
+                "payloads":{"pill_theme":{"idle":{"dot":[1,2,3]}}}}"#
+        )
+        .is_err());
+        // A wrong-shaped theme is rejected at import, not ignored at delivery.
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.neon","name":"Neon","version":"1","tier":"pack",
+                "slots":["pill.theme"]},
+                "payloads":{"pill_theme":"bright"}}"#
+        )
+        .is_err());
     }
 
     #[test]

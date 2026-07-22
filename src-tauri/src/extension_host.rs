@@ -316,6 +316,11 @@ pub fn refresh_index(app: &AppHandle) {
     // the async runtime, so this stays safe even when the change was caused by
     // a shortcut press.
     crate::extension_shortcuts::sync(app);
+    // Same logic for the pill theme (SPEC §9): a change to the `pill.theme` slot
+    // occupant only happens through a registry mutation, and this runs on every
+    // one. The broadcast reaches a connected pill; a pill that connects later
+    // gets the theme in its welcome instead.
+    crate::pill_theme::broadcast(app);
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.

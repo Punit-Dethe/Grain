@@ -45,6 +45,10 @@ pub const CORE_DEFAULT: &str = "grain.core";
 /// competes for the Agent's reply surface.
 pub const AGENT_REPLY_SURFACE_SLOT: &str = "agent.reply-surface";
 
+/// The slot a pill-theme pack occupies (SPEC §9). Core holds it by default;
+/// whoever holds it supplies the pill's look.
+pub const PILL_THEME_SLOT: &str = "pill.theme";
+
 /// Built-in extension ids (enabled state delegates to settings flags).
 pub const BUILTIN_SNIPPETS: &str = "grain.snippets";
 pub const BUILTIN_CONTEXT: &str = "grain.context-awareness";
@@ -199,7 +203,13 @@ impl ExtensionsRegistry {
 
     /// All installed pack records (unordered; callers sort by toggle_seq).
     pub fn records(&self) -> Vec<ExtensionRecord> {
-        self.state.read().unwrap().records.values().cloned().collect()
+        self.state
+            .read()
+            .unwrap()
+            .records
+            .values()
+            .cloned()
+            .collect()
     }
 
     pub fn record(&self, id: &str) -> Option<ExtensionRecord> {
@@ -276,7 +286,10 @@ impl ExtensionsRegistry {
                 .records
                 .get(challenger)
                 .map(|r| {
-                    r.slots.iter().chain(r.variant_slots.iter()).any(|s| s == slot)
+                    r.slots
+                        .iter()
+                        .chain(r.variant_slots.iter())
+                        .any(|s| s == slot)
                 })
                 .unwrap_or(false);
             if !declares {
@@ -343,11 +356,7 @@ impl ExtensionsRegistry {
     pub fn set_enabled(&self, id: &str, enabled: bool) -> Result<bool> {
         if enabled {
             if let Some(c) = self.slot_conflict(id) {
-                anyhow::bail!(
-                    "slot '{}' is occupied by '{}'",
-                    c.slot,
-                    c.current_occupant
-                );
+                anyhow::bail!("slot '{}' is occupied by '{}'", c.slot, c.current_occupant);
             }
         }
         let changed = {
@@ -428,9 +437,7 @@ impl ExtensionsRegistry {
             let stale: Vec<String> = state
                 .slot_claims
                 .iter()
-                .filter(|(slot, occupant)| {
-                    occupant.as_str() == id && !declared.contains(slot)
-                })
+                .filter(|(slot, occupant)| occupant.as_str() == id && !declared.contains(slot))
                 .map(|(slot, _)| slot.clone())
                 .collect();
             for slot in stale {
@@ -498,7 +505,10 @@ mod tests {
         }
         reg.set_enabled("a", true).unwrap();
         reg.set_enabled("b", true).unwrap();
-        assert!(reg.toggle_seq("a") < reg.toggle_seq("b"), "first enabled = top");
+        assert!(
+            reg.toggle_seq("a") < reg.toggle_seq("b"),
+            "first enabled = top"
+        );
 
         // Built-ins participate in the same ordering space.
         reg.touch_builtin_toggle(BUILTIN_SNIPPETS).unwrap();
@@ -569,13 +579,19 @@ mod tests {
         );
         // Takeover disables the incumbent in the same transaction: SPEC §3.2
         // has no state where two enabled extensions both own a slot.
-        assert_eq!(reg.take_slot("b", "pill.theme").unwrap().as_deref(), Some("a"));
+        assert_eq!(
+            reg.take_slot("b", "pill.theme").unwrap().as_deref(),
+            Some("a")
+        );
         assert!(!reg.is_enabled("a"));
         assert!(reg.set_enabled("b", true).unwrap());
 
         // Disable releases back to Grain's default — never to the loser.
         reg.set_enabled("b", false).unwrap();
-        assert_eq!(reg.slot_occupant("pill.theme").as_deref(), Some(CORE_DEFAULT));
+        assert_eq!(
+            reg.slot_occupant("pill.theme").as_deref(),
+            Some(CORE_DEFAULT)
+        );
         assert!(reg.slots_held("b").is_empty());
     }
 
@@ -626,7 +642,8 @@ mod tests {
         // Selecting the centre look is what takes the slot (SPEC §10.2).
         reg.set_slot_claim(AGENT_REPLY_SURFACE_SLOT, AGENT_CENTER_VARIANT_ID)
             .unwrap();
-        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT])).unwrap();
+        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT]))
+            .unwrap();
         assert_eq!(
             reg.slot_conflict("rival").unwrap().current_occupant,
             AGENT_CENTER_VARIANT_ID.to_string()
@@ -654,7 +671,8 @@ mod tests {
         );
 
         // A pack that genuinely CLAIMS the same slot still faces the prompt.
-        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT])).unwrap();
+        reg.install(pack("rival", &[AGENT_REPLY_SURFACE_SLOT]))
+            .unwrap();
         assert!(reg.set_enabled("rival", true).is_err());
     }
 
@@ -765,11 +783,13 @@ pub fn apply_prompt_pack(
 ) {
     remove_prompt_pack(settings, ext_id);
     for e in entries {
-        settings.post_process_prompts.push(crate::settings::LLMPrompt {
-            id: format!("ext:{ext_id}:{}", e.id),
-            name: e.name.clone(),
-            prompt: e.prompt.clone(),
-        });
+        settings
+            .post_process_prompts
+            .push(crate::settings::LLMPrompt {
+                id: format!("ext:{ext_id}:{}", e.id),
+                name: e.name.clone(),
+                prompt: e.prompt.clone(),
+            });
     }
 }
 
@@ -778,7 +798,9 @@ pub fn apply_prompt_pack(
 /// never a dangling id (the §10.2 restore principle, applied to prompts).
 pub fn remove_prompt_pack(settings: &mut crate::settings::AppSettings, ext_id: &str) {
     let prefix = format!("ext:{ext_id}:");
-    settings.post_process_prompts.retain(|p| !p.id.starts_with(&prefix));
+    settings
+        .post_process_prompts
+        .retain(|p| !p.id.starts_with(&prefix));
     if let Some(sel) = &settings.post_process_selected_prompt_id {
         if sel.starts_with(&prefix) {
             settings.post_process_selected_prompt_id =
@@ -826,7 +848,12 @@ mod pack_tests {
             .any(|p| p.id.starts_with("ext:com.x.zh:")));
         // Selection healed to a real prompt, not left dangling.
         let sel = s.post_process_selected_prompt_id.clone();
-        assert!(sel.is_none() || s.post_process_prompts.iter().any(|p| Some(&p.id) == sel.as_ref()));
+        assert!(
+            sel.is_none()
+                || s.post_process_prompts
+                    .iter()
+                    .any(|p| Some(&p.id) == sel.as_ref())
+        );
         assert_ne!(sel.as_deref(), Some("ext:com.x.zh:formal"));
     }
 }

@@ -210,6 +210,13 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
             out_tx.clone(),
         ))
     } else {
+        // [GRAIN] SPEC §9: greet the pill (the non-extension `All` client) with
+        // the current theme, so its very first reveal already wears it — a
+        // broadcast reaches only clients already connected, and the pill
+        // connects late. A worker never themes anything, so it is skipped.
+        if let Some(frame) = crate::pill_theme::welcome_frame(&app) {
+            let _ = out_tx.send(Message::Text(frame.into()));
+        }
         None
     };
 

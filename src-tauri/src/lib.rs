@@ -68,6 +68,7 @@ mod managers;
 mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
 #[path = "handy/portable.rs"]
 pub mod portable;
+mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
