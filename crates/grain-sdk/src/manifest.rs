@@ -238,6 +238,11 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     "surface:workspace",
     "surface:overlay",
     "pill:slots",
+    // Phase 3 (Grain Space Test): read the user's current selection — the
+    // quick-add path a note-capture extension needs. Sensitive (it reads
+    // whatever is selected in any app), so it is its own grant, meant to be
+    // paired with a user-initiated trigger like a shortcut.
+    "capture:selection",
 ];
 
 /// One prompt in a prompt pack. Applied to the user's prompt list under the

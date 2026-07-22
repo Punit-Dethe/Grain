@@ -118,6 +118,19 @@ export const GRAIN_RUNTIME_JS = `(function () {
       set: function (k, v) { return req("storage.set", { key: String(k), value: v }); },
       "delete": function (k) { return req("storage.delete", { key: String(k) }); }
     },
+    // A document store: one file per key (SPEC 3.4), for collections a KV blob
+    // would be the wrong shape for — notes, records, anything that grows.
+    doc: {
+      get: function (k) { return req("doc.get", { key: String(k) }); },
+      put: function (k, v) { return req("doc.put", { key: String(k), value: v }); },
+      "delete": function (k) { return req("doc.delete", { key: String(k) }); },
+      list: function () { return req("doc.list", {}).then(function (r) { return r && r.keys != null ? r.keys : r; }); }
+    },
+    // Read the user's current selection (needs the capture:selection grant).
+    // Resolves to the selected text, or null when nothing is selected.
+    captureSelection: function () {
+      return req("capture.selection", {}).then(function (r) { return r && r.text != null ? r.text : null; });
+    },
     settings: {
       get: function (k) { return req("settings.get", { key: String(k) }); },
       set: function (k, v) { return req("settings.set", { key: String(k), value: v }); }
@@ -129,7 +142,13 @@ export const GRAIN_RUNTIME_JS = `(function () {
         });
       }
     },
-    embed: function (texts) { return req("embed", { texts: texts }); },
+    // On-device embeddings (the same BGE model Grain Space uses). Resolves to an
+    // array of vectors, one per input text.
+    embed: function (texts) {
+      return req("embed", { texts: texts }).then(function (r) {
+        return r && r.vectors != null ? r.vectors : r;
+      });
+    },
     // The extension asks for ITS OWN workspace surface (SPEC §1.2) — there is
     // no id to pass, because the host derives which extension is calling from
     // the channel, not from an argument. The payload reaches the surface UI on

@@ -68,6 +68,13 @@ const BRIDGE = `<script>(function(){
       set: function(k, v){ return call("storage.set", { key: k, value: v }); },
       "delete": function(k){ return call("storage.delete", { key: k }); }
     },
+    doc: {
+      get: function(k){ return call("doc.get", { key: k }); },
+      put: function(k, v){ return call("doc.put", { key: k, value: v }); },
+      "delete": function(k){ return call("doc.delete", { key: k }); },
+      list: function(){ return call("doc.list", {}).then(function(r){ return r && r.keys != null ? r.keys : r; }); }
+    },
+    embed: function(texts){ return call("embed", { texts: texts }).then(function(r){ return r && r.vectors != null ? r.vectors : r; }); },
     settings: {
       get: function(k){ return call("settings.get", { key: k }); },
       set: function(k, v){ return call("settings.set", { key: k, value: v }); }

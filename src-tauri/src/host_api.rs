@@ -26,6 +26,11 @@ use crate::events_auth::{CapabilitySet, ClientIdentity};
 /// Per-extension storage quota (SPEC §3.4). 200 MB, generous for KV + docs.
 const STORAGE_QUOTA_BYTES: u64 = 200 * 1024 * 1024;
 
+/// Cap on texts per `embed` call. The engine holds every input's tokens in
+/// memory at once, so an unbounded batch is a memory-exhaustion lever; a
+/// low-RAM device would rather the extension chunk its work.
+const EMBED_MAX_BATCH: usize = 64;
+
 /// Reserved key inside the storage file for the extension's own settings
 /// namespace (`ext.<id>.*`). There is no path to `AppSettings` — this is the
 /// entire "settings" surface an extension has (SPEC §4.2).
@@ -46,10 +51,12 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
     match method {
         "log.info" | "log.warn" => None,
         "storage.get" | "storage.set" | "storage.delete" => Some("storage"),
+        "doc.get" | "doc.put" | "doc.delete" | "doc.list" => Some("storage"),
         "settings.get" | "settings.set" => Some("settings"),
         "llm.complete" => Some("llm"),
         "embed" => Some("embed"),
         "session.start" => Some("session:start"),
+        "capture.selection" => Some("capture:selection"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
         "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -61,15 +68,112 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
 /// and round-trip behavior are unit-tested directly.
 pub struct ExtStorage {
     path: PathBuf,
+    /// `<data>/extensions/<id>.docs/` — the document store's own directory, one
+    /// file per document, so a large collection is not one blob rewritten on
+    /// every edit (SPEC §3.4: notes are documents, not KV values).
+    docs_dir: PathBuf,
 }
 
 impl ExtStorage {
     pub fn new(data_dir: &std::path::Path, ext_id: &str) -> Self {
+        let ext_dir = data_dir.join("extensions");
         Self {
-            path: data_dir
-                .join("extensions")
-                .join(format!("{ext_id}.storage.json")),
+            path: ext_dir.join(format!("{ext_id}.storage.json")),
+            docs_dir: ext_dir.join(format!("{ext_id}.docs")),
         }
+    }
+
+    /// A document key sanitized to a single safe filename. Rejects anything that
+    /// could escape the store's directory or collide across keys — the whole
+    /// point of a per-document file is undone if a key can be `../../secrets`.
+    /// Pure and total, so it is exhaustively unit-tested.
+    pub fn safe_doc_name(key: &str) -> Result<String, String> {
+        let key = key.trim();
+        if key.is_empty() {
+            return Err("a document key must not be empty".into());
+        }
+        if key.len() > 200 {
+            return Err("a document key is at most 200 characters".into());
+        }
+        // Allowlist, not denylist: only characters that are unambiguously safe
+        // in a filename on every platform, and never a path separator or dot-run.
+        if !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        {
+            return Err("a document key may contain only letters, digits, '-', '_' and '.'".into());
+        }
+        // `.` and `..` (and any all-dots name) are path traversal, not documents.
+        if key.chars().all(|c| c == '.') {
+            return Err("a document key must not be all dots".into());
+        }
+        Ok(format!("{key}.json"))
+    }
+
+    fn doc_path(&self, key: &str) -> Result<PathBuf, String> {
+        Ok(self.docs_dir.join(Self::safe_doc_name(key)?))
+    }
+
+    /// Total bytes the document store currently occupies (for the quota).
+    fn docs_bytes(&self) -> u64 {
+        std::fs::read_dir(&self.docs_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| e.metadata().ok())
+            .map(|m| m.len())
+            .sum()
+    }
+
+    pub fn doc_get(&self, key: &str) -> Result<Value, String> {
+        let path = self.doc_path(key)?;
+        match std::fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
+            Err(_) => Ok(Value::Null), // absent document reads as null, like KV
+        }
+    }
+
+    pub fn doc_put(&self, key: &str, value: Value) -> Result<(), String> {
+        let path = self.doc_path(key)?;
+        let json = serde_json::to_string(&value).map_err(|e| e.to_string())?;
+        // Quota covers the doc store as a whole; charge the NEW size of this doc
+        // against the total minus whatever this key used to occupy.
+        let prev = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let projected = self.docs_bytes().saturating_sub(prev) + json.len() as u64;
+        if projected > STORAGE_QUOTA_BYTES {
+            return Err(format!(
+                "document storage quota exceeded ({} MB max)",
+                STORAGE_QUOTA_BYTES / (1024 * 1024)
+            ));
+        }
+        std::fs::create_dir_all(&self.docs_dir).map_err(|e| e.to_string())?;
+        std::fs::write(&path, json).map_err(|e| e.to_string())
+    }
+
+    pub fn doc_delete(&self, key: &str) -> Result<(), String> {
+        let path = self.doc_path(key)?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// Every document key currently stored (without the `.json` suffix), sorted.
+    pub fn doc_list(&self) -> Vec<String> {
+        let mut keys: Vec<String> = std::fs::read_dir(&self.docs_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                e.file_name()
+                    .to_str()
+                    .and_then(|n| n.strip_suffix(".json"))
+                    .map(str::to_string)
+            })
+            .collect();
+        keys.sort();
+        keys
     }
 
     fn load(&self) -> BTreeMap<String, Value> {
@@ -180,6 +284,21 @@ pub async fn dispatch(
             store.delete(&param_str(&params, "key")?)?;
             Ok(Value::Null)
         }
+        // [GRAIN] SPEC §3.4: the document store — one file per key, so a large
+        // note collection is not one blob rewritten on every edit. Same
+        // `storage` grant, same quota; the key is a path-safe filename.
+        "doc.get" => store.doc_get(&param_str(&params, "key")?),
+        "doc.put" => {
+            let key = param_str(&params, "key")?;
+            let value = params.get("value").cloned().unwrap_or(Value::Null);
+            store.doc_put(&key, value)?;
+            Ok(Value::Null)
+        }
+        "doc.delete" => {
+            store.doc_delete(&param_str(&params, "key")?)?;
+            Ok(Value::Null)
+        }
+        "doc.list" => Ok(json!({ "keys": store.doc_list() })),
         // [GRAIN] SPEC §1.2: the extension asks for ITS OWN workspace and gets
         // nothing else — there is no id parameter to point at another
         // extension's surface, because identity comes from the channel.
@@ -241,9 +360,44 @@ pub async fn dispatch(
             Ok(json!({ "text": text }))
         }
         "embed" => {
-            // Reserved (SPEC): the grain_space embedder isn't exposed as a
-            // shared host call yet. Fails cleanly rather than half-working.
-            Err("embed is not available in this version".into())
+            // [GRAIN] SPEC §1.3 / Grain Space Test: the same on-device BGE
+            // embedder Grain Space uses, offered to extensions. Local, free,
+            // private — the reason a Grain-Space-class extension is buildable
+            // without shipping its own model. Blocking (model inference), so it
+            // runs on the blocking pool; failure to load the model is surfaced
+            // verbatim rather than pretended around.
+            let texts: Vec<String> = params
+                .get("texts")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|v| v.as_str().unwrap_or_default().to_string())
+                        .collect()
+                })
+                .ok_or("embed requires a 'texts' array of strings")?;
+            if texts.len() > EMBED_MAX_BATCH {
+                return Err(format!(
+                    "embed accepts at most {EMBED_MAX_BATCH} texts per call"
+                ));
+            }
+            let vectors =
+                tokio::task::spawn_blocking(move || crate::grain_space::embed::embed(texts))
+                    .await
+                    .map_err(|e| format!("embed task failed: {e}"))?
+                    .map_err(|e| e.to_string())?;
+            Ok(json!({ "vectors": vectors }))
+        }
+        "capture.selection" => {
+            // [GRAIN] Grain Space Test: the selection quick-add path. Simulates
+            // a copy in the foreground app, reads the result, and restores the
+            // clipboard — the same primitive the Agent and Grain Space capture
+            // use. Blocking (it polls the clipboard), so off the async thread;
+            // `null` when there was nothing selected.
+            let app2 = app.clone();
+            let text = tokio::task::spawn_blocking(move || crate::agent::capture_selection(&app2))
+                .await
+                .map_err(|e| format!("capture task failed: {e}"))?;
+            Ok(json!({ "text": text }))
         }
         "session.start" => {
             // Structural capability reserved + plumbed (guide step 7): the name
@@ -278,6 +432,14 @@ mod tests {
         assert_eq!(required_capability("storage.set"), Some("storage"));
         assert_eq!(required_capability("llm.complete"), Some("llm"));
         assert_eq!(required_capability("session.start"), Some("session:start"));
+        assert_eq!(
+            required_capability("capture.selection"),
+            Some("capture:selection")
+        );
+        assert_eq!(required_capability("embed"), Some("embed"));
+        // The document store shares the storage grant.
+        assert_eq!(required_capability("doc.put"), Some("storage"));
+        assert_eq!(required_capability("doc.list"), Some("storage"));
         assert_eq!(required_capability("log.info"), None);
         // Unknown methods require an ungrantable capability → always denied.
         assert_eq!(required_capability("os.exec"), Some("__unknown__"));
@@ -314,5 +476,63 @@ mod tests {
         assert!(s.set("k", json!(huge)).is_err());
         // A normal value still writes.
         assert!(s.set("k", json!("small")).is_ok());
+    }
+
+    #[test]
+    fn document_keys_cannot_escape_the_store() {
+        // The security-critical part: a key is a filename, never a path.
+        for bad in [
+            "",
+            "  ",
+            "../secrets",
+            "a/b",
+            "a\\b",
+            ".",
+            "..",
+            "...",
+            "a b",
+            "a:b",
+            "note\0",
+            &"x".repeat(201),
+        ] {
+            assert!(
+                ExtStorage::safe_doc_name(bad).is_err(),
+                "key {bad:?} must be rejected"
+            );
+        }
+        for ok in ["note", "note-1", "note_1", "a.b", "2026-07-22", "Z9"] {
+            assert_eq!(ExtStorage::safe_doc_name(ok).unwrap(), format!("{ok}.json"));
+        }
+    }
+
+    #[test]
+    fn document_store_roundtrips_and_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = ExtStorage::new(dir.path(), "com.example.docs");
+        assert_eq!(s.doc_get("a").unwrap(), Value::Null); // absent → null
+        assert!(s.doc_list().is_empty());
+
+        s.doc_put("a", json!({"body": "one"})).unwrap();
+        s.doc_put("b", json!({"body": "two"})).unwrap();
+        assert_eq!(s.doc_get("a").unwrap(), json!({"body": "one"}));
+        assert_eq!(s.doc_list(), vec!["a".to_string(), "b".to_string()]);
+
+        // A document is its own file — the KV store is untouched by doc writes.
+        assert_eq!(s.get("a"), Value::Null);
+
+        s.doc_delete("a").unwrap();
+        assert_eq!(s.doc_get("a").unwrap(), Value::Null);
+        assert_eq!(s.doc_list(), vec!["b".to_string()]);
+        // Deleting an absent document is not an error.
+        assert!(s.doc_delete("gone").is_ok());
+    }
+
+    #[test]
+    fn document_put_rejects_an_unsafe_key_before_touching_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = ExtStorage::new(dir.path(), "com.example.docs");
+        assert!(s.doc_put("../escape", json!(1)).is_err());
+        assert!(s.doc_get("../escape").is_err());
+        assert!(s.doc_delete("../escape").is_err());
     }
 }
