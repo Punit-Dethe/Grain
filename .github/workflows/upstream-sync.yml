@@ -4,9 +4,12 @@ name: Upstream Sync
 #
 # Every 2 hours this workflow:
 #   1. refreshes Upstream/data.json (the per-commit assessment ledger the
-#      Upstream/index.html dashboard renders);
-#   2. trial-merges upstream/main and writes Upstream/merge-report.md so the
-#      next sync's conflict surface is always known in advance;
+#      Upstream/index.html dashboard renders) plus Upstream/data.js, the
+#      offline copy that lets the dashboard open straight off the filesystem;
+#   2. trial-merges upstream/main and writes Upstream/merge-report.md (and its
+#      machine-readable twin Upstream/status.json, which puts the behind-count
+#      and conflict list on the dashboard) so the next sync's conflict surface
+#      is always known in advance;
 #   3. if upstream has new commits AND the merge is clean, opens (or updates)
 #      an automatic sync PR — reviewing that PR is the entire sync workflow
 #      for the common case. Conflicted merges are never auto-opened; the
@@ -61,7 +64,9 @@ jobs:
         run: |
           BASE=$(git merge-base HEAD upstream/main || true)
           REPORT="Upstream/merge-report.md"
+          STATUS="Upstream/status.json"
           BEHIND=$(git rev-list --count HEAD..upstream/main)
+          CONFLICTS=""
           {
             echo "# Upstream Merge Report"
             echo
@@ -99,6 +104,29 @@ jobs:
           echo "clean=$CLEAN" >> "$GITHUB_OUTPUT"
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
 
+          # Machine-readable twin of the report: the dashboard renders this so
+          # "are we keeping up?" is answerable without reading CI logs.
+          UPSTREAM_HEAD="$(git rev-parse --short upstream/main)" \
+          UPSTREAM_SUBJECT="$(git log -1 --format='%s' upstream/main)" \
+          UPSTREAM_DATE="$(git log -1 --format='%cI' upstream/main)" \
+          LATEST_TAG="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || echo none)" \
+          MERGE_BASE="$(test -n "$BASE" && git rev-parse --short "$BASE" || echo '')" \
+          BEHIND="$BEHIND" CLEAN="$CLEAN" CONFLICTS="$CONFLICTS" \
+          python - <<'PY' > "$STATUS"
+          import json, os
+          conflicts = [f for f in os.environ["CONFLICTS"].split("\n") if f.strip()]
+          print(json.dumps({
+              "upstream_head": os.environ["UPSTREAM_HEAD"],
+              "upstream_subject": os.environ["UPSTREAM_SUBJECT"],
+              "upstream_date": os.environ["UPSTREAM_DATE"],
+              "latest_tag": os.environ["LATEST_TAG"],
+              "merge_base": os.environ["MERGE_BASE"],
+              "behind": int(os.environ["BEHIND"]),
+              "trial_clean": os.environ["CLEAN"] == "true",
+              "conflicts": conflicts,
+          }, indent=2))
+          PY
+
       # Ledger + ancestry audit. Runs BEFORE the PR step because it detects
       # already-applied commits (cherry-picked work git has no ancestry for) —
       # auto-merging those would replay resolved work and its conflicts.
@@ -107,6 +135,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Without pipefail the pipe reports tee's status, so a crashed
+          # scraper looked like a successful sync that found nothing.
+          set -o pipefail
           python Upstream/sync_upstream.py | tee /tmp/ledger.txt
           if grep -q "ALREADY APPLIED" /tmp/ledger.txt; then
             echo "drift=true" >> "$GITHUB_OUTPUT"
@@ -163,6 +194,6 @@ jobs:
 
       - name: Commit and Push Changes
         run: |
-          git add Upstream/data.json Upstream/merge-report.md
+          git add Upstream/data.json Upstream/data.js Upstream/status.json Upstream/merge-report.md
           # Only commit if there are changes
           git diff --quiet && git diff --staged --quiet || (git commit -m "chore: sync upstream commits" && git push)

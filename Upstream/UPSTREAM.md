@@ -96,9 +96,16 @@ tooling.
 
 1. **Ledger**: [sync_upstream.py](sync_upstream.py) pulls new upstream commits
    into [data.json](data.json) as `Pending` — rendered by
-   [index.html](index.html), the tracker dashboard.
+   [index.html](index.html), the tracker dashboard. It pages the API until it
+   reaches the ledger's oldest entry (a single page silently dropped commits
+   whenever upstream landed a burst), keys on **SHA** (subjects repeat —
+   `update catalog`, `bump tauri global shortcut`), and pre-files a commit
+   already in our ancestry as `Merged` rather than inventing review work.
 2. **Trial merge** → [merge-report.md](merge-report.md): the next sync's
-   conflict surface, always known in advance.
+   conflict surface, always known in advance. Its machine-readable twin
+   `status.json` (behind count, trial result, conflicting files, ancestry
+   drift) is what puts sync health on the dashboard, so "are we keeping up?"
+   never requires reading CI logs.
 3. **Ancestry audit**: flags upstream commits that are already applied here but
    unrecorded (see D below) — and gates step 4 on it.
 4. **Auto-PR**: clean merge + new commits + no ancestry drift → the
@@ -109,6 +116,13 @@ tooling.
 
 [`divergence-ratchet.yml`](../.github/workflows/divergence-ratchet.yml) on
 every push/PR touching `src-tauri/`: the boundary cannot silently erode.
+
+**The dashboard is a plain file — open `Upstream/index.html` and it works.**
+Browsers forbid `fetch()` on a `file://` origin, so the page also ships a
+generated `data.js` (ledger + status baked into a `<script>`) and falls back to
+it, labelling itself `offline copy`. Regenerate all three outputs — `data.json`,
+`status.json`, `data.js` — with `python Upstream/sync_upstream.py`; never edit
+`data.js` or `status.json` by hand.
 
 ### 4. Guards — the boundary is enforced, not hoped for
 
@@ -250,4 +264,5 @@ same commit.
 | 2026-07-17 | `v0.9.3` closed out | Merge base advanced via `git merge -s ours v0.9.3` (tree unchanged); trial-merge conflicts 57 → **0**. |
 | 2026-07-19/20 | — | **Handy Isolation phases 1-7**: audio chain re-baselined onto upstream text; inert files; Grain code extracted to `grain_*` modules; divergence ratchet CI; folder move to `src/handy/` (R100 renames; merge mapping verified with simulated upstream commits). Divergence 5561 → ~3580 lines / 26 files. Three upstreamable fixes catalogued. |
 | 2026-07-20 | infra | This architecture: auto-sync PRs, shared rerere cache, stray-file guard, `Upstream/` as the single home for all sync machinery. |
+| 2026-07-22 | tracker repairs | Ledger was losing commits: one 30-commit API page (no paging) and a **subject** dedup key that swallowed upstream's repeated subjects. Re-keyed on SHA + PR number; two commits it had dropped (#1529, #1447) recovered, and commits already in our ancestry now pre-file as `Merged` instead of padding the review queue. Dashboard opened to an error off the filesystem (`fetch()` is blocked on `file://`) — it now falls back to a generated `data.js`, and shows behind-count / conflicts / drift from `status.json`. Ratchet was red on `main` (extension-platform `[GRAIN]` hooks landed unbudgeted), re-baselined — while red it also gated the auto-sync PR. |
 | 2026-07-20 | `cdbc2239` closed out | #1697/#1701/#1708/#1709 were applied by cherry-pick, so git still counted them unmerged — the cause of the recurring `es/translation.json` conflict. Content verified (3 files byte-identical; the 4 keys the Spanish pick dropped belong to upstream's replaced model-list UI and are referenced nowhere in Grain), then recorded with `merge -s ours`. Trial merge: 1 conflict / 4 behind → **clean / 0 behind**. Ancestry-drift detection added so this cannot recur silently. |
