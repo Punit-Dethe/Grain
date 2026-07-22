@@ -71,6 +71,7 @@ rustfft = "6.4.0"
 strsim = "0.11.0"
 natural = "0.5.0"
 regex = "1"
+sourcemap = "9.3.2" # [GRAIN] Dev-only worker stack mapping (parsed only on error).
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 # [GRAIN] Grain Space: vector index for opt-in semantic note search. The

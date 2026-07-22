@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–4 shipped 2026-07-22:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, and `grain-ext dev` incremental build + authenticated hot reload. **Step 5 (source maps) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–5 shipped 2026-07-22:** WS `Origin` hardening, `grain-ext init`, in-app load-unpacked/dev overrides, authenticated hot reload, and source-mapped developer worker errors. **Step 6 (developer panel) is next.** |
 
 **Phase 3.5 step 4 detail.** `grain-ext dev` performs one normal build, keeps
 the project's build command alive in incremental `--watch` mode, watches its
@@ -45,6 +45,17 @@ per-generation growth). The live pass also fixed two lifecycle defects it
 exposed: esbuild now uses `--watch=forever` when the CLI has no interactive
 stdin, and extension shortcut reconciliation retries after the core shortcut
 backend initializes while remaining idempotent across every hot reload.
+
+**Phase 3.5 step 5 detail.** The supervisor now reports the worker's full
+error stack, blob URL, and injected-runtime line offset. For load-unpacked
+workers, Rust keeps only the canonical project/entry paths while the worker is
+healthy; on failure it resolves the generated file's `sourceMappingURL`,
+accepts inline maps or a canonical external map inside the approved project
+(10 MB ceiling), maps every author frame, then drops the parsed map. Installed
+extensions and healthy workers pay no map-memory cost. A real WebView2 worker
+throw in bundled `dist/main.js` reported `src/main.ts:3:1`; the pure mapper has
+the same authored-file assertion. Raw stacks remain the fallback when a custom
+build supplies no valid map.
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -507,13 +518,13 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–4 (`Origin` hardening,
-   `grain-ext init`, load-unpacked, and authenticated hot reload) are shipped.
-   The live step-4 latency/RSS gate passed. Continue with source maps →
-   developer panel → typed errors → `doctor`
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–5 (`Origin` hardening,
+   `grain-ext init`, load-unpacked, authenticated hot reload, and source maps)
+   are shipped. The live step-4 latency/RSS and step-5 authored-stack gates
+   passed. Continue with developer panel → typed errors → `doctor`
    → author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks step 5.*
+   *Nothing blocks step 6.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`
@@ -554,8 +565,9 @@ record (full ledger: DISTRIBUTION-PLAN §8).
 - **C-5 — archive extraction does not exist yet**, so its traversal/zip-bomb
   tests get written *first* (5A step 4). Zed shipped a CVSS 7.4 Zip Slip in
   exactly this code.
-- **C-6 — `entry_source` as an embedded string** blocks source maps and hides
-  payloads → registry-built artifacts + dev source maps.
+- **C-6 — `entry_source` as an embedded string.** The developer half is fixed:
+  load-unpacked worker stacks are source-mapped to author files. Registry-built
+  installed artifacts still replace embedded payloads in Phase 5B.
 - **C-10 — Grain's own updater is live with a pinned minisign key.** Reuse that
   crypto shape for the index; do not invent one.
 

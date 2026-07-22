@@ -31,7 +31,9 @@ export const GRAIN_RUNTIME_JS = `(function () {
   var open = false;
 
   function fatal(reason) {
-    try { self.postMessage({ type: "fatal", reason: String(reason) }); } catch (e) {}
+    var message = (reason && reason.message ? String(reason.message) : String(reason)).slice(0, 65536);
+    var stack = reason && reason.stack ? String(reason.stack).slice(0, 65536) : undefined;
+    try { self.postMessage({ type: "fatal", reason: message, stack: stack }); } catch (e) {}
   }
 
   function send(obj) {
@@ -94,7 +96,7 @@ export const GRAIN_RUNTIME_JS = `(function () {
 
   function deliverEvent(ev) {
     if (typeof onEventFn === "function") {
-      try { onEventFn(ev); } catch (e) { fatal((e && e.message) || e); }
+      try { onEventFn(ev); } catch (e) { fatal(e); }
     }
   }
 

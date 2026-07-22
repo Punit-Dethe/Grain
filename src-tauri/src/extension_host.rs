@@ -23,6 +23,7 @@
 //! [`crate::host_api`]); this module is the *lifecycle*, not the enforcement.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::Duration;
@@ -51,6 +52,15 @@ const REAP_INTERVAL_SECS: u64 = 30;
 const TRANSFORM_DEADLINE: Duration = Duration::from_millis(150);
 /// Consecutive transform failures before auto-disable (SPEC §3.3).
 const MAX_STRIKES: u32 = 3;
+/// Source maps are read only after a dev worker fails. Bound the exceptional
+/// allocation independently from the 5 MB generated-entry limit.
+const MAX_SOURCE_MAP_BYTES: u64 = 10 * 1024 * 1024;
+
+#[derive(Clone)]
+struct DevSource {
+    root: PathBuf,
+    entry: PathBuf,
+}
 
 /// One extension worker's live connection channel. Populated by
 /// [`attach_connection`] when the worker's WS authenticates in `events_server`.
@@ -76,6 +86,8 @@ struct Worker {
     /// `Arc` so the connection can bump it directly (no lock per frame).
     last_activity: Arc<AtomicU64>,
     conn: Option<WorkerConn>,
+    /// Paths only; the source map is loaded and parsed solely on failure.
+    dev_source: Option<DevSource>,
 }
 
 /// The worker registry: the map plus every operation over it. Deliberately free
@@ -119,6 +131,14 @@ impl Workers {
 
     fn len(&self) -> usize {
         self.map.lock().unwrap().len()
+    }
+
+    fn dev_source(&self, ext_id: &str) -> Option<DevSource> {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .and_then(|worker| worker.dev_source.clone())
     }
 
     /// Register a spawned worker's matching connection and return its shared
@@ -364,6 +384,16 @@ struct DiedPayload {
     ext_id: String,
     #[serde(default)]
     reason: String,
+    #[serde(default)]
+    stack: Option<String>,
+    #[serde(default)]
+    worker_url: Option<String>,
+    #[serde(default)]
+    entry_line_offset: u32,
+    #[serde(default)]
+    line: Option<u32>,
+    #[serde(default)]
+    column: Option<u32>,
 }
 
 fn now_secs() -> u64 {
@@ -371,6 +401,96 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Resolve the map declared by the exact generated file the worker executed.
+/// External maps must remain inside the already-approved project root; inline
+/// maps need no filesystem access. Nothing is retained after this call.
+fn load_dev_source_map(source: &DevSource) -> Option<(sourcemap::DecodedMap, PathBuf)> {
+    let generated = std::fs::read(&source.entry).ok()?;
+    let reference = sourcemap::locate_sourcemap_reference_slice(&generated)
+        .ok()
+        .flatten()?;
+    let base = source.entry.parent()?.to_path_buf();
+    if let Ok(Some(map)) = reference.get_embedded_sourcemap() {
+        return Some((map, base));
+    }
+
+    let map_path = reference.resolve_path(&source.entry)?.canonicalize().ok()?;
+    if !map_path.starts_with(&source.root) || !map_path.is_file() {
+        return None;
+    }
+    if std::fs::metadata(&map_path).ok()?.len() > MAX_SOURCE_MAP_BYTES {
+        log::warn!(
+            "[GRAIN] ext-host: refusing source map over {} MB: {}",
+            MAX_SOURCE_MAP_BYTES / (1024 * 1024),
+            map_path.display()
+        );
+        return None;
+    }
+    let bytes = std::fs::read(&map_path).ok()?;
+    let map = sourcemap::decode_slice(&bytes).ok()?;
+    Some((map, map_path.parent()?.to_path_buf()))
+}
+
+fn mapped_location(
+    map: &sourcemap::DecodedMap,
+    map_base: &std::path::Path,
+    project_root: &std::path::Path,
+    generated_line: u32,
+    generated_column: u32,
+) -> Option<String> {
+    let token = map.lookup_token(
+        generated_line.checked_sub(1)?,
+        generated_column.saturating_sub(1),
+    )?;
+    let raw_source = token.get_source()?;
+    let source_path = map_base.join(raw_source);
+    let display = source_path
+        .canonicalize()
+        .ok()
+        .filter(|path| path.starts_with(project_root))
+        .and_then(|path| path.strip_prefix(project_root).ok().map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(raw_source));
+    Some(format!(
+        "{}:{}:{}",
+        display.to_string_lossy().replace('\\', "/"),
+        token.get_src_line() + 1,
+        token.get_src_col() + 1
+    ))
+}
+
+/// Replace every entry-source frame in a worker stack while leaving runtime
+/// shim frames untouched. Worker coordinates are one-indexed and include the
+/// supervisor prefix; source-map coordinates are zero-indexed and do not.
+fn map_worker_error(source: &DevSource, payload: &DiedPayload) -> Option<String> {
+    let (map, map_base) = load_dev_source_map(source)?;
+    let map_line = |worker_line: u32, column: u32| {
+        let generated_line = worker_line.checked_sub(payload.entry_line_offset)?;
+        mapped_location(&map, &map_base, &source.root, generated_line, column)
+    };
+
+    if let (Some(stack), Some(worker_url)) = (&payload.stack, &payload.worker_url) {
+        let pattern = format!(r"{}:(\d+):(\d+)", regex::escape(worker_url));
+        let frames = regex::Regex::new(&pattern).ok()?;
+        let mapped = frames.replace_all(stack, |captures: &regex::Captures<'_>| {
+            let original = captures.get(0).map(|m| m.as_str()).unwrap_or_default();
+            let line = captures.get(1).and_then(|m| m.as_str().parse().ok());
+            let column = captures.get(2).and_then(|m| m.as_str().parse().ok());
+            match (line, column) {
+                (Some(line), Some(column)) => {
+                    map_line(line, column).unwrap_or_else(|| original.to_string())
+                }
+                _ => original.to_string(),
+            }
+        });
+        if mapped != stack.as_str() {
+            return Some(mapped.into_owned());
+        }
+    }
+
+    let location = map_line(payload.line?, payload.column.unwrap_or(1))?;
+    Some(format!("{}\n    at {location}", payload.reason))
 }
 
 /// Start the host: register the supervisor↔host event bridge, the activation
@@ -399,7 +519,13 @@ pub fn start(app: AppHandle, ctx: Arc<AppContext>) {
     // Supervisor → host: a worker crashed or reported a fatal error.
     app.listen("ext-host://died", move |ev| {
         if let Ok(p) = serde_json::from_str::<DiedPayload>(ev.payload()) {
-            log::warn!("[GRAIN] ext-host: worker '{}' died: {}", p.ext_id, p.reason);
+            let detail = HOST
+                .get()
+                .and_then(|host| host.workers.dev_source(&p.ext_id))
+                .and_then(|source| map_worker_error(&source, &p))
+                .or_else(|| p.stack.clone())
+                .unwrap_or_else(|| p.reason.clone());
+            log::warn!("[GRAIN] ext-host: worker '{}' died: {detail}", p.ext_id);
             kill_worker(&p.ext_id, "worker reported death");
         }
     });
@@ -522,6 +648,14 @@ fn spawn_worker(
     // same server-side filter that gates the pill now gates this worker.
     let token = crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
     let resident = pack.manifest.activation.iter().any(|a| a == "onStartup");
+    let dev_source = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.dev_path(ext_id))
+        .and_then(|root| crate::dev_extensions::load_project(&root).ok())
+        .map(|project| DevSource {
+            root: project.root,
+            entry: project.entry_path,
+        });
     host.workers.insert(
         ext_id,
         Worker {
@@ -530,6 +664,7 @@ fn spawn_worker(
             strikes: 0,
             last_activity: Arc::new(AtomicU64::new(now_secs())),
             conn: None,
+            dev_source,
         },
     );
     let payload = SpawnPayload {
@@ -1203,6 +1338,7 @@ mod tests {
             strikes: 0,
             last_activity: Arc::new(AtomicU64::new(last_activity)),
             conn: None,
+            dev_source: None,
         }
     }
 
@@ -1336,5 +1472,42 @@ mod tests {
             workers.insert("dev", next);
             assert_eq!(workers.len(), 1);
         }
+    }
+
+    #[test]
+    fn dev_worker_stack_maps_to_the_author_file() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::create_dir(root.join("dist")).unwrap();
+        std::fs::write(root.join("src/main.ts"), "throw new Error('mapped');\n").unwrap();
+        let entry = root.join("dist/main.js");
+        std::fs::write(
+            &entry,
+            "\"use strict\";\n(() => {\n  throw new Error('mapped');\n})();\n//# sourceMappingURL=main.js.map\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("dist/main.js.map"),
+            r#"{"version":3,"sources":["../src/main.ts"],"sourcesContent":["throw new Error('mapped');\n"],"mappings":";;AAAA,QAAM,IAAI,MAAM,QAAQ;"}"#,
+        )
+        .unwrap();
+
+        let mapped = map_worker_error(
+            &DevSource { root, entry },
+            &DiedPayload {
+                ext_id: "com.example.dev".into(),
+                reason: "Uncaught Error: mapped".into(),
+                stack: Some("Error: mapped\n    at blob:grain-worker:23:3".into()),
+                worker_url: Some("blob:grain-worker".into()),
+                entry_line_offset: 20,
+                line: Some(23),
+                column: Some(3),
+            },
+        )
+        .unwrap();
+
+        assert!(mapped.contains("src/main.ts:1:"), "{mapped}");
+        assert!(!mapped.contains("blob:grain-worker:23:3"), "{mapped}");
     }
 }

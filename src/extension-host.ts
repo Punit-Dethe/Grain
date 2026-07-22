@@ -29,9 +29,25 @@ interface WorkerHandle {
 }
 
 const workers = new Map<string, WorkerHandle>();
+const MAX_WORKER_ERROR_CHARS = 64 * 1024;
 
-function died(ext_id: string, reason: string) {
-  void emit("ext-host://died", { ext_id, reason });
+interface WorkerErrorDetail {
+  stack?: string;
+  worker_url?: string;
+  entry_line_offset?: number;
+  line?: number;
+  column?: number;
+}
+
+function died(ext_id: string, reason: string, detail: WorkerErrorDetail = {}) {
+  const boundedReason = reason.slice(0, MAX_WORKER_ERROR_CHARS);
+  const boundedStack = detail.stack?.slice(0, MAX_WORKER_ERROR_CHARS);
+  void emit("ext-host://died", {
+    ext_id,
+    ...detail,
+    reason: boundedReason,
+    stack: boundedStack,
+  });
 }
 
 function spawnWorker(p: SpawnPayload) {
@@ -41,11 +57,21 @@ function spawnWorker(p: SpawnPayload) {
   // own source. JSON.stringify is the injection boundary — values are data, so
   // an extension id/token can't break out into code.
   const header =
-    "const __GRAIN_EXT_ID__=" + JSON.stringify(p.ext_id) + ";" +
-    "const __GRAIN_TOKEN__=" + JSON.stringify(p.token) + ";" +
-    "const __GRAIN_CAPS__=" + JSON.stringify(p.caps || []) + ";" +
-    "const __GRAIN_ACTIVATION__=" + JSON.stringify(p.activation ?? null) + ";\n";
-  const src = header + GRAIN_RUNTIME_JS + "\n" + p.entry_source;
+    "const __GRAIN_EXT_ID__=" +
+    JSON.stringify(p.ext_id) +
+    ";" +
+    "const __GRAIN_TOKEN__=" +
+    JSON.stringify(p.token) +
+    ";" +
+    "const __GRAIN_CAPS__=" +
+    JSON.stringify(p.caps || []) +
+    ";" +
+    "const __GRAIN_ACTIVATION__=" +
+    JSON.stringify(p.activation ?? null) +
+    ";\n";
+  const prefix = header + GRAIN_RUNTIME_JS + "\n";
+  const entryLineOffset = (prefix.match(/\n/g) || []).length;
+  const src = prefix + p.entry_source;
 
   const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
   let worker: Worker;
@@ -58,14 +84,29 @@ function spawnWorker(p: SpawnPayload) {
   }
 
   worker.onerror = (ev) => {
-    died(p.ext_id, String((ev && ev.message) || "worker error"));
+    const error = ev && (ev.error as { stack?: unknown } | undefined);
+    died(p.ext_id, String((ev && ev.message) || "worker error"), {
+      stack: error && error.stack ? String(error.stack) : undefined,
+      worker_url: url,
+      entry_line_offset: entryLineOffset,
+      line: ev && ev.lineno ? ev.lineno : undefined,
+      column: ev && ev.colno ? ev.colno : undefined,
+    });
     killWorker(p.ext_id);
   };
   worker.onmessage = (ev) => {
     // The shim posts { type: "fatal", reason } on an unrecoverable error.
-    const m = ev.data as { type?: string; reason?: string } | null;
+    const m = ev.data as {
+      type?: string;
+      reason?: string;
+      stack?: string;
+    } | null;
     if (m && m.type === "fatal") {
-      died(p.ext_id, String(m.reason || "fatal"));
+      died(p.ext_id, String(m.reason || "fatal"), {
+        stack: m.stack ? String(m.stack) : undefined,
+        worker_url: url,
+        entry_line_offset: entryLineOffset,
+      });
       killWorker(p.ext_id);
     }
   };
@@ -87,7 +128,9 @@ function killWorker(ext_id: string) {
 
 async function main() {
   await listen<SpawnPayload>("ext-host://spawn", (e) => spawnWorker(e.payload));
-  await listen<{ ext_id: string }>("ext-host://kill", (e) => killWorker(e.payload.ext_id));
+  await listen<{ ext_id: string }>("ext-host://kill", (e) =>
+    killWorker(e.payload.ext_id),
+  );
   // Signal the host that our listeners are live so it can flush queued spawns
   // (Tauri events aren't buffered — a spawn emitted before this would be lost).
   await emit("ext-host://ready", {});

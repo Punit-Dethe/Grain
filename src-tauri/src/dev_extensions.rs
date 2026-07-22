@@ -14,6 +14,9 @@ const MAX_ENTRY_BYTES: u64 = 5 * 1024 * 1024;
 #[derive(Debug)]
 pub struct LoadedDevProject {
     pub root: PathBuf,
+    /// Canonical built JavaScript entry. The worker host keeps only this path
+    /// and resolves its source-map reference lazily if the worker throws.
+    pub entry_path: PathBuf,
     pub pack: GrainPack,
 }
 
@@ -81,7 +84,11 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
     };
     pack.validate()
         .map_err(|error| format!("invalid extension: {error}"))?;
-    Ok(LoadedDevProject { root, pack })
+    Ok(LoadedDevProject {
+        root,
+        entry_path,
+        pack,
+    })
 }
 
 fn api_requirement_supported(requirement: &str, current: &str) -> bool {
@@ -142,6 +149,10 @@ mod tests {
             "grain.log.info('ready');"
         );
         assert_eq!(loaded.root, dir.path().canonicalize().unwrap());
+        assert_eq!(
+            loaded.entry_path,
+            dir.path().join("src/main.ts").canonicalize().unwrap()
+        );
     }
 
     #[test]
