@@ -282,6 +282,24 @@ extension code runs in the pill.
   strike); and **`pill:slots` action chips** (`pill:slots` cap already in
   KNOWN_CAPABILITIES). Build these when a real theme/chip extension needs them.
 
+**Step 8 shipped — the three Grain Space Test gaps closed.**
+- **`embed`** now runs Grain Space's own on-device BGE model
+  (`grain_space::embed::embed` on the blocking pool), batch-capped at 64. Was a
+  clean "not available" stub; this is what makes third-party semantic recall
+  buildable without shipping a model.
+- **`capture:selection`** (new cap): reads the current selection via the Agent's
+  `capture_selection` primitive (synthetic copy → poll → restore clipboard). Its
+  own grant; meant to pair with a shortcut trigger.
+- **Document store**: `doc.get/put/delete/list`, one file per key under
+  `<id>.docs/`, shares the `storage` grant + 200 MB quota. Security-critical bit
+  is `ExtStorage::safe_doc_name` — an ALLOWLIST (`[A-Za-z0-9._-]`, reject empty/
+  over-long/all-dots/separators) so a key is always a filename, never
+  `../secrets`; checked before any path touches disk, exhaustively tested.
+- Worker runtime + surface bridge gained `grain.doc.*`, `grain.embed` (→ vectors
+  array), `grain.captureSelection` (worker only). No new Tauri commands / no
+  bindings change — all via the host-API WS dispatch. Ratchet untouched (no
+  Handy-tree edits).
+
 **Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/
   `HostCall`/`HostCallResult` wrapped in `HostFrame` (externally-tagged →
