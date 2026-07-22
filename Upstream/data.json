@@ -7,6 +7,13 @@
     "pr": "1733"
   },
   {
+    "date": "Jul 22, 2026",
+    "commit": "fix mute bug (#1760)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1760"
+  },
+  {
     "date": "Jul 21, 2026",
     "commit": "fix windows not shutting down cleanly because of handy (#1732)",
     "status": "Pending",
