@@ -20,8 +20,9 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 step 2** — the slots registry | **SHIPPED.** Exclusive positions, core defaults as occupants, explicit takeover. |
 | **Phase 3 step 3** — schema settings render | **SHIPPED.** Levels 1–2, all five anchors mounted, auto-categorize dogfoods it. |
 | **Phase 3 step 4a** — `contributes.shortcuts` | **SHIPPED.** Namespaced `ext:<id>:<sid>`, toggle-order arbitration, status rows. |
-| **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED.** The guide folds it into step 4; it is genuinely separable and was deferred. |
-| **Phase 3 steps 5–10** | **NOT STARTED.** [PHASE3-GUIDE.md](PHASE3-GUIDE.md) is prescriptive for all of them; **start at Step 4b or Step 5 (`workspace`, the big one)**. |
+| **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
+| **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
+| **⛔ GATE (distribution + dev mode)** | Untouched, still required before Phase 4/5 — `GATE-DISTRIBUTION-AND-DEVMODE.md`. The store step 9 is a SHELL only. |
 | **⛔ GATE — distribution platform + developer mode** | **OPEN, BLOCKING Phase 4/5.** See [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). Requirements captured 2026-07-21; **no design, no plan yet** — by instruction. Phase 3 is unaffected. |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
