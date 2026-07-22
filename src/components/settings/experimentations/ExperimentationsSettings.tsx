@@ -1,6 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, Code2, LayoutGrid, Replace, Sparkles } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import {
+  Bot,
+  Code2,
+  LayoutGrid,
+  Replace,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { OverviewSection } from "./OverviewSection";
 import { SnippetsSection } from "./SnippetsSection";
 import { ActionsSection } from "./ActionsSection";
@@ -69,6 +77,12 @@ const JUMP_TARGETS: Record<string, TabKey> = {
 export const ExperimentationsSettings: React.FC = () => {
   const [tab, setTab] = useState<TabKey>("overview");
   const [developerMode, setDeveloperMode] = useState(false);
+  const [overviewRevision, setOverviewRevision] = useState(0);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importNotice, setImportNotice] = useState<{
+    kind: "success" | "error";
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     void invoke<{ enabled: boolean }>("extension_developer_status")
@@ -82,6 +96,30 @@ export const ExperimentationsSettings: React.FC = () => {
 
   const tabs = developerMode ? [...TABS, DEVELOPER_TAB] : TABS;
 
+  const importPack = async () => {
+    setImportBusy(true);
+    setImportNotice(null);
+    try {
+      const selected = await open({
+        title: "Import Grain extension pack",
+        multiple: false,
+        directory: false,
+        filters: [{ name: "Grain extension pack", extensions: ["grainpack"] }],
+      });
+      if (!selected || Array.isArray(selected)) return;
+      const id = await invoke<string>("extension_import_pack", {
+        path: selected,
+      });
+      setTab("overview");
+      setOverviewRevision((revision) => revision + 1);
+      setImportNotice({ kind: "success", text: `Imported ${id}` });
+    } catch (error) {
+      setImportNotice({ kind: "error", text: String(error) });
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       {/* Page title — set larger than the other consoles; the tabs sit directly
@@ -90,13 +128,36 @@ export const ExperimentationsSettings: React.FC = () => {
         <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
           {SECTION_TITLE}
         </h1>
-        {developerMode && (
-          <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-            <Code2 width={12} height={12} />
-            {DEVELOPER_MODE_LABEL}
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={importBusy}
+            onClick={() => void importPack()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs font-medium text-ink hover:border-ink-faint disabled:opacity-50 cursor-pointer"
+          >
+            <Upload width={13} height={13} />
+            {importBusy ? "Importing…" : "Import pack"}
+          </button>
+          {developerMode && (
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
+              <Code2 width={12} height={12} />
+              {DEVELOPER_MODE_LABEL}
+            </div>
+          )}
+        </div>
       </div>
+
+      {importNotice && (
+        <div
+          className={`rounded-lg px-3 py-2 text-sm ${
+            importNotice.kind === "success"
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+              : "bg-red-500/10 text-red-600"
+          }`}
+        >
+          {importNotice.text}
+        </div>
+      )}
 
       {/* Segmented sub-tab selector — a recessed track of instrument buttons;
           the active one fills solid (ink) with an accent icon. */}
@@ -137,6 +198,7 @@ export const ExperimentationsSettings: React.FC = () => {
 
       {tab === "overview" ? (
         <OverviewSection
+          key={overviewRevision}
           onJump={(id) => setTab(JUMP_TARGETS[id] ?? "overview")}
           onDeveloperModeChange={setDeveloperMode}
         />

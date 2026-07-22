@@ -105,6 +105,7 @@ never to decide what to build.
 
 | Document | Role |
 |---|---|
+| **[AUTHORING.md](AUTHORING.md)** | **Start here to build an extension.** Quickstart, capability reference, worked examples, and debugging. |
 | **[SPEC.md](SPEC.md)** | **Normative.** What to build. |
 | **[DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md)** | **Normative for the store and developer mode.** Hosting, submission, review, trust, install, and the authoring loop. Self-contained — assumes no prior reading. |
 | **[PHASE3.5-GUIDE.md](PHASE3.5-GUIDE.md)** | **Start here to build.** The ten steps of developer mode, with this repo's file paths, build commands and gotchas. |

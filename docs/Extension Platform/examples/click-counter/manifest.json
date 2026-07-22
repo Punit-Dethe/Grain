@@ -1,0 +1,19 @@
+{
+  "id": "com.example.click-counter",
+  "name": "Click Counter",
+  "version": "0.1.0",
+  "grainApi": "^1.0",
+  "tier": "scripted",
+  "description": "Counts its own shortcut presses",
+  "entry": "dist/main.js",
+  "permissions": ["storage"],
+  "activation": ["onShortcut:count"],
+  "contributes": {
+    "shortcuts": [
+      {
+        "id": "count",
+        "label": "Count a press"
+      }
+    ]
+  }
+}
