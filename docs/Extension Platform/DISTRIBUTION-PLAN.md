@@ -82,9 +82,9 @@ past one reviewer is a policy change, not a redesign.
 | How does the app know it is genuine? | Ed25519 signature over the index, **root public key pinned in the binary** — the same shape as Grain's own updater | Already proven in this codebase; no new crypto (**F-3**, **F-24**) |
 | How is "verified" made unforgeable? | Trust exists **only** inside signed index metadata. No manifest field, no domain check, no author input. | Domain-ownership "verified" is theatre (**F-5**, **F-22**) |
 | What stops review-then-swap? | Trust is **per version**, bound to `(id, version, sha256)`; we built the bytes ourselves | GlassWorm shipped clean, then updated dirty (**F-6**) |
-| Who reviews? | **A human reads every extension, and every update.** The risk score sets the queue order and the depth of the read, not whether one happens. | 10–20/month is one reviewer's day per week; "we read everything" beats any badge (§0.1, **F-14**) |
+| Who reviews? | **A human reads every extension, and every update.** No auto-publish, so no risk *score* — just a flagged-combination list that says how deep to read. | 10–20/month is one reviewer's day per week; "we read everything" beats any badge (§0.1, **F-14**) |
 | How does that stay sustainable? | We build the bytes, so an update's review surface is a **source diff**, not a codebase | Diff-only re-review is the difference between 20 reviews and 20 re-reads (**F-2**, §3.4) |
-| Where is our dashboard? | A generated static page over GitHub PRs + labels. GitHub is the database. | Zero infra, free auth, complete audit trail (**F-14**) |
+| Where is our dashboard? | **GitHub's own PR UI**, plus one bot comment per submission carrying the review briefing | Zero infra, free auth, complete audit trail — and at ~20/month there is no queue to sort (§13) |
 | What does hosting cost? | $0 — GitHub Releases and Actions are free for public repos; Vercel Hobby is free for the site | (**F-4**, §2.3) |
 | How do people build extensions? | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`) + in-app developer mode with load-unpacked, sub-second reload, and a developer panel | Raycast's DX is the bar; Zed's load-unpacked is the model (**F-16**, **F-17**) |
 | What ships first? | **Developer mode, before Phase 4.** | Nothing else can be authored or verified without it (**F-19**) |
@@ -101,13 +101,12 @@ past one reviewer is a policy change, not a redesign.
   grain-ext doctor      (identical checks to CI)               │ index.json   │◀── CDN
   grain-ext submit ──▶ PR to github.com/…/grain-extensions     │ + signature  │
                             │                                  └──────┬───────┘
-                            ├─ CI job 1: BUILD (untrusted)             │ verify with
-                            │    no secrets, no network egress         │ PINNED root key
-                            ├─ CI job 2: CHECK (lint, risk score)      ▼
-                            ├─ human review IF the lane says so   fetch blob/<sha256>
-                            ├─ human review — EVERY submission
-                            └─ CI job 3: SIGN + PUBLISH ─▶ Releases verify hash → unpack
-                                 (never runs untrusted code)       → atomic install
+                            ├─ JOB 1  build + check (untrusted code)   │ verify with
+                            │    NO secrets, egress blocked            │ PINNED root key
+                            │    posts the review briefing comment      ▼
+                            ├─ human review — EVERY submission    fetch blob/<sha256>
+                            └─ JOB 2  sign + publish ──▶ Releases  verify hash → unpack
+                                 on merge; runs no untrusted code   → atomic install
 ```
 
 Three separations carry the whole design:
@@ -123,15 +122,21 @@ Three separations carry the whole design:
 ### 2.1 What is published (the static layout)
 
 ```
-/v1/index.json               signed catalogue — small fields only
+/v1/index.json               signed catalogue — EVERYTHING, including descriptions
 /v1/index.json.minisig
-/v1/roots.json               signed by the offline root key: publishing key + the mirror list
+/v1/roots.json               signed by the offline root key: publishing key + base URLs
 /v1/roots.json.minisig
-/v1/ext/<id>.json            full detail: long description, screenshots, changelog, version history
 /v1/blob/<sha256>.grainpack  content-addressed artifacts (immutable, cache-forever)
 /v1/revocations.json         kill switch
 /v1/revocations.json.minisig
 ```
+
+**One index file, not a sparse per-extension split** (simplified 2026-07-23,
+§13). Twenty entries with full descriptions is a few tens of kilobytes — smaller
+than one screenshot. Splitting into `ext/<id>.json` is a scale optimisation that
+buys nothing below a few hundred extensions and costs a generator, a second
+fetch path, and a cache story. **Split it when `index.json` passes ~500 KB**; the
+client reads the same fields either way, so it is a generator change.
 
 Paths are **relative**. Absolute bases come from `roots.json`, which is signed —
 so moving hosts, or adding a mirror, is a signed metadata change rather than an
@@ -262,7 +267,7 @@ than open a page in Grain (§5.2).
 listed, a person read its source*.** That is deliberately simpler than a ladder.
 The badge therefore does not distinguish between listed extensions — what varies
 per card is *evidence*: the review date, the reviewed commit, the capability
-list, and the risk score. Age is shown as a fact ("first published *date*"), never
+list, and any flagged combination. Age is shown as a fact ("first published *date*"), never
 as trust.
 
 Two negative states, both delivered by the signed `revocations.json`:
@@ -318,20 +323,26 @@ the app, the CLI and CI cannot disagree:
 **Forced-human combinations** (score irrelevant): `screen:capture` + `net:*`
 (already the SPEC's rule) · `events:transcripts` + `net:*` · any `native` + `net:*`.
 
-**Every submission is read by a human** (§0.1). The score does not decide
-*whether* — it decides **queue order and how deep the read goes**:
+**Every submission is read by a human** (§0.1). Since nothing is ever
+auto-published, a *numeric* score has no routing job left to do — so it is cut
+(2026-07-23, §13). What remains is a lookup, not a scoring system:
 
-| Band | Score | The read | Target |
+| Class | Rule | The read | Target |
 |---|---|---|---|
-| **Low** | 0 (data packs, no capabilities) | Payload sanity, no code to read. Automation carries most of it. | same day |
-| **Medium** | 1–5 | Full source read, focused on the declared capabilities | 2–3 days |
-| **High** | > 5, or any forced combination | Full source read **plus** an explicit written justification from the author for each high-risk capability, and a runtime observation in developer mode | up to a week, and it may be refused |
+| **No capabilities** | tier `pack`, `permissions: []` | Payload sanity; there is no code | same day |
+| **Ordinary** | anything else | Full source read, focused on the declared capabilities | 2–3 days |
+| **Flagged** | one of the combinations below | Full read **plus** a written justification from the author for each flagged capability, and a runtime observation in developer mode | up to a week, and it may be refused |
 
-The queue is sorted highest-first, so the riskiest thing waiting always gets the
-freshest attention — AMO's risk-weighted queue, with the advantage that our
-inputs are exact rather than heuristic (**F-14**, **F-15**). Automation does not
-replace the reviewer here; it does the mechanical parts (lint, Unicode scan,
-capability diff, build, hash) so the human spends their time reading logic.
+**The flagged combinations** — a `const` list in `grain-sdk`, checked by CI and
+shown in the bot comment: `screen:capture` + `net:*` (already the SPEC's rule) ·
+`events:transcripts` + `net:*` · any `native` tier with `net:*`. Each says "this
+extension can see something private *and* can send it somewhere", which is the
+only question a risk number was ever really answering.
+
+Automation does not replace the reviewer; it does the mechanical parts (lint,
+Unicode scan, capability diff, build, hash) so the human spends their time
+reading logic. **Reinstate the numeric score** if the `experimental` rung is ever
+switched on — a number is only needed when something publishes without a human.
 
 **Published expectations.** The review policy page states the target turnaround
 per band and says plainly that there is one reviewer. If the queue stalls —
@@ -393,20 +404,37 @@ extensions/com.example.spaces/
 and commit, a one-line description, a category, and a contact. **Not required:**
 a built artifact, an account, a signing key, a payment method.
 
-### 4.2 CI, in three jobs that cannot see each other's secrets
+### 4.2 CI: two jobs, and only one of them holds a key
 
-| Job | Runs | Holds | Network |
-|---|---|---|---|
-| **build** | The author's build (untrusted code, `npm ci` and friends) | **nothing** | egress **blocked** |
-| **check** | Lint, manifest validation, risk score, Unicode scan, size caps, diff summary | nothing | none |
-| *(human review — always, §3.3)* | — | — | — |
-| **sign** | Hash, sign, publish the release, regenerate index | the publishing key | upload only |
+**Two jobs, and the split between them is not negotiable** (simplified from
+three, 2026-07-23 — the lint/check work folds into the first job because both
+are secretless; the *boundary* stays exactly where it was):
 
-Job **sign** never executes untrusted code; job **build** never holds a
-credential. They communicate only by artifact hand-off. Open VSX was compromised
-by exactly the collapse of this boundary — `npm install` ran arbitrary build
-scripts in a job that held a token able to overwrite any extension in the
-registry (**F-7**).
+| Job | Runs | Holds | Network | Trigger |
+|---|---|---|---|---|
+| **build-and-check** | The author's build — untrusted code, `npm ci` and its transitive install scripts — then lint, manifest validation, Unicode scan, size caps, capability diff | **nothing** | egress **blocked** | on the PR |
+| **publish** | Hash, sign, publish the release, regenerate the index | the publishing key | upload only | **on merge only** |
+
+> ### Why this cannot become one workflow
+>
+> It is tempting — one "merge → publish" job is fewer lines. It is also the
+> **exact vulnerability that took over Open VSX in 2025**: their nightly workflow
+> ran `npm install` over untrusted extension code *in a job that held
+> `OVSX_PAT`*, a token able to publish or overwrite any extension in the
+> registry. `npm install` executes arbitrary build scripts — from the extension
+> and from every one of its dependencies — so any of them could read the token.
+> Disclosed 4 May 2025, six rounds of fixes, patched 25 June, ~8 million
+> developers exposed (**F-7**).
+>
+> Because we build authors' code ourselves (§2, and it is what makes "reviewed"
+> mean anything), **we are exactly the kind of registry that attack targets.**
+>
+> The cost of keeping the boundary is roughly ten lines of YAML: two jobs, and
+> `secrets` referenced in only the second. That is not over-engineering — it is
+> the cheapest security property in this entire plan, and the only one whose
+> absence has a body count.
+
+Everything else about the pipeline is fair game to simplify. This is not.
 
 **Check-job gates (all blocking):**
 
@@ -422,20 +450,31 @@ registry (**F-7**).
 
 ### 4.3 Our dashboard
 
-**GitHub is the database.** PRs are submissions, labels are state, checks are
-evidence, comments are the audit trail. On top sits a **generated static
-dashboard** (deployed alongside the site, access-restricted) showing:
+**GitHub *is* the dashboard.** No separate web app (simplified 2026-07-23, §13).
+PRs are submissions, labels are state, checks are evidence, comments are the
+audit trail — and at ~20 submissions a month there is no queue to sort, so the
+one thing a custom dashboard would have added over GitHub's own UI is the thing
+scale hasn't demanded yet.
 
-- the queue **sorted by risk weight**, highest first (AMO's model — **F-14**)
-- per submission: risk score *with its breakdown*, capability diff against the
-  previous version, source diff link, lint findings, build status and artifact
-  hash, reproducibility result, author history, time in queue
-- decisions taken as labels (`decision:verified`, `hold:security`,
-  `decision:reject`), executed by a bot workflow on merge
+What replaces it is **one bot comment per pull request**, posted by the check job
+and updated in place — the review briefing, where the review already happens:
 
-**Why not build it inside Grain:** nobody but us would ever open it, and it would
-ship in every user's binary. That is precisely the "destroy if not in use" rule
-the project runs on.
+- **capability diff** against the previous version (the single most important
+  line: "this update newly requests `net:`")
+- lint findings, invisible-Unicode scan, size, typosquat check
+- build status and the artifact hash we produced
+- source diff link, and for an update the **diff-only** verdict (§3.4)
+- any forced-human flag (`screen:capture` + `net:` and friends)
+
+Decisions stay labels (`decision:verified`, `hold:security`, `decision:reject`)
+executed by a workflow on merge, so the audit trail is intact and free.
+
+**Add a real dashboard when** GitHub's filters stop being enough — realistically
+past ~40 open submissions. It is a generator over the same labels, so nothing
+built now is wasted.
+
+**Why it is not inside Grain either:** nobody but us would ever open it, and it
+would ship in every user's binary — the "destroy if not in use" rule.
 
 **One thing the dashboard must show that is easy to forget: the revocation
 button.** Finding out an extension is malicious is the moment the whole system is
@@ -455,11 +494,17 @@ byte:
 | Shape | First byte | Contents | Used by |
 |---|---|---|---|
 | JSON | `{` | manifest with embedded payloads (today's format, unchanged) | tier `pack` |
-| ZIP | `PK` | `manifest.json`, `files.json` (per-file SHA-256), `entry.js`, assets, per-platform binaries | tiers `scripted`, `native` |
+| ZIP | `PK` | `manifest.json`, `entry.js`, assets, per-platform binaries | tiers `scripted`, `native` |
 
-`files.json` carries a hash for **every file**, not one hash for the archive —
-VS Code's signature-manifest design, which localises tampering to a file rather
-than an all-or-nothing verdict (**F-3**).
+**One hash over the whole artifact, not a per-file manifest** (simplified
+2026-07-23, §13). VS Code hashes every file inside the package because *authors*
+upload it and tampering wants localising (**F-3**); **we build the artifact
+ourselves**, so the archive hash in the signed index already binds every byte to
+what we produced. Per-file hashes would add a format, a generator and a verifier
+to re-answer a question we already answered.
+
+What is **not** cut is path-safe extraction — that is a CVE class, not a scale
+concern (§5.2).
 
 ### 5.2 The install transaction
 
@@ -468,7 +513,6 @@ fetch /v1/blob/<sha256>            content-addressed; cache-forever; resumable
   ↓ verify sha256 == index entry   (index itself already signature-verified)
   ↓ unpack to <appdata>/extensions/.staging/<id>-<version>/
   ↓   PATH-SAFE extraction, see below
-  ↓ verify every files.json hash
   ↓ atomic rename → extensions/<id>/<version>/
   ↓ registry entry written (installed, disabled)
   ↓ user enables → permission sheet → capabilities granted
@@ -501,8 +545,16 @@ shipped a CVSS 7.4 Zip Slip in exactly this code):
 
 The store must cost nothing when it is not open. Concretely:
 
-- the index is fetched **on store open**, and at most once per day in the
-  background — never on the transcription path, never at startup
+- the index is fetched **on store open**, and **piggybacked on Grain's existing
+  update check** — never on its own timer, never on the transcription path.
+  (The dedicated daily background refresh was cut 2026-07-23, §13. Grain already
+  runs an update check against its own releases; the revocation list rides along
+  with it, so revocation reach is preserved without adding a scheduler or a
+  second phone-home. If that check is not currently automatic, wire the
+  revocation fetch to it when it becomes so.)
+- **revocations are also enforced from cache at enable time** — before a worker
+  is ever spawned. Free, and it means a revoked extension cannot run again even
+  if the machine has been offline since the revocation was published.
 - a seed index ships inside the app, so first open is instant and offline works
 - parsed index is dropped when the store slide-over closes; only the small
   installed-extension registry stays resident
@@ -564,19 +616,19 @@ extension capabilities.
 ### 6.4 The developer panel — where the DX is won
 
 A Grain-owned workspace surface, **built only when developer mode is on**, and
-sleeping like every other surface. It shows, live:
+sleeping like every other surface.
 
-| Panel | Content |
-|---|---|
-| **Activity** | Activation events, worker spawn/reap, with timestamps |
-| **Host calls** | Method, params, result or error, **duration** — the extension's whole conversation with Rust |
-| **Denials** | Every refused call in red, naming the missing capability and the exact manifest line to add |
-| **Budget** | Transform timings against the 150 ms budget, p50/p95, strikes accrued |
-| **Resources** | Worker memory against its ceiling |
-| **Console** | `log.*` output and thrown errors, **source-mapped to the author's file and line** |
+**One chronological event stream, not a dashboard** (simplified 2026-07-23,
+§13). A developer chasing a bug reads a timeline; six panes is more code and a
+worse debugger. Entry kinds: `log` (the author's output) · `error`
+(source-mapped stack) · `denied` (**red**, naming the capability, the refused
+call, and the manifest line to add) · `call` (`storage.get → ok (3 ms)`) ·
+`slow` (`transform took 187 ms, budget 150 ms — strike 1 of 3`) · `life`
+(spawn / reap / reload / activation).
 
-Plus one **"Copy diagnostics"** button producing a paste-able report — the thing
-that turns a bug report into a fix.
+Filter chips **All · Calls · Denials · Errors**, and one **"Copy diagnostics"**
+button producing a paste-able report — the thing that turns a bug report into a
+fix.
 
 ### 6.5 Errors
 
@@ -600,7 +652,7 @@ and it is the single highest-leverage DX decision in their extension API
 | Signal | Source | Shown | Ranks results? |
 |---|---|---|---|
 | Trust rung + reviewed date | Signed index | Yes, prominently | Yes |
-| Capabilities + risk score | Manifest | Yes — the honest signal | No |
+| Capabilities + any flagged combination | Manifest | Yes — the honest signal | No |
 | Size, last updated, licence | Build | Yes | No |
 | GitHub stars | Fetched **by CI**, baked into the index | Yes, muted | **No** |
 | Install count | Opt-in, aggregate, deduped per install-id per version | Later, muted, if at all | **Never** |
@@ -644,7 +696,7 @@ is the instrument every later phase is verified with.
 | **3.5** | **Developer Mode & SDK** | CLI, load-unpacked, hot reload, developer panel, typed errors, docs, C-2/C-4/C-6 | nothing |
 | 4 | Contract completion | `session:start`, native tier, pill action chips, level-3 settings, re-platforming built-ins, C-7/C-8 | 3.5 to author and test it |
 | **5A** | **Trust rails (client)** | Keys, signed index verification, install/update/remove pipeline, revocation, C-3/C-5/C-9/C-10 | 3.5 |
-| **5B** | **The registry** | `grain-extensions` repo, three-job CI, risk lanes, review dashboard, store UI, public site | 5A |
+| **5B** | **The registry** | `grain-extensions` repo, two-job CI, bot review comment, store UI, public site | 5A |
 | 6 *(optional)* | Independent verification | Reproducible-build verifier, third-party rebuild attestation (F-Droid's model) | an ecosystem that justifies it |
 
 **The gate's blocks resolve as:**
@@ -772,12 +824,12 @@ data kept unless purged.
 and the review policy (including what gets rejected, published openly).
 **2.** The three CI jobs with the secret/egress boundary of §4.2 — **build the
 isolation before the convenience** (**F-7**).
-**3.** Risk scoring in `grain-sdk`, consumed by CI, the dashboard and the store
-card, so the number a user sees is the number that ordered the review.
+**3.** The flagged-combination list in `grain-sdk`, consumed by CI and shown on
+the store card, so what a user sees is what the reviewer was warned about.
 **4.** Publish pipeline: build → hash → sign → publish to a GitHub Release →
-regenerate `index.json` and `ext/<id>.json` → bump `version`, set `expires`.
-**5.** The review dashboard of §4.3, risk-sorted, decisions as labels, revocation
-rehearsed once against a fixture.
+regenerate `index.json` → bump `version`, set `expires`.
+**5.** The bot review comment of §4.3, decisions as labels, and **revocation
+rehearsed once against a fixture before the store opens**.
 **6.** The sustainability mechanics of §3.4: diff-only re-review, the automated
 summary at the top of each review page, `core` for our own CI-built extensions.
 **7.** Store UI: fill the existing slide-over shell — search, cards, capability
@@ -834,4 +886,44 @@ lost, and so a future reader can tell a decision from an assumption.
   authority; not collecting them at launch is the simpler and more private
   default, and nothing breaks if we never add them.
 
+---
 
+## 13. Deliberate simplifications for low volume
+
+Decided 2026-07-23, mid-Phase-3.5. The plan was written against the *shape* of
+the problem; this pass cuts the parts that were sized for a scale we do not have
+(§0.1: 10–20 extensions/month, one reviewer). **Each cut names what brings it
+back**, so a future maintainer can tell a deferral from an oversight.
+
+| Cut | Was | Now | Reinstate when |
+|---|---|---|---|
+| **Developer panel** | Six live panes (activity, calls, denials, budget percentiles, memory) | **One chronological event stream** + four filter chips | Never, probably — a timeline is the better debugger. Add a memory entry when the C-7 ceiling lands |
+| **Review dashboard** | A generated, access-restricted static web app with a risk-sorted queue | **GitHub's own PR UI** + one bot comment carrying the review briefing | GitHub's filters stop coping — realistically past ~40 open submissions |
+| **CI jobs** | Three (build / check / sign) | **Two** — check folds into build; both are secretless | Never. The 2-job split is a boundary, not a structure (§4.2) |
+| **Risk score** | Weighted table, numeric score, three routing lanes | **A flagged-combination lookup**; everything is human-reviewed anyway | The `experimental` rung is switched on — a number is only needed when something publishes without a human |
+| **Index layout** | `index.json` + per-extension `ext/<id>.json` (sparse) | **One `index.json` with everything** | `index.json` passes ~500 KB |
+| **Pack integrity** | Per-file `files.json` SHA-256 manifest | **One hash over the artifact** — we built it, the signed index binds it | Authors ever upload artifacts (they should not) |
+| **Store refresh** | Dedicated daily background timer | **On store open**, plus riding Grain's existing update check | A revocation ever needs to land faster than a user opens the store |
+| **`grain-ext submit`** | A GitHub-authenticated PR-opening flow | **Print the pre-filled URL and open a browser** (~5 lines) | Submissions get frequent enough that the round-trip annoys |
+| **Phase 6** | Reproducible-build verification server | **Not built** | An ecosystem large enough that someone other than us wants to verify our builds |
+
+**What was explicitly NOT cut, and why**, since these are the tempting ones:
+
+- **The two-job CI boundary** — §4.2. Collapsing it re-creates the exact bug that
+  compromised Open VSX, and we are the kind of registry that attack targets
+  because we build authors' code ourselves.
+- **Signature + rollback + expiry checks** — about twenty lines of Rust, and the
+  reason revocation can ever reach a user (**F-11**).
+- **Path-safe archive extraction** — a CVE class (Zed shipped one at CVSS 7.4),
+  not a scale concern (**F-8**).
+- **Invisible/bidi Unicode rejection** — the technique GlassWorm used to hide
+  payloads from reviewers. A regex and a test (**F-6**).
+- **Trust bound to `(id, version, sha256)`** — a struct field and a test. Without
+  it, reviewing v1.0 blesses v2.0 (**F-6**).
+- **Two pinned root keys** — generating a second key at the same ceremony is
+  free; needing one later is not.
+
+The pattern: **cut anything sized for volume; keep everything sized for an
+adversary.** Volume we do not have yet. An adversary needs one user.
+
+---

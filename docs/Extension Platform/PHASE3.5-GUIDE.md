@@ -197,16 +197,38 @@ generic in `src-tauri/src/surfaces/workspace.rs`, so it sleeps like everything
 else. **Build it only when developer mode is on** — an unused window is a
 violation of this project's core rule.
 
-**What to show, live:** activation events and worker spawn/reap · every host call
-with method, params, result and **duration** · **denials in red, naming the
-missing capability and the exact manifest line to add** · transform timings
-against the 150 ms budget with p50/p95 and strikes · worker memory against its
-ceiling · console output and errors, source-mapped. Plus one **"Copy
-diagnostics"** button.
+### Build ONE chronological event stream, not a six-pane dashboard
 
-**Done means.** An intentional capability denial appears within a second, naming
-the capability and the fix. With developer mode **off**, no panel window exists
-and idle RAM is unchanged — measure both.
+This was over-specified for our scale and, more importantly, for how debugging
+actually works. A developer chasing a bug reads a **timeline**, not six widgets
+that each answer a different question. So: a single scrolling log, newest at the
+bottom, with a filter chip row above it.
+
+**One entry type, six kinds:**
+
+| Kind | An entry looks like | Why it earns its place |
+|---|---|---|
+| `log` | the author's `log.*` output | the thing they will actually stare at |
+| `error` | message + **source-mapped stack** (step 5 already produces this) | file and line, not `entry_source:1` |
+| `denied` | **red**, naming the capability, the refused call, and the manifest line to add | the highest-value entry in the whole panel |
+| `call` | `storage.get → ok (3 ms)` | the extension's whole conversation with Rust |
+| `slow` | `transform took 187 ms (budget 150 ms) — strike 1 of 3` | flags the budget inline; no percentile maths |
+| `life` | worker spawned / reaped / reloaded, activation event | the context that makes the rest legible |
+
+Filter chips: **All · Calls · Denials · Errors**. Plus one **"Copy
+diagnostics"** button that dumps the visible stream as text.
+
+**Cut deliberately** (add back when there is a reason, not before): p50/p95
+percentile statistics — a `slow` entry says it better; a memory pane — the
+per-worker ceiling it would chart does not exist yet (that is C-7, Phase 4), so
+add the line to the stream when the ceiling lands; separate panes per concern —
+one stream with filters is less code and a better debugger.
+
+This is roughly a third of the original step and loses nothing an author needs.
+
+**Done means.** An intentional capability denial appears in the stream within a
+second, in red, naming the capability and the fix. With developer mode **off**,
+no panel window exists and idle RAM is unchanged — measure both.
 
 ---
 

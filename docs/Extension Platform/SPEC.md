@@ -425,8 +425,8 @@ contract.
   has no trust field, the installer cannot read one from pack bytes, and trust
   is bound to `(id, version, sha256)` — a verified 1.0 confers nothing on 1.1.
 - **Review: 100% human.** Every extension and every update is read by a person
-  before it is published. A risk score computed from the manifest sets the queue
-  order and the depth of the read, never whether one happens; `screen:capture` +
+  before it is published. Nothing auto-publishes, so there is no risk score —
+  a flagged-combination list sets how deep the read goes: `screen:capture` +
   `net:`, `events:transcripts` + `net:`, and any native tier with `net:` demand
   a written justification per capability and a runtime observation. Updates are
   reviewed as a **source diff** (we built both versions from pinned commits),
@@ -449,7 +449,7 @@ Each phase is done when its checks pass.
 | **3.5** | `grain-ext` CLI (`init`/`dev`/`doctor`/`pack`/`submit`); developer mode with load-unpacked, `dev` badge and override display; **hot reload under 300 ms with no restart and no leaked workers** (RAM-measured); source-mapped stacks; developer panel (activity, host calls, denials, budget, resources, console) built **only** when developer mode is on; typed errors with `hint` + `docs`; `Origin` validation on the WS handshake; author docs proven by an outsider shipping an extension unaided; **Phase 3's surface handshake verified end-to-end with a real dev extension** |
 | **4** | Tier-C supervisor (companion + provider roles); `settings-panel` iframes; `screen:capture` / `pointer` / `audio:play` as demand appears; 1–2 built-ins re-platformed; per-worker memory ceiling with strike semantics; secret settings in the OS keychain. **Native extensions are dev-mode-only until 5A.** |
 | **5A** | Root keys generated and pinned; signed index verified with rollback + expiry handling; the four anti-forgery tests of the plan's §3.2 pass; pack format v2 with **path-safe extraction tested before the extractor exists**; install/update/remove transaction incl. permission-diff gating and previous-version retention; signed revocation disables an installed extension |
-| **5B** | `grain-extensions` repo live with the three-job CI (untrusted build holds no secrets); risk score ordering a **100%-human** review queue; review dashboard risk-sorted with revocation rehearsed; publish pipeline signing to GitHub Releases; store UI filled in; public site; **one real third-party extension shipped end to end** |
+| **5B** | `grain-extensions` repo live with the **two-job** CI (the job that runs untrusted build code holds no secrets; only the merge-triggered publish job has the key); **100%-human** review through GitHub's PR UI with an automated briefing comment; revocation rehearsed against a fixture; publish pipeline signing to GitHub Releases; store UI filled in; public site; **one real third-party extension shipped end to end** |
 
 > ✅ **The gate that blocked rows 4 and 5 is lifted (2026-07-22).** It demanded a
 > designed hosting + submission + review + trust platform (with the guarantee
