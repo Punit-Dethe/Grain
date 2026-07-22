@@ -52,6 +52,10 @@ const REAP_INTERVAL_SECS: u64 = 30;
 /// Transform budget (SPEC §3.1): a cold worker cannot fit this, which is why
 /// `onTransform` extensions warm on `RecordingStarted`.
 const TRANSFORM_DEADLINE: Duration = Duration::from_millis(150);
+/// A session mode owns the deliberately slow stage, but never indefinitely.
+/// Thirty seconds is generous for a routed model call and still guarantees a
+/// hung worker cannot eat the user's transcript.
+const SESSION_STAGE_DEADLINE: Duration = Duration::from_secs(30);
 /// Consecutive transform failures before auto-disable (SPEC §3.3).
 const MAX_STRIKES: u32 = 3;
 /// Source maps are read only after a dev worker fails. Bound the exceptional
@@ -262,6 +266,45 @@ impl Workers {
                 Some(w.strikes)
             }
             None => None,
+        }
+    }
+
+    /// Send a host notification that intentionally has no response waiter.
+    /// Call id zero is reserved for these one-way lifecycle messages.
+    fn notify(&self, ext_id: &str, method: &str, params: Value) -> Result<(), String> {
+        let out_tx = self
+            .map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .and_then(|worker| worker.conn.as_ref())
+            .map(|conn| conn.out_tx.clone())
+            .ok_or("worker not connected")?;
+        let frame = HostFrame::Call(HostCall {
+            call_id: 0,
+            method: method.to_string(),
+            params,
+        });
+        let json = serde_json::to_string(&frame).map_err(|error| error.to_string())?;
+        out_tx
+            .send(Message::Text(json.into()))
+            .map_err(|_| "worker channel closed".to_string())
+    }
+
+    /// Stop waiting for every host-initiated call to this worker. Session
+    /// cancellation uses this to return immediately; late replies are ignored.
+    fn cancel_pending(&self, ext_id: &str, reason: &str) {
+        let pending = self
+            .map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .and_then(|worker| worker.conn.as_ref())
+            .map(|conn| conn.pending.clone());
+        if let Some(pending) = pending {
+            for (_, sender) in pending.lock().unwrap().drain() {
+                let _ = sender.send(Err(reason.to_string()));
+            }
         }
     }
 }
@@ -799,6 +842,21 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
     };
     let empty = host.workers.is_empty();
     log::info!("[ext:{ext_id}] life worker reaped ({reason})");
+    // A reload/disable may reap the worker while its session-owned slow stage
+    // is awaiting a result. Give the worker's AbortSignal one best-effort turn
+    // before closing the socket, then release the host-side waiter below.
+    if crate::extension_session::is_owned_by(ext_id) {
+        if let Some(conn) = &worker.conn {
+            let frame = HostFrame::Call(HostCall {
+                call_id: 0,
+                method: "session.cancel".to_string(),
+                params: json!({ "reason": reason }),
+            });
+            if let Ok(payload) = serde_json::to_string(&frame) {
+                let _ = conn.out_tx.send(Message::Text(payload.into()));
+            }
+        }
+    }
     crate::events_server::revoke_token(&worker.token);
     let _ = host.app.emit_to(
         SUPERVISOR_LABEL,
@@ -856,6 +914,9 @@ fn reap_idle() {
         None => return,
     };
     for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
+        if crate::extension_session::is_owned_by(&id) {
+            continue;
+        }
         kill_worker(&id, "idle timeout");
     }
 }
@@ -953,6 +1014,92 @@ pub async fn run_transforms(app: &AppHandle, text: String) -> String {
         }
     }
     current
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum SessionStageOutput {
+    Text(String),
+    Handled,
+}
+
+fn parse_session_stage_output(value: Value) -> Result<SessionStageOutput, String> {
+    if let Some(text) = value.as_str() {
+        return Ok(SessionStageOutput::Text(text.to_string()));
+    }
+    if value
+        .get("handled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(SessionStageOutput::Handled);
+    }
+    if let Some(text) = value.get("text").and_then(Value::as_str) {
+        return Ok(SessionStageOutput::Text(text.to_string()));
+    }
+    Err("session stage returned neither text nor handled=true".into())
+}
+
+/// Keep the owning worker warm for the recording. The activation payload is
+/// data only; the session's identity still comes from its minted token.
+pub fn wake_for_session(app: &AppHandle, ext_id: &str, mode: &str) {
+    if is_running(ext_id) {
+        return;
+    }
+    let Some(pack) = load_manifest(app, ext_id) else {
+        return;
+    };
+    let granted = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .map(|record| record.granted)
+        .unwrap_or_default();
+    spawn_worker(
+        app,
+        ext_id,
+        &pack,
+        granted,
+        Some(json!({ "Session": { "mode": mode } })),
+    );
+}
+
+/// Run the owner-controlled slow stage. Failure is deliberately returned to
+/// the caller, which falls back to the exact input text.
+pub async fn run_session_stage(
+    ext_id: &str,
+    mode: &str,
+    text: &str,
+) -> Result<SessionStageOutput, String> {
+    let host = HOST.get().ok_or("extension host unavailable")?;
+    let result = host
+        .workers
+        .call(
+            ext_id,
+            "sessionStage",
+            json!({ "mode": mode, "text": text }),
+            SESSION_STAGE_DEADLINE,
+        )
+        .await;
+    if result
+        .as_ref()
+        .is_err_and(|error| error == "deadline exceeded")
+    {
+        let _ = host
+            .workers
+            .notify(ext_id, "session.cancel", json!({ "reason": "timeout" }));
+    }
+    parse_session_stage_output(result?)
+}
+
+/// User cancellation is immediate: notify the handler's AbortSignal and drop
+/// the Rust waiter. The worker may finish later; its response has no recipient.
+pub fn cancel_session_stage(ext_id: &str, reason: &str) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let _ = host
+        .workers
+        .notify(ext_id, "session.cancel", json!({ "reason": reason }));
+    host.workers.cancel_pending(ext_id, reason);
 }
 
 /// How long the host waits for a worker to *acknowledge* a shortcut. The
@@ -1487,6 +1634,48 @@ mod tests {
                     .unwrap_err(),
                 "deadline exceeded"
             );
+        });
+    }
+
+    #[test]
+    fn session_stage_parses_replace_suppress_and_rejects_ambiguous_output() {
+        assert_eq!(
+            parse_session_stage_output(json!("changed")).unwrap(),
+            SessionStageOutput::Text("changed".into())
+        );
+        assert_eq!(
+            parse_session_stage_output(json!({ "text": "changed" })).unwrap(),
+            SessionStageOutput::Text("changed".into())
+        );
+        assert_eq!(
+            parse_session_stage_output(json!({ "handled": true })).unwrap(),
+            SessionStageOutput::Handled
+        );
+        assert!(parse_session_stage_output(Value::Null).is_err());
+    }
+
+    #[test]
+    fn cancelling_pending_calls_releases_the_waiter_immediately() {
+        rt().block_on(async {
+            let workers = Workers::new();
+            let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Message>();
+            workers.insert("com.x.a", worker(now_secs(), false));
+            workers.attach("com.x.a", "tok", out_tx).unwrap();
+
+            let cancel = async {
+                out_rx.recv().await.expect("stage call emitted");
+                workers.cancel_pending("com.x.a", "session cancelled");
+            };
+            let (result, _) = tokio::join!(
+                workers.call(
+                    "com.x.a",
+                    "sessionStage",
+                    json!({ "text": "keep me" }),
+                    Duration::from_secs(30),
+                ),
+                cancel,
+            );
+            assert_eq!(result.unwrap_err(), "session cancelled");
         });
     }
 

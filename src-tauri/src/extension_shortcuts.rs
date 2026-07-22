@@ -229,7 +229,35 @@ fn sync_now(app: &AppHandle) {
         .iter()
         .filter_map(|rec| {
             let pack = crate::extension_host::load_manifest(app, &rec.id)?;
-            if pack.manifest.contributes.shortcuts.is_empty() {
+            let mut shortcuts = pack
+                .manifest
+                .contributes
+                .shortcuts
+                .iter()
+                .map(|declaration| {
+                    (
+                        declaration.id.clone(),
+                        declaration.label.clone(),
+                        declaration.default_binding.clone().unwrap_or_default(),
+                        settings
+                            .bindings
+                            .get(&binding_id(&rec.id, &declaration.id))
+                            .map(|binding| binding.current_binding.clone()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            if let Some(mode) = &pack.manifest.contributes.session_mode {
+                shortcuts.push((
+                    mode.id.clone(),
+                    mode.label.clone(),
+                    mode.default_binding.clone().unwrap_or_default(),
+                    settings
+                        .bindings
+                        .get(&binding_id(&rec.id, &mode.id))
+                        .map(|binding| binding.current_binding.clone()),
+                ));
+            }
+            if shortcuts.is_empty() {
                 return None;
             }
             Some(ExtInput {
@@ -237,23 +265,7 @@ fn sync_now(app: &AppHandle) {
                 name: pack.manifest.name.clone(),
                 description: pack.manifest.description.clone(),
                 enabled: rec.enabled,
-                shortcuts: pack
-                    .manifest
-                    .contributes
-                    .shortcuts
-                    .iter()
-                    .map(|d| {
-                        (
-                            d.id.clone(),
-                            d.label.clone(),
-                            d.default_binding.clone().unwrap_or_default(),
-                            settings
-                                .bindings
-                                .get(&binding_id(&rec.id, &d.id))
-                                .map(|b| b.current_binding.clone()),
-                        )
-                    })
-                    .collect(),
+                shortcuts,
             })
         })
         .collect();
@@ -363,6 +375,13 @@ pub fn forget(app: &AppHandle, ext_id: &str) {
 /// blocking — or worse, touching the shortcut registry — hangs every hotkey in
 /// the app.
 pub fn on_pressed(app: &AppHandle, ext_id: &str, shortcut_id: &str) {
+    let is_session_mode = crate::extension_host::load_manifest(app, ext_id)
+        .and_then(|pack| pack.manifest.contributes.session_mode)
+        .is_some_and(|mode| mode.id == shortcut_id);
+    if is_session_mode {
+        crate::extension_session::toggle_from_shortcut(app, ext_id, shortcut_id);
+        return;
+    }
     crate::extension_host::wake_for_shortcut(app, ext_id, shortcut_id);
 }
 

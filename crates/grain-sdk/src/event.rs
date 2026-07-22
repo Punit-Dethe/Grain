@@ -124,6 +124,11 @@ pub enum DaemonEvent {
     RecordingStarted {
         session_id: u64,
         mode: SessionMode,
+        /// Present only when a third-party extension owns the slow stage. The
+        /// pill renders this host-derived display name; extension code controls
+        /// neither the indicator nor its layout.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner: Option<String>,
     },
     RecordingStopped {
         session_id: u64,
@@ -374,6 +379,7 @@ mod variant_name_tests {
             DaemonEvent::RecordingStarted {
                 session_id: 1,
                 mode: SessionMode::Dictation,
+                owner: None,
             },
             DaemonEvent::TranscriptionComplete {
                 session_id: 1,

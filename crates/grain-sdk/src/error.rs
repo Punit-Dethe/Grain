@@ -10,6 +10,8 @@ pub enum HostErrorCode {
     CapabilityDenied,
     #[serde(rename = "E_TIMEOUT")]
     Timeout,
+    #[serde(rename = "E_SESSION_BUSY")]
+    SessionBusy,
     #[serde(rename = "E_QUOTA")]
     Quota,
     #[serde(rename = "E_INVALID_MANIFEST")]
@@ -31,6 +33,7 @@ impl HostErrorCode {
         match self {
             Self::CapabilityDenied => "E_CAPABILITY_DENIED",
             Self::Timeout => "E_TIMEOUT",
+            Self::SessionBusy => "E_SESSION_BUSY",
             Self::Quota => "E_QUOTA",
             Self::InvalidManifest => "E_INVALID_MANIFEST",
             Self::InvalidArgument => "E_INVALID_ARGUMENT",

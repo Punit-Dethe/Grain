@@ -57,6 +57,7 @@ mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
+mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
 mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/helpers/mod.rs"]
 mod helpers;

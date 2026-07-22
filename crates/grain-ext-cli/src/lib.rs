@@ -180,6 +180,7 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                     label: format!("Open {name}"),
                     default_binding: Some("Ctrl+Alt+Shift+G".into()),
                 }],
+                session_mode: None,
             },
         },
         entry: "dist/main.js".into(),

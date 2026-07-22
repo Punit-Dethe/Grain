@@ -2157,6 +2157,11 @@ struct Remote {
     agent_offer: Option<String>,
     /// Bumped on every offer/clear so the App detects the transition.
     agent_offer_seq: u64,
+    /// [GRAIN] Host-derived extension display name while an extension owns the
+    /// current recording's slow stage. This is status only, never clickable UI.
+    session_owner: Option<String>,
+    /// Bumped when ownership starts or clears so the App updates the riser.
+    session_owner_seq: u64,
     /// [GRAIN] Native agent input: `Some((selection_chars, type_to_expand,
     /// kind))` while the summon card should be on screen. `kind` picks the card
     /// variant (Assist vs the top-anchored Grain Space Capture/Recall).
@@ -2195,6 +2200,8 @@ impl Default for Remote {
             prompt_recording: false,
             agent_offer: None,
             agent_offer_seq: 0,
+            session_owner: None,
+            session_owner_seq: 0,
             agent_input: None,
             agent_input_seq: 0,
             agent_submit_req_seq: 0,
@@ -2220,7 +2227,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         }
         // Recording overrides processing: while recording the pill shows
         // recording; processing only appears after the stop signal.
-        DaemonEvent::RecordingStarted { mode, .. } => {
+        DaemonEvent::RecordingStarted { mode, owner, .. } => {
             r.state = PillState::Recording;
             r.visible = can_show(&r);
             // [GRAIN] Every session opens as the small collapsed capsule. A live
@@ -2234,6 +2241,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
                                         // A new session supersedes any lingering Quick-Agent follow-up offer.
             if r.agent_offer.take().is_some() {
                 r.agent_offer_seq = r.agent_offer_seq.wrapping_add(1);
+            }
+            if r.session_owner != owner {
+                r.session_owner = owner;
+                r.session_owner_seq = r.session_owner_seq.wrapping_add(1);
             }
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
@@ -2258,6 +2269,9 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             // `Processing` body beside the capsule.
             r.state = PillState::Idle;
             r.visible = false;
+            if r.session_owner.take().is_some() {
+                r.session_owner_seq = r.session_owner_seq.wrapping_add(1);
+            }
             eprintln!("event: ProcessingComplete/Cancelled -> hide (idle)");
         }
         // [GRAIN] B4: surface failures in the placeholder fallback state.
@@ -2635,6 +2649,10 @@ struct App {
     // and a click sends `PillAction::AgentFollowup` instead of Prompt Record.
     agent_offer: Option<String>,
     last_agent_offer_seq: u64,
+    /// Host-owned recording owner indicator. While set, the prompt riser is an
+    /// arrow-less, non-clickable "<name> is listening" status capsule.
+    session_owner: Option<String>,
+    last_session_owner_seq: u64,
     /// True when the pill's next hide is an offer withdrawal — those fade out
     /// smoothly (reusing `studio_alpha`) instead of vanishing like session ends.
     offer_fade_close: bool,
@@ -2739,6 +2757,8 @@ impl App {
             prompt_preview_until: None,
             agent_offer: None,
             last_agent_offer_seq: 0,
+            session_owner: None,
+            last_session_owner_seq: 0,
             offer_fade_close: false,
             agent_input: None,
             last_agent_input_seq: 0,
@@ -3048,7 +3068,9 @@ impl App {
             }
             // Collapsed sibling: the arrow-less offer fills its max width; the
             // switcher fits between its arrows in the fixed-width capsule.
-            _ if self.agent_offer.is_some() => (SIB_MAX_W - 4.0 * SIB_TEXT_PAD).max(0.0),
+            _ if self.agent_offer.is_some() || self.session_owner.is_some() => {
+                (SIB_MAX_W - 4.0 * SIB_TEXT_PAD).max(0.0)
+            }
             _ => (SIB_W - 2.0 * SIB_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0),
         }
     }
@@ -3989,8 +4011,9 @@ impl App {
     fn draw_sibling_pill(&mut self, pixmap: &mut Pixmap, pill_right: f32, y_off: f32, pill_h: f32) {
         let p = self.riser_progress.clamp(0.0, 1.0);
         let is_offer = self.agent_offer.is_some();
-        // Fixed width for the switcher; the offer hugs its label up to the max.
-        let cap_w = if is_offer {
+        let is_status = is_offer || self.session_owner.is_some();
+        // Fixed width for the switcher; status capsules hug their label.
+        let cap_w = if is_status {
             let label_w = self.cached_label.as_ref().map_or(0.0, |c| c.total_width);
             (label_w + 4.0 * SIB_TEXT_PAD).clamp(SIB_W, SIB_MAX_W)
         } else {
@@ -4219,7 +4242,7 @@ impl App {
             let col = [236, 229, 218];
             // The `‹ ›` arrows belong to the SWITCHER; the follow-up offer is a
             // single clickable affordance, so it hides them.
-            if self.agent_offer.is_none() {
+            if self.agent_offer.is_none() && self.session_owner.is_none() {
                 let l = CachedText::new(font, "\u{2039}", PROMPT_LABEL_PX);
                 let r = CachedText::new(font, "\u{203a}", PROMPT_LABEL_PX);
                 draw_cached_text_centered(
@@ -4603,10 +4626,26 @@ impl ApplicationHandler<UserEvent> for App {
             // pill if no session is active (so the user sees the new title).
             if r.prompt_seq != self.last_prompt_seq {
                 self.last_prompt_seq = r.prompt_seq;
-                self.prompt_label = r.prompt_name.clone();
-                self.riser_hide_at = Some(now + RISER_HOLD);
-                self.prompt_preview_until = Some(now + RISER_HOLD);
-                self.update_cached_label();
+                if self.session_owner.is_none() {
+                    self.prompt_label = r.prompt_name.clone();
+                    self.riser_hide_at = Some(now + RISER_HOLD);
+                    self.prompt_preview_until = Some(now + RISER_HOLD);
+                    self.update_cached_label();
+                }
+            }
+
+            // [GRAIN] Extension-owned session changed -> show a host-controlled,
+            // non-interactive owner indicator for the full recording/processing
+            // lifetime. The extension supplies neither this text nor its layout.
+            if r.session_owner_seq != self.last_session_owner_seq {
+                self.last_session_owner_seq = r.session_owner_seq;
+                self.session_owner = r.session_owner.clone();
+                if let Some(owner) = &self.session_owner {
+                    self.prompt_label = format!("{owner} is listening");
+                    self.riser_hide_at = None;
+                    self.prompt_preview_until = None;
+                    self.update_cached_label();
+                }
             }
 
             // [GRAIN] Quick-Agent follow-up offer changed → adopt it. While live
@@ -4639,6 +4678,7 @@ impl ApplicationHandler<UserEvent> for App {
             // agent input is up (the input ignores the overlay's None anchor —
             // it is a functional surface, not a status overlay).
             let offer_live = self.agent_offer.is_some();
+            let owner_live = self.session_owner.is_some();
             let input_live = self.agent_input.is_some();
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
             let want_visible = r.visible || preview_visible || offer_live || input_live;
@@ -4737,7 +4777,7 @@ impl ApplicationHandler<UserEvent> for App {
                 }
                 // Ease the prompt riser, auto-hiding after RISER_HOLD. A live
                 // follow-up offer pins it up until the core withdraws the offer.
-                let riser_target = if offer_live {
+                let riser_target = if offer_live || owner_live {
                     1.0
                 } else {
                     match self.riser_hide_at {
@@ -4881,6 +4921,45 @@ pub fn run_pill() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extension_session_owner_lives_through_processing_and_clears_at_terminal() {
+        let remote = Mutex::new(Remote::default());
+        apply_event(
+            &remote,
+            DaemonEvent::RecordingStarted {
+                session_id: 7,
+                mode: SessionMode::Batch,
+                owner: Some("Clicky".into()),
+            },
+        );
+        let started_seq = {
+            let state = remote.lock().unwrap();
+            assert_eq!(state.session_owner.as_deref(), Some("Clicky"));
+            assert!(matches!(state.state, PillState::Recording));
+            state.session_owner_seq
+        };
+
+        apply_event(&remote, DaemonEvent::RecordingStopped { session_id: 7 });
+        {
+            let state = remote.lock().unwrap();
+            assert_eq!(state.session_owner.as_deref(), Some("Clicky"));
+            assert!(matches!(state.state, PillState::Processing));
+            assert_eq!(state.session_owner_seq, started_seq);
+        }
+
+        apply_event(
+            &remote,
+            DaemonEvent::ProcessingComplete {
+                session_id: 7,
+                text: "done".into(),
+            },
+        );
+        let state = remote.lock().unwrap();
+        assert!(state.session_owner.is_none());
+        assert!(matches!(state.state, PillState::Idle));
+        assert_eq!(state.session_owner_seq, started_seq.wrapping_add(1));
+    }
 
     /// Non-edge dots the field can light — the cells a pattern actually paints.
     fn lit_count(a: &Aura) -> usize {

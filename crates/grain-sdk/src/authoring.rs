@@ -35,6 +35,7 @@ export type GrainActivation = DaemonEvent | { Shortcut: { id: string } };
 export type GrainErrorCode =
   | "E_CAPABILITY_DENIED"
   | "E_TIMEOUT"
+  | "E_SESSION_BUSY"
   | "E_QUOTA"
   | "E_INVALID_MANIFEST"
   | "E_INVALID_ARGUMENT"
@@ -80,9 +81,27 @@ export interface GrainApi {
     show(payload?: JsonValue): Promise<unknown>;
     dismiss(): Promise<unknown>;
   };
+  readonly session: {
+    start(options: { mode: string }): Promise<unknown>;
+  };
 
   onTransform(handler: (text: string) => string | Promise<string>): void;
-  onSessionResult(handler: (text: string) => void | Promise<void>): void;
+  onSessionStage(
+    handler: (
+      text: string,
+      context: { readonly mode: string; readonly signal: AbortSignal },
+    ) =>
+      | string
+      | { text?: string; handled?: boolean }
+      | Promise<string | { text?: string; handled?: boolean }>,
+  ): void;
+  /** @deprecated Use onSessionStage. */
+  onSessionResult(
+    handler: (text: string) =>
+      | string
+      | { text?: string; handled?: boolean }
+      | Promise<string | { text?: string; handled?: boolean }>,
+  ): void;
   onShortcut(handler: (id: string) => void | Promise<void>): void;
   onEvent(handler: (event: DaemonEvent) => void): void;
 }

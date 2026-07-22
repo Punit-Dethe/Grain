@@ -122,6 +122,30 @@ pub struct Contributes {
     /// Global shortcuts, registered as `ext:<id>:<shortcut-id>`.
     #[serde(default)]
     pub shortcuts: Vec<ShortcutDecl>,
+    /// One host-owned recording mode. Its suggested binding starts/stops the
+    /// serialized capture session; the extension owns only the bounded slow
+    /// stage after transcription.
+    #[serde(
+        default,
+        rename = "sessionMode",
+        alias = "session_mode",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_mode: Option<SessionModeDecl>,
+}
+
+/// A recording mode contributed by one extension (SPEC §1.3, §3.1).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionModeDecl {
+    pub id: String,
+    pub label: String,
+    #[serde(
+        default,
+        rename = "defaultBinding",
+        alias = "default_binding",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub default_binding: Option<String>,
 }
 
 /// One schema-declared setting (SPEC §4, levels 1–2).
@@ -351,8 +375,9 @@ impl GrainPack {
 
         // Surfaces and code-backed contributions need code to back them.
         let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
-        let contributes_code =
-            !m.contributes.settings.is_empty() || !m.contributes.shortcuts.is_empty();
+        let contributes_code = !m.contributes.settings.is_empty()
+            || !m.contributes.shortcuts.is_empty()
+            || m.contributes.session_mode.is_some();
         if (declares_surface || contributes_code) && m.tier != Tier::Scripted {
             return Err(
                 "surfaces and contributes require tier 'scripted' (there is no code to back them)"
@@ -420,6 +445,33 @@ impl GrainPack {
             }
             if !seen_sc.insert(&sc.id) {
                 return Err(format!("duplicate shortcut id '{}'", sc.id));
+            }
+        }
+
+        if let Some(mode) = &m.contributes.session_mode {
+            if mode.id.trim().is_empty() || mode.label.trim().is_empty() {
+                return Err("a session mode requires both id and label".into());
+            }
+            if mode.id.contains(':') {
+                return Err(format!(
+                    "session mode id '{}' must not contain ':'",
+                    mode.id
+                ));
+            }
+            if !seen_sc.insert(&mode.id) {
+                return Err(format!(
+                    "session mode id '{}' conflicts with a shortcut id",
+                    mode.id
+                ));
+            }
+            if !m
+                .permissions
+                .iter()
+                .any(|permission| permission == "session:start")
+            {
+                return Err(
+                    "contributes.sessionMode requires the 'session:start' permission".into(),
+                );
             }
         }
 
@@ -668,6 +720,35 @@ mod tests {
             ),
             Ok(())
         );
+    }
+
+    #[test]
+    fn session_mode_requires_its_grant_and_a_unique_safe_id() {
+        let base = |permissions: &str, contribution: &str| {
+            pack(&format!(
+                r#"{{"manifest":{{"id":"com.x.notes","name":"Notes","version":"1","tier":"scripted","entry_source":"x","permissions":{permissions},"contributes":{contribution}}}}}"#
+            ))
+        };
+        assert!(base(
+            r#"["session:start"]"#,
+            r#"{"sessionMode":{"id":"note","label":"Dictate a note","default_binding":"Ctrl+Shift+N"}}"#,
+        )
+        .is_ok());
+        assert!(base(
+            "[]",
+            r#"{"sessionMode":{"id":"note","label":"Dictate a note"}}"#,
+        )
+        .is_err());
+        assert!(base(
+            r#"["session:start"]"#,
+            r#"{"sessionMode":{"id":"bad:id","label":"Bad"}}"#,
+        )
+        .is_err());
+        assert!(base(
+            r#"["session:start"]"#,
+            r#"{"shortcuts":[{"id":"note","label":"Other"}],"sessionMode":{"id":"note","label":"Mode"}}"#,
+        )
+        .is_err());
     }
 
     /// Forward-compatibility (SPEC §4.1/§4.3): a pack written against a NEWER

@@ -26,6 +26,7 @@ export const GRAIN_RUNTIME_JS = `(function () {
   var reqSeq = 0;
   var pending = new Map();     // request id -> { resolve, reject }
   var handlers = {};           // "transform" | "sessionResult" -> fn
+  var sessionAbort = null;     // AbortController for the one active slow stage
   var onEventFn = null;
   var outbox = [];             // frames queued until the socket opens
   var open = false;
@@ -95,6 +96,11 @@ export const GRAIN_RUNTIME_JS = `(function () {
   }
 
   function onHostCall(call) {
+    if (call.method === "session.cancel") {
+      if (sessionAbort) sessionAbort.abort();
+      if (call.call_id) send({ callres: { call_id: call.call_id, ok: null } });
+      return;
+    }
     var handler = handlers[call.method];
     if (!handler) {
       send({ callres: { call_id: call.call_id, err: "no handler for " + call.method } });
@@ -181,10 +187,31 @@ export const GRAIN_RUNTIME_JS = `(function () {
       show: function (payload) { return req("overlay.show", { payload: payload == null ? null : payload }); },
       dismiss: function () { return req("overlay.dismiss", {}); }
     },
+    session: {
+      start: function (options) {
+        return req("session.start", { mode: String(options && options.mode || "") });
+      }
+    },
     // A transform returns the rewritten text (a string); an empty string
     // suppresses the paste (SPEC §3.3).
     onTransform: function (fn) { handlers.transform = function (p) { return fn(p.text); }; },
-    onSessionResult: function (fn) { handlers.sessionResult = function (p) { return fn(p.text); }; },
+    onSessionStage: function (fn) {
+      handlers.sessionStage = function (p) {
+        var controller = new AbortController();
+        sessionAbort = controller;
+        return Promise.resolve(fn(p.text, { mode: String(p.mode || ""), signal: controller.signal }))
+          .then(function (out) {
+            if (sessionAbort === controller) sessionAbort = null;
+            return out;
+          }, function (err) {
+            if (sessionAbort === controller) sessionAbort = null;
+            throw err;
+          });
+      };
+    },
+    onSessionResult: function (fn) {
+      grain.onSessionStage(function (text) { return fn(text); });
+    },
     // A shortcut press is acknowledged on RECEIPT, not on completion: the
     // handler runs detached so an extension that opens an LLM call from a
     // hotkey is never mistaken for an unresponsive one.

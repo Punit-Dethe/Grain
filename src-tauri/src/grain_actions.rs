@@ -45,6 +45,15 @@ pub(crate) fn next_session_id() -> u64 {
 /// `RecordingStarted`. Emitted only after capture actually starts, so a failed
 /// start never shows a pill that must be torn down.
 pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: SessionMode) {
+    emit_session_started_with_owner(app, session_id, mode, None);
+}
+
+fn emit_session_started_with_owner(
+    app: &AppHandle,
+    session_id: u64,
+    mode: SessionMode,
+    owner: Option<String>,
+) {
     crate::bridge::emit(
         app,
         DaemonEvent::OverlayConfig {
@@ -53,7 +62,11 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
     );
     crate::bridge::emit(
         app,
-        DaemonEvent::RecordingStarted { session_id, mode },
+        DaemonEvent::RecordingStarted {
+            session_id,
+            mode,
+            owner,
+        },
     );
 }
 
@@ -62,6 +75,14 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
 pub(crate) fn session_started(app: &AppHandle, mode: SessionMode) -> u64 {
     let session_id = next_session_id();
     emit_session_started(app, session_id, mode);
+    session_id
+}
+
+/// Extension sessions always use the batch capture presentation; the owner is
+/// a host-derived fact rendered by the pill, never extension-supplied UI.
+pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
+    let session_id = next_session_id();
+    emit_session_started_with_owner(app, session_id, SessionMode::Batch, Some(owner.to_string()));
     session_id
 }
 
@@ -127,6 +148,7 @@ pub(crate) fn mirror_stream_text(app: &AppHandle, committed: &str, tentative: &s
 /// and block the next `start_stream`) — then hide the pill. The discarded
 /// transcript is intentionally dropped.
 pub(crate) fn cancel_session(app: &AppHandle) {
+    crate::extension_session::cancel(app);
     crate::master_key::unregister_chords(app);
     if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
         rt.cancel_session();
@@ -524,7 +546,11 @@ impl ShortcutAction for RealtimeTranscribeAction {
                             false,
                             // [GRAIN] Snippets built-in extension gate (SPEC 10.1): disabled ->
                             // empty slice, the zero-cost no-op path.
-                            if settings.snippets_enabled { &settings.snippets } else { &[] },
+                            if settings.snippets_enabled {
+                                &settings.snippets
+                            } else {
+                                &[]
+                            },
                             settings.scrap_that_enabled,
                         )
                     } else if !samples.is_empty() {

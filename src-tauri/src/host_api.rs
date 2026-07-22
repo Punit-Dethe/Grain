@@ -437,27 +437,19 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                 )));
             }
         }
-        "doc.list" | "session.start" | "capture.selection" | "workspace.open"
-        | "workspace.close" | "overlay.show" | "overlay.dismiss" => {}
+        "session.start" => {
+            param_nonempty_str(params, "mode")?;
+        }
+        "doc.list" | "capture.selection" | "workspace.open" | "workspace.close"
+        | "overlay.show" | "overlay.dismiss" => {}
         _ => return Err(unknown_method(method)),
     }
     Ok(())
 }
 
-fn not_implemented(method: &str) -> HostError {
-    typed_error(
-        HostErrorCode::NotImplemented,
-        format!("{method} is not implemented in this Grain build."),
-        format!("Wait for Grain API support before depending on {method}."),
-    )
-}
-
 fn preflight(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
     authorize(identity, method)?;
     validate_request(method, params)?;
-    if method == "session.start" {
-        return Err(not_implemented(method));
-    }
     Ok(())
 }
 
@@ -631,11 +623,22 @@ pub async fn dispatch(
             Ok(json!({ "text": text }))
         }
         "session.start" => {
-            // Structural capability reserved + plumbed (guide step 7): the name
-            // exists in the vocabulary and the router from day one, so a
-            // Phase-3 extension never discovers the gap. Returns a clear
-            // unimplemented until the coordinator wiring lands.
-            Err(not_implemented("session.start"))
+            let mode = param_str(&params, "mode")?;
+            match crate::extension_session::start(app, &identity.id, &mode) {
+                Ok(session_id) => Ok(json!({ "sessionId": session_id })),
+                Err(crate::extension_session::StartError::Busy) => Err(typed_error(
+                    HostErrorCode::SessionBusy,
+                    "Another recording session is already running.",
+                    "Wait for the current session to finish or cancel it, then retry.",
+                )),
+                Err(crate::extension_session::StartError::InvalidMode) => Err(invalid_argument(
+                    format!("'{mode}' is not this extension's contributed session mode"),
+                )),
+                Err(crate::extension_session::StartError::Unavailable(error)) => Err(unavailable(
+                    format!("session could not start: {error}"),
+                    "Check microphone access and that the extension is still enabled.",
+                )),
+            }
         }
         other => Err(unknown_method(other)),
     }
@@ -700,6 +703,7 @@ mod tests {
             ("settings.get", "settings"),
             ("llm.complete", "llm"),
             ("embed", "embed"),
+            ("session.start", "session:start"),
             ("capture.selection", "capture:selection"),
             ("workspace.open", "surface:workspace"),
             ("overlay.show", "surface:overlay"),
@@ -728,6 +732,7 @@ mod tests {
             ("settings.set", json!({"key": "k"})),
             ("llm.complete", json!({"prompt": 4})),
             ("embed", json!({"texts": ["ok", 4]})),
+            ("session.start", json!({})),
         ] {
             let error = preflight(&all_caps, method, &params).unwrap_err();
             assert_eq!(error.code, HostErrorCode::InvalidArgument, "{method}");
@@ -748,6 +753,7 @@ mod tests {
             ("settings.set", json!({"key": "k", "value": null})),
             ("llm.complete", json!({"prompt": "hello"})),
             ("embed", json!({"texts": ["hello"]})),
+            ("session.start", json!({"mode": "note"})),
             ("capture.selection", json!({})),
             ("workspace.open", json!({})),
             ("workspace.close", json!({})),
@@ -760,10 +766,6 @@ mod tests {
         let unknown = preflight(&all_caps, "os.exec", &json!({})).unwrap_err();
         assert_eq!(unknown.code, HostErrorCode::UnknownMethod);
         assert_typed(&unknown);
-
-        let pending = preflight(&all_caps, "session.start", &json!({})).unwrap_err();
-        assert_eq!(pending.code, HostErrorCode::NotImplemented);
-        assert_typed(&pending);
     }
 
     #[test]

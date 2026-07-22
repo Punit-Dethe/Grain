@@ -11,17 +11,51 @@
 //! un-called, so upstream changes to it still merge cleanly and can be read
 //! against this file. Keep the two in sync deliberately — nothing enforces it.
 
-use crate::llm_client::LlmError;
-use crate::rotation_state::CallOutcome;
-use crate::settings::{AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-use crate::apple_intelligence;
 use crate::actions::{
     build_system_prompt, is_blank_transcription, strip_invisible_chars, TRANSCRIPTION_FIELD,
 };
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+use crate::apple_intelligence;
+use crate::llm_client::LlmError;
+use crate::rotation_state::CallOutcome;
+use crate::settings::{AppSettings, APPLE_INTELLIGENCE_PROVIDER_ID};
 use grain_core::PostProcessProvider;
 use log::{debug, error, warn};
 use tauri::{AppHandle, Manager};
+
+/// Result of the extension-owned slow stage. On every failure `text` is the
+/// exact stage input and `handled` is false: a worker may change words, but it
+/// can never lose them by crashing, timing out, or reloading.
+pub(crate) struct ExtensionSessionStage {
+    pub text: String,
+    pub handled: bool,
+}
+
+pub(crate) async fn run_extension_session_stage(
+    ext_id: &str,
+    mode: &str,
+    text: &str,
+) -> ExtensionSessionStage {
+    match crate::extension_host::run_session_stage(ext_id, mode, text).await {
+        Ok(crate::extension_host::SessionStageOutput::Text(output)) => ExtensionSessionStage {
+            text: output,
+            handled: false,
+        },
+        Ok(crate::extension_host::SessionStageOutput::Handled) => ExtensionSessionStage {
+            text: String::new(),
+            handled: true,
+        },
+        Err(error) => {
+            log::warn!(
+                "[GRAIN] extension session stage '{ext_id}/{mode}' failed ({error}) — using original text"
+            );
+            ExtensionSessionStage {
+                text: text.to_string(),
+                handled: false,
+            }
+        }
+    }
+}
 
 pub(crate) async fn post_process_transcription(
     app: &AppHandle,

@@ -67,7 +67,9 @@ pub fn handle_shortcut_event(
     // Cancel binding: only fires when recording and key is pressed
     if binding_id == "cancel" {
         let audio_manager = app.state::<Arc<AudioRecordingManager>>();
-        if audio_manager.is_recording() && is_pressed {
+        // [GRAIN] An extension slow stage remains cancellable after capture has
+        // stopped and the audio manager has returned to Idle.
+        if (audio_manager.is_recording() || crate::extension_session::is_active()) && is_pressed {
             action.start(app, binding_id, hotkey_string);
         }
         return;
