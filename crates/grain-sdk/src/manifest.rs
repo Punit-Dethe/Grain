@@ -106,6 +106,11 @@ pub struct OverlayDecl {
     /// Auto-dismiss budget; the host caps this regardless of what is asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u32>,
+    /// The overlay UI as a self-contained HTML document, rendered into the same
+    /// sandboxed iframe a workspace uses (SPEC §7.1). Embedded so the pack stays
+    /// one shareable file.
+    #[serde(default)]
+    pub ui_source: String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -357,11 +362,16 @@ impl GrainPack {
             }
         }
 
-        // A workspace with nothing to render is a window that opens blank and
+        // A surface with nothing to render is a window that opens blank and
         // cannot be explained to the user — reject it at import, not at open.
         if let Some(w) = &m.surfaces.workspace {
             if w.ui_source.trim().is_empty() {
                 return Err("a workspace surface requires ui_source".into());
+            }
+        }
+        if let Some(o) = &m.surfaces.overlay {
+            if o.ui_source.trim().is_empty() {
+                return Err("an overlay surface requires ui_source".into());
             }
         }
 
@@ -529,6 +539,17 @@ mod tests {
                "surfaces":{"workspace":{"title":"T","ui_source":"<p>x"}}"#
         )
         .is_ok());
+        // An overlay is the same story: needs its capability and its UI.
+        assert!(scripted(
+            r#","permissions":["surface:overlay"],
+               "surfaces":{"overlay":{"ui_source":"<p>x"}}"#
+        )
+        .is_ok());
+        assert!(scripted(r#","surfaces":{"overlay":{"ui_source":"<p>x"}}"#).is_err());
+        assert!(scripted(
+            r#","permissions":["surface:overlay"],"surfaces":{"overlay":{"timeout_ms":2000}}"#
+        )
+        .is_err());
         // …and a workspace with no UI would open a blank window nobody can
         // explain, so it is refused at import rather than at open.
         assert!(scripted(

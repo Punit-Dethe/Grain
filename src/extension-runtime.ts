@@ -138,6 +138,12 @@ export const GRAIN_RUNTIME_JS = `(function () {
       open: function (payload) { return req("workspace.open", { payload: payload == null ? null : payload }); },
       close: function () { return req("workspace.close", {}); }
     },
+    // A transient HUD (SPEC 1.2). Host-budgeted in size and lifetime — it
+    // auto-dismisses, so an extension cannot leave one on screen.
+    overlay: {
+      show: function (payload) { return req("overlay.show", { payload: payload == null ? null : payload }); },
+      dismiss: function () { return req("overlay.dismiss", {}); }
+    },
     // A transform returns the rewritten text (a string); an empty string
     // suppresses the paste (SPEC §3.3).
     onTransform: function (fn) { handlers.transform = function (p) { return fn(p.text); }; },

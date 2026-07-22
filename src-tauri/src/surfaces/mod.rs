@@ -7,4 +7,5 @@
 //! it.
 
 pub mod extension;
+pub mod overlay;
 pub mod workspace;

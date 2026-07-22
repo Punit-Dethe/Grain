@@ -824,6 +824,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_surface_init,
             grain_commands::extension_surface_ui_ready,
             grain_commands::extension_surface_sleep_ready,
+            grain_commands::extension_surface_payload,
             grain_commands::extension_import_pack,
             grain_commands::extension_export_pack,
             grain_commands::extension_uninstall,

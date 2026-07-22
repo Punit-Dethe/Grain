@@ -674,9 +674,10 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                 .map_err(|e| e.to_string())?;
             }
             // SPEC §6: a disabled extension keeps no window and no live
-            // credential — the surface is destroyed, not merely slept.
+            // credential — every surface is destroyed, not merely slept.
             if !enabled {
                 crate::surfaces::extension::destroy(&app, pack_id);
+                crate::surfaces::overlay::dismiss(&app, pack_id);
             }
             // The activation/transform index is what the paste path and event
             // bus read; it must never lag the registry.
@@ -1082,6 +1083,7 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
     crate::extension_shortcuts::forget(&app, &id);
     crate::surfaces::extension::destroy(&app, &id);
+    crate::surfaces::overlay::dismiss(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
     }
@@ -1123,4 +1125,16 @@ pub fn extension_surface_sleep_ready(app: AppHandle, window: tauri::WebviewWindo
     if let Some(id) = crate::surfaces::extension::id_for_label(window.label()) {
         crate::surfaces::workspace::sleep_ready(&app, &id);
     }
+}
+
+/// The wrapper page collecting the payload its surface was opened with, to hand
+/// to the iframe on mount. Keyed on the calling window, so a surface only ever
+/// receives its own — and consumed once, so a re-mount does not replay a stale
+/// one.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_surface_payload(
+    window: tauri::WebviewWindow,
+) -> Option<serde_json::Value> {
+    crate::surfaces::extension::take_payload(window.label())
 }

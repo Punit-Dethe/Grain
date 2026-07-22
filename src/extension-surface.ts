@@ -74,6 +74,7 @@ const BRIDGE = `<script>(function(){
     },
     llm: { complete: function(p){ return call("llm.complete", p || {}); } },
     workspace: { close: function(){ return call("workspace.close", {}); } },
+    overlay: { dismiss: function(){ return call("overlay.dismiss", {}); } },
     onEvent: function(fn){ listeners.push(fn); },
     call: call
   };
@@ -122,6 +123,24 @@ function unmount() {
     frame = null;
   }
   inflight.clear();
+}
+
+/** Hand the iframe the payload the surface was opened with, once it is up. A
+ *  fresh build (and a wake after sleep) has no live listener yet, so the host
+ *  parks the payload and we collect it here — the workspace/overlay opening
+ *  argument would otherwise never arrive. */
+async function deliverOpeningPayload() {
+  try {
+    const payload = await invoke<unknown>("extension_surface_payload");
+    if (payload != null) {
+      frame?.contentWindow?.postMessage(
+        { __grainevent: 1, event: payload },
+        "*",
+      );
+    }
+  } catch {
+    /* no payload is the common case — not an error */
+  }
 }
 
 function connect(cfg: SurfaceInit) {
@@ -202,6 +221,7 @@ async function boot() {
   });
   await listen(cfg.reviveEvent, async () => {
     mount();
+    await deliverOpeningPayload();
     await invoke("extension_surface_ui_ready");
   });
   await listen(cfg.payloadEvent, (e) => {
@@ -212,6 +232,7 @@ async function boot() {
   });
 
   mount();
+  await deliverOpeningPayload();
   await invoke("extension_surface_ui_ready");
 }
 

@@ -211,11 +211,50 @@ capped, access is not: at cap, the least-recently-used sleeps and the incoming
 workspace always opens. Only `capped: true` surfaces count and **Grain's own are
 not capped** — a core feature is never evicted for an extension.
 
-**Step 5c NOT started** — the extension-facing half: `surface:workspace` host
-calls (`workspace.open`/`close`), building a spec from the manifest's
-`WorkspaceDecl`, and the surface's **own realm + token** (SPEC §7.1 — a
-workspace is not the supervisor and not the main window). That is where the
-security work lives; the machinery underneath it is done and verified.
+**Step 5c shipped — extension-facing workspace + its own realm.** An extension
+declares `surfaces.workspace` (now with a `ui_source` HTML field); the host opens
+one through the same sleeping-window generic. The security is STRUCTURAL, not a
+check: the window loads Grain's `extension-surface.html`, and the extension's
+markup runs in a **sandboxed iframe** with `allow-scripts` but NOT
+`allow-same-origin` → opaque origin, no Tauri IPC, no reach into the wrapper, no
+shared global. The wrapper holds the surface token; the iframe reaches the host
+only by postMessage-to-wrapper → host-call frame, and every capability is still
+checked in Rust. **Identity is derived, never passed**: `workspace.open`/`close`
+take no id (host reads the worker channel); the three surface commands read the
+calling window's label. Each surface mints its OWN token (≠ the worker's),
+revoked on window destroy; disable/uninstall destroy the surface. `min_size` is
+clamped against an untrusted manifest; a `ui_source`-less surface is rejected at
+import. **Live surface WINDOW e2e (open/iframe-mount/sleep) is deferred to
+Step 10's Grain Space Test**, which builds a real workspace extension — the
+guide's own sequencing, not a skipped check.
+
+**Step 6 shipped — overlay (transient HUD).** Reuses the *realm* (wrapper +
+sandboxed iframe + own revocable token) but not the lifecycle: no sleep, no LRU,
+create-and-destroy. Host **budgets** enforce "cannot linger" (SPEC §1.2): size
+clamped to a HUD (can't impersonate a window), lifetime a hard cap (auto-dismiss
+timer + focus-loss dismiss; an extension that asks for no/too-long a timeout
+still gets a self-removing HUD). Host calls `overlay.show(payload)` /
+`overlay.dismiss`, capability `surface:overlay`.
+- **Race fixed before it shipped:** overlays use UNIQUE per-invocation labels
+  (`ext-overlay-<id>-<epoch>`) + a `CURRENT` ext→label map, because reusing one
+  label across a replacing `show` would race Tauri's async `win.destroy()`
+  against the rebuild. The auto-dismiss timer is epoch-guarded so a replaced
+  overlay's timer can't kill its successor.
+- **Payload delivery unified** across workspace + overlay: a label-keyed stash
+  in `surfaces::extension`, collected by the wrapper via
+  `extension_surface_payload` on every mount (fresh build + wake). A freshly
+  built surface has no live listener yet, so the opening argument would
+  otherwise never arrive; the live `payload_event` still covers an already-awake
+  surface.
+
+**Realm plumbing lives in `surfaces::extension`** and is shared: `stage()` (mint
+token + park init + bind label→id), `take_init`/`take_payload`/`id_for_label`,
+`revoke_for_label` (clears label, token AND payload). Overlay calls into it.
+
+**Bug caught by tsc, worth remembering:** a `//` comment I added INSIDE the
+worker runtime's backtick template (`GRAIN_RUNTIME_JS = \`…\``) used backticks of
+its own and silently terminated the template string. The whole runtime shim is a
+template literal — **no backticks anywhere in its comments or code**.
 
 **Step detail for 1–3 (as originally recorded):**
 - **Step 1 done** — `grain-sdk/protocol.rs`: `ClientRequest`/`ServerResponse`/

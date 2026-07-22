@@ -1132,6 +1132,15 @@ async extensionSurfaceSleepReady() : Promise<void> {
     await TAURI_INVOKE("extension_surface_sleep_ready");
 },
 /**
+ * The wrapper page collecting the payload its surface was opened with, to hand
+ * to the iframe on mount. Keyed on the calling window, so a surface only ever
+ * receives its own — and consumed once, so a re-mount does not replay a stale
+ * one.
+ */
+async extensionSurfacePayload() : Promise<JsonValue | null> {
+    return await TAURI_INVOKE("extension_surface_payload");
+},
+/**
  * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
  * the extensions dir, registers it DISABLED — enabling is the user's explicit
  * second step in Overview, where toggle order is assigned.

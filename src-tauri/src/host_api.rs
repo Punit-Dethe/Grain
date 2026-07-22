@@ -51,6 +51,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "embed" => Some("embed"),
         "session.start" => Some("session:start"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
+        "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
     }
 }
@@ -188,6 +189,16 @@ pub async fn dispatch(
         }
         "workspace.close" => {
             crate::surfaces::extension::close(app, &identity.id);
+            Ok(Value::Null)
+        }
+        // [GRAIN] SPEC §1.2: a transient HUD for THIS extension, host-budgeted
+        // in size and lifetime — same channel-derived identity as workspace.
+        "overlay.show" => {
+            crate::surfaces::overlay::show(app, &identity.id, params.get("payload").cloned())?;
+            Ok(Value::Null)
+        }
+        "overlay.dismiss" => {
+            crate::surfaces::overlay::dismiss(app, &identity.id);
             Ok(Value::Null)
         }
         "settings.get" => {

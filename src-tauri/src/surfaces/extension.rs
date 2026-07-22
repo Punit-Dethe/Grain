@@ -71,6 +71,32 @@ pub fn id_for_label(label: &str) -> Option<String> {
     labels().lock().unwrap().get(label).cloned()
 }
 
+/// window label → the payload the surface should render on its NEXT mount.
+/// Both a workspace and an overlay drop their opening payload here; the wrapper
+/// page collects it once the iframe is up. Delivering it on mount (rather than
+/// only via the live payload event) is what lets a freshly-built surface — which
+/// has no listener yet — still receive what it was opened with.
+static PAYLOADS: OnceLock<Mutex<HashMap<String, serde_json::Value>>> = OnceLock::new();
+
+fn payloads() -> &'static Mutex<HashMap<String, serde_json::Value>> {
+    PAYLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Park a surface's opening payload for its wrapper page to collect on mount.
+pub(crate) fn stash_payload(label: &str, payload: serde_json::Value) {
+    payloads()
+        .lock()
+        .unwrap()
+        .insert(label.to_string(), payload);
+}
+
+/// The wrapper page collecting its surface's opening payload. Consumed once —
+/// on a re-mount after sleep the surface asks again, and a stale payload from a
+/// prior open must not resurface.
+pub fn take_payload(label: &str) -> Option<serde_json::Value> {
+    payloads().lock().unwrap().remove(label)
+}
+
 /// Tauri window labels accept `a-zA-Z0-9-/:_` — an extension id is reverse-DNS
 /// and carries dots, so the label is derived rather than reused. The surface id
 /// stays the real extension id; only the OS-facing label is sanitized.
@@ -130,10 +156,6 @@ fn register(app: &AppHandle, ext_id: &str) -> Result<Arc<Surface>, String> {
 
     let size = DEFAULT_SIZE;
     let ext_owned = ext_id.to_string();
-    labels()
-        .lock()
-        .unwrap()
-        .insert(label_for(ext_id), ext_owned.clone());
     Ok(workspace::ensure(WorkspaceSpec {
         id: ext_owned.clone(),
         label: label_for(ext_id),
@@ -154,7 +176,7 @@ fn register(app: &AppHandle, ext_id: &str) -> Result<Arc<Surface>, String> {
         capped: true,
         on_sleep: None,
         on_destroy: Some(Arc::new(move |_app| {
-            revoke_for(&ext_owned);
+            revoke_for_label(&label_for(&ext_owned));
         })),
     }))
 }
@@ -166,7 +188,30 @@ pub fn open(
     payload: Option<serde_json::Value>,
 ) -> Result<(), String> {
     let surface = register(app, ext_id)?;
-    stage_init(app, ext_id)?;
+    let pack =
+        crate::extension_host::load_manifest(app, ext_id).ok_or("could not read the pack")?;
+    let ui_source = pack
+        .manifest
+        .surfaces
+        .workspace
+        .as_ref()
+        .ok_or("declares no workspace")?
+        .ui_source
+        .clone();
+    stage(
+        app,
+        ext_id,
+        &label_for(ext_id),
+        &ui_source,
+        &sleep_event(ext_id),
+        &revive_event(ext_id),
+        &payload_event(ext_id),
+    )?;
+    // Deliver on the NEXT mount (fresh build or wake); an already-awake surface
+    // gets it live through workspace::open's payload event instead.
+    if let Some(p) = payload.clone() {
+        stash_payload(&label_for(ext_id), p);
+    }
     workspace::open(app, &surface, payload);
     Ok(())
 }
@@ -182,39 +227,45 @@ pub fn close(app: &AppHandle, ext_id: &str) {
 /// window and no live credential.
 pub fn destroy(app: &AppHandle, ext_id: &str) {
     workspace::destroy(app, ext_id);
-    revoke_for(ext_id);
+    revoke_for_label(&label_for(ext_id));
 }
 
-/// Mint the surface's token and park the init payload for the page to collect.
-/// Re-staging replaces (and revokes) any previous one, so a reopened surface
-/// never reuses a credential the old page might still hold.
-fn stage_init(app: &AppHandle, ext_id: &str) -> Result<(), String> {
+/// Mint a surface's token and park its init for the wrapper page to collect,
+/// under `label` — the shared plumbing behind BOTH a workspace and an overlay
+/// (SPEC §7.1). Re-staging replaces (and revokes) any previous credential, so a
+/// reopened surface never reuses one the old page might still hold, and binds
+/// `label → ext_id` so a command can resolve its caller from its own window.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn stage(
+    app: &AppHandle,
+    ext_id: &str,
+    label: &str,
+    ui_source: &str,
+    sleep_event: &str,
+    revive_event: &str,
+    payload_event: &str,
+) -> Result<(), String> {
     use grain_core::extensions as ext;
     let reg = app
         .try_state::<Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let rec = reg.record(ext_id).ok_or("not installed")?;
-    let pack =
-        crate::extension_host::load_manifest(app, ext_id).ok_or("could not read the pack")?;
-    let decl = pack
-        .manifest
-        .surfaces
-        .workspace
-        .as_ref()
-        .ok_or("declares no workspace")?;
 
     let token =
         crate::events_server::mint_extension_token(ext_id, rec.granted.iter().cloned().collect());
     let init = SurfaceInit {
         extension_id: ext_id.to_string(),
         token,
-        ui_source: decl.ui_source.clone(),
-        sleep_event: sleep_event(ext_id),
-        revive_event: revive_event(ext_id),
-        payload_event: payload_event(ext_id),
+        ui_source: ui_source.to_string(),
+        sleep_event: sleep_event.to_string(),
+        revive_event: revive_event.to_string(),
+        payload_event: payload_event.to_string(),
     };
-    let mut map = pending().lock().unwrap();
-    if let Some(old) = map.insert(label_for(ext_id), init) {
+    labels()
+        .lock()
+        .unwrap()
+        .insert(label.to_string(), ext_id.to_string());
+    if let Some(old) = pending().lock().unwrap().insert(label.to_string(), init) {
         crate::events_server::revoke_token(&old.token);
     }
     Ok(())
@@ -227,9 +278,12 @@ pub fn take_init(label: &str) -> Option<SurfaceInit> {
     pending().lock().unwrap().remove(label)
 }
 
-/// Revoke whatever token this surface was issued. Safe to call repeatedly.
-fn revoke_for(ext_id: &str) {
-    if let Some(init) = pending().lock().unwrap().remove(&label_for(ext_id)) {
+/// Revoke whatever token a surface at `label` was issued, and forget the label
+/// binding. Safe to call repeatedly — a gone window leaves nothing behind.
+pub(crate) fn revoke_for_label(label: &str) {
+    labels().lock().unwrap().remove(label);
+    payloads().lock().unwrap().remove(label);
+    if let Some(init) = pending().lock().unwrap().remove(label) {
         crate::events_server::revoke_token(&init.token);
     }
 }
