@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "extension-surface",
+  "description": "Capabilities for extension-owned surface windows (SPEC §1.2, §7.1) — `workspace` (`ext-surface-*`) and `overlay` (`ext-overlay-*`). The page itself is GRAIN's code (extension-surface.html); the extension's markup runs in a sandboxed, opaque-origin iframe that has NO Tauri IPC at all. This grant is deliberately the minimum that page needs: `core:event` so it can hear the host's sleep / revive / payload events and ack them. It must NOT gain window or fs permissions — the host owns every window operation, and a surface that could move or resize itself would break the 'extensions never own windows' rule.",
+  "windows": ["ext-surface-*", "ext-overlay-*"],
+  "permissions": ["core:event:default"]
+}
