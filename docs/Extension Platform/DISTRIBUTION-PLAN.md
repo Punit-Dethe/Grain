@@ -666,6 +666,11 @@ reorder within a phase.
 
 ### Phase 3.5 — Developer Mode & SDK
 
+> **Build from [PHASE3.5-GUIDE.md](PHASE3.5-GUIDE.md)**, which expands these ten
+> steps with the repo's file paths, build commands and gotchas, and is written to
+> be followed with no prior knowledge of the project. The summary below is the
+> shape; the guide is the instruction.
+
 **1. Harden the local channel (C-2).**
 Validate `Origin` in the WebSocket handshake: accept Grain's own webview origins
 and connections with no `Origin` header (non-browser clients — the CLI, the
