@@ -30,7 +30,7 @@ pub struct ExtensionManifest {
     pub version: String,
     /// Contract semver the pack was written against (informational in Phase 1;
     /// enforced when the runtime tiers land).
-    #[serde(default)]
+    #[serde(default, rename = "grainApi", alias = "grain_api")]
     pub grain_api: String,
     pub tier: Tier,
     /// One line, shown in Overview; full text on hover.
@@ -51,7 +51,7 @@ pub struct ExtensionManifest {
     pub activation: Vec<String>,
     /// [GRAIN] Tier-B only: the extension's JS, embedded so a scripted pack
     /// stays a single shareable file (guide Step 4). Empty for tier-A.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub entry_source: String,
     /// [GRAIN] Phase 3 (SPEC §1.2): surfaces the extension DECLARES. Extensions
     /// never create windows — the host builds, places, sleeps and destroys them.
@@ -189,7 +189,12 @@ pub struct ShortcutDecl {
     pub label: String,
     /// Suggested binding; the user's choice always wins, and a conflict with an
     /// existing binding is resolved by the host, not the extension.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "defaultBinding",
+        alias = "default_binding",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub default_binding: Option<String>,
 }
 
@@ -500,6 +505,30 @@ mod tests {
             ),
             Ok(())
         );
+    }
+
+    #[test]
+    fn manifest_writes_spec_casing_and_reads_legacy_field_names() {
+        let json = r#"{"manifest":{"id":"com.x.cat","name":"Cat","version":"1",
+            "grain_api":"^1.0","tier":"scripted","entry_source":"x",
+            "contributes":{"shortcuts":[{"id":"open","label":"Open",
+            "default_binding":"Alt+C"}]}}}"#;
+        let pack: GrainPack = serde_json::from_str(json).unwrap();
+        assert_eq!(pack.manifest.grain_api, "^1.0");
+        assert_eq!(
+            pack.manifest.contributes.shortcuts[0]
+                .default_binding
+                .as_deref(),
+            Some("Alt+C")
+        );
+
+        let value = serde_json::to_value(pack).unwrap();
+        let manifest = &value["manifest"];
+        assert_eq!(manifest["grainApi"], "^1.0");
+        assert!(manifest.get("grain_api").is_none());
+        let shortcut = &manifest["contributes"]["shortcuts"][0];
+        assert_eq!(shortcut["defaultBinding"], "Alt+C");
+        assert!(shortcut.get("default_binding").is_none());
     }
 
     #[test]

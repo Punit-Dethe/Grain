@@ -21,7 +21,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A named animation pattern. Deliberately tiny (R1: widen with real consumers).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum PillPattern {
     /// A solid field at the dot colour over a gentle breathing base.
@@ -40,7 +40,7 @@ pub enum PillPattern {
 
 /// How one pill state looks. Any omitted field falls back to Grain's default for
 /// that state, so a partial theme is a valid theme.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct PillStateTheme {
     /// Background RGBA behind the dots. `None` keeps Grain's background.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,7 +56,7 @@ pub struct PillStateTheme {
 
 /// A pill theme: an optional look per state (SPEC §9). A `None` state is Grain's
 /// own — a theme is never required to restyle everything.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub struct PillTheme {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idle: Option<PillStateTheme>,

@@ -1,0 +1,22 @@
+[package]
+name = "grain-ext-cli"
+version = "0.1.0"
+description = "Developer CLI for Grain extensions"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "grain-ext"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+grain-sdk = { path = "../grain-sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+specta = "=2.0.0-rc.22"
+specta-typescript = "=0.0.9"
+
+[dev-dependencies]
+tempfile = "3"

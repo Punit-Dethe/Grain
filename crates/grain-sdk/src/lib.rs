@@ -19,17 +19,19 @@
 //! changes bump the major and are expected to be rare-to-never (R1: grant
 //! narrowly, widen later).
 
+pub mod authoring;
 pub mod event;
 pub mod manifest;
 pub mod pill_theme;
 pub mod protocol;
 pub mod settings_schema;
 
+pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use event::{AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode};
 pub use manifest::{
     Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry,
     SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
-    KNOWN_SLOTS,
+    KNOWN_CAPABILITIES, KNOWN_SLOTS,
 };
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
 pub use protocol::{

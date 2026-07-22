@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// `Recall`) anchor to the TOP and relabel the card ("Noting…"/"Save Note" vs
 /// "Listening…"/"Confirm"). No extra RAM — same window, same pixmap, just
 /// different strings/anchor.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
 pub enum AgentInputKind {
     /// The generic assistant (operates on selection/field). Original card.
     #[default]
@@ -41,7 +41,7 @@ pub enum OverlayPosition {
 }
 
 /// What a recording session is for. Drives the "what you end with wins" logic.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 pub enum SessionMode {
     /// Plain dictation — stop pastes the raw transcript.
     Dictation,
@@ -58,7 +58,7 @@ pub enum SessionMode {
 
 /// One event broadcast by the daemon. `Clone` so every subscriber gets a copy;
 /// `Serialize`/`Deserialize` so it can cross the local WebSocket to the pill.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
 pub enum DaemonEvent {
     // -- Recording lifecycle --
     RecordingStarted {

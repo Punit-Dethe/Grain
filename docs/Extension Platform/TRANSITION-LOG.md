@@ -23,7 +23,7 @@ whoever (human or agent) continues in a fresh context. Read this, then
 | **Phase 3 steps 5–10** | **SHIPPED 2026-07-22.** workspace (5a/b/c), overlay (6), pill theme (7a–d), embed/capture/doc (8), store shell (9), Grain Space Test walked (10, [PHASE3-REVIEW.md](PHASE3-REVIEW.md)). See detail below. |
 | **Phase 3 step 4b** — chunk 2b (`sessionMode` + a working `session.start`) | **NOT STARTED — the one STRUCTURAL gap, now the top Phase 4 item.** Reserved + plumbed (returns "not implemented"); an extension can't start its own recording session yet. |
 | **✅ GATE — distribution platform + developer mode** | **LIFTED 2026-07-22.** Designed in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md), evidenced by [DISTRIBUTION-RESEARCH.md](DISTRIBUTION-RESEARCH.md); requirements preserved in [GATE-DISTRIBUTION-AND-DEVMODE.md](GATE-DISTRIBUTION-AND-DEVMODE.md). **New build order: 3.5 (developer mode) → 4 → 5A (trust rails) → 5B (registry).** The Phase 3 store step 9 remains a SHELL, filled in 5B. |
-| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Step 1 shipped 2026-07-22:** WS `Origin` allowlist + 64-connection pre-auth cap, with pure unit tests. **Step 2 (`grain-ext init`) is next.** |
+| **Phase 3.5 — Developer Mode & SDK** | **IN PROGRESS. Steps 1–2 shipped 2026-07-22:** WS `Origin` hardening and the `grain-ext init` scaffold with SDK-generated TypeScript types. **Step 3 (load unpacked) is next.** |
 
 **Phase 2 is complete against the guide's definition of done.** What shipped,
 beyond steps 1–3 detailed below:
@@ -369,7 +369,17 @@ verified through that loop, so it goes first.
 
 ## 2. What was built, file by file
 
+### `crates/grain-ext-cli` (NEW — author tooling)
+- `grain-ext init <name> [--id <reverse-dns-id>]` creates a no-overwrite
+  scripted project: normative `manifest.json`, `src/main.ts`, SDK-generated
+  `grain.d.ts`, README, `.gitignore`, package/TypeScript configuration.
+- The scaffold states the Node + esbuild requirement up front. A real generated
+  fixture passes `tsc` and bundles with an external source map.
+
 ### `crates/grain-sdk` (NEW — the public contract, dependency LEAF)
+- `authoring.rs` — source-project `ExtensionProjectManifest` (`manifest.json` +
+  real entry path) and the author-facing `grain` API declaration copied by the
+  CLI; reflected event types and the capability union come from SDK types/data.
 - `event.rs` — `DaemonEvent` (~39 variants) + `PillAction` + `SessionMode` +
   `AgentInputKind` + `OverlayPosition`, moved **verbatim** from grain-core.
 - `protocol.rs` — `ClientHello` / `ServerWelcome` / `GRAIN_API_VERSION`
@@ -447,13 +457,12 @@ verified through that loop, so it goes first.
 Phases 0–3 are shipped; the gate is lifted. **Everything below is specified
 step-by-step in [DISTRIBUTION-PLAN.md](DISTRIBUTION-PLAN.md) §10.**
 
-1. **Phase 3.5 — Developer Mode & SDK.** Step 1 (`Origin` validation + the
-   unauthenticated-connection cap) is shipped. Continue in order:
-   `grain-ext init` → load-unpacked → `dev`
+1. **Phase 3.5 — Developer Mode & SDK.** Steps 1–2 (`Origin` hardening and
+   `grain-ext init`) are shipped. Continue in order: load-unpacked → `dev`
    + hot reload → source maps → developer panel → typed errors → `doctor`
    → author docs → **verify the Phase 3 surface handshake end-to-end with a
    real dev extension** (this is what would have caught C-1, below).
-   *Nothing blocks step 2. Start there.*
+   *Nothing blocks step 3. Start there.*
 2. **Phase 4 — contract completion.** Top item is the one structural gap:
    `session:start` + `contributes.sessionMode` (chunk 2b, reserved and plumbed,
    currently returns "not implemented"). Then tier-C native, `settings-panel`
