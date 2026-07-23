@@ -80,3 +80,6 @@ Refrence/
 # Python bytecode from the Upstream/ tooling
 __pycache__/
 *.pyc
+
+# Local planning documents
+docs/
