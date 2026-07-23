@@ -50,3 +50,7 @@ Upstream/rr-cache/** -text
 # over the EXACT bytes of each .json, so line-ending conversion on checkout
 # would break verification cross-platform. Keep the whole seed dir byte-exact.
 crates/grain-core/seed/** -text
+
+# [GRAIN] Phase 5B signed store fixtures — verified over exact bytes; never
+# line-ending convert or the committed signatures stop matching.
+src-tauri/tests/fixtures/store/** -text

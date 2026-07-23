@@ -515,3 +515,94 @@ pub fn store_revocation_banners(app: AppHandle) -> Result<Vec<RevocationBanner>,
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp_data(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        // Unique per call so parallel tests never share (and wipe) a dir.
+        let uniq = N.fetch_add(1, Ordering::Relaxed);
+        let p = std::env::temp_dir().join(format!(
+            "grain-store-test-{}-{}-{}",
+            std::process::id(),
+            label,
+            uniq
+        ));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    // Synthetic RAM proof for the overhead rule (DISTRIBUTION-PLAN §5.3): with
+    // the store closed, the parsed index is NOT resident — only the small
+    // roots + revocations remain. This is a memory-ownership assertion, not a
+    // process-RSS measurement (that needs a live app run).
+    #[test]
+    fn parsed_index_is_dropped_on_close() {
+        let data = tmp_data("close");
+        let state = StoreState::init(&data);
+        // Opening loads the (seed) index into memory.
+        let _ = state.view_from_resident();
+        assert!(
+            state.index.read().unwrap().is_some(),
+            "index should be resident while the store is open"
+        );
+        // Closing drops it — idle footprint returns to roots + revocations only.
+        state.close();
+        assert!(
+            state.index.read().unwrap().is_none(),
+            "parsed index must be dropped on close (overhead rule)"
+        );
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // End-to-end client path against a REAL signed catalogue (the committed
+    // fixture produced by `grain-registry publish`): cache load → verify roots
+    // against the PINNED keys → verify index against the publishing key →
+    // project entries. Proves the producer (5B) and verifier (5A) agree, and
+    // that a verified entry surfaces with its real trust.
+    #[test]
+    fn verified_fixture_catalogue_loads_from_cache() {
+        let data = tmp_data("fixture");
+        let store = data.join("store");
+        std::fs::create_dir_all(&store).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("store");
+        for f in [
+            "roots.json",
+            "roots.json.minisig",
+            "index.json",
+            "index.json.minisig",
+        ] {
+            std::fs::copy(fixture.join(f), store.join(f))
+                .unwrap_or_else(|e| panic!("copy fixture {f}: {e}"));
+        }
+        let state = StoreState::init(&data);
+        let view = state.view_from_resident();
+        assert_eq!(view.entries.len(), 1, "the fixture catalogue has one entry");
+        let e = &view.entries[0];
+        assert_eq!(e.id, "com.example.hello");
+        assert_eq!(e.trust, "verified", "trust comes from the signed index");
+        assert_eq!(e.tier, "scripted");
+        assert!(e.revocation.is_none());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    // The seed loads and verifies at startup, so a fresh install has a working
+    // (if empty) offline store.
+    #[test]
+    fn seed_boots_a_working_store() {
+        let data = tmp_data("seed");
+        let state = StoreState::init(&data);
+        let view = state.view_from_resident();
+        // Empty seed catalogue, but it renders (offline) rather than erroring.
+        assert_eq!(view.status, "offline");
+        assert!(view.entries.is_empty());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+}

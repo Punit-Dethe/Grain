@@ -1,0 +1,27 @@
+{
+  "spec": 1,
+  "version": 1,
+  "expires": "2026-08-22T19:10:29Z",
+  "entries": [
+    {
+      "id": "com.example.hello",
+      "name": "Hello Transform",
+      "version": "1.0.0",
+      "tier": "scripted",
+      "trust": "verified",
+      "capabilities": [
+        "transform:transcript"
+      ],
+      "sha256": "10046c61be5d612027adf58abdae14e8e5511f7b69826e4b913f03163880bc66",
+      "size": 549,
+      "min_grain_api": "1.0",
+      "repo": "https://github.com/example/grain-hello",
+      "source_commit": "abc123",
+      "author": "example",
+      "reviewed_at": "2026-07-23",
+      "reviewed_commit": "",
+      "updated_at": "2026-07-23",
+      "stars": 0
+    }
+  ]
+}

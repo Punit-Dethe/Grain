@@ -1,0 +1,9 @@
+{
+  "spec": 1,
+  "version": 1,
+  "publishing_key": "RWTHqI3hbG3H4322HL+bes4I4MS7SNYZaTS81plIh7bvaQB8DMwXtDVp",
+  "base_urls": [
+    "http://127.0.0.1:8787/"
+  ],
+  "mirrors": []
+}

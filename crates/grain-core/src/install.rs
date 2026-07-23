@@ -78,12 +78,17 @@ pub fn stage_artifact(
 
     match pack::detect_shape(bytes) {
         PackShape::Zip => {
+            // Multi-file bundle (scripted/native with separate entry + assets).
+            // NOTE: the current runtime loads embedded single-file `GrainPack`s;
+            // loading a multi-file directory bundle at runtime is a follow-on
+            // once the worker/surface loaders read from disk. The extraction and
+            // install transaction are complete and safe regardless.
             pack::extract_zip(bytes, &staging, limits).map_err(InstallError::Pack)?;
         }
         PackShape::Json => {
-            // A tier-`pack` artifact is a single JSON document; store it as the
-            // canonical pack file inside the version dir.
-            std::fs::write(staging.join("manifest.json"), bytes)
+            // A single-file `GrainPack` (the runtime's native format): store it
+            // under the canonical name the loader reads from the version dir.
+            std::fs::write(staging.join("pack.grainpack.json"), bytes)
                 .map_err(|e| InstallError::Io(e.to_string()))?;
         }
         PackShape::Unknown => {
@@ -271,7 +276,7 @@ mod tests {
         let e = entry("com.example.x", "2.0.0", Trust::Verified, &[], bytes);
         let out = install_from_verified_entry(&reg, dir.path(), &e, bytes, ExtractLimits::default())
             .expect("install");
-        assert!(out.join("manifest.json").exists());
+        assert!(out.join("pack.grainpack.json").exists());
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "2.0.0");
         assert_eq!(rec.trust, Trust::Verified);

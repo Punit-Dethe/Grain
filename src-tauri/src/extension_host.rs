@@ -1436,12 +1436,27 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
     let ctx = app
         .try_state::<Arc<AppContext>>()
         .ok_or("app context unavailable")?;
-    let path = ctx
-        .data_dir
-        .join("extensions")
-        .join(format!("{id}.grainpack.json"));
-    let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-    serde_json::from_str(&raw).map_err(|error| error.to_string())
+    let ext_dir = ctx.data_dir.join("extensions");
+    // Legacy single-file location (manual import, seeded built-ins).
+    let legacy = ext_dir.join(format!("{id}.grainpack.json"));
+    if legacy.exists() {
+        let raw = std::fs::read_to_string(&legacy).map_err(|error| error.to_string())?;
+        return serde_json::from_str(&raw).map_err(|error| error.to_string());
+    }
+    // [GRAIN] Phase 5B: a store-installed pack lives in its versioned directory
+    // `<id>/<version>/pack.grainpack.json` (SPEC §5.2 — atomic, previous-version
+    // retained). Resolve it from the record's installed version.
+    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
+        if let Some(rec) = reg.record(id) {
+            let versioned = grain_core::install::version_dir(&ext_dir, id, &rec.installed_version)
+                .join("pack.grainpack.json");
+            if versioned.exists() {
+                let raw = std::fs::read_to_string(&versioned).map_err(|e| e.to_string())?;
+                return serde_json::from_str(&raw).map_err(|e| e.to_string());
+            }
+        }
+    }
+    Err(format!("no pack file for '{id}'"))
 }
 
 pub fn load_manifest(app: &AppHandle, id: &str) -> Option<GrainPack> {
