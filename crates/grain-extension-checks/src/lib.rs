@@ -175,6 +175,13 @@ fn check_manifest(root: &Path, report: &mut DoctorReport) {
 }
 
 fn check_entry(root: &Path, project: &ExtensionProjectManifest, report: &mut DoctorReport) {
+    // A project entry is JavaScript for the scripted runtime only. Data packs
+    // are inert and native companions select their platform binary from the
+    // manifest, so neither has an `entry` file to inspect.
+    if project.manifest.tier != Tier::Scripted {
+        return;
+    }
+
     let entry = Path::new(&project.entry);
     if entry.as_os_str().is_empty()
         || entry.components().any(|component| {
@@ -257,7 +264,15 @@ fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorRe
         manifest,
         payloads: PackPayloads::default(),
     };
-    if let Err(error) = pack.validate() {
+    // `doctor` is a developer-project check. Native companions are permitted
+    // only through this unpacked/developer validation boundary; installation
+    // and import still use `validate()` and reject native code.
+    let validation = if pack.manifest.tier == Tier::Native {
+        pack.validate_dev()
+    } else {
+        pack.validate()
+    };
+    if let Err(error) = validation {
         report
             .findings
             .push(Finding::project("E_MANIFEST", "manifest.json", error));
@@ -265,19 +280,18 @@ fn check_pack_contract(project: &ExtensionProjectManifest, report: &mut DoctorRe
 }
 
 fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
-    if project.manifest.tier != Tier::Scripted {
+    if !matches!(project.manifest.tier, Tier::Scripted | Tier::Native) {
         return;
     }
     // A declared session mode is itself an activation path: the host registers
     // its contributed shortcut and wakes the owner for the slow stage without
     // an `activation` array entry (Phase 4).
-    if project.manifest.activation.is_empty()
-        && project.manifest.contributes.session_mode.is_none()
+    if project.manifest.activation.is_empty() && project.manifest.contributes.session_mode.is_none()
     {
         report.findings.push(Finding::project(
             "E_ACTIVATION",
             "manifest.json",
-            "scripted extensions require at least one activation",
+            "runtime extensions require at least one activation or a sessionMode",
         ));
         return;
     }
@@ -703,6 +717,39 @@ mod tests {
                 .any(|message| message.contains("transform:transcript")),
             "{report}"
         );
+    }
+
+    #[test]
+    fn native_developer_project_has_no_javascript_entry_requirement() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("manifest.json"),
+            r#"{
+              "id":"com.example.native","name":"Native","version":"0.1.0",
+              "grainApi":"^1.0","tier":"native","activation":["onStartup"],
+              "companion":{"windows":"bin/native.exe","macos":"bin/native","linux":"bin/native"}
+            }"#,
+        )
+        .unwrap();
+
+        assert!(doctor(directory.path()).is_clean());
+    }
+
+    #[test]
+    fn session_mode_is_a_valid_runtime_activation_path() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("manifest.json"),
+            r#"{
+              "id":"com.example.note","name":"Note","version":"0.1.0",
+              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+              "permissions":["session:start"],"activation":[],
+              "contributes":{"sessionMode":{"id":"note","label":"Note"}}
+            }"#,
+        )
+        .unwrap();
+
+        assert!(doctor(directory.path()).is_clean());
     }
 
     #[test]

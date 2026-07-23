@@ -22,3 +22,9 @@ fn checked_in_scripted_examples_pass_doctor() {
         assert!(report.is_clean(), "{name}: {report}");
     }
 }
+
+#[test]
+fn checked_in_native_companion_example_passes_developer_doctor() {
+    let report = doctor(&examples_root().join("native-companion"));
+    assert!(report.is_clean(), "native-companion: {report}");
+}
