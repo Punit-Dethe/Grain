@@ -56,6 +56,7 @@ mod grain_llm_client;
 mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
@@ -834,6 +835,10 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_append_trailing_space_setting,
             grain_commands::change_rolling_live_preview_setting,
             grain_commands::extensions_overview,
+            grain_store::store_browse,
+            grain_store::store_close,
+            grain_store::store_install,
+            grain_store::store_revocation_banners,
             grain_commands::extension_set_enabled,
             grain_commands::extension_developer_status,
             grain_commands::extension_set_developer_mode,
@@ -1139,6 +1144,10 @@ pub fn run(cli_args: CliArgs) {
                     }
                     Err(e) => log::error!("[GRAIN] extensions registry failed to load: {e}"),
                 }
+                // [GRAIN] Phase 5A: the store client — loads verified roots +
+                // revocations from cache-or-seed (small, resident); the parsed
+                // index stays out of memory until the store is opened.
+                app.manage(std::sync::Arc::new(grain_store::StoreState::init(&data_dir)));
                 // [GRAIN] Seed built-in scripted packs (auto-categorize dogfood),
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::seed_builtin_packs(&app.handle());

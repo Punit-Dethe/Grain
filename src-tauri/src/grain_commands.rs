@@ -579,12 +579,21 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             description,
             version: rec.installed_version.clone(),
             tier: tier.to_string(),
+            // Load-unpacked is always shown as `dev`; otherwise the rung comes
+            // from the record's real trust (set only by a verified store
+            // install, DISTRIBUTION-PLAN §3.2). A locally-imported pack is
+            // untrusted, shown as `community`.
             trust: if rec.dev.is_some() {
-                "dev"
+                "dev".to_string()
             } else {
-                "community"
-            }
-            .to_string(),
+                match rec.trust {
+                    grain_sdk::Trust::Core => "core",
+                    grain_sdk::Trust::Verified => "verified",
+                    grain_sdk::Trust::Experimental => "experimental",
+                    grain_sdk::Trust::Dev => "community",
+                }
+                .to_string()
+            },
             overrides_installed: reg.dev_overrides_installed(&rec.id),
             overridden_version: rec
                 .dev
@@ -669,6 +678,25 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
         }
         // Imported packs: registry bit + payload application.
         pack_id if reg.is_installed(pack_id) => {
+            // [GRAIN] Phase 5A (DISTRIBUTION-PLAN §3.1, §5.3): a revoked
+            // extension cannot run again, enforced from the cached revocation
+            // list BEFORE a worker is ever spawned — so it holds even if the
+            // machine has been offline since the revocation was published.
+            if enabled {
+                if let Some(store) =
+                    app.try_state::<std::sync::Arc<crate::grain_store::StoreState>>()
+                {
+                    let version = reg
+                        .record(pack_id)
+                        .map(|r| r.installed_version)
+                        .unwrap_or_default();
+                    if let Some(grain_sdk::RevocationState::Revoked) =
+                        store.revocation_state(pack_id, &version)
+                    {
+                        return Err(serde_json::json!({ "revoked": pack_id }).to_string());
+                    }
+                }
+            }
             let pack = load_pack(&app, pack_id)?;
             // [GRAIN] SPEC §6 (the Chrome model): a scripted extension is HELD
             // at first enable until the user approves the capabilities its
@@ -886,6 +914,8 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: Vec::new(),
         dev: None,
+        // Load-unpacked is the `dev` rung: never promotable, never verified.
+        trust: grain_sdk::Trust::Dev,
     };
     reg.load_dev(record, loaded.root)
         .map_err(|error| error.to_string())?;
@@ -1249,6 +1279,11 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // backfilled rather than clearing it on a reinstall.
         variant_slots: prior.map(|r| r.variant_slots).unwrap_or_default(),
         dev: None,
+        // A manually imported local file is UNTRUSTED, always — even if a
+        // store-verified record for this id existed. Trust comes only from the
+        // signed index (DISTRIBUTION-PLAN §3.2); inheriting it here would let a
+        // local pack impersonate a verified one.
+        trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
     })
     .map_err(|e| e.to_string())?;
     // An enabled pack's payloads refresh in place (apply is idempotent).

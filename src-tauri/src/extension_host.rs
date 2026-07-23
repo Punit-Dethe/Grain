@@ -1496,6 +1496,9 @@ pub fn reload_dev_extension(
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: prior.variant_slots,
         dev: prior.dev,
+        // A dev hot-reload preserves the record's rung (a load-unpacked project
+        // is `dev`); trust is never changed by a reload.
+        trust: prior.trust,
     })
     .map_err(|error| error.to_string())?;
 
@@ -1709,6 +1712,8 @@ fn seed_pack(
                 slots: Vec::new(),
                 variant_slots: Vec::new(),
                 dev: None,
+                // First-party built-ins seeded from inside Grain are `core`.
+                trust: grain_sdk::Trust::Core,
             });
         }
     }

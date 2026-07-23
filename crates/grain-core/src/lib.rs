@@ -20,6 +20,8 @@ pub mod settings;
 pub mod trust;
 // [GRAIN] Phase 5A: pack format v2 detection + path-safe archive extraction.
 pub mod pack;
+// [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
+pub mod install;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};

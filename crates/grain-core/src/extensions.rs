@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use anyhow::{Context, Result};
+use grain_sdk::Trust;
 use serde::{Deserialize, Serialize};
 
 pub const EXTENSIONS_FILE: &str = "extensions.json";
@@ -92,6 +93,22 @@ pub struct ExtensionRecord {
     /// verbatim and restored on unload.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dev: Option<DevOverride>,
+    /// [GRAIN] Phase 5A trust rung (SPEC §7.4, DISTRIBUTION-PLAN §3.2). **The
+    /// only path that may set this above [`Trust::UNTRUSTED_DEFAULT`] is
+    /// [`crate::install::install_from_verified_entry`]**, which reads it from a
+    /// signature-verified index entry bound to `(id, version, sha256)`. Every
+    /// other construction site — manual import, dev load, healing — leaves it at
+    /// the untrusted default. `#[serde(default)]` means a registry written
+    /// before 5A reads back as untrusted, never accidentally verified.
+    #[serde(default = "default_trust")]
+    pub trust: Trust,
+}
+
+/// A record's trust when it did not come from a verified index entry. This is
+/// the serde default too, so pre-5A registries and any locally-sourced pack are
+/// untrusted by construction — never `verified`/`core`.
+fn default_trust() -> Trust {
+    Trust::UNTRUSTED_DEFAULT
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -165,6 +182,8 @@ impl ExtensionsRegistry {
                         // Offered, not claimed: the dropdown decides (SPEC §10.2).
                         variant_slots: vec![AGENT_REPLY_SURFACE_SLOT.to_string()],
                         dev: None,
+                        // Grain's own centre-layout variant — trusted as core.
+                        trust: Trust::Core,
                     },
                 );
             }
@@ -699,6 +718,7 @@ mod tests {
             slots: slots.iter().map(|s| s.to_string()).collect(),
             variant_slots: vec![],
             dev: None,
+            trust: Trust::UNTRUSTED_DEFAULT,
         }
     }
 

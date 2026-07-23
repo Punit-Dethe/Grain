@@ -192,7 +192,7 @@ pub fn extract_zip(bytes: &[u8], dest: &Path, limits: ExtractLimits) -> Result<(
 
     let mut total: u64 = 0;
     for i in 0..archive.len() {
-        let mut file = archive
+        let file = archive
             .by_index(i)
             .map_err(|e| PackError::BadArchive(e.to_string()))?;
         let raw_name = file.name().to_string();
