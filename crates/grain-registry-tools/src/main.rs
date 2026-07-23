@@ -103,6 +103,130 @@ enum Cmd {
         #[arg(long)]
         v1: PathBuf,
     },
+    /// Validate every `extensions/<id>/submission.toml` under a directory: the
+    /// required fields, a reverse-DNS id matching the folder, and typosquat
+    /// distance from existing ids. The check CI runs on every PR.
+    CheckSubmission {
+        #[arg(long)]
+        dir: PathBuf,
+    },
+}
+
+/// The submission manifest an author writes (source pointer, never an artifact).
+#[derive(serde::Deserialize)]
+struct Submission {
+    id: String,
+    source_repo: String,
+    tag: String,
+    commit: String,
+    summary: String,
+    #[serde(default)]
+    categories: Vec<String>,
+    license: String,
+    contact: String,
+}
+
+fn check_submission(dir: PathBuf) -> Result<()> {
+    let ext_dir = dir.join("extensions");
+    let mut ids: Vec<String> = Vec::new();
+    let mut problems = 0usize;
+
+    let entries = fs::read_dir(&ext_dir)
+        .with_context(|| format!("read {}", ext_dir.display()))?;
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let folder = entry.file_name().to_string_lossy().to_string();
+        let toml_path = entry.path().join("submission.toml");
+        if !toml_path.exists() {
+            println!("FAIL {folder}: missing submission.toml");
+            problems += 1;
+            continue;
+        }
+        let raw = fs::read_to_string(&toml_path)?;
+        let s: Submission = match toml::from_str(&raw) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("FAIL {folder}: unparseable submission.toml: {e}");
+                problems += 1;
+                continue;
+            }
+        };
+
+        let fail = |msg: &str| {
+            println!("FAIL {folder}: {msg}");
+        };
+        if s.id != folder {
+            fail("id must match the folder name");
+            problems += 1;
+        }
+        if !is_reverse_dns(&s.id) {
+            fail("id must be reverse-DNS (e.g. com.example.thing)");
+            problems += 1;
+        }
+        for (field, val) in [
+            ("source_repo", &s.source_repo),
+            ("tag", &s.tag),
+            ("commit", &s.commit),
+            ("summary", &s.summary),
+            ("license", &s.license),
+            ("contact", &s.contact),
+        ] {
+            if val.trim().is_empty() {
+                fail(&format!("{field} is required"));
+                problems += 1;
+            }
+        }
+        if s.categories.is_empty() {
+            fail("at least one category is required");
+            problems += 1;
+        }
+        // Typosquat: reject a near-miss of an id already seen.
+        for existing in &ids {
+            if existing != &s.id && edit_distance(existing, &s.id) <= 1 {
+                fail(&format!("id is a near-miss of existing '{existing}' (typosquat)"));
+                problems += 1;
+            }
+        }
+        ids.push(s.id.clone());
+    }
+
+    if problems == 0 {
+        println!("OK — {} submission(s) valid", ids.len());
+        Ok(())
+    } else {
+        anyhow::bail!("{problems} submission problem(s)")
+    }
+}
+
+fn is_reverse_dns(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('.').collect();
+    parts.len() >= 2
+        && parts.iter().all(|p| {
+            !p.is_empty()
+                && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+                && !p.starts_with('-')
+        })
+        // ':' would break `ext:<id>:<sid>` binding parsing.
+        && !id.contains(':')
+}
+
+/// Levenshtein distance (small strings; typosquat check only).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = if ca == cb { 0 } else { 1 };
+            cur[j + 1] = (prev[j + 1] + 1).min(cur[j] + 1).min(prev[j] + cost);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 fn main() -> Result<()> {
@@ -127,6 +251,7 @@ fn main() -> Result<()> {
             v1,
         } => publish(key, pack, trust, repo, commit, author, expires_days, v1),
         Cmd::Verify { v1 } => verify(v1),
+        Cmd::CheckSubmission { dir } => check_submission(dir),
     }
 }
 
