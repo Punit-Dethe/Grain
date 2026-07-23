@@ -667,17 +667,46 @@ export const OverviewSection: React.FC<{
   );
 };
 
+/** [GRAIN] One entry from the verified index (mirror of the Rust `StoreEntry`;
+ * raw-invoke local type until a dev run regenerates bindings.ts). */
+type StoreEntry = {
+  id: string;
+  name: string;
+  version: string;
+  tier: string;
+  trust: string;
+  capabilities: string[];
+  size: string;
+  author: string;
+  reviewed_at: string;
+  reviewed_commit: string;
+  revocation: string | null;
+  flags: string[];
+};
+type StoreView = {
+  status: string; // "fresh" | "offline" | "needs-newer-client"
+  can_install: boolean;
+  entries: StoreEntry[];
+};
+
+const TRUST_BADGE: Record<string, { label: string; cls: string }> = {
+  core: { label: "Core", cls: "bg-accent/15 text-accent" },
+  verified: { label: "Verified", cls: "bg-emerald-500/15 text-emerald-600" },
+  experimental: { label: "Experimental", cls: "bg-amber-500/15 text-amber-600" },
+  dev: { label: "Community", cls: "bg-line text-ink-soft" },
+};
+
 /** [GRAIN] The store slide-over (SPEC §5.3): a Zen-Mods-style panel that slides
- * in from the right INSIDE the settings window — no new window, backdrop/Esc to
- * dismiss.
- *
- * This is deliberately a SHELL. The index, install-from-remote, submission flow,
- * and trust badges are gated behind GATE-DISTRIBUTION-AND-DEVMODE.md and MUST
- * NOT be built here — the whole point of the gate is that hosting and the
- * "verified" guarantee are designed before any of that ships. So the panel opens
- * onto an honest empty state and an Import-from-file affordance, which is the
- * only install path that exists today. */
+ * in from the right INSIDE the settings window. Backed by the verified,
+ * signed catalogue via `store_browse` (Phase 5A/5B) — install verifies the
+ * artifact hash before unpacking, and trust is shown from the signed index. */
 const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [view, setView] = useState<StoreView | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [installing, setInstalling] = useState<string | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -685,6 +714,42 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Fetch on open; drop the parsed index on close (the overhead rule §5.3).
+  useEffect(() => {
+    let alive = true;
+    invoke<StoreView>("store_browse")
+      .then((v) => alive && setView(v))
+      .catch((e) => alive && setError(String(e)))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+      void invoke("store_close").catch(() => {});
+    };
+  }, []);
+
+  const install = useCallback(async (entry: StoreEntry) => {
+    setInstalling(entry.id);
+    try {
+      await invoke("store_install", { id: entry.id, version: entry.version });
+      const v = await invoke<StoreView>("store_browse");
+      setView(v);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setInstalling(null);
+    }
+  }, []);
+
+  const entries = (view?.entries ?? []).filter((e) => {
+    const q = query.trim().toLowerCase();
+    return (
+      !q ||
+      e.name.toLowerCase().includes(q) ||
+      e.id.toLowerCase().includes(q) ||
+      e.author.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <div
@@ -713,24 +778,124 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-8 text-center">
-          <Package width={28} height={28} className="text-ink-faint" />
-          <div className="text-sm font-medium text-ink">
-            The store is on its way
+        {/* Honest connection state (§2.1): offline serves cache, refuses installs. */}
+        {view && view.status !== "fresh" && (
+          <div className="px-4 py-2 text-[11px] text-ink-faint bg-line/40 border-b border-line">
+            {view.status === "needs-newer-client"
+              ? "This store needs a newer version of Grain."
+              : "Offline — showing the last catalogue. New installs are paused until reconnected."}
           </div>
-          <p className="text-xs text-ink-faint leading-relaxed">
-            Browsing and one-click installs from the community index arrive in a
-            later update, once submission, review, and the “verified” guarantee
-            are in place. Until then you can install an extension you trust from
-            a file.
-          </p>
+        )}
+
+        <div className="px-4 py-2 border-b border-line">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search extensions"
+            className="w-full px-3 py-1.5 rounded-lg bg-paper border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
+          />
         </div>
 
-        <div className="px-4 py-3 border-t border-line">
-          <p className="text-[11px] text-ink-faint text-center">
-            Import a <span className="font-mono">.grainpack</span> from the
-            Extensions header to add one now.
-          </p>
+        <div className="flex-1 overflow-y-auto">
+          {loading && (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 text-ink-faint">
+              <Package width={24} height={24} />
+              <span className="text-xs">Loading the catalogue…</span>
+            </div>
+          )}
+          {error && (
+            <div className="m-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+              {error}
+            </div>
+          )}
+          {!loading && !error && entries.length === 0 && (
+            <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center text-ink-faint">
+              <Package width={24} height={24} />
+              <span className="text-sm text-ink">No extensions yet</span>
+              <p className="text-xs leading-relaxed">
+                The catalogue is empty right now. You can also import a{" "}
+                <span className="font-mono">.grainpack</span> you trust from the
+                Extensions header.
+              </p>
+            </div>
+          )}
+          {entries.map((e) => {
+            const badge = TRUST_BADGE[e.trust] ?? TRUST_BADGE.dev;
+            const revoked = e.revocation === "revoked";
+            const deprecated = e.revocation === "deprecated";
+            return (
+              <div
+                key={`${e.id}@${e.version}`}
+                className="px-4 py-3 border-b border-line/60"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-ink truncate">
+                        {e.name}
+                      </span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.cls}`}
+                      >
+                        {e.trust === "verified" && (
+                          <ShieldCheck
+                            width={9}
+                            height={9}
+                            className="inline mr-0.5 -mt-0.5"
+                          />
+                        )}
+                        {badge.label}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-ink-faint truncate">
+                      {e.author ? `${e.author} · ` : ""}v{e.version}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={
+                      revoked || !view?.can_install || installing === e.id
+                    }
+                    onClick={() => void install(e)}
+                    className="shrink-0 px-2.5 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                  >
+                    {installing === e.id ? "Installing…" : "Install"}
+                  </button>
+                </div>
+
+                {e.reviewed_at && (
+                  <div className="mt-1 text-[10px] text-ink-faint">
+                    Reviewed {e.reviewed_at}
+                    {e.reviewed_commit
+                      ? ` at ${e.reviewed_commit.slice(0, 7)}`
+                      : ""}
+                  </div>
+                )}
+
+                {/* Flagged combinations (§3.3): what the reviewer was warned of. */}
+                {e.flags.map((f) => (
+                  <div
+                    key={f}
+                    className="mt-1 text-[10px] text-amber-600 flex items-center gap-1"
+                  >
+                    <ShieldCheck width={9} height={9} /> {f}
+                  </div>
+                ))}
+
+                {revoked && (
+                  <div className="mt-1 text-[10px] text-red-600">
+                    Revoked — install disabled.
+                  </div>
+                )}
+                {deprecated && (
+                  <div className="mt-1 text-[10px] text-ink-faint">
+                    Deprecated — no longer maintained.
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
