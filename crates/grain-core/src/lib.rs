@@ -18,6 +18,8 @@ pub use grain_sdk as event;
 pub mod settings;
 // [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
 pub mod trust;
+// [GRAIN] Phase 5A: pack format v2 detection + path-safe archive extraction.
+pub mod pack;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};

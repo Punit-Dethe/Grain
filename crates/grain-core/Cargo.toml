@@ -26,6 +26,7 @@ minisign-verify = "0.2.5"
 sha2 = "0.10"                                   # match src-tauri (one copy)
 # RFC 3339 `expires` parsing only; `now` is injected so the verifier stays pure.
 chrono = { version = "0.4", default-features = false, features = ["alloc"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"
