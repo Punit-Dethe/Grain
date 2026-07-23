@@ -56,8 +56,8 @@
   {
     "date": "Jul 21, 2026",
     "commit": "Refactor Sidebar settings structure (#1720)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead.",
     "pr": "1720",
     "sha": "cdf5028b5a8f2e66bf41d2fc5401c313d6900d16",
     "ts": "2026-07-21T08:52:54Z"

@@ -63,6 +63,12 @@ export const SECTIONS_CONFIG = {
     component: AdvancedSettings,
     enabled: () => true,
   },
+  history: {
+    labelKey: "sidebar.history",
+    icon: History,
+    component: HistorySettings,
+    enabled: () => true,
+  },
   speechToText: {
     labelKey: "sidebar.speechToText",
     icon: AudioLines,
@@ -75,14 +81,6 @@ export const SECTIONS_CONFIG = {
     component: PostProcessingSettings,
     enabled: (settings) => settings?.post_process_enabled ?? false,
   },
-  // [GRAIN] Grain Space: zero-idle-RAM local notes. Always visible — the tab
-  // itself holds the master toggle (everything below it gates on the setting).
-  grainSpace: {
-    labelKey: "sidebar.grainSpace",
-    icon: NotebookPen,
-    component: GrainSpaceSettings,
-    enabled: () => true,
-  },
   // [GRAIN] Home for in-progress features (snippets, …). Always visible — not
   // gated behind debug/experimental flags.
   experimentations: {
@@ -91,10 +89,12 @@ export const SECTIONS_CONFIG = {
     component: ExperimentationsSettings,
     enabled: () => true,
   },
-  history: {
-    labelKey: "sidebar.history",
-    icon: History,
-    component: HistorySettings,
+  // [GRAIN] Grain Space: zero-idle-RAM local notes. Always visible — the tab
+  // itself holds the master toggle (everything below it gates on the setting).
+  grainSpace: {
+    labelKey: "sidebar.grainSpace",
+    icon: NotebookPen,
+    component: GrainSpaceSettings,
     enabled: () => true,
   },
   debug: {
