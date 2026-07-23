@@ -1310,14 +1310,6 @@
             if (!syncStatus) return;
 
             const pills = [];
-            const behind = syncStatus.behind;
-            if (typeof behind === 'number') {
-                pills.push({
-                    tone: behind === 0 ? 'ok' : 'warn',
-                    label: behind === 0 ? 'In step with upstream' : 'Behind upstream',
-                    value: behind === 0 ? '0' : String(behind)
-                });
-            }
             if (typeof syncStatus.trial_clean === 'boolean') {
                 const conflicts = (syncStatus.conflicts || []).length;
                 pills.push({

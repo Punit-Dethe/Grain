@@ -249,7 +249,7 @@ def git(*args):
     ).stdout
 
 
-def check_ancestry_drift():
+def check_ancestry_drift(recorded_shas):
     """Report upstream commits that git counts as unmerged but whose work is
     already in our tree (applied by cherry-pick / by hand).
 
@@ -279,12 +279,21 @@ def check_ancestry_drift():
         print("  (no upstream remote — skipping ancestry check)")
         return 0, []
 
-    applied = [(sha, subj) for sha, subj in unmerged if normalize(subj) in ours]
+    applied = [
+        (sha, subj)
+        for sha, subj in unmerged
+        if normalize(subj) in ours and sha not in recorded_shas
+    ]
     return len(unmerged), applied
 
 
-def report_ancestry():
-    unmerged_count, applied = check_ancestry_drift()
+def report_ancestry(ledger):
+    recorded_shas = {
+        item["sha"][:8]
+        for item in ledger
+        if item.get("sha") and item.get("status") != "Pending"
+    }
+    unmerged_count, applied = check_ancestry_drift(recorded_shas)
     if not unmerged_count:
         print("Ancestry: in sync with upstream/main (0 unmerged).")
         return unmerged_count, applied
@@ -350,6 +359,6 @@ def write_bundle(data, status):
 
 if __name__ == "__main__":
     ledger = update_data()
-    unmerged_count, applied = report_ancestry()
+    unmerged_count, applied = report_ancestry(ledger)
     status = write_status(unmerged_count, applied)
     write_bundle(ledger, status)

@@ -722,11 +722,6 @@ window.UPSTREAM_STATUS = {
     "src/components/Sidebar.tsx",
     "src/components/settings/AccelerationSelector.tsx"
   ],
-  "drift": [
-    {
-      "sha": "f4e3587b",
-      "commit": "Add Danish translations (#1747)"
-    }
-  ],
-  "checked_at": "2026-07-23T08:53:31Z"
+  "drift": [],
+  "checked_at": "2026-07-23T09:29:48Z"
 };
