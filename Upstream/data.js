@@ -41,8 +41,8 @@ window.UPSTREAM_DATA = [
   {
     "date": "Jul 21, 2026",
     "commit": "Add Danish translations (#1747)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24.",
     "pr": "1747",
     "sha": "f4e3587bac44eead5896bb8809076e4ce59caf00",
     "ts": "2026-07-21T11:22:58Z"
@@ -59,8 +59,8 @@ window.UPSTREAM_DATA = [
   {
     "date": "Jul 21, 2026",
     "commit": "Refactor Sidebar settings structure (#1720)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead.",
     "pr": "1720",
     "sha": "cdf5028b5a8f2e66bf41d2fc5401c313d6900d16",
     "ts": "2026-07-21T08:52:54Z"
@@ -68,8 +68,8 @@ window.UPSTREAM_DATA = [
   {
     "date": "Jul 21, 2026",
     "commit": "release v0.9.4",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Upstream version bump; Grain versions independently",
     "pr": "",
     "sha": "17d6c763413e3e29ec5cee76aa19ad01eccb73b2",
     "ts": "2026-07-21T04:47:15Z"
@@ -722,6 +722,11 @@ window.UPSTREAM_STATUS = {
     "src/components/Sidebar.tsx",
     "src/components/settings/AccelerationSelector.tsx"
   ],
-  "drift": [],
-  "checked_at": "2026-07-23T08:04:41Z"
+  "drift": [
+    {
+      "sha": "f4e3587b",
+      "commit": "Add Danish translations (#1747)"
+    }
+  ],
+  "checked_at": "2026-07-23T08:53:31Z"
 };

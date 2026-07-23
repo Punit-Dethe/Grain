@@ -15,6 +15,11 @@
     "src/components/Sidebar.tsx",
     "src/components/settings/AccelerationSelector.tsx"
   ],
-  "drift": [],
-  "checked_at": "2026-07-23T08:04:41Z"
+  "drift": [
+    {
+      "sha": "f4e3587b",
+      "commit": "Add Danish translations (#1747)"
+    }
+  ],
+  "checked_at": "2026-07-23T08:53:31Z"
 }
