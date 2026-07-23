@@ -38,8 +38,8 @@
   {
     "date": "Jul 21, 2026",
     "commit": "Add Danish translations (#1747)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24.",
     "pr": "1747",
     "sha": "f4e3587bac44eead5896bb8809076e4ce59caf00",
     "ts": "2026-07-21T11:22:58Z"
