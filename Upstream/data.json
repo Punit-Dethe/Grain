@@ -65,8 +65,8 @@
   {
     "date": "Jul 21, 2026",
     "commit": "release v0.9.4",
-    "status": "Pending",
-    "notes": "",
+    "status": "Ignored",
+    "notes": "Upstream version bump; Grain versions independently",
     "pr": "",
     "sha": "17d6c763413e3e29ec5cee76aa19ad01eccb73b2",
     "ts": "2026-07-21T04:47:15Z"
