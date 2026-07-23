@@ -53,6 +53,9 @@ pub struct StoreEntry {
     pub reviewed_commit: String,
     /// Revocation state for this exact version, if any: "revoked" | "deprecated".
     pub revocation: Option<String>,
+    /// Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
+    /// so the card tells the user what the reviewer was warned about.
+    pub flags: Vec<String>,
 }
 
 /// What the store slide-over shows when opened.
@@ -211,6 +214,10 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
                 }
                 .to_string()
             }),
+            flags: grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone())
+                .into_iter()
+                .map(|f| f.reason().to_string())
+                .collect(),
         })
         .collect()
 }

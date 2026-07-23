@@ -22,6 +22,7 @@
 pub mod authoring;
 pub mod distribution;
 pub mod error;
+pub mod flagged;
 pub mod event;
 pub mod manifest;
 pub mod pill_theme;
@@ -33,6 +34,7 @@ pub use distribution::{
     Index, IndexEntry, RevocationEntry, RevocationState, Revocations, Roots, Trust,
     DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
 };
+pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use error::{HostError, HostErrorCode};
 pub use event::{
     daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode,
