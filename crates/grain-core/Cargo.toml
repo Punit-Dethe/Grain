@@ -20,6 +20,12 @@ tokio = { version = "1", features = ["sync"] }
 sys-locale = "0.3"
 # Type reflection for the eventual frontend bindings — standalone, not Tauri.
 specta = { version = "=2.0.0-rc.22", features = ["derive"] }
+# [GRAIN] Phase 5A trust rails: pinned-key Ed25519 verification of the signed
+# catalogue (same minisign shape as Grain's own updater, C-10) + artifact hash.
+minisign-verify = "0.2.5"
+sha2 = "0.10"                                   # match src-tauri (one copy)
+# RFC 3339 `expires` parsing only; `now` is injected so the verifier stays pure.
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 
 [dev-dependencies]
 tempfile = "3"

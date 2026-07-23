@@ -20,6 +20,7 @@
 //! narrowly, widen later).
 
 pub mod authoring;
+pub mod distribution;
 pub mod error;
 pub mod event;
 pub mod manifest;
@@ -28,6 +29,10 @@ pub mod protocol;
 pub mod settings_schema;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
+pub use distribution::{
+    Index, IndexEntry, RevocationEntry, RevocationState, Revocations, Roots, Trust,
+    DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
+};
 pub use error::{HostError, HostErrorCode};
 pub use event::{
     daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode,

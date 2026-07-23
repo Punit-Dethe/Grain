@@ -1,0 +1,9 @@
+{
+  "spec": 1,
+  "version": 1,
+  "publishing_key": "RWTHqI3hbG3H4322HL+bes4I4MS7SNYZaTS81plIh7bvaQB8DMwXtDVp",
+  "base_urls": [
+    "https://github.com/Punit-Dethe/grain-extensions/releases/download/v1/"
+  ],
+  "mirrors": []
+}

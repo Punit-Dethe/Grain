@@ -1,0 +1,23 @@
+[package]
+name = "grain-registry-tools"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Maintainer-only tooling for Grain's extension registry: key generation and minisign signing of roots.json / index.json / revocations.json. NOT depended on by the app — the app only VERIFIES (grain-core), and this only produces. Kept separate so the full signing crate never ships in the binary (Phase 5A, C-10)."
+
+[[bin]]
+name = "grain-registry"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+grain-sdk = { path = "../grain-sdk" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The full minisign implementation (keygen + sign + verify). Deliberately NOT a
+# dependency of the app — signing is a maintainer/registry concern (5B), and the
+# app verifies with the lightweight `minisign-verify` crate instead.
+minisign = "0.7"
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"

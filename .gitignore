@@ -74,6 +74,13 @@ src-tauri/.cargo/
 *.updater.key.password
 grain.updater.key*
 
+# [GRAIN] Phase 5A extension-registry SECRET keys — never commit. Only the
+# PUBLIC keys (pinned in grain-core) and the signed seed docs are tracked. The
+# `.key` files here are the development root/publishing secrets; the production
+# ones move to encrypted removable media as the final migration step.
+registry-keys/
+*.key
+
 # Reference projects
 Refrence/
 

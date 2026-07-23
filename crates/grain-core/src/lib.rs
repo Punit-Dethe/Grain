@@ -16,6 +16,8 @@ pub mod extensions;
 // this alias keeps every `grain_core::event::X` path compiling unchanged.
 pub use grain_sdk as event;
 pub mod settings;
+// [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
+pub mod trust;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
