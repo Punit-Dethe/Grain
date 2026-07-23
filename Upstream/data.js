@@ -720,8 +720,9 @@ window.UPSTREAM_STATUS = {
     "src-tauri/Cargo.toml",
     "src-tauri/src/handy/managers/transcription.rs",
     "src/components/Sidebar.tsx",
-    "src/components/settings/AccelerationSelector.tsx"
+    "src/components/settings/AccelerationSelector.tsx",
+    "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-23T09:29:48Z"
+  "checked_at": "2026-07-23T11:43:15Z"
 };
