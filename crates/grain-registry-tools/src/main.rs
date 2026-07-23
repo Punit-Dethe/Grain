@@ -110,6 +110,14 @@ enum Cmd {
         #[arg(long)]
         dir: PathBuf,
     },
+    /// Generate the public static shop window from `v1/index.json`. The app
+    /// NEVER fetches this — it is a shop window only (DISTRIBUTION-PLAN §2.3).
+    SiteGen {
+        #[arg(long)]
+        v1: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 /// The submission manifest an author writes (source pointer, never an artifact).
@@ -252,7 +260,89 @@ fn main() -> Result<()> {
         } => publish(key, pack, trust, repo, commit, author, expires_days, v1),
         Cmd::Verify { v1 } => verify(v1),
         Cmd::CheckSubmission { dir } => check_submission(dir),
+        Cmd::SiteGen { v1, out } => site_gen(v1, out),
     }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn site_gen(v1: PathBuf, out: PathBuf) -> Result<()> {
+    let index: grain_sdk::Index =
+        serde_json::from_slice(&fs::read(v1.join("index.json"))?).context("parse index.json")?;
+    fs::create_dir_all(&out)?;
+
+    let mut cards = String::new();
+    for e in &index.entries {
+        let flags = grain_sdk::flagged_combinations(&e.capabilities, e.tier.clone());
+        let flag_html: String = flags
+            .iter()
+            .map(|f| format!("<li class=\"flag\">⚠ {}</li>", html_escape(f.reason())))
+            .collect();
+        cards.push_str(&format!(
+            r#"<article class="card">
+  <h2>{name}</h2>
+  <p class="meta">{author} · v{version} · <span class="trust {trust}">{trust}</span></p>
+  <p class="reviewed">Reviewed {reviewed} at {commit}</p>
+  <ul class="flags">{flags}</ul>
+  <a class="open" href="grain://store/{id}">Open in Grain</a>
+</article>"#,
+            name = html_escape(&e.name),
+            author = html_escape(&e.author),
+            version = html_escape(&e.version),
+            trust = html_escape(match e.trust {
+                grain_sdk::Trust::Core => "core",
+                grain_sdk::Trust::Verified => "verified",
+                grain_sdk::Trust::Experimental => "experimental",
+                grain_sdk::Trust::Dev => "community",
+            }),
+            reviewed = html_escape(&e.reviewed_at),
+            commit = html_escape(if e.reviewed_commit.is_empty() {
+                "—"
+            } else {
+                &e.reviewed_commit[..7.min(e.reviewed_commit.len())]
+            }),
+            flags = flag_html,
+            id = html_escape(&e.id),
+        ));
+    }
+
+    let page = format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Grain Extensions</title>
+<style>
+  body{{font:15px/1.5 system-ui,sans-serif;max-width:920px;margin:2rem auto;padding:0 1rem;color:#222}}
+  h1{{font-size:1.6rem}}
+  .grid{{display:grid;gap:1rem;grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}}
+  .card{{border:1px solid #e5e5e5;border-radius:12px;padding:1rem}}
+  .meta{{color:#666;font-size:.85rem}}
+  .reviewed{{color:#888;font-size:.75rem}}
+  .trust{{padding:.05rem .4rem;border-radius:4px;font-size:.75rem}}
+  .trust.verified{{background:#d1fae5;color:#065f46}} .trust.core{{background:#e0e7ff;color:#3730a3}}
+  .flags{{list-style:none;padding:0;margin:.5rem 0}} .flag{{color:#b45309;font-size:.75rem}}
+  .open{{display:inline-block;margin-top:.5rem;font-size:.85rem}}
+  footer{{margin-top:2rem;color:#888;font-size:.8rem}}
+</style></head>
+<body>
+<h1>Grain Extensions</h1>
+<p>If it is listed here, a human read its source at that exact version. Installing
+happens inside Grain — this page only opens the store.</p>
+<div class="grid">{cards}</div>
+<footer>Generated from a signed catalogue. The Grain app verifies every artifact
+against a pinned key; this site is a shop window only.</footer>
+</body></html>"#,
+        cards = cards
+    );
+
+    fs::write(out.join("index.html"), page)?;
+    println!("wrote {}/index.html ({} entrie(s))", out.display(), index.entries.len());
+    Ok(())
 }
 
 /// Run the client's own verification against a `v1/` tree, using the pinned root
