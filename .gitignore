@@ -80,6 +80,3 @@ Refrence/
 # Python bytecode from the Upstream/ tooling
 __pycache__/
 *.pyc
-
-# Documentation build artifacts
-docs/
