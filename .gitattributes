@@ -45,3 +45,8 @@ Upstream/rr-cache/** -text
 *.ttf binary
 *.otf binary
 *.woff2 binary
+
+# [GRAIN] Phase 5A signed seed catalogue: the minisign signature is computed
+# over the EXACT bytes of each .json, so line-ending conversion on checkout
+# would break verification cross-platform. Keep the whole seed dir byte-exact.
+crates/grain-core/seed/** -text
