@@ -1,5 +1,14 @@
 [
   {
+    "date": "Jul 23, 2026",
+    "ts": "2026-07-23T13:00:15Z",
+    "sha": "390729a8007a9c09be38416bc7755e4fa04165c3",
+    "commit": "bump handy keys 0.3.2",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 22, 2026",
     "commit": "fix mute bug (#1760)",
     "status": "Pending",

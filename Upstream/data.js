@@ -3,6 +3,15 @@
 // where the browser blocks fetch('data.json').
 window.UPSTREAM_DATA = [
   {
+    "date": "Jul 23, 2026",
+    "ts": "2026-07-23T13:00:15Z",
+    "sha": "390729a8007a9c09be38416bc7755e4fa04165c3",
+    "commit": "bump handy keys 0.3.2",
+    "status": "Pending",
+    "notes": "",
+    "pr": ""
+  },
+  {
     "date": "Jul 22, 2026",
     "commit": "fix mute bug (#1760)",
     "status": "Pending",
@@ -706,12 +715,12 @@ window.UPSTREAM_DATA = [
   }
 ];
 window.UPSTREAM_STATUS = {
-  "upstream_head": "8a362e9e",
-  "upstream_subject": "fix mute bug (#1760)",
-  "upstream_date": "2026-07-22T17:03:01+08:00",
+  "upstream_head": "390729a8",
+  "upstream_subject": "bump handy keys 0.3.2",
+  "upstream_date": "2026-07-23T21:00:15+08:00",
   "latest_tag": "v0.9.4",
   "merge_base": "cdbc2239",
-  "behind": 17,
+  "behind": 18,
   "trial_clean": false,
   "conflicts": [
     ".nix/bun-lock-hash",
@@ -724,5 +733,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-23T11:43:15Z"
+  "checked_at": "2026-07-23T13:15:57Z"
 };
