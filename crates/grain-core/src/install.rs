@@ -120,6 +120,8 @@ pub fn plan_record(
     entry: &IndexEntry,
     granted: Vec<String>,
     prior: Option<&ExtensionRecord>,
+    slots: Vec<String>,
+    variant_slots: Vec<String>,
 ) -> ExtensionRecord {
     let prior_enabled = prior.map(|r| r.enabled).unwrap_or(false);
     // Update with NEW permissions installs but stays disabled until the diff is
@@ -137,8 +139,11 @@ pub fn plan_record(
         toggle_seq: prior.map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: entry.version.clone(),
         granted,
-        slots: prior.map(|r| r.slots.clone()).unwrap_or_default(),
-        variant_slots: prior.map(|r| r.variant_slots.clone()).unwrap_or_default(),
+        // Slots come from the pack manifest we just installed — not the prior
+        // record — so an update that changes them is reflected, and a fresh
+        // store install actually claims what it declares (SPEC §3.2, §10.2).
+        slots,
+        variant_slots,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
         // this exact (id, version, sha256): a verified 1.0 confers nothing on
@@ -159,9 +164,44 @@ pub fn install_from_verified_entry(
     let dir = stage_artifact(root, entry, bytes, limits)?;
     let prior = reg.installed_record(&entry.id);
     let granted = prior.as_ref().map(|r| r.granted.clone()).unwrap_or_default();
-    let record = plan_record(entry, granted, prior.as_ref());
+    let (slots, variant_slots) = manifest_slots(bytes);
+    let record = plan_record(entry, granted, prior.as_ref(), slots, variant_slots);
     reg.install(record).map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
+}
+
+/// Read the `(slots, variant_slots)` a pack declares, from its bytes. A JSON
+/// pack embeds the manifest; a ZIP pack carries `manifest.json`. Best-effort:
+/// an unreadable manifest yields no claims rather than failing the install
+/// (the artifact already passed hash + extraction).
+fn manifest_slots(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
+    use grain_sdk::{ExtensionManifest, GrainPack};
+    match pack::detect_shape(bytes) {
+        PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
+            .map(|p| (p.manifest.slots, p.manifest.variant_slots))
+            .unwrap_or_default(),
+        PackShape::Zip => {
+            // The manifest.json entry — read it out of the archive in-memory.
+            let mut archive = match zip_manifest_json(bytes) {
+                Some(m) => m,
+                None => return (Vec::new(), Vec::new()),
+            };
+            let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
+            archive.clear();
+            m.map(|m| (m.slots, m.variant_slots)).unwrap_or_default()
+        }
+        PackShape::Unknown => (Vec::new(), Vec::new()),
+    }
+}
+
+/// Extract just the `manifest.json` bytes from a ZIP pack, in memory.
+fn zip_manifest_json(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut file = archive.by_name("manifest.json").ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    Some(buf)
 }
 
 #[cfg(test)]
@@ -229,7 +269,7 @@ mod tests {
         // Property 2: trust flows from a verified entry through plan_record.
         let bytes = b"{\"id\":\"com.example.ok\"}";
         let e = entry("com.example.ok", "1.0.0", Trust::Verified, &[], bytes);
-        let record = plan_record(&e, vec![], None);
+        let record = plan_record(&e, vec![], None, vec![], vec![]);
         assert_eq!(record.trust, Trust::Verified);
         assert_eq!(record.installed_version, "1.0.0");
     }
@@ -241,12 +281,12 @@ mod tests {
         // record is untrusted even though the prior 1.0 was verified.
         let prior_bytes = b"{\"v\":\"1.0\"}";
         let prior_entry = entry("com.example.x", "1.0.0", Trust::Verified, &[], prior_bytes);
-        let prior = plan_record(&prior_entry, vec![], None);
+        let prior = plan_record(&prior_entry, vec![], None, vec![], vec![]);
         assert_eq!(prior.trust, Trust::Verified);
 
         let new_bytes = b"{\"v\":\"1.1\"}";
         let new_entry = entry("com.example.x", "1.1.0", Trust::Dev, &[], new_bytes);
-        let updated = plan_record(&new_entry, vec![], Some(&prior));
+        let updated = plan_record(&new_entry, vec![], Some(&prior), vec![], vec![]);
         assert_eq!(
             updated.trust,
             Trust::Dev,

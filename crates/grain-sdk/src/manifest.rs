@@ -61,6 +61,14 @@ pub struct ExtensionManifest {
     /// enabled occupant per slot; claiming an occupied slot prompts a takeover.
     #[serde(default)]
     pub slots: Vec<String>,
+    /// [GRAIN] SPEC §10.2 surface variants: positions the pack *offers* itself
+    /// for rather than claims. Enabling adds it to a host-owned chooser; a core
+    /// setting decides occupancy, so enabling alone changes no occupant and is
+    /// not a takeover. The Agent centre layout is the canonical example
+    /// (occupancy = `agent_panel_position`). Externalised in Phase 5C: a real
+    /// pack declares this instead of the host synthesising it.
+    #[serde(default)]
+    pub variant_slots: Vec<String>,
     /// [GRAIN] Phase 3 (SPEC §4): declarative contributions the host renders or
     /// registers on the extension's behalf.
     #[serde(default)]
@@ -469,6 +477,13 @@ impl GrainPack {
             let known = KNOWN_SLOTS.contains(&slot.as_str()) || slot.starts_with("overrides:"); // `overrides:<core-setting>`
             if !known {
                 return Err(format!("unknown slot '{slot}'"));
+            }
+        }
+        // Variant slots (SPEC §10.2) are offered, not claimed, but must still
+        // name a real slot so a typo is caught rather than silently doing nothing.
+        for slot in &m.variant_slots {
+            if !KNOWN_SLOTS.contains(&slot.as_str()) {
+                return Err(format!("unknown variant slot '{slot}'"));
             }
         }
 

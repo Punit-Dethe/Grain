@@ -540,12 +540,10 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             &reg,
         ),
     ];
-    // Imported packs (everything in the registry that isn't the pre-known
-    // centre variant handled below).
+    // Installed packs — including the Agent centre layout, which is now a real
+    // external pack (Phase 5C) rendered through this same path, not a
+    // host-synthesised special case.
     for rec in reg.records() {
-        if rec.id == ext::AGENT_CENTER_VARIANT_ID {
-            continue;
-        }
         let (name, description, repository, has_detail, tier) = match load_pack(&app, &rec.id) {
             Ok(p) => {
                 let has_detail = !p.manifest.contributes.settings.is_empty()
@@ -604,23 +602,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
             has_detail,
-        });
-    }
-    if let Some(rec) = reg.record(ext::AGENT_CENTER_VARIANT_ID) {
-        cards.push(ExtensionCard {
-            id: rec.id.clone(),
-            name: "Agent — Centre layout".to_string(),
-            description: "An alternative centred look for the Agent's reply panel.".to_string(),
-            version: rec.installed_version.clone(),
-            tier: "pack".to_string(),
-            trust: "core".to_string(),
-            overrides_installed: false,
-            overridden_version: None,
-            enabled: rec.enabled,
-            toggle_seq: rec.toggle_seq.to_string(),
-            repository: None,
-            // Its one control is the Agent's position dropdown (SPEC §10.2).
-            has_detail: false,
         });
     }
     Ok(cards)
@@ -1275,9 +1256,10 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
             .map(|r| r.granted.clone())
             .unwrap_or_default(),
         slots: pack.manifest.slots.clone(),
-        // No manifest syntax offers a variant slot yet; preserve what heal_slots
-        // backfilled rather than clearing it on a reinstall.
-        variant_slots: prior.map(|r| r.variant_slots).unwrap_or_default(),
+        // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
+        // that they are externalised — the Agent centre layout ships as a real
+        // pack rather than a host-synthesised record.
+        variant_slots: pack.manifest.variant_slots.clone(),
         dev: None,
         // A manually imported local file is UNTRUSTED, always — even if a
         // store-verified record for this id existed. Trust comes only from the
@@ -1377,10 +1359,12 @@ pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result
 #[specta::specta]
 pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
     use grain_core::extensions as ext;
-    if id == ext::AGENT_CENTER_VARIANT_ID || id.starts_with("grain.") {
-        // Built-in-shipped entries have no reinstall source until the store
-        // ships; disabling is their supported off-switch.
-        return Err("built-in extensions can be disabled, not uninstalled".into());
+    // The three settings-flag-backed built-ins have no record to remove — they
+    // are disabled, never uninstalled. Everything else, including the now
+    // externalised Agent centre layout, is a real installed pack with a store
+    // reinstall source, so it uninstalls normally (Phase 5C).
+    if id == ext::BUILTIN_SNIPPETS || id == ext::BUILTIN_CONTEXT || id == ext::BUILTIN_AGENT {
+        return Err("built-in features can be disabled, not uninstalled".into());
     }
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()

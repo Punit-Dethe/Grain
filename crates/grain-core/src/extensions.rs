@@ -151,11 +151,13 @@ pub struct ExtensionsRegistry {
 }
 
 impl ExtensionsRegistry {
-    /// Load (or initialize) the registry. On first initialization,
-    /// `settings_file_preexisted` drives the SPEC §10.1 upgrade rule for the
-    /// centre-layout variant: existing users had the centre option before the
-    /// platform, so it installs enabled for them; new installs start without it.
-    pub fn load(data_dir: &Path, settings_file_preexisted: bool) -> Result<Self> {
+    /// Load (or initialize) the registry.
+    ///
+    /// Phase 5C: the Agent centre layout is **no longer synthesised or seeded**
+    /// here — it is a real external pack installed from the store like any other
+    /// (its code left the app). `settings_file_preexisted` is retained for call
+    /// compatibility and any future upgrade migration, but nothing is seeded.
+    pub fn load(data_dir: &Path, _settings_file_preexisted: bool) -> Result<Self> {
         let path = data_dir.join(EXTENSIONS_FILE);
         let state = if path.exists() {
             let raw =
@@ -167,27 +169,7 @@ impl ExtensionsRegistry {
                 RegistryFile::default()
             })
         } else {
-            let mut fresh = RegistryFile::default();
-            if settings_file_preexisted {
-                fresh.next_toggle_seq = 1;
-                fresh.records.insert(
-                    AGENT_CENTER_VARIANT_ID.to_string(),
-                    ExtensionRecord {
-                        id: AGENT_CENTER_VARIANT_ID.to_string(),
-                        enabled: true,
-                        toggle_seq: 0,
-                        installed_version: "1.0.0".into(),
-                        granted: Vec::new(),
-                        slots: Vec::new(),
-                        // Offered, not claimed: the dropdown decides (SPEC §10.2).
-                        variant_slots: vec![AGENT_REPLY_SURFACE_SLOT.to_string()],
-                        dev: None,
-                        // Grain's own centre-layout variant — trusted as core.
-                        trust: Trust::Core,
-                    },
-                );
-            }
-            fresh
+            RegistryFile::default()
         };
         let reg = Self {
             path,
@@ -671,14 +653,17 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_installs_center_variant_enabled() {
+    fn center_variant_installs_as_a_pack_and_enables() {
+        // Phase 5C: the centre layout is a real external pack now — installed
+        // from the store, not seeded. Installing + enabling it works like any
+        // other variant pack, and it is NOT present until installed.
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        assert!(!reg.is_installed(AGENT_CENTER_VARIANT_ID), "not shipped");
+        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
+        reg.set_enabled(AGENT_CENTER_VARIANT_ID, true)
+            .expect("enabling a variant pack is never a takeover");
         assert!(reg.is_enabled(AGENT_CENTER_VARIANT_ID));
-        // …and the decision persists across reloads (marker file exists now).
-        drop(reg);
-        let reg2 = ExtensionsRegistry::load(dir.path(), false).unwrap();
-        assert!(reg2.is_enabled(AGENT_CENTER_VARIANT_ID));
     }
 
     #[test]
@@ -720,6 +705,13 @@ mod tests {
             dev: None,
             trust: Trust::UNTRUSTED_DEFAULT,
         }
+    }
+
+    /// A surface-variant pack (SPEC §10.2) — offers a slot, claims none.
+    fn variant_pack(id: &str) -> ExtensionRecord {
+        let mut r = pack(id, &[]);
+        r.variant_slots = vec![AGENT_REPLY_SURFACE_SLOT.to_string()];
+        r
     }
 
     #[test]
@@ -902,19 +894,19 @@ mod tests {
     }
 
     #[test]
-    fn center_variant_declares_its_slot_even_without_a_pack_file() {
-        // The centre variant is synthesized by `load` and has NO
-        // `.grainpack.json`, so nothing else can report that it competes for
-        // the Agent's reply surface. Without this backfill the first real claim
-        // would look uncontested and silently displace a shipped feature.
+    fn center_variant_declares_its_slot_from_its_manifest() {
+        // Phase 5C: the centre variant is a real installed pack whose manifest
+        // declares the variant slot. Installing it records the offer; selecting
+        // the centre look is what actually takes the reply surface (SPEC §10.2).
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
         assert_eq!(
             reg.record(AGENT_CENTER_VARIANT_ID).unwrap().variant_slots,
             vec![AGENT_REPLY_SURFACE_SLOT.to_string()]
         );
 
-        // …and a registry written before slots existed is healed on load.
+        // …and a registry written before slots existed is still healed on load.
         let stale = format!(
             r#"{{"records":{{"{id}":{{"id":"{id}","enabled":true,"toggle_seq":0,
                "installed_version":"1.0.0","granted":[]}}}}}}"#,
@@ -951,8 +943,8 @@ mod tests {
         // occupant, so treating the declaration as a claim made the pack
         // impossible to turn on at all.
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
-        reg.set_enabled(AGENT_CENTER_VARIANT_ID, false).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
 
         assert_eq!(reg.slot_conflict(AGENT_CENTER_VARIANT_ID), None);
         reg.set_enabled(AGENT_CENTER_VARIANT_ID, true)
@@ -974,7 +966,9 @@ mod tests {
         // Occupancy is what releases, not declaration — so switching the
         // centre look off hands the reply surface back to core.
         let dir = tmp();
-        let reg = ExtensionsRegistry::load(dir.path(), true).unwrap();
+        let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
+        reg.install(variant_pack(AGENT_CENTER_VARIANT_ID)).unwrap();
+        reg.set_enabled(AGENT_CENTER_VARIANT_ID, true).unwrap();
         reg.set_slot_claim(AGENT_REPLY_SURFACE_SLOT, AGENT_CENTER_VARIANT_ID)
             .unwrap();
         reg.set_enabled(AGENT_CENTER_VARIANT_ID, false).unwrap();

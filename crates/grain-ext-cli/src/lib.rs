@@ -260,6 +260,7 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             entry_source: String::new(),
             surfaces: Surfaces::default(),
             slots: Vec::new(),
+            variant_slots: Vec::new(),
             contributes: Contributes {
                 settings: Vec::new(),
                 shortcuts: vec![ShortcutDecl {
