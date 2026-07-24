@@ -240,48 +240,71 @@ const ListEditor: React.FC<{
   };
   return (
     <div className="w-full space-y-2">
-      {value.map((row, i) => (
-        <div
-          key={i}
-          className="rounded-lg border border-line bg-paper-sunken p-3 space-y-2"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-ink-soft capitalize">
-              {noun} {i + 1}
-            </span>
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={() => onChange(value.filter((_, idx) => idx !== i))}
-              className="text-ink-faint hover:text-red-600 cursor-pointer text-xs"
-              aria-label={`Remove ${noun} ${i + 1}`}
-            >
-              Remove
-            </button>
+      {/* The list grows row by row and, once it passes ~6 rows, becomes a
+          scroll area of fixed height (SPEC list rule) rather than pushing the
+          page down forever. */}
+      <div className="space-y-2 max-h-[22rem] overflow-y-auto">
+        {value.length === 0 && (
+          <div className="text-xs text-ink-soft italic px-1 py-2">
+            No {noun}s yet.
           </div>
-          {field.fields.map((f) => (
-            <div key={f.key} className="flex items-center gap-3">
-              <span className="text-xs text-ink-faint w-20 shrink-0">
-                {f.label}
+        )}
+        {value.map((row, i) => (
+          <div
+            key={i}
+            className="rounded-lg border border-line bg-paper p-3 space-y-2.5 shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ink-soft capitalize">
+                {noun} {i + 1}
               </span>
-              <div className="flex-1 min-w-0 flex justify-end">
-                <FieldInput
-                  field={f}
-                  value={row[f.key]}
-                  extId={extId}
-                  disabled={disabled}
-                  onChange={(v) => setRow(i, f.key, v)}
-                />
-              </div>
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => onChange(value.filter((_, idx) => idx !== i))}
+                className="text-ink-soft hover:text-red-600 cursor-pointer text-xs font-medium"
+                aria-label={`Remove ${noun} ${i + 1}`}
+              >
+                Remove
+              </button>
             </div>
-          ))}
-        </div>
-      ))}
+            {field.fields.map((f) => (
+              <div
+                key={f.key}
+                className={
+                  f.kind === "list"
+                    ? "space-y-1.5"
+                    : "flex items-center gap-3 justify-between"
+                }
+              >
+                <span className="text-xs font-medium text-ink shrink-0">
+                  {f.label}
+                </span>
+                <div
+                  className={
+                    f.kind === "list"
+                      ? "w-full"
+                      : "flex-1 min-w-0 flex justify-end"
+                  }
+                >
+                  <FieldInput
+                    field={f}
+                    value={row[f.key]}
+                    extId={extId}
+                    disabled={disabled}
+                    onChange={(v) => setRow(i, f.key, v)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
       <button
         type="button"
         disabled={disabled}
         onClick={() => onChange([...value, blankRow()])}
-        className="px-2.5 py-1.5 rounded-lg border border-dashed border-line text-xs text-ink-soft hover:text-ink hover:border-ink-faint cursor-pointer"
+        className="px-3 py-1.5 rounded-lg border border-dashed border-ink-faint/40 text-xs font-medium text-ink-soft hover:text-ink hover:border-ink-faint hover:bg-paper-sunken/50 cursor-pointer transition-colors"
       >
         + Add {noun}
       </button>
@@ -537,19 +560,25 @@ export const ExtensionSettings: React.FC<{
           row.kind === "list" ? (
             // A list is a full-width editor: label on top, rows below.
             <div key={row.key} className="px-4 py-3 space-y-2">
-              <div>
-                <div className="text-sm text-ink">{row.label}</div>
-                {row.description && (
-                  <div className="text-xs text-ink-faint">
-                    {row.description}
-                  </div>
-                )}
-                {row.notice && (
-                  <div className="text-xs text-amber-600 mt-0.5">
-                    {row.notice}
-                  </div>
-                )}
-              </div>
+              {(row.label || row.description || row.notice) && (
+                <div>
+                  {row.label && (
+                    <div className="text-sm font-medium text-ink">
+                      {row.label}
+                    </div>
+                  )}
+                  {row.description && (
+                    <div className="text-xs text-ink-soft">
+                      {row.description}
+                    </div>
+                  )}
+                  {row.notice && (
+                    <div className="text-xs text-amber-600 mt-0.5">
+                      {row.notice}
+                    </div>
+                  )}
+                </div>
+              )}
               <ListEditor
                 field={{
                   key: row.key,
