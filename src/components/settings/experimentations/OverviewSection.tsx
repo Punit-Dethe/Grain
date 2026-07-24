@@ -448,105 +448,127 @@ export const OverviewSection: React.FC<{
         )}
       </div>
 
-      <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
-        {cards.map((card) => (
-          <div
-            key={card.id}
-            className="flex items-center gap-3 px-4 py-3 group"
-            title={card.description}
-          >
-            <Package
-              width={15}
-              height={15}
-              className={card.enabled ? "text-accent" : "text-ink-faint"}
-            />
-            <div className="flex-1 min-w-0">
-              <button
-                type="button"
-                onClick={() =>
-                  card.has_detail ? setDetail(card.id) : onJump(card.id)
-                }
-                className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
-              >
-                {card.name}
-              </button>
-              <div className="text-xs text-ink-faint truncate">
-                {card.description}
+      {cards.length === 0 && !error && (
+        <div className="rounded-xl border border-line bg-paper-raised px-4 py-6 text-sm text-ink-faint text-center">
+          Loading extensions…
+        </div>
+      )}
+
+      {/* [GRAIN] Active (enabled) above; installed-but-inactive below a labelled
+          divider — the two states never share one list. */}
+      {(
+        [
+          { key: "active", label: null, items: cards.filter((c) => c.enabled) },
+          {
+            key: "inactive",
+            label: "Installed · not active",
+            items: cards.filter((c) => !c.enabled),
+          },
+        ] as const
+      ).map((group) =>
+        group.items.length === 0 ? null : (
+          <div key={group.key} className="space-y-2">
+            {group.label && (
+              <div className="flex items-center gap-2 px-1 text-[11px] uppercase tracking-wide text-ink-faint">
+                <span>{group.label}</span>
+                <span className="flex-1 border-t border-line" />
               </div>
-              {card.overrides_installed && (
-                <div className="text-[10px] text-amber-700 dark:text-amber-300">
-                  Installed
-                  {card.overridden_version
-                    ? ` v${card.overridden_version}`
-                    : ""}{" "}
-                  · Overridden by dev extension
-                </div>
-              )}
-            </div>
-            {card.trust === "dev" && (
-              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                dev
-              </span>
             )}
-            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
-              {card.tier === "builtin" ? "built-in" : card.tier} · v
-              {card.version}
-            </span>
-            {card.has_detail && (
-              <button
-                type="button"
-                onClick={() => setDetail(card.id)}
-                className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
-                aria-label={`Settings for ${card.name}`}
-                title="Settings"
-              >
-                <Sliders width={13} height={13} />
-              </button>
-            )}
-            {card.repository && (
-              <a
-                href={card.repository}
-                target="_blank"
-                rel="noreferrer"
-                className="text-ink-faint hover:text-ink transition-colors"
-                aria-label="Repository"
-              >
-                <ExternalLink width={13} height={13} />
-              </a>
-            )}
-            {/* Inline enable toggle. A scripted extension's first enable is
+            <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
+              {group.items.map((card) => (
+                <div
+                  key={card.id}
+                  className="flex items-center gap-3 px-4 py-3 group"
+                  title={card.description}
+                >
+                  <Package
+                    width={15}
+                    height={15}
+                    className={card.enabled ? "text-accent" : "text-ink-faint"}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        card.has_detail ? setDetail(card.id) : onJump(card.id)
+                      }
+                      className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
+                    >
+                      {card.name}
+                    </button>
+                    <div className="text-xs text-ink-faint truncate">
+                      {card.description}
+                    </div>
+                    {card.overrides_installed && (
+                      <div className="text-[10px] text-amber-700 dark:text-amber-300">
+                        Installed
+                        {card.overridden_version
+                          ? ` v${card.overridden_version}`
+                          : ""}{" "}
+                        · Overridden by dev extension
+                      </div>
+                    )}
+                  </div>
+                  {card.trust === "dev" && (
+                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                      dev
+                    </span>
+                  )}
+                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
+                    {card.tier === "builtin" ? "built-in" : card.tier} · v
+                    {card.version}
+                  </span>
+                  {card.has_detail && (
+                    <button
+                      type="button"
+                      onClick={() => setDetail(card.id)}
+                      className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
+                      aria-label={`Settings for ${card.name}`}
+                      title="Settings"
+                    >
+                      <Sliders width={13} height={13} />
+                    </button>
+                  )}
+                  {card.repository && (
+                    <a
+                      href={card.repository}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-ink-faint hover:text-ink transition-colors"
+                      aria-label="Repository"
+                    >
+                      <ExternalLink width={13} height={13} />
+                    </a>
+                  )}
+                  {/* Inline enable toggle. A scripted extension's first enable is
                 held by the backend until the permission sheet below is
                 approved (SPEC §6). */}
-            <button
-              type="button"
-              role="switch"
-              aria-checked={card.enabled}
-              disabled={busy === card.id}
-              onClick={() => void toggle(card)}
-              className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
-                card.enabled
-                  ? "bg-accent"
-                  : "bg-paper-sunken border border-line"
-              } ${busy === card.id ? "opacity-50" : ""}`}
-            >
-              <span
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
-                  card.enabled ? "left-[18px]" : "left-0.5"
-                }`}
-              />
-            </button>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={card.enabled}
+                    disabled={busy === card.id}
+                    onClick={() => void toggle(card)}
+                    className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
+                      card.enabled
+                        ? "bg-accent"
+                        : "bg-paper-sunken border border-line"
+                    } ${busy === card.id ? "opacity-50" : ""}`}
+                  >
+                    <span
+                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
+                        card.enabled ? "left-[18px]" : "left-0.5"
+                      }`}
+                    />
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-        {cards.length === 0 && !error && (
-          <div className="px-4 py-6 text-sm text-ink-faint text-center">
-            Loading extensions…
-          </div>
-        )}
-      </div>
+        ),
+      )}
 
-      {/* Store entry point (SPEC §5.3) — opens the slide-over. The panel is a
-          shell (empty state) until the marketplace phase; the affordance and
-          layout are final now. */}
+      {/* Store entry point (SPEC §5.3) — fills the content region full-width. */}
       <button
         type="button"
         onClick={() => setStoreOpen(true)}
@@ -692,7 +714,10 @@ type StoreView = {
 const TRUST_BADGE: Record<string, { label: string; cls: string }> = {
   core: { label: "Core", cls: "bg-accent/15 text-accent" },
   verified: { label: "Verified", cls: "bg-emerald-500/15 text-emerald-600" },
-  experimental: { label: "Experimental", cls: "bg-amber-500/15 text-amber-600" },
+  experimental: {
+    label: "Experimental",
+    cls: "bg-amber-500/15 text-amber-600",
+  },
   dev: { label: "Community", cls: "bg-line text-ink-soft" },
 };
 
@@ -752,74 +777,74 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   });
 
   return (
+    // [GRAIN] Fills the whole content region — right of the app sidebar
+    // (`left-60` = the sidebar's `w-60`), below the titlebar (`top-9` = h-9), to
+    // the window edges. The sidebar and window controls stay visible and live;
+    // the store owns the section it's in rather than floating in a narrow overlay.
     <div
-      className="fixed inset-0 z-50 flex justify-end bg-black/40"
+      className="fixed top-9 bottom-0 right-0 left-60 z-30 bg-paper flex flex-col"
       role="dialog"
       aria-modal="true"
       aria-label="Extension store"
-      onClick={onClose}
     >
-      <div
-        className="h-full w-full max-w-md bg-paper-raised border-l border-line shadow-xl flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-line">
-          <div className="flex items-center gap-2 text-sm font-medium text-ink">
-            <Store width={15} height={15} />
-            Extension store
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
-            aria-label="Close"
-          >
-            Close
-          </button>
+      <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+        <button
+          type="button"
+          onClick={onClose}
+          className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink transition-colors cursor-pointer"
+        >
+          <ChevronLeft width={15} height={15} />
+          All extensions
+        </button>
+        <div className="flex items-center gap-2 text-sm font-medium text-ink">
+          <Store width={15} height={15} />
+          Extension store
         </div>
+      </div>
 
-        {/* Honest connection state (§2.1): offline serves cache, refuses installs. */}
-        {view && view.status !== "fresh" && (
-          <div className="px-4 py-2 text-[11px] text-ink-faint bg-line/40 border-b border-line">
-            {view.status === "needs-newer-client"
-              ? "This store needs a newer version of Grain."
-              : "Offline — showing the last catalogue. New installs are paused until reconnected."}
+      {/* Honest connection state (§2.1): offline serves cache, refuses installs. */}
+      {view && view.status !== "fresh" && (
+        <div className="px-6 py-2 text-[11px] text-ink-faint bg-line/40 border-b border-line">
+          {view.status === "needs-newer-client"
+            ? "This store needs a newer version of Grain."
+            : "Offline — showing the last catalogue. New installs are paused until reconnected."}
+        </div>
+      )}
+
+      <div className="px-6 py-3 border-b border-line">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search extensions"
+          className="w-full max-w-md px-3 py-1.5 rounded-lg bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
+        />
+      </div>
+
+      <div className="flex-1 overflow-y-auto px-6 py-5">
+        {loading && (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 text-ink-faint">
+            <Package width={24} height={24} />
+            <span className="text-xs">Loading the catalogue…</span>
           </div>
         )}
-
-        <div className="px-4 py-2 border-b border-line">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search extensions"
-            className="w-full px-3 py-1.5 rounded-lg bg-paper border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
-          />
-        </div>
-
-        <div className="flex-1 overflow-y-auto">
-          {loading && (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-ink-faint">
-              <Package width={24} height={24} />
-              <span className="text-xs">Loading the catalogue…</span>
-            </div>
-          )}
-          {error && (
-            <div className="m-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
-              {error}
-            </div>
-          )}
-          {!loading && !error && entries.length === 0 && (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center text-ink-faint">
-              <Package width={24} height={24} />
-              <span className="text-sm text-ink">No extensions yet</span>
-              <p className="text-xs leading-relaxed">
-                The catalogue is empty right now. You can also import a{" "}
-                <span className="font-mono">.grainpack</span> you trust from the
-                Extensions header.
-              </p>
-            </div>
-          )}
+        {error && (
+          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+            {error}
+          </div>
+        )}
+        {!loading && !error && entries.length === 0 && (
+          <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center text-ink-faint">
+            <Package width={24} height={24} />
+            <span className="text-sm text-ink">No extensions yet</span>
+            <p className="text-xs leading-relaxed max-w-sm">
+              The catalogue is empty right now. You can also import a{" "}
+              <span className="font-mono">.grainpack</span> you trust from the
+              Extensions header.
+            </p>
+          </div>
+        )}
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {entries.map((e) => {
             const badge = TRUST_BADGE[e.trust] ?? TRUST_BADGE.dev;
             const revoked = e.revocation === "revoked";
@@ -827,11 +852,11 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             return (
               <div
                 key={`${e.id}@${e.version}`}
-                className="px-4 py-3 border-b border-line/60"
+                className="rounded-xl border border-line bg-paper-raised p-4 flex flex-col gap-2"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-medium text-ink truncate">
                         {e.name}
                       </span>
@@ -865,7 +890,7 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 </div>
 
                 {e.reviewed_at && (
-                  <div className="mt-1 text-[10px] text-ink-faint">
+                  <div className="text-[10px] text-ink-faint">
                     Reviewed {e.reviewed_at}
                     {e.reviewed_commit
                       ? ` at ${e.reviewed_commit.slice(0, 7)}`
@@ -877,19 +902,19 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 {e.flags.map((f) => (
                   <div
                     key={f}
-                    className="mt-1 text-[10px] text-amber-600 flex items-center gap-1"
+                    className="text-[10px] text-amber-600 flex items-center gap-1"
                   >
                     <ShieldCheck width={9} height={9} /> {f}
                   </div>
                 ))}
 
                 {revoked && (
-                  <div className="mt-1 text-[10px] text-red-600">
+                  <div className="text-[10px] text-red-600">
                     Revoked — install disabled.
                   </div>
                 )}
                 {deprecated && (
-                  <div className="mt-1 text-[10px] text-ink-faint">
+                  <div className="text-[10px] text-ink-faint">
                     Deprecated — no longer maintained.
                   </div>
                 )}
