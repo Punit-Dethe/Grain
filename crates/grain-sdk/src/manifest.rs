@@ -313,6 +313,17 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // whatever is selected in any app), so it is its own grant, meant to be
     // paired with a user-initiated trigger like a shortcut.
     "capture:selection",
+    // Phase 5C (SPEC §1.3): launch side effects. Both are danger-marked and the
+    // host enforces the security, not the extension:
+    //  · `open:url` opens a link in the user's browser — the host allows ONLY
+    //    http/https/mailto/tel schemes (never file:, javascript:, custom
+    //    handlers, …), the exact scheme-allowlist lesson from a decade of
+    //    Electron `openExternal` RCEs, and never touches a shell.
+    //  · `open:app` launches a local application — but ONLY one the user picked
+    //    through Grain's own native chooser; the extension can never launch an
+    //    arbitrary path or its own bundled binary.
+    "open:url",
+    "open:app",
 ];
 
 /// Parameterised network grants are deliberately narrower than URLs: exactly

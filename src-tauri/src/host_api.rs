@@ -27,6 +27,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, LOCATI
 use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::events_auth::{CapabilitySet, ClientIdentity};
 
@@ -108,6 +109,8 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "capture.selection" => Some("capture:selection"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
         "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
+        "open.url" => Some("open:url"),
+        "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
     }
 }
@@ -553,8 +556,16 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
         "session.start" => {
             param_nonempty_str(params, "mode")?;
         }
+        "open.url" => {
+            // Full validation (scheme allowlist) happens in dispatch; here we
+            // only require a non-empty string so a typed error is returned early.
+            param_nonempty_str(params, "url")?;
+        }
+        "open.app" => {
+            param_nonempty_str(params, "path")?;
+        }
         "doc.list" | "capture.selection" | "workspace.open" | "workspace.close"
-        | "overlay.show" | "overlay.dismiss" => {}
+        | "overlay.show" | "overlay.dismiss" | "open.pickApp" => {}
         _ => return Err(unknown_method(method)),
     }
     Ok(())
@@ -1011,8 +1022,131 @@ pub async fn dispatch(
                 )),
             }
         }
+        // [GRAIN] Phase 5C — launch side effects. Security is enforced HERE, in
+        // Rust, never trusted to the extension (SPEC §7.2).
+        "open.url" => {
+            // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
+            // `openExternal` RCEs and Tauri's own shell-open advisory
+            // (GHSA-c9pr-q8gx-3mgp) all trace to opening a URL whose scheme was
+            // not restricted — `file:`, `javascript:`, custom URI handlers, etc.
+            let raw = param_nonempty_str(&params, "url")?;
+            let url = validate_open_url(&raw)?;
+            // The opener plugin hands the URL to the OS default handler; it does
+            // not spawn a shell, so there is no argument/command injection path.
+            app.opener()
+                .open_url(url, None::<String>)
+                .map_err(|error| {
+                    unavailable(
+                        format!("could not open the link: {error}"),
+                        "The URL was valid but the OS could not open it.",
+                    )
+                })?;
+            Ok(Value::Null)
+        }
+        "open.pickApp" => {
+            // User-mediated app choice: the ONLY way a path becomes launchable.
+            // The extension cannot supply a path here — the user picks it in
+            // Grain's native chooser, and we record it as approved for this
+            // extension so a later `open.app` can run it.
+            let app2 = app.clone();
+            let picked = tokio::task::spawn_blocking(move || {
+                use tauri_plugin_dialog::DialogExt;
+                app2.dialog().file().blocking_pick_file()
+            })
+            .await
+            .map_err(|error| internal_error(format!("picker task failed: {error}")))?;
+            let path = picked
+                .and_then(|f| f.into_path().ok())
+                .map(|p| p.to_string_lossy().to_string());
+            if let Some(ref p) = path {
+                approve_app(&data_dir, &identity.id, p)
+                    .map_err(|e| internal_error(format!("could not record approval: {e}")))?;
+            }
+            Ok(json!({ "path": path }))
+        }
+        "open.app" => {
+            let path = param_nonempty_str(&params, "path")?;
+            // The extension may launch ONLY a path the user picked through
+            // `open.pickApp`. An arbitrary path (including the extension's own
+            // bundled files) is refused — this is what stops `open:app` from
+            // being a sandbox escape / RCE.
+            if !is_app_approved(&data_dir, &identity.id, &path) {
+                return Err(typed_error(
+                    HostErrorCode::CapabilityDenied,
+                    "This app was not approved by the user.",
+                    "Call open.pickApp() so the user chooses the application; only a user-picked app can be launched.",
+                ));
+            }
+            app.opener()
+                .open_path(path.clone(), None::<String>)
+                .map_err(|error| {
+                    unavailable(
+                        format!("could not launch the app: {error}"),
+                        "The app path was approved but the OS could not open it (it may have moved).",
+                    )
+                })?;
+            Ok(Value::Null)
+        }
         other => Err(unknown_method(other)),
     }
+}
+
+/// Validate a URL for `open:url`. Returns the accepted URL string, or a typed
+/// error. **Scheme allowlist only** — the single most important control here
+/// (Electron `openExternal` / Tauri shell-open RCE history): `file:`,
+/// `javascript:`, `data:`, `vbscript:` and any custom URI handler are refused,
+/// because the OS routes them to handlers that can execute code or read files.
+fn validate_open_url(raw: &str) -> HostResult<String> {
+    const ALLOWED: &[&str] = &["http", "https", "mailto", "tel"];
+    let url = Url::parse(raw.trim())
+        .map_err(|error| invalid_argument(format!("invalid URL: {error}")))?;
+    let scheme = url.scheme().to_ascii_lowercase();
+    if !ALLOWED.contains(&scheme.as_str()) {
+        return Err(typed_error(
+            HostErrorCode::InvalidArgument,
+            format!("scheme '{scheme}' is not allowed"),
+            "open.url accepts only http, https, mailto and tel links.",
+        ));
+    }
+    // Defence in depth: reject embedded credentials (phishing / SSRF-ish).
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid_argument("URLs must not contain credentials"));
+    }
+    Ok(url.to_string())
+}
+
+/// Where a per-extension set of user-approved launchable app paths lives. This
+/// file is written ONLY by the host (via `open.pickApp`); the extension has no
+/// API that can add to it, so it cannot self-approve an app to launch.
+fn approved_apps_path(data_dir: &std::path::Path, ext_id: &str) -> std::path::PathBuf {
+    data_dir
+        .join("extensions")
+        .join(format!("{ext_id}.approved-apps.json"))
+}
+
+fn read_approved_apps(data_dir: &std::path::Path, ext_id: &str) -> Vec<String> {
+    std::fs::read_to_string(approved_apps_path(data_dir, ext_id))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn is_app_approved(data_dir: &std::path::Path, ext_id: &str, path: &str) -> bool {
+    read_approved_apps(data_dir, ext_id)
+        .iter()
+        .any(|p| p == path)
+}
+
+fn approve_app(data_dir: &std::path::Path, ext_id: &str, path: &str) -> std::io::Result<()> {
+    let mut approved = read_approved_apps(data_dir, ext_id);
+    if !approved.iter().any(|p| p == path) {
+        approved.push(path.to_string());
+    }
+    let file = approved_apps_path(data_dir, ext_id);
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(file, serde_json::to_string(&approved)?)
 }
 
 #[cfg(test)]
@@ -1026,6 +1160,58 @@ mod tests {
             role: crate::events_auth::ClientRole::Worker,
             caps: CapabilitySet::Named(caps.iter().map(|s| s.to_string()).collect::<HashSet<_>>()),
         }
+    }
+
+    #[test]
+    fn open_url_allows_only_safe_schemes() {
+        // Accepted: the four safe schemes.
+        for ok in [
+            "https://example.com/x",
+            "http://example.com",
+            "mailto:a@example.com",
+            "tel:+15551234",
+        ] {
+            assert!(validate_open_url(ok).is_ok(), "{ok} should be allowed");
+        }
+        // Rejected: every known `openExternal`/shell-open RCE vector.
+        for bad in [
+            "file:///etc/passwd",
+            "file:///C:/Windows/System32/calc.exe",
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            "smb://attacker/share",
+            "vscode://x",
+            "ms-msdt:/id",
+            "chrome://settings",
+            "\\\\attacker\\share",
+            "example.com", // no scheme — must be explicit, never guessed
+        ] {
+            let err = validate_open_url(bad).unwrap_err();
+            assert_eq!(err.code, HostErrorCode::InvalidArgument, "{bad} must be refused");
+        }
+        // Credentials are refused even on an allowed scheme.
+        assert!(validate_open_url("https://user:pw@example.com").is_err());
+    }
+
+    #[test]
+    fn open_app_only_launches_user_approved_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path();
+        let id = "com.example.actions";
+        let evil = "C:/Windows/System32/cmd.exe";
+        // Nothing is approved by default — an arbitrary path is refused.
+        assert!(!is_app_approved(data, id, evil));
+        // Only a path recorded via the user-mediated picker becomes launchable,
+        // and only for the extension that picked it.
+        let good = "C:/Program Files/Editor/editor.exe";
+        approve_app(data, id, good).unwrap();
+        assert!(is_app_approved(data, id, good));
+        assert!(!is_app_approved(data, id, evil), "approval is per-path, exact");
+        assert!(
+            !is_app_approved(data, "com.other.ext", good),
+            "approval is per-extension"
+        );
     }
 
     #[test]

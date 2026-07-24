@@ -95,6 +95,15 @@ export interface GrainApi {
     }>;
   };
   embed(texts: string[]): Promise<number[][]>;
+  readonly open: {
+    /** Open a link in the user's browser. Host allows only http/https/mailto/tel. */
+    url(url: string): Promise<unknown>;
+    /** Launch a user-approved application by path (see pickApp). */
+    app(path: string): Promise<unknown>;
+    /** Ask the user to choose an application; resolves to its path (approved for
+     * this extension) or null if cancelled. The only way to make a path launchable. */
+    pickApp(): Promise<string | null>;
+  };
   readonly workspace: {
     open(payload?: JsonValue): Promise<unknown>;
     close(): Promise<unknown>;

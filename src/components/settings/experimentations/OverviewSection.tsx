@@ -35,6 +35,9 @@ const CAPABILITY_LABELS: Record<string, string> = {
   settings: "Save its own settings",
   llm: "Send text to your configured AI provider",
   embed: "Turn text into embeddings",
+  "capture:selection": "Read your currently selected text",
+  "open:url": "Open web links in your browser",
+  "open:app": "Launch apps you choose",
 };
 
 const capabilityLabel = (cap: string) =>

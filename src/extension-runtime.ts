@@ -220,6 +220,16 @@ export const GRAIN_RUNTIME_JS = `(function () {
         return req("session.start", { mode: String(options && options.mode || "") });
       }
     },
+    // Launch side effects (SPEC 1.3). The host enforces safety: open.url accepts
+    // only http/https/mailto/tel; open.app launches ONLY a path the user picked
+    // via open.pickApp (which returns the chosen path and records approval).
+    open: {
+      url: function (u) { return req("open.url", { url: String(u) }); },
+      app: function (p) { return req("open.app", { path: String(p) }); },
+      pickApp: function () {
+        return req("open.pickApp", {}).then(function (r) { return r && r.path != null ? r.path : null; });
+      }
+    },
     // A transform returns the rewritten text (a string); an empty string
     // suppresses the paste (SPEC §3.3).
     onTransform: function (fn) { handlers.transform = function (p) { return fn(p.text); }; },

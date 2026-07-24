@@ -1395,6 +1395,13 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
             .map_err(|error| error.to_string())?;
         ctx.purge_extension_secrets(&id)
             .map_err(|error| error.to_string())?;
+        // [GRAIN] Phase 5C: forget any user-approved launchable app paths, so a
+        // reinstalled extension starts with no launch approvals (SPEC §6).
+        let _ = std::fs::remove_file(
+            ctx.data_dir
+                .join("extensions")
+                .join(format!("{id}.approved-apps.json")),
+        );
     }
     // Disable keeps a rebind; uninstall is the transaction that clears it
     // (SPEC §6: shortcuts unregistered, slots released, storage wiped).
