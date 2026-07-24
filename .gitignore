@@ -79,6 +79,7 @@ grain.updater.key*
 # `.key` files here are the development root/publishing secrets; the production
 # ones move to encrypted removable media as the final migration step.
 registry-keys/
+production-keys/
 *.key
 
 # Reference projects
