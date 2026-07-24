@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { OverviewSection } from "./OverviewSection";
 import { SnippetsSection } from "./SnippetsSection";
-import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
 import { DeveloperSection } from "./DeveloperSection";
@@ -205,12 +204,9 @@ export const ExperimentationsSettings: React.FC = () => {
       ) : tab === "snippets" ? (
         <div className="space-y-8">
           <SnippetsSection />
-          {/* SPEC §5.4: one thin divider, then Actions — the position its
-              extension form will occupy via anchor "snippets.after". */}
-          <div className="border-t border-line" />
-          <ActionsSection />
-          {/* SPEC §4.3: an extension's settings render next to the feature they
-              extend. Renders nothing when nothing anchors here. */}
+          {/* Voice Actions is now its own extension — its editor lives in the
+              Voice Actions extension page (Overview → Voice Actions), not here.
+              SPEC §4.3: this anchor stays for snippet packs that extend here. */}
           <ExtensionAnchor anchor="snippets.after" />
         </div>
       ) : tab === "context" ? (

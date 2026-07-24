@@ -765,6 +765,14 @@ pub struct AppSettings {
     /// available).
     #[serde(default)]
     pub agent_enabled: bool,
+    /// [GRAIN] Extension platform: the Voice Actions built-in extension's switch.
+    /// Unlike snippets/agent it defaults ON — voice actions never had an
+    /// off-switch and an empty action list already costs nothing (the matcher
+    /// early-returns), so ON preserves the exact prior behavior for every user,
+    /// new and existing, without a migration. The toggle simply adds the
+    /// off-switch the feature never had.
+    #[serde(default = "default_true")]
+    pub actions_enabled: bool,
     /// [GRAIN] One-time marker for the extension-platform settings import above
     /// (SPEC §10.1 upgrade rule). False in files written before the platform;
     /// `load_settings` performs the import exactly once and sets it.
@@ -1589,6 +1597,9 @@ pub fn get_default_settings() -> AppSettings {
         // the upgrade import in context.rs turns them on for existing users.
         snippets_enabled: false,
         agent_enabled: false,
+        // Voice actions default ON (see the field doc): preserves prior always-on
+        // behavior; an empty action list is already a no-op.
+        actions_enabled: true,
         extensions_imported_v1: false,
         extension_developer_mode: false,
         app_modes: Vec::new(),

@@ -547,6 +547,24 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             settings.agent_enabled,
             &reg,
         ),
+        // Voice Actions is a built-in WITHOUT a sub-tab: its Overview row opens
+        // an extension page whose custom card is the Actions editor. So unlike
+        // the three above it carries `has_detail: true` and a repository link.
+        ExtensionCard {
+            id: ext::BUILTIN_ACTIONS.to_string(),
+            name: "Voice Actions".to_string(),
+            description: "Say a phrase to open apps and websites — fully local, no AI."
+                .to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            tier: "builtin".to_string(),
+            trust: "core".to_string(),
+            overrides_installed: false,
+            overridden_version: None,
+            enabled: settings.actions_enabled,
+            toggle_seq: reg.toggle_seq(ext::BUILTIN_ACTIONS).to_string(),
+            repository: Some("https://github.com/Punit-Dethe/Grain".to_string()),
+            has_detail: true,
+        },
     ];
     // Installed packs — including the Agent centre layout, which is now a real
     // external pack (Phase 5C) rendered through this same path, not a
@@ -635,6 +653,11 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
         ext::BUILTIN_CONTEXT => {
             let mut settings = settings::get_settings(&app);
             settings.context_awareness_enabled = enabled;
+            settings::write_settings(&app, settings);
+        }
+        ext::BUILTIN_ACTIONS => {
+            let mut settings = settings::get_settings(&app);
+            settings.actions_enabled = enabled;
             settings::write_settings(&app, settings);
         }
         ext::BUILTIN_AGENT => {
@@ -1476,7 +1499,11 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     // are disabled, never uninstalled. Everything else, including the now
     // externalised Agent centre layout, is a real installed pack with a store
     // reinstall source, so it uninstalls normally (Phase 5C).
-    if id == ext::BUILTIN_SNIPPETS || id == ext::BUILTIN_CONTEXT || id == ext::BUILTIN_AGENT {
+    if id == ext::BUILTIN_SNIPPETS
+        || id == ext::BUILTIN_CONTEXT
+        || id == ext::BUILTIN_AGENT
+        || id == ext::BUILTIN_ACTIONS
+    {
         return Err("built-in features can be disabled, not uninstalled".into());
     }
     let reg = app

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
+  ChevronDown,
   ChevronLeft,
   Code2,
   Trash2,
@@ -11,6 +12,7 @@ import {
   Replace,
   ShieldCheck,
   Sliders,
+  Star,
   Store,
   X,
 } from "lucide-react";
@@ -21,6 +23,7 @@ import {
   type SettingRow,
   type SettingsSection,
 } from "./ExtensionSettings";
+import { NATIVE_CARDS } from "./nativeCards";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
@@ -134,6 +137,209 @@ function sortCards(cards: ExtensionCard[]): ExtensionCard[] {
     return d !== 0 ? d : a.name.localeCompare(b.name);
   });
 }
+
+/** GitHub stars for a repo URL — best-effort, cached for the session. Returns
+ * null until (or unless) it resolves, so the UI just omits the count on a miss.
+ * The app runs with CSP disabled, so the settings webview can hit the API
+ * directly; GitHub serves permissive CORS for public repos. */
+const starCache = new Map<string, number | null>();
+function useRepoStars(repo: string | null): number | null {
+  const [stars, setStars] = useState<number | null>(
+    repo && starCache.has(repo) ? (starCache.get(repo) ?? null) : null,
+  );
+  useEffect(() => {
+    if (!repo) return;
+    if (starCache.has(repo)) {
+      setStars(starCache.get(repo) ?? null);
+      return;
+    }
+    const m = repo.match(/github\.com\/([^/]+)\/([^/?#]+?)(?:\.git)?\/?$/i);
+    if (!m) return;
+    let alive = true;
+    fetch(`https://api.github.com/repos/${m[1]}/${m[2]}`, {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { stargazers_count?: number } | null) => {
+        const n =
+          j && typeof j.stargazers_count === "number"
+            ? j.stargazers_count
+            : null;
+        starCache.set(repo, n);
+        if (alive) setStars(n);
+      })
+      .catch(() => starCache.set(repo, null));
+    return () => {
+      alive = false;
+    };
+  }, [repo]);
+  return stars;
+}
+
+const TIER_LABEL: Record<string, string> = {
+  builtin: "built-in",
+  pack: "pack",
+  scripted: "scripted",
+  native: "native",
+};
+
+/** Compact star count: 1234 → "1.2k". */
+const fmtStars = (n: number) =>
+  n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
+
+/** [GRAIN] The extension page — you go INTO an extension from Overview (its
+ * name or ⚙). A proper header (title, tier/trust, enable toggle, repository +
+ * star count, collapsible description), then the extension's declarative
+ * settings, then its custom card (SPEC §4.1 Level 3). This is the per-extension
+ * surface; the tab bar itself never grows with extension count (SPEC §5.2). */
+const ExtensionPage: React.FC<{
+  card: ExtensionCard | undefined;
+  section: SettingsSection | undefined;
+  ownRows: SettingRow[];
+  fallbackName: string;
+  busy: boolean;
+  onBack: () => void;
+  onToggle: () => void;
+  onChanged: () => void;
+}> = ({
+  card,
+  section,
+  ownRows,
+  fallbackName,
+  busy,
+  onBack,
+  onToggle,
+  onChanged,
+}) => {
+  const [descOpen, setDescOpen] = useState(true);
+  const stars = useRepoStars(card?.repository ?? null);
+  const NativeCard = card ? NATIVE_CARDS[card.id] : undefined;
+  const repoLabel = card?.repository
+    ? card.repository
+        .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
+        .replace(/\.git$/, "")
+        .replace(/\/$/, "")
+    : null;
+
+  return (
+    <div className="space-y-6">
+      <button
+        type="button"
+        onClick={onBack}
+        className="flex items-center gap-1 text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+      >
+        <ChevronLeft width={13} height={13} />
+        All extensions
+      </button>
+
+      {/* Header */}
+      <div className="space-y-2.5 px-1">
+        <div className="flex items-start gap-3">
+          <div className="flex-1 min-w-0 space-y-1.5">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-semibold tracking-tight leading-none text-ink">
+                {card?.name ?? section?.name ?? fallbackName}
+              </h1>
+              {card && (
+                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
+                  {TIER_LABEL[card.tier] ?? card.tier} · v{card.version}
+                </span>
+              )}
+              {card?.trust === "dev" && (
+                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                  dev
+                </span>
+              )}
+            </div>
+            {card?.repository && (
+              <div className="flex items-center gap-3 text-xs text-ink-faint">
+                <a
+                  href={card.repository}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 hover:text-ink transition-colors"
+                >
+                  <ExternalLink width={12} height={12} />
+                  {repoLabel}
+                </a>
+                {stars != null && (
+                  <span className="inline-flex items-center gap-1">
+                    <Star width={12} height={12} />
+                    {fmtStars(stars)}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+          {card && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={card.enabled}
+              aria-label={`Enable ${card.name}`}
+              disabled={busy}
+              onClick={onToggle}
+              className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 mt-1 ${
+                card.enabled ? "bg-accent" : "bg-paper-sunken border border-line"
+              } ${busy ? "opacity-50" : ""}`}
+            >
+              <span
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
+                  card.enabled ? "left-[18px]" : "left-0.5"
+                }`}
+              />
+            </button>
+          )}
+        </div>
+
+        {/* Collapsible ("shrinkable") description. */}
+        {card?.description && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setDescOpen((o) => !o)}
+              className="flex items-center gap-1 text-xs text-ink-faint hover:text-ink-soft transition-colors cursor-pointer"
+            >
+              <ChevronDown
+                width={12}
+                height={12}
+                className={`transition-transform ${descOpen ? "" : "-rotate-90"}`}
+              />
+              About
+            </button>
+            {descOpen && (
+              <p className="mt-1 text-sm text-ink-soft leading-relaxed max-w-2xl">
+                {card.description}
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Declarative settings (empty for a card-only extension like Voice
+          Actions — renders nothing). */}
+      {section && (
+        <ExtensionSettings
+          section={section}
+          rows={ownRows}
+          onChanged={onChanged}
+        />
+      )}
+
+      {/* Custom card — native first-party UI (SPEC §4.1 Level 3). The
+          third-party `settingsPanel` iframe will render in this same slot. */}
+      {NativeCard && <NativeCard />}
+
+      {card && <ExtensionShortcuts id={card.id} />}
+
+      {!section && !NativeCard && card && !card.enabled && (
+        <p className="px-1 text-xs text-ink-faint">
+          Turn this extension on to see its settings.
+        </p>
+      )}
+    </div>
+  );
+};
 
 /** [GRAIN] Extensions → Overview (SPEC §5.1): every installed extension,
  * enabled and disabled alike — name (jump), inline toggle, description on
@@ -335,42 +541,126 @@ export const OverviewSection: React.FC<{
   // The extension's own settings section (SPEC §4.3 fallback). Rendered in
   // place of the list so the tab bar never grows with extension count.
   const openSection = sections.find((s) => s.id === detail);
+
+  // Built once and rendered in BOTH the list and the extension page, so an
+  // enable toggle on either surface can raise the sheet it needs.
+  const pendingModal = pending && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={() => setPending(null)}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl border border-line bg-paper-raised shadow-lg p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <ShieldCheck width={16} height={16} className="text-accent" />
+          <h3 className="text-sm font-medium text-ink">
+            Allow “{pending.card.name}”?
+          </h3>
+        </div>
+        <p className="text-xs text-ink-faint">
+          This extension runs its own code on your device. It is asking to:
+        </p>
+        <ul className="space-y-1.5">
+          {pending.permissions.map((p) => (
+            <li key={p} className="flex items-start gap-2 text-xs text-ink">
+              <span className="mt-[5px] w-1 h-1 rounded-full bg-accent shrink-0" />
+              <span>{capabilityLabel(p)}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => setPending(null)}
+            className="px-3 py-1.5 rounded-lg text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => void approve()}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
+          >
+            Allow and enable
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const contestedModal = contested && (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={() => setContested(null)}
+    >
+      <div
+        className="w-full max-w-sm rounded-xl border border-line bg-paper-raised shadow-lg p-4 space-y-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <Replace width={16} height={16} className="text-accent" />
+          <h3 className="text-sm font-medium text-ink">
+            Replace {slotLabel(contested.conflict.slot)}?
+          </h3>
+        </div>
+        <p className="text-xs text-ink-faint">
+          Only one extension can control{" "}
+          {slotLabel(contested.conflict.slot)}. It is currently{" "}
+          <span className="text-ink">
+            {occupantName(contested.conflict.currentOccupant)}
+          </span>
+          .
+        </p>
+        <p className="text-xs text-ink-faint">
+          Turning on “{contested.card.name}” will switch{" "}
+          {contested.conflict.currentOccupant === CORE_DEFAULT
+            ? "Grain's own version off"
+            : `“${occupantName(contested.conflict.currentOccupant)}” off`}
+          . You can switch back at any time.
+        </p>
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            onClick={() => setContested(null)}
+            className="px-3 py-1.5 rounded-lg text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
+          >
+            Keep current
+          </button>
+          <button
+            type="button"
+            onClick={() => void takeOver()}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
+          >
+            Replace and enable
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   if (detail) {
     const card = cards.find((c) => c.id === detail);
     return (
-      <div className="space-y-3">
-        <button
-          type="button"
-          onClick={() => setDetail(null)}
-          className="flex items-center gap-1 text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
-        >
-          <ChevronLeft width={13} height={13} />
-          All extensions
-        </button>
-        <div className="px-1">
-          <h2 className="text-sm font-medium text-ink">
-            {openSection?.name ?? card?.name ?? detail}
-          </h2>
-          {card?.description && (
-            <p className="text-xs text-ink-faint">{card.description}</p>
-          )}
-        </div>
-        {/* An extension may contribute settings, shortcuts, or both; a disabled
-            one contributes neither until it is turned back on (SPEC §6). */}
-        {openSection && (
-          <ExtensionSettings
-            section={openSection}
-            rows={ownRows(detail)}
-            onChanged={() => void refresh()}
-          />
-        )}
-        <ExtensionShortcuts id={detail} />
-        {!openSection && card && !card.enabled && (
-          <p className="px-1 text-xs text-ink-faint">
-            Turn this extension on to see its settings.
-          </p>
-        )}
-      </div>
+      <>
+        <ExtensionPage
+          card={card}
+          section={openSection}
+          ownRows={ownRows(detail)}
+          fallbackName={openSection?.name ?? detail}
+          busy={busy === detail}
+          onBack={() => setDetail(null)}
+          onToggle={() => card && void toggle(card)}
+          onChanged={() => void refresh()}
+        />
+        {pendingModal}
+        {contestedModal}
+      </>
     );
   }
 
@@ -625,111 +915,10 @@ export const OverviewSection: React.FC<{
         />
       )}
 
-      {/* Permission sheet (SPEC §6, the Chrome model): a scripted extension
-          runs code, so nothing starts until the user approves what it asked
-          for. Cancel simply leaves it disabled. */}
-      {pending && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setPending(null)}
-        >
-          <div
-            className="w-full max-w-sm rounded-xl border border-line bg-paper-raised shadow-lg p-4 space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2">
-              <ShieldCheck width={16} height={16} className="text-accent" />
-              <h3 className="text-sm font-medium text-ink">
-                Allow “{pending.card.name}”?
-              </h3>
-            </div>
-            <p className="text-xs text-ink-faint">
-              This extension runs its own code on your device. It is asking to:
-            </p>
-            <ul className="space-y-1.5">
-              {pending.permissions.map((p) => (
-                <li key={p} className="flex items-start gap-2 text-xs text-ink">
-                  <span className="mt-[5px] w-1 h-1 rounded-full bg-accent shrink-0" />
-                  <span>{capabilityLabel(p)}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setPending(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void approve()}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
-              >
-                Allow and enable
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Takeover prompt (SPEC §3.2): one enabled occupant per slot. The
-          incumbent is named and switched off explicitly — never displaced
-          silently, and never by whichever extension happened to load first. */}
-      {contested && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setContested(null)}
-        >
-          <div
-            className="w-full max-w-sm rounded-xl border border-line bg-paper-raised shadow-lg p-4 space-y-3"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2">
-              <Replace width={16} height={16} className="text-accent" />
-              <h3 className="text-sm font-medium text-ink">
-                Replace {slotLabel(contested.conflict.slot)}?
-              </h3>
-            </div>
-            <p className="text-xs text-ink-faint">
-              Only one extension can control{" "}
-              {slotLabel(contested.conflict.slot)}. It is currently{" "}
-              <span className="text-ink">
-                {occupantName(contested.conflict.currentOccupant)}
-              </span>
-              .
-            </p>
-            <p className="text-xs text-ink-faint">
-              Turning on “{contested.card.name}” will switch{" "}
-              {contested.conflict.currentOccupant === CORE_DEFAULT
-                ? "Grain's own version off"
-                : `“${occupantName(contested.conflict.currentOccupant)}” off`}
-              . You can switch back at any time.
-            </p>
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                type="button"
-                onClick={() => setContested(null)}
-                className="px-3 py-1.5 rounded-lg text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
-              >
-                Keep current
-              </button>
-              <button
-                type="button"
-                onClick={() => void takeOver()}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent text-white hover:opacity-90 transition-opacity cursor-pointer"
-              >
-                Replace and enable
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Permission sheet (SPEC §6) and takeover prompt (SPEC §3.2) — see the
+          shared consts above; both also render on the extension page. */}
+      {pendingModal}
+      {contestedModal}
     </div>
   );
 };

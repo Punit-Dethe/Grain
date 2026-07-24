@@ -114,6 +114,15 @@ pub struct Surfaces {
     pub workspace: Option<WorkspaceDecl>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overlay: Option<OverlayDecl>,
+    /// The custom settings card (SPEC §4.1 Level 3): the extension's own UI,
+    /// rendered inline in its settings section below the schema controls.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        rename = "settingsPanel",
+        alias = "settings_panel"
+    )]
+    pub settings_panel: Option<SettingsPanelDecl>,
 }
 
 /// An app-class window: built hidden once, shown on summon, UI unmounted +
@@ -150,6 +159,33 @@ pub struct OverlayDecl {
     /// one shareable file.
     #[serde(default)]
     pub ui_source: String,
+}
+
+/// The custom settings card (SPEC §4.1 Level 3) — the escape hatch for settings
+/// UI the declarative controls (toggle/dropdown/list/…) cannot express. It
+/// renders INLINE in the extension's own settings section, below the schema
+/// controls, in the SAME opaque-origin sandboxed iframe a workspace uses (SPEC
+/// §7.1): no `allow-same-origin`, no Tauri IPC, no reach into Grain's page. It
+/// carries no authority beyond the capabilities the user granted — every host
+/// call it makes is capability-checked in Rust, exactly like a worker's.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SettingsPanelDecl {
+    /// The panel UI as a self-contained HTML document, embedded so the pack
+    /// stays one shareable file.
+    #[serde(default)]
+    pub ui_source: String,
+    /// Words settings-search must find this panel by (SPEC §4.1). Required: the
+    /// host cannot read inside the iframe, so without these the panel would be
+    /// invisible to search. At least one non-blank term.
+    #[serde(default, alias = "searchTerms")]
+    pub search_terms: Vec<String>,
+    /// Suggested panel height in px; the host clamps it to a sane range.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "minHeight"
+    )]
+    pub min_height: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -338,6 +374,10 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // its capability is rejected — the grant is what the user actually approves.
     "surface:workspace",
     "surface:overlay",
+    // Phase 5C (SPEC §4.1 Level 3): the custom settings card — the extension's
+    // own UI in a sandboxed iframe inside its settings section. Same realm
+    // model as workspace/overlay, so it is its own surface grant.
+    "surface:settings-panel",
     "pill:slots",
     // Phase 3 (Grain Space Test): read the user's current selection — the
     // quick-add path a note-capture extension needs. Sensitive (it reads
@@ -535,7 +575,9 @@ impl GrainPack {
         }
 
         // Surfaces and code-backed contributions need code to back them.
-        let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
+        let declares_surface = m.surfaces.workspace.is_some()
+            || m.surfaces.overlay.is_some()
+            || m.surfaces.settings_panel.is_some();
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
             || m.contributes.session_mode.is_some();
@@ -547,6 +589,10 @@ impl GrainPack {
         for (declared, cap) in [
             (m.surfaces.workspace.is_some(), "surface:workspace"),
             (m.surfaces.overlay.is_some(), "surface:overlay"),
+            (
+                m.surfaces.settings_panel.is_some(),
+                "surface:settings-panel",
+            ),
         ] {
             if declared && !m.permissions.iter().any(|p| p == cap) {
                 return Err(format!(
@@ -565,6 +611,16 @@ impl GrainPack {
         if let Some(o) = &m.surfaces.overlay {
             if o.ui_source.trim().is_empty() {
                 return Err("an overlay surface requires ui_source".into());
+            }
+        }
+        if let Some(p) = &m.surfaces.settings_panel {
+            if p.ui_source.trim().is_empty() {
+                return Err("a settings panel requires ui_source".into());
+            }
+            // Unsearchable settings are lost settings (SPEC §4.1): the host can't
+            // read inside the iframe, so the author must supply the search words.
+            if p.search_terms.iter().all(|t| t.trim().is_empty()) {
+                return Err("a settings panel requires searchTerms".into());
             }
         }
 
