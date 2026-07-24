@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronLeft,
   Code2,
+  Trash2,
   ExternalLink,
   FolderOpen,
   Package,
@@ -214,6 +216,25 @@ export const OverviewSection: React.FC<{
       if (needs) setPending({ card, permissions: needs });
       else if (conflict) setContested({ card, conflict });
       else setError(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const uninstall = async (card: ExtensionCard) => {
+    // SPEC §6: default is to KEEP data; removal is a separate explicit step.
+    if (
+      !window.confirm(
+        `Uninstall "${card.name}"?\n\nIts saved data is kept, so you can reinstall later.`,
+      )
+    )
+      return;
+    setBusy(card.id);
+    try {
+      await invoke("extension_uninstall", { id: card.id, purge: false });
+      await refresh();
+    } catch (e) {
+      setError(String(e));
     } finally {
       setBusy(null);
     }
@@ -540,6 +561,21 @@ export const OverviewSection: React.FC<{
                       <ExternalLink width={13} height={13} />
                     </a>
                   )}
+                  {/* Uninstall — only real installed packs (not the three
+                      settings-backed built-ins, and not load-unpacked dev
+                      projects, which unload from the Developer panel). */}
+                  {card.tier !== "builtin" && card.trust !== "dev" && (
+                    <button
+                      type="button"
+                      disabled={busy === card.id}
+                      onClick={() => void uninstall(card)}
+                      className="text-ink-faint hover:text-red-600 transition-colors cursor-pointer disabled:opacity-50"
+                      aria-label={`Uninstall ${card.name}`}
+                      title="Uninstall"
+                    >
+                      <Trash2 width={13} height={13} />
+                    </button>
+                  )}
                   {/* Inline enable toggle. A scripted extension's first enable is
                 held by the backend until the permission sheet below is
                 approved (SPEC §6). */}
@@ -578,7 +614,12 @@ export const OverviewSection: React.FC<{
         Browse extensions
       </button>
 
-      {storeOpen && <StoreSlideOver onClose={() => setStoreOpen(false)} />}
+      {storeOpen && (
+        <StoreSlideOver
+          onClose={() => setStoreOpen(false)}
+          onChanged={() => void refresh()}
+        />
+      )}
 
       {/* Permission sheet (SPEC §6, the Chrome model): a scripted extension
           runs code, so nothing starts until the user approves what it asked
@@ -725,46 +766,81 @@ const TRUST_BADGE: Record<string, { label: string; cls: string }> = {
  * in from the right INSIDE the settings window. Backed by the verified,
  * signed catalogue via `store_browse` (Phase 5A/5B) — install verifies the
  * artifact hash before unpacking, and trust is shown from the signed index. */
-const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+const StoreSlideOver: React.FC<{
+  onClose: () => void;
+  onChanged?: () => void;
+}> = ({ onClose, onChanged }) => {
   const [view, setView] = useState<StoreView | null>(null);
+  const [installed, setInstalled] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
+  // Measured position: fill everything right of the sidebar and below the
+  // titlebar, read from the live DOM so it survives UI scaling and never
+  // hard-codes the sidebar width.
+  const [box, setBox] = useState<{ left: number; top: number }>({
+    left: 240,
+    top: 36,
+  });
 
   useEffect(() => {
+    const measure = () => {
+      const bar = document
+        .getElementById("grain-sidebar")
+        ?.getBoundingClientRect();
+      setBox({ left: bar ? bar.right : 240, top: bar ? bar.top : 36 });
+    };
+    measure();
+    window.addEventListener("resize", measure);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("keydown", onKey);
+    };
   }, [onClose]);
+
+  const reload = useCallback(async () => {
+    const [v, cards] = await Promise.all([
+      invoke<StoreView>("store_browse"),
+      invoke<{ id: string; version: string }[]>("extensions_overview").catch(
+        () => [] as { id: string; version: string }[],
+      ),
+    ]);
+    setView(v);
+    setInstalled(Object.fromEntries(cards.map((c) => [c.id, c.version])));
+  }, []);
 
   // Fetch on open; drop the parsed index on close (the overhead rule §5.3).
   useEffect(() => {
     let alive = true;
-    invoke<StoreView>("store_browse")
-      .then((v) => alive && setView(v))
+    reload()
       .catch((e) => alive && setError(String(e)))
       .finally(() => alive && setLoading(false));
     return () => {
-      alive = false;
       void invoke("store_close").catch(() => {});
     };
-  }, []);
+  }, [reload]);
 
-  const install = useCallback(async (entry: StoreEntry) => {
-    setInstalling(entry.id);
-    try {
-      await invoke("store_install", { id: entry.id, version: entry.version });
-      const v = await invoke<StoreView>("store_browse");
-      setView(v);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setInstalling(null);
-    }
-  }, []);
+  const install = useCallback(
+    async (entry: StoreEntry) => {
+      setInstalling(entry.id);
+      setError(null);
+      try {
+        await invoke("store_install", { id: entry.id, version: entry.version });
+        await reload();
+        onChanged?.();
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setInstalling(null);
+      }
+    },
+    [reload, onChanged],
+  );
 
   const entries = (view?.entries ?? []).filter((e) => {
     const q = query.trim().toLowerCase();
@@ -776,13 +852,13 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     );
   });
 
-  return (
-    // [GRAIN] Fills the whole content region — right of the app sidebar
-    // (`left-60` = the sidebar's `w-60`), below the titlebar (`top-9` = h-9), to
-    // the window edges. The sidebar and window controls stay visible and live;
-    // the store owns the section it's in rather than floating in a narrow overlay.
+  return createPortal(
+    // [GRAIN] Portaled to <body> and positioned from the MEASURED sidebar edge,
+    // so it fills everything right of the sidebar / below the titlebar without a
+    // hard-coded offset and regardless of the app's UI-scale transform.
     <div
-      className="fixed top-9 bottom-0 right-0 left-60 z-30 bg-paper flex flex-col"
+      className="fixed right-0 bottom-0 z-40 bg-paper flex flex-col"
+      style={{ left: box.left, top: box.top }}
       role="dialog"
       aria-modal="true"
       aria-label="Extension store"
@@ -877,16 +953,38 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       {e.author ? `${e.author} · ` : ""}v{e.version}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    disabled={
-                      revoked || !view?.can_install || installing === e.id
-                    }
-                    onClick={() => void install(e)}
-                    className="shrink-0 px-2.5 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                  >
-                    {installing === e.id ? "Installing…" : "Install"}
-                  </button>
+                  {(() => {
+                    const have = installed[e.id];
+                    const isInstalled = have != null;
+                    const upToDate = have === e.version;
+                    const busyThis = installing === e.id;
+                    const label = busyThis
+                      ? "Installing…"
+                      : isInstalled && upToDate
+                        ? "Installed"
+                        : isInstalled
+                          ? "Update"
+                          : "Install";
+                    const disabled =
+                      busyThis ||
+                      revoked ||
+                      (isInstalled && upToDate) ||
+                      !view?.can_install;
+                    return (
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => void install(e)}
+                        className={`shrink-0 px-2.5 py-1 rounded-lg border text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isInstalled && upToDate
+                            ? "border-line text-ink-faint"
+                            : "border-line text-ink hover:border-ink-faint cursor-pointer"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })()}
                 </div>
 
                 {e.reviewed_at && (
@@ -923,6 +1021,7 @@ const StoreSlideOver: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           })}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

@@ -1607,8 +1607,31 @@ const AUTO_CATEGORIZE_ENTRY: &str = r#"grain.onEvent(async function (ev) {
 /// survives (SPEC §6, §10.1). Built-ins default **off** and, being first-party,
 /// arrive pre-granted their declared capabilities (no permission sheet).
 ///
+/// [GRAIN] Phase 5C migration: the Agent centre layout used to be a synthesised
+/// record with no pack file on disk. Now it is a real external pack. An existing
+/// install still carries the stale synthesised record, which renders as an
+/// "Unreadable pack" (no file to load). Drop it on boot so it disappears from
+/// the list; the user reinstalls it from the store. Only removes a record that
+/// has no loadable pack and is not a live dev project.
+pub fn migrate_externalized_builtins(app: &AppHandle) {
+    use grain_core::extensions::AGENT_CENTER_VARIANT_ID as CENTER;
+    let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
+        return;
+    };
+    let Some(rec) = reg.record(CENTER) else { return };
+    if rec.dev.is_some() {
+        return; // a dev project owns it — leave it alone
+    }
+    if load_manifest(app, CENTER).is_none() {
+        log::info!("[GRAIN] migrating stale synthesised '{CENTER}' record → removed (reinstall from store)");
+        let _ = reg.uninstall(CENTER);
+        refresh_index(app);
+    }
+}
+
 /// Call once after `AppContext` + `ExtensionsRegistry` are managed.
 pub fn seed_builtin_packs(app: &AppHandle) {
+    migrate_externalized_builtins(app);
     seed_pack(
         app,
         AUTO_CATEGORIZE_ID,

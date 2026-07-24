@@ -134,7 +134,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // [GRAIN] Sidebar matched to the Advanced Calibration console: a recessed
     // #DDD5C8 rail with a charcoal brand badge, a NAVIGATION label, and numbered
     // tabs that light up in the accent (tint + hairline + pip) when active.
-    <div className="flex flex-col w-60 h-full border-e border-line bg-paper-sunken">
+    <div
+      id="grain-sidebar"
+      className="flex flex-col w-60 h-full border-e border-line bg-paper-sunken"
+    >
       {/* Brand mark — flips in dark mode so it stays legible against the dark sidebar. */}
       <div className="px-5 pt-7">
         <div
