@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
@@ -15,6 +15,7 @@ type SettingKindName =
   | "app_path"
   | "url"
   | "list"
+  | "panel"
   | "unsupported";
 
 /** The SCHEMA of one field (no value) — mirror of Rust `ExtensionSettingField`.
@@ -30,6 +31,8 @@ export interface SettingField {
   options: { value: string; label: string }[];
   fields: SettingField[];
   item_label: string | null;
+  /** The card HTML for a `panel` field (null otherwise). */
+  ui_source: string | null;
 }
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
@@ -49,6 +52,8 @@ export interface SettingRow {
   options: { value: string; label: string }[];
   fields: SettingField[];
   item_label: string | null;
+  /** The card HTML for a `panel` row (null otherwise). */
+  ui_source: string | null;
 }
 
 export interface SettingsSection {
@@ -78,6 +83,122 @@ const INPUT_CLASS =
 function pickAppFor(extId: string): Promise<string | null> {
   return invoke<string | null>("extension_pick_app", { id: extId });
 }
+
+/** [GRAIN] The runtime injected ahead of a custom card's HTML (SPEC §4.1 Level
+ * 3). It gives the sandboxed iframe a `window.grain` that is a postMessage proxy
+ * to this (trusted) settings page, which relays each call to the host — so an
+ * author writes a card exactly like a worker/surface. The iframe is sandboxed
+ * (`allow-scripts` only, opaque origin), so this channel is the ONLY thing it
+ * has, and every method is capability-checked in Rust. A ResizeObserver reports
+ * the content height so the host can grow the frame to fit (no inner scrollbar).*/
+const PANEL_BRIDGE = `<script>(function(){
+  var seq=0, pending={};
+  function call(method, params){
+    return new Promise(function(resolve,reject){
+      var id=++seq; pending[id]={resolve:resolve,reject:reject};
+      parent.postMessage({__grain:1,id:id,method:method,params:params||{}}, "*");
+    });
+  }
+  function asErr(raw){
+    var info = raw && typeof raw==="object" ? raw : {code:"E_INTERNAL",message:String(raw),hint:"",docs:""};
+    var e=new Error(String(info.message||"Host call failed")); e.name="GrainError";
+    e.code=String(info.code||"E_INTERNAL"); e.hint=String(info.hint||""); e.docs=String(info.docs||"");
+    if(info.capability!=null) e.capability=String(info.capability); return e;
+  }
+  window.addEventListener("message", function(ev){
+    var d=ev.data; if(!d||d.__grainres!==1) return;
+    var p=pending[d.id]; if(!p) return; delete pending[d.id];
+    if(d.err!=null) p.reject(asErr(d.err)); else p.resolve(d.ok);
+  });
+  function postHeight(){ try{ parent.postMessage({__grainresize:1,height:Math.ceil(document.documentElement.getBoundingClientRect().height)}, "*"); }catch(e){} }
+  window.addEventListener("load", postHeight);
+  try{ new ResizeObserver(postHeight).observe(document.documentElement); }catch(e){ setInterval(postHeight, 500); }
+  window.grain={
+    log:{info:function(m){return call("log.info",{msg:String(m)});},warn:function(m){return call("log.warn",{msg:String(m)});}},
+    storage:{get:function(k){return call("storage.get",{key:k});},set:function(k,v){return call("storage.set",{key:k,value:v});},"delete":function(k){return call("storage.delete",{key:k});}},
+    settings:{get:function(k){return call("settings.get",{key:k});},set:function(k,v){return call("settings.set",{key:k,value:v});}},
+    llm:{complete:function(p){return call("llm.complete",{prompt:String(p)});}},
+    embed:function(t){return call("embed",{texts:t}).then(function(r){return r&&r.vectors!=null?r.vectors:r;});},
+    open:{url:function(u){return call("open.url",{url:String(u)});},app:function(p){return call("open.app",{path:String(p)});},pickApp:function(){return call("open.pickApp",{}).then(function(r){return r&&r.path!=null?r.path:null;});}},
+    capture:{selection:function(){return call("capture.selection",{}).then(function(r){return r&&r.text!=null?r.text:null;});}},
+    focusedApp:function(){return call("capture.app",{});},
+    call:call
+  };
+})();<\/script>`;
+
+/** [GRAIN] A custom card (SPEC §4.1 Level 3): the extension's own HTML in a
+ * sandboxed iframe. Created on scroll-into-view and destroyed on unmount (the
+ * "destroy if not in use" rule). Host calls from the frame are relayed to
+ * `extension_host_call` with a FIXED extension id — the iframe can neither forge
+ * an identity nor reach another extension's grants. */
+const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
+  extId,
+  uiSource,
+}) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const frameRef = useRef<HTMLIFrameElement | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const [height, setHeight] = useState(320);
+
+  // Lazy-mount: build the iframe (and the extension's DOM/JS realm) only once it
+  // scrolls into view.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || mounted) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setMounted(true);
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [mounted]);
+
+  // Relay calls (and height reports) from THIS frame only; the id is ours.
+  useEffect(() => {
+    if (!mounted) return;
+    const onMsg = (ev: MessageEvent) => {
+      const d = ev.data as
+        | { __grain?: number; __grainresize?: number; [k: string]: unknown }
+        | null;
+      if (!d || !frameRef.current || ev.source !== frameRef.current.contentWindow)
+        return;
+      if (d.__grainresize === 1 && typeof d.height === "number") {
+        setHeight(Math.min(Math.max(d.height, 80), 900));
+        return;
+      }
+      if (d.__grain !== 1 || typeof d.method !== "string") return;
+      const id = d.id;
+      const reply = (ok: unknown, err: unknown) =>
+        frameRef.current?.contentWindow?.postMessage(
+          { __grainres: 1, id, ok, err },
+          "*",
+        );
+      void invoke("extension_host_call", {
+        id: extId,
+        method: d.method,
+        params: (d.params as unknown) ?? {},
+      })
+        .then((ok) => reply(ok, null))
+        .catch((err) => reply(null, err));
+    };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
+  }, [mounted, extId]);
+
+  return (
+    <div ref={containerRef} className="w-full">
+      {mounted && (
+        <iframe
+          ref={frameRef}
+          title="Extension settings card"
+          sandbox="allow-scripts"
+          srcDoc={PANEL_BRIDGE + uiSource}
+          className="w-full block rounded-xl border border-line bg-paper"
+          style={{ height }}
+        />
+      )}
+    </div>
+  );
+};
 
 /** [GRAIN] The `app_path` control: primary action is "Capture focused app" — a
  * short countdown lets the user switch to the target app, then the host
@@ -595,7 +716,29 @@ export const ExtensionSettings: React.FC<{
       )}
       <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
         {rows.map((row) =>
-          row.kind === "list" ? (
+          row.kind === "panel" ? (
+            // A custom card: the extension's own UI, full-width. An optional
+            // label/description sits above the sandboxed iframe.
+            <div key={row.key} className="px-4 py-3 space-y-2">
+              {(row.label || row.description) && (
+                <div>
+                  {row.label && (
+                    <div className="text-sm font-medium text-ink">
+                      {row.label}
+                    </div>
+                  )}
+                  {row.description && (
+                    <div className="text-xs text-ink-soft">
+                      {row.description}
+                    </div>
+                  )}
+                </div>
+              )}
+              {row.ui_source ? (
+                <PanelCard extId={section.id} uiSource={row.ui_source} />
+              ) : null}
+            </div>
+          ) : row.kind === "list" ? (
             // A list is a full-width editor: label on top, rows below.
             <div key={row.key} className="px-4 py-3 space-y-2">
               {(row.label || row.description || row.notice) && (
@@ -629,6 +772,7 @@ export const ExtensionSettings: React.FC<{
                   options: row.options,
                   fields: row.fields,
                   item_label: row.item_label,
+                  ui_source: null,
                 }}
                 value={
                   Array.isArray(row.value)

@@ -76,9 +76,10 @@ pub fn fallback(decl: &SettingDecl) -> Value {
         // Reusable structured primitives (Phase 5C).
         SettingKind::List { .. } => Value::Array(Vec::new()),
         SettingKind::AppPath | SettingKind::Url => Value::String(String::new()),
-        // An unknown kind has no empty state this build could invent, and
-        // inventing one would overwrite data a newer build understands.
-        SettingKind::Unsupported => Value::Null,
+        // A custom card holds no host-managed value (it owns its own state); an
+        // unknown kind has no empty state this build could invent, and inventing
+        // one would overwrite data a newer build understands.
+        SettingKind::Panel { .. } | SettingKind::Unsupported => Value::Null,
     }
 }
 
@@ -226,6 +227,12 @@ fn check(decl: &SettingDecl, value: &Value) -> Result<Accepted, String> {
             Ok(Accepted::plain(Value::Array(out)))
         }
 
+        // A custom card stores no value through the schema — the extension owns
+        // its state via the settings/storage API under its own keys, not the
+        // panel's key — so there is nothing here to coerce.
+        SettingKind::Panel { .. } => {
+            Err("a panel holds no stored value".into())
+        }
         // Rejected on the way in, passed through on the way out (see `resolve`):
         // this build cannot know what a valid value for it looks like.
         SettingKind::Unsupported => {

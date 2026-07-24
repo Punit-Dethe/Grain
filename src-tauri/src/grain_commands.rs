@@ -1004,12 +1004,19 @@ pub struct ExtensionSettingField {
     pub fields: Vec<ExtensionSettingField>,
     /// Singular noun for a `list`'s Add button / row header.
     pub item_label: Option<String>,
+    /// The card's self-contained HTML, for a `panel` field (None otherwise).
+    pub ui_source: Option<String>,
 }
 
 /// Flatten a declaration into its renderer schema (no value). Shared by
 /// top-level rows and nested list fields.
 fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
     use grain_sdk::SettingKind as K;
+    // A `panel` carries its markup out to the renderer; every other kind has none.
+    let ui_source = match &decl.kind {
+        K::Panel { ui_source, .. } => Some(ui_source.clone()),
+        _ => None,
+    };
     let (kind, min, max, step, options, fields, item_label) = match &decl.kind {
         K::Bool => ("bool", None, None, None, vec![], vec![], None),
         K::String => ("string", None, None, None, vec![], vec![], None),
@@ -1046,6 +1053,7 @@ fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
             fields.iter().map(field_schema).collect(),
             item_label.clone(),
         ),
+        K::Panel { .. } => ("panel", None, None, None, vec![], vec![], None),
         K::Unsupported => ("unsupported", None, None, None, vec![], vec![], None),
     };
     ExtensionSettingField {
@@ -1059,6 +1067,7 @@ fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
         options,
         fields,
         item_label,
+        ui_source,
     }
 }
 
@@ -1094,6 +1103,8 @@ pub struct ExtensionSettingRow {
     pub fields: Vec<ExtensionSettingField>,
     /// Singular noun for a `list`'s Add button / row header.
     pub item_label: Option<String>,
+    /// The card's self-contained HTML, for a `panel` row (None otherwise).
+    pub ui_source: Option<String>,
 }
 
 fn setting_row(
@@ -1117,6 +1128,7 @@ fn setting_row(
         options: schema.options,
         fields: schema.fields,
         item_label: schema.item_label,
+        ui_source: schema.ui_source,
     }
 }
 
@@ -1156,6 +1168,11 @@ fn rows_for(
         .into_iter()
         .filter(|d| !matches!(d.kind, grain_sdk::SettingKind::Unsupported))
         .map(|decl| {
+            // A panel (custom card) holds no host-managed value — it manages its
+            // own state through the extension API — so it skips schema resolution.
+            if matches!(decl.kind, grain_sdk::SettingKind::Panel { .. }) {
+                return setting_row(decl, serde_json::Value::Null, None);
+            }
             let stored = if matches!(decl.kind, grain_sdk::SettingKind::Secret) {
                 let marker = if ctx
                     .extension_secret(&crate::host_api::extension_secret_key(ext_id, &decl.key))
@@ -1390,6 +1407,57 @@ pub fn extension_capture_app(app: AppHandle, id: String) -> Result<Option<String
         .ok_or("app context unavailable")?;
     crate::host_api::approve_app(&ctx.data_dir, &id, &path).map_err(|e| e.to_string())?;
     Ok(Some(path))
+}
+
+/// [GRAIN] The custom card's host channel (SPEC §4.1 Level 3). A `panel` setting
+/// renders the extension's own UI in a sandboxed iframe; that iframe posts host
+/// calls up to Grain's (trusted) settings page, which relays them here. The
+/// panel gets EXACTLY the capabilities the user granted this extension: the
+/// grants come from the registry RECORD, never from the caller, so a card can
+/// neither assert another identity nor widen its own. Every method is then
+/// capability-checked by `host_api::dispatch`, identically to a worker. The
+/// error crosses back as the same `{code,message,hint,…}` shape the worker gets.
+#[tauri::command]
+#[specta::specta]
+pub async fn extension_host_call(
+    app: AppHandle,
+    id: String,
+    method: String,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, serde_json::Value> {
+    use grain_core::extensions as ext;
+    let internal = |message: &str, hint: &str| {
+        serde_json::to_value(grain_sdk::HostError::new(
+            grain_sdk::HostErrorCode::Internal,
+            message,
+            hint,
+        ))
+        .unwrap_or_else(|_| serde_json::json!({ "code": "E_INTERNAL", "message": message }))
+    };
+    let reg = app
+        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
+        .ok_or_else(|| internal("extensions registry unavailable", ""))?;
+    let record = reg
+        .record(&id)
+        .ok_or_else(|| internal("unknown extension", "Reinstall the extension and try again."))?;
+    if !record.enabled {
+        return Err(internal(
+            "extension is disabled",
+            "Enable the extension to use its settings card.",
+        ));
+    }
+    let identity = crate::events_auth::ClientIdentity {
+        id: id.clone(),
+        role: crate::events_auth::ClientRole::Surface,
+        caps: crate::events_auth::CapabilitySet::Named(record.granted.iter().cloned().collect()),
+    };
+    crate::host_api::dispatch(&app, &identity, &method, params)
+        .await
+        .map_err(|error| {
+            serde_json::to_value(&error).unwrap_or_else(
+                |_| serde_json::json!({ "code": "E_INTERNAL", "message": error.message }),
+            )
+        })
 }
 
 /// Record the user's approval of a scripted extension's capabilities (SPEC §6).
