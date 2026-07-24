@@ -73,10 +73,24 @@ pub fn fallback(decl: &SettingDecl) -> Value {
             .first()
             .map(|o| Value::String(o.value.clone()))
             .unwrap_or(Value::Null),
+        // Reusable structured primitives (Phase 5C).
+        SettingKind::List { .. } => Value::Array(Vec::new()),
+        SettingKind::AppPath | SettingKind::Url => Value::String(String::new()),
         // An unknown kind has no empty state this build could invent, and
         // inventing one would overwrite data a newer build understands.
         SettingKind::Unsupported => Value::Null,
     }
+}
+
+/// The scheme allowlist for a `url` setting — the same one `open:url` enforces
+/// in the host, checked here (without the `url` crate, to keep the leaf light)
+/// so a stored URL is always safe to open.
+fn url_scheme_ok(s: &str) -> bool {
+    let scheme = match s.split_once(':') {
+        Some((scheme, _)) => scheme.to_ascii_lowercase(),
+        None => return false, // a URL setting must carry an explicit scheme
+    };
+    matches!(scheme.as_str(), "http" | "https" | "mailto" | "tel")
 }
 
 /// Validate a value on its way **into** the namespace.
@@ -173,6 +187,43 @@ fn check(decl: &SettingDecl, value: &Value) -> Result<Accepted, String> {
                 return Err(format!("“{s}” is not one of the listed choices"));
             }
             Ok(Accepted::plain(Value::String(s.to_string())))
+        }
+
+        SettingKind::AppPath => value
+            .as_str()
+            .map(|s| Accepted::plain(Value::String(s.to_string())))
+            .ok_or_else(|| "expected an application path".into()),
+
+        SettingKind::Url => {
+            let s = value.as_str().ok_or("expected a URL")?;
+            if s.trim().is_empty() {
+                return Ok(Accepted::plain(Value::String(String::new())));
+            }
+            if !url_scheme_ok(s.trim()) {
+                return Err("expected an http, https, mailto or tel URL".into());
+            }
+            Ok(Accepted::plain(Value::String(s.trim().to_string())))
+        }
+
+        // A repeatable list of rows. Each row is normalised field-by-field with
+        // the lenient read path (`resolve`), so a single malformed row never
+        // rejects the whole list — the UI validates fields before writing, and
+        // storage that no longer fits degrades to defaults per field, not en masse.
+        SettingKind::List { fields, .. } => {
+            let rows = value.as_array().ok_or("expected a list of rows")?;
+            let mut out = Vec::with_capacity(rows.len());
+            for row in rows {
+                let obj = row
+                    .as_object()
+                    .ok_or("every list row must be an object")?;
+                let mut norm = serde_json::Map::new();
+                for f in fields {
+                    let resolved = resolve(f, obj.get(&f.key));
+                    norm.insert(f.key.clone(), resolved.value);
+                }
+                out.push(Value::Object(norm));
+            }
+            Ok(Accepted::plain(Value::Array(out)))
         }
 
         // Rejected on the way in, passed through on the way out (see `resolve`):
@@ -353,6 +404,73 @@ mod tests {
             Value::Null,
         );
         assert_eq!(resolve(&d, None).value, serde_json::json!(4.0));
+    }
+
+    #[test]
+    fn url_setting_enforces_the_open_url_scheme_allowlist() {
+        let d = decl(SettingKind::Url, Value::Null);
+        for ok in ["https://x.com", "http://x.com", "mailto:a@x.com", "tel:+1"] {
+            assert!(coerce(&d, &serde_json::json!(ok)).is_ok(), "{ok}");
+        }
+        for bad in ["file:///etc/passwd", "javascript:1", "x.com", "ftp://x"] {
+            assert!(coerce(&d, &serde_json::json!(bad)).is_err(), "{bad}");
+        }
+        // Empty is allowed (an optional/unset URL field).
+        assert_eq!(
+            coerce(&d, &serde_json::json!("")).unwrap().value,
+            serde_json::json!("")
+        );
+    }
+
+    #[test]
+    fn app_path_accepts_any_string_path() {
+        let d = decl(SettingKind::AppPath, Value::Null);
+        assert!(coerce(&d, &serde_json::json!("C:/Program Files/App/app.exe")).is_ok());
+        assert!(coerce(&d, &serde_json::json!(3)).is_err());
+    }
+
+    #[test]
+    fn list_normalizes_rows_against_its_field_schema() {
+        let field = |key: &str, kind: SettingKind| SettingDecl {
+            key: key.into(),
+            label: key.into(),
+            kind,
+            default: Value::Null,
+            description: String::new(),
+            anchor: None,
+            order: 0,
+        };
+        let d = decl(
+            SettingKind::List {
+                fields: vec![
+                    field("trigger", SettingKind::String),
+                    field("url", SettingKind::Url),
+                ],
+                item_label: Some("action".into()),
+            },
+            Value::Null,
+        );
+        // A well-formed list round-trips; extra keys are dropped, missing filled.
+        let input = serde_json::json!([
+            { "trigger": "open docs", "url": "https://docs.rs", "junk": 1 },
+            { "trigger": "mail" }
+        ]);
+        let out = coerce(&d, &input).unwrap().value;
+        assert_eq!(
+            out,
+            serde_json::json!([
+                { "trigger": "open docs", "url": "https://docs.rs" },
+                { "trigger": "mail", "url": "" }
+            ])
+        );
+        // A non-array is rejected.
+        assert!(coerce(&d, &serde_json::json!({"trigger": "x"})).is_err());
+        // A bad URL inside a row degrades to "" (lenient), not a whole-list reject.
+        let bad = serde_json::json!([{ "trigger": "t", "url": "file:///x" }]);
+        assert_eq!(
+            coerce(&d, &bad).unwrap().value,
+            serde_json::json!([{ "trigger": "t", "url": "" }])
+        );
     }
 
     #[test]

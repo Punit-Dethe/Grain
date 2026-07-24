@@ -188,7 +188,7 @@ pub struct SessionModeDecl {
 }
 
 /// One schema-declared setting (SPEC §4, levels 1–2).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct SettingDecl {
     pub key: String,
     pub label: String,
@@ -235,10 +235,41 @@ pub enum SettingKind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         step: Option<f64>,
     },
-    /// A kind this build doesn't know (SPEC §4.1 also defines `rows`, and the
-    /// list will grow). Without this, one unknown kind makes the WHOLE pack
-    /// fail to deserialize — a manifest written against a newer contract must
-    /// still install with its known subset. The host skips rendering it.
+    /// [GRAIN] Phase 5C — reusable structured primitives, so an extension can
+    /// build a rich native config (workflows, rules, mappings) at an anchor with
+    /// no webview.
+    ///
+    /// A **repeatable list of rows**. Each row is a group of the declared
+    /// `fields` (themselves any `SettingKind`, so lists nest). The stored value
+    /// is an array of objects keyed by each field's `key`. The single
+    /// most-requested primitive — this is what lets Voice Actions (many
+    /// workflows, each opening several targets) be declared rather than coded.
+    List {
+        fields: Vec<SettingDecl>,
+        /// Singular noun for the "Add" button and row header (e.g. "action",
+        /// "target"). Defaults to "item".
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            rename = "itemLabel",
+            alias = "item_label"
+        )]
+        item_label: Option<String>,
+    },
+    /// A filesystem path to an application, chosen through the host's **native
+    /// picker**. Picking is the user-mediated act that also records the path as
+    /// approved for `open:app` — an extension can never launch a path the user
+    /// did not choose here.
+    #[serde(rename = "app_path")]
+    AppPath,
+    /// A URL field. The host validates the scheme against the same allowlist as
+    /// `open:url` (http/https/mailto/tel), so a stored value is always safe to
+    /// open and a typo is caught on entry.
+    Url,
+    /// A kind this build doesn't know (SPEC §4.1). Without this, one unknown
+    /// kind makes the WHOLE pack fail to deserialize — a manifest written
+    /// against a newer contract must still install with its known subset. The
+    /// host skips rendering it.
     #[serde(other)]
     Unsupported,
 }

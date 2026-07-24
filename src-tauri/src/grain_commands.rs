@@ -981,10 +981,85 @@ pub(crate) fn setting_decl(
         .find(|d| d.key == key)
 }
 
-#[derive(serde::Serialize, specta::Type)]
+#[derive(serde::Serialize, specta::Type, Clone)]
 pub struct SelectOptionDto {
     pub value: String,
     pub label: String,
+}
+
+/// [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
+/// renderer so it can draw a `list` row's inputs, or an `app_path`/`url` field.
+/// Recursive: a list field carries its own `fields` so lists nest.
+#[derive(serde::Serialize, specta::Type, Clone)]
+pub struct ExtensionSettingField {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub kind: String,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub step: Option<f64>,
+    pub options: Vec<SelectOptionDto>,
+    /// Sub-field schema for a `list` field (empty otherwise).
+    pub fields: Vec<ExtensionSettingField>,
+    /// Singular noun for a `list`'s Add button / row header.
+    pub item_label: Option<String>,
+}
+
+/// Flatten a declaration into its renderer schema (no value). Shared by
+/// top-level rows and nested list fields.
+fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
+    use grain_sdk::SettingKind as K;
+    let (kind, min, max, step, options, fields, item_label) = match &decl.kind {
+        K::Bool => ("bool", None, None, None, vec![], vec![], None),
+        K::String => ("string", None, None, None, vec![], vec![], None),
+        K::Secret => ("secret", None, None, None, vec![], vec![], None),
+        K::Shortcut => ("shortcut", None, None, None, vec![], vec![], None),
+        K::Color => ("color", None, None, None, vec![], vec![], None),
+        K::AppPath => ("app_path", None, None, None, vec![], vec![], None),
+        K::Url => ("url", None, None, None, vec![], vec![], None),
+        K::Number { min, max } => ("number", *min, *max, None, vec![], vec![], None),
+        K::Slider { min, max, step } => {
+            ("slider", Some(*min), Some(*max), *step, vec![], vec![], None)
+        }
+        K::Select { options } => (
+            "select",
+            None,
+            None,
+            None,
+            options
+                .iter()
+                .map(|o| SelectOptionDto {
+                    value: o.value.clone(),
+                    label: o.label.clone(),
+                })
+                .collect(),
+            vec![],
+            None,
+        ),
+        K::List { fields, item_label } => (
+            "list",
+            None,
+            None,
+            None,
+            vec![],
+            fields.iter().map(field_schema).collect(),
+            item_label.clone(),
+        ),
+        K::Unsupported => ("unsupported", None, None, None, vec![], vec![], None),
+    };
+    ExtensionSettingField {
+        key: decl.key.clone(),
+        label: decl.label.clone(),
+        description: decl.description.clone(),
+        kind: kind.to_string(),
+        min,
+        max,
+        step,
+        options,
+        fields,
+        item_label,
+    }
 }
 
 /// One row of an extension's settings section: the declaration flattened into
@@ -1015,6 +1090,10 @@ pub struct ExtensionSettingRow {
     pub max: Option<f64>,
     pub step: Option<f64>,
     pub options: Vec<SelectOptionDto>,
+    /// Sub-field schema for a `list` row (empty otherwise).
+    pub fields: Vec<ExtensionSettingField>,
+    /// Singular noun for a `list`'s Add button / row header.
+    pub item_label: Option<String>,
 }
 
 fn setting_row(
@@ -1022,43 +1101,22 @@ fn setting_row(
     value: serde_json::Value,
     notice: Option<String>,
 ) -> ExtensionSettingRow {
-    use grain_sdk::SettingKind as K;
-    let (kind, min, max, step, options) = match &decl.kind {
-        K::Bool => ("bool", None, None, None, vec![]),
-        K::String => ("string", None, None, None, vec![]),
-        K::Secret => ("secret", None, None, None, vec![]),
-        K::Shortcut => ("shortcut", None, None, None, vec![]),
-        K::Color => ("color", None, None, None, vec![]),
-        K::Number { min, max } => ("number", *min, *max, None, vec![]),
-        K::Slider { min, max, step } => ("slider", Some(*min), Some(*max), *step, vec![]),
-        K::Select { options } => (
-            "select",
-            None,
-            None,
-            None,
-            options
-                .iter()
-                .map(|o| SelectOptionDto {
-                    value: o.value.clone(),
-                    label: o.label.clone(),
-                })
-                .collect(),
-        ),
-        K::Unsupported => ("unsupported", None, None, None, vec![]),
-    };
+    let schema = field_schema(&decl);
     ExtensionSettingRow {
-        key: decl.key,
-        label: decl.label,
-        description: decl.description,
-        kind: kind.to_string(),
+        key: schema.key,
+        label: schema.label,
+        description: schema.description,
+        kind: schema.kind,
         anchor: decl.anchor,
         order: decl.order,
         value,
         notice,
-        min,
-        max,
-        step,
-        options,
+        min: schema.min,
+        max: schema.max,
+        step: schema.step,
+        options: schema.options,
+        fields: schema.fields,
+        item_label: schema.item_label,
     }
 }
 
@@ -1285,6 +1343,31 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
     }
     crate::extension_host::refresh_index(&app);
     Ok(id)
+}
+
+/// [GRAIN] Phase 5C: the `app_path` settings control's native picker. Opens the
+/// OS file chooser and, on a pick, records the path as **approved for this
+/// extension** (the same user-mediated approval `open:app` requires) so a rule
+/// the user builds here can actually launch. Returns the chosen path or `None`.
+#[tauri::command]
+#[specta::specta]
+pub async fn extension_pick_app(app: AppHandle, id: String) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picker = app.clone();
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || picker.dialog().file().blocking_pick_file())
+            .await
+            .map_err(|e| e.to_string())?;
+    let path = picked
+        .and_then(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().to_string());
+    if let Some(ref p) = path {
+        let ctx = app
+            .try_state::<std::sync::Arc<grain_core::AppContext>>()
+            .ok_or("app context unavailable")?;
+        crate::host_api::approve_app(&ctx.data_dir, &id, p).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
 }
 
 /// Record the user's approval of a scripted extension's capabilities (SPEC §6).

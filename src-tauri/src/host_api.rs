@@ -1137,7 +1137,7 @@ fn is_app_approved(data_dir: &std::path::Path, ext_id: &str, path: &str) -> bool
         .any(|p| p == path)
 }
 
-fn approve_app(data_dir: &std::path::Path, ext_id: &str, path: &str) -> std::io::Result<()> {
+pub(crate) fn approve_app(data_dir: &std::path::Path, ext_id: &str, path: &str) -> std::io::Result<()> {
     let mut approved = read_approved_apps(data_dir, ext_id);
     if !approved.iter().any(|p| p == path) {
         approved.push(path.to_string());

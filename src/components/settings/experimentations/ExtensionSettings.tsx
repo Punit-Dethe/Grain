@@ -3,20 +3,42 @@ import { invoke } from "@tauri-apps/api/core";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
  * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
+type SettingKindName =
+  | "bool"
+  | "string"
+  | "secret"
+  | "number"
+  | "select"
+  | "shortcut"
+  | "color"
+  | "slider"
+  | "app_path"
+  | "url"
+  | "list"
+  | "unsupported";
+
+/** The SCHEMA of one field (no value) — mirror of Rust `ExtensionSettingField`.
+ * Recursive: a `list` field carries its own `fields`. */
+export interface SettingField {
+  key: string;
+  label: string;
+  description: string;
+  kind: SettingKindName;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  options: { value: string; label: string }[];
+  fields: SettingField[];
+  item_label: string | null;
+}
+
+/** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
+ * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
 export interface SettingRow {
   key: string;
   label: string;
   description: string;
-  kind:
-    | "bool"
-    | "string"
-    | "secret"
-    | "number"
-    | "select"
-    | "shortcut"
-    | "color"
-    | "slider"
-    | "unsupported";
+  kind: SettingKindName;
   anchor: string | null;
   order: number;
   value: unknown;
@@ -25,6 +47,8 @@ export interface SettingRow {
   max: number | null;
   step: number | null;
   options: { value: string; label: string }[];
+  fields: SettingField[];
+  item_label: string | null;
 }
 
 export interface SettingsSection {
@@ -46,13 +70,233 @@ export const ANCHORS = [
 
 export type Anchor = (typeof ANCHORS)[number];
 
+const INPUT_CLASS =
+  "px-2 py-1 rounded-lg bg-paper-sunken border border-line text-sm text-ink outline-none focus:border-accent/50 disabled:opacity-50";
+
+/** Open the host's native app picker for `extId`; resolves to the chosen path
+ * (also recorded as approved for open:app) or null. */
+function pickAppFor(extId: string): Promise<string | null> {
+  return invoke<string | null>("extension_pick_app", { id: extId });
+}
+
+/** [GRAIN] A single field editor used INSIDE a `list` row — edits local state and
+ * bubbles the whole value up via `onChange` (the parent list commits the array
+ * as one write). Reusable across any list/nested-list schema. */
+const FieldInput: React.FC<{
+  field: SettingField;
+  value: unknown;
+  extId: string;
+  disabled: boolean;
+  onChange: (value: unknown) => void;
+}> = ({ field, value, extId, disabled, onChange }) => {
+  switch (field.kind) {
+    case "bool":
+      return (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={value === true}
+          aria-label={field.label}
+          disabled={disabled}
+          onClick={() => onChange(value !== true)}
+          className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 ${
+            value === true ? "bg-accent" : "bg-paper-sunken border border-line"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
+              value === true ? "left-[18px]" : "left-0.5"
+            }`}
+          />
+        </button>
+      );
+    case "select":
+      return (
+        <select
+          aria-label={field.label}
+          disabled={disabled}
+          value={typeof value === "string" ? value : ""}
+          onChange={(e) => onChange(e.target.value)}
+          className={`${INPUT_CLASS} cursor-pointer`}
+        >
+          {field.options.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      );
+    case "app_path":
+      return (
+        <div className="flex items-center gap-2 flex-1 min-w-0">
+          <span
+            className="text-xs text-ink-soft truncate flex-1"
+            title={String(value ?? "")}
+          >
+            {typeof value === "string" && value ? value : "No app chosen"}
+          </span>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() =>
+              void pickAppFor(extId).then((p) => {
+                if (p) onChange(p);
+              })
+            }
+            className="px-2 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint cursor-pointer shrink-0"
+          >
+            Choose app…
+          </button>
+        </div>
+      );
+    case "number":
+    case "slider":
+      return (
+        <input
+          type="number"
+          aria-label={field.label}
+          disabled={disabled}
+          min={field.min ?? undefined}
+          max={field.max ?? undefined}
+          step={field.step ?? undefined}
+          defaultValue={typeof value === "number" ? value : 0}
+          key={String(value)}
+          onBlur={(e) => {
+            const n = Number(e.target.value);
+            if (!Number.isNaN(n)) onChange(n);
+          }}
+          className={`${INPUT_CLASS} w-24 text-right`}
+        />
+      );
+    case "color":
+      return (
+        <input
+          type="color"
+          aria-label={field.label}
+          disabled={disabled}
+          value={typeof value === "string" ? value : "#000000"}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-9 h-6 rounded border border-line bg-transparent cursor-pointer"
+        />
+      );
+    case "list":
+      return (
+        <ListEditor
+          field={field}
+          value={
+            Array.isArray(value) ? (value as Record<string, unknown>[]) : []
+          }
+          extId={extId}
+          disabled={disabled}
+          onChange={onChange}
+        />
+      );
+    // string / url / shortcut — a plain text field. URL validity is enforced by
+    // the backend on commit; the field just captures text.
+    default:
+      return (
+        <input
+          type="text"
+          aria-label={field.label}
+          disabled={disabled}
+          defaultValue={typeof value === "string" ? value : ""}
+          key={String(value)}
+          placeholder={field.kind === "url" ? "https://…" : ""}
+          onBlur={(e) => onChange(e.target.value)}
+          className={`${INPUT_CLASS} flex-1 min-w-0`}
+        />
+      );
+  }
+};
+
+/** [GRAIN] The reusable repeatable-list editor (SPEC §4 `list`). Renders each
+ * row's fields via [`FieldInput`], with add/remove — the native, no-webview way
+ * an extension builds a rich config (workflows, rules, mappings) at an anchor. */
+const ListEditor: React.FC<{
+  field: SettingField;
+  value: Record<string, unknown>[];
+  extId: string;
+  disabled: boolean;
+  onChange: (value: unknown) => void;
+}> = ({ field, value, extId, disabled, onChange }) => {
+  const noun = field.item_label || "item";
+  const blankRow = (): Record<string, unknown> => {
+    const row: Record<string, unknown> = {};
+    field.fields.forEach((f) => {
+      row[f.key] =
+        f.kind === "bool"
+          ? false
+          : f.kind === "list"
+            ? []
+            : f.kind === "number" || f.kind === "slider"
+              ? 0
+              : "";
+    });
+    return row;
+  };
+  const setRow = (i: number, key: string, v: unknown) => {
+    const next = value.map((r, idx) => (idx === i ? { ...r, [key]: v } : r));
+    onChange(next);
+  };
+  return (
+    <div className="w-full space-y-2">
+      {value.map((row, i) => (
+        <div
+          key={i}
+          className="rounded-lg border border-line bg-paper-sunken p-3 space-y-2"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-ink-soft capitalize">
+              {noun} {i + 1}
+            </span>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onChange(value.filter((_, idx) => idx !== i))}
+              className="text-ink-faint hover:text-red-600 cursor-pointer text-xs"
+              aria-label={`Remove ${noun} ${i + 1}`}
+            >
+              Remove
+            </button>
+          </div>
+          {field.fields.map((f) => (
+            <div key={f.key} className="flex items-center gap-3">
+              <span className="text-xs text-ink-faint w-20 shrink-0">
+                {f.label}
+              </span>
+              <div className="flex-1 min-w-0 flex justify-end">
+                <FieldInput
+                  field={f}
+                  value={row[f.key]}
+                  extId={extId}
+                  disabled={disabled}
+                  onChange={(v) => setRow(i, f.key, v)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => onChange([...value, blankRow()])}
+        className="px-2.5 py-1.5 rounded-lg border border-dashed border-line text-xs text-ink-soft hover:text-ink hover:border-ink-faint cursor-pointer"
+      >
+        + Add {noun}
+      </button>
+    </div>
+  );
+};
+
 /** One schema-declared control. The renderer knows `kind`, never the
  * extension — there is no per-extension code anywhere in this file. */
 const Control: React.FC<{
   row: SettingRow;
+  extId: string;
   disabled: boolean;
   onCommit: (value: unknown) => void;
-}> = ({ row, disabled, onCommit }) => {
+}> = ({ row, extId, disabled, onCommit }) => {
   // Text-like controls edit locally and commit on blur, so the backend isn't
   // asked to validate every keystroke.
   const [draft, setDraft] = useState<string>(
@@ -190,12 +434,14 @@ const Control: React.FC<{
     // conflict resolution, and it arrives with `contributes.shortcuts`.
     case "shortcut":
     case "string":
+    case "url":
       return (
         <input
           type="text"
           aria-label={row.label}
           disabled={disabled}
           value={draft}
+          placeholder={row.kind === "url" ? "https://…" : ""}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => {
             if (draft !== row.value) onCommit(draft);
@@ -204,9 +450,34 @@ const Control: React.FC<{
         />
       );
 
-    // Declared by a manifest written against a newer contract. Dropped by the
-    // backend before it gets here; handled anyway so a future row can never
-    // render as a broken control.
+    case "app_path":
+      return (
+        <div className="flex items-center gap-2">
+          <span
+            className="text-xs text-ink-soft truncate max-w-[12rem]"
+            title={typeof row.value === "string" ? row.value : ""}
+          >
+            {typeof row.value === "string" && row.value
+              ? row.value
+              : "No app chosen"}
+          </span>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() =>
+              void pickAppFor(extId).then((p) => {
+                if (p) onCommit(p);
+              })
+            }
+            className="px-2 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint cursor-pointer"
+          >
+            Choose app…
+          </button>
+        </div>
+      );
+
+    // `list` is rendered full-width at the row level (see below), and an
+    // unsupported kind is dropped by the backend before it reaches here.
     default:
       return null;
   }
@@ -262,28 +533,72 @@ export const ExtensionSettings: React.FC<{
         </div>
       )}
       <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
-        {rows.map((row) => (
-          <div key={row.key} className="flex items-center gap-3 px-4 py-3">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm text-ink">{row.label}</div>
-              {row.description && (
-                <div className="text-xs text-ink-faint">{row.description}</div>
-              )}
-              {/* A value the user did not change must say so (SPEC §6:
-                  "invalid values → default + notice"). */}
-              {row.notice && (
-                <div className="text-xs text-amber-600 mt-0.5">
-                  {row.notice}
-                </div>
-              )}
+        {rows.map((row) =>
+          row.kind === "list" ? (
+            // A list is a full-width editor: label on top, rows below.
+            <div key={row.key} className="px-4 py-3 space-y-2">
+              <div>
+                <div className="text-sm text-ink">{row.label}</div>
+                {row.description && (
+                  <div className="text-xs text-ink-faint">
+                    {row.description}
+                  </div>
+                )}
+                {row.notice && (
+                  <div className="text-xs text-amber-600 mt-0.5">
+                    {row.notice}
+                  </div>
+                )}
+              </div>
+              <ListEditor
+                field={{
+                  key: row.key,
+                  label: row.label,
+                  description: row.description,
+                  kind: "list",
+                  min: row.min,
+                  max: row.max,
+                  step: row.step,
+                  options: row.options,
+                  fields: row.fields,
+                  item_label: row.item_label,
+                }}
+                value={
+                  Array.isArray(row.value)
+                    ? (row.value as Record<string, unknown>[])
+                    : []
+                }
+                extId={section.id}
+                disabled={busy === row.key}
+                onChange={(v) => void commit(row, v)}
+              />
             </div>
-            <Control
-              row={row}
-              disabled={busy === row.key}
-              onCommit={(v) => void commit(row, v)}
-            />
-          </div>
-        ))}
+          ) : (
+            <div key={row.key} className="flex items-center gap-3 px-4 py-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm text-ink">{row.label}</div>
+                {row.description && (
+                  <div className="text-xs text-ink-faint">
+                    {row.description}
+                  </div>
+                )}
+                {/* A value the user did not change must say so (SPEC §6:
+                    "invalid values → default + notice"). */}
+                {row.notice && (
+                  <div className="text-xs text-amber-600 mt-0.5">
+                    {row.notice}
+                  </div>
+                )}
+              </div>
+              <Control
+                row={row}
+                extId={section.id}
+                disabled={busy === row.key}
+                onCommit={(v) => void commit(row, v)}
+              />
+            </div>
+          ),
+        )}
       </div>
     </div>
   );
