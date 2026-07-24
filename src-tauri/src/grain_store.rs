@@ -745,6 +745,31 @@ mod tests {
         let rec = reg.record("grain.agent-center-layout").expect("installed");
         assert_eq!(rec.trust, grain_sdk::Trust::Core);
         assert_eq!(rec.variant_slots, vec!["agent.reply-surface".to_string()]);
+
+        // Voice Actions — the scripted extension exercising the new
+        // open:url/open:app capabilities — installs the same way.
+        assert!(
+            view.entries.iter().any(|e| e.id == "grain.voice-actions"),
+            "voice actions is published"
+        );
+        rt.block_on(install_entry(
+            &state,
+            &reg,
+            &ext_root,
+            &client,
+            "grain.voice-actions",
+            "1.0.0",
+        ))
+        .expect("install voice actions from the live blob");
+        let va = reg.record("grain.voice-actions").expect("voice actions installed");
+        assert_eq!(va.trust, grain_sdk::Trust::Core);
+        // Its single-file pack unpacked into the versioned dir.
+        assert!(
+            grain_core::install::version_dir(&ext_root, "grain.voice-actions", "1.0.0")
+                .join("pack.grainpack.json")
+                .exists(),
+            "voice actions artifact unpacked"
+        );
         let _ = std::fs::remove_dir_all(&data);
     }
 
