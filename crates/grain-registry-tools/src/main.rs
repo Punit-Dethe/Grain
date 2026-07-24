@@ -568,6 +568,15 @@ fn publish(
     };
 
     let today = chrono::Utc::now();
+    // Pipeline-maintained fields (stars, installs) and detail media survive a
+    // re-publish of the same (id, version) — republishing the artifact must not
+    // reset its popularity or wipe its README/screenshots.
+    let (installs, stars, readme, media) = index
+        .entries
+        .iter()
+        .find(|e| e.id == manifest.id && e.version == manifest.version)
+        .map(|e| (e.installs, e.stars, e.readme.clone(), e.media.clone()))
+        .unwrap_or_default();
     let entry = grain_sdk::IndexEntry {
         id: manifest.id.clone(),
         name: manifest.name.clone(),
@@ -575,6 +584,7 @@ fn publish(
         tier: manifest.tier.clone(),
         trust,
         capabilities: manifest.permissions.clone(),
+        description: manifest.description.clone(),
         sha256,
         size: bytes.len() as u64,
         min_grain_api: manifest.grain_api.clone(),
@@ -584,7 +594,10 @@ fn publish(
         reviewed_at: today.format("%Y-%m-%d").to_string(),
         reviewed_commit: String::new(),
         updated_at: today.format("%Y-%m-%d").to_string(),
-        stars: 0,
+        stars,
+        installs,
+        readme,
+        media,
     };
 
     // Upsert by (id, version).

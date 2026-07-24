@@ -90,6 +90,10 @@ pub struct IndexEntry {
     pub trust: Trust,
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// One-line summary, from the manifest — shown on the store card so a name
+    /// alone never has to carry the install decision (DISTRIBUTION-PLAN §2.3).
+    #[serde(default)]
+    pub description: String,
     /// SHA-256 of the artifact, lowercase hex. Bound to trust with `(id,
     /// version, sha256)`.
     pub sha256: String,
@@ -117,6 +121,32 @@ pub struct IndexEntry {
     /// Fetched by CI, never by the client.
     #[serde(default)]
     pub stars: u64,
+    /// Install count — the popularity signal shown on the card and detail page.
+    /// Maintained by the publish pipeline (like `stars`), never written by the
+    /// client: it reads this number straight from the signed index it already
+    /// fetched, so there is no per-card query and nothing phoned home.
+    #[serde(default)]
+    pub installs: u64,
+    /// SHA-256 (in `media/<hash>.md`) of the extension's full README, shown on
+    /// its detail page. Empty = none. Fetched lazily on open, dropped on close.
+    #[serde(default)]
+    pub readme: String,
+    /// Screenshots / GIFs for the detail page (DISTRIBUTION-PLAN §2.3). Media
+    /// blobs referenced by hash, loaded lazily — never during browse.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<MediaRef>,
+}
+
+/// One screenshot or GIF in `media/<sha256>.<ext>` (DISTRIBUTION-PLAN §2.3).
+/// Content-addressed, so integrity is verified for free; WEBP or GIF only.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MediaRef {
+    /// SHA-256 of the media bytes, lowercase hex.
+    pub sha256: String,
+    /// `webp` | `gif`.
+    pub kind: String,
+    #[serde(default)]
+    pub size: u64,
 }
 
 /// Signed by a root key; verified against the keys pinned in the binary. Names

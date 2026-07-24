@@ -47,15 +47,32 @@ pub struct StoreEntry {
     pub tier: String,
     pub trust: String,
     pub capabilities: Vec<String>,
+    /// One-line summary shown under the name on the card.
+    pub description: String,
     pub size: String,
     pub author: String,
     pub reviewed_at: String,
     pub reviewed_commit: String,
+    /// Popularity signal shown on the card and detail page. Read straight from
+    /// the signed index — the client never counts or queries per card.
+    pub installs: u64,
+    /// README media hash (empty = none). The detail page fetches it lazily.
+    pub readme: String,
+    /// Screenshots / GIFs for the detail page, loaded lazily — never in browse.
+    pub media: Vec<StoreMedia>,
     /// Revocation state for this exact version, if any: "revoked" | "deprecated".
     pub revocation: Option<String>,
     /// Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
     /// so the card tells the user what the reviewer was warned about.
     pub flags: Vec<String>,
+}
+
+/// One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
+#[derive(Clone, Serialize, specta::Type)]
+pub struct StoreMedia {
+    pub sha256: String,
+    /// `webp` | `gif`.
+    pub kind: String,
 }
 
 /// What the store slide-over shows when opened.
@@ -203,10 +220,21 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
             tier: tier_str(&e.tier).into(),
             trust: trust_str(e.trust).into(),
             capabilities: e.capabilities.clone(),
+            description: e.description.clone(),
             size: e.size.to_string(),
             author: e.author.clone(),
             reviewed_at: e.reviewed_at.clone(),
             reviewed_commit: e.reviewed_commit.clone(),
+            installs: e.installs,
+            readme: e.readme.clone(),
+            media: e
+                .media
+                .iter()
+                .map(|m| StoreMedia {
+                    sha256: m.sha256.clone(),
+                    kind: m.kind.clone(),
+                })
+                .collect(),
             revocation: revocations.state_for(&e.id, &e.version).map(|s| {
                 match s {
                     RevocationState::Revoked => "revoked",

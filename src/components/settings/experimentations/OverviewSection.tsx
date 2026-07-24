@@ -6,6 +6,7 @@ import {
   ChevronLeft,
   Code2,
   Trash2,
+  Download,
   ExternalLink,
   FolderOpen,
   Package,
@@ -922,6 +923,7 @@ export const OverviewSection: React.FC<{
 
 /** [GRAIN] One entry from the verified index (mirror of the Rust `StoreEntry`;
  * raw-invoke local type until a dev run regenerates bindings.ts). */
+type StoreMedia = { sha256: string; kind: string };
 type StoreEntry = {
   id: string;
   name: string;
@@ -929,10 +931,14 @@ type StoreEntry = {
   tier: string;
   trust: string;
   capabilities: string[];
+  description: string;
   size: string;
   author: string;
   reviewed_at: string;
   reviewed_commit: string;
+  installs: number;
+  readme: string;
+  media: StoreMedia[];
   revocation: string | null;
   flags: string[];
 };
@@ -1139,8 +1145,15 @@ const StoreSlideOver: React.FC<{
                         {badge.label}
                       </span>
                     </div>
-                    <div className="text-[11px] text-ink-faint truncate">
-                      {e.author ? `${e.author} · ` : ""}v{e.version}
+                    <div className="mt-0.5 text-[11px] text-ink-faint flex items-center gap-1.5 flex-wrap">
+                      {e.author && <span className="truncate">{e.author}</span>}
+                      <span>v{e.version}</span>
+                      {e.installs > 0 && (
+                        <span className="inline-flex items-center gap-0.5">
+                          <Download width={10} height={10} />
+                          {fmtStars(e.installs)}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {(() => {
@@ -1176,6 +1189,14 @@ const StoreSlideOver: React.FC<{
                     );
                   })()}
                 </div>
+
+                {/* The description carries the install decision — a name alone
+                    is too vague to install from (DISTRIBUTION-PLAN §2.3). */}
+                {e.description && (
+                  <p className="text-xs text-ink-soft leading-relaxed line-clamp-2">
+                    {e.description}
+                  </p>
+                )}
 
                 {e.reviewed_at && (
                   <div className="text-[10px] text-ink-faint">
