@@ -593,6 +593,123 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    fn fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("store")
+    }
+
+    /// A dead-simple blocking file server for the fixture `v1/` tree. Serves any
+    /// existing file by request path; 404 otherwise. One request per connection.
+    fn serve_v1(root: PathBuf) -> Option<std::net::SocketAddr> {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        // The signed fixture roots.json names 127.0.0.1:8787, so bind exactly it.
+        let listener = TcpListener::bind("127.0.0.1:8787").ok()?;
+        let addr = listener.local_addr().ok()?;
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("/")
+                    .trim_start_matches('/')
+                    .to_string();
+                let file = root.join(&path);
+                let body = std::fs::read(&file).ok();
+                let resp = match body {
+                    Some(bytes) => {
+                        let mut head = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            bytes.len()
+                        )
+                        .into_bytes();
+                        head.extend_from_slice(&bytes);
+                        head
+                    }
+                    None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+                };
+                let _ = stream.write_all(&resp);
+                let _ = stream.flush();
+            }
+        });
+        Some(addr)
+    }
+
+    // FULL client end-to-end over real HTTP against the signed catalogue:
+    // serve v1/ on localhost → StoreState refresh (verify roots+index) → install
+    // the artifact (fetch blob → verify sha256 → unpack → registry record with
+    // trust) → confirm the pack loads from its versioned dir. This is the honest
+    // synthetic equivalent of the in-app store click, minus the GUI and worker
+    // execution.
+    #[test]
+    fn http_end_to_end_install_from_signed_catalogue() {
+        // Build the served tree = fixture (roots/index/sigs + blob).
+        let data = tmp_data("e2e");
+        let served = data.join("served_v1");
+        std::fs::create_dir_all(served.join("blob")).unwrap();
+        let fx = fixture_dir();
+        for f in [
+            "roots.json",
+            "roots.json.minisig",
+            "index.json",
+            "index.json.minisig",
+        ] {
+            std::fs::copy(fx.join(f), served.join(f)).unwrap();
+        }
+        for e in std::fs::read_dir(fx.join("blob")).unwrap().flatten() {
+            std::fs::copy(e.path(), served.join("blob").join(e.file_name())).unwrap();
+        }
+
+        let Some(_addr) = serve_v1(served) else {
+            eprintln!("SKIP: could not bind 127.0.0.1:8787 (port busy)");
+            return;
+        };
+
+        // Seed the store cache with the fixture roots so init picks up the
+        // localhost base URL, then refresh + install over HTTP.
+        let store_cache = data.join("store");
+        std::fs::create_dir_all(&store_cache).unwrap();
+        for f in ["roots.json", "roots.json.minisig"] {
+            std::fs::copy(fx.join(f), store_cache.join(f)).unwrap();
+        }
+        let state = StoreState::init(&data);
+        let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+        let ext_root = data.join("extensions");
+        let client = reqwest::Client::new();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let view = rt.block_on(refresh(&state, &client));
+        assert_eq!(view.status, "fresh", "index verified + fresh over HTTP");
+        assert_eq!(view.entries.len(), 1);
+        assert!(view.can_install);
+
+        let dir = rt
+            .block_on(install_entry(
+                &state,
+                &reg,
+                &ext_root,
+                &client,
+                "com.example.hello",
+                "1.0.0",
+            ))
+            .expect("install over HTTP");
+        assert!(dir.join("pack.grainpack.json").exists(), "artifact unpacked");
+
+        let rec = reg.record("com.example.hello").expect("registry record");
+        assert_eq!(rec.trust, grain_sdk::Trust::Verified, "trust from signed index");
+        assert_eq!(rec.installed_version, "1.0.0");
+        assert!(!rec.enabled, "fresh install lands disabled (enable is explicit)");
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     // The seed loads and verifies at startup, so a fresh install has a working
     // (if empty) offline store.
     #[test]

@@ -1,0 +1,15 @@
+{
+  "manifest": {
+    "id": "com.example.hello",
+    "name": "Hello Transform",
+    "version": "1.0.0",
+    "grainApi": "1.0",
+    "tier": "scripted",
+    "description": "A friendly hello-world transcript transform (registry end-to-end sample).",
+    "repository": "https://github.com/example/grain-hello",
+    "permissions": ["transform:transcript"],
+    "activation": ["onTransform"],
+    "entry_source": "grain.transform.transcript(function (text) { return text.replace(/\\bhello\\b/gi, 'hello 👋'); });"
+  },
+  "payloads": {}
+}
