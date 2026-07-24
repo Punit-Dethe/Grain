@@ -1011,6 +1011,54 @@ async extensionsOverview() : Promise<Result<ExtensionCard[], string>> {
 }
 },
 /**
+ * Open the store: refresh from the network (piggybacking the update check),
+ * verify, and return the catalogue. Falls back to the offline cache/seed.
+ */
+async storeBrowse() : Promise<Result<StoreView, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_browse") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Close the store slide-over: drop the parsed index so idle footprint returns
+ * to just the small roots + revocations.
+ */
+async storeClose() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_close") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Install (or update to) a specific verified `(id, version)`. In-app click
+ * only — a link may open the store but never trigger this.
+ */
+async storeInstall(id: string, version: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_install", { id, version }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Banners for installed extensions that have been revoked or deprecated —
+ * enforced from the resident (cached) revocation list, so it holds offline.
+ */
+async storeRevocationBanners() : Promise<Result<RevocationBanner[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_revocation_banners") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
  * settings flag + bump toggle order; packs write the registry. The Agent
  * toggle re-registers its binding so the change is zero-overhead-when-off.
@@ -2343,7 +2391,7 @@ export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExte
  */
 export type ExtensionSettingRow = { key: string; label: string; description: string; 
 /**
- * `bool | string | number | select | shortcut | color | slider`.
+ * `bool | string | secret | number | select | shortcut | color | slider`.
  */
 kind: string; 
 /**
@@ -2511,6 +2559,10 @@ export type ReminderStatus =
  */
 "dismissed"
 /**
+ * A banner for an installed extension that has been revoked or deprecated.
+ */
+export type RevocationBanner = { id: string; state: string; reason: string }
+/**
  * Map of provider id → API key. Persisted to a SEPARATE credential file by
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
  */
@@ -2542,6 +2594,32 @@ conflicts_with: string | null }
  */
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * One card's data for the store UI (a specta-friendly projection of
+ * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
+ */
+export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[]; size: string; author: string; reviewed_at: string; reviewed_commit: string; 
+/**
+ * Revocation state for this exact version, if any: "revoked" | "deprecated".
+ */
+revocation: string | null; 
+/**
+ * Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
+ * so the card tells the user what the reviewer was warned about.
+ */
+flags: string[] }
+/**
+ * What the store slide-over shows when opened.
+ */
+export type StoreView = { 
+/**
+ * "fresh" | "offline" | "needs-newer-client".
+ */
+status: string; 
+/**
+ * Whether new installs are allowed (false when offline/expired).
+ */
+can_install: boolean; entries: StoreEntry[] }
 /**
  * Phase of the streaming overlay card, emitted to drive its UI state.
  */
