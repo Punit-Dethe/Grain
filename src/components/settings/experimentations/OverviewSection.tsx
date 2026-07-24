@@ -23,7 +23,6 @@ import {
   type SettingRow,
   type SettingsSection,
 } from "./ExtensionSettings";
-import { NATIVE_CARDS } from "./nativeCards";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
@@ -213,7 +212,6 @@ const ExtensionPage: React.FC<{
 }) => {
   const [descOpen, setDescOpen] = useState(true);
   const stars = useRepoStars(card?.repository ?? null);
-  const NativeCard = card ? NATIVE_CARDS[card.id] : undefined;
   const repoLabel = card?.repository
     ? card.repository
         .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
@@ -326,13 +324,12 @@ const ExtensionPage: React.FC<{
         />
       )}
 
-      {/* Custom card — native first-party UI (SPEC §4.1 Level 3). The
-          third-party `settingsPanel` iframe will render in this same slot. */}
-      {NativeCard && <NativeCard />}
+      {/* Custom card slot (SPEC §4.1 Level 3): a third-party extension's own
+          `settingsPanel` iframe will render here. Runtime lands next. */}
 
       {card && <ExtensionShortcuts id={card.id} />}
 
-      {!section && !NativeCard && card && !card.enabled && (
+      {!section && card && !card.enabled && (
         <p className="px-1 text-xs text-ink-faint">
           Turn this extension on to see its settings.
         </p>

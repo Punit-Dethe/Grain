@@ -54,10 +54,6 @@ pub const PILL_THEME_SLOT: &str = "pill.theme";
 pub const BUILTIN_SNIPPETS: &str = "grain.snippets";
 pub const BUILTIN_CONTEXT: &str = "grain.context-awareness";
 pub const BUILTIN_AGENT: &str = "grain.agent";
-/// Voice Actions — the "say a phrase → open apps/sites" built-in. Unlike the
-/// three above it has no sub-tab; its Overview row opens a detail page whose
-/// custom card is the Actions editor (the first native settings card).
-pub const BUILTIN_ACTIONS: &str = "grain.voice-actions";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExtensionRecord {

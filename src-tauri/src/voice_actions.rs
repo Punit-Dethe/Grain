@@ -76,9 +76,7 @@ pub fn open_targets(app: &AppHandle, targets: &[ActionTarget]) {
 /// ("start coding") is consumed here and never costs an LLM call or a paste.
 pub fn intercept(app: &AppHandle, text: &str) -> String {
     let settings = settings::get_settings(app);
-    // Gated by the Voice Actions built-in extension's switch (disabled → the
-    // whole matcher is skipped, zero overhead) and by having any action at all.
-    if !settings.actions_enabled || settings.actions.is_empty() {
+    if settings.actions.is_empty() {
         return text.to_string();
     }
 
