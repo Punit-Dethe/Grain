@@ -107,6 +107,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "embed" => Some("embed"),
         "session.start" => Some("session:start"),
         "capture.selection" => Some("capture:selection"),
+        "capture.app" => Some("capture:app"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
         "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
         "open.url" => Some("open:url"),
@@ -564,7 +565,7 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
         "open.app" => {
             param_nonempty_str(params, "path")?;
         }
-        "doc.list" | "capture.selection" | "workspace.open" | "workspace.close"
+        "doc.list" | "capture.selection" | "capture.app" | "workspace.open" | "workspace.close"
         | "overlay.show" | "overlay.dismiss" | "open.pickApp" => {}
         _ => return Err(unknown_method(method)),
     }
@@ -1003,6 +1004,24 @@ pub async fn dispatch(
                         )
                     })?;
             Ok(json!({ "text": text }))
+        }
+        "capture.app" => {
+            // [GRAIN] Phase 5C: a one-shot snapshot of the foreground app — the
+            // primitive a context-aware extension is built on. Reuses Grain's
+            // own detector; `null` when nothing resolves. Privacy-gated by
+            // `capture:app`.
+            let detected = tokio::task::spawn_blocking(crate::grain_commands::detect_active_app)
+                .await
+                .map_err(|e| internal_error(format!("app detect failed: {e}")))?;
+            Ok(match detected {
+                Some(a) => json!({
+                    "name": a.name,
+                    "exe": a.exe,
+                    "exePath": a.exe_path,
+                    "urlHost": a.url_host,
+                }),
+                None => Value::Null,
+            })
         }
         "session.start" => {
             let mode = param_str(&params, "mode")?;

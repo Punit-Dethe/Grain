@@ -168,6 +168,11 @@ export const GRAIN_RUNTIME_JS = `(function () {
     captureSelection: function () {
       return req("capture.selection", {}).then(function (r) { return r && r.text != null ? r.text : null; });
     },
+    // The foreground app right now (needs capture:app): { name, exe, exePath,
+    // urlHost } or null. The primitive for context-aware extensions.
+    focusedApp: function () {
+      return req("capture.app", {});
+    },
     settings: {
       get: function (k) { return req("settings.get", { key: String(k) }); },
       set: function (k, v) { return req("settings.set", { key: String(k), value: v }); }

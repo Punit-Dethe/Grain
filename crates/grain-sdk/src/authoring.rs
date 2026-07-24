@@ -70,6 +70,13 @@ export interface GrainApi {
     list(): Promise<string[]>;
   };
   captureSelection(): Promise<string | null>;
+  /** The foreground app right now (needs capture:app), or null. */
+  focusedApp(): Promise<{
+    name: string;
+    exe: string | null;
+    exePath: string | null;
+    urlHost: string | null;
+  } | null>;
   readonly settings: {
     get<T extends JsonValue = JsonValue>(key: string): Promise<T | null>;
     set(key: string, value: JsonValue): Promise<unknown>;

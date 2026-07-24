@@ -344,6 +344,11 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // whatever is selected in any app), so it is its own grant, meant to be
     // paired with a user-initiated trigger like a shortcut.
     "capture:selection",
+    // Phase 5C: observe the foreground application (name, executable, and the
+    // browser URL host when it is a browser). Privacy-marked — it reveals which
+    // app the user is in — and the foundation any context-aware extension needs
+    // (the same primitive Grain's own Context Awareness uses).
+    "capture:app",
     // Phase 5C (SPEC §1.3): launch side effects. Both are danger-marked and the
     // host enforces the security, not the extension:
     //  · `open:url` opens a link in the user's browser — the host allows ONLY

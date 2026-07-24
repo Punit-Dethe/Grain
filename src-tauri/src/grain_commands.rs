@@ -1370,6 +1370,28 @@ pub async fn extension_pick_app(app: AppHandle, id: String) -> Result<Option<Str
     Ok(path)
 }
 
+/// [GRAIN] Phase 5C: capture the FOREGROUND app for an `app_path` control (the
+/// user switches to their target app during the control's countdown, then this
+/// snapshots it). Records the path as approved for this extension's `open:app`,
+/// exactly like the file picker. Returns the executable path, or `None`.
+#[tauri::command]
+#[specta::specta]
+pub fn extension_capture_app(app: AppHandle, id: String) -> Result<Option<String>, String> {
+    let Some(detected) = detect_active_app() else {
+        return Ok(None);
+    };
+    // `exe_path` is empty when the path couldn't be resolved — nothing to record.
+    let path = detected.exe_path;
+    if path.is_empty() {
+        return Ok(None);
+    }
+    let ctx = app
+        .try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .ok_or("app context unavailable")?;
+    crate::host_api::approve_app(&ctx.data_dir, &id, &path).map_err(|e| e.to_string())?;
+    Ok(Some(path))
+}
+
 /// Record the user's approval of a scripted extension's capabilities (SPEC §6).
 /// Called by the permission sheet on Approve; the caller then retries enable.
 ///

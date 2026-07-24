@@ -1184,6 +1184,34 @@ async extensionSettingsSections() : Promise<Result<ExtensionSettingsSection[], s
 }
 },
 /**
+ * [GRAIN] Phase 5C: the `app_path` settings control's native picker. Opens the
+ * OS file chooser and, on a pick, records the path as **approved for this
+ * extension** (the same user-mediated approval `open:app` requires) so a rule
+ * the user builds here can actually launch. Returns the chosen path or `None`.
+ */
+async extensionPickApp(id: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_pick_app", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Phase 5C: capture the FOREGROUND app for an `app_path` control (the
+ * user switches to their target app during the control's countdown, then this
+ * snapshots it). Records the path as approved for this extension's `open:app`,
+ * exactly like the file picker. Returns the executable path, or `None`.
+ */
+async extensionCaptureApp(id: string) : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_capture_app", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * The live state of one extension's contributed shortcuts (SPEC §3.3), so the
  * settings section can show a chord that is registered — and name the holder
  * of one that isn't, rather than leaving a dead hotkey unexplained.
@@ -2381,6 +2409,20 @@ toggle_seq: string; repository: string | null;
 has_detail: boolean }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
+ * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
+ * renderer so it can draw a `list` row's inputs, or an `app_path`/`url` field.
+ * Recursive: a list field carries its own `fields` so lists nest.
+ */
+export type ExtensionSettingField = { key: string; label: string; description: string; kind: string; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[]; 
+/**
+ * Sub-field schema for a `list` field (empty otherwise).
+ */
+fields: ExtensionSettingField[]; 
+/**
+ * Singular noun for a `list`'s Add button / row header.
+ */
+item_label: string | null }
+/**
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
  * 
@@ -2408,7 +2450,15 @@ value: JsonValue;
  * Set when a stored value had to be reset — a change the user did not make
  * must never be silent.
  */
-notice: string | null; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[] }
+notice: string | null; min: number | null; max: number | null; step: number | null; options: SelectOptionDto[]; 
+/**
+ * Sub-field schema for a `list` row (empty otherwise).
+ */
+fields: ExtensionSettingField[]; 
+/**
+ * Singular noun for a `list`'s Add button / row header.
+ */
+item_label: string | null }
 /**
  * One enabled extension's settings, ready to render.
  */

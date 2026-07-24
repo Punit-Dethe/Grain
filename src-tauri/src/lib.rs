@@ -849,6 +849,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,
             grain_commands::extension_pick_app,
+            grain_commands::extension_capture_app,
             grain_commands::extension_shortcuts_status,
             grain_commands::extension_setting_set,
             grain_commands::extension_surface_init,

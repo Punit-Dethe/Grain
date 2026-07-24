@@ -73,11 +73,82 @@ export type Anchor = (typeof ANCHORS)[number];
 const INPUT_CLASS =
   "px-2 py-1 rounded-lg bg-paper-sunken border border-line text-sm text-ink outline-none focus:border-accent/50 disabled:opacity-50";
 
-/** Open the host's native app picker for `extId`; resolves to the chosen path
+/** Open the host's native file picker for `extId`; resolves to the chosen path
  * (also recorded as approved for open:app) or null. */
 function pickAppFor(extId: string): Promise<string | null> {
   return invoke<string | null>("extension_pick_app", { id: extId });
 }
+
+/** [GRAIN] The `app_path` control: primary action is "Capture focused app" — a
+ * short countdown lets the user switch to the target app, then the host
+ * snapshots it (and records it as approved for open:app). A file-choose
+ * fallback stays for apps that are hard to focus. Shared by list rows and
+ * top-level rows. */
+const AppField: React.FC<{
+  value: unknown;
+  extId: string;
+  disabled: boolean;
+  onChange: (value: unknown) => void;
+}> = ({ value, extId, disabled, onChange }) => {
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const name =
+    typeof value === "string" && value ? value.split(/[\\/]/).pop() : null;
+
+  const capture = () => {
+    let n = 3;
+    setCountdown(n);
+    const tick = () => {
+      n -= 1;
+      if (n > 0) {
+        setCountdown(n);
+        setTimeout(tick, 1000);
+      } else {
+        setCountdown(null);
+        void invoke<string | null>("extension_capture_app", { id: extId }).then(
+          (p) => {
+            if (p) onChange(p);
+          },
+        );
+      }
+    };
+    setTimeout(tick, 1000);
+  };
+
+  if (countdown != null) {
+    return (
+      <span className="text-xs text-accent tabular-nums whitespace-nowrap">
+        Switch to your app… {countdown}
+      </span>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <span
+        className="text-xs text-ink-soft truncate max-w-[9rem]"
+        title={typeof value === "string" ? value : ""}
+      >
+        {name || "No app chosen"}
+      </span>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={capture}
+        className="px-2 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint cursor-pointer shrink-0"
+      >
+        Capture app
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => void pickAppFor(extId).then((p) => p && onChange(p))}
+        title="Choose a file instead"
+        className="text-ink-faint hover:text-ink cursor-pointer text-xs shrink-0"
+      >
+        Browse…
+      </button>
+    </div>
+  );
+};
 
 /** [GRAIN] A single field editor used INSIDE a `list` row — edits local state and
  * bubbles the whole value up via `onChange` (the parent list commits the array
@@ -128,26 +199,7 @@ const FieldInput: React.FC<{
       );
     case "app_path":
       return (
-        <div className="flex items-center gap-2 flex-1 min-w-0">
-          <span
-            className="text-xs text-ink-soft truncate flex-1"
-            title={String(value ?? "")}
-          >
-            {typeof value === "string" && value ? value : "No app chosen"}
-          </span>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() =>
-              void pickAppFor(extId).then((p) => {
-                if (p) onChange(p);
-              })
-            }
-            className="px-2 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint cursor-pointer shrink-0"
-          >
-            Choose app…
-          </button>
-        </div>
+        <AppField value={value} extId={extId} disabled={disabled} onChange={onChange} />
       );
     case "number":
     case "slider":
@@ -474,29 +526,15 @@ const Control: React.FC<{
       );
 
     case "app_path":
+      // Same native control as inside a list row: primary "Capture app" with a
+      // countdown, plus a file-choose fallback.
       return (
-        <div className="flex items-center gap-2">
-          <span
-            className="text-xs text-ink-soft truncate max-w-[12rem]"
-            title={typeof row.value === "string" ? row.value : ""}
-          >
-            {typeof row.value === "string" && row.value
-              ? row.value
-              : "No app chosen"}
-          </span>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() =>
-              void pickAppFor(extId).then((p) => {
-                if (p) onCommit(p);
-              })
-            }
-            className="px-2 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint cursor-pointer"
-          >
-            Choose app…
-          </button>
-        </div>
+        <AppField
+          value={row.value}
+          extId={extId}
+          disabled={disabled}
+          onChange={onCommit}
+        />
       );
 
     // `list` is rendered full-width at the row level (see below), and an
