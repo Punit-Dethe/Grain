@@ -710,6 +710,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
     }
 
+    // The REAL end-to-end against the live GitHub-hosted catalogue: a fresh
+    // StoreState (embedded seed roots → raw.githubusercontent base URL) →
+    // refresh over the network → verify against pinned keys → install the Agent
+    // centre layout from its content-addressed blob. Network-dependent, so it is
+    // #[ignore]d in normal runs; run with `cargo test -- --ignored live_github`.
+    #[test]
+    #[ignore = "network: fetches the live GitHub-hosted catalogue"]
+    fn live_github_end_to_end_install() {
+        let data = tmp_data("live");
+        let state = StoreState::init(&data);
+        let reg = grain_core::extensions::ExtensionsRegistry::load(&data, false).unwrap();
+        let ext_root = data.join("extensions");
+        let client = reqwest::Client::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let view = rt.block_on(refresh(&state, &client));
+        assert_eq!(view.status, "fresh", "live index verified + fresh");
+        assert!(
+            view.entries.iter().any(|e| e.id == "grain.agent-center-layout"),
+            "the centre layout is published in the live catalogue"
+        );
+
+        rt.block_on(install_entry(
+            &state,
+            &reg,
+            &ext_root,
+            &client,
+            "grain.agent-center-layout",
+            "1.0.0",
+        ))
+        .expect("install the centre layout from the live blob");
+
+        let rec = reg.record("grain.agent-center-layout").expect("installed");
+        assert_eq!(rec.trust, grain_sdk::Trust::Core);
+        assert_eq!(rec.variant_slots, vec!["agent.reply-surface".to_string()]);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
     // The seed loads and verifies at startup, so a fresh install has a working
     // (if empty) offline store.
     #[test]

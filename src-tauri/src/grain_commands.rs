@@ -200,9 +200,17 @@ pub fn sync_agent_reply_surface_slot(app: &AppHandle) {
         Some(ext::CORE_DEFAULT) | Some(ext::AGENT_CENTER_VARIANT_ID) | None => {}
         Some(_) => return,
     }
-    let center = settings::get_settings(app).agent_panel_position
-        == settings::AgentPanelPosition::Center
-        && reg.is_enabled(ext::AGENT_CENTER_VARIANT_ID);
+    let wants_center =
+        settings::get_settings(app).agent_panel_position == settings::AgentPanelPosition::Center;
+    let center = wants_center && reg.is_enabled(ext::AGENT_CENTER_VARIANT_ID);
+    // Migration (Phase 5C): the centre layout is no longer shipped. An existing
+    // user who had Centre selected but has not installed the pack falls back to
+    // Side, so the Agent never tries to render a look whose extension is gone.
+    if wants_center && !reg.is_enabled(ext::AGENT_CENTER_VARIANT_ID) {
+        let mut s = settings::get_settings(app);
+        s.agent_panel_position = settings::AgentPanelPosition::Side;
+        settings::write_settings(app, s);
+    }
     let occupant = if center {
         ext::AGENT_CENTER_VARIANT_ID
     } else {
