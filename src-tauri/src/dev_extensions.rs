@@ -93,6 +93,28 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         Tier::Pack => return Err("load unpacked does not accept data-only packs".into()),
     };
 
+    // Inline any custom-card (`panel`) uiSource that names a project file — the
+    // same treatment `entry` gets, so a card's HTML lives in its own file rather
+    // than as a giant string in manifest.json. (The published pack does this in
+    // grain-registry `build-pack`; dev-load mirrors it.)
+    for setting in &mut project.manifest.contributes.settings {
+        if let grain_sdk::SettingKind::Panel { ui_source, .. } = &mut setting.kind {
+            // A value already containing markup is inline HTML; anything else is
+            // a project file to read.
+            if !ui_source.contains('<') && !ui_source.trim().is_empty() {
+                let file = ui_source.clone();
+                let candidate = canonical_project_file(&root, &file, "panel uiSource")?;
+                let meta = std::fs::metadata(&candidate)
+                    .map_err(|error| format!("inspect panel uiSource '{file}': {error}"))?;
+                if meta.len() > MAX_ENTRY_BYTES {
+                    return Err("a panel uiSource is larger than 5 MB".into());
+                }
+                *ui_source = std::fs::read_to_string(&candidate)
+                    .map_err(|error| format!("read panel uiSource '{file}': {error}"))?;
+            }
+        }
+    }
+
     let pack = GrainPack {
         manifest: project.manifest,
         payloads: PackPayloads::default(),
