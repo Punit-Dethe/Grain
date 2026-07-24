@@ -118,6 +118,18 @@ enum Cmd {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Build a single-file `.grainpack.json` from a project directory: inline the
+    /// entry file into `entry_source`, inline any surface `ui_source` file, and
+    /// emit the runtime `GrainPack`. This is the runtime's native single-file
+    /// format (the worker/surface loaders read embedded sources).
+    BuildPack {
+        /// Project directory containing `manifest.json` + the entry/surface files.
+        #[arg(long)]
+        src: PathBuf,
+        /// Output `.grainpack.json` path.
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 /// The submission manifest an author writes (source pointer, never an artifact).
@@ -261,7 +273,64 @@ fn main() -> Result<()> {
         Cmd::Verify { v1 } => verify(v1),
         Cmd::CheckSubmission { dir } => check_submission(dir),
         Cmd::SiteGen { v1, out } => site_gen(v1, out),
+        Cmd::BuildPack { src, out } => build_pack(src, out),
     }
+}
+
+/// Inline a scripted project into a single-file runtime `GrainPack`:
+/// `manifest.json` + the entry file → `entry_source`, and each surface's
+/// `ui_source` file → its inlined HTML. The result is what the runtime loads
+/// directly (embedded sources), and what `publish` then hashes/signs.
+fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
+    let manifest_raw = fs::read_to_string(src.join("manifest.json"))
+        .with_context(|| format!("read {}/manifest.json", src.display()))?;
+    // Parse loosely as JSON so we can rewrite fields without pinning the schema.
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&manifest_raw).context("parse manifest.json")?;
+
+    // Inline the entry file → entry_source, drop the project-only `entry` path.
+    if let Some(entry) = manifest.get("entry").and_then(|v| v.as_str()).map(String::from) {
+        let js = fs::read_to_string(src.join(&entry))
+            .with_context(|| format!("read entry file {entry}"))?;
+        manifest["entry_source"] = serde_json::Value::String(js);
+        manifest.as_object_mut().unwrap().remove("entry");
+    }
+
+    // Inline each surface's ui_source when it names a project file.
+    if let Some(surfaces) = manifest.get_mut("surfaces").and_then(|v| v.as_object_mut()) {
+        for (_name, surface) in surfaces.iter_mut() {
+            let ui_file = surface
+                .get("ui_source")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            if let Some(ui_file) = ui_file {
+                let candidate = src.join(&ui_file);
+                // Only inline when it is actually a file in the project (a short
+                // path); otherwise assume it is already inline HTML.
+                if candidate.is_file() {
+                    let html = fs::read_to_string(&candidate)
+                        .with_context(|| format!("read ui_source {ui_file}"))?;
+                    surface["ui_source"] = serde_json::Value::String(html);
+                }
+            }
+        }
+    }
+
+    let pack = serde_json::json!({ "manifest": manifest, "payloads": {} });
+    let json = format!("{}\n", serde_json::to_string_pretty(&pack)?);
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    fs::write(&out, json).with_context(|| format!("write {}", out.display()))?;
+    // Sanity: the emitted pack must parse as a GrainPack. Full `validate()` is
+    // the CI check-job's business for community submissions; it also reserves
+    // the `grain.` id prefix for first-party built-ins, which is exactly what
+    // core/ packs legitimately use — so we structurally parse here and let the
+    // reserved-prefix rule stay an import-time (untrusted) guard.
+    let _built: grain_sdk::GrainPack = serde_json::from_slice(&fs::read(&out)?)
+        .context("emitted pack does not parse as a GrainPack")?;
+    println!("built {} ({} bytes)", out.display(), fs::metadata(&out)?.len());
+    Ok(())
 }
 
 fn html_escape(s: &str) -> String {

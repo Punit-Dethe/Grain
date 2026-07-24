@@ -107,6 +107,11 @@ const BRIDGE = `<script>(function(){
     },
     workspace: { close: function(){ return call("workspace.close", {}); } },
     overlay: { dismiss: function(){ return call("overlay.dismiss", {}); } },
+    open: {
+      url: function(u){ return call("open.url", { url: String(u) }); },
+      app: function(p){ return call("open.app", { path: String(p) }); },
+      pickApp: function(){ return call("open.pickApp", {}).then(function(r){ return r && r.path != null ? r.path : null; }); }
+    },
     onEvent: function(fn){ listeners.push(fn); },
     call: call
   };
