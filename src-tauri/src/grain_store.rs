@@ -492,6 +492,98 @@ pub fn store_close(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Dependency-free base64 (standard alphabet, padded) — for building `data:`
+/// URLs from small media blobs without pulling a crate.
+fn base64_encode(data: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(T[((n >> 18) & 63) as usize] as char);
+        out.push(T[((n >> 12) & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            T[((n >> 6) & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            T[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// Fetch a content-addressed media blob (`media/<hash>.<ext>`) — cache-first,
+/// then the base URLs. Content-addressed blobs are immutable, so the on-disk
+/// cache never goes stale and a hit avoids the network entirely (low-RAM: no
+/// resident media, and the webview drops the bytes when the detail closes).
+async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>, String> {
+    if sha256.is_empty() || !sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("invalid media hash".into());
+    }
+    let state = store_state(app)?;
+    let name = format!("media/{sha256}.{ext}");
+    let cache_path = state.cache_dir.join(format!("{sha256}.{ext}"));
+    if let Ok(bytes) = std::fs::read(&cache_path) {
+        if grain_core::trust::sha256_hex(&bytes) == sha256 {
+            return Ok(bytes);
+        }
+    }
+    let client = app
+        .try_state::<reqwest::Client>()
+        .map(|c| c.inner().clone())
+        .ok_or("http client unavailable")?;
+    let bases: Vec<String> = {
+        let roots = state.roots.read().unwrap();
+        roots
+            .base_urls
+            .iter()
+            .chain(roots.mirrors.iter())
+            .cloned()
+            .collect()
+    };
+    for base in &bases {
+        if let Some(bytes) = fetch(&client, base, &name).await {
+            // Content integrity: the bytes MUST hash to the requested id.
+            if grain_core::trust::sha256_hex(&bytes) != sha256 {
+                continue;
+            }
+            let _ = std::fs::create_dir_all(&state.cache_dir);
+            let _ = std::fs::write(&cache_path, &bytes);
+            return Ok(bytes);
+        }
+    }
+    Err("media not reachable".into())
+}
+
+/// A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
+/// when a detail opens — and integrity-checked against its hash. WEBP or GIF.
+#[tauri::command]
+#[specta::specta]
+pub async fn store_media(app: AppHandle, sha256: String, kind: String) -> Result<String, String> {
+    let (ext, mime) = match kind.as_str() {
+        "webp" => ("webp", "image/webp"),
+        "gif" => ("gif", "image/gif"),
+        _ => return Err("unsupported media kind".into()),
+    };
+    let bytes = fetch_media(&app, &sha256, ext).await?;
+    Ok(format!("data:{mime};base64,{}", base64_encode(&bytes)))
+}
+
+/// An extension's full README (markdown text), by its media hash. Lazy, and
+/// integrity-checked. Rendered on the detail page.
+#[tauri::command]
+#[specta::specta]
+pub async fn store_readme(app: AppHandle, sha256: String) -> Result<String, String> {
+    let bytes = fetch_media(&app, &sha256, "md").await?;
+    String::from_utf8(bytes).map_err(|_| "readme is not valid UTF-8".to_string())
+}
+
 /// Install (or update to) a specific verified `(id, version)`. In-app click
 /// only — a link may open the store but never trigger this.
 #[tauri::command]
