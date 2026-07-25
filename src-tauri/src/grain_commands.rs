@@ -240,6 +240,20 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     crate::grain_space::apply_enabled(&app, enabled);
     Ok(())
 }
+/// [GRAIN] The Grain Space MCP bridge. Switching it ON mints the proxy's token
+/// and writes it where `grain-mcp` looks; switching it OFF revokes the token and
+/// deletes the file, so a client that is already connected stops being able to
+/// reconnect and a client that starts later finds nothing to authenticate with.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_mcp_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_mcp = enabled;
+    settings::write_settings(&app, settings);
+    crate::grain_space::apply_mcp(&app, enabled);
+    Ok(())
+}
+
 
 /// [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
 /// download (opt-in consent flow) is driven by the frontend before it turns

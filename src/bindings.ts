@@ -214,6 +214,20 @@ async changeGrainSpaceEnabledSetting(enabled: boolean) : Promise<Result<null, st
 }
 },
 /**
+ * [GRAIN] The Grain Space MCP bridge. Switching it ON mints the proxy's token
+ * and writes it where `grain-mcp` looks; switching it OFF revokes the token and
+ * deletes the file, so a client that is already connected stops being able to
+ * reconnect and a client that starts later finds nothing to authenticate with.
+ */
+async changeGrainSpaceMcpSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_mcp_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
  * download (opt-in consent flow) is driven by the frontend before it turns
  * this on. OFF must guarantee the embedding model never loads — any resident
@@ -2175,6 +2189,13 @@ grain_space_enabled?: boolean;
  * shipped with the app).
  */
 grain_space_semantic?: boolean; 
+/**
+ * [GRAIN] The MCP bridge: when ON, Grain writes a token file that lets the
+ * `grain-mcp` proxy authenticate, so an MCP client can search and read this
+ * notebook. OFF by default — sharing the user's notes with another
+ * application is not something to arrive switched on.
+ */
+grain_space_mcp?: boolean; 
 /**
  * [GRAIN] When ON (default), reminders extracted from a captured note are
  * armed automatically; when OFF the note pane shows a manual "arm" button.

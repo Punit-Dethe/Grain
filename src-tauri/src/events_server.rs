@@ -122,6 +122,20 @@ pub fn mint_surface_token(ext_id: &str, caps: std::collections::HashSet<String>)
     mint_extension_token(ext_id, caps, crate::events_auth::ClientRole::Surface)
 }
 
+/// [GRAIN] Mint the identity the Grain Space MCP proxy authenticates with, and
+/// hand the token to it through a file only this user can read.
+///
+/// A file rather than an argument or an environment variable because the proxy
+/// is spawned by the CLIENT, not by us — Claude Code, an IDE, a chat app — and
+/// we never see that command line. It carries exactly one capability, `space`,
+/// which is not in `KNOWN_CAPABILITIES` and therefore cannot be requested by a
+/// manifest or granted by a permission sheet.
+pub fn mint_mcp_token() -> String {
+    let mut caps = std::collections::HashSet::new();
+    caps.insert("space".to_string());
+    mint_extension_token("grain.mcp", caps, crate::events_auth::ClientRole::Mcp)
+}
+
 fn mint_extension_token(
     ext_id: &str,
     caps: std::collections::HashSet<String>,
@@ -455,6 +469,9 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
     // this socket speaks and whether the worker host tracks it for reaping.
     let is_worker = identity.role == crate::events_auth::ClientRole::Worker;
     let is_surface = identity.role == crate::events_auth::ClientRole::Surface;
+    // The MCP proxy is a request/response client and nothing else: it never
+    // subscribes to events and never receives a host call.
+    let is_mcp = identity.role == crate::events_auth::ClientRole::Mcp;
     let last_activity = if is_worker {
         let Some(activity) =
             crate::extension_host::attach_connection(&identity.id, &session.token, out_tx.clone())
@@ -517,7 +534,7 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
                             .unwrap_or(0);
                         la.store(now, Ordering::Relaxed);
                     }
-                    if is_worker || is_surface {
+                    if is_worker || is_surface || is_mcp {
                         match serde_json::from_str::<grain_sdk::HostFrame>(&txt) {
                             Ok(grain_sdk::HostFrame::Request(req)) => {
                                 // Capability-checked host API. Dispatch off the

@@ -110,6 +110,10 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "capture.app" => Some("capture:app"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
         "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
+        // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
+        // no manifest can request it and no permission sheet can grant it — it
+        // exists only on the identity the app mints for its own proxy.
+        "space.collections" | "space.search" | "space.get" => Some("space"),
         "open.url" => Some("open:url"),
         "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -1043,6 +1047,29 @@ pub async fn dispatch(
         }
         // [GRAIN] Phase 5C — launch side effects. Security is enforced HERE, in
         // Rust, never trusted to the extension (SPEC §7.2).
+        // [GRAIN] Grain Space over MCP. These read the SAME vault and index the
+        // app's own UI reads — there is no second copy and no second engine —
+        // and they are reachable only from the `space` capability, which only
+        // the MCP proxy's identity carries.
+        "space.collections" => {
+            let names = crate::grain_space::collections(app).await.map_err(internal_error)?;
+            Ok(serde_json::json!({ "collections": names }))
+        }
+        "space.search" => {
+            let query = param_nonempty_str(&params, "query")?;
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(8)
+                .clamp(1, 50) as usize;
+            let hits = crate::grain_space::search(app, &query, limit).await.map_err(internal_error)?;
+            Ok(serde_json::json!({ "results": hits }))
+        }
+        "space.get" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let note = crate::grain_space::get(app, &id).await.map_err(internal_error)?;
+            serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
+        }
         "open.url" => {
             // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
             // `openExternal` RCEs and Tauri's own shell-open advisory

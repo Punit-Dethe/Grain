@@ -34,6 +34,11 @@ pub enum ClientRole {
     Worker,
     Surface,
     DevControl,
+    /// [GRAIN] The Grain Space MCP proxy (`grain-mcp`). It speaks the same
+    /// request frame extension workers use, so the bridge needed no new
+    /// transport — only an identity with its own capability, which no extension
+    /// can be granted.
+    Mcp,
 }
 
 /// A resolved identity: the registry entry the presented token mapped to.

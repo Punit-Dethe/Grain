@@ -78,3 +78,135 @@ pub fn emit_notes_changed(app: &AppHandle) {
     use tauri::Emitter;
     let _ = app.emit(NOTES_CHANGED_EVENT, ());
 }
+
+// ── The MCP bridge's read surface ───────────────────────────────────────────
+//
+// [GRAIN] Three calls the `grain-mcp` proxy makes over the existing local
+// request frame (see `host_api::dispatch`). They read the SAME vault and index
+// the app's own UI reads — there is no second copy of the notebook and no
+// second embedding engine, which is the whole reason the proxy is a proxy.
+//
+// Each is gated on the feature being on, so switching Grain Space off closes the
+// bridge with it rather than leaving a door open onto a disabled feature.
+
+/// The shape one search hit crosses the wire in. Deliberately small: an agent
+/// deciding WHICH note to open should not be made to read every note first.
+#[derive(serde::Serialize)]
+pub struct SpaceHit {
+    pub id: String,
+    pub title: String,
+    pub snippet: String,
+    pub collection: Option<String>,
+    pub saved_at: i64,
+}
+
+fn require_enabled(app: &AppHandle) -> Result<(), String> {
+    if is_enabled(app) {
+        Ok(())
+    } else {
+        Err("Grain Space is switched off.".to_string())
+    }
+}
+
+/// Collection names, as the sidebar knows them.
+pub async fn collections(app: &AppHandle) -> Result<Vec<String>, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    tauri::async_runtime::spawn_blocking(move || backend::list_folders(&be))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// The full hybrid search — FTS, vectors and the entity graph, fused — the same
+/// one the overlay's search box runs.
+pub async fn search(app: &AppHandle, query: &str, limit: usize) -> Result<Vec<SpaceHit>, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let q = query.to_string();
+    let notes = tauri::async_runtime::spawn_blocking(move || backend::search_notes(&be, &q))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    Ok(notes
+        .into_iter()
+        .take(limit)
+        .map(|n| SpaceHit {
+            snippet: n.tldr.clone(),
+            collection: None,
+            saved_at: n.timestamp,
+            id: n.id,
+            title: n.title,
+        })
+        .collect())
+}
+
+/// One note in full, by id.
+pub async fn get(app: &AppHandle, id: &str) -> Result<note::Note, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || backend::get_note(&be, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Token file the `grain-mcp` proxy reads to authenticate. Present exactly while
+/// the bridge is on.
+const MCP_TOKEN_FILE: &str = "mcp-token.json";
+
+/// Bring the MCP bridge in line with its flag. ON mints a fresh token and writes
+/// it; OFF revokes whatever was minted and deletes the file, so the door closes
+/// rather than merely being unadvertised.
+///
+/// A fresh token each time is deliberate: turning the bridge off and on again is
+/// how a user revokes access from a client they no longer trust, and that only
+/// means anything if the old secret stops working.
+pub fn apply_mcp(app: &AppHandle, enabled: bool) {
+    let Ok(dir) = crate::grain_space::data_dir(app) else {
+        return;
+    };
+    let path = dir.join(MCP_TOKEN_FILE);
+    // Whatever was there is dead either way.
+    if let Ok(raw) = std::fs::read_to_string(&path) {
+        if let Ok(old) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(token) = old.get("token").and_then(|t| t.as_str()) {
+                crate::events_server::revoke_token(token);
+            }
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+    if !enabled {
+        return;
+    }
+    let token = crate::events_server::mint_mcp_token();
+    let body = serde_json::json!({ "token": token, "port": 7124 });
+    if let Err(e) = std::fs::write(&path, body.to_string()) {
+        log::warn!("[GRAIN] space mcp: could not write the token file: {e}");
+        return;
+    }
+    restrict_to_owner(&path);
+    log::info!("[GRAIN] space mcp: bridge on");
+}
+
+/// The token is a bearer secret; on unix the file is 0600. Windows inherits the
+/// user profile's ACL, which is already user-only.
+fn restrict_to_owner(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+}
+
+/// Grain's own data directory (where the token file lives).
+fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    app.try_state::<std::sync::Arc<grain_core::AppContext>>()
+        .map(|ctx| ctx.data_dir.clone())
+        .ok_or_else(|| "app context unavailable".to_string())
+}

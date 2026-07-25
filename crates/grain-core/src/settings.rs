@@ -781,6 +781,12 @@ pub struct AppSettings {
     /// shipped with the app).
     #[serde(default)]
     pub grain_space_semantic: bool,
+    /// [GRAIN] The MCP bridge: when ON, Grain writes a token file that lets the
+    /// `grain-mcp` proxy authenticate, so an MCP client can search and read this
+    /// notebook. OFF by default — sharing the user's notes with another
+    /// application is not something to arrive switched on.
+    #[serde(default)]
+    pub grain_space_mcp: bool,
     /// [GRAIN] When ON (default), reminders extracted from a captured note are
     /// armed automatically; when OFF the note pane shows a manual "arm" button.
     #[serde(default = "default_true")]
@@ -1529,6 +1535,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_panel_position: AgentPanelPosition::default(),
         grain_space_enabled: false,
         grain_space_semantic: false,
+        grain_space_mcp: false,
         grain_space_auto_reminders: true,
         grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),
         grain_space_backend: GrainSpaceBackend::default(),
