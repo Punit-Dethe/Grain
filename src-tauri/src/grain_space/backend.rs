@@ -85,6 +85,11 @@ pub fn graph_notes(b: &Backend, terms: &[String], limit: usize) -> Result<Vec<(N
     vault::graph_notes(b, terms, limit)
 }
 
+/// Per-term IDF for the reranker (D6), read from the FTS index's own vocabulary.
+pub fn term_idf(b: &Backend, terms: &[String]) -> Result<std::collections::HashMap<String, f64>> {
+    vault::term_idf(b, terms)
+}
+
 /// Store the typed relations a capture extracted. Best-effort: never fail a
 /// capture that already saved.
 pub fn record_relations(b: &Backend, relations: &[super::capture::Relation]) -> Result<()> {

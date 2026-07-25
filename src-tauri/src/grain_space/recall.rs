@@ -212,6 +212,12 @@ async fn retrieve(
         // notes sharing no vocabulary. A failure degrades the turn by one leg,
         // never fails it.
         let terms = query_terms(&query_owned);
+        // Per-term IDF for the reranker (D6). One indexed probe per term against
+        // the FTS index's own vocabulary; a failure falls back to uniform weights.
+        let idf = backend::term_idf(&be_owned, &terms).unwrap_or_else(|e| {
+            log::warn!("[GRAIN] recall: idf probe failed ({e:#}); uniform term weights");
+            std::collections::HashMap::new()
+        });
         let graph = match backend::graph_notes(&be_owned, &terms, GRAPH_LEG_LIMIT) {
             Ok(hits) => hits.into_iter().map(|(note, _direct)| note).collect(),
             Err(e) => {
@@ -244,6 +250,7 @@ async fn retrieve(
                             &query_owned,
                             pool,
                             &std::collections::HashMap::new(),
+                            &idf,
                             half_life_days,
                             TOP_K_PER_TURN,
                         ));
@@ -293,6 +300,7 @@ async fn retrieve(
             &query_owned,
             pool,
             &sims,
+            &idf,
             half_life_days,
             TOP_K_PER_TURN,
         ))
@@ -366,6 +374,7 @@ fn rerank(
     query: &str,
     pool: Vec<(Note, f64)>,
     sims: &std::collections::HashMap<String, f64>,
+    idf: &std::collections::HashMap<String, f64>,
     half_life_days: u32,
     k: usize,
 ) -> Vec<Note> {
@@ -414,7 +423,7 @@ fn rerank(
                 Some(c) if sims_spread => (c - sim_min) / (sim_max - sim_min),
                 _ => 0.5, // no vector / no spread — neutral
             };
-            let overlap = term_overlap(&terms, &note);
+            let overlap = term_overlap(&terms, &note, idf);
             let age_ms = if note.is_pinned {
                 0.0
             } else {
@@ -444,16 +453,32 @@ fn query_terms(query: &str) -> Vec<String> {
         .collect()
 }
 
-/// Fraction of query terms that appear in the note's title + tldr (the
-/// high-signal metadata). 0.0 when there are no query terms. Reor-style lexical
-/// emphasis without their post-hoc keyword re-score architecture.
-fn term_overlap(terms: &[String], note: &Note) -> f64 {
+/// **IDF-weighted** share of the query's terms present in the note's high-signal
+/// text — title, summary, and the distilled question (D6). 0.0 with no terms.
+///
+/// Unweighted, this counted a hit on "the" exactly as much as a hit on `auth.py`,
+/// which is what Cerebras means by IDF separating signal from filler. Weighted,
+/// the score is `Σ idf(matched) / Σ idf(all)`, so matching the one rare term that
+/// actually identifies the note beats matching four common ones.
+///
+/// An empty `idf` map (the probe failed, or an empty corpus) falls back to
+/// uniform weights — the previous behaviour, never an error.
+fn term_overlap(terms: &[String], note: &Note, idf: &std::collections::HashMap<String, f64>) -> f64 {
     if terms.is_empty() {
         return 0.0;
     }
-    let hay = format!("{} {}", note.title, note.tldr).to_lowercase();
-    let hits = terms.iter().filter(|t| hay.contains(t.as_str())).count();
-    hits as f64 / terms.len() as f64
+    let hay = format!("{} {} {}", note.title, note.tldr, note.question).to_lowercase();
+    let weight = |t: &String| idf.get(t).copied().unwrap_or(1.0);
+    let total: f64 = terms.iter().map(weight).sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+    let matched: f64 = terms
+        .iter()
+        .filter(|t| hay.contains(t.as_str()))
+        .map(weight)
+        .sum();
+    matched / total
 }
 
 // -- memories block -------------------------------------------------------------
@@ -1225,7 +1250,10 @@ async fn build_block_and_meta(
             match backend::get_note(&be_block, id) {
                 Ok(note) => {
                     let m = i + 1;
-                    let relevance = term_overlap(&terms, &note);
+                    // Ordering WITHIN the memories block: uniform weights are
+                    // right here (this only sorts a handful of already-selected
+                    // memories; a DB probe per block rebuild would not earn it).
+                    let relevance = term_overlap(&terms, &note, &HashMap::new());
                     blocks.push((relevance, m, render_memory(m, &note, now_ms, &terms)));
                     let title = display_title(&note);
                     meta.insert(
@@ -1436,7 +1464,14 @@ mod tests {
         hit.title = "Wifi password".into();
         let miss = note("miss", 100);
         let pool = vec![(miss, 0.02_f64), (hit, 0.019_f64)];
-        let out = rerank("what is the wifi password", pool, &HashMap::new(), 0, 6);
+        let out = rerank(
+            "what is the wifi password",
+            pool,
+            &HashMap::new(),
+            &HashMap::new(),
+            0,
+            6,
+        );
         assert_eq!(out[0].id, "hit");
     }
 
@@ -1447,7 +1482,14 @@ mod tests {
         let older = note("older", 1_000);
         let newer = note("newer", 5_000_000_000_000);
         let pool = vec![(older, 0.01_f64), (newer, 0.01_f64)];
-        let out = rerank("unrelated terms", pool, &HashMap::new(), 30, 6);
+        let out = rerank(
+            "unrelated terms",
+            pool,
+            &HashMap::new(),
+            &HashMap::new(),
+            30,
+            6,
+        );
         assert_eq!(out[0].id, "newer");
     }
 
@@ -1465,7 +1507,14 @@ mod tests {
             ("strong".to_string(), 0.82_f64),
             ("weak".to_string(), 0.31_f64),
         ]);
-        let out = rerank("query with no lexical hits", pool, &sims, 0, 6);
+        let out = rerank(
+            "query with no lexical hits",
+            pool,
+            &sims,
+            &HashMap::new(),
+            0,
+            6,
+        );
         assert_eq!(out[0].id, "strong");
         assert_eq!(out[1].id, "unknown");
         assert_eq!(out[2].id, "weak");
@@ -1473,13 +1522,54 @@ mod tests {
 
     #[test]
     fn term_overlap_fraction() {
+        use std::collections::HashMap;
         let mut n = note("x", 1);
         n.title = "Home wifi".into();
         n.tldr = "network details".into();
         let terms = query_terms("home wifi password");
-        // "home" + "wifi" present, "password" absent → 2/3.
-        let frac = term_overlap(&terms, &n);
+        // No IDF map ⇒ uniform weights: "home" + "wifi" present, "password"
+        // absent → 2/3. This is the pre-D6 behaviour, preserved as the fallback.
+        let frac = term_overlap(&terms, &n, &HashMap::new());
         assert!((frac - 2.0 / 3.0).abs() < 1e-9);
+
+        // The distilled question is part of the high-signal text it matches on.
+        let mut q = note("q", 1);
+        q.question = "why did token refresh fail?".into();
+        let terms = query_terms("token refresh");
+        assert!((term_overlap(&terms, &q, &HashMap::new()) - 1.0).abs() < 1e-9);
+    }
+
+    /// D6: filler must stop outscoring signal. `common` matches three words that
+    /// appear in every note; `rare` matches the one term that actually identifies
+    /// it. Unweighted, `common` wins 3/4 to 1/4 — which is the bug.
+    #[test]
+    fn idf_weighting_puts_signal_above_filler() {
+        use std::collections::HashMap;
+        let terms = query_terms("the note about authpy");
+        let idf = HashMap::from([
+            ("the".to_string(), 0.1_f64),
+            ("note".to_string(), 0.1_f64),
+            ("about".to_string(), 0.1_f64),
+            ("authpy".to_string(), 6.0_f64),
+        ]);
+
+        let mut common = note("common", 100);
+        common.title = "The note about things".into();
+        let mut rare = note("rare", 100);
+        rare.title = "authpy".into();
+
+        // Unweighted, the filler match looks three times better.
+        let flat_common = term_overlap(&terms, &common, &HashMap::new());
+        let flat_rare = term_overlap(&terms, &rare, &HashMap::new());
+        assert!(flat_common > flat_rare, "the behaviour D6 exists to fix");
+
+        // Weighted, the rare term dominates.
+        let w_common = term_overlap(&terms, &common, &idf);
+        let w_rare = term_overlap(&terms, &rare, &idf);
+        assert!(
+            w_rare > w_common,
+            "idf-weighted: rare {w_rare} must beat filler {w_common}"
+        );
     }
 
     #[test]

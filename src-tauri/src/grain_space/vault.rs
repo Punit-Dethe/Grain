@@ -1700,6 +1700,50 @@ pub fn record_relations(v: &Vault, relations: &[super::capture::Relation]) -> Re
     super::graph::record_relations(&conn, relations, chrono::Utc::now().timestamp_millis())
 }
 
+/// Inverse document frequency for each query term (D6). Cerebras's fourth
+/// ranking signal — "IDF separates signal from filler" — which Grain got for free
+/// inside FTS5's `bm25()` and then threw away at rerank time, so a match on "the"
+/// counted exactly as much as a match on `auth.py`.
+///
+/// `ln(1 + N/df)`: a term in every note scores ~0.7, a term in one note out of a
+/// thousand scores ~6.9. A term the index has never seen is treated as maximally
+/// rare rather than as an error — an unindexed proper noun IS a strong signal.
+///
+/// Read from `fts5vocab`, so the counts come from the same tokenizer that did the
+/// matching rather than from a second, subtly different one of our own.
+pub fn term_idf(v: &Vault, terms: &[String]) -> Result<HashMap<String, f64>> {
+    let mut out = HashMap::new();
+    if terms.is_empty() {
+        return Ok(out);
+    }
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    // The vocab table is a zero-cost view over the FTS index — creating it is
+    // metadata only, and it stays in sync automatically.
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS notes_vocab USING fts5vocab(notes_fts, 'row');",
+    )?;
+    let total: i64 = conn.query_row("SELECT COUNT(*) FROM notes_meta", [], |r| r.get(0))?;
+    if total == 0 {
+        return Ok(out);
+    }
+    let n = total as f64;
+    let mut stmt = conn.prepare("SELECT doc FROM notes_vocab WHERE term = ?1")?;
+    for term in terms {
+        let lowered = term.to_lowercase();
+        let df: i64 = stmt
+            .query_row(params![lowered], |r| r.get(0))
+            .unwrap_or_default();
+        let idf = if df <= 0 {
+            (1.0 + n).ln()
+        } else {
+            (1.0 + n / df as f64).ln()
+        };
+        out.insert(lowered, idf);
+    }
+    Ok(out)
+}
+
 /// The graph retrieval leg (D5): query terms → entities → neighbourhood → notes.
 /// Needs neither the embedding model nor an LLM, so it works with semantic search
 /// off and on a machine that never downloaded the model.
@@ -1915,16 +1959,30 @@ pub(crate) fn chunk_body(body: &str) -> Vec<String> {
 }
 
 /// The embed texts for one note, in chunk order. Every chunk carries the title
-/// (retrieval context); the tldr rides only on the first chunk.
-fn chunk_embed_texts(title: &str, tldr: &str, body: &str) -> Vec<String> {
-    if body.chars().count() <= CHUNK_TARGET_CHARS {
-        return vec![super::embed::note_embed_text(title, tldr, body)];
+/// (retrieval context); the summary and the DISTILLED DOCUMENT (question +
+/// entities, D3) ride only on the first chunk — which is the chunk that speaks
+/// for the note in the KNN dedupe, so the note's intent match lives there while
+/// later chunks stay pure body for in-document recall.
+fn chunk_embed_texts(note: &Note) -> Vec<String> {
+    use super::embed::{note_embed_text_distilled, DistilledDoc};
+    let distilled = DistilledDoc::of(&note.question, &note.entities);
+    if note.body.chars().count() <= CHUNK_TARGET_CHARS {
+        return vec![note_embed_text_distilled(
+            &distilled,
+            &note.title,
+            &note.tldr,
+            &note.body,
+        )];
     }
-    chunk_body(body)
+    chunk_body(&note.body)
         .into_iter()
         .enumerate()
         .map(|(i, chunk)| {
-            super::embed::note_embed_text(title, if i == 0 { tldr } else { "" }, &chunk)
+            if i == 0 {
+                note_embed_text_distilled(&distilled, &note.title, &note.tldr, &chunk)
+            } else {
+                note_embed_text_distilled(&DistilledDoc::default(), &note.title, "", &chunk)
+            }
         })
         .collect()
 }
@@ -1954,10 +2012,7 @@ pub fn stale_embed_texts(v: &Vault) -> Result<Vec<(String, String)>> {
     for (id, rel) in rows {
         match read_note_at(v, &rel) {
             Ok(note) => {
-                for (i, text) in chunk_embed_texts(&note.title, &note.tldr, &note.body)
-                    .into_iter()
-                    .enumerate()
-                {
+                for (i, text) in chunk_embed_texts(&note).into_iter().enumerate() {
                     out.push((format!("{id}#{i}"), text));
                 }
             }
@@ -2796,6 +2851,41 @@ mod tests {
         cleanup(&v);
     }
 
+    /// The IDF probe must read real document frequencies from the FTS index's own
+    /// vocabulary, so a rare term outweighs one that appears everywhere.
+    #[test]
+    fn idf_reflects_real_document_frequency() {
+        let v = temp_vault("idf");
+        for i in 0..6 {
+            // "common" is in every note; "sqlitevec" is in exactly one.
+            let body = if i == 0 {
+                "common word and sqlitevec"
+            } else {
+                "common word only"
+            };
+            save_note(&v, &grain_note(&format!("Note {i}"), body)).unwrap();
+        }
+        let terms = vec![
+            "common".to_string(),
+            "sqlitevec".to_string(),
+            "neverindexed".to_string(),
+        ];
+        let idf = term_idf(&v, &terms).unwrap();
+        let common = idf["common"];
+        let rare = idf["sqlitevec"];
+        let unseen = idf["neverindexed"];
+        assert!(rare > common, "rare {rare} must outweigh common {common}");
+        assert!(
+            unseen >= rare,
+            "a term the index has never seen is maximally rare, not an error"
+        );
+        // An empty corpus must yield no weights rather than a divide-by-zero.
+        let empty = temp_vault("idf_empty");
+        assert!(term_idf(&empty, &terms).unwrap().is_empty());
+        cleanup(&empty);
+        cleanup(&v);
+    }
+
     /// Deleting a note must remove it from the walk — a stale link would have
     /// retrieval citing a note that no longer exists.
     #[test]
@@ -2968,7 +3058,7 @@ mod tests {
     #[test]
     fn chunk_body_packs_blocks_and_hard_splits_walls() {
         // Small body → single chunk path (chunk_embed_texts short-circuits).
-        assert_eq!(chunk_embed_texts("T", "S", "tiny body").len(), 1);
+        assert_eq!(chunk_embed_texts(&grain_note("T", "tiny body")).len(), 1);
 
         // Heading-separated blocks pack greedily under the budget.
         let chunks = chunk_body("# A\none\n\n# B\ntwo");
@@ -2981,6 +3071,42 @@ mod tests {
         assert!(chunks
             .iter()
             .all(|c| c.chars().count() <= CHUNK_TARGET_CHARS));
+    }
+
+    /// D3: the distilled document must be part of what a note EMBEDS as, and must
+    /// come first so it survives the tokenizer's truncation on a long note. Later
+    /// chunks stay pure body — they exist for in-document recall, not intent.
+    #[test]
+    fn the_distilled_document_leads_the_embedding_text() {
+        let mut note = grain_note("Buffer Raise", "bumped it to 256KB");
+        note.question = "why did token refresh fail on large payloads?".into();
+        note.entities = vec!["auth.py".into(), "JWT".into()];
+
+        let texts = chunk_embed_texts(&note);
+        assert!(
+            texts[0].starts_with("Question: why did token refresh fail"),
+            "{}",
+            texts[0]
+        );
+        assert!(texts[0].contains("About: auth.py, JWT"), "{}", texts[0]);
+
+        // A raw capture with no distillation embeds exactly as it always did.
+        let raw = grain_note("Plain", "just a thought");
+        assert_eq!(
+            chunk_embed_texts(&raw)[0],
+            super::super::embed::note_embed_text("Plain", &raw.tldr, "just a thought")
+        );
+
+        // Long note: the distillation rides chunk 0 only.
+        let mut long = grain_note("Long", &"word ".repeat(CHUNK_TARGET_CHARS));
+        long.question = "what did the report say?".into();
+        let texts = chunk_embed_texts(&long);
+        assert!(texts.len() > 1);
+        assert!(texts[0].contains("Question:"));
+        assert!(
+            texts[1..].iter().all(|t| !t.contains("Question:")),
+            "later chunks stay pure body"
+        );
     }
 
     #[test]

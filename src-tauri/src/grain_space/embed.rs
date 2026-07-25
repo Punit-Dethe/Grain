@@ -517,19 +517,71 @@ fn embed_batch(
 }
 
 /// The exact text a note embeds as (blank fields omitted; the tokenizer
-/// truncates to `MAX_TOKENS` — title+tldr carry the meaning for long notes).
+/// truncates to `MAX_TOKENS` — the distilled fields come FIRST precisely so they
+/// survive that truncation on a long note).
+///
+/// [`DistilledDoc`] carries the searchable question and the note's entities
+/// (KNOWLEDGE-ARCHITECTURE-PLAN.md D3). Embedding the distilled document rather
+/// than raw text is the one measured accuracy win Cerebras reports, and the
+/// reason is mechanical: the question is phrased the way the user will later ask,
+/// so it sits far closer in vector space to the real query than the note's own
+/// prose does.
 pub fn note_embed_text(title: &str, tldr: &str, body: &str) -> String {
+    note_embed_text_distilled(&DistilledDoc::default(), title, tldr, body)
+}
+
+/// The distilled half of a note's search document. Empty for raw captures and
+/// foreign notes, in which case embedding is byte-identical to before.
+#[derive(Default)]
+pub struct DistilledDoc<'a> {
+    pub question: &'a str,
+    pub entities: &'a [String],
+}
+
+impl DistilledDoc<'_> {
+    fn is_empty(&self) -> bool {
+        self.question.trim().is_empty() && self.entities.is_empty()
+    }
+}
+
+pub fn note_embed_text_distilled(
+    distilled: &DistilledDoc<'_>,
+    title: &str,
+    tldr: &str,
+    body: &str,
+) -> String {
     let mut parts = Vec::new();
+    // Question first: it is the closest thing in the record to the query that
+    // will come looking, and first means it survives token truncation.
+    if !distilled.question.trim().is_empty() {
+        parts.push(format!("Question: {}", distilled.question.trim()));
+    }
     if !title.trim().is_empty() {
         parts.push(format!("Title: {}", title.trim()));
     }
     if !tldr.trim().is_empty() {
         parts.push(format!("Summary: {}", tldr.trim()));
     }
+    if !distilled.entities.is_empty() {
+        parts.push(format!("About: {}", distilled.entities.join(", ")));
+    }
     if !body.trim().is_empty() {
         parts.push(format!("Body: {}", body.trim()));
     }
     parts.join("\n\n")
+}
+
+impl<'a> DistilledDoc<'a> {
+    /// The distilled view of a note, or the empty one when it has no distillation
+    /// (so callers never branch).
+    pub fn of(question: &'a str, entities: &'a [String]) -> Self {
+        let doc = DistilledDoc { question, entities };
+        if doc.is_empty() {
+            DistilledDoc::default()
+        } else {
+            doc
+        }
+    }
 }
 
 #[cfg(test)]
