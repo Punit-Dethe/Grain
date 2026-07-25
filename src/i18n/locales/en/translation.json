@@ -634,7 +634,9 @@
         "createPrompt": "Create Prompt",
         "cancel": "Cancel",
         "selectToEdit": "Select a prompt above to view and edit its details.",
-        "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt."
+        "createFirst": "Click 'Create New Prompt' above to create your first post-processing prompt.",
+        "yourPrompts": "Your prompts",
+        "fromExtension": "Comes with {{name}}. Turn that extension off to remove it."
       }
     },
     "history": {

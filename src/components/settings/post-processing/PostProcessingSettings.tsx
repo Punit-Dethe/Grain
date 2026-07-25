@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
+import { invoke } from "@tauri-apps/api/core";
 import { commands } from "@/bindings";
 
 import {
@@ -22,6 +23,24 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
 };
 
 
+/** [GRAIN] A prompt an extension brought with it carries a namespaced id —
+ * `ext:<extension-id>:<key>` — assigned when its pack is applied
+ * (grain-core::apply_prompt_pack) and removed by that same prefix when the
+ * extension is turned off. The prefix is the ONLY thing separating a
+ * contributed prompt from one the user wrote, so it is what the list groups on
+ * and what decides whether the editor below is writable.
+ *
+ * An extension id can never contain a colon, so the first one splits it cleanly
+ * from the prompt's own key. */
+const EXT_PROMPT_PREFIX = "ext:";
+
+export function promptOwner(promptId: string): string | null {
+  if (!promptId.startsWith(EXT_PROMPT_PREFIX)) return null;
+  const rest = promptId.slice(EXT_PROMPT_PREFIX.length);
+  const cut = rest.indexOf(":");
+  return cut > 0 ? rest.slice(0, cut) : null;
+}
+
 const PostProcessingSettingsPromptsComponent: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating, refreshSettings } =
@@ -29,11 +48,60 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
   const [isCreating, setIsCreating] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [draftText, setDraftText] = useState("");
+  /** Extension id → display name, so a group can be headed by the extension's
+   * NAME rather than its id. Fetched once; an id with no card (the extension
+   * was removed mid-session) simply heads its own group. */
+  const [extNames, setExtNames] = useState<Record<string, string>>({});
 
   const prompts = getSetting("post_process_prompts") || [];
   const selectedPromptId = getSetting("post_process_selected_prompt_id") || "";
   const selectedPrompt =
     prompts.find((prompt) => prompt.id === selectedPromptId) || null;
+  const selectedOwner = promptOwner(selectedPromptId);
+  const ownerName = selectedOwner
+    ? (extNames[selectedOwner] ?? selectedOwner)
+    : null;
+
+  useEffect(() => {
+    let alive = true;
+    void invoke<{ id: string; name: string }[]>("extensions_overview")
+      .then(
+        (cards) =>
+          alive &&
+          setExtNames(Object.fromEntries(cards.map((c) => [c.id, c.name]))),
+      )
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /** The user's own prompts first, then one group per extension. Within a group
+   * the pack's declared order is preserved, which is the order its author meant
+   * them to be read in. */
+  const promptOptions = useMemo(() => {
+    const mine = prompts.filter((p) => !promptOwner(p.id));
+    const theirs = prompts.filter((p) => promptOwner(p.id));
+    const owners = [...new Set(theirs.map((p) => promptOwner(p.id)!))].sort(
+      (a, b) => (extNames[a] ?? a).localeCompare(extNames[b] ?? b),
+    );
+    return [
+      ...mine.map((p) => ({
+        value: p.id,
+        label: p.name,
+        group: t("settings.postProcessing.prompts.yourPrompts"),
+      })),
+      ...owners.flatMap((owner) =>
+        theirs
+          .filter((p) => promptOwner(p.id) === owner)
+          .map((p) => ({
+            value: p.id,
+            label: p.name,
+            group: extNames[owner] ?? owner,
+          })),
+      ),
+    ];
+  }, [prompts, extNames, t]);
 
   useEffect(() => {
     if (isCreating) return;
@@ -140,10 +208,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
         <div className="flex gap-2 min-w-0">
           <Dropdown
             selectedValue={selectedPromptId || null}
-            options={prompts.map((p) => ({
-              value: p.id,
-              label: p.name,
-            }))}
+            options={promptOptions}
             onSelect={(value) => handlePromptSelect(value)}
             placeholder={
               prompts.length === 0
@@ -175,6 +240,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
               <Input
                 type="text"
                 value={draftName}
+                readOnly={!!ownerName}
                 onChange={(e) => setDraftName(e.target.value)}
                 placeholder={t(
                   "settings.postProcessing.prompts.promptLabelPlaceholder",
@@ -189,6 +255,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
               </label>
               <Textarea
                 value={draftText}
+                readOnly={!!ownerName}
                 onChange={(e) => setDraftText(e.target.value)}
                 placeholder={t(
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
@@ -202,24 +269,37 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex gap-2 pt-2">
-              <Button
-                onClick={handleUpdatePrompt}
-                variant="primary"
-                size="md"
-                disabled={!draftName.trim() || !draftText.trim() || !isDirty}
-              >
-                {t("settings.postProcessing.prompts.updatePrompt")}
-              </Button>
-              <Button
-                onClick={() => handleDeletePrompt(selectedPromptId)}
-                variant="secondary"
-                size="md"
-                disabled={!selectedPromptId || prompts.length <= 1}
-              >
-                {t("settings.postProcessing.prompts.deletePrompt")}
-              </Button>
-            </div>
+            {/* A prompt that came with an extension is READ-ONLY here. It lives
+                in that pack's manifest, so an edit would be silently reverted
+                the next time the extension was re-applied and a delete would
+                simply come back — offering either would be a lie. You remove it
+                by turning the extension off, which is where it came from. */}
+            {ownerName ? (
+              <p className="pt-2 text-xs text-ink-faint">
+                {t("settings.postProcessing.prompts.fromExtension", {
+                  name: ownerName,
+                })}
+              </p>
+            ) : (
+              <div className="flex gap-2 pt-2">
+                <Button
+                  onClick={handleUpdatePrompt}
+                  variant="primary"
+                  size="md"
+                  disabled={!draftName.trim() || !draftText.trim() || !isDirty}
+                >
+                  {t("settings.postProcessing.prompts.updatePrompt")}
+                </Button>
+                <Button
+                  onClick={() => handleDeletePrompt(selectedPromptId)}
+                  variant="secondary"
+                  size="md"
+                  disabled={!selectedPromptId || prompts.length <= 1}
+                >
+                  {t("settings.postProcessing.prompts.deletePrompt")}
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

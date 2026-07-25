@@ -5,6 +5,11 @@ export interface DropdownOption {
   value: string;
   label: string;
   disabled?: boolean;
+  /** Optional heading this option sits under. Options carrying the same group
+   * are listed together beneath one label, in the order they arrive; options
+   * with no group are listed plainly. When NO option has a group the list is
+   * rendered exactly as before, so existing dropdowns are untouched. */
+  group?: string;
 }
 
 interface DropdownProps {
@@ -95,20 +100,31 @@ export const Dropdown: React.FC<DropdownProps> = ({
               {t("common.noOptionsFound")}
             </div>
           ) : (
-            options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className={`w-full px-2 py-1 text-sm text-start hover:bg-[var(--accent-tint)] transition-colors duration-150 ${
-                  selectedValue === option.value
-                    ? "bg-[var(--accent-tint)] text-accent font-semibold"
-                    : ""
-                } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                onClick={() => handleSelect(option.value)}
-                disabled={option.disabled}
-              >
-                <span className="whitespace-normal break-words">{option.label}</span>
-              </button>
+            options.map((option, i) => (
+              <React.Fragment key={option.value}>
+                {/* A heading whenever the group changes — so a list assembled
+                    from several sources says which is which, without every
+                    entry having to repeat it in its own label. */}
+                {option.group && option.group !== options[i - 1]?.group && (
+                  <div className="px-2 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
+                    {option.group}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className={`w-full px-2 py-1 text-sm text-start hover:bg-[var(--accent-tint)] transition-colors duration-150 ${
+                    selectedValue === option.value
+                      ? "bg-[var(--accent-tint)] text-accent font-semibold"
+                      : ""
+                  } ${option.disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                  onClick={() => handleSelect(option.value)}
+                  disabled={option.disabled}
+                >
+                  <span className="whitespace-normal break-words">
+                    {option.label}
+                  </span>
+                </button>
+              </React.Fragment>
             ))
           )}
         </div>
