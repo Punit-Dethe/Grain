@@ -604,6 +604,55 @@ pub fn store_entry(app: AppHandle, id: String) -> Result<Option<StoreEntry>, Str
         .next())
 }
 
+/// One installed extension's cover reference.
+#[derive(Clone, Serialize, specta::Type)]
+pub struct StoreCover {
+    pub id: String,
+    pub sha256: String,
+    pub kind: String,
+}
+
+/// Cover references for a set of ids, from the CACHED index in ONE parse.
+///
+/// The installed list shows each extension's picture, and asking `store_entry`
+/// per row would re-read and re-verify the whole catalogue once per extension.
+/// This reads it once, keeps only `(id, cover)`, and drops the rest — the list
+/// gets its images without the catalogue ever staying resident. Ids that are not
+/// in the catalogue, or have no media, are simply absent from the result.
+#[tauri::command]
+#[specta::specta]
+pub fn store_covers(app: AppHandle, ids: Vec<String>) -> Result<Vec<StoreCover>, String> {
+    let state = store_state(&app)?;
+    let roots = state.roots.read().unwrap().clone();
+    let loaded = load_cached_index(&state.cache_dir, &roots, None, now_unix()).or_else(|_| {
+        trust::verify_index(
+            &roots,
+            trust::SEED_INDEX.as_bytes(),
+            trust::SEED_INDEX_SIG,
+            None,
+            now_unix(),
+            true,
+        )
+    });
+    let Ok((index, _)) = loaded else {
+        return Ok(Vec::new());
+    };
+    let mut covers: Vec<StoreCover> = Vec::new();
+    for id in ids {
+        // Newest published entry wins, matching `store_entry`.
+        if let Some(entry) = index.entries.iter().filter(|e| e.id == id).next_back() {
+            if let Some(m) = entry.media.first() {
+                covers.push(StoreCover {
+                    id,
+                    sha256: m.sha256.clone(),
+                    kind: m.kind.clone(),
+                });
+            }
+        }
+    }
+    Ok(covers)
+}
+
 /// A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
 /// when a detail opens — and integrity-checked against its hash. WEBP or GIF.
 #[tauri::command]

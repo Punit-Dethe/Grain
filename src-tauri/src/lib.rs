@@ -838,6 +838,7 @@ pub fn run(cli_args: CliArgs) {
             grain_store::store_media,
             grain_store::store_readme,
             grain_store::store_entry,
+            grain_store::store_covers,
             grain_store::store_install,
             grain_store::store_revocation_banners,
             grain_commands::extension_set_enabled,
@@ -1154,7 +1155,7 @@ pub fn run(cli_args: CliArgs) {
                 app.manage(std::sync::Arc::new(grain_store::StoreState::init(&data_dir)));
                 // [GRAIN] Seed built-in scripted packs (auto-categorize dogfood),
                 // now that AppContext + the registry are managed. Default off.
-                extension_host::seed_builtin_packs(&app.handle());
+                extension_host::reconcile_builtin_packs(&app.handle());
                 // [GRAIN] The Agent's reply-surface slot is the one occupancy
                 // whose truth lives in settings, not the registry (SPEC §10.2).
                 grain_commands::sync_agent_reply_surface_slot(&app.handle());

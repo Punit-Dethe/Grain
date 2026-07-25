@@ -1550,63 +1550,42 @@ pub fn reload_dev_extension(
     })
 }
 
-// ── Built-in scripted packs (the dogfood) ────────────────────────────────────
+// ── Retired built-ins ───────────────────────────────────────────────────────
 
-/// The auto-categorization built-in (guide Step 8) — the first scripted
-/// built-in, proving the runtime end to end: worker spawn on an event, the
-/// injected activation payload, `llm` + `storage` host calls, capability
-/// enforcement, and the idle reaper.
-const AUTO_CATEGORIZE_ID: &str = "grain.auto-categorize";
-
-/// Its worker source. On each finalized transcript it asks the user's active LLM
-/// for a one-word category and appends the note to that category's list in the
-/// extension's OWN storage (no path to app data). Authored as a raw string so
-/// the JS reads naturally.
-const AUTO_CATEGORIZE_ENTRY: &str = r#"grain.onEvent(async function (ev) {
-  var payload = ev && ev.TranscriptionComplete;
-  if (!payload || !payload.text) return;
-  var text = String(payload.text);
-  // Declared settings (SPEC 4.1): the host renders these, validates them on the
-  // way in, and hands back values this code can trust — no defaulting here
-  // beyond the case where the read itself fails.
-  var minLength = 8;
-  var keepPer = 200;
-  try {
-    var a = await grain.settings.get("min_length");
-    var b = await grain.settings.get("max_per_category");
-    if (typeof a === "number") minLength = a;
-    if (typeof b === "number") keepPer = b;
-  } catch (e) {
-    // No `settings` grant (an older install): the declared defaults still apply.
-  }
-  if (text.trim().length < minLength) return;
-  var prompt =
-    "Classify this dictated note under ONE short lowercase category label " +
-    "(1-2 words, e.g. work, personal, ideas, todo, journal). " +
-    "Reply with ONLY the label, nothing else.\n\nNote:\n" + text;
-  try {
-    var label = (await grain.llm.complete(prompt) || "").trim().toLowerCase();
-    label = label.split("\n")[0].replace(/[^a-z0-9 _-]/g, "").trim();
-    if (!label) return;
-    var key = "category:" + label;
-    var existing = await grain.storage.get(key);
-    if (!Array.isArray(existing)) existing = [];
-    existing.push({ at: Date.now(), text: text.slice(0, 280) });
-    if (existing.length > keepPer) existing = existing.slice(-keepPer);
-    await grain.storage.set(key, existing);
-    await grain.log.info("auto-categorized into '" + label + "'");
-  } catch (e) {
-    await grain.log.warn("auto-categorize failed: " + ((e && e.message) || e));
-  }
-});
-"#;
-
-/// Seed Grain's built-in scripted packs at startup. Idempotent: the pack FILE is
-/// (re)written so shipped code upgrades reach existing users, while the registry
-/// RECORD is installed only when absent so the user's enabled/toggle state
-/// survives (SPEC §6, §10.1). Built-ins default **off** and, being first-party,
-/// arrive pre-granted their declared capabilities (no permission sheet).
+/// Packs Grain used to seed into every install and no longer ships.
 ///
+/// `grain.auto-categorize` was a dogfood sample proving the scripted runtime end
+/// to end — worker spawn on an event, `llm` + `storage` host calls, capability
+/// enforcement, the idle reaper. It did its job, but it was seeded on every
+/// launch, so it sat under "Installed · not active" in everyone's list forever,
+/// as a demo nobody asked for. (Unrelated to Grain Space's auto-filing, which is
+/// a real feature and stays.)
+const RETIRED_BUILTINS: &[&str] = &["grain.auto-categorize"];
+
+/// Take retired built-ins off an existing install: the record, the pack file on
+/// disk, and anything the pack stored. Idempotent — after the first boot there
+/// is nothing left to find, and a fresh install never had them.
+fn retire_builtin_packs(app: &AppHandle) {
+    let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
+        return;
+    };
+    for id in RETIRED_BUILTINS {
+        if reg.dev_path(id).is_some() {
+            continue; // a live dev project owns the id — leave it alone
+        }
+        let known = reg.is_installed(id);
+        let _ = reg.uninstall(id);
+        if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
+            let dir = ctx.data_dir.join("extensions");
+            let _ = std::fs::remove_file(dir.join(format!("{id}.grainpack.json")));
+            let _ = crate::host_api::ExtStorage::new(&ctx.data_dir, id).purge();
+        }
+        if known {
+            log::info!("[GRAIN] retired built-in '{id}' removed");
+        }
+    }
+}
+
 /// [GRAIN] Phase 5C migration: the Agent centre layout used to be a synthesised
 /// record with no pack file on disk. Now it is a real external pack. An existing
 /// install still carries the stale synthesised record, which renders as an
@@ -1629,132 +1608,16 @@ pub fn migrate_externalized_builtins(app: &AppHandle) {
     }
 }
 
-/// Call once after `AppContext` + `ExtensionsRegistry` are managed.
-pub fn seed_builtin_packs(app: &AppHandle) {
+/// Bring the installed set in line with what this build actually ships. Called
+/// once after `AppContext` + `ExtensionsRegistry` are managed.
+///
+/// Grain used to SEED scripted packs from inside the binary here. It no longer
+/// does: first-party extensions are real packs in the catalogue, installed the
+/// same way anyone else's are, so this only has to clean up after the ones that
+/// were seeded into existing installs.
+pub fn reconcile_builtin_packs(app: &AppHandle) {
     migrate_externalized_builtins(app);
-    seed_pack(
-        app,
-        AUTO_CATEGORIZE_ID,
-        "Auto-Categorize",
-        "Files each dictation under an AI-chosen category, kept in the extension's own storage.",
-        &["storage", "settings", "llm", "events:transcripts"],
-        &["onEvent:TranscriptionComplete"],
-        AUTO_CATEGORIZE_ENTRY,
-        // [GRAIN] The first dogfood of the schema settings render (SPEC §4.1).
-        // Anchored to the dictation pipeline, so these controls appear beside
-        // post-processing — the feature they extend — rather than in a tab of
-        // their own. The worker reads these same keys back over `settings.get`.
-        json!([
-            {
-                "key": "min_length",
-                "label": "Minimum note length",
-                "description": "Shorter dictations are left uncategorized.",
-                "kind": "number",
-                "min": 1,
-                "max": 500,
-                "default": 8,
-                "anchor": "dictation.pipeline.after",
-                "order": 0
-            },
-            {
-                "key": "max_per_category",
-                "label": "Notes kept per category",
-                "description": "The oldest are dropped once a category is full.",
-                "kind": "slider",
-                "min": 20.0,
-                "max": 1000.0,
-                "step": 20.0,
-                "default": 200,
-                "anchor": "dictation.pipeline.after",
-                "order": 1
-            }
-        ]),
-    );
-}
-
-#[allow(clippy::too_many_arguments)]
-fn seed_pack(
-    app: &AppHandle,
-    id: &str,
-    name: &str,
-    description: &str,
-    permissions: &[&str],
-    activation: &[&str],
-    entry_source: &str,
-    settings: serde_json::Value,
-) {
-    let ctx = match app.try_state::<Arc<AppContext>>() {
-        Some(c) => c,
-        None => return,
-    };
-    let dir = ctx.data_dir.join("extensions");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let pack = json!({
-        "manifest": {
-            "id": id,
-            "name": name,
-            "version": env!("CARGO_PKG_VERSION"),
-            "grain_api": grain_sdk::GRAIN_API_VERSION,
-            "tier": "scripted",
-            "description": description,
-            "permissions": permissions,
-            "activation": activation,
-            "entry_source": entry_source,
-            "contributes": { "settings": settings },
-        },
-        "payloads": {}
-    });
-    if let Ok(new_content) = serde_json::to_string_pretty(&pack) {
-        let path = dir.join(format!("{id}.grainpack.json"));
-        // Write only when changed — ship upgrades without a redundant write.
-        let changed = std::fs::read_to_string(&path)
-            .map(|old| old != new_content)
-            .unwrap_or(true);
-        if changed {
-            let _ = std::fs::write(&path, new_content);
-        }
-    }
-    // Register DISABLED if absent (SPEC §8: built-in scripted packs default off).
-    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        if let Some(mut rec) = reg.record(id) {
-            // A shipped built-in that gained a capability in this release: top
-            // up its grants so the upgrade doesn't leave it half-working.
-            //
-            // Safe ONLY because `seed_pack` is called exclusively for
-            // first-party packs whose permissions ship inside Grain itself and
-            // were pre-granted at install. A third-party pack that widens its
-            // permissions goes through the permission diff instead (SPEC §6) —
-            // never through here.
-            debug_assert!(id.starts_with("grain."));
-            let added = permissions
-                .iter()
-                .filter(|p| !rec.granted.iter().any(|g| g == *p))
-                .map(|p| p.to_string())
-                .collect::<Vec<_>>();
-            if !added.is_empty() && id.starts_with("grain.") {
-                log::info!("[GRAIN] built-in '{id}' gained capabilities: {added:?}");
-                rec.granted.extend(added);
-                let _ = reg.install(rec);
-            }
-        }
-        if !reg.is_installed(id) {
-            let _ = reg.install(grain_core::extensions::ExtensionRecord {
-                id: id.to_string(),
-                enabled: false,
-                toggle_seq: 0,
-                installed_version: env!("CARGO_PKG_VERSION").to_string(),
-                // First-party: pre-grant its declared caps so enabling just works.
-                granted: permissions.iter().map(|s| s.to_string()).collect(),
-                slots: Vec::new(),
-                variant_slots: Vec::new(),
-                dev: None,
-                // First-party built-ins seeded from inside Grain are `core`.
-                trust: grain_sdk::Trust::Core,
-            });
-        }
-    }
+    retire_builtin_packs(app);
 }
 
 #[cfg(test)]

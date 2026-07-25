@@ -19,6 +19,7 @@ import {
   type SettingsSection,
 } from "./ExtensionSettings";
 import { ExtensionDetail, Cover, type DetailMeta } from "./ExtensionDetail";
+import { useSettings } from "../../../hooks/useSettings";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
@@ -132,6 +133,49 @@ function sortCards(cards: ExtensionCard[]): ExtensionCard[] {
 const fmtStars = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
 
+/** [GRAIN] The extension's cover, thumbnail-sized, at the head of its row. The
+ * picture is how you actually recognise an extension in a list — a generic
+ * package glyph on every row told you only that they were all extensions. Falls
+ * back to that glyph for a locally imported pack with no catalogue entry. */
+const RowCover: React.FC<{
+  media: StoreMedia | undefined;
+  name: string;
+  dim: boolean;
+}> = ({ media, name, dim }) => {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!media) {
+      setUrl(null);
+      return;
+    }
+    let alive = true;
+    invoke<string>("store_media", { sha256: media.sha256, kind: media.kind })
+      .then((u) => alive && setUrl(u))
+      .catch(() => alive && setUrl(null));
+    return () => {
+      alive = false;
+    };
+  }, [media?.sha256, media?.kind]);
+
+  return (
+    <div
+      className={`w-[72px] h-[46px] shrink-0 rounded-lg overflow-hidden border border-line bg-paper-sunken grid place-items-center transition-opacity ${
+        dim ? "opacity-45" : ""
+      }`}
+    >
+      {url ? (
+        <img
+          src={url}
+          alt={`${name} cover`}
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <Package width={15} height={15} className="text-ink-faint/60" />
+      )}
+    </div>
+  );
+};
+
 /** [GRAIN] Extensions → Overview (SPEC §5.1): every installed extension,
  * enabled and disabled alike — name (jumps to wherever its settings render),
  * gear (its detail page), inline toggle, repository link, and the store.
@@ -148,6 +192,13 @@ export const OverviewSection: React.FC<{
   onDetailOpenChange?: (open: boolean) => void;
 }> = ({ onJump, onDetailOpenChange }) => {
   const [cards, setCards] = useState<ExtensionCard[]>([]);
+  /** Enabling an extension can rewrite settings the rest of the app is already
+   * showing — a prompt pack's entries land in the post-processing list. Those
+   * writes happen in Rust and the settings store only listens for
+   * `model-state-changed`, so without this the new prompts do not appear until
+   * the app is restarted. Anything that installs, enables, disables or removes
+   * an extension re-reads settings afterwards. */
+  const { refreshSettings } = useSettings();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** The extension held at first enable, awaiting the user's approval. */
@@ -164,6 +215,10 @@ export const OverviewSection: React.FC<{
   /** Enabled extensions' declared settings, so Overview knows which cards have
    * a section of their own to open. */
   const [sections, setSections] = useState<SettingsSection[]>([]);
+  /** Cover reference per installed id, read from the CACHED index in a single
+   * parse and dropped with the component — the catalogue never stays resident
+   * behind the list (SPEC §5.3), it just lends it its pictures. */
+  const [covers, setCovers] = useState<Record<string, StoreMedia>>({});
   /** The extension whose own settings section is open, if any. */
   const [detail, setDetail] = useState<string | null>(null);
   /** Catalogue metadata for the open detail (cover/README/installs). Fetched
@@ -186,10 +241,11 @@ export const OverviewSection: React.FC<{
       setCards(sortCards(next));
       setSections(secs);
       setError(null);
+      await refreshSettings();
     } catch (e) {
       setError(String(e));
     }
-  }, []);
+  }, [refreshSettings]);
 
   /** The anchor an extension's settings actually render at, if any — read from
    * its declared rows rather than a hard-coded id map, so a new extension that
@@ -216,6 +272,29 @@ export const OverviewSection: React.FC<{
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Covers for whatever is installed, in one call, whenever the set changes.
+  const cardIds = cards.map((c) => c.id).join(",");
+  useEffect(() => {
+    if (!cardIds) return;
+    let alive = true;
+    invoke<{ id: string; sha256: string; kind: string }[]>("store_covers", {
+      ids: cardIds.split(","),
+    })
+      .then(
+        (list) =>
+          alive &&
+          setCovers(
+            Object.fromEntries(
+              list.map((c) => [c.id, { sha256: c.sha256, kind: c.kind }]),
+            ),
+          ),
+      )
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [cardIds]);
 
   // Tell the hub when a detail page is open so it can drop its title, tab bar
   // and import button: inside an extension you are on THAT page, and the hub's
@@ -516,19 +595,22 @@ export const OverviewSection: React.FC<{
                 <span className="flex-1 border-t border-line" />
               </div>
             )}
-            <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
+            {/* Each extension is its own card with air around it, rather than a
+                row in one undivided slab. A list of separate things should look
+                like separate things, and the height gives the picture room —
+                which is what you actually recognise an extension by. */}
+            <div className="space-y-2">
               {group.items.map((card) => (
                 <div
                   key={card.id}
-                  className="flex items-center gap-3 px-4 py-3 group"
-                  title={card.description}
+                  className="flex items-center gap-3.5 px-3 py-3 rounded-xl border border-line bg-paper-raised hover:border-ink-faint/40 transition-colors group"
                 >
-                  <Package
-                    width={15}
-                    height={15}
-                    className={card.enabled ? "text-accent" : "text-ink-faint"}
+                  <RowCover
+                    media={covers[card.id]}
+                    name={card.name}
+                    dim={!card.enabled}
                   />
-                  <div className="flex-1 min-w-0">
+                  <div className="flex-1 min-w-0 pe-4">
                     {/* Name and gear go to DIFFERENT places (SPEC §5.1). The
                         name means "take me to this extension's settings" — and
                         for one anchored at a feature (Voice Actions below
@@ -547,7 +629,13 @@ export const OverviewSection: React.FC<{
                     >
                       {card.name}
                     </button>
-                    <div className="text-xs text-ink-faint truncate">
+                    {/* Stops short of the controls instead of running under
+                        them — a description that reaches the right edge reads
+                        as clipped rather than summarised. */}
+                    <div
+                      className="mt-0.5 text-xs text-ink-faint line-clamp-2 max-w-[46ch]"
+                      title={card.description}
+                    >
                       {card.description}
                     </div>
                     {card.overrides_installed && (
@@ -589,10 +677,14 @@ export const OverviewSection: React.FC<{
                   >
                     <Sliders width={13} height={13} />
                   </button>
-                  {/* Uninstall — only real installed packs (not the three
-                      settings-backed built-ins, and not load-unpacked dev
-                      projects, which unload from the Developer panel). */}
-                  {card.tier !== "builtin" && card.trust !== "dev" && (
+                  {/* Uninstall — everything except load-unpacked dev projects,
+                      which unload from the Developer panel instead. A builtin
+                      like Grain Space uninstalls too: its implementation is
+                      compiled in, but the INSTALL is a real registry record, so
+                      removing it switches the feature off and takes the row out
+                      of the list. Its notes are not in the extension's storage,
+                      so they survive; the store puts it back. */}
+                  {card.trust !== "dev" && (
                     <button
                       type="button"
                       disabled={busy === card.id}
