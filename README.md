@@ -16,55 +16,47 @@ Grain begins with a simple job: press a shortcut, speak, and put the result in t
 
 Its transcription foundation comes from [Handy](https://github.com/cjpais/handy). Grain builds on that foundation with a strict rule: **a capability should exist only while you are using it.**
 
-## Dictation without the setup ritual
+## Features
 
-Most dictation tools make you decide everything before you speak: real-time or batch, which model, which prompt, whether AI should touch the result. Changing your mind means opening Settings, stopping the recording, reconfiguring, then starting again.
-
-Grain is designed for the moment your mind changes.
+Most dictation tools make you decide everything before you speak: real-time or batch, which model, which prompt, whether AI should touch the result. Grain is designed for the moment your mind changes.
 
 ### Three modes, always one shortcut away
 
-**What it is:** Batch, Flow, and real-time ASR each have their own configurable shortcut. Use local Whisper or Parakeet models, or an OpenAI-compatible speech-to-text provider.
+Batch records first and transcribes after; Flow uses a rolling window for responsive long-form dictation; real-time ASR shows words as you speak. Each has its own configurable shortcut and can use local Whisper or Parakeet models, or an OpenAI-compatible speech-to-text provider.
 
-**Why it exists:** “Fast” and “perfectly polished” are different needs. You should not have to choose one workflow forever because switching means a settings detour.
-
-**In real life:** Use Flow for a long stream of thoughts, ASR when you need immediate words on screen, and Batch for a short message where final punctuation matters—all without interrupting the work in front of you.
+*You are thinking through a long design note, so you use Flow. You need to watch every word while filling a form, so you use ASR. You are sending one careful message, so you choose Batch for its final punctuation—without opening Settings in between.*
 
 ### Switch the prompt while you are still talking
 
-**What it is:** Change the active processing prompt mid-dictation with a shortcut.
+Change the active processing prompt mid-dictation with a shortcut.
 
-**Why it exists:** A thought can start as a rough note and become an email, a bug report, or code documentation halfway through. Stopping just to change a prompt breaks the thought you were trying to capture.
-
-**In real life:** Start explaining a bug in your own words. When you realise this needs to be a GitHub issue, switch to your issue-template prompt and keep speaking.
+*You start explaining a bug in your own words. Halfway through, you realise this should be a GitHub issue. Switch to your issue-template prompt and keep talking; there is no stop, settings change, or second recording.*
 
 ### Decide on AI at the end
 
-**What it is:** Start with any dictation mode, then choose AI post-processing only when you finish.
+Start in any dictation mode, then choose AI post-processing only when you finish.
 
-**Why it exists:** You do not always know whether a transcript needs rewriting until you see what you said. Grain removes the up-front commitment.
+*You dictate raw meeting notes. At the end, finish with the AI shortcut and turn them into a concise follow-up email with action items—without recording the same thought again.*
 
-**In real life:** Dictate a meeting note normally. At the end, finish with the AI shortcut and turn it into “a concise follow-up email with action items”—without recording it again.
+### Prompt Record
 
-### Say the instruction when the instruction occurs to you
+Speak a custom instruction during a session and Grain applies it to the text you have already dictated.
 
-**What it is:** Prompt Record lets you speak a custom instruction during a session. Grain uses it to process the text you have already dictated.
+*After dictating an outline, you say: “Turn this into a confident three-paragraph proposal for the client.” There is no copying text into another AI chat just to give that instruction.*
 
-**Why it exists:** Sometimes the right instruction is not a saved prompt; it arrives after you have worked through the thought. Copying text into another AI chat just to give that instruction is needless ceremony.
+### Agent and Quick Agent
 
-**In real life:** After dictating an outline, say: “turn this into a confident three-paragraph proposal for the client.” Grain processes the existing dictation with that instruction.
+Select text, give Grain an instruction by voice or typing, and use Quick Agent to replace it immediately. Expand into Agent for a proper back-and-forth conversation, or use Agent without a selection as a natural standalone chat.
 
-### An agent where the work already is
+*Highlight an awkward paragraph and say, “Make this clearer and less defensive.” Quick Agent places the revision where the original was. If that reveals a bigger question, expand it and continue the conversation with the same context.*
 
-**What it is:** Select text, give Grain an instruction by voice or typing, and use Quick Agent to replace it immediately. Expand into Agent when you need a real back-and-forth conversation; use it without a selection for a natural, standalone chat.
+### Snippets, App Modes, and Voice Actions
 
-**Why it exists:** Small text changes should not require opening a separate chatbot, pasting context, copying the reply back, and finding your place again.
+Snippets expand repeated text. App Modes apply instructions only in the app or site where they matter. Voice Actions can open a user-approved application or safe web link from a phrase.
 
-**In real life:** Highlight an awkward paragraph and say “make this clearer and less defensive.” Quick Agent puts the revision in place. If the first revision raises a bigger question, expand it and keep the conversation going.
+*Say “project dashboard” to open the dashboard, or dictate in your IDE and have only that app's mode format the result as code. In every other app, Grain leaves the transcript alone and makes no extra AI call.*
 
-### Small workflows that stay small
-
-Snippets save repeated text; Context-Aware Modes apply instructions only in the app or site where they matter; Voice Actions can open a user-approved app or safe web link from a phrase. A non-matching app mode makes no AI call. The Quick Panel keeps shortcuts, routes, prompts, providers, and history close when you actually need to adjust them.
+The Quick Panel keeps shortcuts, routes, prompts, providers, and history close when you need to adjust them.
 
 ## Why Grain is an extension platform
 
