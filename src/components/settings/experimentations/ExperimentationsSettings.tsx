@@ -87,6 +87,7 @@ const JUMP_TARGETS: Record<string, TabKey> = {
 export const ExperimentationsSettings: React.FC = () => {
   const [tab, setTab] = useState<TabKey>("overview");
   const [developerMode, setDeveloperMode] = useState(false);
+  const [developerBusy, setDeveloperBusy] = useState(false);
   /** An extension's own page is a PAGE, not a panel inside the hub — while one
    * is open the hub hides its title, tab bar and import button. */
   const [detailOpen, setDetailOpen] = useState(false);
@@ -108,6 +109,23 @@ export const ExperimentationsSettings: React.FC = () => {
   }, [developerMode, tab]);
 
   const tabs = developerMode ? [...TABS, DEVELOPER_TAB] : TABS;
+
+  /** Developer mode is a HEADER control, not a row in the list of things you
+   * installed — it is a property of Grain, and a full-width card explaining it
+   * sat above every user's extensions to be read once and then ignored. As an
+   * icon it stays one click away and costs a normal user nothing. */
+  const toggleDeveloperMode = async () => {
+    const next = !developerMode;
+    setDeveloperBusy(true);
+    try {
+      await invoke("extension_set_developer_mode", { enabled: next });
+      setDeveloperMode(next);
+    } catch {
+      // Leave the button where it was; the backend rejected the change.
+    } finally {
+      setDeveloperBusy(false);
+    }
+  };
 
   /** Jump to a tab by anchor or extension id. False = nowhere here to go. */
   const jumpTo = (target: string): boolean => {
@@ -154,6 +172,28 @@ export const ExperimentationsSettings: React.FC = () => {
           {SECTION_TITLE}
         </h1>
         <div className="flex items-center gap-2">
+          {/* On/off is carried by the button itself — filled means on. A
+              separate badge announcing the state of the control next to it is
+              the same fact twice. */}
+          <button
+            type="button"
+            aria-pressed={developerMode}
+            aria-label={DEVELOPER_MODE_LABEL}
+            title={
+              developerMode
+                ? `${DEVELOPER_MODE_LABEL} · on`
+                : DEVELOPER_MODE_LABEL
+            }
+            disabled={developerBusy}
+            onClick={() => void toggleDeveloperMode()}
+            className={`inline-flex items-center justify-center rounded-lg border p-1.5 transition-colors disabled:opacity-50 cursor-pointer ${
+              developerMode
+                ? "border-ink bg-ink text-paper"
+                : "border-line text-ink-faint hover:border-ink-faint hover:text-ink"
+            }`}
+          >
+            <Code2 width={13} height={13} />
+          </button>
           <button
             type="button"
             disabled={importBusy}
@@ -163,12 +203,6 @@ export const ExperimentationsSettings: React.FC = () => {
             <Upload width={13} height={13} />
             {importBusy ? "Importing…" : "Import pack"}
           </button>
-          {developerMode && (
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">
-              <Code2 width={12} height={12} />
-              {DEVELOPER_MODE_LABEL}
-            </div>
-          )}
         </div>
       </div>
 
@@ -227,7 +261,6 @@ export const ExperimentationsSettings: React.FC = () => {
         <OverviewSection
           key={overviewRevision}
           onJump={jumpTo}
-          onDeveloperModeChange={setDeveloperMode}
           onDetailOpenChange={setDetailOpen}
         />
       ) : tab === "snippets" ? (

@@ -126,15 +126,6 @@ const PANEL_BRIDGE = `<script>(function(){
     ro.observe(document.documentElement);
     if(document.body) ro.observe(document.body);
   }catch(e){ setInterval(postHeight, 500); }
-  // The HOST owns this frame's height (it grows to fit), and a card that also
-  // scrolled itself would show a scrollbar over content the page is already
-  // making room for. Theme likewise comes from Grain, not the OS: a sandboxed
-  // iframe's prefers-color-scheme follows the SYSTEM, so a card would render
-  // dark inside a light Grain whenever the two disagree.
-  window.addEventListener("message", function(ev){
-    var d=ev.data; if(!d||d.__graintheme!==1) return;
-    try{ document.documentElement.setAttribute("data-grain-theme", String(d.theme)); }catch(e){}
-  });
   window.grain={
     log:{info:function(m){return call("log.info",{msg:String(m)});},warn:function(m){return call("log.warn",{msg:String(m)});}},
     storage:{get:function(k){return call("storage.get",{key:k});},set:function(k,v){return call("storage.set",{key:k,value:v});},"delete":function(k){return call("storage.delete",{key:k});}},
@@ -146,14 +137,67 @@ const PANEL_BRIDGE = `<script>(function(){
     focusedApp:function(){return call("capture.app",{});},
     call:call
   };
-})();<\/script>
-<style>html,body{margin:0;padding:0;}html{overflow:hidden;}<\/style>`;
+})();<\/script>`;
 
 /** Cards grow to fit rather than scrolling inside (see the bridge). The ceiling
  * only exists so a runaway card can't produce a mile-long frame; the settings
  * page itself scrolls long content. */
 const PANEL_MIN_HEIGHT = 80;
 const PANEL_MAX_HEIGHT = 2400;
+
+/** Grain's live palette, handed to the card as `--grain-*` custom properties so
+ * an author can adopt the app's colours rather than guess at them. Read from the
+ * computed root each time a card mounts, so it cannot drift from the tokens the
+ * rest of the settings window is drawn with. */
+const HOST_TOKENS = [
+  "paper",
+  "paper-raised",
+  "paper-sunken",
+  "ink",
+  "ink-soft",
+  "ink-faint",
+  "accent",
+  "line",
+] as const;
+
+const hostPalette = (): string => {
+  const root = getComputedStyle(document.documentElement);
+  return HOST_TOKENS.map(
+    (t) => `--grain-${t}:${root.getPropertyValue(`--color-${t}`).trim()}`,
+  ).join(";");
+};
+
+/**
+ * Grain owns a card's colour scheme; the operating system does not.
+ *
+ * A sandboxed iframe has an opaque origin, so `prefers-color-scheme` inside it
+ * reports the SYSTEM setting — which is the wrong answer whenever the user's OS
+ * and their Grain theme disagree, and is exactly why a card rendered dark inside
+ * a light Grain. Rewriting the author's query to a condition that tracks GRAIN
+ * asks nothing of the author, so it corrects cards that are already installed as
+ * well as ones written against `[data-grain-theme]`.
+ *
+ * `(min-width:0)` always matches; `(max-width:0)` never does.
+ */
+export function alignColorScheme(src: string, dark: boolean): string {
+  const on = "(min-width:0)";
+  const off = "(max-width:0)";
+  return src
+    .replace(/\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, dark ? on : off)
+    .replace(/\(\s*prefers-color-scheme\s*:\s*light\s*\)/gi, dark ? off : on);
+}
+
+/** The full document handed to a card's frame: host bridge, then Grain's theme,
+ * then the author's markup. The theme is written into the document rather than
+ * messaged in after load, so a card can never paint in the wrong one first. */
+const panelDocument = (uiSource: string, dark: boolean): string =>
+  PANEL_BRIDGE +
+  `<style>:root{color-scheme:${dark ? "dark" : "light"};${hostPalette()}}` +
+  `html,body{margin:0;padding:0;}html{overflow:hidden;}</style>` +
+  `<script>document.documentElement.setAttribute("data-grain-theme","${
+    dark ? "dark" : "light"
+  }");<\/script>` +
+  alignColorScheme(uiSource, dark);
 
 /** [GRAIN] A custom card (SPEC §4.1 Level 3): the extension's own HTML in a
  * sandboxed iframe. Created on scroll-into-view and destroyed on unmount (the
@@ -216,34 +260,21 @@ const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
     return () => window.removeEventListener("message", onMsg);
   }, [mounted, extId]);
 
-  // Push GRAIN's theme into the frame, and re-push whenever it changes. The
-  // sandbox has an opaque origin, so the card's own `prefers-color-scheme` sees
-  // the operating system — which is the wrong answer whenever the user's OS and
-  // their Grain theme disagree.
-  useEffect(() => {
-    if (!mounted) return;
-    const theme = isSettingsDark ? "dark" : "light";
-    const send = () =>
-      frameRef.current?.contentWindow?.postMessage(
-        { __graintheme: 1, theme },
-        "*",
-      );
-    send();
-    // The frame may not have installed its listener yet on first mount.
-    const frame = frameRef.current;
-    frame?.addEventListener("load", send);
-    return () => frame?.removeEventListener("load", send);
-  }, [mounted, isSettingsDark]);
-
   return (
+    // No border, no radius, no background: the card draws its OWN surface, and
+    // wrapping that in a second one is what made an extension read as a foreign
+    // thing bolted into the page. The frame is given the width and gets out of
+    // the way. Changing theme rewrites the document (see `panelDocument`), which
+    // reloads the frame — correct by construction, and the only moment a card is
+    // ever rebuilt.
     <div ref={containerRef} className="w-full">
       {mounted && (
         <iframe
           ref={frameRef}
           title="Extension settings card"
           sandbox="allow-scripts"
-          srcDoc={PANEL_BRIDGE + uiSource}
-          className="w-full block rounded-xl border border-line bg-paper"
+          srcDoc={panelDocument(uiSource, isSettingsDark)}
+          className="w-full block border-0 bg-transparent"
           style={{ height }}
         />
       )}
@@ -758,45 +789,54 @@ export const ExtensionSettings: React.FC<{
 
   if (rows.length === 0) return null;
 
-  return (
-    <div className="space-y-2">
-      {error && (
-        <div className="px-3 py-2 rounded-lg bg-red-500/10 text-red-600 text-xs">
-          {error}
+  // A custom card renders EDGE TO EDGE, outside the settings container: it
+  // draws its own surface, and nesting that inside Grain's bordered row list
+  // stacked two frames around one piece of UI. So consecutive ordinary rows are
+  // grouped into a container and each panel is emitted bare between them, with
+  // the declared order preserved either way.
+  const groups: { panel: boolean; rows: SettingRow[] }[] = [];
+  for (const row of rows) {
+    const panel = row.kind === "panel";
+    const last = groups[groups.length - 1];
+    if (!panel && last && !last.panel) last.rows.push(row);
+    else groups.push({ panel, rows: [row] });
+  }
+
+  const renderPanel = (row: SettingRow) => (
+    <div key={row.key} className="space-y-2">
+      {(row.label || row.description) && (
+        <div className="px-1">
+          {row.label && (
+            <div className="text-sm font-medium text-ink">{row.label}</div>
+          )}
+          {row.description && (
+            <div className="text-xs text-ink-soft">{row.description}</div>
+          )}
         </div>
       )}
-      <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
-        {rows.map((row) =>
-          row.kind === "panel" ? (
-            // A custom card: the extension's own UI, full-width. An optional
-            // label/description sits above the sandboxed iframe.
-            <div key={row.key} className="px-4 py-3 space-y-2">
-              {(row.label || row.description) && (
-                <div>
-                  {row.label && (
-                    <div className="text-sm font-medium text-ink">
-                      {row.label}
-                    </div>
-                  )}
-                  {row.description && (
-                    <div className="text-xs text-ink-soft">
-                      {row.description}
-                    </div>
-                  )}
-                </div>
-              )}
-              {row.ui_source ? (
-                // `grain://<view-id>` is a HOST view — Grain's own React, not
-                // author markup — and only a builtin-tier pack can name one
-                // (enforced in grain-sdk at import, not here).
-                hostViewId(row.ui_source) ? (
-                  <HostView viewId={hostViewId(row.ui_source)!} />
-                ) : (
-                  <PanelCard extId={section.id} uiSource={row.ui_source} />
-                )
-              ) : null}
-            </div>
-          ) : row.kind === "list" ? (
+      {row.ui_source ? (
+        // `grain://<view-id>` is a HOST view — Grain's own React, not author
+        // markup — and only a builtin-tier pack can name one (enforced in
+        // grain-sdk at import, not here).
+        hostViewId(row.ui_source) ? (
+          <HostView viewId={hostViewId(row.ui_source)!} />
+        ) : (
+          <PanelCard extId={section.id} uiSource={row.ui_source} />
+        )
+      ) : null}
+    </div>
+  );
+
+  const renderGroup = (group: { panel: boolean; rows: SettingRow[] }, i: number) =>
+    group.panel ? (
+      renderPanel(group.rows[0])
+    ) : (
+      <div
+        key={`rows-${i}`}
+        className="rounded-xl border border-line bg-paper-raised divide-y divide-line"
+      >
+        {group.rows.map((row) =>
+          row.kind === "list" ? (
             // A list is a full-width editor: label on top, rows below.
             <div key={row.key} className="px-4 py-3 space-y-2">
               {(row.label || row.description || row.notice) && (
@@ -869,6 +909,16 @@ export const ExtensionSettings: React.FC<{
           ),
         )}
       </div>
+    );
+
+  return (
+    <div className="space-y-2">
+      {error && (
+        <div className="px-3 py-2 rounded-lg bg-red-500/10 text-red-600 text-xs">
+          {error}
+        </div>
+      )}
+      {groups.map(renderGroup)}
     </div>
   );
 };
@@ -958,9 +1008,32 @@ export const ExtensionAnchor: React.FC<{ anchor: Anchor }> = ({ anchor }) => {
 
   return (
     <div className="space-y-6">
+      {/* The heading is the SAME eyebrow the core groups above it use — same
+          mono face, same weight, same ink, same rule out to a patch jack. An
+          extension's settings are settings; typography that whispers next to
+          "SNIPPETS" made the section look half-loaded rather than deliberate.
+          What it adds is the EXT tag after a divider, which says where the
+          settings came from without demoting them. */}
       {anchored.map(({ s, rows }) => (
-        <div key={s.id} className="space-y-2">
-          <h3 className="px-1 text-sm font-medium text-ink-soft">{s.name}</h3>
+        <div key={s.id} className="space-y-2.5">
+          <div className="flex items-center gap-2.5 px-1">
+            <h3 className="font-mono text-[0.68rem] font-semibold text-ink uppercase tracking-[0.18em]">
+              {s.name}
+            </h3>
+            <span className="h-3 w-px bg-[var(--line-strong)] shrink-0" />
+            <span
+              title="Provided by an extension"
+              className="font-mono text-[0.6rem] font-semibold uppercase tracking-[0.14em] leading-none text-ink-soft bg-paper-sunken border border-line rounded-[3px] px-1.5 py-[3px] shrink-0"
+            >
+              EXT
+            </span>
+            <div className="flex-1 flex items-center gap-2 translate-y-[-1px]">
+              <span className="flex-1 border-t border-line" />
+              <span className="grid place-items-center w-2.5 h-2.5 rounded-full border border-[var(--line-strong)] bg-paper shrink-0">
+                <span className="w-1 h-1 rounded-full bg-ink-faint/60" />
+              </span>
+            </div>
+          </div>
           <ExtensionSettings section={s} rows={rows} />
         </div>
       ))}

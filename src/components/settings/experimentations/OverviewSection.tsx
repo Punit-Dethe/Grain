@@ -3,17 +3,13 @@ import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChevronLeft,
-  Code2,
   Trash2,
   Download,
-  ExternalLink,
-  FolderOpen,
   Package,
   Replace,
   ShieldCheck,
   Sliders,
   Store,
-  X,
 } from "lucide-react";
 import {
   ANCHORS,
@@ -116,11 +112,6 @@ interface ExtensionCard {
   has_detail: boolean;
 }
 
-interface ExtensionDeveloperStatus {
-  enabled: boolean;
-  loaded: Array<{ id: string; path: string }>;
-}
-
 const NEVER_TOGGLED = "18446744073709551615";
 
 /** Toggle-order sort (SPEC §4.4): enabled first, each group by the order the
@@ -153,16 +144,10 @@ export const OverviewSection: React.FC<{
    * Returns false when this build has nowhere to jump to, so the caller can fall
    * back to the extension's own page. */
   onJump: (target: string) => boolean;
-  onDeveloperModeChange: (enabled: boolean) => void;
   /** True while a detail page is open, so the hub can hide its own chrome. */
   onDetailOpenChange?: (open: boolean) => void;
-}> = ({ onJump, onDeveloperModeChange, onDetailOpenChange }) => {
+}> = ({ onJump, onDetailOpenChange }) => {
   const [cards, setCards] = useState<ExtensionCard[]>([]);
-  const [developer, setDeveloper] = useState<ExtensionDeveloperStatus>({
-    enabled: false,
-    loaded: [],
-  });
-  const [developerBusy, setDeveloperBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** The extension held at first enable, awaiting the user's approval. */
@@ -192,22 +177,19 @@ export const OverviewSection: React.FC<{
 
   const refresh = useCallback(async () => {
     try {
-      const [next, secs, dev] = await Promise.all([
+      const [next, secs] = await Promise.all([
         invoke<ExtensionCard[]>("extensions_overview"),
         invoke<SettingsSection[]>("extension_settings_sections").catch(
           () => [] as SettingsSection[],
         ),
-        invoke<ExtensionDeveloperStatus>("extension_developer_status"),
       ]);
       setCards(sortCards(next));
       setSections(secs);
-      setDeveloper(dev);
-      onDeveloperModeChange(dev.enabled);
       setError(null);
     } catch (e) {
       setError(String(e));
     }
-  }, [onDeveloperModeChange]);
+  }, []);
 
   /** The anchor an extension's settings actually render at, if any — read from
    * its declared rows rather than a hard-coded id map, so a new extension that
@@ -296,42 +278,6 @@ export const OverviewSection: React.FC<{
       setError(String(e));
     } finally {
       setBusy(null);
-    }
-  };
-
-  const setDeveloperMode = async (enabled: boolean) => {
-    setDeveloperBusy(true);
-    try {
-      await invoke("extension_set_developer_mode", { enabled });
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setDeveloperBusy(false);
-    }
-  };
-
-  const loadUnpacked = async () => {
-    setDeveloperBusy(true);
-    try {
-      await invoke<string | null>("extension_load_unpacked");
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setDeveloperBusy(false);
-    }
-  };
-
-  const unloadDev = async (id: string) => {
-    setDeveloperBusy(true);
-    try {
-      await invoke("extension_unload_dev", { id });
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setDeveloperBusy(false);
     }
   };
 
@@ -538,96 +484,11 @@ export const OverviewSection: React.FC<{
         </div>
       )}
 
-      <div className="rounded-xl border border-line bg-paper-raised">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <Code2 width={15} height={15} className="text-ink-faint" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-ink">Developer mode</div>
-            <div className="text-xs text-ink-faint">
-              Load extension code from a folder on this device.
-            </div>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={developer.enabled}
-            disabled={developerBusy}
-            onClick={() => void setDeveloperMode(!developer.enabled)}
-            className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
-              developer.enabled
-                ? "bg-accent"
-                : "bg-paper-sunken border border-line"
-            } ${developerBusy ? "opacity-50" : ""}`}
-          >
-            <span
-              className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
-                developer.enabled ? "left-[18px]" : "left-0.5"
-              }`}
-            />
-          </button>
-        </div>
-
-        {developer.enabled && (
-          <div className="border-t border-line px-4 py-3 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-medium text-ink">
-                  Load unpacked
-                </div>
-                <div className="text-[11px] text-ink-faint">
-                  Local code has the same permission checks as installed
-                  extensions.
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={developerBusy}
-                onClick={() => void loadUnpacked()}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs text-ink hover:border-ink-faint disabled:opacity-50 cursor-pointer"
-              >
-                <FolderOpen width={13} height={13} />
-                Choose folder…
-              </button>
-            </div>
-
-            {developer.loaded.length > 0 && (
-              <div className="space-y-1.5">
-                {developer.loaded.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="flex items-center gap-2 rounded-lg bg-paper-sunken px-2.5 py-2"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div className="text-xs font-medium text-ink truncate">
-                        {entry.id}
-                      </div>
-                      <div
-                        className="text-[10px] text-ink-faint truncate"
-                        title={entry.path}
-                      >
-                        {entry.path}
-                      </div>
-                    </div>
-                    <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                      dev
-                    </span>
-                    <button
-                      type="button"
-                      disabled={developerBusy}
-                      onClick={() => void unloadDev(entry.id)}
-                      className="text-ink-faint hover:text-ink disabled:opacity-50 cursor-pointer"
-                      aria-label={`Unload ${entry.id}`}
-                      title="Unload"
-                    >
-                      <X width={13} height={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      {/* NOTE: developer mode is NOT a row here. It is a property of Grain, not
+          something you installed, and as a full-width card it sat above every
+          user's extensions to be read once and ignored forever. It is now an
+          icon in the Extensions header, and loading unpacked code lives in the
+          Developer tab that icon reveals. */}
 
       {cards.length === 0 && !error && (
         <div className="rounded-xl border border-line bg-paper-raised px-4 py-6 text-sm text-ink-faint text-center">
@@ -679,8 +540,8 @@ export const OverviewSection: React.FC<{
                       onClick={() => {
                         const anchor = anchorTabOf(card.id);
                         if (anchor && onJump(anchor)) return;
-                        if (card.has_detail) setDetail(card.id);
-                        else onJump(card.id);
+                        if (onJump(card.id)) return;
+                        setDetail(card.id);
                       }}
                       className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
                     >
@@ -707,29 +568,27 @@ export const OverviewSection: React.FC<{
                   {/* NOTE: no tier/version chip. "SCRIPTED · V1.0.0" is
                       packaging trivia on a list whose job is "what do I have,
                       and is it on" — it lives on the detail page, where the
-                      question is actually about the extension. */}
-                  {card.has_detail && (
-                    <button
-                      type="button"
-                      onClick={() => setDetail(card.id)}
-                      className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
-                      aria-label={`About ${card.name}`}
-                      title="About this extension"
-                    >
-                      <Sliders width={13} height={13} />
-                    </button>
-                  )}
-                  {card.repository && (
-                    <a
-                      href={card.repository}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-ink-faint hover:text-ink transition-colors"
-                      aria-label="Repository"
-                    >
-                      <ExternalLink width={13} height={13} />
-                    </a>
-                  )}
+                      question is actually about the extension.
+
+                      The gear is unconditional. It used to appear only when an
+                      extension declared settings or shortcuts, which left a
+                      pack like Agent center layout — one that contributes a
+                      surface and nothing else — with no way in at all, and no
+                      way to read what it is. Every installed extension has an
+                      identity and a README to show, so every row opens.
+
+                      Its repository is NOT here: it is one line down on that
+                      page, and a link out of the app is a strange thing to
+                      offer from a list whose job is "what do I have". */}
+                  <button
+                    type="button"
+                    onClick={() => setDetail(card.id)}
+                    className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
+                    aria-label={`About ${card.name}`}
+                    title="About this extension"
+                  >
+                    <Sliders width={13} height={13} />
+                  </button>
                   {/* Uninstall — only real installed packs (not the three
                       settings-backed built-ins, and not load-unpacked dev
                       projects, which unload from the Developer panel). */}
@@ -852,20 +711,19 @@ const StoreSlideOver: React.FC<{
   const [installing, setInstalling] = useState<string | null>(null);
   /** The store entry whose detail page is open (null = the grid). */
   const [opened, setOpened] = useState<string | null>(null);
-  // Measured position: fill everything right of the sidebar and below the
-  // titlebar, read from the live DOM so it survives UI scaling and never
-  // hard-codes the sidebar width.
-  const [box, setBox] = useState<{ left: number; top: number }>({
-    left: 240,
-    top: 36,
-  });
+  /** How far down the window content starts — everything below the titlebar is
+   * ours. Browsing a catalogue is a MODE, not a panel beside the settings you
+   * were reading: it takes the whole window (the sidebar included) the way the
+   * Quick Panel does, and "All extensions" puts you back exactly where you were.
+   * Measured from the live DOM so it survives UI scaling. */
+  const [top, setTop] = useState(36);
 
   useEffect(() => {
     const measure = () => {
       const bar = document
         .getElementById("grain-sidebar")
         ?.getBoundingClientRect();
-      setBox({ left: bar ? bar.right : 240, top: bar ? bar.top : 36 });
+      setTop(bar ? bar.top : 36);
     };
     measure();
     window.addEventListener("resize", measure);
@@ -942,12 +800,12 @@ const StoreSlideOver: React.FC<{
     : "";
 
   return createPortal(
-    // [GRAIN] Portaled to <body> and positioned from the MEASURED sidebar edge,
-    // so it fills everything right of the sidebar / below the titlebar without a
-    // hard-coded offset and regardless of the app's UI-scale transform.
+    // [GRAIN] Portaled to <body> and pinned to the whole window below the
+    // MEASURED titlebar, so the catalogue gets the full width to lay out in
+    // regardless of the app's UI-scale transform.
     <div
-      className="fixed right-0 bottom-0 z-40 bg-paper flex flex-col"
-      style={{ left: box.left, top: box.top }}
+      className="fixed left-0 right-0 bottom-0 z-40 bg-paper flex flex-col"
+      style={{ top }}
       role="dialog"
       aria-modal="true"
       aria-label="Extension store"
@@ -1042,7 +900,10 @@ const StoreSlideOver: React.FC<{
             </p>
           </div>
         )}
-        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+        {/* The full window buys another column before the cards get wide enough
+            to look stretched; the max-width stops the grid running away on a
+            very wide display. */}
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 max-w-[1600px] mx-auto">
           {entries.map((e) => {
             const badge = TRUST_BADGE[e.trust] ?? TRUST_BADGE.dev;
             const revoked = e.revocation === "revoked";
