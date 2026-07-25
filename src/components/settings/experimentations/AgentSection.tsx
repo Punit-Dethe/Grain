@@ -8,7 +8,6 @@ import type {
 import { useSettings } from "../../../hooks/useSettings";
 import { Dropdown } from "../../ui/Dropdown";
 import { SettingContainer } from "../../ui/SettingContainer";
-import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { ShortcutInput } from "../ShortcutInput";
 
@@ -24,15 +23,20 @@ const CONTEXT_OPTIONS: { value: AgentContextMode; label: string }[] = [
   { value: "full", label: "Full field text" },
 ];
 
-const POSITION_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
+const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
   { value: "side", label: "Side card" },
   { value: "center", label: "Center panel (beta)" },
 ];
 
-/** [GRAIN] Agent settings, consolidated into two groups so single controls no
- * longer each get their own heading: Replies (auto-copy, the follow-up
- * shortcut, Quick Agent) and Input & context (type-to-expand + what the Agent
- * reads from the focused field at summon). All copy lives in per-row "i" hints. */
+/** [GRAIN] Agent settings — the rows BELOW the feature's own switch, rendered
+ * inside its panel (see [`FeaturePanel`]) as one ungrouped list.
+ *
+ * There are no sub-headings. Six controls split across "Reply surface",
+ * "Replies" and "Input & context" spent three headings naming what the rows
+ * already said, and made a short list look like a long one. They read in the
+ * order you meet them instead: how the reply appears, how it comes back to you,
+ * how you talk to it, and what it is allowed to read. All copy lives in the
+ * per-row "i" hints. */
 export const AgentSection: React.FC = () => {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const autocopy = getSetting("agent_autocopy") ?? "first";
@@ -55,100 +59,94 @@ export const AgentSection: React.FC = () => {
       )
       .catch(() => setCenterAvailable(true)); // never brick the dropdown
   }, []);
-  const positionOptions = centerAvailable
-    ? POSITION_OPTIONS
-    : POSITION_OPTIONS.filter((o) => o.value !== "center");
+  const lookOptions = centerAvailable
+    ? LOOK_OPTIONS
+    : LOOK_OPTIONS.filter((o) => o.value !== "center");
 
   return (
-    <div className="space-y-6">
-      <SettingsGroup
-        title="Reply surface"
-        info="Where the Agent's answer appears after you submit. The side card sits in the bottom-right corner; the center panel opens near the top of the screen, hugs its content, and grows downward as the conversation lengthens."
+    <>
+      {/* 1. Where the reply appears. "Look" rather than "Position": one of the
+          two options is a differently shaped surface, not the same card moved,
+          so this is a choice about appearance. The setting KEY stays
+          `agent_panel_position` — renaming it would migrate everyone's stored
+          value to say the same thing. */}
+      <SettingContainer
+        title="Look"
+        description="'Side card' is the original bottom-right reply card. 'Center panel' is the sleeker center-top surface that grows with your conversation up to a maximum height, then scrolls. The center panel is still in development."
+        descriptionMode="tooltip"
+        grouped
       >
-        <SettingContainer
-          title="Position"
-          description="'Side card' is the original bottom-right reply card. 'Center panel' is the sleeker center-top surface that grows with your conversation up to a maximum height, then scrolls. The center panel is still in development."
-          descriptionMode="tooltip"
-          grouped
-        >
-          <Dropdown
-            options={positionOptions}
-            selectedValue={panelPosition}
-            disabled={isUpdating("agent_panel_position")}
-            onSelect={(v) =>
-              updateSetting("agent_panel_position", v as AgentPanelPosition)
-            }
-          />
-        </SettingContainer>
-      </SettingsGroup>
+        <Dropdown
+          options={lookOptions}
+          selectedValue={panelPosition}
+          disabled={isUpdating("agent_panel_position")}
+          onSelect={(v) =>
+            updateSetting("agent_panel_position", v as AgentPanelPosition)
+          }
+        />
+      </SettingContainer>
 
-      <SettingsGroup
-        title="Replies"
-        info="How the Agent hands its replies back to you. Confirm always pastes the shown reply into the app you summoned the Agent from."
-      >
-        <SettingContainer
-          title="Auto-copy replies"
-          description="Copy the Agent's replies to your clipboard as they arrive: only the first reply of a session, every reply (including retries and follow-ups), or never."
-          descriptionMode="tooltip"
-          grouped
-        >
-          <Dropdown
-            options={AUTOCOPY_OPTIONS}
-            selectedValue={autocopy}
-            disabled={isUpdating("agent_autocopy")}
-            onSelect={(v) =>
-              updateSetting("agent_autocopy", v as AgentAutocopy)
-            }
-          />
-        </SettingContainer>
-        {/* Renders its own row (name + description from the binding). While the
-            Agent is open this shortcut OVERRIDES any other Grain shortcut on
-            the same keys; outside the Agent it does nothing. */}
-        <ShortcutInput
-          shortcutId="agent_followup"
-          grouped
-          descriptionMode="tooltip"
-        />
-        <ToggleSwitch
-          label="Quick Agent"
-          description="Skip the reply card entirely: the reply is auto-pasted straight at your cursor (replacing any still-selected text), then the pill briefly offers 'ask follow-up' in case you need to keep going. Same summon shortcut."
-          descriptionMode="tooltip"
-          grouped
-          checked={quick}
-          isUpdating={isUpdating("agent_quick_enabled")}
-          onChange={(v) => updateSetting("agent_quick_enabled", v)}
-        />
-      </SettingsGroup>
+      {/* 2. …or no reply surface at all. */}
+      <ToggleSwitch
+        label="Quick Agent"
+        description="Skip the reply card entirely: the reply is auto-pasted straight at your cursor (replacing any still-selected text), then the pill briefly offers 'ask follow-up' in case you need to keep going. Same summon shortcut."
+        descriptionMode="tooltip"
+        grouped
+        checked={quick}
+        isUpdating={isUpdating("agent_quick_enabled")}
+        onChange={(v) => updateSetting("agent_quick_enabled", v)}
+      />
 
-      <SettingsGroup
-        title="Input & context"
-        info="How the native summon card behaves, and what the Agent may read from the field you summoned it from."
+      {/* 3. How replies come back to you. */}
+      <SettingContainer
+        title="Auto-copy replies"
+        description="Copy the Agent's replies to your clipboard as they arrive: only the first reply of a session, every reply (including retries and follow-ups), or never."
+        descriptionMode="tooltip"
+        grouped
       >
-        <ToggleSwitch
-          label="Type to expand"
-          description="The summon card records by default. Start typing while it's listening to jump straight to the typing card; turn this off to keep it voice-first (press Tab or click to type)."
-          descriptionMode="tooltip"
-          grouped
-          checked={typeToExpand}
-          isUpdating={isUpdating("agent_input_type_to_expand")}
-          onChange={(v) => updateSetting("agent_input_type_to_expand", v)}
+        <Dropdown
+          options={AUTOCOPY_OPTIONS}
+          selectedValue={autocopy}
+          disabled={isUpdating("agent_autocopy")}
+          onSelect={(v) => updateSetting("agent_autocopy", v as AgentAutocopy)}
         />
-        <SettingContainer
-          title="Field context"
-          description="What the Agent reads from the focused field at summon. 'Unique terms' passes only high-signal names and identifiers (never raw text); 'Full field text' sends the field content (capped) so the Agent understands the surrounding document. Selected text always stays the subject — the field content is reference only. Password fields are never read."
-          descriptionMode="tooltip"
-          grouped
-        >
-          <Dropdown
-            options={CONTEXT_OPTIONS}
-            selectedValue={contextMode}
-            disabled={isUpdating("agent_context_mode")}
-            onSelect={(v) =>
-              updateSetting("agent_context_mode", v as AgentContextMode)
-            }
-          />
-        </SettingContainer>
-      </SettingsGroup>
-    </div>
+      </SettingContainer>
+
+      {/* 4. How you talk to it. */}
+      <ToggleSwitch
+        label="Type to expand"
+        description="The summon card records by default. Start typing while it's listening to jump straight to the typing card; turn this off to keep it voice-first (press Tab or click to type)."
+        descriptionMode="tooltip"
+        grouped
+        checked={typeToExpand}
+        isUpdating={isUpdating("agent_input_type_to_expand")}
+        onChange={(v) => updateSetting("agent_input_type_to_expand", v)}
+      />
+      {/* Renders its own row (name + description from the binding). While the
+          Agent is open this shortcut OVERRIDES any other Grain shortcut on the
+          same keys; outside the Agent it does nothing. */}
+      <ShortcutInput
+        shortcutId="agent_followup"
+        grouped
+        descriptionMode="tooltip"
+      />
+
+      {/* 5. What it is allowed to read. */}
+      <SettingContainer
+        title="Field context"
+        description="What the Agent reads from the focused field at summon. 'Unique terms' passes only high-signal names and identifiers (never raw text); 'Full field text' sends the field content (capped) so the Agent understands the surrounding document. Selected text always stays the subject — the field content is reference only. Password fields are never read."
+        descriptionMode="tooltip"
+        grouped
+      >
+        <Dropdown
+          options={CONTEXT_OPTIONS}
+          selectedValue={contextMode}
+          disabled={isUpdating("agent_context_mode")}
+          onSelect={(v) =>
+            updateSetting("agent_context_mode", v as AgentContextMode)
+          }
+        />
+      </SettingContainer>
+    </>
   );
 };

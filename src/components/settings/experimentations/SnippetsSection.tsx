@@ -36,7 +36,11 @@ const normalizeTrigger = (trigger: string): string =>
 /** [GRAIN] Voice snippets: trigger phrase → verbatim expansion. Extracted from
  * the old ExperimentationsSettings so each Extensions feature lives in its own
  * isolated sub-tab. */
-export const SnippetsSection: React.FC = () => {
+export const SnippetsSection: React.FC<{
+  /** The feature's own switch above already names it (see [`FeaturePanel`]);
+   * repeating "Snippets" as a group title over the editor prints it twice. */
+  untitled?: boolean;
+}> = ({ untitled }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const snippets = getSetting("snippets") || [];
@@ -119,9 +123,11 @@ export const SnippetsSection: React.FC = () => {
 
   return (
     <SettingsGroup
-      title={t("settings.experimentations.snippets.title")}
-      info={t("settings.experimentations.snippets.description")}
-      trailing={snippets.length > 0 ? <CountChip n={snippets.length} /> : null}
+      title={untitled ? undefined : t("settings.experimentations.snippets.title")}
+      info={untitled ? undefined : t("settings.experimentations.snippets.description")}
+      trailing={
+        untitled || snippets.length === 0 ? null : <CountChip n={snippets.length} />
+      }
     >
       {/* Composer — a labelled trigger → expansion pair. */}
       <div className="p-4 space-y-3">

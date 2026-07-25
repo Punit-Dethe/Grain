@@ -1011,6 +1011,23 @@ async storeEntry(id: string) : Promise<Result<StoreEntry | null, string>> {
 }
 },
 /**
+ * Cover references for a set of ids, from the CACHED index in ONE parse.
+ * 
+ * The installed list shows each extension's picture, and asking `store_entry`
+ * per row would re-read and re-verify the whole catalogue once per extension.
+ * This reads it once, keeps only `(id, cover)`, and drops the rest — the list
+ * gets its images without the catalogue ever staying resident. Ids that are not
+ * in the catalogue, or have no media, are simply absent from the result.
+ */
+async storeCovers(ids: string[]) : Promise<Result<StoreCover[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_covers", { ids }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Install (or update to) a specific verified `(id, version)`. In-app click
  * only — a link may open the store but never trigger this.
  */
@@ -2629,6 +2646,10 @@ conflicts_with: string | null }
  */
 export type Snippet = { id: string; trigger: string; replacement: string; enabled?: boolean }
 export type SoundTheme = "marimba" | "pop" | "custom"
+/**
+ * One installed extension's cover reference.
+ */
+export type StoreCover = { id: string; sha256: string; kind: string }
 /**
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).

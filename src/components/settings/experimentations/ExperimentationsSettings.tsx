@@ -14,7 +14,7 @@ import { SnippetsSection } from "./SnippetsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
 import { DeveloperSection } from "./DeveloperSection";
-import { FeatureToggle } from "./FeatureToggle";
+import { FeaturePanel, useFeatureEnabled } from "./FeaturePanel";
 import { ExtensionAnchor } from "./ExtensionSettings";
 
 type TabKey = "overview" | "snippets" | "context" | "agent" | "developer";
@@ -92,6 +92,9 @@ export const ExperimentationsSettings: React.FC = () => {
   const [detailOpen, setDetailOpen] = useState(false);
   const [overviewRevision, setOverviewRevision] = useState(0);
   const [importBusy, setImportBusy] = useState(false);
+  // The snippets EDITOR is a rich surface, not a settings row, so it lives
+  // outside the feature's well and needs the flag directly to disappear with it.
+  const snippetsOn = useFeatureEnabled("snippets_enabled");
   const [importNotice, setImportNotice] = useState<{
     kind: "success" | "error";
     text: string;
@@ -264,40 +267,46 @@ export const ExperimentationsSettings: React.FC = () => {
         />
       ) : tab === "snippets" ? (
         <div className="space-y-6">
-          {/* Grain's own features carry their master switch at the top of their
-              own tab — they are not installed packs and no longer appear in
-              Overview. */}
-          <FeatureToggle
+          {/* Grain's own features carry their master switch as the FIRST ROW of
+              their own tab — they are not installed packs and no longer appear
+              in Overview — and everything they govern follows it. */}
+          <FeaturePanel
             settingKey="snippets_enabled"
             title="Snippets"
             info="Speak a trigger word and Grain expands it into your saved text, before anything is pasted. Fully local — no AI call, and the trigger is stripped from what you get."
           />
-          <SnippetsSection />
+          {snippetsOn && <SnippetsSection untitled />}
           {/* SPEC §4.3: an extension's settings render next to the feature they
               extend. Renders nothing when nothing anchors here. Grain's own
               built-in Actions used to sit at this exact spot; the Voice Actions
               extension now anchors here instead, which is what the position was
-              always holding open. */}
+              always holding open.
+
+              It is NOT hidden with the feature: an extension anchored here is a
+              separate thing with its own switch, and Voice Actions works
+              whether or not Grain's snippets do. */}
           <ExtensionAnchor anchor="snippets.after" />
         </div>
       ) : tab === "context" ? (
         <div className="space-y-6">
-          <FeatureToggle
+          <FeaturePanel
             settingKey="context_awareness_enabled"
-            title="Context Awareness"
+            title="Context awareness"
             info="Detects the app you're dictating into and adapts AI formatting to it — an IDE keeps technical terms, chat stays casual, email gets a little more polished. Requires post-processing to be on."
-          />
-          <ContextAwareSection />
+          >
+            <ContextAwareSection />
+          </FeaturePanel>
           <ExtensionAnchor anchor="context.after" />
         </div>
       ) : tab === "agent" ? (
         <div className="space-y-6">
-          <FeatureToggle
+          <FeaturePanel
             settingKey="agent_enabled"
             title="Agent"
             info="Summon a voice-first AI assistant on your current selection — ask a question, rewrite what you highlighted, or run a follow-up conversation without leaving the app you're in."
-          />
-          <AgentSection />
+          >
+            <AgentSection />
+          </FeaturePanel>
           <ExtensionAnchor anchor="agent.after" />
         </div>
       ) : (
