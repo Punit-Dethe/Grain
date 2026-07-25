@@ -7,7 +7,10 @@ export { AboutSettings } from "./about/AboutSettings";
 export { PostProcessingSettings } from "./post-processing/PostProcessingSettings";
 export { SpeechToTextSettings } from "./speech-to-text/SpeechToTextSettings";
 export { ExperimentationsSettings } from "./experimentations/ExperimentationsSettings";
-export { GrainSpaceSettings } from "./grain-space/GrainSpaceSettings";
+// NOTE: GrainSpaceSettings is deliberately NOT re-exported here. This barrel is
+// the sidebar's section components, and Grain Space no longer has a tab — it is
+// a builtin-tier extension whose settings render as the host view
+// `grain://grain-space/settings` (see experimentations/hostViews.tsx).
 
 // Individual setting components
 export { MicrophoneSelector } from "./MicrophoneSelector";

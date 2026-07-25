@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { HostView, hostViewId } from "./hostViews";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
  * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
@@ -735,7 +736,14 @@ export const ExtensionSettings: React.FC<{
                 </div>
               )}
               {row.ui_source ? (
-                <PanelCard extId={section.id} uiSource={row.ui_source} />
+                // `grain://<view-id>` is a HOST view — Grain's own React, not
+                // author markup — and only a builtin-tier pack can name one
+                // (enforced in grain-sdk at import, not here).
+                hostViewId(row.ui_source) ? (
+                  <HostView viewId={hostViewId(row.ui_source)!} />
+                ) : (
+                  <PanelCard extId={section.id} uiSource={row.ui_source} />
+                )
               ) : null}
             </div>
           ) : row.kind === "list" ? (

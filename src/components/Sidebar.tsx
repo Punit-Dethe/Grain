@@ -6,7 +6,6 @@ import {
   FlaskConical,
   History,
   Info,
-  NotebookPen,
   Sparkles,
   AudioLines,
 } from "lucide-react";
@@ -22,7 +21,6 @@ import {
   PostProcessingSettings,
   SpeechToTextSettings,
   ExperimentationsSettings,
-  GrainSpaceSettings,
 } from "./settings";
 
 export type SidebarSection = keyof typeof SECTIONS_CONFIG;
@@ -89,14 +87,11 @@ export const SECTIONS_CONFIG = {
     component: ExperimentationsSettings,
     enabled: () => true,
   },
-  // [GRAIN] Grain Space: zero-idle-RAM local notes. Always visible — the tab
-  // itself holds the master toggle (everything below it gates on the setting).
-  grainSpace: {
-    labelKey: "sidebar.grainSpace",
-    icon: NotebookPen,
-    component: GrainSpaceSettings,
-    enabled: () => true,
-  },
+  // [GRAIN] NOTE: Grain Space no longer has a tab. It is a `builtin`-tier
+  // extension — installed from the store, and its settings live on its own
+  // extension page (host view `grain://grain-space/settings`). Do not add it
+  // back here; SPEC §5.2 is that features reached this way get a drill-in page,
+  // not a tab.
   debug: {
     labelKey: "sidebar.debug",
     icon: FlaskConical,

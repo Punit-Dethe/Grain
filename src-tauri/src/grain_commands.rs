@@ -283,30 +283,8 @@ pub fn change_default_panel_setting(app: AppHandle, panel: String) -> Result<(),
 pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.grain_space_enabled = enabled;
-    settings::write_settings(&app, settings.clone());
-
-    for (id, binding) in settings.bindings.iter() {
-        if !id.starts_with("grain_space_") {
-            continue;
-        }
-        if enabled {
-            let _ = register_shortcut(&app, binding.clone());
-        } else {
-            let _ = unregister_shortcut(&app, binding.clone());
-        }
-    }
-
-    // Arm (or tear down) the reminder timer for the new state.
-    crate::grain_space::reminders::sync(&app);
-
-    // Feature off ⇒ TRULY destroy the window (not sleep) so nothing of the
-    // workspace stays resident, then drop the embedding engine. Disabled must
-    // mean zero footprint.
-    if !enabled {
-        crate::grain_space::window::destroy(&app);
-        crate::grain_space::embed::shutdown_engine();
-    }
-
+    settings::write_settings(&app, settings);
+    crate::grain_space::apply_enabled(&app, enabled);
     Ok(())
 }
 
@@ -718,6 +696,13 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             }
             reg.set_enabled(pack_id, enabled)
                 .map_err(|e| e.to_string())?;
+            // A `builtin`-tier pack's runtime is compiled in, so "enabled" has to
+            // reach the feature's own gate rather than a worker. Mirror the bit
+            // into `grain_space_enabled` and apply it live — the toggle on the
+            // extension page IS Grain Space's master switch.
+            if pack_id == ext::GRAIN_SPACE_ID {
+                crate::grain_space::sync_install_state(&app);
+            }
             if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
                 ctx.update_settings(|s| {
                     if enabled {
@@ -1555,6 +1540,13 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     let removed = reg.uninstall(&id).map_err(|e| e.to_string())?;
     if !removed {
         return Err(format!("'{id}' is not installed"));
+    }
+    // Uninstalling a `builtin`-tier pack turns its compiled-in feature off. The
+    // per-extension storage purge below cannot reach Grain Space's notes (they
+    // live in `grain_space/`, not `extensions/<id>/`), which is the point: the
+    // feature goes away, the user's writing does not.
+    if id == ext::GRAIN_SPACE_ID {
+        crate::grain_space::sync_install_state(&app);
     }
     if dev_active {
         if purge {

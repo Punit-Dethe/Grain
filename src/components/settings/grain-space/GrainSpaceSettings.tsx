@@ -66,10 +66,18 @@ function noteDisplayTitle(note: Note): string {
   return firstLine.length > 60 ? `${firstLine.slice(0, 57)}…` : firstLine;
 }
 
-/** [GRAIN] Grain Space tab: master toggle, capture shortcuts, search behavior,
- * reminders (top) and the date-grouped notes list (bottom). The whole feature
- * is create/destroy — this tab is just a window onto the on-disk notes. */
-export const GrainSpaceSettings: React.FC = () => {
+/** [GRAIN] Grain Space's settings surface: storage, capture shortcuts, search
+ * behavior, reminders and the date-grouped notes list. The whole feature is
+ * create/destroy — this is just a window onto the on-disk notes.
+ *
+ * Grain Space is a `builtin`-tier extension, so this renders as a HOST VIEW on
+ * its extension page (`grain://grain-space/settings`) rather than a sidebar tab.
+ * `embedded` drops the title and master switch, which the extension page already
+ * draws — the `enabled &&` gate below still does the right thing, because the
+ * page's own toggle is what writes `grain_space_enabled`. */
+export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
+  embedded = false,
+}) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("grain_space_enabled") ?? false;
@@ -279,26 +287,32 @@ export const GrainSpaceSettings: React.FC = () => {
   }
 
   return (
-    <div className="max-w-4xl w-full mx-auto space-y-6">
-      {/* Title + master switch. The tab itself is the on/off — everything below
-          appears only once enabled. */}
-      <div className="flex items-center justify-between gap-4 px-1">
-        <div className="flex items-center gap-2">
-          <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
-            Grain Space
-          </h1>
-          <InfoHint
-            text="A local scratch space for spoken and captured notes. Everything stays on this machine as plain files, and the feature holds zero memory while its surfaces are closed. Turning it off unregisters its shortcuts and loads nothing — your notes stay on disk."
-            position="bottom"
+    <div
+      className={
+        embedded ? "w-full space-y-6" : "max-w-4xl w-full mx-auto space-y-6"
+      }
+    >
+      {/* Standalone only: title + master switch. On the extension page both are
+          the page's own header, so rendering them here would duplicate them. */}
+      {!embedded && (
+        <div className="flex items-center justify-between gap-4 px-1">
+          <div className="flex items-center gap-2">
+            <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
+              Grain Space
+            </h1>
+            <InfoHint
+              text="A local scratch space for spoken and captured notes. Everything stays on this machine as plain files, and the feature holds zero memory while its surfaces are closed. Turning it off unregisters its shortcuts and loads nothing — your notes stay on disk."
+              position="bottom"
+            />
+          </div>
+          <Switch
+            checked={enabled}
+            isUpdating={isUpdating("grain_space_enabled")}
+            onChange={(v) => updateSetting("grain_space_enabled", v)}
+            ariaLabel="Enable Grain Space"
           />
         </div>
-        <Switch
-          checked={enabled}
-          isUpdating={isUpdating("grain_space_enabled")}
-          onChange={(v) => updateSetting("grain_space_enabled", v)}
-          ariaLabel="Enable Grain Space"
-        />
-      </div>
+      )}
 
       {enabled && (
         <>
