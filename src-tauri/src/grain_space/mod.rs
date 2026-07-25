@@ -210,3 +210,111 @@ fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map(|ctx| ctx.data_dir.clone())
         .ok_or_else(|| "app context unavailable".to_string())
 }
+
+
+/// Metadata an MCP client supplied with a note.
+///
+/// Every field is optional and every one that is present WINS over anything
+/// Grain would derive. The caller is a language model that has just read the
+/// conversation the note came out of; Grain's own extraction call sees the body
+/// and nothing else, costs a round trip to the user's provider, and — for the
+/// many users who have configured no provider at all — does not happen, leaving
+/// a plain-code title and no distillation on a note that a perfectly capable
+/// model just wrote. Preferring what the caller knows is cheaper AND better.
+#[derive(Default)]
+pub struct SuppliedMeta {
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    /// Leads the text the note is indexed by, so this is the field that most
+    /// affects whether the note is found again.
+    pub question: Option<String>,
+    pub entities: Vec<String>,
+    pub collection: Option<String>,
+}
+
+impl SuppliedMeta {
+    /// True when the caller told us enough that a distillation call would only
+    /// be re-deriving what we already have.
+    fn covers_distillation(&self) -> bool {
+        self.title.is_some() && (self.question.is_some() || !self.entities.is_empty())
+    }
+}
+
+/// Save a note sent over the bridge. Returns its id.
+///
+/// Preference order: what the caller supplied → Grain's own distillation when it
+/// did not and a provider exists → a verbatim note with a plain-code title.
+pub async fn save(app: &AppHandle, body: &str, supplied: SuppliedMeta) -> Result<String, String> {
+    require_enabled(app)?;
+    let backend = backend::resolve(app)?;
+
+    let (mut note, relations) = if supplied.covers_distillation() {
+        (note::Note::raw(body.trim().to_string()), Vec::new())
+    } else {
+        capture::compose_note(app, body, None, "mcp").await
+    };
+    note.source = "mcp".to_string();
+    if let Some(t) = supplied.title {
+        note.title = t.chars().take(80).collect();
+    }
+    if let Some(s) = supplied.summary {
+        note.tldr = s;
+    }
+    if let Some(q) = supplied.question {
+        note.question = q.chars().take(240).collect();
+    }
+    if !supplied.entities.is_empty() {
+        // Normalised and capped exactly as the capture path does — a supplied
+        // entity list is still untrusted input, and the graph's identity rules
+        // are not negotiable by the caller.
+        note.entities = capture::clean_entity_names(&supplied.entities);
+    }
+    if note.title.trim().is_empty() {
+        note.title = capture::fallback_title(&note.body);
+    }
+
+    let id = note.id.clone();
+    let be = backend.clone();
+    tauri::async_runtime::spawn_blocking(move || backend::save_note(&be, &note))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+
+    if !relations.is_empty() {
+        let be = backend.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            backend::record_relations(&be, &relations)
+        })
+        .await;
+    }
+    if let Some(folder) = supplied.collection {
+        let be = backend.clone();
+        let moved = id.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            backend::move_note_to_folder(&be, &moved, Some(&folder))
+        })
+        .await;
+    }
+    emit_notes_changed(app);
+    reminders::sync(app);
+    Ok(id)
+}
+
+/// Append to an existing note, under a rule. The running-log case: a session's
+/// decisions, a list that keeps growing. Never rewrites what is already there.
+pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    let addition = text.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut note = backend::get_note(&be, &id)?;
+        note.body = format!("{}\n\n---\n\n{}", note.body.trim_end(), addition);
+        backend::save_note(&be, &note)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    emit_notes_changed(app);
+    Ok(())
+}

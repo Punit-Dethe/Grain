@@ -22,4 +22,7 @@ rmcp = { version = "2.2", features = ["server", "transport-io"] }
 # macro expands to `schemars::…` paths, and a second major would derive a trait
 # the SDK does not accept.
 schemars = "1.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "net"] }
+# Grain's local port is a WebSocket; the proxy is one more client of it.
+tokio-tungstenite = "0.24"
+futures-util = "0.3"

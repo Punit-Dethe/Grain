@@ -277,6 +277,22 @@ fn clean_entity_name(raw: &str) -> String {
     collapsed.chars().take(MAX_ENTITY_NAME_CHARS).collect()
 }
 
+/// Clean a caller-supplied entity list to exactly the rules the extraction path
+/// enforces: normalised names, deduplicated by norm, first-come order, capped.
+///
+/// A list an MCP client sent is still untrusted input — the graph's identity
+/// rules are not the caller's to negotiate — so it goes through the same gate
+/// the model's own output does.
+pub(crate) fn clean_entity_names(raw: &[String]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    raw.iter()
+        .map(|name| clean_entity_name(name))
+        .filter(|name| !name.is_empty())
+        .filter(|name| seen.insert(entity_norm(name)))
+        .take(MAX_ENTITIES)
+        .collect()
+}
+
 /// The dedup key for an entity (LightRAG's `Dedupe`, applied at both ends —
 /// here and as a UNIQUE column in the index).
 pub(crate) fn entity_norm(name: &str) -> String {

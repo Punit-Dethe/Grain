@@ -976,11 +976,13 @@ name = "grain-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "rmcp",
  "schemars",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]

@@ -113,7 +113,9 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
         // no manifest can request it and no permission sheet can grant it — it
         // exists only on the identity the app mints for its own proxy.
-        "space.collections" | "space.search" | "space.get" => Some("space"),
+        "space.collections" | "space.search" | "space.get" | "space.save" | "space.append" => {
+            Some("space")
+        }
         "open.url" => Some("open:url"),
         "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -1069,6 +1071,46 @@ pub async fn dispatch(
             let id = param_nonempty_str(&params, "id")?;
             let note = crate::grain_space::get(app, &id).await.map_err(internal_error)?;
             serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
+        }
+        "space.save" => {
+            let body = param_nonempty_str(&params, "body")?;
+            let opt = |k: &str| {
+                params
+                    .get(k)
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|v| !v.is_empty())
+                    .map(str::to_string)
+            };
+            let entities: Vec<String> = params
+                .get("entities")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let supplied = crate::grain_space::SuppliedMeta {
+                title: opt("title"),
+                summary: opt("summary"),
+                question: opt("question"),
+                entities,
+                collection: opt("collection"),
+            };
+            let id = crate::grain_space::save(app, &body, supplied)
+                .await
+                .map_err(internal_error)?;
+            Ok(serde_json::json!({ "id": id }))
+        }
+        "space.append" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let text = param_nonempty_str(&params, "text")?;
+            crate::grain_space::append(app, &id, &text)
+                .await
+                .map_err(internal_error)?;
+            Ok(serde_json::json!({ "id": id }))
         }
         "open.url" => {
             // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
