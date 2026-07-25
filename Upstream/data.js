@@ -743,5 +743,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-25T20:37:32Z"
+  "checked_at": "2026-07-25T22:40:24Z"
 };
