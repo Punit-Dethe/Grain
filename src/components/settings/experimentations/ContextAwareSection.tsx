@@ -212,15 +212,9 @@ export const ContextAwareSection: React.FC = () => {
         title="Context awareness"
         info="Adapts post-processing to the app you're dictating into. It softly nudges tone and vocabulary (an IDE keeps technical terms; chat stays casual; email gets slightly more polished) without hard-reformatting. Applied on top of your selected post-processing prompt. Requires post-processing to be on."
       >
-        <ToggleSwitch
-          label="Enable context awareness"
-          description="Detect the foreground app and layer soft context (and any matching mode below) onto post-processing."
-          descriptionMode="tooltip"
-          grouped
-          checked={enabled}
-          isUpdating={isUpdating("context_awareness_enabled")}
-          onChange={(v) => updateSetting("context_awareness_enabled", v)}
-        />
+        {/* NOTE: the master "enable context awareness" switch is NOT here —
+            it is the tab header (FeatureToggle in ExperimentationsSettings), so
+            all three core features turn on and off in the same place. */}
         <ToggleSwitch
           label="Nearby-term hints (silent)"
           description="Read UNIQUE names and identifiers (e.g. Rita, useGrainStore, PyTorch) from the field you're dictating into and pass them as a spelling hint only. Never sends raw text, never stored, password fields skipped. Improves accuracy on names and jargon."

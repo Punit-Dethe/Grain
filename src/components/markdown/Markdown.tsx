@@ -21,17 +21,36 @@ const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const TABLE_DIVIDER_CELL = /^:?-{3,}:?$/;
 
 /**
- * Stateless, safe Markdown renderer for Agent replies. It deliberately covers
- * the response shapes the local/remote models emit most often without adding a
- * document parser dependency or retaining an AST/cache after the panel closes.
+ * [GRAIN] The app's ONE stateless, safe Markdown renderer. Written for Agent
+ * replies, now shared by every surface that renders authored Markdown (Agent
+ * panel, extension store READMEs) — one parser, one set of supported shapes, one
+ * place a rendering bug gets fixed.
+ *
+ * It deliberately covers the shapes real documents use — GFM tables with
+ * alignment, fenced code, nested emphasis, strikethrough — without adding a
+ * document-parser dependency or retaining an AST/cache after the surface closes.
  * React escapes all text; raw HTML is always displayed literally.
+ *
+ * `className` picks the stylesheet: `agc-markdown` for the Agent's dark panel,
+ * `gm-markdown` for the light settings surfaces. The markup is identical.
  */
-export function AgentMarkdown({ markdown }: { markdown: string }) {
+export function Markdown({
+  markdown,
+  className = "gm-markdown",
+}: {
+  markdown: string;
+  className?: string;
+}) {
   return (
-    <div className="agc-markdown">
+    <div className={className}>
       {parseBlocks(markdown).map((block, index) => renderBlock(block, index))}
     </div>
   );
+}
+
+/** The Agent panel's dark-surface binding. */
+export function AgentMarkdown({ markdown }: { markdown: string }) {
+  return <Markdown markdown={markdown} className="agc-markdown" />;
 }
 
 function parseBlocks(markdown: string): Block[] {

@@ -142,12 +142,21 @@ const fmtStars = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
 
 /** [GRAIN] Extensions → Overview (SPEC §5.1): every installed extension,
- * enabled and disabled alike — name (jump), inline toggle, description on
- * hover, repository link, tier chip, and the (future) store entry point. */
+ * enabled and disabled alike — name (jumps to wherever its settings render),
+ * gear (its detail page), inline toggle, repository link, and the store.
+ *
+ * Grain's own always-present features (Snippets, Context Awareness, Agent) are
+ * NOT listed here: they have a tab each, and their on/off switch sits at the top
+ * of that tab. Overview is for things you installed. */
 export const OverviewSection: React.FC<{
-  onJump: (id: string) => void;
+  /** Jump to where `target` lives — an extension id or a settings anchor.
+   * Returns false when this build has nowhere to jump to, so the caller can fall
+   * back to the extension's own page. */
+  onJump: (target: string) => boolean;
   onDeveloperModeChange: (enabled: boolean) => void;
-}> = ({ onJump, onDeveloperModeChange }) => {
+  /** True while a detail page is open, so the hub can hide its own chrome. */
+  onDetailOpenChange?: (open: boolean) => void;
+}> = ({ onJump, onDeveloperModeChange, onDetailOpenChange }) => {
   const [cards, setCards] = useState<ExtensionCard[]>([]);
   const [developer, setDeveloper] = useState<ExtensionDeveloperStatus>({
     enabled: false,
@@ -200,6 +209,18 @@ export const OverviewSection: React.FC<{
     }
   }, [onDeveloperModeChange]);
 
+  /** The anchor an extension's settings actually render at, if any — read from
+   * its declared rows rather than a hard-coded id map, so a new extension that
+   * anchors at `context.after` jumps to Context without anyone editing this
+   * file. `null` when its settings live on its own page. */
+  const anchorTabOf = useCallback(
+    (id: string): string | null =>
+      (sections.find((s) => s.id === id)?.rows ?? []).find(
+        (r) => r.anchor && (ANCHORS as readonly string[]).includes(r.anchor),
+      )?.anchor ?? null,
+    [sections],
+  );
+
   /** SPEC §4.3: a setting with no anchor — or an anchor this build doesn't
    * know — belongs to the extension's own section. Settings are never lost. */
   const ownRows = useCallback(
@@ -213,6 +234,14 @@ export const OverviewSection: React.FC<{
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Tell the hub when a detail page is open so it can drop its title, tab bar
+  // and import button: inside an extension you are on THAT page, and the hub's
+  // chrome above it just reads as leftover furniture.
+  useEffect(() => {
+    onDetailOpenChange?.(!!detail);
+  }, [detail, onDetailOpenChange]);
+  useEffect(() => () => onDetailOpenChange?.(false), [onDetailOpenChange]);
 
   // Load the open extension's catalogue metadata; drop it as soon as the detail
   // closes so nothing from the store stays in memory behind the list.
@@ -639,11 +668,20 @@ export const OverviewSection: React.FC<{
                     className={card.enabled ? "text-accent" : "text-ink-faint"}
                   />
                   <div className="flex-1 min-w-0">
+                    {/* Name and gear go to DIFFERENT places (SPEC §5.1). The
+                        name means "take me to this extension's settings" — and
+                        for one anchored at a feature (Voice Actions below
+                        Snippets, App Modes below Context) that place is the
+                        feature's tab, not a page of its own. The gear always
+                        means "tell me about this extension". */}
                     <button
                       type="button"
-                      onClick={() =>
-                        card.has_detail ? setDetail(card.id) : onJump(card.id)
-                      }
+                      onClick={() => {
+                        const anchor = anchorTabOf(card.id);
+                        if (anchor && onJump(anchor)) return;
+                        if (card.has_detail) setDetail(card.id);
+                        else onJump(card.id);
+                      }}
                       className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
                     >
                       {card.name}
@@ -666,17 +704,17 @@ export const OverviewSection: React.FC<{
                       dev
                     </span>
                   )}
-                  <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
-                    {card.tier === "builtin" ? "built-in" : card.tier} · v
-                    {card.version}
-                  </span>
+                  {/* NOTE: no tier/version chip. "SCRIPTED · V1.0.0" is
+                      packaging trivia on a list whose job is "what do I have,
+                      and is it on" — it lives on the detail page, where the
+                      question is actually about the extension. */}
                   {card.has_detail && (
                     <button
                       type="button"
                       onClick={() => setDetail(card.id)}
                       className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
-                      aria-label={`Settings for ${card.name}`}
-                      title="Settings"
+                      aria-label={`About ${card.name}`}
+                      title="About this extension"
                     >
                       <Sliders width={13} height={13} />
                     </button>
@@ -1030,40 +1068,40 @@ const StoreSlideOver: React.FC<{
                   )}
                 </button>
 
-                <div className="p-4 flex flex-col gap-2 flex-1">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={() => setOpened(e.id)}
-                        className="text-sm font-medium text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
-                      >
-                        {e.name}
-                      </button>
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.cls}`}
-                      >
-                        {e.trust === "verified" && (
-                          <ShieldCheck
-                            width={9}
-                            height={9}
-                            className="inline mr-0.5 -mt-0.5"
-                          />
-                        )}
-                        {badge.label}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 text-[11px] text-ink-faint flex items-center gap-1.5 flex-wrap">
-                      {e.author && <span className="truncate">{e.author}</span>}
-                      <span>v{e.version}</span>
-                      {e.installs > 0 && (
-                        <span className="inline-flex items-center gap-0.5">
-                          <Download width={10} height={10} />
-                          {fmtStars(e.installs)}
-                        </span>
+                {/* Deliberately shallow: the cover carries the card, and every
+                    detail (author, version, review date, capabilities, README)
+                    is one click away. A tall block of small grey metadata under
+                    each title made the grid heavy and told nobody anything they
+                    could act on. Title · trust · installs on ONE line, the
+                    description, the button. */}
+                <div className="p-3 flex flex-col gap-1.5 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setOpened(e.id)}
+                      className="text-sm font-medium text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
+                    >
+                      {e.name}
+                    </button>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.cls}`}
+                    >
+                      {e.trust === "verified" && (
+                        <ShieldCheck
+                          width={9}
+                          height={9}
+                          className="inline mr-0.5 -mt-0.5"
+                        />
                       )}
-                    </div>
+                      {badge.label}
+                    </span>
+                    {e.installs > 0 && (
+                      <span className="inline-flex items-center gap-0.5 text-[11px] text-ink-faint">
+                        <Download width={10} height={10} />
+                        {fmtStars(e.installs)}
+                      </span>
+                    )}
                   </div>
                   {(() => {
                     const have = installed[e.id];
@@ -1107,16 +1145,9 @@ const StoreSlideOver: React.FC<{
                   </p>
                 )}
 
-                {e.reviewed_at && (
-                  <div className="text-[10px] text-ink-faint">
-                    Reviewed {e.reviewed_at}
-                    {e.reviewed_commit
-                      ? ` at ${e.reviewed_commit.slice(0, 7)}`
-                      : ""}
-                  </div>
-                )}
-
-                {/* Flagged combinations (§3.3): what the reviewer was warned of. */}
+                {/* Flagged combinations (§3.3): what the reviewer was warned of.
+                    These STAY on the card — unlike a review date, a flag is a
+                    reason not to click Install. */}
                 {e.flags.map((f) => (
                   <div
                     key={f}

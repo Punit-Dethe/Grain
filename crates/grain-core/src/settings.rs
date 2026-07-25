@@ -842,11 +842,6 @@ pub struct AppSettings {
     /// shipped with the app).
     #[serde(default)]
     pub grain_space_semantic: bool,
-    /// [GRAIN] Load the semantic embedding model in half precision (f16) instead
-    /// of f32 — roughly half the resident RAM, near-identical results, CPU speed
-    /// about the same. Opt-in side-by-side option (the download is the same file).
-    #[serde(default)]
-    pub grain_space_embed_f16: bool,
     /// [GRAIN] When ON (default), reminders extracted from a captured note are
     /// armed automatically; when OFF the note pane shows a manual "arm" button.
     #[serde(default = "default_true")]
@@ -1603,7 +1598,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_panel_position: AgentPanelPosition::default(),
         grain_space_enabled: false,
         grain_space_semantic: false,
-        grain_space_embed_f16: false,
         grain_space_auto_reminders: true,
         grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),
         grain_space_backend: GrainSpaceBackend::default(),

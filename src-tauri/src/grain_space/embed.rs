@@ -4,8 +4,6 @@
 //! MIT) is downloaded into the shared HF cache only after explicit user consent.
 //! The engine is one dedicated OS thread that owns the tokenizer + Candle BERT
 //! weights behind an mpsc channel — 100% independent from the audio/ASR threads.
-//! The weights can be loaded in f16 (half the resident RAM) via the
-//! `grain_space_embed_f16` setting; see [`set_use_f16`].
 //!
 //! Lifecycle (strict directive 7, overrides modelinfo.md's "never unload"):
 //! spawned lazily by the FIRST semantic search while the overlay window is
@@ -26,8 +24,10 @@ use tauri::{AppHandle, Emitter};
 pub const MODEL_REPO: &str = "BAAI/bge-small-en-v1.5";
 pub const MODEL_REVISION: &str = "main";
 /// Everything the engine needs. `model.safetensors` is the f32 export
-/// (33.4M params × 4 B ≈ 130 MB on disk); f16 is a load-time cast of this same
-/// file (no separate download), see [`set_use_f16`].
+/// (33.4M params × 4 B ≈ 130 MB on disk). Loaded at full precision, always:
+/// half precision halved the resident weights but candle's f16 CPU matmul can
+/// silently produce all-zero/NaN embeddings, and an embedding that is quietly
+/// wrong is worse than one that costs 60 MB more.
 const MODEL_FILES: [&str; 3] = ["config.json", "tokenizer.json", "model.safetensors"];
 pub const EMBED_DIM: usize = 384;
 const MAX_TOKENS: usize = 512;
@@ -52,24 +52,6 @@ fn cached_file(filename: &str) -> Option<PathBuf> {
 /// True when every model file is present in the shared HF cache.
 pub fn model_on_disk() -> bool {
     MODEL_FILES.iter().all(|f| cached_file(f).is_some())
-}
-
-/// Load the model in half precision (f16) when set — ~half the resident RAM,
-/// near-identical embeddings. Read at engine spawn; the setting command drops
-/// the engine so a live one re-loads at the new precision. Mirrors the
-/// `grain_space_embed_f16` setting; kept as an atomic because the engine layer
-/// has no `AppHandle`.
-static USE_F16: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Session flag: set when an f16 load produced invalid (all-zero/NaN) output
-/// (candle 0.9.x f16 CPU matmul is unreliable) so subsequent spawns skip the
-/// f16 attempt and its double-load. Cleared only by process restart.
-static F16_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Point the (next) engine load at f16 or f32. Call from a place that has the
-/// setting; pair with [`shutdown_engine`] to re-load a resident engine.
-pub fn set_use_f16(enabled: bool) {
-    USE_F16.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 // -- download (consent-gated by the frontend) -----------------------------------
@@ -371,7 +353,7 @@ fn spawn_engine() -> Result<Engine> {
 /// failure answers every queued/future request with the error instead of
 /// wedging callers.
 fn worker(config: PathBuf, tokenizer: PathBuf, weights: PathBuf, rx: mpsc::Receiver<Request>) {
-    let loaded = load_with_probe(&config, &tokenizer, &weights);
+    let loaded = load_model(&config, &tokenizer, &weights);
     match loaded {
         Ok((tokenizer, model, device)) => {
             for req in rx {
@@ -391,32 +373,6 @@ fn worker(config: PathBuf, tokenizer: PathBuf, weights: PathBuf, rx: mpsc::Recei
     }
 }
 
-/// Load the model, then probe with a sentinel text. If f16 was used and the
-/// forward produced invalid (all-zero/NaN) output — which candle 0.9.x's f16
-/// CPU matmul can do silently — flip [`F16_DISABLED`] and reload in f32 so
-/// embeddings (and thus recall) actually work this session.
-fn load_with_probe(
-    config: &PathBuf,
-    tokenizer: &PathBuf,
-    weights: &PathBuf,
-) -> Result<(
-    tokenizers::Tokenizer,
-    candle_transformers::models::bert::BertModel,
-    candle_core::Device,
-)> {
-    let tried_f16 = USE_F16.load(std::sync::atomic::Ordering::Relaxed)
-        && !F16_DISABLED.load(std::sync::atomic::Ordering::Relaxed);
-    let (tok, model, device) = load_model(config, tokenizer, weights)?;
-    if tried_f16 && embed_batch(&tok, &model, &device, &["probe".to_string()]).is_err() {
-        log::warn!(
-            "[GRAIN] embed f16 forward produced invalid output on this CPU; reloading in f32 for this session"
-        );
-        F16_DISABLED.store(true, std::sync::atomic::Ordering::Relaxed);
-        return load_model(config, tokenizer, weights);
-    }
-    Ok((tok, model, device))
-}
-
 fn load_model(
     config_path: &PathBuf,
     tokenizer_path: &PathBuf,
@@ -426,19 +382,12 @@ fn load_model(
     candle_transformers::models::bert::BertModel,
     candle_core::Device,
 )> {
-    use candle_core::{DType, Device};
+    use candle_core::Device;
     use candle_nn::VarBuilder;
     use candle_transformers::models::bert::{BertModel, Config, DTYPE};
 
     let start = std::time::Instant::now();
     let device = Device::Cpu;
-    // f16 halves the resident weights; the safetensors on disk is f32, so Candle
-    // casts on load. Final embeddings are cast back to f32 (the vec index dtype).
-    // F16_DISABLED is set once an f16 load produced invalid output (candle 0.9.x
-    // f16 CPU matmul can silently yield all-zero/NaN) — skip the broken path.
-    let f16 = USE_F16.load(std::sync::atomic::Ordering::Relaxed)
-        && !F16_DISABLED.load(std::sync::atomic::Ordering::Relaxed);
-    let dtype = if f16 { DType::F16 } else { DTYPE };
 
     let config: Config = serde_json::from_str(
         &std::fs::read_to_string(config_path).context("read model config.json")?,
@@ -456,14 +405,13 @@ fn load_model(
 
     // mmap keeps the resident cost close to the pages actually touched.
     let vb = unsafe {
-        VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], dtype, &device)
+        VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DTYPE, &device)
             .context("map model.safetensors")?
     };
     let model = BertModel::load(vb, &config).context("build BERT graph")?;
     log::info!(
-        "[GRAIN] embed model loaded in {} ms ({})",
-        start.elapsed().as_millis(),
-        if f16 { "f16" } else { "f32" }
+        "[GRAIN] embed model loaded in {} ms",
+        start.elapsed().as_millis()
     );
     Ok((tokenizer, model, device))
 }
@@ -494,7 +442,7 @@ fn embed_batch(
         let type_ids = Tensor::new(encoding.get_type_ids(), device)?.unsqueeze(0)?;
         // No padding → no mask needed (every position is a real token).
         let hidden = model.forward(&input_ids, &type_ids, None)?; // [1, seq, dim]
-                                                                  // Pool/normalize in f32 so an f16 model doesn't lose precision here and
+                                                                  // Pool/normalize in f32 so precision isn't lost precision here and
                                                                   // the stored vector is always f32 (the vec index dtype).
         let hidden = hidden.to_dtype(candle_core::DType::F32)?;
         let pooled = (hidden.sum(1)? / seq_len as f64)?; // [1, dim]
@@ -610,7 +558,6 @@ mod tests {
             println!("model not on disk; skipped");
             return;
         }
-        super::USE_F16.store(false, std::sync::atomic::Ordering::Relaxed);
         let docs = vec![
             super::note_embed_text(
                 "Wifi password",
@@ -647,40 +594,4 @@ mod tests {
         );
     }
 
-    /// Regression: when f16 is enabled but its forward pass produces invalid
-    /// (all-zero/NaN) output — as candle 0.9.x's f16 CPU matmul does —
-    /// [`load_with_probe`] must flip [`F16_DISABLED`] and reload in f32 so
-    /// embeddings (and recall) keep working. Skips itself if the model isn't
-    /// on disk.
-    #[test]
-    fn f16_falls_back_to_f32_when_broken() {
-        let (cfg, tok, w) = match (
-            super::cached_file("config.json"),
-            super::cached_file("tokenizer.json"),
-            super::cached_file("model.safetensors"),
-        ) {
-            (Some(c), Some(t), Some(w)) => (c, t, w),
-            _ => {
-                println!("model not on disk; skipped");
-                return;
-            }
-        };
-        super::USE_F16.store(true, std::sync::atomic::Ordering::Relaxed);
-        super::F16_DISABLED.store(false, std::sync::atomic::Ordering::Relaxed);
-        let (tokenizer, model, device) =
-            super::load_with_probe(&cfg, &tok, &w).expect("load_with_probe");
-        let v = super::embed_batch(
-            &tokenizer,
-            &model,
-            &device,
-            &["my wi fi password is interstellar".to_string()],
-        )
-        .expect("embed_batch after fallback");
-        assert!(v[0].iter().all(|x| x.is_finite()), "NaN/Inf after fallback");
-        assert!(v[0].iter().any(|&x| x != 0.0), "all-zero after fallback");
-        assert!(
-            super::F16_DISABLED.load(std::sync::atomic::Ordering::Relaxed),
-            "F16_DISABLED must be set after a broken f16 load"
-        );
-    }
 }

@@ -15,6 +15,7 @@ import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
 import { DeveloperSection } from "./DeveloperSection";
+import { FeatureToggle } from "./FeatureToggle";
 import { ExtensionAnchor } from "./ExtensionSettings";
 
 type TabKey = "overview" | "snippets" | "context" | "agent" | "developer";
@@ -58,10 +59,19 @@ const DEVELOPER_TAB = {
   icon: <Code2 width={15} height={15} />,
 };
 
-/** Where each extension id's settings live (SPEC §5.1: clicking a name in
- * Overview jumps to its settings). Pack-tier ids without a tab of their own
- * land on the most related core tab. */
+/** Where clicking a name in Overview lands (SPEC §5.1). Keyed by BOTH the
+ * settings anchor an extension declares — the general case, so a new extension
+ * anchored at `context.after` jumps to Context with no change here — and a few
+ * core ids that have a tab but no anchor of their own.
+ *
+ * An anchor missing from this map is not an error: `jumpTo` returns false and
+ * the caller opens the extension's own page instead. `models.after` is one such
+ * — it renders in the Speech-to-Text section of the sidebar, not in this hub. */
 const JUMP_TARGETS: Record<string, TabKey> = {
+  "snippets.after": "snippets",
+  "context.after": "context",
+  "dictation.pipeline.after": "context",
+  "agent.after": "agent",
   "grain.snippets": "snippets",
   "grain.context-awareness": "context",
   "grain.agent": "agent",
@@ -77,6 +87,9 @@ const JUMP_TARGETS: Record<string, TabKey> = {
 export const ExperimentationsSettings: React.FC = () => {
   const [tab, setTab] = useState<TabKey>("overview");
   const [developerMode, setDeveloperMode] = useState(false);
+  /** An extension's own page is a PAGE, not a panel inside the hub — while one
+   * is open the hub hides its title, tab bar and import button. */
+  const [detailOpen, setDetailOpen] = useState(false);
   const [overviewRevision, setOverviewRevision] = useState(0);
   const [importBusy, setImportBusy] = useState(false);
   const [importNotice, setImportNotice] = useState<{
@@ -95,6 +108,14 @@ export const ExperimentationsSettings: React.FC = () => {
   }, [developerMode, tab]);
 
   const tabs = developerMode ? [...TABS, DEVELOPER_TAB] : TABS;
+
+  /** Jump to a tab by anchor or extension id. False = nowhere here to go. */
+  const jumpTo = (target: string): boolean => {
+    const next = JUMP_TARGETS[target];
+    if (!next) return false;
+    setTab(next);
+    return true;
+  };
 
   const importPack = async () => {
     setImportBusy(true);
@@ -123,7 +144,11 @@ export const ExperimentationsSettings: React.FC = () => {
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       {/* Page title — set larger than the other consoles; the tabs sit directly
-          beneath it, no subtitle, so the section opens clean. */}
+          beneath it, no subtitle, so the section opens clean. Hidden while an
+          extension's own page is open: that page has its own title and its own
+          "All extensions" way back. */}
+      {!detailOpen && (
+      <>
       <div className="flex items-center justify-between gap-3 px-1">
         <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
           {SECTION_TITLE}
@@ -195,15 +220,26 @@ export const ExperimentationsSettings: React.FC = () => {
           );
         })}
       </div>
+      </>
+      )}
 
       {tab === "overview" ? (
         <OverviewSection
           key={overviewRevision}
-          onJump={(id) => setTab(JUMP_TARGETS[id] ?? "overview")}
+          onJump={jumpTo}
           onDeveloperModeChange={setDeveloperMode}
+          onDetailOpenChange={setDetailOpen}
         />
       ) : tab === "snippets" ? (
-        <div className="space-y-8">
+        <div className="space-y-6">
+          {/* Grain's own features carry their master switch at the top of their
+              own tab — they are not installed packs and no longer appear in
+              Overview. */}
+          <FeatureToggle
+            settingKey="snippets_enabled"
+            title="Snippets"
+            info="Speak a trigger word and Grain expands it into your saved text, before anything is pasted. Fully local — no AI call, and the trigger is stripped from what you get."
+          />
           <SnippetsSection />
           {/* SPEC §5.4: one thin divider, then Actions — the position its
               extension form will occupy via anchor "snippets.after". */}
@@ -214,12 +250,22 @@ export const ExperimentationsSettings: React.FC = () => {
           <ExtensionAnchor anchor="snippets.after" />
         </div>
       ) : tab === "context" ? (
-        <div className="space-y-8">
+        <div className="space-y-6">
+          <FeatureToggle
+            settingKey="context_awareness_enabled"
+            title="Context Awareness"
+            info="Detects the app you're dictating into and adapts AI formatting to it — an IDE keeps technical terms, chat stays casual, email gets a little more polished. Requires post-processing to be on."
+          />
           <ContextAwareSection />
           <ExtensionAnchor anchor="context.after" />
         </div>
       ) : tab === "agent" ? (
-        <div className="space-y-8">
+        <div className="space-y-6">
+          <FeatureToggle
+            settingKey="agent_enabled"
+            title="Agent"
+            info="Summon a voice-first AI assistant on your current selection — ask a question, rewrite what you highlighted, or run a follow-up conversation without leaving the app you're in."
+          />
           <AgentSection />
           <ExtensionAnchor anchor="agent.after" />
         </div>

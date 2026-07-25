@@ -17,7 +17,7 @@ import {
   type AgentReply,
   type AgentSource,
 } from "@/bindings";
-import { AgentMarkdown } from "./AgentMarkdown";
+import { AgentMarkdown } from "../markdown/Markdown";
 import "./agent.css";
 
 /** [GRAIN] CENTER layout geometry that must agree with the backend

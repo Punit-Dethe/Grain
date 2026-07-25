@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { HostView, hostViewId } from "./hostViews";
+import { useTheme } from "../../../contexts/ThemeContext";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
  * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
@@ -111,9 +112,29 @@ const PANEL_BRIDGE = `<script>(function(){
     var p=pending[d.id]; if(!p) return; delete pending[d.id];
     if(d.err!=null) p.reject(asErr(d.err)); else p.resolve(d.ok);
   });
-  function postHeight(){ try{ parent.postMessage({__grainresize:1,height:Math.ceil(document.documentElement.getBoundingClientRect().height)}, "*"); }catch(e){} }
+  function contentHeight(){
+    var d=document.documentElement, b=document.body;
+    return Math.ceil(Math.max(
+      d?d.scrollHeight:0, b?b.scrollHeight:0,
+      b?b.getBoundingClientRect().height:0
+    ));
+  }
+  function postHeight(){ try{ parent.postMessage({__grainresize:1,height:contentHeight()}, "*"); }catch(e){} }
   window.addEventListener("load", postHeight);
-  try{ new ResizeObserver(postHeight).observe(document.documentElement); }catch(e){ setInterval(postHeight, 500); }
+  try{
+    var ro=new ResizeObserver(postHeight);
+    ro.observe(document.documentElement);
+    if(document.body) ro.observe(document.body);
+  }catch(e){ setInterval(postHeight, 500); }
+  // The HOST owns this frame's height (it grows to fit), and a card that also
+  // scrolled itself would show a scrollbar over content the page is already
+  // making room for. Theme likewise comes from Grain, not the OS: a sandboxed
+  // iframe's prefers-color-scheme follows the SYSTEM, so a card would render
+  // dark inside a light Grain whenever the two disagree.
+  window.addEventListener("message", function(ev){
+    var d=ev.data; if(!d||d.__graintheme!==1) return;
+    try{ document.documentElement.setAttribute("data-grain-theme", String(d.theme)); }catch(e){}
+  });
   window.grain={
     log:{info:function(m){return call("log.info",{msg:String(m)});},warn:function(m){return call("log.warn",{msg:String(m)});}},
     storage:{get:function(k){return call("storage.get",{key:k});},set:function(k,v){return call("storage.set",{key:k,value:v});},"delete":function(k){return call("storage.delete",{key:k});}},
@@ -125,7 +146,14 @@ const PANEL_BRIDGE = `<script>(function(){
     focusedApp:function(){return call("capture.app",{});},
     call:call
   };
-})();<\/script>`;
+})();<\/script>
+<style>html,body{margin:0;padding:0;}html{overflow:hidden;}<\/style>`;
+
+/** Cards grow to fit rather than scrolling inside (see the bridge). The ceiling
+ * only exists so a runaway card can't produce a mile-long frame; the settings
+ * page itself scrolls long content. */
+const PANEL_MIN_HEIGHT = 80;
+const PANEL_MAX_HEIGHT = 2400;
 
 /** [GRAIN] A custom card (SPEC §4.1 Level 3): the extension's own HTML in a
  * sandboxed iframe. Created on scroll-into-view and destroyed on unmount (the
@@ -140,6 +168,7 @@ const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [mounted, setMounted] = useState(false);
   const [height, setHeight] = useState(320);
+  const { isSettingsDark } = useTheme();
 
   // Lazy-mount: build the iframe (and the extension's DOM/JS realm) only once it
   // scrolls into view.
@@ -163,7 +192,9 @@ const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
       if (!d || !frameRef.current || ev.source !== frameRef.current.contentWindow)
         return;
       if (d.__grainresize === 1 && typeof d.height === "number") {
-        setHeight(Math.min(Math.max(d.height, 80), 900));
+        setHeight(
+          Math.min(Math.max(d.height, PANEL_MIN_HEIGHT), PANEL_MAX_HEIGHT),
+        );
         return;
       }
       if (d.__grain !== 1 || typeof d.method !== "string") return;
@@ -184,6 +215,25 @@ const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
     window.addEventListener("message", onMsg);
     return () => window.removeEventListener("message", onMsg);
   }, [mounted, extId]);
+
+  // Push GRAIN's theme into the frame, and re-push whenever it changes. The
+  // sandbox has an opaque origin, so the card's own `prefers-color-scheme` sees
+  // the operating system — which is the wrong answer whenever the user's OS and
+  // their Grain theme disagree.
+  useEffect(() => {
+    if (!mounted) return;
+    const theme = isSettingsDark ? "dark" : "light";
+    const send = () =>
+      frameRef.current?.contentWindow?.postMessage(
+        { __graintheme: 1, theme },
+        "*",
+      );
+    send();
+    // The frame may not have installed its listener yet on first mount.
+    const frame = frameRef.current;
+    frame?.addEventListener("load", send);
+    return () => frame?.removeEventListener("load", send);
+  }, [mounted, isSettingsDark]);
 
   return (
     <div ref={containerRef} className="w-full">

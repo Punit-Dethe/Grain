@@ -408,9 +408,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // was closed and park a timer for the next one. No-op (no disk touch, no
     // timer) when the feature is disabled.
     grain_space::reminders::sync(app_handle);
-    // Seed the embedding precision from the persisted setting (the engine layer
-    // has no AppHandle; it reads this at spawn).
-    grain_space::embed::set_use_f16(get_settings(app_handle).grain_space_embed_f16);
 
     // Note: Shortcuts are NOT initialized here.
     // The frontend is responsible for calling the `initialize_shortcuts` command
@@ -769,7 +766,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_post_process_enabled_setting,
             grain_commands::change_grain_space_enabled_setting,
             grain_commands::change_grain_space_semantic_setting,
-            grain_commands::change_grain_space_embed_f16_setting,
             grain_commands::change_grain_space_auto_reminders_setting,
             grain_commands::change_grain_space_auto_categorize_setting,
             grain_commands::change_grain_space_backend_setting,

@@ -1981,7 +1981,7 @@ fn chunk_embed_texts(note: &Note) -> Vec<String> {
             if i == 0 {
                 note_embed_text_distilled(&distilled, &note.title, &note.tldr, &chunk)
             } else {
-                note_embed_text_distilled(&DistilledDoc::default(), &note.title, "", &chunk)
+                super::embed::note_embed_text(&note.title, "", &chunk)
             }
         })
         .collect()

@@ -82,7 +82,6 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("grain_space_enabled") ?? false;
   const semantic = getSetting("grain_space_semantic") ?? false;
-  const embedF16 = getSetting("grain_space_embed_f16") ?? false;
   const autoReminders = getSetting("grain_space_auto_reminders") ?? true;
   const autoCategorize = getSetting("grain_space_auto_categorize") ?? false;
   // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md) — a hard switch.
@@ -505,18 +504,6 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
                   {t("settings.grainSpace.dismiss")}
                 </button>
               </div>
-            )}
-            {/* Precision choice — only meaningful once the model is in use. */}
-            {semantic && !modelFlow && (
-              <ToggleSwitch
-                label="Half-precision (f16) model"
-                description="Load the embedding model in f16 — about half the memory, near-identical results. Same download."
-                descriptionMode="tooltip"
-                grouped
-                checked={embedF16}
-                isUpdating={isUpdating("grain_space_embed_f16")}
-                onChange={(v) => updateSetting("grain_space_embed_f16", v)}
-              />
             )}
             {/* Semantic on ⇒ the model is on disk; offer to reclaim its ~130 MB. */}
             {semantic && !modelFlow && (

@@ -7,7 +7,8 @@ import {
   type SettingRow,
   type SettingsSection,
 } from "./ExtensionSettings";
-import { Markdown } from "./markdown";
+import { Markdown } from "../../markdown/Markdown";
+import "../../markdown/markdown.css";
 
 export type DetailMedia = { sha256: string; kind: string };
 
@@ -70,6 +71,24 @@ function useMedia(m: DetailMedia | undefined): string | null {
     };
   }, [m?.sha256, m?.kind]);
   return url;
+}
+
+/**
+ * Drop the README's own H1 — the page already has the title, in real page
+ * typography, above it. Two titles is always wrong, whatever the second one says.
+ *
+ * The paragraph under it is deliberately KEPT: the page does not render the
+ * manifest description when a README exists (see below), so that paragraph IS
+ * the page's opening line rather than a second copy of one.
+ */
+export function stripReadmeTitle(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/g, "\n").split("\n");
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i += 1;
+  if (i >= lines.length || !/^#\s+\S/.test(lines[i])) return markdown;
+  i += 1;
+  while (i < lines.length && !lines[i].trim()) i += 1;
+  return lines.slice(i).join("\n");
 }
 
 /** Lazily fetch the README markdown by hash. */
@@ -229,8 +248,14 @@ export const ExtensionDetail: React.FC<{
         )}
       </div>
 
-      {/* Description — full by default; collapsible when it sits above settings. */}
+      {/* Description — but ONLY when nothing longer is going to say the same
+          thing. The manifest description is CARD copy: one line, written to make
+          the install decision in a grid. A README is PAGE copy by the same
+          author, and it opens by introducing the extension. Rendering both put
+          two near-identical paragraphs at the top of the page. So: README wins
+          the page when there is one, description carries it when there isn't. */}
       {meta.description &&
+        !readme &&
         (hasInPlaceSettings ? (
           <div>
             <button
@@ -266,9 +291,12 @@ export const ExtensionDetail: React.FC<{
         />
       ) : (
         <>
+          {/* The README is the page body, not a widget on it — no card, no
+              border. A box around authored prose reads as "embedded thing"
+              and fights the header above it. */}
           {readme && (
-            <div className="rounded-xl border border-line bg-paper-raised px-5 py-4">
-              <Markdown text={readme} />
+            <div className="pt-1">
+              <Markdown markdown={stripReadmeTitle(readme)} />
             </div>
           )}
           {gallery.length > 0 && (

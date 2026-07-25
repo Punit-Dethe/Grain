@@ -304,19 +304,6 @@ pub fn change_grain_space_semantic_setting(app: AppHandle, enabled: bool) -> Res
     Ok(())
 }
 
-/// [GRAIN] Load the embedding model in f16 (half RAM) vs f32. Drops any resident
-/// engine so the next embed re-loads at the chosen precision.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_embed_f16_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_embed_f16 = enabled;
-    settings::write_settings(&app, settings);
-    crate::grain_space::embed::set_use_f16(enabled);
-    crate::grain_space::embed::shutdown_engine();
-    Ok(())
-}
-
 /// [GRAIN] Grain Space backend hard switch (OBSIDIAN-PLAN.md §1). Swapping the
 /// backend changes which corpus every surface sees; the overlay is closed and
 /// the embedding engine dropped so nothing keeps serving the old corpus.
@@ -469,30 +456,6 @@ pub struct ExtensionCard {
     pub has_detail: bool,
 }
 
-fn builtin_card(
-    id: &str,
-    name: &str,
-    description: &str,
-    enabled: bool,
-    reg: &grain_core::extensions::ExtensionsRegistry,
-) -> ExtensionCard {
-    ExtensionCard {
-        id: id.to_string(),
-        name: name.to_string(),
-        description: description.to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        tier: "builtin".to_string(),
-        trust: "core".to_string(),
-        overrides_installed: false,
-        overridden_version: None,
-        enabled,
-        toggle_seq: reg.toggle_seq(id).to_string(),
-        repository: None,
-        // Built-ins have their own tab; the Overview name jumps there.
-        has_detail: false,
-    }
-}
-
 /// The Overview tab's data: every extension, enabled and disabled alike.
 #[tauri::command]
 #[specta::specta]
@@ -501,31 +464,15 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
-    let settings = settings::get_settings(&app);
-
-    let mut cards = vec![
-        builtin_card(
-            ext::BUILTIN_SNIPPETS,
-            "Snippets",
-            "Speak a trigger word and Grain expands it into your saved text.",
-            settings.snippets_enabled,
-            &reg,
-        ),
-        builtin_card(
-            ext::BUILTIN_CONTEXT,
-            "Context Awareness",
-            "Detects the app you're dictating into and adapts AI formatting to it.",
-            settings.context_awareness_enabled,
-            &reg,
-        ),
-        builtin_card(
-            ext::BUILTIN_AGENT,
-            "Agent",
-            "Summon a voice-first AI assistant on your current selection.",
-            settings.agent_enabled,
-            &reg,
-        ),
-    ];
+    // [GRAIN] Grain's three always-present features (Snippets, Context
+    // Awareness, Agent) are NOT listed here. They ship with the app, have a tab
+    // each, and their master switch is that tab's header — listing them beside
+    // installed packs implied they could be uninstalled and buried the list of
+    // things the user actually chose to install.
+    //
+    // `extension_set_enabled` still accepts their ids for compatibility, but the
+    // tab headers write those settings flags directly.
+    let mut cards: Vec<ExtensionCard> = Vec::new();
     // Installed packs — including the Agent centre layout, which is now a real
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.

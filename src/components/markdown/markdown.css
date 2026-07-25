@@ -1,0 +1,173 @@
+/* [GRAIN] `gm-markdown` — the light/settings binding for the shared Markdown
+   renderer (Markdown.tsx). The Agent panel's `agc-markdown` rules live in
+   agent.css and are hard-coded for a dark surface; these are written against
+   Grain's design tokens instead, so the same markup reads correctly in both
+   light and dark settings themes.
+
+   Authored prose, not chat: the rhythm here is deliberately looser than the
+   Agent panel's, and inline code is tinted rather than boxed — a README is full
+   of `identifiers`, and giving each one a hard border turns a paragraph into
+   confetti. */
+
+.gm-markdown {
+  min-width: 0;
+  color: var(--color-ink-soft, inherit);
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+
+.gm-markdown > :first-child {
+  margin-top: 0;
+}
+.gm-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.gm-markdown p,
+.gm-markdown ul,
+.gm-markdown ol,
+.gm-markdown blockquote,
+.gm-markdown pre,
+.gm-markdown .agc-md-table-wrap {
+  margin: 0 0 0.85em;
+}
+
+/* Headings carry the ink colour so they read as structure against the softer
+   body text, and get real space above — a README's sections need separating. */
+.gm-markdown h1,
+.gm-markdown h2,
+.gm-markdown h3,
+.gm-markdown h4,
+.gm-markdown h5,
+.gm-markdown h6 {
+  margin: 1.6em 0 0.5em;
+  color: var(--color-ink, inherit);
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.gm-markdown h1 {
+  font-size: 1.3em;
+}
+.gm-markdown h2 {
+  font-size: 1.12em;
+}
+.gm-markdown h3 {
+  font-size: 1em;
+}
+.gm-markdown h4,
+.gm-markdown h5,
+.gm-markdown h6 {
+  font-size: 0.94em;
+}
+
+.gm-markdown ul,
+.gm-markdown ol {
+  padding-left: 1.3em;
+}
+.gm-markdown ul {
+  list-style: disc;
+}
+.gm-markdown ol {
+  list-style: decimal;
+}
+.gm-markdown li {
+  margin: 0;
+}
+.gm-markdown li + li {
+  margin-top: 0.35em;
+}
+
+.gm-markdown strong {
+  color: var(--color-ink, inherit);
+  font-weight: 600;
+}
+
+.gm-markdown blockquote {
+  padding-left: 0.9em;
+  border-left: 2px solid var(--color-line, currentColor);
+  color: var(--color-ink-faint, inherit);
+}
+
+/* Tinted, not bordered. */
+.gm-markdown code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--color-ink, #000) 7%, transparent);
+  color: var(--color-ink, inherit);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.86em;
+  white-space: nowrap;
+}
+
+.gm-markdown pre {
+  overflow-x: auto;
+  padding: 0.8em 0.9em;
+  border: 1px solid var(--color-line, currentColor);
+  border-radius: 8px;
+  background: var(--color-paper-sunken, transparent);
+  white-space: pre;
+}
+.gm-markdown pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+/* Tables scroll inside their own box; the page never scrolls sideways. */
+.gm-markdown .agc-md-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-line, currentColor);
+  border-radius: 8px;
+}
+.gm-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+.gm-markdown th,
+.gm-markdown td {
+  min-width: 6em;
+  padding: 0.5em 0.7em;
+  border-bottom: 1px solid var(--color-line, currentColor);
+  vertical-align: top;
+}
+.gm-markdown th {
+  background: var(--color-paper-sunken, transparent);
+  color: var(--color-ink, inherit);
+  font-weight: 600;
+  text-align: left;
+}
+.gm-markdown tbody tr:last-child td {
+  border-bottom: 0;
+}
+.gm-markdown .agc-md-align-left {
+  text-align: left;
+}
+.gm-markdown .agc-md-align-center {
+  text-align: center;
+}
+.gm-markdown .agc-md-align-right {
+  text-align: right;
+}
+
+.gm-markdown a {
+  color: var(--color-accent, inherit);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.gm-markdown a:hover {
+  text-decoration-thickness: 2px;
+}
+
+.gm-markdown hr {
+  margin: 1.4em 0;
+  border: 0;
+  border-top: 1px solid var(--color-line, currentColor);
+}
+
+.gm-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}

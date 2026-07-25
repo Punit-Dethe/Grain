@@ -228,18 +228,6 @@ async changeGrainSpaceSemanticSetting(enabled: boolean) : Promise<Result<null, s
 }
 },
 /**
- * [GRAIN] Load the embedding model in f16 (half RAM) vs f32. Drops any resident
- * engine so the next embed re-loads at the chosen precision.
- */
-async changeGrainSpaceEmbedF16Setting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_embed_f16_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Auto-arm reminders extracted from captured notes (vs. manual arm).
  */
 async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -2339,12 +2327,6 @@ grain_space_enabled?: boolean;
  */
 grain_space_semantic?: boolean; 
 /**
- * [GRAIN] Load the semantic embedding model in half precision (f16) instead
- * of f32 — roughly half the resident RAM, near-identical results, CPU speed
- * about the same. Opt-in side-by-side option (the download is the same file).
- */
-grain_space_embed_f16?: boolean; 
-/**
  * [GRAIN] When ON (default), reminders extracted from a captured note are
  * armed automatically; when OFF the note pane shows a manual "arm" button.
  */
@@ -2594,7 +2576,28 @@ tldr: string; body: string;
 /**
  * Epoch ms (UTC). Date grouping happens in the UI, in local time.
  */
-timestamp: number; todo_tags?: TodoTag[]; reminder_state?: ReminderState; is_pinned?: boolean }
+timestamp: number; todo_tags?: TodoTag[]; reminder_state?: ReminderState; is_pinned?: boolean; 
+/**
+ * The distilled **searchable question** — one sentence someone would
+ * actually type or say when looking for this note ("why did token refresh
+ * fail on large payloads?"). Cerebras's measured accuracy win is embedding
+ * this rather than the raw body. Empty for raw captures and foreign notes.
+ */
+question?: string; 
+/**
+ * Entities named in the note (files, people, apps, projects, topics), as
+ * written. The keys of the entity graph; display names live here, the
+ * deduplicated norms live in the derived index.
+ */
+entities?: string[]; 
+/**
+ * Where the capture came from: `dictation` | `selection` | `manual` |
+ * `import`, or "" when unknown (every note written before this field).
+ * Cerebras's `source` column: cheap, and the thing you actually want to
+ * filter on when a query means "that thing I copied", not "that thing I
+ * said".
+ */
+source?: string }
 /**
  * Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
  * `Note` schema and never persisted: light metadata derived at list time so a
