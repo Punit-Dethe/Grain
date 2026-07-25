@@ -165,7 +165,7 @@ pub async fn capture_and_save(
     } else {
         "dictation"
     };
-    let (mut note, routing, _relations) = compose_note(app, &body, framing, &folders, source).await;
+    let (mut note, routing, relations) = compose_note(app, &body, framing, &folders, source).await;
     // An explicit typed title wins over the auto-generated one (kept short).
     if let Some(t) = title_override.map(str::trim).filter(|t| !t.is_empty()) {
         note.title = t.chars().take(80).collect();
@@ -179,6 +179,20 @@ pub async fn capture_and_save(
             .await;
     match saved {
         Ok(Ok(())) => {
+            // Typed relations are index-level, so they land after the file write
+            // (the note's own entities went in with its frontmatter). Best-effort:
+            // the note is already safe on disk, and a thinner graph is never a
+            // reason to report a failed capture.
+            if !relations.is_empty() {
+                let be_graph = backend.clone();
+                if let Ok(Err(e)) = tauri::async_runtime::spawn_blocking(move || {
+                    super::backend::record_relations(&be_graph, &relations)
+                })
+                .await
+                {
+                    log::warn!("[GRAIN] space capture: graph relations not recorded: {e:#}");
+                }
+            }
             // Confidence-gated filing (AUTO-CATEGORIZATION-PLAN.md §4): only a
             // HIGH-confidence route moves the file silently; a MEDIUM route is
             // recorded as a pending suggestion the user accepts with one click

@@ -43,6 +43,11 @@ const MAX_SESSION_MEMORIES: usize = 12;
 const MAX_TOOL_HOPS: usize = 3;
 /// RRF constant (standard).
 const RRF_K: f64 = 60.0;
+/// Notes the graph leg contributes per level. Deliberately smaller than the
+/// candidate pool: the graph's job is to surface the few notes the other two legs
+/// structurally CANNOT find (no shared vocabulary), not to flood the pool with
+/// everything that happens to mention a common entity.
+const GRAPH_LEG_LIMIT: usize = 8;
 /// Minimum raw cosine similarity for a semantic hit to count as RELATED. KNN
 /// always returns the nearest notes even when nothing matches, so without a
 /// floor a tiny corpus (e.g. 4 notes) leaks unrelated notes into the block just
@@ -195,6 +200,26 @@ async fn retrieve(
         // when recall needs it.
         let fts = backend::search_notes_natural(&be_owned, &query_owned, range)?;
 
+        // The GRAPH leg (KNOWLEDGE-ARCHITECTURE-PLAN.md D5): query terms →
+        // entities → their neighbourhood → notes. Already ordered direct-first,
+        // so LightRAG's low-level hits (the note names what you asked about)
+        // outrank high-level ones (reached by walking) through their RRF rank
+        // alone — no extra weight to tune.
+        //
+        // This is the only leg that needs NEITHER the embedding model nor an
+        // LLM, so it works with semantic search off and on a machine that never
+        // downloaded the model. It is also the only leg that can connect two
+        // notes sharing no vocabulary. A failure degrades the turn by one leg,
+        // never fails it.
+        let terms = query_terms(&query_owned);
+        let graph = match backend::graph_notes(&be_owned, &terms, GRAPH_LEG_LIMIT) {
+            Ok(hits) => hits.into_iter().map(|(note, _direct)| note).collect(),
+            Err(e) => {
+                log::warn!("[GRAIN] recall: graph leg failed ({e:#}); continuing without it");
+                Vec::new()
+            }
+        };
+
         // The query vector doubles as the reranker's evidence source, so it
         // outlives the KNN leg.
         let mut query_vec: Option<Vec<f32>> = None;
@@ -214,7 +239,7 @@ async fn retrieve(
                         // Embedding failed (e.g. model load error): fall back to
                         // FTS-only for this turn rather than failing the answer.
                         log::warn!("[GRAIN] recall: embed failed ({e:#}); FTS-only this turn");
-                        let pool = fuse_scored(fts, Vec::new(), CANDIDATE_POOL);
+                        let pool = fuse_legs(vec![fts, graph], CANDIDATE_POOL);
                         return Ok(rerank(
                             &query_owned,
                             pool,
@@ -249,7 +274,7 @@ async fn retrieve(
             Vec::new()
         };
 
-        let pool = fuse_scored(fts, semantic, CANDIDATE_POOL);
+        let pool = fuse_legs(vec![fts, semantic, graph], CANDIDATE_POOL);
 
         // Exact re-scoring: true cosine for EVERY pool candidate from its
         // stored chunk vectors — including FTS hits the KNN head never saw.
@@ -275,22 +300,25 @@ async fn retrieve(
     .await?
 }
 
-/// Reciprocal Rank Fusion of two ranked note lists: `score(id) = Σ 1/(k+rank)`
-/// (0-based rank, k=60). Returns the top `k` notes PAIRED WITH their fused
-/// score (the reranker needs the raw score). Deterministic: ties break by
-/// newest timestamp (HashMap iteration is not ordered).
-pub(crate) fn fuse_scored(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<(Note, f64)> {
+/// Reciprocal Rank Fusion of ANY number of ranked note lists:
+/// `score(id) = Σ 1/(k+rank)` (0-based rank, k=60 — the constant Cerebras uses,
+/// and the standard one). Rank fusion rather than score comparison is the point:
+/// BM25 scores, cosine distances and a graph walk's ordering are not on
+/// comparable scales, and RRF never asks them to be.
+///
+/// Returns the top `k` notes PAIRED WITH their fused score (the reranker needs
+/// the raw score). Deterministic: ties break by newest timestamp (HashMap
+/// iteration is not ordered).
+pub(crate) fn fuse_legs(legs: Vec<Vec<Note>>, k: usize) -> Vec<(Note, f64)> {
     use std::collections::HashMap;
     let mut score: HashMap<String, f64> = HashMap::new();
     let mut notes: HashMap<String, Note> = HashMap::new();
 
-    for (rank, note) in fts.into_iter().enumerate() {
-        *score.entry(note.id.clone()).or_insert(0.0) += 1.0 / (RRF_K + rank as f64);
-        notes.entry(note.id.clone()).or_insert(note);
-    }
-    for (rank, note) in semantic.into_iter().enumerate() {
-        *score.entry(note.id.clone()).or_insert(0.0) += 1.0 / (RRF_K + rank as f64);
-        notes.entry(note.id.clone()).or_insert(note);
+    for leg in legs {
+        for (rank, note) in leg.into_iter().enumerate() {
+            *score.entry(note.id.clone()).or_insert(0.0) += 1.0 / (RRF_K + rank as f64);
+            notes.entry(note.id.clone()).or_insert(note);
+        }
     }
 
     let mut ranked: Vec<(String, f64)> = score.into_iter().collect();
@@ -308,6 +336,11 @@ pub(crate) fn fuse_scored(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<
         .take(k)
         .filter_map(|(id, s)| notes.remove(&id).map(|n| (n, s)))
         .collect()
+}
+
+/// The two-leg form (lexical + semantic) the overlay's hybrid search uses.
+pub(crate) fn fuse_scored(fts: Vec<Note>, semantic: Vec<Note>, k: usize) -> Vec<(Note, f64)> {
+    fuse_legs(vec![fts, semantic], k)
 }
 
 /// Back-compat thin wrapper: RRF fuse to top `k` notes without the scores. Kept

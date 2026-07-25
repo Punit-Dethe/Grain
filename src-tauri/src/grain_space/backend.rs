@@ -77,6 +77,20 @@ pub fn search_notes_natural(
     vault::search_notes_natural(b, query, range)
 }
 
+/// The graph retrieval leg (KNOWLEDGE-ARCHITECTURE-PLAN.md D5). Each hit carries
+/// whether the note named a query entity DIRECTLY (LightRAG's low level) or was
+/// reached by walking the neighbourhood (high level), so the caller can fuse the
+/// two as separate ranked lists.
+pub fn graph_notes(b: &Backend, terms: &[String], limit: usize) -> Result<Vec<(Note, bool)>> {
+    vault::graph_notes(b, terms, limit)
+}
+
+/// Store the typed relations a capture extracted. Best-effort: never fail a
+/// capture that already saved.
+pub fn record_relations(b: &Backend, relations: &[super::capture::Relation]) -> Result<()> {
+    vault::record_relations(b, relations)
+}
+
 /// Exact stored-vector cosine for a candidate pool (reranker evidence).
 pub fn note_similarities(
     b: &Backend,

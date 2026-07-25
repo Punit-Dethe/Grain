@@ -18,6 +18,7 @@ pub mod capture;
 pub mod commands;
 pub mod embed;
 pub mod folder_meta;
+pub mod graph;
 pub mod note;
 pub mod recall;
 pub mod reminders;

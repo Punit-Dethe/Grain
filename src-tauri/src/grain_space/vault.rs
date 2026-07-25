@@ -734,6 +734,9 @@ fn open_index(v: &Vault) -> Result<Connection> {
         "ALTER TABLE notes_meta ADD COLUMN content TEXT NOT NULL DEFAULT ''",
         [],
     );
+    // The entity graph lives in this SAME index file, so switching backends can
+    // never mix two corpora's entities and "rebuild index" already covers it.
+    super::graph::ensure_tables(&conn)?;
     Ok(conn)
 }
 
@@ -787,10 +790,23 @@ fn index_upsert(
         params![note.id, rel, note.timestamp, note.is_pinned as i64, mtime, size, foreign as i64, content],
     )?;
     conn.execute("DELETE FROM notes_fts WHERE id = ?1", params![note.id])?;
+    // The distilled question joins the searchable text (D1): it is phrased the
+    // way the user will later ask, which is exactly what BM25 should match on.
+    // Column layout is unchanged — it rides in the `tldr` column alongside the
+    // summary, so no index migration is needed.
+    let searchable_summary = if note.question.trim().is_empty() {
+        note.tldr.clone()
+    } else {
+        format!("{}\n{}", note.tldr, note.question)
+    };
     conn.execute(
         "INSERT INTO notes_fts (id, title, tldr, body) VALUES (?1, ?2, ?3, ?4)",
-        params![note.id, note.title, note.tldr, note.body],
+        params![note.id, note.title, searchable_summary, note.body],
     )?;
+    // Graph links come from the note's own frontmatter, so this runs for a fresh
+    // capture AND for a rebuild-from-files — the entity neighbourhood is always
+    // derivable from what is on disk (graph.rs).
+    super::graph::set_note_entities(conn, &note.id, &note.entities, note.timestamp)?;
     Ok(())
 }
 
@@ -812,6 +828,7 @@ fn index_remove(conn: &Connection, id: &str) -> Result<()> {
     if vec_table_exists(conn) {
         purge_note_vectors(conn, id)?;
     }
+    super::graph::forget_note(conn, id)?;
     Ok(())
 }
 
@@ -1670,6 +1687,43 @@ fn mutate_grain_note(v: &Vault, id: &str, apply: impl FnOnce(&mut Note)) -> Resu
     }
 }
 
+/// Store the typed relations one capture extracted (D2 → D4). Separate from
+/// `save_note` because relations are index-level: they are not in the note file,
+/// so they cannot ride the frontmatter write. Best-effort by design — a failure
+/// here must never fail a capture that already saved.
+pub fn record_relations(v: &Vault, relations: &[super::capture::Relation]) -> Result<()> {
+    if relations.is_empty() {
+        return Ok(());
+    }
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    super::graph::record_relations(&conn, relations, chrono::Utc::now().timestamp_millis())
+}
+
+/// The graph retrieval leg (D5): query terms → entities → neighbourhood → notes.
+/// Needs neither the embedding model nor an LLM, so it works with semantic search
+/// off and on a machine that never downloaded the model.
+pub fn graph_notes(v: &Vault, terms: &[String], limit: usize) -> Result<Vec<(Note, bool)>> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+    let hits = super::graph::walk(&conn, terms, limit)?;
+    let mut out = Vec::with_capacity(hits.len());
+    for hit in hits {
+        // A hit whose row has vanished (deleted between walk and read) is simply
+        // skipped — never an error for the whole leg.
+        let Some((rel, _)) = path_of(&conn, &hit.note_id)? else {
+            continue;
+        };
+        match read_note_at(v, &rel) {
+            Ok(note) => out.push((note, hit.direct)),
+            Err(e) => log::warn!("[GRAIN] vault graph_notes: {e:#}"),
+        }
+    }
+    Ok(out)
+}
+
 /// Recovery: wipe the derived index and re-scan the vault from scratch.
 pub fn rebuild_index(v: &Vault) -> Result<u32> {
     ensure_vault(v)?;
@@ -1679,6 +1733,11 @@ pub fn rebuild_index(v: &Vault) -> Result<u32> {
     if vec_table_exists(&conn) {
         conn.execute("DELETE FROM notes_vec", [])?;
     }
+    // The reconcile below repopulates the entity neighbourhood from frontmatter.
+    // Typed relation predicates are NOT in the note files, so they are lost here
+    // and re-accumulate as notes are re-captured — the graph gets thinner, never
+    // wrong (graph.rs).
+    super::graph::clear(&conn)?;
     reconcile_locked(v, &conn)?;
     let count: u32 = conn.query_row("SELECT COUNT(*) FROM notes_meta", [], |r| r.get(0))?;
     Ok(count)
@@ -2656,6 +2715,123 @@ mod tests {
         let floored = semantic_search_ranged(&v, &va, 30, None, 0.5).unwrap();
         assert_eq!(floored.len(), 1);
         assert_eq!(floored[0].id, a.id);
+        cleanup(&v);
+    }
+
+    /// **The proof for the graph leg (D5/B5).** A graph leg that looks plausible
+    /// and retrieves nothing is worse than none, because it costs a fusion slot.
+    /// So: a real vault, real files, a question that the lexical leg CANNOT
+    /// answer, and the same question answered once entities are in place.
+    ///
+    /// Setup mirrors the case that motivated this whole design — "how did my auth
+    /// setup change?" The answer lives in a note that never uses the words
+    /// "session" or "cookie", and is reachable only because both notes name
+    /// `auth.py`.
+    #[test]
+    fn the_graph_leg_answers_what_keyword_search_structurally_cannot() {
+        let v = temp_vault("graph_leg");
+
+        // The old decision. Names the entities, and the words the query will use.
+        let mut old = grain_note("Session Auth", "we authenticate with session cookies");
+        old.entities = vec!["Session Cookie".into(), "auth.py".into()];
+        save_note(&v, &old).unwrap();
+
+        // The newer decision. Shares NO content words with the query below.
+        let mut new = grain_note("Buffer Raise", "raised the buffer to 256KB");
+        new.entities = vec!["auth.py".into(), "buffer size".into()];
+        save_note(&v, &new).unwrap();
+
+        // An unrelated note, to prove the walk is selective rather than
+        // returning whatever is in the vault.
+        let mut other = grain_note("Pasta", "boil the water first");
+        other.entities = vec!["pasta".into()];
+        save_note(&v, &other).unwrap();
+
+        // BASELINE: keyword search finds the note that says "session cookie" and
+        // is structurally incapable of finding the buffer note — no shared word.
+        let lexical = search_notes_natural(&v, "session cookie auth", None).unwrap();
+        let lexical_ids: Vec<&str> = lexical.iter().map(|n| n.id.as_str()).collect();
+        assert!(lexical_ids.contains(&old.id.as_str()));
+        assert!(
+            !lexical_ids.contains(&new.id.as_str()),
+            "baseline must MISS the multi-hop answer, or this test proves nothing"
+        );
+
+        // THE GRAPH LEG: same query terms, now reaching the buffer note through
+        // the entity both notes share.
+        let terms = vec!["session".to_string(), "cookie".to_string()];
+        let hits = graph_notes(&v, &terms, 8).unwrap();
+        let direct: Vec<&str> = hits
+            .iter()
+            .filter(|(_, d)| *d)
+            .map(|(n, _)| n.id.as_str())
+            .collect();
+        let walked: Vec<&str> = hits
+            .iter()
+            .filter(|(_, d)| !*d)
+            .map(|(n, _)| n.id.as_str())
+            .collect();
+
+        assert_eq!(direct, vec![old.id.as_str()], "low level: names the entity");
+        assert_eq!(
+            walked,
+            vec![new.id.as_str()],
+            "high level: reached through auth.py — the answer keyword search missed"
+        );
+        assert!(
+            !hits.iter().any(|(n, _)| n.id == other.id),
+            "the walk must stay selective, not return the vault"
+        );
+
+        // A rebuild must restore the neighbourhood from the notes' own
+        // frontmatter — the graph is derived, and derived means rebuildable.
+        rebuild_index(&v).unwrap();
+        let after = graph_notes(&v, &terms, 8).unwrap();
+        assert_eq!(
+            after.len(),
+            hits.len(),
+            "rebuild-from-files must restore the entity neighbourhood"
+        );
+
+        cleanup(&v);
+    }
+
+    /// Deleting a note must remove it from the walk — a stale link would have
+    /// retrieval citing a note that no longer exists.
+    #[test]
+    fn graph_links_follow_note_deletion_and_edits() {
+        let v = temp_vault("graph_lifecycle");
+        let mut note = grain_note("Auth Fix", "the fix");
+        note.entities = vec!["auth.py".into(), "JWT".into()];
+        save_note(&v, &note).unwrap();
+        assert_eq!(graph_notes(&v, &["auth.py".into()], 8).unwrap().len(), 1);
+
+        // An edit that drops an entity drops the link.
+        note.entities = vec!["JWT".into()];
+        save_note(&v, &note).unwrap();
+        assert!(graph_notes(&v, &["auth.py".into()], 8).unwrap().is_empty());
+        assert_eq!(graph_notes(&v, &["jwt".into()], 8).unwrap().len(), 1);
+
+        delete_note(&v, &note.id).unwrap();
+        assert!(graph_notes(&v, &["jwt".into()], 8).unwrap().is_empty());
+        cleanup(&v);
+    }
+
+    /// The distilled question must be searchable: it is phrased the way the user
+    /// will later ask, which is the whole point of storing it.
+    #[test]
+    fn the_distilled_question_is_searchable() {
+        let v = temp_vault("question_fts");
+        let mut note = grain_note("Buffer Raise", "bumped it to 256KB");
+        // The body says none of this; the question does.
+        note.question = "why did token refresh fail on large payloads?".into();
+        save_note(&v, &note).unwrap();
+
+        let hits = search_notes_natural(&v, "token refresh failing", None).unwrap();
+        assert!(
+            hits.iter().any(|n| n.id == note.id),
+            "a question-only match must retrieve the note"
+        );
         cleanup(&v);
     }
 
