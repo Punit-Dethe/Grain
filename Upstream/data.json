@@ -1,5 +1,14 @@
 [
   {
+    "date": "Jul 25, 2026",
+    "ts": "2026-07-25T06:35:53Z",
+    "sha": "6cad594cdba3aaa99555183fcb1e7b5a3967168e",
+    "commit": "maximize-window: enable maximize and snap support (#1778)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1778"
+  },
+  {
     "date": "Jul 23, 2026",
     "ts": "2026-07-23T13:00:15Z",
     "sha": "390729a8007a9c09be38416bc7755e4fa04165c3",

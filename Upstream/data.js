@@ -3,6 +3,15 @@
 // where the browser blocks fetch('data.json').
 window.UPSTREAM_DATA = [
   {
+    "date": "Jul 25, 2026",
+    "ts": "2026-07-25T06:35:53Z",
+    "sha": "6cad594cdba3aaa99555183fcb1e7b5a3967168e",
+    "commit": "maximize-window: enable maximize and snap support (#1778)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1778"
+  },
+  {
     "date": "Jul 23, 2026",
     "ts": "2026-07-23T13:00:15Z",
     "sha": "390729a8007a9c09be38416bc7755e4fa04165c3",
@@ -715,12 +724,12 @@ window.UPSTREAM_DATA = [
   }
 ];
 window.UPSTREAM_STATUS = {
-  "upstream_head": "390729a8",
-  "upstream_subject": "bump handy keys 0.3.2",
-  "upstream_date": "2026-07-23T21:00:15+08:00",
+  "upstream_head": "6cad594c",
+  "upstream_subject": "maximize-window: enable maximize and snap support (#1778)",
+  "upstream_date": "2026-07-25T14:35:53+08:00",
   "latest_tag": "v0.9.4",
   "merge_base": "cdbc2239",
-  "behind": 18,
+  "behind": 19,
   "trial_clean": false,
   "conflicts": [
     ".nix/bun-lock-hash",
@@ -728,10 +737,11 @@ window.UPSTREAM_STATUS = {
     "scripts/gen_catalog.py",
     "src-tauri/Cargo.toml",
     "src-tauri/src/handy/managers/transcription.rs",
+    "src-tauri/src/lib.rs",
     "src/components/Sidebar.tsx",
     "src/components/settings/AccelerationSelector.tsx",
     "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-25T04:51:28Z"
+  "checked_at": "2026-07-25T07:46:59Z"
 };
