@@ -1,11 +1,11 @@
 //! [GRAIN] The link to the running Grain app.
 //!
-//! Grain mints a token for MCP when Grain Space is enabled and writes it beside
-//! its other data; this reads that file and authenticates on the local event
-//! port. No token file means the feature is off — which is a different message
-//! to the user than "Grain is not running", and both are different from a real
-//! failure, so all three are distinguished here rather than collapsed into one
-//! unhelpful error.
+//! Grain mints a token for MCP when the bridge is switched on in the Grain Space
+//! tab and writes it beside its other data; this reads that file and
+//! authenticates on the local event port. No token file means the bridge is off
+//! — which is a different message to the user than "Grain is not running", and
+//! both are different from a real failure, so all three are distinguished here
+//! rather than collapsed into one unhelpful error.
 
 use std::path::PathBuf;
 
@@ -15,7 +15,7 @@ use serde::Deserialize;
 /// The port Grain's local event server listens on (`events_server::EVENTS_PORT`).
 const EVENTS_PORT: u16 = 7124;
 
-/// Written by the app when Grain Space is enabled; removed when it is not.
+/// Written by the app when the MCP bridge is on; removed when it is not.
 const TOKEN_FILE: &str = "mcp-token.json";
 
 #[derive(Debug, Deserialize)]
