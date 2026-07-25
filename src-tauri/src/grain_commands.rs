@@ -48,31 +48,7 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
     Ok(())
 }
 
-/// [GRAIN] Persist the user's voice actions (trigger → open apps/sites). Drops
-/// entries with a blank trigger or no targets, and prunes blank target values —
-/// the UI enforces this too, but this guards direct invoke calls.
-#[tauri::command]
-#[specta::specta]
-pub fn update_actions(app: AppHandle, actions: Vec<settings::VoiceAction>) -> Result<(), String> {
-    let actions: Vec<settings::VoiceAction> = actions
-        .into_iter()
-        .map(|mut a| {
-            a.targets.retain(|t| match t {
-                settings::ActionTarget::App(v) | settings::ActionTarget::Url(v) => {
-                    !v.trim().is_empty()
-                }
-            });
-            a
-        })
-        .filter(|a| !a.trigger.trim().is_empty() && !a.targets.is_empty())
-        .collect();
-    let mut settings = settings::get_settings(&app);
-    settings.actions = actions;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Toggle context awareness (post-processing SOFT context + user MODES).
+/// [GRAIN] Toggle context awareness (post-processing SOFT context).
 #[tauri::command]
 #[specta::specta]
 pub fn change_context_awareness_enabled_setting(
@@ -219,29 +195,6 @@ pub fn sync_agent_reply_surface_slot(app: &AppHandle) {
     if let Err(e) = reg.set_slot_claim(ext::AGENT_REPLY_SURFACE_SLOT, occupant) {
         log::warn!("[GRAIN] could not sync the agent reply-surface slot: {e}");
     }
-}
-
-/// [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
-/// entries missing a name, prompt, or a non-blank matcher value — the UI enforces
-/// this too, but this guards direct invoke calls.
-#[tauri::command]
-#[specta::specta]
-pub fn update_app_modes(app: AppHandle, modes: Vec<settings::AppMode>) -> Result<(), String> {
-    let modes: Vec<settings::AppMode> = modes
-        .into_iter()
-        .filter(|m| {
-            let has_target = match &m.matcher {
-                settings::AppMatch::Process(v) | settings::AppMatch::UrlHost(v) => {
-                    !v.trim().is_empty()
-                }
-            };
-            !m.name.trim().is_empty() && !m.prompt.trim().is_empty() && has_target
-        })
-        .collect();
-    let mut settings = settings::get_settings(&app);
-    settings.app_modes = modes;
-    settings::write_settings(&app, settings);
-    Ok(())
 }
 
 /// [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be

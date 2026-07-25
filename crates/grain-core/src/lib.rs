@@ -26,6 +26,6 @@ pub mod install;
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
 pub use settings::{
-    ActionTarget, AppMatch, AppMode, AppSettings, DictCandidate, PostProcessProvider, SecretMap,
-    SttProvider, SttProviderKind, VoiceAction, STT_LOCAL_PROVIDER_ID,
+    AppSettings, DictCandidate, PostProcessProvider, SecretMap, SttProvider, SttProviderKind,
+    STT_LOCAL_PROVIDER_ID,
 };

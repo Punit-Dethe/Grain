@@ -110,60 +110,6 @@ fn default_snippet_enabled() -> bool {
     true
 }
 
-/// [GRAIN] One thing a voice ACTION opens. `App` is launched with the OS default
-/// handler (an executable, a document, or a folder — cross-platform via the
-/// opener); `Url` is opened in the user's default browser. Kept as a two-variant
-/// enum so the UI stays a single App/Website toggle (childishly simple).
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum ActionTarget {
-    App(String),
-    Url(String),
-}
-
-/// [GRAIN] A voice ACTION (Experimentations tab): when the (normalized) trigger
-/// phrase is spoken, every `target` is opened and the trigger is stripped from
-/// the pasted text. One action can open several apps + sites at once — a
-/// "workflow" (e.g. "start coding" opens the editor, terminal, and two docs).
-/// Matching reuses the snippet matcher, so it is case/punctuation tolerant and
-/// survives rolling-window chunk artifacts. No AI, no network — a local launch.
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
-pub struct VoiceAction {
-    pub id: String,
-    pub trigger: String,
-    pub targets: Vec<ActionTarget>,
-    #[serde(default = "default_snippet_enabled")]
-    pub enabled: bool,
-}
-
-/// [GRAIN] How an [`AppMode`] is bound to the active target. A mode fires when the
-/// foreground app (or, in a browser, the current site) matches. `Process` matches
-/// the executable stem case-insensitively (e.g. `"Code"`, `"slack"`); `UrlHost`
-/// matches the browser address-bar host by suffix (`"mail.google.com"` also
-/// matches `"…mail.google.com"`), so users type a bare host, not a regex.
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
-pub enum AppMatch {
-    Process(String),
-    UrlHost(String),
-}
-
-/// [GRAIN] A user-defined "mode": a specific post-processing prompt (HARD
-/// formatting) applied ONLY when its `matcher` hits the active app/site. This is
-/// the opt-in, per-target layer that rides on top of the always-on base prompt +
-/// automatic soft context. The `prompt` is inline (self-contained) rather than a
-/// reference into `post_process_prompts`, so a mode can be shared/exported whole.
-#[derive(Serialize, Deserialize, Debug, Clone, Type)]
-pub struct AppMode {
-    pub id: String,
-    pub name: String,
-    #[serde(rename = "match")]
-    pub matcher: AppMatch,
-    pub prompt: String,
-    #[serde(default = "default_snippet_enabled")]
-    pub enabled: bool,
-}
-
 /// [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
 /// clipboard automatically as they arrive. `First` (default) mirrors the
 /// original behavior — only the first reply of a session is auto-copied.
@@ -640,9 +586,6 @@ pub struct AppSettings {
     /// [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
     #[serde(default)]
     pub snippets: Vec<Snippet>,
-    /// [GRAIN] Voice actions (Experimentations tab): trigger phrase → open apps/sites.
-    #[serde(default)]
-    pub actions: Vec<VoiceAction>,
     #[serde(default)]
     pub model_unload_timeout: ModelUnloadTimeout,
     #[serde(default = "default_word_correction_threshold")]
@@ -746,10 +689,10 @@ pub struct AppSettings {
     pub rolling_live_preview: bool,
     /// [GRAIN] Context awareness (post-processing only): when on, the backend
     /// detects the foreground app/site right before LLM post-processing and layers
-    /// an automatic SOFT context line (tone/vocab, never restructuring) plus any
-    /// matching user [`AppMode`] (HARD formatting) on top of the selected base
-    /// prompt. OFF by default — zero behavior change until opted in, and it only
-    /// affects installs that also run post-processing.
+    /// an automatic SOFT context line (tone/vocab, never restructuring) on top of
+    /// the selected base prompt. OFF by default — zero behavior change until opted
+    /// in, and it only affects installs that also run post-processing. HARD
+    /// per-app formatting is the App Modes extension's job, not a setting here.
     #[serde(default)]
     pub context_awareness_enabled: bool,
     /// [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
@@ -775,10 +718,6 @@ pub struct AppSettings {
     /// folder selection and load-unpacked projects. OFF by default.
     #[serde(default)]
     pub extension_developer_mode: bool,
-    /// [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
-    /// default; only consulted when `context_awareness_enabled` is true.
-    #[serde(default)]
-    pub app_modes: Vec<AppMode>,
     /// [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
     /// read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
     /// names) from the focused field via UI Automation and pass them to the LLM as
@@ -1540,7 +1479,6 @@ pub fn get_default_settings() -> AppSettings {
         log_level: default_log_level(),
         custom_words: Vec::new(),
         snippets: Vec::new(),
-        actions: Vec::new(),
         model_unload_timeout: ModelUnloadTimeout::default(),
         word_correction_threshold: default_word_correction_threshold(),
         history_limit: default_history_limit(),
@@ -1586,7 +1524,6 @@ pub fn get_default_settings() -> AppSettings {
         agent_enabled: false,
         extensions_imported_v1: false,
         extension_developer_mode: false,
-        app_modes: Vec::new(),
         context_nearby_terms: false,
         auto_dictionary_enabled: false,
         dictionary_candidates: Vec::new(),

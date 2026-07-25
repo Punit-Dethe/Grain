@@ -764,45 +764,7 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] Persist the user's voice actions (trigger → open apps/sites). Drops
- * entries with a blank trigger or no targets, and prunes blank target values —
- * the UI enforces this too, but this guards direct invoke calls.
- */
-async updateActions(actions: VoiceAction[]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_actions", { actions }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Open a set of targets on demand — powers the Settings "Test" button so
- * a user can confirm an action before saving it.
- */
-async runAction(targets: ActionTarget[]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("run_action", { targets }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Native file picker for choosing an application/executable to launch,
- * so users never have to type a path. Returns the absolute path, or `None` if
- * the dialog was cancelled. Runs the modal off the async executor.
- */
-async pickActionApp() : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("pick_action_app") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Toggle context awareness (post-processing SOFT context + user MODES).
+ * [GRAIN] Toggle context awareness (post-processing SOFT context).
  */
 async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
@@ -897,19 +859,6 @@ async changeAutoDictionaryEnabledSetting(enabled: boolean) : Promise<Result<null
 async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_scrap_that_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Persist the user's per-app / per-site modes (hard formatting). Drops
- * entries missing a name, prompt, or a non-blank matcher value — the UI enforces
- * this too, but this guards direct invoke calls.
- */
-async updateAppModes(modes: AppMode[]) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("update_app_modes", { modes }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2063,13 +2012,6 @@ streamTextEvent: "stream-text-event"
 /** user-defined types **/
 
 /**
- * [GRAIN] One thing a voice ACTION opens. `App` is launched with the OS default
- * handler (an executable, a document, or a folder — cross-platform via the
- * opener); `Url` is opened in the user's default browser. Kept as a two-variant
- * enum so the UI stays a single App/Website toggle (childishly simple).
- */
-export type ActionTarget = { kind: "app"; value: string } | { kind: "url"; value: string }
-/**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the
  * original behavior — only the first reply of a session is auto-copied.
@@ -2117,22 +2059,6 @@ confirm_delete: AgentSource | null }
  */
 export type AgentSource = { note_id: string; title: string; saved_at: number }
 /**
- * [GRAIN] How an [`AppMode`] is bound to the active target. A mode fires when the
- * foreground app (or, in a browser, the current site) matches. `Process` matches
- * the executable stem case-insensitively (e.g. `"Code"`, `"slack"`); `UrlHost`
- * matches the browser address-bar host by suffix (`"mail.google.com"` also
- * matches `"…mail.google.com"`), so users type a bare host, not a regex.
- */
-export type AppMatch = { kind: "process"; value: string } | { kind: "url_host"; value: string }
-/**
- * [GRAIN] A user-defined "mode": a specific post-processing prompt (HARD
- * formatting) applied ONLY when its `matcher` hits the active app/site. This is
- * the opt-in, per-target layer that rides on top of the always-on base prompt +
- * automatic soft context. The `prompt` is inline (self-contained) rather than a
- * reference into `post_process_prompts`, so a mode can be shared/exported whole.
- */
-export type AppMode = { id: string; name: string; match: AppMatch; prompt: string; enabled?: boolean }
-/**
  * The container-level `serde(default)` (backed by the `Default` impl below)
  * guarantees every field — including ones added in the future — falls back to
  * its `get_default_settings()` value when missing from a stored settings
@@ -2153,11 +2079,7 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
-snippets?: Snippet[]; 
-/**
- * [GRAIN] Voice actions (Experimentations tab): trigger phrase → open apps/sites.
- */
-actions?: VoiceAction[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
+snippets?: Snippet[]; model_unload_timeout?: ModelUnloadTimeout; word_correction_threshold?: number; history_limit?: number; recording_retention_period?: RecordingRetentionPeriod; paste_method?: PasteMethod; clipboard_handling?: ClipboardHandling; auto_submit?: boolean; auto_submit_key?: AutoSubmitKey; post_process_enabled?: boolean; post_process_provider_id?: string; post_process_providers?: PostProcessProvider[]; post_process_api_keys?: SecretMap; 
 /**
  * [GRAIN] When true, post-processing routes among ENABLED post-process
  * providers (round-robin + per-provider daily quota + failover). When false
@@ -2214,10 +2136,10 @@ rolling_live_preview?: boolean;
 /**
  * [GRAIN] Context awareness (post-processing only): when on, the backend
  * detects the foreground app/site right before LLM post-processing and layers
- * an automatic SOFT context line (tone/vocab, never restructuring) plus any
- * matching user [`AppMode`] (HARD formatting) on top of the selected base
- * prompt. OFF by default — zero behavior change until opted in, and it only
- * affects installs that also run post-processing.
+ * an automatic SOFT context line (tone/vocab, never restructuring) on top of
+ * the selected base prompt. OFF by default — zero behavior change until opted
+ * in, and it only affects installs that also run post-processing. HARD
+ * per-app formatting is the App Modes extension's job, not a setting here.
  */
 context_awareness_enabled?: boolean; 
 /**
@@ -2247,11 +2169,6 @@ extensions_imported_v1?: boolean;
  * folder selection and load-unpacked projects. OFF by default.
  */
 extension_developer_mode?: boolean; 
-/**
- * [GRAIN] User-defined per-app / per-site modes (HARD formatting). Empty by
- * default; only consulted when `context_awareness_enabled` is true.
- */
-app_modes?: AppMode[]; 
 /**
  * [GRAIN] Silent nearby-term hints: when on (and context awareness is on),
  * read UNIQUE non-dictionary tokens (proper nouns, code identifiers, library
@@ -2856,15 +2773,6 @@ export type TodoTag = { text: string; done: boolean }
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
-/**
- * [GRAIN] A voice ACTION (Experimentations tab): when the (normalized) trigger
- * phrase is spoken, every `target` is opened and the trigger is stripped from
- * the pasted text. One action can open several apps + sites at once — a
- * "workflow" (e.g. "start coding" opens the editor, terminal, and two docs).
- * Matching reuses the snippet matcher, so it is case/punctuation tolerant and
- * survives rolling-window chunk artifacts. No AI, no network — a local launch.
- */
-export type VoiceAction = { id: string; trigger: string; targets: ActionTarget[]; enabled?: boolean }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

@@ -1,26 +1,27 @@
 //! [GRAIN] Context awareness — detect the foreground app/site and compose the
-//! three-stage post-processing system prompt.
+//! layered post-processing system prompt.
 //!
-//! # The three stages
+//! # The layers
 //! 1. **BASE** — the user's selected post-processing prompt (General/Email/Coding
 //!    or a custom one). Always present; unchanged behavior.
 //! 2. **CONTEXT (soft)** — an automatic, ≤2-line nudge derived from the detected
 //!    app *category* (tone + vocabulary). Never restructures or hard-formats.
-//! 3. **MODE (hard)** — a user-defined [`AppMode`] prompt, injected ONLY when its
-//!    matcher hits the active app/site. This is where hard formatting lives, and
-//!    only because the user asked for it.
+//!
+//! HARD per-app formatting is no longer built in: it is what the App Modes
+//! extension does, in its own transform hook and its own storage, so Grain
+//! carries neither the setting nor the matcher for it.
 //!
 //! This is a **zero-overhead inline interceptor**, not a new engine: detection is
 //! one cheap OS call made ONCE per finalized transcript (never per rolling chunk),
 //! right before LLM post-processing, and composition is pure string work. When
-//! context awareness is off — or nothing is detected and no mode matches — the
-//! base prompt is returned untouched, so the common path is exactly today's.
+//! context awareness is off — or nothing is detected — the base prompt is
+//! returned untouched, so the common path is exactly today's.
 //!
 //! Detection is Windows-only for now; other platforms return `None`, degrading
 //! cleanly to BASE-only behavior. Browser URL/site detection is a later increment
 //! (needs UI Automation); until then browsers get the generic `Browser` category.
 
-use grain_core::{AppMatch, AppMode, AppSettings};
+use grain_core::AppSettings;
 
 /// Coarse app category driving the automatic SOFT context line. Deliberately a
 /// small, robust bucket set (à la the incumbents' 4–8 categories) rather than a
@@ -547,11 +548,11 @@ pub fn extract_unique_terms(text: &str) -> Vec<String> {
 pub struct ActiveContext {
     /// Human-facing app name for the prompt/UI (window title or exe stem).
     pub app_name: String,
-    /// Executable stem, lowercased, no extension (the [`AppMatch::Process`] key).
+    /// Executable stem, lowercased, no extension — the process-matching key.
     pub exe: String,
     /// Full executable path, when resolvable. Unlike `exe` (a stem for *matching*),
-    /// this is a *launchable* path — used by voice actions' "capture focused app"
-    /// to fill an App target you can actually open. Empty when unavailable.
+    /// this is a *launchable* path — handed to extensions that need an app they
+    /// can actually open. Empty when unavailable.
     pub exe_path: String,
     pub category: AppCategory,
     /// Browser address-bar host, when the foreground app is a browser and UI
@@ -563,46 +564,15 @@ pub struct ActiveContext {
     pub nearby_terms: Vec<String>,
 }
 
-/// True if `mode` targets the given context. `Process` compares exe stems
-/// case-insensitively; `UrlHost` matches by dot-aware host suffix so a bare
-/// `mail.google.com` also fires on any sub-host of it.
-pub fn mode_matches(mode: &AppMode, ctx: &ActiveContext) -> bool {
-    match &mode.matcher {
-        AppMatch::Process(p) => {
-            let want = p.trim().trim_end_matches(".exe").to_ascii_lowercase();
-            !want.is_empty() && ctx.exe == want
-        }
-        AppMatch::UrlHost(h) => {
-            let want = h.trim().trim_start_matches("www.").to_ascii_lowercase();
-            match &ctx.url_host {
-                Some(host) if !want.is_empty() => {
-                    let host = host.trim_start_matches("www.");
-                    host == want || host.ends_with(&format!(".{want}"))
-                }
-                _ => false,
-            }
-        }
-    }
-}
-
-/// The first enabled mode whose matcher hits `ctx`, if any.
-fn matching_mode<'a>(settings: &'a AppSettings, ctx: &ActiveContext) -> Option<&'a AppMode> {
-    settings
-        .app_modes
-        .iter()
-        .find(|m| m.enabled && mode_matches(m, ctx))
-}
-
 /// Compose the final post-processing system prompt from up to four stages.
 ///
 /// `spoken_instruction` is the **Prompt Record** layer: an instruction the user
 /// dictated mid-recording (by clicking the pill), aimed at THIS transcript. It is
-/// the absolute highest authority — above a hard app mode — and is applied even
-/// when context awareness is off.
+/// the absolute highest authority, and is applied even when context awareness is
+/// off.
 ///
 /// Returns `base` unchanged when nothing applies (no spoken instruction, context
-/// off / no detection / no matching mode), so the common path is byte-for-byte
-/// today's behavior. Otherwise a compact preamble is prepended (NOT appended — so
+/// off / no detection), so the common path is byte-for-byte today's behavior. Otherwise a compact preamble is prepended (NOT appended — so
 /// it precedes the transcript in both the structured and legacy `${output}`
 /// paths) framing the layers and their priority.
 pub fn compose_prompt(
@@ -623,9 +593,8 @@ pub fn compose_prompt(
         None
     };
     let soft = ctx.and_then(|c| c.category.soft_line());
-    let mode = ctx.and_then(|c| matching_mode(settings, c));
     let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
-    let has_ctx = soft.is_some() || mode.is_some() || !terms.is_empty();
+    let has_ctx = soft.is_some() || !terms.is_empty();
 
     if spoken.is_none() && !has_ctx {
         return base.to_string(); // nothing to add — untouched.
@@ -634,8 +603,8 @@ pub fn compose_prompt(
     let mut pre = String::with_capacity(base.len() + 640);
 
     // 1) Spoken instruction — ABSOLUTE highest priority. The user just dictated it
-    // for this exact transcript, so it outranks every rule below (including a hard
-    // app mode). It is an instruction ABOUT the transcript, never content to emit.
+    // for this exact transcript, so it outranks every rule below. It is an
+    // instruction ABOUT the transcript, never content to emit.
     if let Some(instr) = spoken {
         pre.push_str("[Spoken instruction — HIGHEST PRIORITY]\n");
         pre.push_str(
@@ -648,7 +617,7 @@ pub fn compose_prompt(
         pre.push_str("\n\n");
     }
 
-    // 2) Context-awareness block (soft context / hard app mode / nearby terms).
+    // 2) Context-awareness block (soft context / nearby terms).
     if has_ctx {
         if let Some(c) = ctx {
             pre.push_str("[Context awareness]\n");
@@ -666,15 +635,6 @@ pub fn compose_prompt(
             pre.push_str(line);
             pre.push('\n');
         }
-        if let Some(m) = mode {
-            pre.push_str(
-                "User formatting instructions for this app (HIGHEST priority among \
-                 the rules below — follow exactly; the spoken instruction above, if \
-                 any, still wins): ",
-            );
-            pre.push_str(m.prompt.trim());
-            pre.push('\n');
-        }
         if !terms.is_empty() {
             // Additive, LOW authority: only fix a term to one of these spellings when
             // the transcript clearly meant it; otherwise ignore. Never insert them.
@@ -688,9 +648,9 @@ pub fn compose_prompt(
         }
         pre.push_str(
             "Apply the above as guidance over the cleanup rules below. Priority when \
-             instructions conflict: the spoken instruction first, then the user's app \
-             instructions, then the base cleanup rules, then soft context. Keep edits \
-             minimal, preserve meaning, and never invent content that was not dictated.\n\n",
+             instructions conflict: the spoken instruction first, then the base cleanup \
+             rules, then soft context. Keep edits minimal, preserve meaning, and never \
+             invent content that was not dictated.\n\n",
         );
     }
 
@@ -1108,45 +1068,6 @@ mod tests {
     }
 
     #[test]
-    fn process_mode_matches_and_injects_highest_priority() {
-        let mut s = AppSettings::default();
-        s.context_awareness_enabled = true;
-        s.app_modes.push(AppMode {
-            id: "x".into(),
-            name: "X post".into(),
-            matcher: AppMatch::Process("chrome".into()),
-            prompt: "Rewrite as a tweet under 280 chars.".into(),
-            enabled: true,
-        });
-        let out = compose_prompt(
-            "BASE ${output}",
-            &s,
-            Some(&ctx("chrome", AppCategory::Browser)),
-            None,
-        );
-        assert!(out.contains("HIGHEST priority"));
-        assert!(out.contains("tweet under 280"));
-    }
-
-    #[test]
-    fn url_host_suffix_match() {
-        let m = AppMode {
-            id: "g".into(),
-            name: "Gmail".into(),
-            matcher: AppMatch::UrlHost("mail.google.com".into()),
-            prompt: "p".into(),
-            enabled: true,
-        };
-        let mut c = ctx("chrome", AppCategory::Browser);
-        c.url_host = Some("mail.google.com".into());
-        assert!(mode_matches(&m, &c));
-        c.url_host = Some("www.mail.google.com".into());
-        assert!(mode_matches(&m, &c));
-        c.url_host = Some("docs.google.com".into());
-        assert!(!mode_matches(&m, &c));
-    }
-
-    #[test]
     fn extract_terms_keeps_names_and_identifiers_drops_prose() {
         let text = "I asked Rita to fix the useGrainStore hook and the snake_case bug in PyTorch v2 today because it was broken";
         let terms = extract_unique_terms(text);
@@ -1202,28 +1123,22 @@ mod tests {
     }
 
     #[test]
-    fn spoken_instruction_outranks_app_mode() {
+    fn spoken_instruction_outranks_soft_context() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        s.app_modes.push(AppMode {
-            id: "x".into(),
-            name: "X post".into(),
-            matcher: AppMatch::Process("chrome".into()),
-            prompt: "Rewrite as a tweet.".into(),
-            enabled: true,
-        });
         let out = compose_prompt(
             "BASE ${output}",
             &s,
-            Some(&ctx("chrome", AppCategory::Browser)),
+            Some(&ctx("code", AppCategory::Ide)),
             Some("translate it into French"),
         );
-        // The spoken instruction must appear ABOVE the app-mode instructions.
+        // Order carries the authority: what the user just dictated for THIS
+        // transcript has to be read before the automatic context nudge.
         let spoken_pos = out.find("translate it into French").unwrap();
-        let mode_pos = out.find("Rewrite as a tweet").unwrap();
+        let ctx_pos = out.find("[Context awareness]").unwrap();
         assert!(
-            spoken_pos < mode_pos,
-            "spoken instruction must precede app mode"
+            spoken_pos < ctx_pos,
+            "spoken instruction must precede soft context"
         );
     }
 

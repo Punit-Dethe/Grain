@@ -92,7 +92,6 @@ mod tray;
 mod tray_i18n;
 #[path = "handy/utils.rs"]
 mod utils;
-mod voice_actions; // [GRAIN] voice actions: spoken trigger → open apps/sites
 
 pub use cli::CliArgs;
 #[cfg(debug_assertions)]
@@ -817,9 +816,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             grain_commands::update_snippets,
-            grain_commands::update_actions,
-            voice_actions::run_action,
-            voice_actions::pick_action_app,
             grain_commands::change_context_awareness_enabled_setting,
             grain_commands::change_context_nearby_terms_setting,
             grain_commands::change_agent_autocopy_setting,
@@ -829,7 +825,6 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_auto_dictionary_enabled_setting,
             grain_commands::change_scrap_that_enabled_setting,
-            grain_commands::update_app_modes,
             grain_commands::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,

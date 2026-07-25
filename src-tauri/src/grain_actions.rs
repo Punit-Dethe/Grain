@@ -815,9 +815,6 @@ impl ShortcutAction for NativeAsrAction {
                 }
                 ft
             } else {
-                // Voice actions also apply to the Live streaming path: fire
-                // any spoken trigger and strip it before paste (no-op when unused).
-                let finalized = crate::voice_actions::intercept(&ah, &finalized);
                 if finalized.trim().is_empty() {
                     String::new()
                 } else {

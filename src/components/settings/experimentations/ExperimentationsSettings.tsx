@@ -11,7 +11,6 @@ import {
 } from "lucide-react";
 import { OverviewSection } from "./OverviewSection";
 import { SnippetsSection } from "./SnippetsSection";
-import { ActionsSection } from "./ActionsSection";
 import { ContextAwareSection } from "./ContextAwareSection";
 import { AgentSection } from "./AgentSection";
 import { DeveloperSection } from "./DeveloperSection";
@@ -274,12 +273,11 @@ export const ExperimentationsSettings: React.FC = () => {
             info="Speak a trigger word and Grain expands it into your saved text, before anything is pasted. Fully local — no AI call, and the trigger is stripped from what you get."
           />
           <SnippetsSection />
-          {/* SPEC §5.4: one thin divider, then Actions — the position its
-              extension form will occupy via anchor "snippets.after". */}
-          <div className="border-t border-line" />
-          <ActionsSection />
           {/* SPEC §4.3: an extension's settings render next to the feature they
-              extend. Renders nothing when nothing anchors here. */}
+              extend. Renders nothing when nothing anchors here. Grain's own
+              built-in Actions used to sit at this exact spot; the Voice Actions
+              extension now anchors here instead, which is what the position was
+              always holding open. */}
           <ExtensionAnchor anchor="snippets.after" />
         </div>
       ) : tab === "context" ? (

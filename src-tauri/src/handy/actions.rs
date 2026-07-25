@@ -204,13 +204,7 @@ pub(crate) async fn process_transcription_output(
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
 
-    // [GRAIN] Voice actions: fire any spoken trigger (open apps/sites) and strip
-    // it from what we paste. Runs on the finalized transcript BEFORE
-    // post-processing so a pure command ("start coding") never costs an LLM call
-    // — if the whole utterance was the command, `final_text` is now empty and the
-    // paste path below already skips empty output. Zero-cost when no actions
-    // are configured (a single `is_empty()` check inside `intercept`).
-    let mut final_text = crate::voice_actions::intercept(app, transcription);
+    let mut final_text = transcription.to_string();
     let mut post_processed_text: Option<String> = None;
     let mut post_process_prompt: Option<String> = None;
 
