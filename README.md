@@ -1,127 +1,129 @@
 <div align="center">
-  <img src="src-tauri/icons/128x128.png" alt="Grain Logo" width="128" height="128" />
+  <img src="src-tauri/icons/128x128.png" alt="Grain logo" width="128" height="128" />
   <h1>Grain</h1>
+  <p><strong>Speak it. Shape it. Remember it.</strong></p>
+  <p>A local-first, open-source voice utility for dictation, AI workflows, and personal memory.</p>
+  <p>
+    <a href="https://github.com/Punit-Dethe/Grain/releases">Download</a> ·
+    <a href="BUILD.md">Build from source</a> ·
+    <a href="docs/grain-features.md">Feature guide</a> ·
+    <a href="CONTRIBUTING.md">Contribute</a>
+  </p>
 </div>
 
-**A free, open source, and extensible speech-to-text application that works completely offline.**
-
-Grain is a cross-platform desktop application that provides simple, privacy-focused speech transcription. Press a shortcut, speak, and have your words appear in any text field. This happens on your own computer without sending any information to the cloud (unless you opt into external API providers).
-
-## Why Grain?
-
-Grain was created to fill the gap for a truly open source, extensible speech-to-text tool:
-
-- **Free**: Accessibility tooling belongs in everyone's hands, not behind a paywall
-- **Open Source**: Together we can build further. Extend Grain for yourself and contribute to something bigger
-- **Private**: Your voice stays on your computer. Get transcriptions without sending audio to the cloud
-- **Simple**: One tool, one job. Transcribe what you say and put it into a text box
-
-Grain isn't trying to be the best speech-to-text app—it's trying to be the most forkable one.
-
-## What's New in Grain?
-
-We've massively upgraded the core capabilities to make transcription faster and more powerful:
-
-- **Rolling Window Dictation**: Real-time transcription using a live rolling model.
-- **Agent Workflow**: Leverage smart agent processing on your dictated text.
-- **On-the-Fly Model Switching**: Switch models seamlessly while speaking.
-- **Radically Lower Memory Footprint**: We decoupled the frontend from the backend, slashing RAM usage (Peak: ~40MB, Average: ~30MB).
-- **OpenAI Compatible STT**: The Speech-to-Text endpoint is now fully OpenAI compatible.
-- **Multi-Provider & Smart Rotation**: Support for multiple STT and Post-Processing providers. Grain will smartly rotate between them based on daily limits, round-robin rules, and availability. Both endpoints feature this smart rotation!
-- **Quick Panel**: Access your most important settings instantly from a beautiful, responsive quick panel—no need to dig through full settings windows.
-
-## How It Works
-
-1. **Press** a configurable keyboard shortcut to start/stop recording (or use push-to-talk mode)
-2. **Speak** your words while the shortcut is active
-3. **Release** and Grain processes your speech using Whisper or Parakeet
-4. **Get** your transcribed text pasted directly into whatever app you're using
-
-The core process can be run entirely locally:
-
-- Silence is filtered using VAD (Voice Activity Detection) with Silero
-- Transcription uses your choice of models:
-  - **Whisper models** (Small/Medium/Turbo/Large) with GPU acceleration when available
-  - **Parakeet V3** - CPU-optimized model with excellent performance and automatic language detection
-- Works on Windows, macOS, and Linux
-
-## Quick Start
-
-### Installation
-
-1. Download the latest release from the [releases page](https://github.com/Punit-Dethe/Grain/releases).
-2. Install the application
-3. Launch Grain and grant necessary system permissions (microphone, accessibility)
-4. Configure your preferred keyboard shortcuts in Settings
-5. Start transcribing!
-
-### Development Setup
-
-For detailed build instructions including platform-specific requirements, see [BUILD.md](BUILD.md).
-
-## Architecture
-
-### Architectural Philosophy: Invisible & Efficient
-Grain is designed as an "always-armed" background utility, not an application you open and close. Because it sits in your system tray 100% of the time, its architectural decisions prioritize aggressive resource minimization and zero-friction execution:
-
-- **The Native Pill (Decoupled UI)**: Instead of keeping a heavy 150MB+ Web/Tauri window open in the background just to show a tiny recording indicator, we decoupled the UI. The recording indicator (the "Pill") is a tiny, highly-optimized native Rust process (using WGPU). This slashes Grain's idle memory footprint down to an almost invisible **~45MB-60MB** while eliminating focus-stealing bugs and render latency.
-- **Instant Unload**: AI model weights are hundreds of megabytes. Grain only loads these weights into memory the exact millisecond you start speaking. The second your transcription is pasted, the model is aggressively unloaded, returning your RAM to 0% utilization so your daily web browsing and work are never hindered.
-- **Smart GPU Offloading (Vulkan & DirectML)**: We don't force AI math onto your CPU (which drains batteries, spins fans, and lags the OS). By relying on Vulkan (for Whisper) and DirectML via ONNX Runtime (for Other Model's), we offload the heavy math to your dedicated GPU hardware. We rely on the modern OS (WDDM) to virtualize VRAM seamlessly—meaning even if you launch a massive AAA game, Windows will gracefully page Grain's AI weights back and forth without crashing or hogging resources.
-
-Grain is built as a Tauri application combining:
-
-- **Frontend**: React + TypeScript with Tailwind CSS for the settings UI and Quick Panel
-- **Backend**: Rust for system integration, audio processing, and ML inference
-- **Core Libraries**:
-  - `whisper-rs`: Local speech recognition with Whisper models
-  - `transcribe-rs`: CPU-optimized speech recognition with Parakeet models
-  - `cpal`: Cross-platform audio I/O
-  - `vad-rs`: Voice Activity Detection
-  - `rdev`: Global keyboard shortcuts and system events
-  - `rubato`: Audio resampling
-
-### Debug Mode
-
-Grain includes an advanced debug mode for development and troubleshooting. Access it by pressing:
-
-- **macOS**: `Cmd+Shift+D`
-- **Windows/Linux**: `Ctrl+Shift+D`
-
-### CLI Parameters
-
-Grain supports command-line flags for controlling a running instance and customizing startup behavior. These work on all platforms (macOS, Windows, Linux).
-
-**Remote control flags** (sent to an already-running instance via the single-instance plugin):
-
-```bash
-grain-core --toggle-transcription    # Toggle recording on/off
-grain-core --toggle-post-process     # Toggle recording with post-processing on/off
-grain-core --cancel                  # Cancel the current operation
-```
-
-**Startup flags:**
-
-```bash
-grain-core --start-hidden            # Start without showing the main window
-grain-core --no-tray                 # Start without the system tray icon
-grain-core --debug                   # Enable debug mode with verbose logging
-grain-core --help                    # Show all available flags
-```
-
-## Known Issues & Current Limitations
-
-### Major Issues (Help Wanted)
-
-**Whisper Model Crashes:**
-
-- Whisper models crash on certain system configurations (Windows and Linux)
-- Does not affect all systems - issue is configuration-dependent
-  - If you experience crashes and are a developer, please help to fix and provide debug logs!
-
-**Wayland Support (Linux):**
-
-- Limited support for Wayland display server
-- Requires `wtype` or `dotool` for text input to work correctly.
-
 ---
-*Grain is a fork built upon the excellent foundation of [Handy](https://github.com/cjpais/handy).*
+
+Grain gets a thought out of your head without making you change context. Hold a shortcut, speak, and receive text in the app you are already using. When you need more than dictation, Grain can shape the result with your AI provider, act on selected text, or keep a local memory you can ask about later.
+
+It is built on the battle-tested [Handy](https://github.com/cjpais/handy) transcription foundation, with Grain-specific workflows designed around one rule: **nothing should stay alive when you are not using it.**
+
+## The friction Grain removes
+
+| Instead of… | With Grain | A small example |
+| --- | --- | --- |
+| Opening an app just to dictate | Use a global shortcut in any text field | Hold your shortcut, say “Send the revised estimate by Friday,” release. |
+| Choosing an AI workflow before you start talking | Decide at the end whether to process the transcript | Dictate freely, then finish with the AI shortcut for “make this a concise email.” |
+| Repeating boilerplate or navigating to a link | Say a phrase that expands text or triggers an action | Say “project dashboard” to open the dashboard without pasting its URL. |
+| Rewriting the same thought for every app | Apply instructions only where they belong | In your IDE, format a spoken note as code; in email, make it professional. |
+| Searching folders for a half-remembered fact | Ask your personal memory naturally | “What did I decide about the buffer size?” |
+
+## Dictation that fits the moment
+
+Grain gives each dictation style its own configurable shortcut, so changing pace does not mean opening Settings.
+
+| Mode | Best for | What it feels like |
+| --- | --- | --- |
+| **Batch** | Short recordings and maximum punctuation accuracy | Speak, stop, receive the finished transcription. |
+| **Flow** | Everyday dictation | A rolling window keeps long dictation responsive; live preview is optional. |
+| **ASR** | Immediate feedback | Words appear as you speak through real-time streaming transcription. |
+
+Use local Whisper or Parakeet models, or connect an OpenAI-compatible speech-to-text endpoint. Local models are loaded for work and released afterwards; supported hardware acceleration is used when available.
+
+## Workflows, without the ceremony
+
+- **AI post-processing** — Run dictated text through the LLM provider you choose, with prompts you can switch while speaking.
+- **Prompt Record** — Turn a spoken instruction into the processing prompt mid-session: say the content first, then say how you want it changed.
+- **Quick Agent** — Select text, give an instruction by voice or typing, and paste the answer back without opening a full chat window. Expand only when a conversation is useful.
+- **Context-aware modes** — Apply an instruction only for a chosen app or website. A non-match means no extra AI call.
+- **Snippets and voice actions** — Expand frequently used text, open user-approved apps, or launch safe web links from phrases you define.
+- **History and dictionary tools** — Keep both raw and processed output available; maintain words that need special handling.
+- **Quick Panel** — Reach the settings you use most—shortcuts, models, providers, prompts, and history—without digging through tabs.
+
+## Grain Space: a memory companion, not another notes app
+
+Grain Space is for the things you would otherwise send to yourself, bookmark forever, or hope to remember. Capture a selection, speak a note, or type one; later, ask for the answer rather than trying to recall the exact note title.
+
+> **You:** “What was that Product Hunt app I saved?”
+>
+> **Grain:** An answer first, with the supporting memories underneath so you can inspect the source.
+
+### What makes Space 3.0 different
+
+- **Answer-first recall with provenance** — Grain answers conversationally, then shows the notes behind the answer. The original Markdown remains the source of truth.
+- **Local Markdown, by default** — Use Grain’s own folder or an Obsidian vault. Your files remain ordinary Markdown, readable and editable outside Grain.
+- **Hybrid retrieval** — Exact terms, optional on-device semantic search, recency, distilled searchable descriptions, and an entity graph are fused to find both literal and half-remembered ideas.
+- **No memory daemon** — Space refreshes its view when you use it. Its optional embedding model loads on demand and is dropped when the surface closes.
+- **Safe vault coexistence** — Grain-owned notes can live in a selected vault while other vault notes remain searchable without being overwritten.
+- **Recall is not a black box** — Sources can be opened from an answer, so “I think it was…” never becomes unexplained AI fiction.
+
+Space is a built-in extension: it follows the same install, enable, disable, and uninstall lifecycle as other extensions. Disabling or uninstalling it never deletes your notes.
+
+Read the [Grain Space product vision](docs/Grain%20Space%202.0/Grain%20space%20files/PRODUCT-VISION.md), the [current Space extension guide](grain-extensions/core/grain.grain-space/README.md), or the [3.0 knowledge architecture](docs/Grain%20Space%202.0/KNOWLEDGE-ARCHITECTURE-PLAN.md).
+
+## Private by design
+
+- Local transcription and semantic retrieval run on your machine.
+- Cloud speech-to-text and AI processing are opt-in; Grain uses only the providers you configure.
+- Space sends text to an AI provider only for actions that need it, such as creating a summary or answering a Recall question. With no provider, capture and search still work.
+- Extensions declare the capabilities they need. Grain checks access at the host boundary rather than trusting extension code.
+- Disabled features unregister their shortcuts, destroy their surfaces, and stop consuming runtime resources.
+
+## An extension platform that stays out of your way
+
+Grain’s optional workflows are becoming extensions so they can evolve without turning the core app into a permanent background engine. Extensions can be simple data packs, short-lived scripted workflows, or narrowly scoped native companions.
+
+The host owns windows, permissions, settings, and lifecycle. An extension asks for a capability; it does not get unrestricted access to Grain or your system. First-party examples include:
+
+- **Grain Space** — local capture and answer-first memory retrieval.
+- **App Modes** — app- and website-specific transcript formatting.
+- **Voice Actions** — phrase-to-link and phrase-to-user-approved-app actions.
+- **Agent Centre layout** — a zero-runtime layout option for Agent replies.
+
+Browse the [extension registry](grain-extensions/README.md), learn the [authoring model](docs/Extension%20Platform/README.md), or see the [App Modes](grain-extensions/core/grain.app-modes/README.md) and [Voice Actions](grain-extensions/core/grain.voice-actions/README.md) examples.
+
+## Quick start
+
+1. Download the latest build from [Releases](https://github.com/Punit-Dethe/Grain/releases).
+2. Grant the operating-system permissions Grain asks for, including microphone access and accessibility/input permissions where required.
+3. Choose a transcription route: a local model, or an OpenAI-compatible provider.
+4. Set a dictation shortcut and use it in any text field.
+5. Enable only the optional workflows you want.
+
+Grain targets Windows, macOS, and Linux. Linux text insertion may require `wtype` or `dotool` under Wayland.
+
+## Build from source
+
+The project is a Tauri application: React and TypeScript provide the on-demand application surfaces; Rust handles system integration, audio, transcription, and the native runtime.
+
+```bash
+bun install
+bun run tauri dev
+```
+
+For system prerequisites, platform-specific build notes, and release builds, see [BUILD.md](BUILD.md).
+
+## Project guides
+
+| Looking for | Start here |
+| --- | --- |
+| Product capabilities and workflow details | [Feature guide](docs/grain-features.md) |
+| Building and packaging | [Build guide](BUILD.md) |
+| Contributing to Grain | [Contributing guide](CONTRIBUTING.md) |
+| Translations | [Translation guide](CONTRIBUTING_TRANSLATIONS.md) |
+| Building an extension | [Extension authoring guide](docs/Extension%20Platform/AUTHORING.md) |
+| Extension contract | [Extension specification](docs/Extension%20Platform/SPEC.md) |
+| Tracking compatibility with Handy | [Upstream tracking](Upstream/UPSTREAM.md) |
+
+## License
+
+Grain is released under the [MIT License](LICENSE). It is a fork of [Handy](https://github.com/cjpais/handy); Grain keeps the Handy-derived code isolated so upstream improvements can continue to flow in.
