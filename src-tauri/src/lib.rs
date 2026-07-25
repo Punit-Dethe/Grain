@@ -839,6 +839,7 @@ pub fn run(cli_args: CliArgs) {
             grain_store::store_close,
             grain_store::store_media,
             grain_store::store_readme,
+            grain_store::store_entry,
             grain_store::store_install,
             grain_store::store_revocation_banners,
             grain_commands::extension_set_enabled,

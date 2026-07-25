@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import {
-  ChevronDown,
   ChevronLeft,
   Code2,
   Trash2,
@@ -13,7 +12,6 @@ import {
   Replace,
   ShieldCheck,
   Sliders,
-  Star,
   Store,
   X,
 } from "lucide-react";
@@ -24,6 +22,7 @@ import {
   type SettingRow,
   type SettingsSection,
 } from "./ExtensionSettings";
+import { ExtensionDetail, Cover, type DetailMeta } from "./ExtensionDetail";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
@@ -138,206 +137,9 @@ function sortCards(cards: ExtensionCard[]): ExtensionCard[] {
   });
 }
 
-/** GitHub stars for a repo URL — best-effort, cached for the session. Returns
- * null until (or unless) it resolves, so the UI just omits the count on a miss.
- * The app runs with CSP disabled, so the settings webview can hit the API
- * directly; GitHub serves permissive CORS for public repos. */
-const starCache = new Map<string, number | null>();
-function useRepoStars(repo: string | null): number | null {
-  const [stars, setStars] = useState<number | null>(
-    repo && starCache.has(repo) ? (starCache.get(repo) ?? null) : null,
-  );
-  useEffect(() => {
-    if (!repo) return;
-    if (starCache.has(repo)) {
-      setStars(starCache.get(repo) ?? null);
-      return;
-    }
-    const m = repo.match(/github\.com\/([^/]+)\/([^/?#]+?)(?:\.git)?\/?$/i);
-    if (!m) return;
-    let alive = true;
-    fetch(`https://api.github.com/repos/${m[1]}/${m[2]}`, {
-      headers: { Accept: "application/vnd.github+json" },
-    })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j: { stargazers_count?: number } | null) => {
-        const n =
-          j && typeof j.stargazers_count === "number"
-            ? j.stargazers_count
-            : null;
-        starCache.set(repo, n);
-        if (alive) setStars(n);
-      })
-      .catch(() => starCache.set(repo, null));
-    return () => {
-      alive = false;
-    };
-  }, [repo]);
-  return stars;
-}
-
-const TIER_LABEL: Record<string, string> = {
-  builtin: "built-in",
-  pack: "pack",
-  scripted: "scripted",
-  native: "native",
-};
-
-/** Compact star count: 1234 → "1.2k". */
+/** Compact count: 1234 → "1.2k". */
 const fmtStars = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
-
-/** [GRAIN] The extension page — you go INTO an extension from Overview (its
- * name or ⚙). A proper header (title, tier/trust, enable toggle, repository +
- * star count, collapsible description), then the extension's declarative
- * settings, then its custom card (SPEC §4.1 Level 3). This is the per-extension
- * surface; the tab bar itself never grows with extension count (SPEC §5.2). */
-const ExtensionPage: React.FC<{
-  card: ExtensionCard | undefined;
-  section: SettingsSection | undefined;
-  ownRows: SettingRow[];
-  fallbackName: string;
-  busy: boolean;
-  onBack: () => void;
-  onToggle: () => void;
-  onChanged: () => void;
-}> = ({
-  card,
-  section,
-  ownRows,
-  fallbackName,
-  busy,
-  onBack,
-  onToggle,
-  onChanged,
-}) => {
-  const [descOpen, setDescOpen] = useState(true);
-  const stars = useRepoStars(card?.repository ?? null);
-  const repoLabel = card?.repository
-    ? card.repository
-        .replace(/^https?:\/\/(www\.)?github\.com\//i, "")
-        .replace(/\.git$/, "")
-        .replace(/\/$/, "")
-    : null;
-
-  return (
-    <div className="space-y-6">
-      <button
-        type="button"
-        onClick={onBack}
-        className="flex items-center gap-1 text-xs text-ink-faint hover:text-ink transition-colors cursor-pointer"
-      >
-        <ChevronLeft width={13} height={13} />
-        All extensions
-      </button>
-
-      {/* Header */}
-      <div className="space-y-2.5 px-1">
-        <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0 space-y-1.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-semibold tracking-tight leading-none text-ink">
-                {card?.name ?? section?.name ?? fallbackName}
-              </h1>
-              {card && (
-                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-paper-sunken text-ink-faint border border-line">
-                  {TIER_LABEL[card.tier] ?? card.tier} · v{card.version}
-                </span>
-              )}
-              {card?.trust === "dev" && (
-                <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                  dev
-                </span>
-              )}
-            </div>
-            {card?.repository && (
-              <div className="flex items-center gap-3 text-xs text-ink-faint">
-                <a
-                  href={card.repository}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1 hover:text-ink transition-colors"
-                >
-                  <ExternalLink width={12} height={12} />
-                  {repoLabel}
-                </a>
-                {stars != null && (
-                  <span className="inline-flex items-center gap-1">
-                    <Star width={12} height={12} />
-                    {fmtStars(stars)}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-          {card && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={card.enabled}
-              aria-label={`Enable ${card.name}`}
-              disabled={busy}
-              onClick={onToggle}
-              className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer shrink-0 mt-1 ${
-                card.enabled ? "bg-accent" : "bg-paper-sunken border border-line"
-              } ${busy ? "opacity-50" : ""}`}
-            >
-              <span
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
-                  card.enabled ? "left-[18px]" : "left-0.5"
-                }`}
-              />
-            </button>
-          )}
-        </div>
-
-        {/* Collapsible ("shrinkable") description. */}
-        {card?.description && (
-          <div>
-            <button
-              type="button"
-              onClick={() => setDescOpen((o) => !o)}
-              className="flex items-center gap-1 text-xs text-ink-faint hover:text-ink-soft transition-colors cursor-pointer"
-            >
-              <ChevronDown
-                width={12}
-                height={12}
-                className={`transition-transform ${descOpen ? "" : "-rotate-90"}`}
-              />
-              About
-            </button>
-            {descOpen && (
-              <p className="mt-1 text-sm text-ink-soft leading-relaxed max-w-2xl">
-                {card.description}
-              </p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Declarative settings (empty for a card-only extension like Voice
-          Actions — renders nothing). */}
-      {section && (
-        <ExtensionSettings
-          section={section}
-          rows={ownRows}
-          onChanged={onChanged}
-        />
-      )}
-
-      {/* Custom card slot (SPEC §4.1 Level 3): a third-party extension's own
-          `settingsPanel` iframe will render here. Runtime lands next. */}
-
-      {card && <ExtensionShortcuts id={card.id} />}
-
-      {!section && card && !card.enabled && (
-        <p className="px-1 text-xs text-ink-faint">
-          Turn this extension on to see its settings.
-        </p>
-      )}
-    </div>
-  );
-};
 
 /** [GRAIN] Extensions → Overview (SPEC §5.1): every installed extension,
  * enabled and disabled alike — name (jump), inline toggle, description on
@@ -370,6 +172,10 @@ export const OverviewSection: React.FC<{
   const [sections, setSections] = useState<SettingsSection[]>([]);
   /** The extension whose own settings section is open, if any. */
   const [detail, setDetail] = useState<string | null>(null);
+  /** Catalogue metadata for the open detail (cover/README/installs). Fetched
+   * from the CACHED index only while a detail is open, and dropped on close —
+   * the catalogue never stays resident for the installed list. */
+  const [detailMeta, setDetailMeta] = useState<StoreEntry | null>(null);
   /** The store slide-over (SPEC §5.3). A SHELL only for now — the index,
    * install-from-remote, and trust badges are gated behind
    * GATE-DISTRIBUTION-AND-DEVMODE.md, so this opens onto an honest empty state. */
@@ -407,6 +213,22 @@ export const OverviewSection: React.FC<{
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Load the open extension's catalogue metadata; drop it as soon as the detail
+  // closes so nothing from the store stays in memory behind the list.
+  useEffect(() => {
+    if (!detail) {
+      setDetailMeta(null);
+      return;
+    }
+    let alive = true;
+    invoke<StoreEntry | null>("store_entry", { id: detail })
+      .then((e) => alive && setDetailMeta(e))
+      .catch(() => alive && setDetailMeta(null));
+    return () => {
+      alive = false;
+    };
+  }, [detail]);
 
   const toggle = async (card: ExtensionCard) => {
     setBusy(card.id);
@@ -644,17 +466,34 @@ export const OverviewSection: React.FC<{
 
   if (detail) {
     const card = cards.find((c) => c.id === detail);
+    // Catalogue metadata (cover, README, installs) for an extension that came
+    // from the store; a local/built-in one simply has none and the header
+    // renders from the card alone.
+    const meta: DetailMeta = {
+      id: detail,
+      name: card?.name ?? openSection?.name ?? detail,
+      description: card?.description ?? detailMeta?.description ?? "",
+      version: card?.version ?? detailMeta?.version ?? "",
+      tier: card?.tier ?? detailMeta?.tier ?? "pack",
+      trust: card?.trust ?? detailMeta?.trust ?? "dev",
+      repository: card?.repository ?? (detailMeta?.repo || null),
+      installs: detailMeta?.installs ?? 0,
+      readme: detailMeta?.readme ?? "",
+      media: detailMeta?.media ?? [],
+    };
     return (
       <>
-        <ExtensionPage
-          card={card}
-          section={openSection}
-          ownRows={ownRows(detail)}
-          fallbackName={openSection?.name ?? detail}
-          busy={busy === detail}
+        <ExtensionDetail
+          meta={meta}
           onBack={() => setDetail(null)}
-          onToggle={() => card && void toggle(card)}
-          onChanged={() => void refresh()}
+          installed={{
+            enabled: card?.enabled ?? false,
+            busy: busy === detail,
+            onToggle: () => card && void toggle(card),
+            section: openSection,
+            ownRows: ownRows(detail),
+            onChanged: () => void refresh(),
+          }}
         />
         {pendingModal}
         {contestedModal}
@@ -932,6 +771,7 @@ type StoreEntry = {
   trust: string;
   capabilities: string[];
   description: string;
+  repo: string;
   size: string;
   author: string;
   reviewed_at: string;
@@ -972,6 +812,8 @@ const StoreSlideOver: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
+  /** The store entry whose detail page is open (null = the grid). */
+  const [opened, setOpened] = useState<string | null>(null);
   // Measured position: fill everything right of the sidebar and below the
   // titlebar, read from the live DOM so it survives UI scaling and never
   // hard-codes the sidebar width.
@@ -1048,6 +890,19 @@ const StoreSlideOver: React.FC<{
     );
   });
 
+  /** The opened store entry — the SAME unified detail the installed list uses,
+   * so an extension's picture, words, and links are authored and read once. */
+  const openEntry = entries.find((e) => e.id === opened) ?? null;
+  const openLabel = openEntry
+    ? installing === openEntry.id
+      ? "Installing…"
+      : installed[openEntry.id] === openEntry.version
+        ? "Installed"
+        : installed[openEntry.id] != null
+          ? "Update"
+          : "Install"
+    : "";
+
   return createPortal(
     // [GRAIN] Portaled to <body> and positioned from the MEASURED sidebar edge,
     // so it fills everything right of the sidebar / below the titlebar without a
@@ -1083,17 +938,50 @@ const StoreSlideOver: React.FC<{
         </div>
       )}
 
-      <div className="px-6 py-3 border-b border-line">
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search extensions"
-          className="w-full max-w-md px-3 py-1.5 rounded-lg bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
-        />
-      </div>
+      {!openEntry && (
+        <div className="px-6 py-3 border-b border-line">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search extensions"
+            className="w-full max-w-md px-3 py-1.5 rounded-lg bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
+          />
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
+        {/* An opened entry replaces the grid with the SAME detail component the
+            installed list uses — one header, one set of authored content. */}
+        {openEntry ? (
+          <div className="max-w-3xl mx-auto">
+            <ExtensionDetail
+              meta={{
+                id: openEntry.id,
+                name: openEntry.name,
+                description: openEntry.description,
+                version: openEntry.version,
+                tier: openEntry.tier,
+                trust: openEntry.trust,
+                repository: openEntry.repo || null,
+                installs: openEntry.installs,
+                readme: openEntry.readme,
+                media: openEntry.media,
+              }}
+              onBack={() => setOpened(null)}
+              install={{
+                label: openLabel,
+                disabled:
+                  installing === openEntry.id ||
+                  openEntry.revocation === "revoked" ||
+                  installed[openEntry.id] === openEntry.version ||
+                  !view?.can_install,
+                onInstall: () => void install(openEntry),
+              }}
+            />
+          </div>
+        ) : (
+        <>
         {loading && (
           <div className="flex flex-col items-center justify-center gap-2 py-16 text-ink-faint">
             <Package width={24} height={24} />
@@ -1124,14 +1012,35 @@ const StoreSlideOver: React.FC<{
             return (
               <div
                 key={`${e.id}@${e.version}`}
-                className="rounded-xl border border-line bg-paper-raised p-4 flex flex-col gap-2"
+                className="group rounded-xl border border-line bg-paper-raised overflow-hidden flex flex-col hover:border-ink-faint/50 transition-colors"
               >
+                {/* Cover image on top — the card's most important element. */}
+                <button
+                  type="button"
+                  onClick={() => setOpened(e.id)}
+                  className="block w-full text-left cursor-pointer"
+                  aria-label={`Open ${e.name}`}
+                >
+                  {e.media.length > 0 ? (
+                    <Cover media={e.media[0]} name={e.name} rounded="rounded-none" />
+                  ) : (
+                    <div className="w-full aspect-[16/9] bg-paper-sunken flex items-center justify-center border-b border-line">
+                      <Package width={22} height={22} className="text-ink-faint/50" />
+                    </div>
+                  )}
+                </button>
+
+                <div className="p-4 flex flex-col gap-2 flex-1">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-medium text-ink truncate">
+                      <button
+                        type="button"
+                        onClick={() => setOpened(e.id)}
+                        className="text-sm font-medium text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
+                      >
                         {e.name}
-                      </span>
+                      </button>
                       <span
                         className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.cls}`}
                       >
@@ -1227,10 +1136,13 @@ const StoreSlideOver: React.FC<{
                     Deprecated — no longer maintained.
                   </div>
                 )}
+                </div>
               </div>
             );
           })}
         </div>
+        </>
+        )}
       </div>
     </div>,
     document.body,

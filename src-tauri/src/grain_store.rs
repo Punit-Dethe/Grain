@@ -49,6 +49,8 @@ pub struct StoreEntry {
     pub capabilities: Vec<String>,
     /// One-line summary shown under the name on the card.
     pub description: String,
+    /// Source repository (GitHub), for the "view on GitHub" link.
+    pub repo: String,
     pub size: String,
     pub author: String,
     pub reviewed_at: String,
@@ -221,6 +223,7 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
             trust: trust_str(e.trust).into(),
             capabilities: e.capabilities.clone(),
             description: e.description.clone(),
+            repo: e.repo.clone(),
             size: e.size.to_string(),
             author: e.author.clone(),
             reviewed_at: e.reviewed_at.clone(),
@@ -559,6 +562,45 @@ async fn fetch_media(app: &AppHandle, sha256: &str, ext: &str) -> Result<Vec<u8>
         }
     }
     Err("media not reachable".into())
+}
+
+/// One extension's catalogue metadata (description, installs, README + media
+/// refs) from the CACHED signed index — no network, and the parsed index is
+/// dropped immediately, so an installed extension's detail page can show the
+/// same header as the store without keeping the catalogue resident.
+/// `None` when the id is not in the catalogue (e.g. a locally imported pack).
+#[tauri::command]
+#[specta::specta]
+pub fn store_entry(app: AppHandle, id: String) -> Result<Option<StoreEntry>, String> {
+    let state = store_state(&app)?;
+    let roots = state.roots.read().unwrap().clone();
+    let loaded = load_cached_index(&state.cache_dir, &roots, None, now_unix()).or_else(|_| {
+        trust::verify_index(
+            &roots,
+            trust::SEED_INDEX.as_bytes(),
+            trust::SEED_INDEX_SIG,
+            None,
+            now_unix(),
+            true,
+        )
+    });
+    let Ok((index, _)) = loaded else {
+        return Ok(None);
+    };
+    let revocations = state.revocations.read().unwrap();
+    // Newest entry wins when several versions are published for this id.
+    let matches: Vec<IndexEntry> = index
+        .entries
+        .iter()
+        .filter(|e| e.id == id)
+        .cloned()
+        .collect();
+    let Some(entry) = matches.last() else {
+        return Ok(None);
+    };
+    Ok(project_entries(std::slice::from_ref(entry), &revocations)
+        .into_iter()
+        .next())
 }
 
 /// A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
