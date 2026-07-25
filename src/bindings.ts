@@ -2201,8 +2201,7 @@ grain_space_vault_path?: string;
  * Grain only ever creates/edits files under this folder; the rest of the
  * vault is read-only (searchable, never written).
  */
-grain_space_vault_folder?: string; 
-}
+grain_space_vault_folder?: string }
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
@@ -2266,7 +2265,7 @@ export type EngineType =
  */
 export type ExtensionCard = { id: string; name: string; description: string; version: string; 
 /**
- * "builtin" | "pack" | "scripted" | "native"
+ * "pack" | "scripted" | "native"
  */
 tier: string; 
 /**

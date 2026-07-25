@@ -20,35 +20,6 @@ pub enum Tier {
     Pack,
     Scripted,
     Native,
-    /// [GRAIN] A **built-in**: identity, store listing and settings schema ship
-    /// as a normal pack, but the implementation is compiled into Grain (the
-    /// VS Code built-in-extension model). Reserved to first-party `grain.` ids.
-    ///
-    /// This is how a feature too large or too privileged to be JavaScript —
-    /// Grain Space owns an ONNX embedding engine, sqlite-vec, a native overlay
-    /// window and global shortcuts — still gets the extension *contract*: it is
-    /// listed, installed, enabled, disabled and uninstalled exactly like any
-    /// other extension, and clicking into it opens its own settings page rather
-    /// than a bespoke sidebar tab.
-    ///
-    /// A builtin carries no `entry_source` and no companion binary: there is
-    /// nothing to launch. Its `permissions` are **declarative documentation**
-    /// (the Rust does not route through `host_api::dispatch`) so the store page
-    /// can still tell the truth about what the feature touches.
-    Builtin,
-}
-
-/// [GRAIN] Marker for a [`SettingKind::Panel`] whose UI is a **host-implemented
-/// React view** instead of author markup in a sandboxed iframe:
-/// `grain://<view-id>`. Restricted to [`Tier::Builtin`] at import — a community
-/// pack naming a host view would inherit Grain's own privileges.
-pub const HOST_VIEW_SCHEME: &str = "grain://";
-
-/// The host view a panel's `uiSource` names, or `None` when it is ordinary
-/// embedded markup. Callers still check the tier; validation guarantees it.
-pub fn host_view_id(ui_source: &str) -> Option<&str> {
-    let id = ui_source.trim().strip_prefix(HOST_VIEW_SCHEME)?;
-    (!id.is_empty()).then_some(id)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -357,6 +328,7 @@ pub const ANCHORS: &[&str] = &[
     "dictation.pipeline.after",
     "context.after",
     "agent.after",
+    "grainspace.after",
     "models.after",
 ];
 
@@ -491,16 +463,10 @@ impl GrainPack {
         if m.id.is_empty() || !m.id.contains('.') {
             return Err("manifest.id must be a reverse-dns identifier".into());
         }
-        // NOTE: `grain.`-prefixed ids are built-in-only for USER imports; the
-        // startup seed of built-in scripted packs (e.g. auto-categorize) calls
-        // its own path, not this validator, so the prefix stays reserved here.
-        // The builtin tier INVERTS the rule: a builtin is first-party by
-        // definition, so it must carry the prefix it is reserved for.
-        if m.tier == Tier::Builtin {
-            if !m.id.starts_with("grain.") {
-                return Err("builtin extensions must use the reserved 'grain.' id prefix".into());
-            }
-        } else if m.id.starts_with("grain.") {
+        // `grain.` is reserved: a USER-imported pack may not claim a first-party
+        // identity. Packs Grain publishes are validated on the path that installs
+        // them from the signed catalogue, not through this importer.
+        if m.id.starts_with("grain.") {
             return Err("the 'grain.' id prefix is reserved for built-ins".into());
         }
         if m.name.trim().is_empty() {
@@ -517,25 +483,6 @@ impl GrainPack {
                 if !m.companion.as_ref().is_some_and(CompanionDecl::has_any) {
                     return Err("native extensions require a companion binary map".into());
                 }
-                for cap in &m.permissions {
-                    if !KNOWN_CAPABILITIES.contains(&cap.as_str())
-                        && network_capability_host(cap).is_none()
-                    {
-                        return Err(format!("unknown capability '{cap}'"));
-                    }
-                }
-            }
-            Tier::Builtin => {
-                // Nothing to launch: the implementation is already in the binary.
-                if !m.entry_source.is_empty() {
-                    return Err("builtin extensions must not carry entry_source".into());
-                }
-                if m.companion.is_some() {
-                    return Err("builtin extensions must not declare a companion".into());
-                }
-                // Still checked against the known set — a builtin's permission
-                // list is what the store page shows the user, so a typo there
-                // would be a lie about what the feature touches.
                 for cap in &m.permissions {
                     if !KNOWN_CAPABILITIES.contains(&cap.as_str())
                         && network_capability_host(cap).is_none()
@@ -675,17 +622,6 @@ impl GrainPack {
                 // iframe. Only a builtin (already forced to a `grain.` id) may
                 // name one; otherwise a community pack could ask to be rendered
                 // as if it were Grain's own code.
-                if ui_source.trim().starts_with(HOST_VIEW_SCHEME) {
-                    if m.tier != Tier::Builtin {
-                        return Err(format!(
-                            "panel setting '{}' names a host view, which only builtin extensions may do",
-                            s.key
-                        ));
-                    }
-                    if host_view_id(ui_source).is_none() {
-                        return Err(format!("panel setting '{}' has an empty host view id", s.key));
-                    }
-                }
             }
             if matches!(s.kind, SettingKind::Secret)
                 && s.default.as_str().is_some_and(|value| !value.is_empty())
@@ -1078,70 +1014,9 @@ mod tests {
     /// The builtin tier (Grain Space's mechanism): first-party identity is
     /// mandatory, there is nothing to launch, and it may contribute settings a
     /// data pack cannot.
-    #[test]
-    fn builtin_tier_requires_first_party_identity_and_carries_no_runtime() {
-        let builtin = |id: &str, extra: &str| {
-            pack(&format!(
-                r#"{{"manifest":{{"id":"{id}","name":"Grain Space","version":"1",
-                    "tier":"builtin"{extra}}}}}"#
-            ))
-        };
-        assert_eq!(builtin("grain.grain-space", ""), Ok(()));
-        // A builtin declaring settings is the whole point — a `pack` may not.
-        assert_eq!(
-            builtin(
-                "grain.grain-space",
-                r#","permissions":["storage"],
-                   "contributes":{"settings":[{"key":"scope","label":"Scope","kind":"bool"}]}"#
-            ),
-            Ok(())
-        );
-        // Community ids cannot claim the tier; builtins cannot ship a runtime.
-        assert!(builtin("com.x.notes", "").is_err());
-        assert!(builtin("grain.x", r#","entry_source":"grain.log.info('hi')""#).is_err());
-        assert!(builtin("grain.x", r#","companion":{"windows":"bin/x.exe"}"#).is_err());
-        assert!(builtin("grain.x", r#","permissions":["root"]"#).is_err());
-    }
 
     /// A `grain://` panel renders a HOST component with Grain's own privileges,
     /// so the tier gate is a security boundary, not a convenience.
-    #[test]
-    fn host_view_panels_are_restricted_to_builtins() {
-        let panel = |tier: &str, id: &str, extra: &str, ui: &str| {
-            pack(&format!(
-                r#"{{"manifest":{{"id":"{id}","name":"n","version":"1","tier":"{tier}"{extra},
-                    "contributes":{{"settings":[{{"key":"vault","label":"Vault","kind":"panel",
-                    "uiSource":"{ui}","searchTerms":["vault"]}}]}}}}}}"#
-            ))
-        };
-        assert_eq!(
-            panel("builtin", "grain.grain-space", "", "grain://grain-space/vault"),
-            Ok(())
-        );
-        // The same declaration from a community pack is refused.
-        assert!(panel(
-            "scripted",
-            "com.x.notes",
-            r#","entry_source":"x""#,
-            "grain://grain-space/vault"
-        )
-        .is_err());
-        // Ordinary embedded markup is unaffected.
-        assert_eq!(
-            panel(
-                "scripted",
-                "com.x.notes",
-                r#","entry_source":"x""#,
-                "<p>my card</p>"
-            ),
-            Ok(())
-        );
-        assert!(panel("builtin", "grain.x", "", "grain://").is_err());
-
-        assert_eq!(host_view_id("grain://grain-space/vault"), Some("grain-space/vault"));
-        assert_eq!(host_view_id("<p>markup</p>"), None);
-        assert_eq!(host_view_id("grain://"), None);
-    }
 
     #[test]
     fn native_companions_validate_only_through_the_developer_boundary() {
@@ -1195,6 +1070,7 @@ mod tests {
                 "dictation.pipeline.after",
                 "context.after",
                 "agent.after",
+                "grainspace.after",
                 "models.after",
             ]
         );

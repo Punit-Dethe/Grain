@@ -93,9 +93,6 @@ pub fn load_project(root: &Path) -> Result<LoadedDevProject, String> {
         Tier::Pack => return Err("load unpacked does not accept data-only packs".into()),
         // A builtin's implementation is compiled into Grain, so there is nothing
         // on disk for load-unpacked to run.
-        Tier::Builtin => {
-            return Err("load unpacked does not accept builtin extensions".into());
-        }
     };
 
     // Inline any custom-card (`panel`) uiSource that names a project file — the

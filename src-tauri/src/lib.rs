@@ -396,13 +396,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     }
     events_server::spawn_pill_supervisor();
 
-    // [GRAIN] Grain Space is a `builtin`-tier extension: reconcile its runtime
-    // flag with the registry BEFORE anything reads it, so an install that is no
-    // longer present can't leave the feature half-alive with nothing in the UI to
-    // switch it off. Shortcut registration happens later (the frontend drives
-    // `initialize_shortcuts`), so this only has to get the flag right.
-    grain_space::sync_install_state(app_handle);
-
     // [GRAIN] Grain Space reminders: fire anything that came due while the app
     // was closed and park a timer for the next one. No-op (no disk touch, no
     // timer) when the feature is disabled.

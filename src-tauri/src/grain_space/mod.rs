@@ -41,37 +41,10 @@ pub fn base_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 ///
 /// `grain_space_enabled` remains the ONE runtime flag (the shortcut-registration
 /// hooks in the Handy tree read it directly, and every command early-returns on
-/// it). Since the feature became a `builtin`-tier extension it is no longer set
-/// by a settings tab: [`sync_install_state`] mirrors the registry bit into it, so
-/// "not installed" and "installed but disabled" both land on `false` — exactly
-/// the state the feature already knew how to be.
+/// it). Set by the master switch at the top of the Grain Space tab, which is the
+/// single runtime gate every early-return and shortcut hook reads.
 pub fn is_enabled(app: &AppHandle) -> bool {
     crate::settings::get_settings(app).grain_space_enabled
-}
-
-/// Mirror the extension record into the runtime flag. Called when the record is
-/// toggled, when it is uninstalled, and once at startup — the last one matters,
-/// because a `true` left behind by an install that is no longer present would
-/// otherwise leave the feature half-alive with no way to see or turn it off.
-///
-/// Returns true when the flag actually changed (so callers can (un)register
-/// shortcuts only when there is something to do).
-pub fn sync_install_state(app: &AppHandle) -> bool {
-    use grain_core::extensions as ext;
-    let installed_and_on = app
-        .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
-        .is_some_and(|reg| {
-            reg.record(ext::GRAIN_SPACE_ID)
-                .is_some_and(|record| record.enabled)
-        });
-    let mut settings = crate::settings::get_settings(app);
-    if settings.grain_space_enabled == installed_and_on {
-        return false;
-    }
-    settings.grain_space_enabled = installed_and_on;
-    crate::settings::write_settings(app, settings);
-    apply_enabled(app, installed_and_on);
-    true
 }
 
 /// Bring the running process in line with the flag, so OFF is zero-overhead

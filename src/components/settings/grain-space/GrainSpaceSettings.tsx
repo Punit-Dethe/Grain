@@ -70,11 +70,10 @@ function noteDisplayTitle(note: Note): string {
  * behavior, reminders and the date-grouped notes list. The whole feature is
  * create/destroy — this is just a window onto the on-disk notes.
  *
- * Grain Space is a `builtin`-tier extension, so this renders as a HOST VIEW on
- * its extension page (`grain://grain-space/settings`) rather than a sidebar tab.
- * `embedded` drops the title and master switch, which the extension page already
- * draws — the `enabled &&` gate below still does the right thing, because the
- * page's own toggle is what writes `grain_space_enabled`. */
+ * Grain Space is a BUILT-IN feature with its own tab in the Extensions hub, so
+ * `embedded` drops the title and master switch that the tab already draws as its
+ * first row. The `enabled &&` gates below still do the right thing: that row is
+ * what writes `grain_space_enabled`. */
 export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
   embedded = false,
 }) => {
@@ -290,8 +289,8 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
         embedded ? "w-full space-y-6" : "max-w-4xl w-full mx-auto space-y-6"
       }
     >
-      {/* Standalone only: title + master switch. On the extension page both are
-          the page's own header, so rendering them here would duplicate them. */}
+      {/* Standalone only: title + master switch. Inside the tab both are its
+          first row, so rendering them here would duplicate them. */}
       {!embedded && (
         <div className="flex items-center justify-between gap-4 px-1">
           <div className="flex items-center gap-2">

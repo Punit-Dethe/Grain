@@ -101,7 +101,7 @@ interface ExtensionCard {
   name: string;
   description: string;
   version: string;
-  tier: "builtin" | "pack" | "scripted" | "native";
+  tier: "pack" | "scripted" | "native";
   trust: "core" | "community" | "dev";
   overrides_installed: boolean;
   overridden_version: string | null;

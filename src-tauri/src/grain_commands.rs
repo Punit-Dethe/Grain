@@ -377,7 +377,7 @@ pub struct ExtensionCard {
     pub name: String,
     pub description: String,
     pub version: String,
-    /// "builtin" | "pack" | "scripted" | "native"
+    /// "pack" | "scripted" | "native"
     pub tier: String,
     /// "core" | "community" | "dev". Dev is permanent while loaded and is
     /// never allowed to masquerade as verified.
@@ -425,7 +425,6 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     grain_sdk::Tier::Pack => "pack",
                     grain_sdk::Tier::Scripted => "scripted",
                     grain_sdk::Tier::Native => "native",
-                    grain_sdk::Tier::Builtin => "builtin",
                 };
                 (
                     p.manifest.name,
@@ -583,13 +582,6 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             }
             reg.set_enabled(pack_id, enabled)
                 .map_err(|e| e.to_string())?;
-            // A `builtin`-tier pack's runtime is compiled in, so "enabled" has to
-            // reach the feature's own gate rather than a worker. Mirror the bit
-            // into `grain_space_enabled` and apply it live — the toggle on the
-            // extension page IS Grain Space's master switch.
-            if pack_id == ext::GRAIN_SPACE_ID {
-                crate::grain_space::sync_install_state(&app);
-            }
             if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
                 ctx.update_settings(|s| {
                     if enabled {
@@ -1413,28 +1405,24 @@ pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result
 #[specta::specta]
 pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
     use grain_core::extensions as ext;
-    // The three settings-flag-backed built-ins have no record to remove — they
-    // are disabled, never uninstalled. Everything else, including the now
-    // externalised Agent centre layout, is a real installed pack with a store
-    // reinstall source, so it uninstalls normally (Phase 5C).
-    if id == ext::BUILTIN_SNIPPETS || id == ext::BUILTIN_CONTEXT || id == ext::BUILTIN_AGENT {
-        return Err("built-in features can be disabled, not uninstalled".into());
+    // Grain's own features have no record to remove: they are turned off in
+    // their own tab, never uninstalled. Everything else is a real installed pack
+    // with a store to reinstall from.
+    if id == ext::BUILTIN_SNIPPETS
+        || id == ext::BUILTIN_CONTEXT
+        || id == ext::BUILTIN_AGENT
+        || id == ext::BUILTIN_GRAIN_SPACE
+    {
+        return Err("built-in features can be turned off, not uninstalled".into());
     }
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
     let dev_active = reg.dev_path(&id).is_some();
-    let removed = reg.uninstall(&id).map_err(|e| e.to_string())?;
-    if !removed {
-        return Err(format!("'{id}' is not installed"));
+    if !reg.uninstall(&id).map_err(|e| e.to_string())? && !dev_active {
+        return Err("not installed".into());
     }
-    // Uninstalling a `builtin`-tier pack turns its compiled-in feature off. The
-    // per-extension storage purge below cannot reach Grain Space's notes (they
-    // live in `grain_space/`, not `extensions/<id>/`), which is the point: the
-    // feature goes away, the user's writing does not.
-    if id == ext::GRAIN_SPACE_ID {
-        crate::grain_space::sync_install_state(&app);
-    }
+    crate::extension_host::refresh_index(&app);
     if dev_active {
         if purge {
             let _ = std::fs::remove_file(pack_path(&app, &id)?);

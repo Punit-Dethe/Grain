@@ -50,16 +50,14 @@ pub const AGENT_REPLY_SURFACE_SLOT: &str = "agent.reply-surface";
 /// whoever holds it supplies the pill's look.
 pub const PILL_THEME_SLOT: &str = "pill.theme";
 
-/// Built-in extension ids (enabled state delegates to settings flags).
+/// Ids reserved for Grain's own always-present features. They are not installed
+/// and cannot be uninstalled — each has a tab in the Extensions hub whose first
+/// row is its master switch — but the ids stay reserved so a third-party pack
+/// can never claim one.
 pub const BUILTIN_SNIPPETS: &str = "grain.snippets";
 pub const BUILTIN_CONTEXT: &str = "grain.context-awareness";
 pub const BUILTIN_AGENT: &str = "grain.agent";
-
-/// Grain Space, distributed as a `builtin`-tier pack: installed from the signed
-/// index like any other extension, implementation compiled into Grain. Its
-/// registry bit is mirrored into `grain_space_enabled`, which stays the single
-/// runtime gate every early-return and shortcut hook already reads.
-pub const GRAIN_SPACE_ID: &str = "grain.grain-space";
+pub const BUILTIN_GRAIN_SPACE: &str = "grain.grain-space";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ExtensionRecord {

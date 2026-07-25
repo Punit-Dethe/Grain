@@ -393,9 +393,6 @@ fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
                 // `grain://<view-id>` names a HOST-implemented view compiled into
                 // Grain (builtin tier only) — there is no file to inline, and it
                 // must survive packing verbatim.
-                if ui_file.trim().starts_with(grain_sdk::HOST_VIEW_SCHEME) {
-                    continue;
-                }
                 let candidate = src.join(&ui_file);
                 if candidate.is_file() {
                     let html = fs::read_to_string(&candidate)
@@ -547,7 +544,6 @@ fn tier_dbg(t: &grain_sdk::Tier) -> &'static str {
         grain_sdk::Tier::Pack => "pack",
         grain_sdk::Tier::Scripted => "scripted",
         grain_sdk::Tier::Native => "native",
-        grain_sdk::Tier::Builtin => "builtin",
     }
 }
 
