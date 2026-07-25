@@ -158,20 +158,31 @@ const RowCover: React.FC<{
   }, [media?.sha256, media?.kind]);
 
   return (
-    <div
-      className={`w-[72px] h-[46px] shrink-0 rounded-lg overflow-hidden border border-line bg-paper-sunken grid place-items-center transition-opacity ${
-        dim ? "opacity-45" : ""
-      }`}
-    >
+    // Bled to the row's own left edge, top to bottom — a framed thumbnail with a
+    // border and a gap is a second card inside the card. The right side fades
+    // into the row's surface so the picture ENDS in the card rather than being
+    // cut off by the text next to it.
+    <div className="relative w-[150px] shrink-0 self-stretch overflow-hidden bg-paper-sunken">
       {url ? (
         <img
           src={url}
           alt={`${name} cover`}
-          className="w-full h-full object-cover"
+          className={`absolute inset-0 w-full h-full object-cover transition-opacity ${
+            dim ? "opacity-35" : ""
+          }`}
         />
       ) : (
-        <Package width={15} height={15} className="text-ink-faint/60" />
+        <div className="absolute inset-0 grid place-items-center">
+          <Package width={16} height={16} className="text-ink-faint/50" />
+        </div>
       )}
+      <div
+        className="absolute inset-y-0 right-0 w-24 pointer-events-none"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, transparent, var(--color-paper-raised) 92%)",
+        }}
+      />
     </div>
   );
 };
@@ -603,14 +614,14 @@ export const OverviewSection: React.FC<{
               {group.items.map((card) => (
                 <div
                   key={card.id}
-                  className="flex items-center gap-3.5 px-3 py-3 rounded-xl border border-line bg-paper-raised hover:border-ink-faint/40 transition-colors group"
+                  className="flex items-stretch min-h-[84px] rounded-xl border border-line bg-paper-raised hover:border-ink-faint/40 transition-colors group overflow-hidden"
                 >
                   <RowCover
                     media={covers[card.id]}
                     name={card.name}
                     dim={!card.enabled}
                   />
-                  <div className="flex-1 min-w-0 pe-4">
+                  <div className="flex-1 min-w-0 py-3 flex flex-col justify-center">
                     {/* Name and gear go to DIFFERENT places (SPEC §5.1). The
                         name means "take me to this extension's settings" — and
                         for one anchored at a feature (Voice Actions below
@@ -629,11 +640,11 @@ export const OverviewSection: React.FC<{
                     >
                       {card.name}
                     </button>
-                    {/* Stops short of the controls instead of running under
-                        them — a description that reaches the right edge reads
-                        as clipped rather than summarised. */}
+                    {/* Runs to the controls and no further. Card copy is one
+                        line now, so a hard character cap only truncated
+                        sentences that already fit. */}
                     <div
-                      className="mt-0.5 text-xs text-ink-faint line-clamp-2 max-w-[46ch]"
+                      className="mt-1 text-xs text-ink-faint line-clamp-2 pe-4"
                       title={card.description}
                     >
                       {card.description}
@@ -648,6 +659,7 @@ export const OverviewSection: React.FC<{
                       </div>
                     )}
                   </div>
+                  <div className="flex items-center gap-3 shrink-0 self-center pe-4">
                   {card.trust === "dev" && (
                     <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
                       dev
@@ -717,6 +729,7 @@ export const OverviewSection: React.FC<{
                       }`}
                     />
                   </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -781,17 +794,24 @@ type StoreView = {
 /** [GRAIN] The trust rung, as shown ON the cover image (see the card below).
  * There is no "Core": the backend reports a first-party pack as `verified`,
  * because that is exactly what it promises the person installing it. */
-const TRUST_BADGE: Record<string, { label: string; cls: string }> = {
-  verified: {
-    label: "Verified",
-    cls: "bg-emerald-500/90 text-white",
-  },
-  experimental: {
-    label: "Experimental",
-    cls: "bg-amber-500/90 text-white",
-  },
-  dev: { label: "Community", cls: "bg-black/60 text-white" },
-};
+const TRUST_BADGE: Record<string, { label: string; cls: string; title: string }> =
+  {
+    verified: {
+      label: "Verified",
+      cls: "text-emerald-700 dark:text-emerald-400",
+      title: "Built from pinned source by our CI and signed before publishing.",
+    },
+    experimental: {
+      label: "Experimental",
+      cls: "text-amber-600",
+      title: "Reviewed, but young or narrowly tested.",
+    },
+    dev: {
+      label: "Community",
+      cls: "text-ink-faint",
+      title: "Submitted by its author and reviewed.",
+    },
+  };
 
 /** The filter row. Short on purpose: these answer "what KIND of thing is this",
  * which is the only question a filter can usefully ask before you have opened
@@ -937,16 +957,20 @@ const StoreSlideOver: React.FC<{
       aria-modal="true"
       aria-label="Extension store"
     >
-      <div className="flex items-center justify-between px-6 py-4 border-b border-line">
+      {/* The title lives in the bar, centred, with the way back on the left.
+          It was a page heading with a paragraph under it, which cost ~120px of
+          vertical space to say what one line in the chrome already says — and
+          that space belongs to the extensions. */}
+      <div className="relative flex items-center px-6 py-3 border-b border-line">
         <button
           type="button"
           onClick={onClose}
-          className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink transition-colors cursor-pointer"
+          className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink transition-colors cursor-pointer z-10"
         >
           <ChevronLeft width={15} height={15} />
           All extensions
         </button>
-        <div className="flex items-center gap-2 text-sm font-medium text-ink">
+        <div className="absolute inset-x-0 flex items-center justify-center gap-2 text-sm font-medium text-ink pointer-events-none">
           <Store width={15} height={15} />
           Extension store
         </div>
@@ -962,52 +986,31 @@ const StoreSlideOver: React.FC<{
       )}
 
       {!openEntry && (
-        <div className="px-6 pt-6 pb-4 border-b border-line">
-          <div className="max-w-[1600px] mx-auto space-y-4">
-            <div>
-              <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none text-ink">
-                Extension store
-              </h1>
-              <p className="mt-2 text-sm text-ink-soft max-w-2xl leading-relaxed">
-                Everything here is built from pinned source by our own CI and
-                signed before it reaches you.
-              </p>
-            </div>
+        <div className="px-6 py-4 border-b border-line">
+          <div className="max-w-[1600px] mx-auto flex items-center gap-3">
             <input
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search extensions"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
+              className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
             />
-            {/* One row of chips, no sort controls. With a catalogue this size a
-                sort is a control that changes nothing; the filter is the part
-                that answers a real question. */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              {CATEGORY_FILTERS.map((f) => {
-                const n = countFor(f.key);
-                const active = category === f.key;
-                return (
-                  <button
-                    key={f.key}
-                    type="button"
-                    disabled={n === 0 && f.key !== "all"}
-                    onClick={() => setCategory(f.key)}
-                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                      active
-                        ? "border-ink bg-ink text-paper"
-                        : "border-line text-ink-soft hover:text-ink hover:border-ink-faint cursor-pointer"
-                    }`}
-                  >
-                    {f.label}
-                    <span className={active ? "opacity-60" : "text-ink-faint"}>
-                      {" "}
-                      ({n})
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* A dropdown, not a row of chips: with six of them the chips were a
+                second full-width line above the grid, and this is a filter you
+                set once and forget. Counts stay, so an empty option reads as
+                empty before you pick it. */}
+            <select
+              aria-label="Filter by category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="shrink-0 px-3 py-2 rounded-xl bg-paper-raised border border-line text-sm text-ink cursor-pointer focus:outline-none focus:border-ink-faint"
+            >
+              {CATEGORY_FILTERS.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label} ({countFor(f.key)})
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       )}
@@ -1016,7 +1019,7 @@ const StoreSlideOver: React.FC<{
         {/* An opened entry replaces the grid with the SAME detail component the
             installed list uses — one header, one set of authored content. */}
         {openEntry ? (
-          <div className="max-w-3xl mx-auto">
+          <div className="max-w-5xl mx-auto">
             <ExtensionDetail
               meta={{
                 id: openEntry.id,
@@ -1069,130 +1072,122 @@ const StoreSlideOver: React.FC<{
         {/* The full window buys another column before the cards get wide enough
             to look stretched; the max-width stops the grid running away on a
             very wide display. */}
-        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 max-w-[1600px] mx-auto">
+        <div className="grid gap-x-6 gap-y-8 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 max-w-[1600px] mx-auto">
           {entries.map((e) => {
             const badge = TRUST_BADGE[e.trust] ?? TRUST_BADGE.dev;
             const revoked = e.revocation === "revoked";
             const deprecated = e.revocation === "deprecated";
+            const have = installed[e.id];
+            const isInstalled = have != null;
+            const upToDate = have === e.version;
+            const busyThis = installing === e.id;
+            const label = busyThis
+              ? "Installing…"
+              : isInstalled && upToDate
+                ? "Installed"
+                : isInstalled
+                  ? "Update"
+                  : "Install";
+            const disabled =
+              busyThis || revoked || (isInstalled && upToDate) || !view?.can_install;
             return (
-              <div
-                key={`${e.id}@${e.version}`}
-                className="group rounded-xl border border-line bg-paper-raised overflow-hidden flex flex-col hover:border-ink-faint/50 transition-colors"
-              >
-                {/* Cover image on top — the card's most important element. The
-                    trust rung rides ON it: it is the one thing you want to know
-                    before reading anything, and up here it costs no height and
-                    never competes with the name for the eye. */}
-                <button
-                  type="button"
-                  onClick={() => setOpened(e.id)}
-                  className="relative block w-full text-left cursor-pointer"
-                  aria-label={`Open ${e.name}`}
-                >
-                  {e.media.length > 0 ? (
-                    <Cover media={e.media[0]} name={e.name} rounded="rounded-none" />
-                  ) : (
-                    <div className="w-full aspect-[16/9] bg-paper-sunken flex items-center justify-center border-b border-line">
-                      <Package width={22} height={22} className="text-ink-faint/50" />
-                    </div>
-                  )}
-                  <span
-                    className={`absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold backdrop-blur-sm ${badge.cls}`}
+              // No card. The picture is the object; a border and a raised panel
+              // around it only drew a box around a box, and six of them made a
+              // grid of containers rather than a grid of extensions. Title and
+              // copy sit on the page itself.
+              <div key={`${e.id}@${e.version}`} className="group flex flex-col">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setOpened(e.id)}
+                    className="block w-full text-left cursor-pointer rounded-xl overflow-hidden border border-line group-hover:border-ink-faint/50 transition-colors"
+                    aria-label={`Open ${e.name}`}
                   >
-                    {e.trust === "verified" && (
-                      <ShieldCheck width={10} height={10} />
+                    {e.media.length > 0 ? (
+                      <Cover
+                        media={e.media[0]}
+                        name={e.name}
+                        rounded="rounded-none"
+                      />
+                    ) : (
+                      <div className="w-full aspect-[16/9] bg-paper-sunken flex items-center justify-center">
+                        <Package width={22} height={22} className="text-ink-faint/50" />
+                      </div>
                     )}
-                    {badge.label}
-                  </span>
-                </button>
+                  </button>
+                  {/* The action goes ON the image, top-right: it is the one
+                      thing you came to the card to do, and up here it needs no
+                      row of its own under the words. */}
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => void install(e)}
+                    className={`absolute top-2.5 right-2.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm backdrop-blur-md transition-colors disabled:cursor-not-allowed ${
+                      isInstalled && upToDate
+                        ? "bg-black/45 text-white/80"
+                        : "bg-paper-raised/85 text-ink hover:bg-paper-raised cursor-pointer"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                </div>
 
-                {/* Deliberately shallow: the cover carries the card, and every
-                    detail (author, version, review date, capabilities, README)
-                    is one click away. A tall block of small grey metadata under
-                    each title made the grid heavy and told nobody anything they
-                    could act on. Title · trust · installs on ONE line, the
-                    description, the button. */}
-                <div className="p-3 flex flex-col gap-1.5 flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex items-center gap-1.5 flex-wrap">
+                <div className="pt-3 px-0.5 flex flex-col gap-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
                     <button
                       type="button"
                       onClick={() => setOpened(e.id)}
-                      className="text-sm font-medium text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
+                      className="text-[0.95rem] font-semibold text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
                     >
                       {e.name}
                     </button>
+                    {/* Trust, after a hairline rule — present and readable, not
+                        a coloured pill shouting over the name. */}
+                    <span className="h-3.5 w-px bg-line shrink-0" />
+                    <span
+                      className={`inline-flex items-center gap-1 text-[11px] shrink-0 ${badge.cls}`}
+                      title={badge.title}
+                    >
+                      {e.trust === "verified" && (
+                        <ShieldCheck width={11} height={11} />
+                      )}
+                      {badge.label}
+                    </span>
                     {e.installs > 0 && (
-                      <span className="inline-flex items-center gap-0.5 text-[11px] text-ink-faint">
+                      <span className="inline-flex items-center gap-0.5 text-[11px] text-ink-faint shrink-0">
                         <Download width={10} height={10} />
                         {fmtStars(e.installs)}
                       </span>
                     )}
                   </div>
-                  {(() => {
-                    const have = installed[e.id];
-                    const isInstalled = have != null;
-                    const upToDate = have === e.version;
-                    const busyThis = installing === e.id;
-                    const label = busyThis
-                      ? "Installing…"
-                      : isInstalled && upToDate
-                        ? "Installed"
-                        : isInstalled
-                          ? "Update"
-                          : "Install";
-                    const disabled =
-                      busyThis ||
-                      revoked ||
-                      (isInstalled && upToDate) ||
-                      !view?.can_install;
-                    return (
-                      <button
-                        type="button"
-                        disabled={disabled}
-                        onClick={() => void install(e)}
-                        className={`shrink-0 px-2.5 py-1 rounded-lg border text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                          isInstalled && upToDate
-                            ? "border-line text-ink-faint"
-                            : "border-line text-ink hover:border-ink-faint cursor-pointer"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })()}
-                </div>
 
-                {/* The description carries the install decision — a name alone
-                    is too vague to install from (DISTRIBUTION-PLAN §2.3). */}
-                {e.description && (
-                  <p className="text-xs text-ink-soft leading-relaxed line-clamp-2">
-                    {e.description}
-                  </p>
-                )}
+                  {e.description && (
+                    <p className="text-[13px] text-ink-soft leading-relaxed line-clamp-2">
+                      {e.description}
+                    </p>
+                  )}
 
-                {/* Flagged combinations (§3.3): what the reviewer was warned of.
-                    These STAY on the card — unlike a review date, a flag is a
-                    reason not to click Install. */}
-                {e.flags.map((f) => (
-                  <div
-                    key={f}
-                    className="text-[10px] text-amber-600 flex items-center gap-1"
-                  >
-                    <ShieldCheck width={9} height={9} /> {f}
-                  </div>
-                ))}
-
-                {revoked && (
-                  <div className="text-[10px] text-red-600">
-                    Revoked — install disabled.
-                  </div>
-                )}
-                {deprecated && (
-                  <div className="text-[10px] text-ink-faint">
-                    Deprecated — no longer maintained.
-                  </div>
-                )}
+                  {/* Flagged combinations (§3.3): what the reviewer was warned
+                      of. These STAY — unlike a review date, a flag is a reason
+                      not to install. */}
+                  {e.flags.map((f) => (
+                    <div
+                      key={f}
+                      className="text-[11px] text-amber-600 flex items-center gap-1"
+                    >
+                      <ShieldCheck width={10} height={10} /> {f}
+                    </div>
+                  ))}
+                  {revoked && (
+                    <div className="text-[11px] text-red-600">
+                      Revoked — install disabled.
+                    </div>
+                  )}
+                  {deprecated && (
+                    <div className="text-[11px] text-ink-faint">
+                      Deprecated — no longer maintained.
+                    </div>
+                  )}
                 </div>
               </div>
             );

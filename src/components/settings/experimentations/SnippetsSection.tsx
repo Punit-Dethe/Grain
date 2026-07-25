@@ -129,51 +129,57 @@ export const SnippetsSection: React.FC<{
         untitled || snippets.length === 0 ? null : <CountChip n={snippets.length} />
       }
     >
-      {/* Composer — a labelled trigger → expansion pair. */}
-      <div className="p-4 space-y-3">
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-3 items-start">
-          <div className="space-y-1.5">
-            <FieldLabel htmlFor="snippet-trigger">Trigger phrase</FieldLabel>
-            <Input
-              id="snippet-trigger"
-              type="text"
-              className="w-full"
-              variant="compact"
-              value={trigger}
-              onChange={(e) => setTrigger(e.target.value)}
-              maxLength={MAX_TRIGGER_LENGTH}
-              placeholder={t(
-                "settings.experimentations.snippets.triggerPlaceholder",
-              )}
-              disabled={updating}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <FieldLabel htmlFor="snippet-expansion">Expands to</FieldLabel>
-            <Textarea
-              id="snippet-expansion"
-              className="w-full"
-              variant="compact"
-              autoResize
-              maxRows={3}
-              value={replacement}
-              onChange={(e) => setReplacement(e.target.value)}
-              placeholder={t(
-                "settings.experimentations.snippets.replacementPlaceholder",
-              )}
-              disabled={updating}
-            />
-          </div>
+      {/* Composer. Stacked, not side-by-side: the two fields are a MAPPING, and
+          setting them across from each other left both cramped while saying
+          nothing about the relationship. Down the page with the arrow between
+          them, the form reads as the sentence it is — say this, get that. */}
+      <div className="p-5 space-y-4">
+        <div className="space-y-2">
+          <FieldLabel htmlFor="snippet-trigger">When I say</FieldLabel>
+          <Input
+            id="snippet-trigger"
+            type="text"
+            className="w-full"
+            value={trigger}
+            onChange={(e) => setTrigger(e.target.value)}
+            maxLength={MAX_TRIGGER_LENGTH}
+            placeholder={t(
+              "settings.experimentations.snippets.triggerPlaceholder",
+            )}
+            disabled={updating}
+          />
         </div>
 
-        <div className="flex items-center justify-between gap-3">
-          {/* Starter examples — click to prefill, then edit and save. Only on a
-              fresh form so they never fight with an in-progress edit. */}
-          {!editingId &&
+        <div className="flex items-center gap-2 ps-1 text-ink-faint">
+          <MapArrow className="rotate-90" />
+          <span className="h-px flex-1 bg-line" />
+        </div>
+
+        <div className="space-y-2">
+          <FieldLabel htmlFor="snippet-expansion">Grain types</FieldLabel>
+          <Textarea
+            id="snippet-expansion"
+            className="w-full"
+            autoResize
+            maxRows={5}
+            value={replacement}
+            onChange={(e) => setReplacement(e.target.value)}
+            placeholder={t(
+              "settings.experimentations.snippets.replacementPlaceholder",
+            )}
+            disabled={updating}
+          />
+        </div>
+
+        {/* Starter examples — click to prefill, then edit and save. Only on a
+            fresh form so they never fight with an in-progress edit, and on
+            their own line so they read as suggestions rather than as part of
+            the button group. */}
+        {!editingId &&
           trimmedTrigger.length === 0 &&
-          replacement.length === 0 ? (
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs text-ink-faint">Try</span>
+          replacement.length === 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-0.5">
+              <span className="text-xs text-ink-soft">Start from</span>
               {EXAMPLES.map((ex) => (
                 <button
                   key={ex.trigger}
@@ -182,33 +188,30 @@ export const SnippetsSection: React.FC<{
                     setTrigger(ex.trigger);
                     setReplacement(ex.replacement);
                   }}
-                  className="px-2.5 py-1 rounded-md text-xs font-mono border border-line text-ink-soft hover:text-ink hover:border-accent/50 transition-colors cursor-pointer"
+                  className="px-2.5 py-1 rounded-md text-xs font-mono text-ink-soft bg-paper-sunken border border-line hover:text-ink hover:border-ink-faint transition-colors cursor-pointer"
                 >
                   {ex.trigger}
                 </button>
               ))}
             </div>
-          ) : (
-            <span />
           )}
 
-          <div className="flex items-center gap-2 shrink-0">
-            {editingId && (
-              <Button onClick={resetForm} variant="secondary" size="md">
-                {t("settings.experimentations.snippets.cancel")}
-              </Button>
-            )}
-            <Button
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              variant="primary"
-              size="md"
-            >
-              {editingId
-                ? t("settings.experimentations.snippets.update")
-                : t("settings.experimentations.snippets.add")}
+        <div className="flex items-center justify-end gap-2 pt-1">
+          {editingId && (
+            <Button onClick={resetForm} variant="secondary" size="md">
+              {t("settings.experimentations.snippets.cancel")}
             </Button>
-          </div>
+          )}
+          <Button
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            variant="primary"
+            size="md"
+          >
+            {editingId
+              ? t("settings.experimentations.snippets.update")
+              : t("settings.experimentations.snippets.add")}
+          </Button>
         </div>
       </div>
 
@@ -228,16 +231,22 @@ export const SnippetsSection: React.FC<{
             return (
               <div
                 key={snippet.id}
-                className={`group px-4 py-2.5 flex items-center gap-3 transition-colors ${
+                className={`group px-5 py-3.5 flex items-center gap-3 transition-colors ${
                   editing
                     ? "bg-[var(--accent-tint)]"
                     : "hover:bg-[rgba(20,19,18,0.02)]"
                 } ${enabled ? "" : "opacity-45"}`}
               >
+                {/* The trigger is what you SAY and the expansion is what you
+                    get; the payload was set in faint grey, which is the colour
+                    the eye skips. */}
                 <div className="flex-1 min-w-0 flex items-center gap-2.5">
                   <TriggerChip>{snippet.trigger}</TriggerChip>
                   <MapArrow />
-                  <span className="min-w-0 truncate text-sm text-ink-soft">
+                  <span
+                    className="min-w-0 truncate text-sm text-ink"
+                    title={snippet.replacement}
+                  >
                     {snippet.replacement}
                   </span>
                 </div>

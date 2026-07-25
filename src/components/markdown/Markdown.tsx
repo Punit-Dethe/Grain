@@ -3,8 +3,8 @@ import { Fragment, type ReactNode } from "react";
 type Block =
   | { type: "paragraph"; lines: string[] }
   | { type: "heading"; depth: number; text: string }
-  | { type: "unordered-list"; items: string[] }
-  | { type: "ordered-list"; items: string[]; start: number }
+  | { type: "unordered-list"; items: string[][] }
+  | { type: "ordered-list"; items: string[][]; start: number }
   | { type: "quote"; lines: string[] }
   | { type: "code"; language: string; lines: string[] }
   | { type: "table"; header: string[]; alignments: TableAlignment[]; rows: string[][] }
@@ -19,6 +19,13 @@ const QUOTE = /^>\s?(.*)$/;
 const FENCE = /^```\s*([^\s]*)\s*$/;
 const RULE = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const TABLE_DIVIDER_CELL = /^:?-{3,}:?$/;
+/** A line that continues the list item above it: indented, and not itself the
+ * start of something else. */
+const LIST_CONTINUATION = /^\s{1,}\S/;
+/** CommonMark's explicit line break inside a paragraph: two trailing spaces, or
+ * a trailing backslash. Everything else that looks like a newline is a SOFT
+ * break — the author's wrapping, not their intent. */
+const HARD_BREAK = /( {2,}|\\)$/;
 
 /**
  * [GRAIN] The app's ONE stateless, safe Markdown renderer. Written for Agent
@@ -37,18 +44,29 @@ const TABLE_DIVIDER_CELL = /^:?-{3,}:?$/;
 export function Markdown({
   markdown,
   className = "gm-markdown",
+  softBreaks = false,
 }: {
   markdown: string;
   className?: string;
+  /** Treat a lone newline inside a paragraph as a SPACE (CommonMark), not a
+   * line break. Authored documents are hard-wrapped by their author — a README
+   * wrapped at 80 columns rendered with every one of those breaks preserved,
+   * which looks like a narrow column of text with the right half of the page
+   * left empty. Chat replies are the opposite case: a model emits single
+   * newlines meaning them, so the Agent keeps break-per-newline. */
+  softBreaks?: boolean;
 }) {
   return (
     <div className={className}>
-      {parseBlocks(markdown).map((block, index) => renderBlock(block, index))}
+      {parseBlocks(markdown).map((block, index) =>
+        renderBlock(block, index, softBreaks),
+      )}
     </div>
   );
 }
 
-/** The Agent panel's dark-surface binding. */
+/** The Agent panel's dark-surface binding. Keeps break-per-newline: a reply is
+ * written as it is meant to be read, not wrapped to a column. */
 export function AgentMarkdown({ markdown }: { markdown: string }) {
   return <Markdown markdown={markdown} className="agc-markdown" />;
 }
@@ -103,25 +121,25 @@ function parseBlocks(markdown: string): Block[] {
     }
     const unordered = line.match(UNORDERED_ITEM);
     if (unordered) {
-      const items: string[] = [];
+      const items: string[][] = [];
       while (i < lines.length) {
         const next = lines[i].match(UNORDERED_ITEM);
         if (!next) break;
-        items.push(next[1]);
         i += 1;
+        items.push([next[1], ...readContinuation(lines, () => i, (n) => (i = n))]);
       }
       blocks.push({ type: "unordered-list", items });
       continue;
     }
     const ordered = line.match(ORDERED_ITEM);
     if (ordered) {
-      const items: string[] = [];
+      const items: string[][] = [];
       const start = Number(ordered[1]);
       while (i < lines.length) {
         const next = lines[i].match(ORDERED_ITEM);
         if (!next) break;
-        items.push(next[2]);
         i += 1;
+        items.push([next[2], ...readContinuation(lines, () => i, (n) => (i = n))]);
       }
       blocks.push({ type: "ordered-list", items, start });
       continue;
@@ -137,6 +155,29 @@ function parseBlocks(markdown: string): Block[] {
   }
 
   return blocks;
+}
+
+/** Lines belonging to the list item just read: indented, non-blank, and not the
+ * start of a new item or block. Without this a hard-wrapped item spilled out of
+ * the list and rendered as a stray paragraph beneath it. */
+function readContinuation(
+  lines: string[],
+  get: () => number,
+  set: (next: number) => void,
+): string[] {
+  const extra: string[] = [];
+  let i = get();
+  while (
+    i < lines.length &&
+    lines[i].trim() &&
+    LIST_CONTINUATION.test(lines[i]) &&
+    !isBlockStart(lines[i].trim())
+  ) {
+    extra.push(lines[i].trim());
+    i += 1;
+  }
+  set(i);
+  return extra;
 }
 
 function isBlockStart(line: string) {
@@ -194,18 +235,18 @@ function normalizeTableRow(cells: string[], columns: number): string[] {
   return Array.from({ length: columns }, (_, index) => cells[index] ?? "");
 }
 
-function renderBlock(block: Block, key: number): ReactNode {
+function renderBlock(block: Block, key: number, soft: boolean): ReactNode {
   switch (block.type) {
     case "heading": {
       const Tag = `h${block.depth}` as keyof JSX.IntrinsicElements;
       return <Tag key={key}>{inline(block.text)}</Tag>;
     }
     case "unordered-list":
-      return <ul key={key}>{block.items.map((item, i) => <li key={i}>{inline(item)}</li>)}</ul>;
+      return <ul key={key}>{block.items.map((item, i) => <li key={i}>{joinLines(item, soft)}</li>)}</ul>;
     case "ordered-list":
-      return <ol key={key} start={block.start}>{block.items.map((item, i) => <li key={i}>{inline(item)}</li>)}</ol>;
+      return <ol key={key} start={block.start}>{block.items.map((item, i) => <li key={i}>{joinLines(item, soft)}</li>)}</ol>;
     case "quote":
-      return <blockquote key={key}>{withBreaks(block.lines)}</blockquote>;
+      return <blockquote key={key}>{joinLines(block.lines, soft)}</blockquote>;
     case "code":
       return <pre key={key} data-language={block.language || undefined}><code>{block.lines.join("\n")}</code></pre>;
     case "table":
@@ -226,15 +267,37 @@ function renderBlock(block: Block, key: number): ReactNode {
     case "rule":
       return <hr key={key} />;
     case "paragraph":
-      return <p key={key}>{withBreaks(block.lines)}</p>;
+      return <p key={key}>{joinLines(block.lines, soft)}</p>;
   }
 }
 
-function withBreaks(lines: string[]): ReactNode[] {
-  return lines.flatMap((line, index) => [
-    ...(index ? [<br key={`break-${index}`} />] : []),
-    <Fragment key={`line-${index}`}>{inline(line)}</Fragment>,
-  ]);
+/** Lines of one paragraph-like block, joined per the chosen break rule: a
+ * newline becomes a space when `soft`, otherwise a `<br>`. An explicit
+ * CommonMark break (two trailing spaces, or a backslash) is always honoured. */
+function joinLines(lines: string[], soft: boolean): ReactNode[] {
+  if (!soft) {
+    return lines.flatMap((line, index) => [
+      ...(index ? [<br key={`break-${index}`} />] : []),
+      <Fragment key={`line-${index}`}>{inline(line)}</Fragment>,
+    ]);
+  }
+  const out: ReactNode[] = [];
+  let run: string[] = [];
+  const flush = (key: number) => {
+    if (run.length) out.push(<Fragment key={`run-${key}`}>{inline(run.join(" "))}</Fragment>);
+    run = [];
+  };
+  lines.forEach((line, index) => {
+    if (HARD_BREAK.test(line)) {
+      run.push(line.replace(HARD_BREAK, ""));
+      flush(index);
+      if (index < lines.length - 1) out.push(<br key={`break-${index}`} />);
+    } else {
+      run.push(line.trim());
+    }
+  });
+  flush(lines.length);
+  return out;
 }
 
 function inline(text: string): ReactNode[] {

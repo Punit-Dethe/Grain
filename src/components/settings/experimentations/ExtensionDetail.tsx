@@ -175,8 +175,15 @@ export const ExtensionDetail: React.FC<{
         All extensions
       </button>
 
-      {/* Cover image on top (unless we are compacting for in-place settings). */}
-      {!hasInPlaceSettings && <Cover media={cover} name={meta.name} />}
+      {/* Cover image on top (unless we are compacting for in-place settings).
+          Deliberately not full-bleed: on a page whose job is to explain an
+          extension, a 16:9 banner across the full width pushed every word below
+          the fold. It is context for the title, at the size of context. */}
+      {!hasInPlaceSettings && (
+        <div className="max-w-sm">
+          <Cover media={cover} name={meta.name} />
+        </div>
+      )}
 
       {/* Title row + primary action. */}
       <div className="flex items-start gap-3">
@@ -271,13 +278,13 @@ export const ExtensionDetail: React.FC<{
               About
             </button>
             {descOpen && (
-              <p className="mt-1 text-sm text-ink-soft leading-relaxed max-w-2xl">
+              <p className="mt-1 text-sm text-ink-soft leading-relaxed max-w-3xl">
                 {meta.description}
               </p>
             )}
           </div>
         ) : (
-          <p className="text-sm text-ink-soft leading-relaxed max-w-2xl">
+          <p className="text-sm text-ink-soft leading-relaxed max-w-3xl">
             {meta.description}
           </p>
         ))}
@@ -296,7 +303,7 @@ export const ExtensionDetail: React.FC<{
               and fights the header above it. */}
           {readme && (
             <div className="pt-1">
-              <Markdown markdown={stripReadmeTitle(readme)} />
+              <Markdown markdown={stripReadmeTitle(readme)} softBreaks />
             </div>
           )}
           {gallery.length > 0 && (
