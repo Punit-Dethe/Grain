@@ -26,10 +26,21 @@ pub(crate) fn ensure_vec_extension() {
     });
 }
 
-// -- LOCKED note schema -------------------------------------------------------
-// `id, title, tldr, body, timestamp, todo_tags, reminder_state, is_pinned` —
-// exactly these fields, and never an embedding. Do not extend without updating
-// FINAL-PLAN.md §3.2 first.
+// -- The note schema ----------------------------------------------------------
+// `id, title, tldr, body, timestamp, todo_tags, reminder_state, is_pinned,
+// question, entities, source` — exactly these fields, and NEVER an embedding.
+//
+// The first eight were the original locked set (FINAL-PLAN.md §3.2). The last
+// three are the DISTILLED ARTIFACT (KNOWLEDGE-ARCHITECTURE-PLAN.md B1): the
+// searchable question, the entities named in the note, and where the capture
+// came from. They are persisted in frontmatter rather than only in the derived
+// index, so a full reindex never has to re-run the LLM to get them back.
+//
+// Extending this is a deliberate contract change: update
+// `json_schema_is_locked` below in the same commit, or the schema drifts
+// silently. No migration is ever needed — absent fields deserialize empty, so
+// every pre-existing note stays valid on read and simply gains the new fields
+// the next time it is written.
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Type)]
 pub struct TodoTag {
@@ -84,6 +95,24 @@ pub struct Note {
     pub reminder_state: ReminderState,
     #[serde(default)]
     pub is_pinned: bool,
+    /// The distilled **searchable question** — one sentence someone would
+    /// actually type or say when looking for this note ("why did token refresh
+    /// fail on large payloads?"). Cerebras's measured accuracy win is embedding
+    /// this rather than the raw body. Empty for raw captures and foreign notes.
+    #[serde(default)]
+    pub question: String,
+    /// Entities named in the note (files, people, apps, projects, topics), as
+    /// written. The keys of the entity graph; display names live here, the
+    /// deduplicated norms live in the derived index.
+    #[serde(default)]
+    pub entities: Vec<String>,
+    /// Where the capture came from: `dictation` | `selection` | `manual` |
+    /// `import`, or "" when unknown (every note written before this field).
+    /// Cerebras's `source` column: cheap, and the thing you actually want to
+    /// filter on when a query means "that thing I copied", not "that thing I
+    /// said".
+    #[serde(default)]
+    pub source: String,
 }
 
 /// Listing-only sidebar card (TAURI-OVERLAY-PLAN.md Phase A). NOT the locked
@@ -121,6 +150,9 @@ impl Note {
             todo_tags: Vec::new(),
             reminder_state: ReminderState::default(),
             is_pinned: false,
+            question: String::new(),
+            entities: Vec::new(),
+            source: String::new(),
         }
     }
 }
@@ -153,7 +185,8 @@ mod tests {
 
     #[test]
     fn json_schema_is_locked() {
-        // The locked field set, and nothing else — catches accidental schema drift.
+        // The declared field set, and nothing else — catches accidental drift.
+        // Changing this list is a contract change; see the note above the struct.
         let note = Note::raw("body".into());
         let value = serde_json::to_value(&note).unwrap();
         let obj = value.as_object().unwrap();
@@ -163,15 +196,34 @@ mod tests {
             keys,
             vec![
                 "body",
+                "entities",
                 "id",
                 "is_pinned",
+                "question",
                 "reminder_state",
+                "source",
                 "timestamp",
                 "title",
                 "tldr",
                 "todo_tags"
             ]
         );
+        // An embedding must NEVER reach the note file — vectors are derived and
+        // rebuildable, and a note is something the user can read.
+        assert!(!obj.contains_key("embedding"));
+    }
+
+    /// A note written before the distilled fields existed must still read
+    /// cleanly, with the new fields empty rather than the parse failing.
+    #[test]
+    fn notes_written_before_the_distilled_fields_still_deserialize() {
+        let old = r#"{"id":"a","title":"T","tldr":"S","body":"B","timestamp":1,
+            "todo_tags":[],"reminder_state":{"status":"none","fire_at":null},
+            "is_pinned":false}"#;
+        let note: Note = serde_json::from_str(old).unwrap();
+        assert_eq!(note.question, "");
+        assert!(note.entities.is_empty());
+        assert_eq!(note.source, "");
     }
 
     #[test]

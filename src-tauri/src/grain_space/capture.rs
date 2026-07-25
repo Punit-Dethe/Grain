@@ -158,7 +158,14 @@ pub async fn capture_and_save(
     } else {
         Vec::new()
     };
-    let (mut note, routing) = compose_note(app, &body, framing, &folders).await;
+    // The capture origin: a saved selection is something the user READ, a bare
+    // dictation is something they SAID. Worth telling apart at retrieval time.
+    let source = if selection.is_some() {
+        "selection"
+    } else {
+        "dictation"
+    };
+    let (mut note, routing, _relations) = compose_note(app, &body, framing, &folders, source).await;
     // An explicit typed title wins over the auto-generated one (kept short).
     if let Some(t) = title_override.map(str::trim).filter(|t| !t.is_empty()) {
         note.title = t.chars().take(80).collect();
@@ -262,7 +269,7 @@ pub(crate) struct Routing {
 }
 
 /// The structured-output shape for the extraction call.
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Default)]
 struct ExtractedMeta {
     /// The note rewritten as tidy Markdown (structuring path only). Empty when
     /// structuring was not requested — the verbatim body is then kept.
@@ -287,12 +294,159 @@ struct ExtractedMeta {
     /// suggested, or left loose. Present only alongside `category`.
     #[serde(default)]
     category_confidence: String,
+    /// [GRAIN] Distillation (KNOWLEDGE-ARCHITECTURE-PLAN.md D2): the searchable
+    /// question — one sentence someone would actually go looking with. This is
+    /// what gets embedded (D3), which is the single measured accuracy win in the
+    /// Cerebras write-up: distil, then embed.
+    #[serde(default)]
+    question: String,
+    /// Entities named in the note. LightRAG's `Recog` step, riding this call
+    /// instead of a second LLM pass — which is the whole reason a graph is
+    /// affordable here.
+    #[serde(default)]
+    entities: Vec<ExtractedEntity>,
+    /// How those entities relate. LightRAG's edges, same free ride.
+    #[serde(default)]
+    relations: Vec<ExtractedRelation>,
+}
+
+/// Entity kinds we accept. Anything else collapses to `topic` — a taxonomy the
+/// model can't corrupt.
+const ENTITY_KINDS: [&str; 6] = ["person", "app", "file", "project", "topic", "place"];
+
+#[derive(Deserialize, Debug, Default)]
+struct ExtractedEntity {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    kind: String,
+}
+
+#[derive(Deserialize, Debug, Default)]
+struct ExtractedRelation {
+    #[serde(default)]
+    from: String,
+    #[serde(default)]
+    pred: String,
+    #[serde(default)]
+    to: String,
+}
+
+/// Hard caps, enforced in Rust rather than hoped for in the prompt. A model that
+/// returns 400 entities or a 5 KB name cannot bloat the graph or the note file.
+const MAX_ENTITIES: usize = 12;
+const MAX_RELATIONS: usize = 8;
+const MAX_ENTITY_NAME_CHARS: usize = 64;
+const MAX_QUESTION_CHARS: usize = 240;
+
+/// Normalize one entity name: trim, collapse whitespace, cap length. Empty when
+/// nothing usable is left.
+fn clean_entity_name(raw: &str) -> String {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
+    collapsed.chars().take(MAX_ENTITY_NAME_CHARS).collect()
+}
+
+/// The dedup key for an entity (LightRAG's `Dedupe`, applied at both ends —
+/// here and as a UNIQUE column in the index).
+pub(crate) fn entity_norm(name: &str) -> String {
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// One extracted relation, cleaned and capped. Public so the graph writer shares
+/// exactly the same normalization the note file was written with.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Relation {
+    pub from: String,
+    pub pred: String,
+    pub to: String,
+}
+
+/// Validate and cap the extracted entity list: normalized names, known kinds,
+/// deduplicated by norm, first-come order preserved.
+fn clean_entities(raw: Vec<ExtractedEntity>) -> Vec<(String, String)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for e in raw {
+        let name = clean_entity_name(&e.name);
+        if name.is_empty() {
+            continue;
+        }
+        let norm = entity_norm(&name);
+        if !seen.insert(norm) {
+            continue;
+        }
+        let kind = e.kind.trim().to_ascii_lowercase();
+        let kind = if ENTITY_KINDS.contains(&kind.as_str()) {
+            kind
+        } else {
+            "topic".to_string()
+        };
+        out.push((name, kind));
+        if out.len() >= MAX_ENTITIES {
+            break;
+        }
+    }
+    out
+}
+
+/// Validate and cap relations. A relation is kept only when BOTH ends survived
+/// entity cleaning — an edge to something we never recorded is a dangling
+/// pointer, and a self-edge carries no information.
+fn clean_relations(raw: Vec<ExtractedRelation>, entities: &[(String, String)]) -> Vec<Relation> {
+    let known: std::collections::HashMap<String, &str> = entities
+        .iter()
+        .map(|(name, _)| (entity_norm(name), name.as_str()))
+        .collect();
+    let mut out: Vec<Relation> = Vec::new();
+    for r in raw {
+        let from = known.get(&entity_norm(&clean_entity_name(&r.from)));
+        let to = known.get(&entity_norm(&clean_entity_name(&r.to)));
+        let (Some(from), Some(to)) = (from, to) else {
+            continue;
+        };
+        if entity_norm(from) == entity_norm(to) {
+            continue;
+        }
+        let pred = clean_entity_name(&r.pred).to_lowercase().replace(' ', "_");
+        if pred.is_empty() {
+            continue;
+        }
+        let rel = Relation {
+            from: from.to_string(),
+            pred,
+            to: to.to_string(),
+        };
+        if out.contains(&rel) {
+            continue;
+        }
+        out.push(rel);
+        if out.len() >= MAX_RELATIONS {
+            break;
+        }
+    }
+    out
 }
 
 impl ExtractedMeta {
-    fn apply(self, note: &mut Note, auto_arm: bool) {
+    /// Apply the metadata to the note, returning the cleaned relations — which
+    /// belong to the derived graph, not the note file (a note records the
+    /// entities it names; how they connect is index-level and rebuildable from
+    /// re-capture, so keeping it out of frontmatter keeps the file readable).
+    fn apply(self, note: &mut Note, auto_arm: bool) -> Vec<Relation> {
         note.title = self.title.trim().to_string();
         note.tldr = self.tldr.trim().to_string();
+        note.question = self
+            .question
+            .trim()
+            .chars()
+            .take(MAX_QUESTION_CHARS)
+            .collect();
+        let entities = clean_entities(self.entities);
+        let relations = clean_relations(self.relations, &entities);
+        note.entities = entities.into_iter().map(|(name, _)| name).collect();
         note.todo_tags = self
             .todos
             .into_iter()
@@ -315,6 +469,7 @@ impl ExtractedMeta {
             },
             None => ReminderState::default(),
         };
+        relations
     }
 }
 
@@ -431,6 +586,22 @@ async fn extract_metadata(
          - title: at most 3 words, plain text.\n\
          - tldr: exactly one short sentence.\n\
          - todos: action items present in the note (empty array if none).\n\
+         - question: the ONE question this note is the answer to, phrased as the \
+           user would actually search for it later (\"why did token refresh fail on \
+           large payloads?\"). Use the note's own words for specifics. One sentence, \
+           no preamble. If the note answers nothing (a bare reminder, a phone \
+           number), use an empty string.\n\
+         - entities: the specific things this note is ABOUT — people, apps, files, \
+           projects, places, topics — copied as they appear in the note, each with \
+           its kind (person|app|file|project|topic|place). At most 12, most \
+           important first. Only what is actually named: no invented categories, \
+           no generic words like \"work\" or \"meeting\" unless the note names them \
+           as a thing. Empty array is correct for a note with no clear subjects.\n\
+         - relations: how those entities connect, as {{from, pred, to}} using ONLY \
+           names from `entities`. `pred` is a short lowercase verb phrase \
+           (used_for, blocked_by, owns, part_of, fixed_in). At most 8, and only \
+           relations the note actually states — never inferred from general \
+           knowledge. Empty array when the note states none.\n\
          - reminder_at: if a reminder/timer is requested, the local datetime it should fire as \
            YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}.\
          {category_line}\
@@ -446,9 +617,45 @@ async fn extract_metadata(
         "title": { "type": "string" },
         "tldr": { "type": "string" },
         "todos": { "type": "array", "items": { "type": "string" } },
-        "reminder_at": { "type": "string" }
+        "reminder_at": { "type": "string" },
+        // Distillation (D2/D3). `kind` is an enum so the taxonomy is fixed by the
+        // schema rather than by the prompt; Rust still re-validates on the way in.
+        "question": { "type": "string" },
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "kind": { "type": "string", "enum": ENTITY_KINDS }
+                },
+                "required": ["name", "kind"],
+                "additionalProperties": false
+            }
+        },
+        "relations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from": { "type": "string" },
+                    "pred": { "type": "string" },
+                    "to": { "type": "string" }
+                },
+                "required": ["from", "pred", "to"],
+                "additionalProperties": false
+            }
+        }
     });
-    let mut required = vec!["title", "tldr", "todos", "reminder_at"];
+    let mut required = vec![
+        "title",
+        "tldr",
+        "todos",
+        "reminder_at",
+        "question",
+        "entities",
+        "relations",
+    ];
     if structure {
         properties["body"] = serde_json::json!({ "type": "string" });
         required.insert(0, "body");
@@ -630,13 +837,20 @@ fn raw_append(current: &Note, change: &str) -> Note {
 /// shapes the title/summary only. Degrades to a raw note on any extraction
 /// failure — the body is always preserved. Shared by the `remember` action and
 /// note capture; does NOT save.
+///
+/// `source` is the capture origin recorded on the note (`dictation`,
+/// `selection`, …). The returned relations are the graph edges the same call
+/// extracted (D2) — they belong to the derived index, not the note file.
 pub(crate) async fn compose_note(
     app: &AppHandle,
     body: &str,
     framing: Option<&str>,
     folders: &[(String, String)],
-) -> (Note, Option<Routing>) {
+    source: &str,
+) -> (Note, Option<Routing>, Vec<Relation>) {
     let mut note = Note::raw(body.trim().to_string());
+    note.source = source.to_string();
+    let mut relations = Vec::new();
     let settings = get_settings(app);
     // The route the model chose (validated back to an exact folder + gated on
     // confidence), or None. Piggybacks the extraction call above.
@@ -695,7 +909,7 @@ pub(crate) async fn compose_note(
                 {
                     note.body = formatted.to_string();
                 }
-                meta.apply(&mut note, settings.grain_space_auto_reminders);
+                relations = meta.apply(&mut note, settings.grain_space_auto_reminders);
             }
             Err(e) => log::warn!("[GRAIN] space compose: extraction failed ({e}); raw note"),
         }
@@ -705,7 +919,7 @@ pub(crate) async fn compose_note(
     if note.title.trim().is_empty() {
         note.title = fallback_title(&note.body);
     }
-    (note, routing)
+    (note, routing, relations)
 }
 
 /// Propose a one/two-sentence description for a folder from a sample of the
@@ -907,13 +1121,11 @@ mod tests {
     fn metadata_apply_arms_or_parks_reminder() {
         let meta = |auto: bool| {
             let m = ExtractedMeta {
-                body: String::new(),
                 title: " Wifi Note ".into(),
                 tldr: "The wifi password.".into(),
                 todos: vec!["buy milk".into(), "  ".into()],
                 reminder_at: "2026-07-06T18:30".into(),
-                category: String::new(),
-                category_confidence: String::new(),
+                ..Default::default()
             };
             let mut note = Note::raw("body".into());
             m.apply(&mut note, auto);
@@ -935,18 +1147,116 @@ mod tests {
     #[test]
     fn bad_reminder_string_means_no_reminder() {
         let m = ExtractedMeta {
-            body: String::new(),
             title: "T".into(),
             tldr: "S".into(),
-            todos: vec![],
             reminder_at: "tomorrow evening".into(),
-            category: String::new(),
-            category_confidence: String::new(),
+            ..Default::default()
         };
         let mut note = Note::raw("b".into());
         m.apply(&mut note, true);
         assert_eq!(note.reminder_state.status, ReminderStatus::None);
         assert!(note.reminder_state.fire_at.is_none());
+    }
+
+    fn ent(name: &str, kind: &str) -> ExtractedEntity {
+        ExtractedEntity {
+            name: name.into(),
+            kind: kind.into(),
+        }
+    }
+
+    fn rel(from: &str, pred: &str, to: &str) -> ExtractedRelation {
+        ExtractedRelation {
+            from: from.into(),
+            pred: pred.into(),
+            to: to.into(),
+        }
+    }
+
+    /// The caps and taxonomy are enforced in RUST, not by asking the prompt
+    /// nicely. A model that returns 400 entities, 5 KB names or an invented kind
+    /// must not be able to bloat or corrupt the graph.
+    #[test]
+    fn distillation_is_capped_and_normalized_in_rust() {
+        let mut raw: Vec<ExtractedEntity> = (0..40)
+            .map(|i| ent(&format!("thing {i}"), "topic"))
+            .collect();
+        raw.push(ent(&"x".repeat(500), "topic"));
+        raw.push(ent("  spaced   out  ", "WEIRD-KIND"));
+        raw.push(ent("", "person"));
+        let cleaned = clean_entities(raw);
+        assert_eq!(cleaned.len(), MAX_ENTITIES, "hard cap on entity count");
+        assert!(cleaned.iter().all(|(n, _)| n.chars().count() <= MAX_ENTITY_NAME_CHARS));
+        assert!(
+            cleaned.iter().all(|(_, k)| ENTITY_KINDS.contains(&k.as_str())),
+            "an unknown kind collapses to a known one"
+        );
+
+        // Deduplication is by norm (LightRAG's Dedupe), so case and spacing
+        // variants of one entity collapse to a single node.
+        let cleaned = clean_entities(vec![
+            ent("auth.py", "file"),
+            ent("Auth.PY", "file"),
+            ent("  auth.py ", "file"),
+        ]);
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(cleaned[0].0, "auth.py", "the first spelling wins");
+
+        // A blank name is dropped, and whitespace is collapsed.
+        let cleaned = clean_entities(vec![ent("  spaced   out  ", "topic")]);
+        assert_eq!(cleaned[0].0, "spaced out");
+    }
+
+    /// An edge is only kept when BOTH ends are entities we actually recorded —
+    /// otherwise the graph accumulates dangling pointers that retrieval would
+    /// then walk into.
+    #[test]
+    fn relations_must_land_on_recorded_entities() {
+        let entities = clean_entities(vec![ent("JWT", "topic"), ent("auth.py", "file")]);
+        let relations = clean_relations(
+            vec![
+                rel("JWT", "used for", "auth.py"),
+                // Unknown endpoint — dropped.
+                rel("JWT", "used_for", "Postgres"),
+                // Self-edge — no information.
+                rel("JWT", "same_as", "jwt"),
+                // Empty predicate — dropped.
+                rel("JWT", "  ", "auth.py"),
+                // Exact duplicate of the first — dropped.
+                rel("jwt", "used_for", "AUTH.PY"),
+            ],
+            &entities,
+        );
+        assert_eq!(relations.len(), 1, "{relations:?}");
+        assert_eq!(
+            relations[0],
+            Relation {
+                from: "JWT".into(),
+                pred: "used_for".into(),
+                to: "auth.py".into(),
+            },
+            "predicates normalize to snake_case; endpoints keep their spelling"
+        );
+    }
+
+    /// Distillation must reach the note, and the relations must NOT — they are
+    /// index-level, and a note file stays something a human reads.
+    #[test]
+    fn apply_puts_distillation_on_the_note_and_returns_the_edges() {
+        let m = ExtractedMeta {
+            title: "Auth Bug".into(),
+            tldr: "Raised the buffer.".into(),
+            question: "  why did token refresh fail?  ".into(),
+            entities: vec![ent("auth.py", "file"), ent("JWT", "topic")],
+            relations: vec![rel("JWT", "used_for", "auth.py")],
+            ..Default::default()
+        };
+        let mut note = Note::raw("body".into());
+        let relations = m.apply(&mut note, false);
+        assert_eq!(note.question, "why did token refresh fail?");
+        assert_eq!(note.entities, vec!["auth.py", "JWT"]);
+        assert_eq!(relations.len(), 1);
+        assert_eq!(note.body, "body", "extraction never touches the body");
     }
 
     #[test]

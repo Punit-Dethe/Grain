@@ -813,7 +813,8 @@ pub async fn run_turn(app: &AppHandle, messages: &[AgentMessage]) -> Result<Agen
         match action {
             RecallAction::Remember => {
                 // Recall's "remember" doesn't auto-categorize (no folder list).
-                let (note, _) = capture::compose_note(app, &latest, None, &[]).await;
+                let (note, _, _) =
+                    capture::compose_note(app, &latest, None, &[], "dictation").await;
                 persist(app, &be, note).await;
             }
             RecallAction::Reconcile { m } => {

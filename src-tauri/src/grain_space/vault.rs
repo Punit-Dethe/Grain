@@ -185,6 +185,67 @@ struct GrainMeta {
     pinned: bool,
     todos: Vec<TodoTag>,
     reminder: ReminderState,
+    /// The distilled searchable question (KNOWLEDGE-ARCHITECTURE-PLAN.md D1).
+    question: String,
+    /// Entity display names, as a YAML flow list: `entities: [auth.py, JWT]`.
+    entities: Vec<String>,
+    /// Capture origin. Historically always the literal `grain`, which is why
+    /// that value is read as "unknown" — see [`parse_entities`]' sibling note in
+    /// [`parse_grain_meta`].
+    source: String,
+}
+
+/// Parse a YAML **flow** sequence (`[a, b, "c, d"]`) — the form we emit for
+/// `entities`, chosen because it stays one line in Obsidian's properties UI.
+/// Tolerant of a bare scalar (treated as a single item) and of a block list
+/// authored by hand, which arrives here as an empty value and is filled in by
+/// the `in_entities` continuation in [`parse_grain_meta`].
+fn parse_flow_list(value: &str) -> Vec<String> {
+    let t = value.trim();
+    let inner = t
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(t);
+    let mut out = Vec::new();
+    let mut item = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for c in inner.chars() {
+        if escaped {
+            item.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ',' if !quoted => {
+                out.push(std::mem::take(&mut item));
+            }
+            _ => item.push(c),
+        }
+    }
+    out.push(item);
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Render a list of names as a YAML flow sequence, quoting only what needs it.
+fn emit_flow_list(items: &[String]) -> String {
+    let parts: Vec<String> = items
+        .iter()
+        .map(|s| {
+            let s = s.trim();
+            if s.contains([',', '[', ']', '"', ':', '#', '\'']) || s.is_empty() {
+                yaml_quote(s)
+            } else {
+                s.to_string()
+            }
+        })
+        .collect();
+    format!("[{}]", parts.join(", "))
 }
 
 /// Parse OUR flat frontmatter (see `emit_frontmatter`). Tolerant: unknown keys
@@ -198,12 +259,29 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
         pinned: false,
         todos: Vec::new(),
         reminder: ReminderState::default(),
+        question: String::new(),
+        entities: Vec::new(),
+        source: String::new(),
     };
     let mut reminder_at: Option<i64> = None;
     let mut reminder_status: Option<ReminderStatus> = None;
     let mut in_todos = false;
+    let mut in_entities = false;
     for line in fm.lines() {
         let line = line.trim_end_matches('\r');
+        // A hand-authored block list under `entities:` — accept it even though
+        // we always emit the flow form, because the user's file wins.
+        if in_entities {
+            let trimmed = line.trim_start();
+            if let Some(item) = trimmed.strip_prefix("- ") {
+                let item = yaml_unquote(item);
+                if !item.trim().is_empty() {
+                    meta.entities.push(item.trim().to_string());
+                }
+                continue;
+            }
+            in_entities = false;
+        }
         if in_todos {
             let trimmed = line.trim_start();
             if let Some(item) = trimmed.strip_prefix("- ") {
@@ -236,6 +314,19 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
             "created" => meta.created_ms = parse_local_datetime_ms(&yaml_unquote(value)),
             "pinned" => meta.pinned = value.eq_ignore_ascii_case("true"),
             "todos" => in_todos = value.is_empty(),
+            "question" => meta.question = yaml_unquote(value),
+            "entities" => {
+                meta.entities = parse_flow_list(value);
+                // Empty value ⇒ a block list follows on the next lines.
+                in_entities = meta.entities.is_empty();
+            }
+            // `source: grain` is what every note written before this field
+            // carried — decoration, not a capture origin. Read it as unknown so
+            // an old note isn't mislabelled as having a real source.
+            "source" => {
+                let raw = yaml_unquote(value);
+                meta.source = if raw == "grain" { String::new() } else { raw };
+            }
             "reminder" => reminder_at = parse_local_datetime_ms(&yaml_unquote(value)),
             "reminder_status" => {
                 reminder_status = match yaml_unquote(value).as_str() {
@@ -264,7 +355,7 @@ fn parse_grain_meta(fm: &str) -> Option<GrainMeta> {
 /// Frontmatter keys Grain owns and re-emits itself. Any OTHER key in an
 /// existing file's frontmatter is the user's own (Obsidian `tags`, `aliases`,
 /// `cssclass`, …) and must survive a save — see [`preserved_frontmatter`].
-const GRAIN_FM_KEYS: [&str; 8] = [
+const GRAIN_FM_KEYS: [&str; 10] = [
     "grain_id",
     "tldr",
     "created",
@@ -273,6 +364,8 @@ const GRAIN_FM_KEYS: [&str; 8] = [
     "reminder",
     "reminder_status",
     "source",
+    "question",
+    "entities",
 ];
 
 /// The user's own frontmatter lines from an existing file — every line NOT
@@ -320,6 +413,16 @@ fn emit_markdown_with(note: &Note, preserved: &[String]) -> String {
     if !note.tldr.trim().is_empty() {
         fm.push_str(&format!("tldr: {}\n", yaml_quote(note.tldr.trim())));
     }
+    // The distilled artifact (KNOWLEDGE-ARCHITECTURE-PLAN.md D1): durable here,
+    // in the user's own file, so a full index rebuild never has to re-run the
+    // LLM to get it back. Omitted entirely when empty — an unconfigured provider
+    // must not leave empty keys littering every note.
+    if !note.question.trim().is_empty() {
+        fm.push_str(&format!("question: {}\n", yaml_quote(note.question.trim())));
+    }
+    if !note.entities.is_empty() {
+        fm.push_str(&format!("entities: {}\n", emit_flow_list(&note.entities)));
+    }
     fm.push_str(&format!(
         "created: {}\n",
         format_local_datetime(note.timestamp)
@@ -355,7 +458,14 @@ fn emit_markdown_with(note: &Note, preserved: &[String]) -> String {
         fm.push_str(line);
         fm.push('\n');
     }
-    fm.push_str("source: grain\n---\n");
+    // Capture origin. `grain` is the historical placeholder every older note
+    // carries and is read back as "unknown", so writing it when we genuinely
+    // don't know keeps the file shape unchanged.
+    let source = note.source.trim();
+    fm.push_str(&format!(
+        "source: {}\n---\n",
+        if source.is_empty() { "grain" } else { source }
+    ));
     let body = note.body.trim_end();
     if body.is_empty() {
         fm
@@ -487,10 +597,16 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
                 todo_tags: meta.todos,
                 reminder_state: meta.reminder,
                 is_pinned: meta.pinned,
+                question: meta.question,
+                entities: meta.entities,
+                source: meta.source,
             },
             true,
         );
     }
+    // A foreign note: never distilled, because distillation means writing to a
+    // file we do not own (the v1 read-only rule). It still participates in
+    // lexical and vector retrieval, and the graph reaches it by name match.
     (
         Note {
             id: foreign_id(rel_path),
@@ -501,6 +617,9 @@ fn read_md_note(rel_path: &str, text: &str, mtime_ms: i64) -> (Note, bool) {
             todo_tags: Vec::new(),
             reminder_state: ReminderState::default(),
             is_pinned: false,
+            question: String::new(),
+            entities: Vec::new(),
+            source: String::new(),
         },
         false,
     )
@@ -2119,6 +2238,71 @@ mod tests {
         // Times round-trip at second precision (local wall clock).
         assert!((meta.created_ms.unwrap() - note.timestamp).abs() < 1000);
         assert_eq!(body.trim(), "the wifi password is hunter2");
+    }
+
+    /// The distilled artifact (D1) must survive a write→read cycle in the user's
+    /// own file, because that is what lets a full index rebuild avoid re-running
+    /// the LLM.
+    #[test]
+    fn distilled_fields_roundtrip_through_frontmatter() {
+        let mut note = grain_note("Auth Bug Fix", "raised the buffer to 256KB");
+        note.question = "why did token refresh fail on large payloads?".into();
+        note.entities = vec![
+            "auth.py".into(),
+            "JWT".into(),
+            // Commas and colons must not break the flow list.
+            "Alex, on-call".into(),
+            "ratio 1:2".into(),
+        ];
+        note.source = "dictation".into();
+
+        let md = emit_markdown_with(&note, &[]);
+        let (fm, _) = split_frontmatter(&md);
+        let meta = parse_grain_meta(fm.unwrap()).unwrap();
+        assert_eq!(meta.question, note.question);
+        assert_eq!(meta.entities, note.entities);
+        assert_eq!(meta.source, "dictation");
+
+        let (back, owned) = read_md_note("Auth Bug Fix.md", &md, 0);
+        assert!(owned);
+        assert_eq!(back.question, note.question);
+        assert_eq!(back.entities, note.entities);
+        assert_eq!(back.source, "dictation");
+    }
+
+    /// A note from before the distilled fields: `source: grain` was decoration,
+    /// not a capture origin, so it must read back as unknown rather than being
+    /// mislabelled — and the absent keys must simply be empty.
+    #[test]
+    fn pre_distillation_notes_read_as_unknown_source() {
+        let text = "---\ngrain_id: abc123\ntldr: \"Old note\"\ncreated: 2026-01-02T03:04:05.000\nsource: grain\n---\nbody text";
+        let (note, owned) = read_md_note("Old.md", text, 999);
+        assert!(owned);
+        assert_eq!(note.tldr, "Old note");
+        assert_eq!(note.question, "");
+        assert!(note.entities.is_empty());
+        assert_eq!(note.source, "", "`grain` is a placeholder, not a source");
+    }
+
+    /// An empty distilled artifact must leave the file shape untouched — no
+    /// blank `question:`/`entities:` keys littering notes captured with no LLM.
+    #[test]
+    fn empty_distillation_emits_no_keys() {
+        let note = grain_note("Raw", "just a thought");
+        let md = emit_markdown_with(&note, &[]);
+        assert!(!md.contains("question:"), "{md}");
+        assert!(!md.contains("entities:"), "{md}");
+    }
+
+    /// A hand-authored block list under `entities:` is the user's file winning
+    /// over our preferred flow form.
+    #[test]
+    fn hand_authored_entity_block_list_is_accepted() {
+        let text =
+            "---\ngrain_id: abc\nentities:\n  - auth.py\n  - \"Alex, on-call\"\npinned: true\n---\nb";
+        let meta = parse_grain_meta(split_frontmatter(text).0.unwrap()).unwrap();
+        assert_eq!(meta.entities, vec!["auth.py", "Alex, on-call"]);
+        assert!(meta.pinned, "parsing must resume after the block list");
     }
 
     #[test]
