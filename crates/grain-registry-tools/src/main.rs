@@ -95,6 +95,32 @@ enum Cmd {
         /// The `v1/` output directory.
         #[arg(long)]
         v1: PathBuf,
+        /// The extension's PROJECT folder. When given, publishing also picks up
+        /// the store listing from it, so an author only drops files in place:
+        ///   · `README.md`        → the detail page's README
+        ///   · `media/cover.webp` (or .gif) → the card's cover image
+        ///   · `media/*.webp|gif` → further screenshots, in filename order
+        /// Each is content-addressed into `v1/media/<sha256>.<ext>`.
+        #[arg(long)]
+        media_src: Option<PathBuf>,
+    },
+    /// Set install counts on the index and re-sign it. This is the ONLY writer
+    /// of `installs`: the counter lives server-side (the download endpoint
+    /// aggregates blob fetches), CI feeds the totals in here, and the client
+    /// only ever reads the number from the signed index — it never counts,
+    /// queries per card, or phones home.
+    SetInstalls {
+        /// Publishing secret key (`publishing.key`).
+        #[arg(long)]
+        key: PathBuf,
+        /// `id=count` pairs, e.g. `--set grain.voice-actions=1240`.
+        #[arg(long = "set", value_name = "ID=COUNT")]
+        sets: Vec<String>,
+        /// Days until the index `expires` (default 30).
+        #[arg(long, default_value_t = 30)]
+        expires_days: i64,
+        #[arg(long)]
+        v1: PathBuf,
     },
     /// Verify a `v1/` tree exactly as the app would: roots against the PINNED
     /// root keys, then index + revocations against the publishing key. Proves
@@ -269,7 +295,24 @@ fn main() -> Result<()> {
             author,
             expires_days,
             v1,
-        } => publish(key, pack, trust, repo, commit, author, expires_days, v1),
+            media_src,
+        } => publish(
+            key,
+            pack,
+            trust,
+            repo,
+            commit,
+            author,
+            expires_days,
+            v1,
+            media_src,
+        ),
+        Cmd::SetInstalls {
+            key,
+            sets,
+            expires_days,
+            v1,
+        } => set_installs(key, sets, expires_days, v1),
         Cmd::Verify { v1 } => verify(v1),
         Cmd::CheckSubmission { dir } => check_submission(dir),
         Cmd::SiteGen { v1, out } => site_gen(v1, out),
@@ -311,6 +354,36 @@ fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
                     let html = fs::read_to_string(&candidate)
                         .with_context(|| format!("read ui_source {ui_file}"))?;
                     surface["ui_source"] = serde_json::Value::String(html);
+                }
+            }
+        }
+    }
+
+    // Inline each custom card's (`panel`) uiSource when it names a project file
+    // — the same treatment surfaces get, so a card's HTML lives in its own file
+    // rather than as a giant string inside manifest.json.
+    if let Some(settings) = manifest
+        .get_mut("contributes")
+        .and_then(|c| c.get_mut("settings"))
+        .and_then(|s| s.as_array_mut())
+    {
+        for setting in settings.iter_mut() {
+            if setting.get("kind").and_then(|k| k.as_str()) != Some("panel") {
+                continue;
+            }
+            let ui_file = setting
+                .get("uiSource")
+                .or_else(|| setting.get("ui_source"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            if let Some(ui_file) = ui_file {
+                let candidate = src.join(&ui_file);
+                if candidate.is_file() {
+                    let html = fs::read_to_string(&candidate)
+                        .with_context(|| format!("read panel uiSource {ui_file}"))?;
+                    let obj = setting.as_object_mut().unwrap();
+                    obj.remove("ui_source");
+                    obj.insert("uiSource".into(), serde_json::Value::String(html));
                 }
             }
         }
@@ -527,6 +600,67 @@ fn manifest_of(bytes: &[u8]) -> Result<grain_sdk::ExtensionManifest> {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Copy one file into `v1/media/<sha256>.<ext>` and return its hash + size.
+/// Content-addressed, so republishing identical bytes is a no-op and the client
+/// gets integrity for free.
+fn put_media(v1: &std::path::Path, file: &std::path::Path, ext: &str) -> Result<(String, u64)> {
+    let bytes = fs::read(file).with_context(|| format!("read {}", file.display()))?;
+    let sha256 = grain_core::trust::sha256_hex(&bytes);
+    let dir = v1.join("media");
+    fs::create_dir_all(&dir)?;
+    fs::write(dir.join(format!("{sha256}.{ext}")), &bytes)?;
+    Ok((sha256, bytes.len() as u64))
+}
+
+/// Collect an extension's store listing from its project folder (author-facing
+/// convention — no extra metadata file to write):
+///   · `README.md`                  → the detail page's README
+///   · `media/cover.{webp,gif}`     → the card's cover (sorted first)
+///   · `media/*.{webp,gif}`         → further screenshots, in filename order
+fn collect_media(
+    v1: &std::path::Path,
+    src: &std::path::Path,
+) -> Result<(String, Vec<grain_sdk::MediaRef>)> {
+    let mut readme = String::new();
+    let readme_path = src.join("README.md");
+    if readme_path.is_file() {
+        let (hash, _) = put_media(v1, &readme_path, "md")?;
+        readme = hash;
+    }
+
+    let mut media = Vec::new();
+    let media_dir = src.join("media");
+    if media_dir.is_dir() {
+        let mut files: Vec<PathBuf> = fs::read_dir(&media_dir)?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.is_file()
+                    && matches!(
+                        p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                        Some("webp") | Some("gif")
+                    )
+            })
+            .collect();
+        // `cover.*` leads; the rest follow in filename order.
+        files.sort_by_key(|p| {
+            let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            (name != "cover", name)
+        });
+        for f in files {
+            let ext = f
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("webp")
+                .to_ascii_lowercase();
+            let (sha256, size) = put_media(v1, &f, &ext)?;
+            media.push(grain_sdk::MediaRef { sha256, kind: ext, size });
+        }
+    }
+    Ok((readme, media))
+}
+
+#[allow(clippy::too_many_arguments)]
 fn publish(
     key: PathBuf,
     pack: PathBuf,
@@ -536,6 +670,7 @@ fn publish(
     author: String,
     expires_days: i64,
     v1: PathBuf,
+    media_src: Option<PathBuf>,
 ) -> Result<()> {
     let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
     let manifest = manifest_of(&bytes)?;
@@ -571,12 +706,22 @@ fn publish(
     // Pipeline-maintained fields (stars, installs) and detail media survive a
     // re-publish of the same (id, version) — republishing the artifact must not
     // reset its popularity or wipe its README/screenshots.
-    let (installs, stars, readme, media) = index
+    let (installs, stars, mut readme, mut media) = index
         .entries
         .iter()
         .find(|e| e.id == manifest.id && e.version == manifest.version)
         .map(|e| (e.installs, e.stars, e.readme.clone(), e.media.clone()))
         .unwrap_or_default();
+    // A project folder supplies the listing (README + screenshots) by convention.
+    if let Some(src) = &media_src {
+        let (r, m) = collect_media(&v1, src)?;
+        if !r.is_empty() {
+            readme = r;
+        }
+        if !m.is_empty() {
+            media = m;
+        }
+    }
     let entry = grain_sdk::IndexEntry {
         id: manifest.id.clone(),
         name: manifest.name.clone(),
@@ -623,6 +768,49 @@ fn publish(
         v1.display(),
         index.version
     );
+    Ok(())
+}
+
+/// Write install totals onto the index and re-sign. The counter itself is
+/// server-side (the CDN/download endpoint aggregates artifact fetches); this is
+/// the step that publishes those totals into the signed document the client
+/// reads. Ids not present in the index are reported and skipped.
+fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+    let index_path = v1.join("index.json");
+    let mut index: grain_sdk::Index =
+        serde_json::from_slice(&fs::read(&index_path).context("read index.json")?)
+            .context("parse index.json")?;
+
+    for pair in &sets {
+        let (id, count) = pair
+            .split_once('=')
+            .with_context(|| format!("expected ID=COUNT, got '{pair}'"))?;
+        let count: u64 = count
+            .trim()
+            .parse()
+            .with_context(|| format!("'{count}' is not a count"))?;
+        let mut hit = false;
+        for e in index.entries.iter_mut().filter(|e| e.id == id) {
+            e.installs = count;
+            hit = true;
+        }
+        if hit {
+            println!("  {id} → {count} installs");
+        } else {
+            println!("  {id} — not in the index, skipped");
+        }
+    }
+
+    index.version += 1;
+    index.expires = (chrono::Utc::now() + chrono::Duration::days(expires_days))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let json = format!("{}\n", serde_json::to_string_pretty(&index)?);
+    let doc = json.into_bytes();
+    let sig = sign_bytes(&key, &doc)?;
+    fs::write(&index_path, &doc)?;
+    fs::write(v1.join("index.json.minisig"), sig)?;
+    println!("index re-signed (version {})", index.version);
     Ok(())
 }
 
