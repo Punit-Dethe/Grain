@@ -766,7 +766,6 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_grain_space_enabled_setting,
             grain_commands::change_grain_space_semantic_setting,
             grain_commands::change_grain_space_auto_reminders_setting,
-            grain_commands::change_grain_space_auto_categorize_setting,
             grain_commands::change_grain_space_backend_setting,
             grain_commands::change_grain_space_vault_path_setting,
             grain_commands::change_grain_space_vault_folder_setting,
@@ -774,12 +773,6 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_list_cards,
             grain_space::commands::grain_space_list_folders,
             grain_space::commands::grain_space_move_note,
-            grain_space::commands::grain_space_folder_descriptions,
-            grain_space::commands::grain_space_set_folder_description,
-            grain_space::commands::grain_space_suggest_folder_description,
-            grain_space::commands::grain_space_pending_suggestions,
-            grain_space::commands::grain_space_accept_suggestion,
-            grain_space::commands::grain_space_dismiss_suggestion,
             grain_space::commands::grain_space_search_notes,
             grain_space::commands::grain_space_get_note,
             grain_space::commands::grain_space_export_notes,
@@ -1153,7 +1146,7 @@ pub fn run(cli_args: CliArgs) {
                 // revocations from cache-or-seed (small, resident); the parsed
                 // index stays out of memory until the store is opened.
                 app.manage(std::sync::Arc::new(grain_store::StoreState::init(&data_dir)));
-                // [GRAIN] Seed built-in scripted packs (auto-categorize dogfood),
+                // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::reconcile_builtin_packs(&app.handle());
                 // [GRAIN] The Agent's reply-surface slot is the one occupancy

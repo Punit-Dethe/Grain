@@ -335,19 +335,6 @@ pub fn change_grain_space_auto_reminders_setting(
     Ok(())
 }
 
-/// [GRAIN] Auto-categorization: route captured notes into existing Grain folders
-/// (AUTO-CATEGORIZATION-PLAN.md). Off by default.
-#[tauri::command]
-#[specta::specta]
-pub fn change_grain_space_auto_categorize_setting(
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.grain_space_auto_categorize = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
 
 /// [GRAIN] Toggle voice conditioning (85 Hz high-pass + boost-only AGC for quiet
 /// mics). Persists the setting and live-updates the open recorder so it applies

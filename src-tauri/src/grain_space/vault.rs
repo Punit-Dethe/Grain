@@ -532,7 +532,7 @@ fn sanitize_filename(title: &str) -> String {
     }
 }
 
-/// Sanitize one folder-path segment for auto-categorization: strip the
+/// Sanitize one folder-path segment: strip the
 /// characters Windows/Obsidian reject, collapse whitespace, cap length. Empty
 /// (e.g. all-invalid) → empty string, which the caller skips.
 fn sanitize_folder_segment(seg: &str) -> String {
@@ -1535,7 +1535,7 @@ pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
     }
 }
 
-// -- auto-categorization (AUTO-CATEGORIZATION-PLAN.md P1) --------------------------
+// -- collections ------------------------------------------------------------
 
 /// The distinct collection paths (Grain subfolders that currently hold notes) —
 /// the candidate categories for routing a fresh capture. Cheap: derived from
@@ -1562,7 +1562,7 @@ pub fn list_folders(v: &Vault) -> Result<Vec<String>> {
     Ok(set.into_iter().collect())
 }
 
-/// Move a Grain note into a subfolder of the Grain folder (auto-categorization),
+/// Move a Grain note into a subfolder of the Grain folder,
 /// or back to the Grain root when `folder` is `None`/empty. The file moves;
 /// identity (`grain_id`) rides along, so links and the note's id are unchanged.
 /// Refuses notes outside the Grain folder (the user's own vault). A no-op when

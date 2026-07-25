@@ -162,7 +162,7 @@ const RowCover: React.FC<{
     // border and a gap is a second card inside the card. The right side fades
     // into the row's surface so the picture ENDS in the card rather than being
     // cut off by the text next to it.
-    <div className="relative w-[150px] shrink-0 self-stretch overflow-hidden bg-paper-sunken">
+    <div className="relative w-[150px] shrink-0 self-stretch overflow-hidden rounded-xl bg-paper-sunken">
       {url ? (
         <img
           src={url}
@@ -176,11 +176,14 @@ const RowCover: React.FC<{
           <Package width={16} height={16} className="text-ink-faint/50" />
         </div>
       )}
+      {/* A SHORT fade — long enough not to read as a hard edge, short enough
+          that most of the picture survives it. At a quarter of the width it was
+          washing out the part you actually identify the extension by. */}
       <div
-        className="absolute inset-y-0 right-0 w-24 pointer-events-none"
+        className="absolute inset-y-0 right-0 w-10 pointer-events-none"
         style={{
           backgroundImage:
-            "linear-gradient(to right, transparent, var(--color-paper-raised) 92%)",
+            "linear-gradient(to right, transparent, var(--color-paper-raised) 88%)",
         }}
       />
     </div>
@@ -621,7 +624,7 @@ export const OverviewSection: React.FC<{
                     name={card.name}
                     dim={!card.enabled}
                   />
-                  <div className="flex-1 min-w-0 py-3 flex flex-col justify-center">
+                  <div className="flex-1 min-w-0 ps-3.5 py-3.5 flex flex-col justify-center">
                     {/* Name and gear go to DIFFERENT places (SPEC §5.1). The
                         name means "take me to this extension's settings" — and
                         for one anchored at a feature (Voice Actions below
@@ -644,7 +647,7 @@ export const OverviewSection: React.FC<{
                         line now, so a hard character cap only truncated
                         sentences that already fit. */}
                     <div
-                      className="mt-1 text-xs text-ink-faint line-clamp-2 pe-4"
+                      className="mt-0.5 text-xs text-ink-faint line-clamp-2 pe-8"
                       title={card.description}
                     >
                       {card.description}
@@ -957,20 +960,19 @@ const StoreSlideOver: React.FC<{
       aria-modal="true"
       aria-label="Extension store"
     >
-      {/* The title lives in the bar, centred, with the way back on the left.
-          It was a page heading with a paragraph under it, which cost ~120px of
-          vertical space to say what one line in the chrome already says — and
-          that space belongs to the extensions. */}
-      <div className="relative flex items-center px-6 py-3 border-b border-line">
+      {/* Way back on the left, where you came in; the store's own mark on the
+          right. Nothing is centred — the page below reads left-to-right and a
+          centred label in the bar above it fought that. */}
+      <div className="flex items-center justify-between px-6 py-3 border-b border-line">
         <button
           type="button"
           onClick={onClose}
-          className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink transition-colors cursor-pointer z-10"
+          className="inline-flex items-center gap-1.5 text-sm text-ink-soft hover:text-ink transition-colors cursor-pointer"
         >
           <ChevronLeft width={15} height={15} />
           All extensions
         </button>
-        <div className="absolute inset-x-0 flex items-center justify-center gap-2 text-sm font-medium text-ink pointer-events-none">
+        <div className="flex items-center gap-2 text-sm font-medium text-ink">
           <Store width={15} height={15} />
           Extension store
         </div>
@@ -986,8 +988,12 @@ const StoreSlideOver: React.FC<{
       )}
 
       {!openEntry && (
-        <div className="px-6 py-4 border-b border-line">
-          <div className="max-w-[1600px] mx-auto flex items-center gap-3">
+        <div className="px-6 pt-5 pb-4 border-b border-line">
+          <div className="max-w-[1600px] mx-auto space-y-4">
+          <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none text-ink">
+            Extension store
+          </h1>
+          <div className="flex items-center gap-3">
             <input
               type="text"
               value={query}
@@ -1011,6 +1017,7 @@ const StoreSlideOver: React.FC<{
                 </option>
               ))}
             </select>
+          </div>
           </div>
         </div>
       )}
@@ -1100,7 +1107,7 @@ const StoreSlideOver: React.FC<{
                   <button
                     type="button"
                     onClick={() => setOpened(e.id)}
-                    className="block w-full text-left cursor-pointer rounded-xl overflow-hidden border border-line group-hover:border-ink-faint/50 transition-colors"
+                    className="block w-full text-left cursor-pointer rounded-2xl overflow-hidden transition-opacity group-hover:opacity-95"
                     aria-label={`Open ${e.name}`}
                   >
                     {e.media.length > 0 ? (
@@ -1132,7 +1139,7 @@ const StoreSlideOver: React.FC<{
                   </button>
                 </div>
 
-                <div className="pt-3 px-0.5 flex flex-col gap-1.5">
+                <div className="pt-3 px-0.5 flex flex-col gap-1">
                   <div className="flex items-center gap-2 min-w-0">
                     <button
                       type="button"

@@ -839,56 +839,8 @@
   background: var(--line);
 }
 
-/* ── Auto-categorization: in-editor suggestion chip ─────────────────────── */
-.gs-suggest {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 10px 26px 0;
-  padding: 7px 8px 7px 12px;
-  border: 1px solid var(--sel-border);
-  background: var(--orange-soft);
-  border-radius: 12px;
-  font-size: 12px;
-  color: var(--ink);
-}
-
-.gs-suggest > svg {
-  flex: none;
-  color: var(--orange);
-}
-
-.gs-suggest-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-weight: 500;
-}
-
 .gs-btn--tiny {
   padding: 4px 12px;
-}
-
-.gs-suggest-dismiss {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  color: var(--muted);
-  cursor: pointer;
-  transition:
-    background 140ms ease,
-    color 140ms ease;
-}
-
-.gs-suggest-dismiss:hover {
-  background: var(--hover);
-  color: var(--ink);
 }
 
 /* ── Auto-categorization: per-collection routing description ─────────────── */

@@ -135,7 +135,7 @@ pub fn delete_note(b: &Backend, id: &str) -> Result<()> {
 }
 
 /// Existing Grain subfolders that hold notes — the candidate categories for
-/// auto-routing a fresh capture (AUTO-CATEGORIZATION-PLAN.md P1).
+/// moving a note between collections.
 pub fn list_folders(b: &Backend) -> Result<Vec<String>> {
     vault::list_folders(b)
 }

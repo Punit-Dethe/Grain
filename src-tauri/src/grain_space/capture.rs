@@ -138,26 +138,6 @@ pub async fn capture_and_save(
     }
 
     let backend = super::backend::resolve(app)?;
-    let settings = get_settings(app);
-    // Auto-categorization (AUTO-CATEGORIZATION-PLAN.md P1): when enabled, offer
-    // the existing Grain folders to the (already-happening) structuring call so
-    // it can route the note. Off/empty ⇒ no routing, no behavior change.
-    // Each candidate folder rides in WITH its description — the "what belongs
-    // here" evidence the router classifies against (a bare name misfiles; see
-    // AUTO-CATEGORIZATION-PLAN.md and folder_meta.rs).
-    let folders = if settings.grain_space_auto_categorize {
-        let be = backend.clone();
-        tauri::async_runtime::spawn_blocking(move || {
-            let names = super::backend::list_folders(&be)?;
-            super::folder_meta::descriptions_for(&be, &names)
-        })
-        .await
-        .ok()
-        .and_then(|r| r.ok())
-        .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
     // The capture origin: a saved selection is something the user READ, a bare
     // dictation is something they SAID. Worth telling apart at retrieval time.
     let source = if selection.is_some() {
@@ -165,7 +145,7 @@ pub async fn capture_and_save(
     } else {
         "dictation"
     };
-    let (mut note, routing, relations) = compose_note(app, &body, framing, &folders, source).await;
+    let (mut note, relations) = compose_note(app, &body, framing, source).await;
     // An explicit typed title wins over the auto-generated one (kept short).
     if let Some(t) = title_override.map(str::trim).filter(|t| !t.is_empty()) {
         note.title = t.chars().take(80).collect();
@@ -191,40 +171,6 @@ pub async fn capture_and_save(
                 .await
                 {
                     log::warn!("[GRAIN] space capture: graph relations not recorded: {e:#}");
-                }
-            }
-            // Confidence-gated filing (AUTO-CATEGORIZATION-PLAN.md §4): only a
-            // HIGH-confidence route moves the file silently; a MEDIUM route is
-            // recorded as a pending suggestion the user accepts with one click
-            // in the overlay. A weak/forced guess never touches the file — this
-            // is the fix for "news landed in Work". New-folder discovery stays a
-            // separate, gated pass (P3), never a single-note decision.
-            if let Some(r) = routing {
-                let be2 = backend.clone();
-                let id2 = id.clone();
-                match r.confidence {
-                    Confidence::High => {
-                        match tauri::async_runtime::spawn_blocking(move || {
-                            super::backend::move_note_to_folder(&be2, &id2, Some(&r.folder))
-                        })
-                        .await
-                        {
-                            Ok(Ok(_)) => log::info!("[GRAIN] space capture: auto-filed {id}"),
-                            Ok(Err(e)) => {
-                                log::warn!("[GRAIN] space capture: auto-file failed: {e:#}")
-                            }
-                            Err(e) => {
-                                log::warn!("[GRAIN] space capture: auto-file task panicked: {e}")
-                            }
-                        }
-                    }
-                    Confidence::Medium => {
-                        let _ = tauri::async_runtime::spawn_blocking(move || {
-                            super::folder_meta::set_suggestion(&be2, &id2, &r.folder)
-                        })
-                        .await;
-                        log::info!("[GRAIN] space capture: suggested folder for {id}");
-                    }
                 }
             }
             super::emit_notes_changed(&app2);
@@ -264,24 +210,6 @@ fn llm_usable(settings: &AppSettings) -> bool {
         .unwrap_or(false)
 }
 
-/// How sure the router is that a note belongs in the folder it picked. Drives
-/// the filing decision: `High` files silently, `Medium` becomes a one-click
-/// suggestion, `Low` (or no fit) leaves the note loose. Parsed from the model's
-/// `category_confidence` string; anything unrecognized degrades to `Low` so an
-/// unclear answer never moves a file.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Confidence {
-    High,
-    Medium,
-}
-
-/// A validated route: an existing folder plus the confidence behind it. Only
-/// `High`/`Medium` reach here — `Low`/none collapse to `None` in `compose_note`.
-pub(crate) struct Routing {
-    pub folder: String,
-    pub confidence: Confidence,
-}
-
 /// The structured-output shape for the extraction call.
 #[derive(Deserialize, Debug, Default)]
 struct ExtractedMeta {
@@ -297,17 +225,6 @@ struct ExtractedMeta {
     /// reminder/timer.
     #[serde(default)]
     reminder_at: String,
-    /// Auto-categorization (AUTO-CATEGORIZATION-PLAN.md P1): the existing Grain
-    /// folder this note best belongs to (chosen ONLY from the provided list), or
-    /// "" for none. Piggybacks the structuring call — no extra model, no extra
-    /// RAM. Present only when the caller supplied candidate folders.
-    #[serde(default)]
-    category: String,
-    /// How sure the model is about `category`: "high" | "medium" | "low" (or ""
-    /// when `category` is ""). Gates whether the note is filed silently, merely
-    /// suggested, or left loose. Present only alongside `category`.
-    #[serde(default)]
-    category_confidence: String,
     /// [GRAIN] Distillation (KNOWLEDGE-ARCHITECTURE-PLAN.md D2): the searchable
     /// question — one sentence someone would actually go looking with. This is
     /// what gets embedded (D3), which is the single measured accuracy win in the
@@ -513,7 +430,6 @@ async fn extract_metadata(
     body: &str,
     framing: Option<&str>,
     structure: bool,
-    folders: &[(String, String)],
 ) -> Result<ExtractedMeta, String> {
     let provider = settings
         .active_post_process_provider()
@@ -562,37 +478,6 @@ async fn extract_metadata(
     } else {
         "You extract metadata from a personal note the user is saving. Reply with JSON only."
     };
-    // Auto-categorization rides this existing call: present each folder WITH its
-    // description (the label schema) and ask for a fit + a calibrated confidence.
-    // Only when folders exist. Descriptions are the evidence that stops a bare
-    // name ("Work") from vacuuming up unrelated notes.
-    let category_line = if folders.is_empty() {
-        String::new()
-    } else {
-        let catalogue = folders
-            .iter()
-            .map(|(name, desc)| {
-                let desc = desc.trim();
-                if desc.is_empty() {
-                    format!("  - \"{name}\" (no description)")
-                } else {
-                    format!("  - \"{name}\": {desc}")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!(
-            "\n- category: the ONE folder below this note clearly belongs in, judged AGAINST each \
-             folder's description, copied EXACTLY (its quoted name), or an empty string when none \
-             is a genuine fit. Do NOT force it — an empty string is the correct, expected answer \
-             when nothing matches; NEVER invent a folder or match on a superficial word overlap.\n\
-             - category_confidence: your confidence that the note truly belongs there — \"high\" \
-             only when the note plainly matches the folder's description; \"medium\" when it is a \
-             reasonable but uncertain fit; \"low\" when it is a guess. Use \"\" when category is \"\". \
-             Prefer \"medium\"/\"low\" over \"high\" whenever there is any doubt.\n\
-             Folders (name: what belongs there):\n{catalogue}"
-        )
-    };
     let system_prompt = format!(
         "{intro}{framing_line}\n\
          Rules:\n\
@@ -618,7 +503,6 @@ async fn extract_metadata(
            knowledge. Empty array when the note states none.\n\
          - reminder_at: if a reminder/timer is requested, the local datetime it should fire as \
            YYYY-MM-DDTHH:MM; otherwise an empty string. The current local datetime is {now_local}.\
-         {category_line}\
          {verbatim_tail}",
         verbatim_tail = if structure {
             ""
@@ -673,13 +557,6 @@ async fn extract_metadata(
     if structure {
         properties["body"] = serde_json::json!({ "type": "string" });
         required.insert(0, "body");
-    }
-    if !folders.is_empty() {
-        properties["category"] = serde_json::json!({ "type": "string" });
-        properties["category_confidence"] =
-            serde_json::json!({ "type": "string", "enum": ["high", "medium", "low", ""] });
-        required.push("category");
-        required.push("category_confidence");
     }
     let schema = serde_json::json!({
         "type": "object",
@@ -859,16 +736,12 @@ pub(crate) async fn compose_note(
     app: &AppHandle,
     body: &str,
     framing: Option<&str>,
-    folders: &[(String, String)],
     source: &str,
-) -> (Note, Option<Routing>, Vec<Relation>) {
+) -> (Note, Vec<Relation>) {
     let mut note = Note::raw(body.trim().to_string());
     note.source = source.to_string();
     let mut relations = Vec::new();
     let settings = get_settings(app);
-    // The route the model chose (validated back to an exact folder + gated on
-    // confidence), or None. Piggybacks the extraction call above.
-    let mut routing: Option<Routing> = None;
     if llm_usable(&settings) {
         // Structure the body only for a freshly dictated/typed note (no framed
         // selection) that fits the sample window — a truncated giant paste can't
@@ -883,35 +756,10 @@ pub(crate) async fn compose_note(
             &sample_for_meta(body.trim()),
             framing,
             structure,
-            folders,
         )
         .await
         {
             Ok(mut meta) => {
-                // Validate the routed category against the real folder list
-                // (exact name, case-insensitive) so the model can never invent
-                // a folder here — new-folder discovery is a separate, gated pass.
-                // Then gate on confidence: only high/medium survive; a low or
-                // unrecognized confidence collapses to None (note stays loose).
-                let cat = meta.category.trim();
-                if !cat.is_empty() {
-                    if let Some((folder, _)) =
-                        folders.iter().find(|(name, _)| name.eq_ignore_ascii_case(cat))
-                    {
-                        routing = match meta.category_confidence.trim().to_ascii_lowercase().as_str()
-                        {
-                            "high" => Some(Routing {
-                                folder: folder.clone(),
-                                confidence: Confidence::High,
-                            }),
-                            "medium" => Some(Routing {
-                                folder: folder.clone(),
-                                confidence: Confidence::Medium,
-                            }),
-                            _ => None,
-                        };
-                    }
-                }
                 // Adopt the reformatted body only when it clearly preserved the
                 // content — a formatted note is longer, not shorter, so a big
                 // shrink means the model summarized and we keep the raw text.
@@ -933,81 +781,9 @@ pub(crate) async fn compose_note(
     if note.title.trim().is_empty() {
         note.title = fallback_title(&note.body);
     }
-    (note, routing, relations)
+    (note, relations)
 }
 
-/// Propose a one/two-sentence description for a folder from a sample of the
-/// notes already in it — the label schema the router will classify against
-/// (AUTO-CATEGORIZATION-PLAN.md). One cheap LLM call against the active
-/// post-process provider; `None` on no samples / no usable provider / failure.
-/// User-triggered (a button in the open overlay), so never idle work.
-pub(crate) async fn propose_folder_description(
-    app: &AppHandle,
-    folder: &str,
-    samples: &[String],
-) -> Option<String> {
-    let settings = get_settings(app);
-    if !llm_usable(&settings) || samples.is_empty() {
-        return None;
-    }
-    let provider = settings.active_post_process_provider().cloned()?;
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    let api_key = settings
-        .post_process_api_keys
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-    let client = app
-        .try_state::<reqwest::Client>()
-        .map(|s| s.inner().clone())?;
-
-    let system_prompt = format!(
-        "You write a short definition for a personal-notes folder named \"{folder}\", to help \
-         auto-file future notes. Given a sample of the notes it currently holds, reply with JSON \
-         {{\"description\": \"...\"}} where description is ONE or two plain sentences stating what \
-         kind of note belongs in this folder — the shared subject/purpose, not a list of the \
-         examples. No folder name prefix, no markdown."
-    );
-    let user = format!("Notes currently in \"{folder}\":\n- {}", samples.join("\n- "));
-    let schema = serde_json::json!({
-        "type": "object",
-        "properties": { "description": { "type": "string" } },
-        "required": ["description"],
-        "additionalProperties": false
-    });
-
-    let success = crate::llm_client::send_chat_completion_with_schema(
-        &client,
-        &provider,
-        api_key,
-        &model,
-        user,
-        Some(system_prompt),
-        Some(schema),
-        None,
-        None,
-    )
-    .await
-    .ok()?;
-    crate::post_process_router::record_usage(app, &provider.id);
-
-    #[derive(Deserialize)]
-    struct Proposed {
-        #[serde(default)]
-        description: String,
-    }
-    let parsed: Proposed = serde_json::from_str(strip_code_fences(&success.content?)).ok()?;
-    let desc = parsed.description.trim();
-    if desc.is_empty() {
-        None
-    } else {
-        Some(desc.chars().take(400).collect())
-    }
-}
 
 /// One structured merge call against the active post-process provider.
 async fn reconcile_call(

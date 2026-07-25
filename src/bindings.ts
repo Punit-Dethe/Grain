@@ -239,18 +239,6 @@ async changeGrainSpaceAutoRemindersSetting(enabled: boolean) : Promise<Result<nu
 }
 },
 /**
- * [GRAIN] Auto-categorization: route captured notes into existing Grain folders
- * (AUTO-CATEGORIZATION-PLAN.md). Off by default.
- */
-async changeGrainSpaceAutoCategorizeSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_auto_categorize_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Grain Space backend hard switch (OBSIDIAN-PLAN.md §1). Swapping the
  * backend changes which corpus every surface sees; the overlay is closed and
  * the embedding engine dropped so nothing keeps serving the old corpus.
@@ -323,85 +311,12 @@ async grainSpaceListFolders() : Promise<Result<string[], string>> {
 },
 /**
  * File a note into a Grain subfolder (or back to the Grain root when `folder`
- * is null/empty) — the accept action for an auto-categorization suggestion, or
+ * is null/empty) — moving a note between collections, or
  * a manual re-file. Returns the moved note.
  */
 async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Note, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_move_note", { id, folder }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Every Grain collection paired with its description (the "what belongs here"
- * evidence the router classifies against). Folders with no description return
- * an empty string. Orphaned descriptions (folder deleted) are pruned here.
- */
-async grainSpaceFolderDescriptions() : Promise<Result<([string, string])[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_folder_descriptions") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Set (or clear, with an empty string) a collection's description.
- */
-async grainSpaceSetFolderDescription(folder: string, description: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_set_folder_description", { folder, description }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Propose a one-sentence description for a folder from a sample of the notes
- * already in it — the user-triggered "Suggest" affordance. Runs only while the
- * overlay is open (the caller is a button), so no idle RAM. Returns "" when
- * there's nothing to sample or no usable LLM.
- */
-async grainSpaceSuggestFolderDescription(folder: string) : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_suggest_folder_description", { folder }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * All pending `(note id, suggested folder)` routes — the medium-confidence
- * suggestions awaiting a one-click accept/dismiss in the editor.
- */
-async grainSpacePendingSuggestions() : Promise<Result<([string, string])[], string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_pending_suggestions") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Accept a note's pending folder suggestion: file it there and clear the
- * suggestion. Returns the moved note.
- */
-async grainSpaceAcceptSuggestion(id: string) : Promise<Result<Note, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_accept_suggestion", { id }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Dismiss a note's pending folder suggestion without moving it.
- */
-async grainSpaceDismissSuggestion(id: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_dismiss_suggestion", { id }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2287,13 +2202,7 @@ grain_space_vault_path?: string;
  * vault is read-only (searchable, never written).
  */
 grain_space_vault_folder?: string; 
-/**
- * [GRAIN] Auto-categorization (AUTO-CATEGORIZATION-PLAN.md). When ON, a
- * captured note is routed into the best-fitting existing Grain folder via
- * the structuring call that already runs — no extra model, no idle work.
- * Off by default; when off, no categorization code path runs.
- */
-grain_space_auto_categorize?: boolean }
+}
 export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }

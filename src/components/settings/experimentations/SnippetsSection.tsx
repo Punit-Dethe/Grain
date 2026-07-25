@@ -171,15 +171,15 @@ export const SnippetsSection: React.FC<{
           />
         </div>
 
-        {/* Starter examples — click to prefill, then edit and save. Only on a
-            fresh form so they never fight with an in-progress edit, and on
-            their own line so they read as suggestions rather than as part of
-            the button group. */}
-        {!editingId &&
+        {/* Starter examples share the action row: they were a line of their
+            own above the button, which put a band of dead space across the
+            widest part of the form to hold three small chips. */}
+        <div className="flex items-center justify-between gap-3 pt-1">
+          {!editingId &&
           trimmedTrigger.length === 0 &&
-          replacement.length === 0 && (
-            <div className="flex flex-wrap items-center gap-2 pt-0.5">
-              <span className="text-xs text-ink-soft">Start from</span>
+          replacement.length === 0 ? (
+            <div className="flex flex-wrap items-center gap-2 min-w-0">
+              <span className="text-xs text-ink-soft shrink-0">Start from</span>
               {EXAMPLES.map((ex) => (
                 <button
                   key={ex.trigger}
@@ -194,24 +194,27 @@ export const SnippetsSection: React.FC<{
                 </button>
               ))}
             </div>
+          ) : (
+            <span />
           )}
 
-        <div className="flex items-center justify-end gap-2 pt-1">
-          {editingId && (
-            <Button onClick={resetForm} variant="secondary" size="md">
-              {t("settings.experimentations.snippets.cancel")}
+          <div className="flex items-center gap-2 shrink-0">
+            {editingId && (
+              <Button onClick={resetForm} variant="secondary" size="md">
+                {t("settings.experimentations.snippets.cancel")}
+              </Button>
+            )}
+            <Button
+              onClick={handleSubmit}
+              disabled={!canSubmit}
+              variant="primary"
+              size="md"
+            >
+              {editingId
+                ? t("settings.experimentations.snippets.update")
+                : t("settings.experimentations.snippets.add")}
             </Button>
-          )}
-          <Button
-            onClick={handleSubmit}
-            disabled={!canSubmit}
-            variant="primary"
-            size="md"
-          >
-            {editingId
-              ? t("settings.experimentations.snippets.update")
-              : t("settings.experimentations.snippets.add")}
-          </Button>
+          </div>
         </div>
       </div>
 

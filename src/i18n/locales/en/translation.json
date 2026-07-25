@@ -972,10 +972,7 @@
     "folderDescEdit": "Edit description",
     "folderDescPlaceholder": "What belongs in this collection? e.g. “Work at Acme — projects, meetings, deadlines.”",
     "folderDescSuggest": "Suggest",
-    "folderDescSuggesting": "Thinking…",
-    "suggestFileHere": "File in #{{folder}}?",
-    "suggestAccept": "File it",
-    "suggestDismiss": "Not now"
+    "folderDescSuggesting": "Thinking…"
   },
   "overlay": {
     "transcribing": "Transcribing...",

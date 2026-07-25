@@ -83,7 +83,6 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
   const enabled = getSetting("grain_space_enabled") ?? false;
   const semantic = getSetting("grain_space_semantic") ?? false;
   const autoReminders = getSetting("grain_space_auto_reminders") ?? true;
-  const autoCategorize = getSetting("grain_space_auto_categorize") ?? false;
   // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md) — a hard switch.
   const backend = getSetting("grain_space_backend") ?? "grain";
   const vaultPath = getSetting("grain_space_vault_path") ?? "";
@@ -411,15 +410,6 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
               checked={autoReminders}
               isUpdating={isUpdating("grain_space_auto_reminders")}
               onChange={(v) => updateSetting("grain_space_auto_reminders", v)}
-            />
-            <ToggleSwitch
-              label="Auto-categorize notes"
-              description="File a dictated note into the best-fitting existing folder automatically. Uses the same AI pass that already structures the note — no extra model, no background work. New folders are never created from a single note."
-              descriptionMode="tooltip"
-              grouped
-              checked={autoCategorize}
-              isUpdating={isUpdating("grain_space_auto_categorize")}
-              onChange={(v) => updateSetting("grain_space_auto_categorize", v)}
             />
           </SettingsGroup>
 

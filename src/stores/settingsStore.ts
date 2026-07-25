@@ -193,8 +193,6 @@ const settingUpdaters: {
     commands.changeGrainSpaceSemanticSetting(value as boolean),
   grain_space_auto_reminders: (value) =>
     commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
-  grain_space_auto_categorize: (value) =>
-    commands.changeGrainSpaceAutoCategorizeSetting(value as boolean),
   // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md): a hard switch between
   // the grain store and a vault, plus where the vault lives.
   grain_space_backend: (value) =>
