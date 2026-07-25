@@ -1,0 +1,25 @@
+[package]
+name = "grain-mcp"
+version = "0.1.0"
+description = "Grain Space over the Model Context Protocol"
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "grain-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# The official MCP Rust SDK, pinned to the stable 2.x line — 3.0 is a beta and
+# this binary ships to users. `transport-io` is the server-side stdio transport;
+# `server` brings the tool router and the schema derivation with it.
+rmcp = { version = "2.2", features = ["server", "transport-io"] }
+# Must be the SAME major the SDK uses (rmcp 2.2 -> schemars 1.0): the derive
+# macro expands to `schemars::…` paths, and a second major would derive a trait
+# the SDK does not accept.
+schemars = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
