@@ -2677,6 +2677,10 @@ readme: string;
  */
 media: StoreMedia[]; 
 /**
+ * What kind of thing this is, for the store's filter row.
+ */
+categories: string[]; 
+/**
  * Revocation state for this exact version, if any: "revoked" | "deprecated".
  */
 revocation: string | null; 

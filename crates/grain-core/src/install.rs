@@ -232,6 +232,7 @@ mod tests {
             installs: 0,
             readme: String::new(),
             media: Vec::new(),
+            categories: Vec::new(),
         }
     }
 

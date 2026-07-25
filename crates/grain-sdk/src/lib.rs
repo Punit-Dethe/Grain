@@ -31,8 +31,8 @@ pub mod settings_schema;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use distribution::{
-    Index, IndexEntry, MediaRef, RevocationEntry, RevocationState, Revocations, Roots, Trust,
-    DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
+    is_category, Index, IndexEntry, MediaRef, RevocationEntry, RevocationState, Revocations, Roots,
+    Trust, CATEGORIES, DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
 };
 pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use error::{HostError, HostErrorCode};

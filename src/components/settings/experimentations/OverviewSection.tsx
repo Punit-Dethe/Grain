@@ -768,6 +768,7 @@ type StoreEntry = {
   installs: number;
   readme: string;
   media: StoreMedia[];
+  categories: string[];
   revocation: string | null;
   flags: string[];
 };
@@ -777,15 +778,33 @@ type StoreView = {
   entries: StoreEntry[];
 };
 
+/** [GRAIN] The trust rung, as shown ON the cover image (see the card below).
+ * There is no "Core": the backend reports a first-party pack as `verified`,
+ * because that is exactly what it promises the person installing it. */
 const TRUST_BADGE: Record<string, { label: string; cls: string }> = {
-  core: { label: "Core", cls: "bg-accent/15 text-accent" },
-  verified: { label: "Verified", cls: "bg-emerald-500/15 text-emerald-600" },
+  verified: {
+    label: "Verified",
+    cls: "bg-emerald-500/90 text-white",
+  },
   experimental: {
     label: "Experimental",
-    cls: "bg-amber-500/15 text-amber-600",
+    cls: "bg-amber-500/90 text-white",
   },
-  dev: { label: "Community", cls: "bg-line text-ink-soft" },
+  dev: { label: "Community", cls: "bg-black/60 text-white" },
 };
+
+/** The filter row. Short on purpose: these answer "what KIND of thing is this",
+ * which is the only question a filter can usefully ask before you have opened
+ * anything. Mirrors `CATEGORIES` in grain-sdk, which is what a submission
+ * declares and CI validates against. */
+const CATEGORY_FILTERS: { key: string; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "visual", label: "Visual" },
+  { key: "prompts", label: "Prompts" },
+  { key: "dictation", label: "Dictation" },
+  { key: "tools", label: "Tools" },
+  { key: "installed", label: "Installed" },
+];
 
 /** [GRAIN] The store slide-over (SPEC §5.3): a Zen-Mods-style panel that slides
  * in from the right INSIDE the settings window. Backed by the verified,
@@ -800,6 +819,7 @@ const StoreSlideOver: React.FC<{
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("all");
   const [installing, setInstalling] = useState<string | null>(null);
   /** The store entry whose detail page is open (null = the grid). */
   const [opened, setOpened] = useState<string | null>(null);
@@ -868,15 +888,30 @@ const StoreSlideOver: React.FC<{
     [reload, onChanged],
   );
 
-  const entries = (view?.entries ?? []).filter((e) => {
+  const all = view?.entries ?? [];
+  const entries = all.filter((e) => {
     const q = query.trim().toLowerCase();
-    return (
+    const matchesQuery =
       !q ||
       e.name.toLowerCase().includes(q) ||
       e.id.toLowerCase().includes(q) ||
-      e.author.toLowerCase().includes(q)
-    );
+      e.description.toLowerCase().includes(q);
+    const matchesCategory =
+      category === "all" ||
+      (category === "installed"
+        ? installed[e.id] != null
+        : e.categories.includes(category));
+    return matchesQuery && matchesCategory;
   });
+
+  /** Counts sit on the chips, so an empty filter is visibly empty before you
+   * click it rather than after. */
+  const countFor = (key: string) =>
+    key === "all"
+      ? all.length
+      : key === "installed"
+        ? all.filter((e) => installed[e.id] != null).length
+        : all.filter((e) => e.categories.includes(key)).length;
 
   /** The opened store entry — the SAME unified detail the installed list uses,
    * so an extension's picture, words, and links are authored and read once. */
@@ -927,14 +962,53 @@ const StoreSlideOver: React.FC<{
       )}
 
       {!openEntry && (
-        <div className="px-6 py-3 border-b border-line">
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search extensions"
-            className="w-full max-w-md px-3 py-1.5 rounded-lg bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
-          />
+        <div className="px-6 pt-6 pb-4 border-b border-line">
+          <div className="max-w-[1600px] mx-auto space-y-4">
+            <div>
+              <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none text-ink">
+                Extension store
+              </h1>
+              <p className="mt-2 text-sm text-ink-soft max-w-2xl leading-relaxed">
+                Everything here is built from pinned source by our own CI and
+                signed before it reaches you.
+              </p>
+            </div>
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search extensions"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
+            />
+            {/* One row of chips, no sort controls. With a catalogue this size a
+                sort is a control that changes nothing; the filter is the part
+                that answers a real question. */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {CATEGORY_FILTERS.map((f) => {
+                const n = countFor(f.key);
+                const active = category === f.key;
+                return (
+                  <button
+                    key={f.key}
+                    type="button"
+                    disabled={n === 0 && f.key !== "all"}
+                    onClick={() => setCategory(f.key)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                      active
+                        ? "border-ink bg-ink text-paper"
+                        : "border-line text-ink-soft hover:text-ink hover:border-ink-faint cursor-pointer"
+                    }`}
+                  >
+                    {f.label}
+                    <span className={active ? "opacity-60" : "text-ink-faint"}>
+                      {" "}
+                      ({n})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1005,11 +1079,14 @@ const StoreSlideOver: React.FC<{
                 key={`${e.id}@${e.version}`}
                 className="group rounded-xl border border-line bg-paper-raised overflow-hidden flex flex-col hover:border-ink-faint/50 transition-colors"
               >
-                {/* Cover image on top — the card's most important element. */}
+                {/* Cover image on top — the card's most important element. The
+                    trust rung rides ON it: it is the one thing you want to know
+                    before reading anything, and up here it costs no height and
+                    never competes with the name for the eye. */}
                 <button
                   type="button"
                   onClick={() => setOpened(e.id)}
-                  className="block w-full text-left cursor-pointer"
+                  className="relative block w-full text-left cursor-pointer"
                   aria-label={`Open ${e.name}`}
                 >
                   {e.media.length > 0 ? (
@@ -1019,6 +1096,14 @@ const StoreSlideOver: React.FC<{
                       <Package width={22} height={22} className="text-ink-faint/50" />
                     </div>
                   )}
+                  <span
+                    className={`absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-semibold backdrop-blur-sm ${badge.cls}`}
+                  >
+                    {e.trust === "verified" && (
+                      <ShieldCheck width={10} height={10} />
+                    )}
+                    {badge.label}
+                  </span>
                 </button>
 
                 {/* Deliberately shallow: the cover carries the card, and every
@@ -1037,18 +1122,6 @@ const StoreSlideOver: React.FC<{
                     >
                       {e.name}
                     </button>
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${badge.cls}`}
-                    >
-                      {e.trust === "verified" && (
-                        <ShieldCheck
-                          width={9}
-                          height={9}
-                          className="inline mr-0.5 -mt-0.5"
-                        />
-                      )}
-                      {badge.label}
-                    </span>
                     {e.installs > 0 && (
                       <span className="inline-flex items-center gap-0.5 text-[11px] text-ink-faint">
                         <Download width={10} height={10} />

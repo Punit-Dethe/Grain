@@ -62,6 +62,8 @@ pub struct StoreEntry {
     pub readme: String,
     /// Screenshots / GIFs for the detail page, loaded lazily — never in browse.
     pub media: Vec<StoreMedia>,
+    /// What kind of thing this is, for the store's filter row.
+    pub categories: Vec<String>,
     /// Revocation state for this exact version, if any: "revoked" | "deprecated".
     pub revocation: Option<String>,
     /// Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
@@ -104,12 +106,19 @@ fn tier_str(t: &grain_sdk::Tier) -> &'static str {
     }
 }
 
+/// Trust as the STORE says it.
+///
+/// `Core` is an internal provenance rung — our own packs are built and signed by
+/// the same CI job, with no review queue — but to someone deciding whether to
+/// install, it promises exactly what `Verified` promises. Two words for one
+/// guarantee only raises the question of which is better, and first-party
+/// software claiming its own extra tier is not a good answer to that. So the
+/// catalogue keeps the distinction and the card does not.
 fn trust_str(t: grain_sdk::Trust) -> &'static str {
     match t {
         grain_sdk::Trust::Dev => "dev",
         grain_sdk::Trust::Experimental => "experimental",
-        grain_sdk::Trust::Verified => "verified",
-        grain_sdk::Trust::Core => "core",
+        grain_sdk::Trust::Verified | grain_sdk::Trust::Core => "verified",
     }
 }
 
@@ -239,6 +248,7 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
                     kind: m.kind.clone(),
                 })
                 .collect(),
+            categories: e.categories.clone(),
             revocation: revocations.state_for(&e.id, &e.version).map(|s| {
                 match s {
                     RevocationState::Revoked => "revoked",

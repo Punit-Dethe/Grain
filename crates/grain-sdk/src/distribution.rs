@@ -135,6 +135,27 @@ pub struct IndexEntry {
     /// blobs referenced by hash, loaded lazily — never during browse.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<MediaRef>,
+    /// What KIND of thing this is, from the submission's declared categories
+    /// (see [`CATEGORIES`]). Carried in the signed index so the store can filter
+    /// without fetching anything per card.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub categories: Vec<String>,
+}
+
+/// The category vocabulary a submission may declare. Deliberately short: these
+/// answer "what kind of thing is this", which is the only question a filter row
+/// can usefully ask before you have opened anything. A longer taxonomy would
+/// need the user to already know the catalogue to use it.
+pub const CATEGORIES: &[(&str, &str)] = &[
+    ("visual", "Changes how Grain looks — surfaces, layouts, themes."),
+    ("prompts", "Ships prompts you can select."),
+    ("dictation", "Changes what happens to your words on the way out."),
+    ("tools", "Adds something Grain could not do before."),
+];
+
+/// True when `c` is one of [`CATEGORIES`].
+pub fn is_category(c: &str) -> bool {
+    CATEGORIES.iter().any(|(name, _)| *name == c)
 }
 
 /// One screenshot or GIF in `media/<sha256>.<ext>` (DISTRIBUTION-PLAN §2.3).

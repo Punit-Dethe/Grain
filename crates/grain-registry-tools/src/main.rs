@@ -228,6 +228,19 @@ fn check_submission(dir: PathBuf) -> Result<()> {
             fail("at least one category is required");
             problems += 1;
         }
+        for c in &s.categories {
+            if !grain_sdk::is_category(c) {
+                fail(&format!(
+                    "unknown category '{c}' — allowed: {}",
+                    grain_sdk::CATEGORIES
+                        .iter()
+                        .map(|(n, _)| *n)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+                problems += 1;
+            }
+        }
         // Typosquat: reject a near-miss of an id already seen.
         for existing in &ids {
             if existing != &s.id && edit_distance(existing, &s.id) <= 1 {
@@ -719,7 +732,15 @@ fn publish(
         .find(|e| e.id == manifest.id && e.version == manifest.version)
         .map(|e| (e.installs, e.stars, e.readme.clone(), e.media.clone()))
         .unwrap_or_default();
-    // A project folder supplies the listing (README + screenshots) by convention.
+    // A project folder supplies the listing (README + screenshots) by convention,
+    // and its submission.toml supplies the categories the store filters on — the
+    // author declares them once, in the file CI already validates.
+    let mut categories: Vec<String> = index
+        .entries
+        .iter()
+        .find(|e| e.id == manifest.id && e.version == manifest.version)
+        .map(|e| e.categories.clone())
+        .unwrap_or_default();
     if let Some(src) = &media_src {
         let (r, m) = collect_media(&v1, src)?;
         if !r.is_empty() {
@@ -727,6 +748,24 @@ fn publish(
         }
         if !m.is_empty() {
             media = m;
+        }
+        let sub = src.join("submission.toml");
+        if sub.exists() {
+            let raw = fs::read_to_string(&sub).context("read submission.toml")?;
+            let parsed: Submission = toml::from_str(&raw).context("parse submission.toml")?;
+            for c in &parsed.categories {
+                if !grain_sdk::is_category(c) {
+                    anyhow::bail!(
+                        "unknown category '{c}' — allowed: {}",
+                        grain_sdk::CATEGORIES
+                            .iter()
+                            .map(|(n, _)| *n)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+            }
+            categories = parsed.categories;
         }
     }
     let entry = grain_sdk::IndexEntry {
@@ -750,6 +789,7 @@ fn publish(
         installs,
         readme,
         media,
+        categories,
     };
 
     // Upsert by (id, version).
