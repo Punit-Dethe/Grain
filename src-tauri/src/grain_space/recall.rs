@@ -178,11 +178,90 @@ fn system_prompt(now: &str, weekday: &str) -> String {
 /// minDate/maxDate). Semantic is used only when enabled AND on disk; otherwise
 /// it degrades to FTS-only SILENTLY. All store/embed work runs off the async
 /// runtime.
+/// Structural narrowing the planner can ask for (D7). Cerebras's first layer is
+/// an LLM planner that shrinks the search space before the database is touched;
+/// Grain already HAS that planner — it is the `search_memory` tool loop — it just
+/// had nothing but dates to narrow on.
+///
+/// Deliberately small: real columns and a real join table, not `WHERE
+/// metadata->>'project_id'` JSON-path gymnastics. Folders and entities cover
+/// personal scale; "projects as named bundles of scope parameters" is an
+/// enterprise construct for 50,000 documents and is not built here.
+#[derive(Default, Debug)]
+pub(crate) struct Filters {
+    /// Keep only notes naming this entity (case/space-insensitive).
+    pub entity: Option<String>,
+    /// Keep only notes captured this way (`dictation`, `selection`, …).
+    pub source: Option<String>,
+}
+
+impl Filters {
+    fn is_empty(&self) -> bool {
+        self.entity.is_none() && self.source.is_none()
+    }
+
+    /// Does this note survive the filters?
+    fn keep(&self, note: &Note) -> bool {
+        if let Some(want) = &self.entity {
+            let want = super::capture::entity_norm(want);
+            if !note
+                .entities
+                .iter()
+                .any(|e| super::capture::entity_norm(e) == want)
+            {
+                return false;
+            }
+        }
+        if let Some(want) = &self.source {
+            if !note.source.eq_ignore_ascii_case(want.trim()) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 async fn retrieve(
     app: &AppHandle,
     be: &Backend,
     query: &str,
     range: Option<(i64, i64)>,
+) -> Result<Vec<Note>> {
+    retrieve_filtered(app, be, query, range, &Filters::default()).await
+}
+
+async fn retrieve_filtered(
+    app: &AppHandle,
+    be: &Backend,
+    query: &str,
+    range: Option<(i64, i64)>,
+    filters: &Filters,
+) -> Result<Vec<Note>> {
+    // With filters active, rank the WHOLE pool and narrow afterwards. Narrowing a
+    // top-6 list would silently return nothing when the match sits at rank 20 —
+    // a filter must sharpen the answer, never hide it.
+    let want = if filters.is_empty() {
+        TOP_K_PER_TURN
+    } else {
+        CANDIDATE_POOL
+    };
+    let hits = retrieve_inner(app, be, query, range, want).await?;
+    if filters.is_empty() {
+        return Ok(hits);
+    }
+    Ok(hits
+        .into_iter()
+        .filter(|note| filters.keep(note))
+        .take(TOP_K_PER_TURN)
+        .collect())
+}
+
+async fn retrieve_inner(
+    app: &AppHandle,
+    be: &Backend,
+    query: &str,
+    range: Option<(i64, i64)>,
+    top_k: usize,
 ) -> Result<Vec<Note>> {
     let semantic_on = {
         let s = crate::settings::get_settings(app);
@@ -252,7 +331,7 @@ async fn retrieve(
                             &std::collections::HashMap::new(),
                             &idf,
                             half_life_days,
-                            TOP_K_PER_TURN,
+                            top_k,
                         ));
                     }
                 }
@@ -302,7 +381,7 @@ async fn retrieve(
             &sims,
             &idf,
             half_life_days,
-            TOP_K_PER_TURN,
+            top_k,
         ))
     })
     .await?
@@ -1033,6 +1112,21 @@ fn search_memory_spec() -> crate::llm_client::ToolSpec {
                 "maxDate": {
                     "type": "string",
                     "description": "Latest saved date to include, as YYYY-MM-DD. Optional."
+                },
+                "entity": {
+                    "type": "string",
+                    "description": "Narrow to memories about one specific thing — a person, \
+                                    file, app, project or place, named exactly as the user \
+                                    said it. Use when the question is clearly ABOUT one \
+                                    subject; leave out otherwise. Optional."
+                },
+                "source": {
+                    "type": "string",
+                    "enum": ["dictation", "selection"],
+                    "description": "Narrow by how the memory was captured: 'dictation' is \
+                                    something the user said, 'selection' is text they saved \
+                                    from elsewhere. Use only when they distinguish the two \
+                                    (\"that thing I copied\"). Optional."
                 }
             },
             "required": ["query"]
@@ -1129,13 +1223,36 @@ async fn execute_search_memory(
         (lo, hi) => Some((lo.unwrap_or(0), hi.unwrap_or(i64::MAX))),
     };
 
-    if query.is_empty() && range.is_none() {
+    // Structural narrowing (D7). A blank string is not a filter — a model that
+    // fills every optional field would otherwise narrow to nothing.
+    let text_arg = |key: &str| {
+        args.get(key)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let filters = Filters {
+        entity: text_arg("entity"),
+        source: text_arg("source"),
+    };
+
+    if query.is_empty() && range.is_none() && filters.is_empty() {
         return "No search terms were given.".to_string();
     }
 
-    log::info!("[GRAIN] recall: search_memory(query={query:?}, range={range:?})");
+    log::info!("[GRAIN] recall: search_memory(query={query:?}, range={range:?}, {filters:?})");
 
-    let hits = match retrieve(app, be, &query, range).await {
+    // An entity filter also feeds the query text, so the graph leg seeds on it
+    // and the lexical leg can match it — filtering alone would only ever narrow
+    // what the unfiltered query happened to surface.
+    let search_text = match &filters.entity {
+        Some(e) if !query.is_empty() => format!("{query} {e}"),
+        Some(e) => e.clone(),
+        None => query.clone(),
+    };
+
+    let hits = match retrieve_filtered(app, be, &search_text, range, &filters).await {
         Ok(h) => h,
         Err(e) => {
             log::warn!("[GRAIN] recall: search_memory failed: {e:#}");
@@ -1143,7 +1260,19 @@ async fn execute_search_memory(
         }
     };
     if hits.is_empty() {
-        return "No saved memories matched that search.".to_string();
+        // Say WHICH narrowing came up empty, so the model retries without it
+        // rather than concluding the memory doesn't exist.
+        return match (&filters.entity, &filters.source) {
+            (Some(e), _) => format!(
+                "No saved memories matched that search about \"{e}\". Try again without the \
+                 entity filter."
+            ),
+            (None, Some(s)) => format!(
+                "No saved memories matched that search among {s} captures. Try again without \
+                 the source filter."
+            ),
+            (None, None) => "No saved memories matched that search.".to_string(),
+        };
     }
 
     // Register (stable M-ids) and render with the assigned M-numbers so the
@@ -1518,6 +1647,48 @@ mod tests {
         assert_eq!(out[0].id, "strong");
         assert_eq!(out[1].id, "unknown");
         assert_eq!(out[2].id, "weak");
+    }
+
+    /// D7: the planner's structural filters. Matching is norm-based, so the model
+    /// naming "Auth.PY" still hits a note that wrote "auth.py".
+    #[test]
+    fn planner_filters_narrow_on_entity_and_source() {
+        let mut dictated = note("dictated", 100);
+        dictated.entities = vec!["auth.py".into(), "JWT".into()];
+        dictated.source = "dictation".into();
+
+        let mut copied = note("copied", 100);
+        copied.entities = vec!["auth.py".into()];
+        copied.source = "selection".into();
+
+        let bare = note("bare", 100);
+
+        let by_entity = Filters {
+            entity: Some("  Auth.PY ".into()),
+            source: None,
+        };
+        assert!(by_entity.keep(&dictated), "norm-insensitive entity match");
+        assert!(by_entity.keep(&copied));
+        assert!(!by_entity.keep(&bare), "a note naming nothing is excluded");
+
+        let by_source = Filters {
+            entity: None,
+            source: Some("selection".into()),
+        };
+        assert!(by_source.keep(&copied));
+        assert!(!by_source.keep(&dictated));
+
+        // Both filters are a conjunction.
+        let both = Filters {
+            entity: Some("JWT".into()),
+            source: Some("selection".into()),
+        };
+        assert!(!both.keep(&dictated), "right entity, wrong source");
+        assert!(!both.keep(&copied), "right source, wrong entity");
+
+        // No filters keeps everything, including notes with no distillation.
+        assert!(Filters::default().keep(&bare));
+        assert!(Filters::default().is_empty());
     }
 
     #[test]
