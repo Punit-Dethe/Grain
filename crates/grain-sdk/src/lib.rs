@@ -41,9 +41,9 @@ pub use event::{
     DAEMON_EVENT_VARIANTS,
 };
 pub use manifest::{
-    CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads,
-    PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier,
-    WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS,
+    host_view_id, CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl,
+    PackPayloads, PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces,
+    Tier, WorkspaceDecl, ANCHORS, HOST_VIEW_SCHEME, KNOWN_CAPABILITIES, KNOWN_SLOTS,
 };
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
 pub use protocol::{

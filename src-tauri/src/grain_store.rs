@@ -100,6 +100,7 @@ fn tier_str(t: &grain_sdk::Tier) -> &'static str {
         grain_sdk::Tier::Pack => "pack",
         grain_sdk::Tier::Scripted => "scripted",
         grain_sdk::Tier::Native => "native",
+        grain_sdk::Tier::Builtin => "builtin",
     }
 }
 

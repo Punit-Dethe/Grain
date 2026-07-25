@@ -1035,6 +1035,45 @@ async storeClose() : Promise<Result<null, string>> {
 }
 },
 /**
+ * A screenshot/GIF for the detail page, as a `data:` URL. Lazy — called only
+ * when a detail opens — and integrity-checked against its hash. WEBP or GIF.
+ */
+async storeMedia(sha256: string, kind: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_media", { sha256, kind }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * An extension's full README (markdown text), by its media hash. Lazy, and
+ * integrity-checked. Rendered on the detail page.
+ */
+async storeReadme(sha256: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_readme", { sha256 }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * One extension's catalogue metadata (description, installs, README + media
+ * refs) from the CACHED signed index — no network, and the parsed index is
+ * dropped immediately, so an installed extension's detail page can show the
+ * same header as the store without keeping the catalogue resident.
+ * `None` when the id is not in the catalogue (e.g. a locally imported pack).
+ */
+async storeEntry(id: string) : Promise<Result<StoreEntry | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("store_entry", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Install (or update to) a specific verified `(id, version)`. In-app click
  * only — a link may open the store but never trigger this.
  */
@@ -1206,6 +1245,24 @@ async extensionPickApp(id: string) : Promise<Result<string | null, string>> {
 async extensionCaptureApp(id: string) : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("extension_capture_app", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] The custom card's host channel (SPEC §4.1 Level 3). A `panel` setting
+ * renders the extension's own UI in a sandboxed iframe; that iframe posts host
+ * calls up to Grain's (trusted) settings page, which relays them here. The
+ * panel gets EXACTLY the capabilities the user granted this extension: the
+ * grants come from the registry RECORD, never from the caller, so a card can
+ * neither assert another identity nor widen its own. Every method is then
+ * capability-checked by `host_api::dispatch`, identically to a worker. The
+ * error crosses back as the same `{code,message,hint,…}` shape the worker gets.
+ */
+async extensionHostCall(id: string, method: string, params: JsonValue) : Promise<Result<JsonValue, JsonValue>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_host_call", { id, method, params }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2421,7 +2478,11 @@ fields: ExtensionSettingField[];
 /**
  * Singular noun for a `list`'s Add button / row header.
  */
-item_label: string | null }
+item_label: string | null; 
+/**
+ * The card's self-contained HTML, for a `panel` field (None otherwise).
+ */
+ui_source: string | null }
 /**
  * One row of an extension's settings section: the declaration flattened into
  * exactly what a control needs, plus the value to show.
@@ -2458,7 +2519,11 @@ fields: ExtensionSettingField[];
 /**
  * Singular noun for a `list`'s Add button / row header.
  */
-item_label: string | null }
+item_label: string | null; 
+/**
+ * The card's self-contained HTML, for a `panel` row (None otherwise).
+ */
+ui_source: string | null }
 /**
  * One enabled extension's settings, ready to render.
  */
@@ -2648,7 +2713,28 @@ export type SoundTheme = "marimba" | "pop" | "custom"
  * One card's data for the store UI (a specta-friendly projection of
  * [`IndexEntry`]; the index type itself lives in the crypto-free leaf).
  */
-export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[]; size: string; author: string; reviewed_at: string; reviewed_commit: string; 
+export type StoreEntry = { id: string; name: string; version: string; tier: string; trust: string; capabilities: string[]; 
+/**
+ * One-line summary shown under the name on the card.
+ */
+description: string; 
+/**
+ * Source repository (GitHub), for the "view on GitHub" link.
+ */
+repo: string; size: string; author: string; reviewed_at: string; reviewed_commit: string; 
+/**
+ * Popularity signal shown on the card and detail page. Read straight from
+ * the signed index — the client never counts or queries per card.
+ */
+installs: number; 
+/**
+ * README media hash (empty = none). The detail page fetches it lazily.
+ */
+readme: string; 
+/**
+ * Screenshots / GIFs for the detail page, loaded lazily — never in browse.
+ */
+media: StoreMedia[]; 
 /**
  * Revocation state for this exact version, if any: "revoked" | "deprecated".
  */
@@ -2658,6 +2744,14 @@ revocation: string | null;
  * so the card tells the user what the reviewer was warned about.
  */
 flags: string[] }
+/**
+ * One screenshot/GIF ref crossed to the store UI (mirror of `MediaRef`).
+ */
+export type StoreMedia = { sha256: string; 
+/**
+ * `webp` | `gif`.
+ */
+kind: string }
 /**
  * What the store slide-over shows when opened.
  */

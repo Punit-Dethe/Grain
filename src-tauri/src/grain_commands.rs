@@ -560,6 +560,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     grain_sdk::Tier::Pack => "pack",
                     grain_sdk::Tier::Scripted => "scripted",
                     grain_sdk::Tier::Native => "native",
+                    grain_sdk::Tier::Builtin => "builtin",
                 };
                 (
                     p.manifest.name,

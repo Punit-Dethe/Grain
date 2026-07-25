@@ -228,6 +228,10 @@ mod tests {
             reviewed_commit: String::new(),
             updated_at: String::new(),
             stars: 0,
+            description: String::new(),
+            installs: 0,
+            readme: String::new(),
+            media: Vec::new(),
         }
     }
 
