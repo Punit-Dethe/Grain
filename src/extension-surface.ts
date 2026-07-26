@@ -156,6 +156,75 @@ function send(obj: unknown) {
   else outbox.push(s);
 }
 
+/** Grain's live palette, handed to the surface as `--grain-*` so an author can
+ *  adopt the app's colours rather than guess at them. Read from the computed
+ *  root each mount, so it cannot drift from the tokens Grain is drawn with. */
+const HOST_TOKENS = [
+  "paper",
+  "paper-raised",
+  "paper-sunken",
+  "ink",
+  "ink-soft",
+  "ink-faint",
+  "accent",
+  "line",
+] as const;
+
+function hostPalette(): string {
+  const root = getComputedStyle(document.documentElement);
+  // Only tokens that actually RESOLVED. An empty custom property is still a set
+  // one, so `var(--grain-paper, #ece5da)` would resolve to nothing rather than
+  // to the fallback — emitting a blank here would break every card that wrote a
+  // sensible default. This page is a standalone entry and may not carry the
+  // app's stylesheet, so "resolved to nothing" is a real case, not a paranoid one.
+  return HOST_TOKENS.map((t) => [t, root.getPropertyValue(`--color-${t}`).trim()])
+    .filter(([, v]) => v !== "")
+    .map(([t, v]) => `--grain-${t}:${v}`)
+    .join(";");
+}
+
+/**
+ * Grain owns a surface's colour scheme; the operating system does not.
+ *
+ * A sandboxed iframe has an opaque origin, so `prefers-color-scheme` inside it
+ * reports the SYSTEM setting — the wrong answer whenever the user's OS and their
+ * Grain theme disagree. This is the same fix the settings panels already carry
+ * (ExtensionSettings.alignColorScheme); surfaces never got it, so a window would
+ * have rendered dark inside a light Grain exactly as the cards used to.
+ *
+ * `(min-width:0)` always matches; `(max-width:0)` never does.
+ */
+function alignColorScheme(src: string, dark: boolean): string {
+  const on = "(min-width:0)";
+  const off = "(max-width:0)";
+  return src
+    .replace(/\(\s*prefers-color-scheme\s*:\s*dark\s*\)/gi, dark ? on : off)
+    .replace(/\(\s*prefers-color-scheme\s*:\s*light\s*\)/gi, dark ? off : on);
+}
+
+/** The document handed to the sandboxed frame: theme, then bridge, then the
+ *  extension's own markup with its media queries pointed at Grain's theme. */
+function surfaceDocument(uiSource: string): string {
+  // The same key ThemeContext writes, so a surface follows the settings window
+  // rather than the OS. Read per mount: the window can be slept and woken after
+  // the user has changed it.
+  const dark = (() => {
+    try {
+      return localStorage.getItem("grain-theme-settings") === "dark";
+    } catch {
+      return false;
+    }
+  })();
+  const theme = dark ? "dark" : "light";
+  return (
+    `<style>:root{color-scheme:${theme};${hostPalette()}}html,body{margin:0;padding:0;}</style>` +
+    `<script>document.documentElement.setAttribute("data-grain-theme","${theme}");<` +
+    `/script>` +
+    BRIDGE +
+    alignColorScheme(uiSource, dark)
+  );
+}
+
 /** Mount the extension's UI. `srcdoc` + `sandbox` without `allow-same-origin`
  *  is what produces the opaque origin — do not add it. */
 function mount() {
@@ -164,7 +233,7 @@ function mount() {
   const el = document.createElement("iframe");
   el.id = "frame";
   el.setAttribute("sandbox", "allow-scripts");
-  el.srcdoc = BRIDGE + init.uiSource;
+  el.srcdoc = surfaceDocument(init.uiSource);
   document.body.appendChild(el);
   frame = el;
 }
