@@ -641,7 +641,10 @@ export const OverviewSection: React.FC<{
                         if (onJump(card.id)) return;
                         setDetail(card.id);
                       }}
-                      className="text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
+                      // `text-start` is load-bearing: a <button> is centered by
+                      // default, and stretched by this flex column every row's
+                      // name floated to the middle of the card.
+                      className="text-start text-sm font-medium text-ink hover:text-accent transition-colors cursor-pointer"
                     >
                       {card.name}
                     </button>

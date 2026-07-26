@@ -178,9 +178,12 @@ export const ExtensionDetail: React.FC<{
       {/* Cover image on top (unless we are compacting for in-place settings).
           Deliberately not full-bleed: on a page whose job is to explain an
           extension, a 16:9 banner across the full width pushed every word below
-          the fold. It is context for the title, at the size of context. */}
+          the fold. It is context for the title, at the size of context —
+          centered, because a small image pinned to the left edge of a wide page
+          reads as a mistake rather than a choice. */}
       {!hasInPlaceSettings && (
-        <div className="max-w-sm">
+        <div className="max-w-md mx-auto">
+
           <Cover media={cover} name={meta.name} />
         </div>
       )}
