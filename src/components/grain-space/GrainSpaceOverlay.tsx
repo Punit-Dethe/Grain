@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Maximize2,
   MessageSquare,
@@ -16,7 +14,12 @@ import { type Note, type NoteCard } from "@/bindings";
 // [GRAIN] Not `@/bindings` directly: this component runs BOTH inside the app and
 // inside the extension surface the note UI is moving to, and the adapter is what
 // makes those the same code (NOTE-UI-EXTENSION-PLAN.md).
-import { commands } from "./hostAdapter";
+import {
+  commands,
+  hostListen as listen,
+  hostWindow,
+  inExtension,
+} from "./hostAdapter";
 import { Sidebar } from "./Sidebar";
 import { EditorPane } from "./EditorPane";
 import { CalendarView } from "./CalendarView";
@@ -607,7 +610,7 @@ export function GrainSpaceOverlay() {
                 type="button"
                 className="gs-iconbtn"
                 title="Minimize"
-                onClick={() => void getCurrentWindow().minimize()}
+                onClick={() => hostWindow.minimize()}
               >
                 <Minus width={14} height={14} />
               </button>
@@ -615,7 +618,7 @@ export function GrainSpaceOverlay() {
                 type="button"
                 className="gs-iconbtn"
                 title="Maximize"
-                onClick={() => void getCurrentWindow().toggleMaximize()}
+                onClick={() => hostWindow.toggleMaximize()}
               >
                 <Maximize2 width={14} height={14} />
               </button>

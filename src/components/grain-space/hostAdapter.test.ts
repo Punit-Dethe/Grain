@@ -91,13 +91,20 @@ describe("hostAdapter", () => {
     expect(calls.map((c) => c.method)).toEqual(["cards"]);
   });
 
-  it("passes through methods it does not override, so the port is one import", async () => {
-    stubBridge(calls);
-    // Recall stays behind: it needs the `llm` grant the note window does not
-    // ask for. It must still RESOLVE rather than throw, so the components that
-    // call it fail visibly at their own boundary instead of here.
+  it("passes an un-overridden method through to Tauri when there is no bridge", async () => {
     const res = await commands.grainSpaceRecallTurn([]);
     expect(res.status).toBe("ok");
+  });
+
+  it("refuses an un-overridden method inside a surface, as a VALUE not a throw", async () => {
+    stubBridge(calls);
+    // Recall stays behind: it needs the `llm` grant the note window does not
+    // ask for. Reaching Tauri from a surface throws on missing internals — as
+    // an unhandled rejection inside a mount effect, which leaves a UI that
+    // looks fine and is quietly missing whatever the call was for.
+    const res = await commands.grainSpaceRecallTurn([]);
+    expect(res.status).toBe("error");
+    expect((res as { error: string }).error).toContain("not available");
     expect(calls).toHaveLength(0);
   });
 

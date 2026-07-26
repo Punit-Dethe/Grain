@@ -67,13 +67,37 @@ async function wrap<T>(run: () => Promise<T>): Promise<Res<T>> {
   }
 }
 
+/**
+ * Every generated command, made SAFE to call from a surface.
+ *
+ * Spreading `tauri` raw was not enough. A pass-through invoked inside a surface
+ * reaches `@tauri-apps/api`, which has no `__TAURI_INTERNALS__` to talk to and
+ * throws — as an unhandled rejection, from inside a mount effect, leaving a UI
+ * that looks fine and is quietly missing whatever that call was for.
+ *
+ * So a pass-through refuses in a surface, as an error VALUE in the same shape
+ * everything else here returns. Callers already branch on `status`, which means
+ * the ones that matter (Recall, the model downloads) degrade to their existing
+ * error paths instead of needing a guard each.
+ */
+const passthrough = Object.fromEntries(
+  Object.entries(tauri).map(([name, fn]) => [
+    name,
+    (...args: unknown[]) =>
+      bridge()
+        ? Promise.resolve({
+            status: "error" as const,
+            error: `${name} is not available in the note window.`,
+          })
+        : (fn as (...a: unknown[]) => unknown)(...args),
+  ]),
+) as typeof tauri;
+
 export const commands = {
-  // Everything not overridden below passes straight through, so this object is
-  // a drop-in superset of the generated bindings and the port is ONE changed
-  // import line. The pass-throughs are Tauri calls that only work inside the
-  // app — Recall, the model downloads, "open in Obsidian" — and the components
-  // that use them check `inExtension()` and hide themselves instead.
-  ...tauri,
+  // A drop-in superset of the generated bindings, so the port is ONE changed
+  // import line. The overrides below win; everything else is the safe
+  // pass-through above.
+  ...passthrough,
 
   grainSpaceListCards(): Promise<Res<NoteCard[]>> {
     const g = bridge();
@@ -163,6 +187,48 @@ export const commands = {
       await g.workspace.close();
       return null;
     });
+  },
+};
+
+
+/**
+ * Tauri events, when there are any.
+ *
+ * Inside the app these are real `listen` subscriptions. Inside a surface there
+ * is no Tauri IPC at all — the frame has an opaque origin — so calling `listen`
+ * throws on `window.__TAURI_INTERNALS__`, five times over, as unhandled
+ * rejections that leave the UI looking fine and quietly not updating.
+ *
+ * KNOWN GAP: in a surface these do not fire, so a note captured elsewhere while
+ * the window is open does not appear until something else refreshes. The host
+ * would have to push these over the surface channel; until it does, this is a
+ * silent no-op rather than a noisy crash, which is the better of the two.
+ */
+export function hostListen<T = unknown>(
+  event: string,
+  handler: (payload: { payload: T }) => void,
+): Promise<() => void> {
+  if (bridge()) return Promise.resolve(() => {});
+  return import("@tauri-apps/api/event").then((m) =>
+    m.listen(event, handler as never),
+  );
+}
+
+/** The window's own chrome controls. A surface does not own its window — the
+ *  host builds, places and sleeps it — so these are no-ops there, and the
+ *  buttons that call them are hidden by `inExtension()`. */
+export const hostWindow = {
+  minimize(): void {
+    if (bridge()) return;
+    void import("@tauri-apps/api/window").then((m) =>
+      m.getCurrentWindow().minimize(),
+    );
+  },
+  toggleMaximize(): void {
+    if (bridge()) return;
+    void import("@tauri-apps/api/window").then((m) =>
+      m.getCurrentWindow().toggleMaximize(),
+    );
   },
 };
 
