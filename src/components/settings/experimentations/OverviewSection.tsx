@@ -34,6 +34,8 @@ const CAPABILITY_LABELS: Record<string, string> = {
   settings: "Save its own settings",
   llm: "Send text to your configured AI provider",
   embed: "Turn text into embeddings",
+  // The widest grant there is: say so, rather than "access notes".
+  notes: "Read and change all your Grain Space notes",
   "capture:selection": "Read your currently selected text",
   "capture:app": "See which app you're currently using",
   "open:url": "Open web links in your browser",

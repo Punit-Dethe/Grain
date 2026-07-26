@@ -364,6 +364,19 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // whatever is selected in any app), so it is its own grant, meant to be
     // paired with a user-initiated trigger like a shortcut.
     "capture:selection",
+    // [GRAIN] Read and change the user's Grain Space notes. The widest-reaching
+    // grant the platform has — it is everything they have written down — so it
+    // is flagged and its permission sheet says so in those words.
+    //
+    // It exists because a note VIEWER is a legitimate extension: Grain's own is
+    // one (NOTE-UI-EXTENSION-PLAN.md), and so is a third-party publisher, sync
+    // bridge or alternative editor. Refusing to have the capability would not
+    // make the platform safer, only unable to express what people will build.
+    //
+    // Distinct from the MCP bridge's `space`, which is absent from this list on
+    // purpose: that one is minted by Grain for its own proxy and can never be
+    // requested by a manifest.
+    "notes",
     // Phase 5C: observe the foreground application (name, executable, and the
     // browser URL host when it is a browser). Privacy-marked — it reveals which
     // app the user is in — and the foundation any context-aware extension needs

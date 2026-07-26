@@ -116,6 +116,17 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "space.collections" | "space.search" | "space.get" | "space.save" | "space.append" => {
             Some("space")
         }
+        // [GRAIN] The same notebook, reached by an EXTENSION rather than by
+        // Grain's own MCP proxy. Wider than `space.*` because a viewer edits:
+        // the read methods are shared, and these add the writes a UI needs.
+        "notes.cards"
+        | "notes.search"
+        | "notes.get"
+        | "notes.save"
+        | "notes.update"
+        | "notes.delete"
+        | "notes.move"
+        | "notes.pin" => Some("notes"),
         "open.url" => Some("open:url"),
         "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -1112,6 +1123,88 @@ pub async fn dispatch(
                 .map_err(internal_error)?;
             Ok(serde_json::json!({ "id": id }))
         }
+        // [GRAIN] The `notes` capability's surface (NOTE-UI-EXTENSION-PLAN.md).
+        // The reads mirror `space.*` deliberately rather than sharing an arm:
+        // the two capabilities are separately grantable and must stay separately
+        // revocable, and collapsing them would make one imply the other.
+        "notes.cards" => {
+            let cards = crate::grain_space::cards(app).await.map_err(internal_error)?;
+            Ok(serde_json::json!({ "cards": cards }))
+        }
+        "notes.search" => {
+            let query = param_nonempty_str(&params, "query")?;
+            let limit = params
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20)
+                .clamp(1, 200) as usize;
+            let hits = crate::grain_space::search(app, &query, limit)
+                .await
+                .map_err(internal_error)?;
+            Ok(serde_json::json!({ "results": hits }))
+        }
+        "notes.get" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let note = crate::grain_space::get(app, &id).await.map_err(internal_error)?;
+            serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
+        }
+        "notes.save" => {
+            let body = param_nonempty_str(&params, "body")?;
+            let supplied = crate::grain_space::SuppliedMeta {
+                title: params
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                ..Default::default()
+            };
+            let id = crate::grain_space::save(app, &body, supplied)
+                .await
+                .map_err(internal_error)?;
+            Ok(serde_json::json!({ "id": id }))
+        }
+        "notes.update" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let title = params
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let body = params.get("body").and_then(Value::as_str).map(str::to_string);
+            crate::grain_space::update(app, &id, title, body)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
+        }
+        "notes.delete" => {
+            let id = param_nonempty_str(&params, "id")?;
+            crate::grain_space::delete(app, &id)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
+        }
+        "notes.move" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let folder = params
+                .get("folder")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+                .map(str::to_string);
+            crate::grain_space::move_to(app, &id, folder)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
+        }
+        "notes.pin" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let pinned = params
+                .get("pinned")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            crate::grain_space::set_pinned(app, &id, pinned)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
+        }
         "open.url" => {
             // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
             // `openExternal` RCEs and Tauri's own shell-open advisory
@@ -1322,6 +1415,36 @@ mod tests {
         assert_eq!(required_capability("doc.put"), Some("storage"));
         assert_eq!(required_capability("doc.list"), Some("storage"));
         assert_eq!(required_capability("log.info"), None);
+
+        // [GRAIN] The notebook has TWO capabilities and they must not collapse
+        // into one. `space` is minted by Grain for its own MCP proxy and is
+        // absent from KNOWN_CAPABILITIES, so no manifest can ask for it;
+        // `notes` is what an extension is granted. Holding one must never
+        // imply the other, or revoking a note viewer would leave it reading
+        // through the bridge's methods.
+        assert_eq!(required_capability("space.search"), Some("space"));
+        assert_eq!(required_capability("notes.search"), Some("notes"));
+        assert!(!grain_sdk::KNOWN_CAPABILITIES.contains(&"space"));
+        assert!(grain_sdk::KNOWN_CAPABILITIES.contains(&"notes"));
+        let viewer = named(&["notes"]);
+        assert!(has_capability(&viewer, "notes"));
+        assert!(!has_capability(&viewer, "space"));
+
+        // Every gated `notes.*` method has a handler: gating one without
+        // routing it turns a typo into an internal error at call time.
+        for method in [
+            "notes.cards",
+            "notes.search",
+            "notes.get",
+            "notes.save",
+            "notes.update",
+            "notes.delete",
+            "notes.move",
+            "notes.pin",
+        ] {
+            assert_eq!(required_capability(method), Some("notes"), "{method}");
+        }
+
         // Unknown methods require an ungrantable capability → always denied.
         assert_eq!(required_capability("os.exec"), Some("__unknown__"));
         assert!(!has_capability(

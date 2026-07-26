@@ -345,3 +345,97 @@ pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String>
     emit_notes_changed(app);
     Ok(())
 }
+
+
+// ── The extension-facing note surface ───────────────────────────────────────
+//
+// [GRAIN] What the `notes` capability reaches (NOTE-UI-EXTENSION-PLAN.md). The
+// MCP bridge's `space.*` covers reading and adding; a VIEWER also edits, so
+// these add the rest. Everything routes through the same `vault.rs` calls the
+// app's own UI uses — including the Grain-folder scoping — so an extension
+// cannot reach a file outside the notebook, and there is no second code path
+// that could drift from the first.
+
+/// Note cards for a listing: the small shape, without bodies.
+pub async fn cards(app: &AppHandle) -> Result<Vec<note::NoteCard>, String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    tauri::async_runtime::spawn_blocking(move || backend::list_cards(&be))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
+/// Replace a note's editable content. Identity, timestamps and the file's place
+/// on disk are the store's to keep — a caller supplies what it edited, not a
+/// whole record it might have stale.
+pub async fn update(
+    app: &AppHandle,
+    id: &str,
+    title: Option<String>,
+    body: Option<String>,
+) -> Result<(), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut note = backend::get_note(&be, &id)?;
+        if let Some(t) = title {
+            note.title = t.chars().take(80).collect();
+        }
+        if let Some(b) = body {
+            note.body = b;
+        }
+        backend::save_note(&be, &note)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    emit_notes_changed(app);
+    Ok(())
+}
+
+/// Delete one note.
+///
+/// Unlike the MCP bridge, a viewer DOES get this: a person clicking delete in a
+/// note window has decided, and refusing would just send them to the file
+/// manager. The grant that reaches it is flagged and user-approved.
+pub async fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || backend::delete_note(&be, &id))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    emit_notes_changed(app);
+    Ok(())
+}
+
+/// Move a note between collections. `None` puts it loose in the Grain folder.
+pub async fn move_to(app: &AppHandle, id: &str, folder: Option<String>) -> Result<(), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        backend::move_note_to_folder(&be, &id, folder.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    emit_notes_changed(app);
+    Ok(())
+}
+
+/// Pin or unpin.
+pub async fn set_pinned(app: &AppHandle, id: &str, pinned: bool) -> Result<(), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    tauri::async_runtime::spawn_blocking(move || backend::set_pinned(&be, &id, pinned))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    emit_notes_changed(app);
+    Ok(())
+}

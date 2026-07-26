@@ -13,6 +13,11 @@ use crate::manifest::{network_capability_host, Tier};
 /// A flagged combination present in a manifest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlaggedCombination {
+    /// `notes` + any `net:` grant: it can read everything the user has written
+    /// down AND send it somewhere. Not blocked — a publishing or sync extension
+    /// is a real thing to want — but it is the combination that most warrants a
+    /// human reading the source before it is listed.
+    NotesAndNetwork,
     /// `screen:capture` + any `net:` grant.
     ScreenCaptureAndNetwork,
     /// `events:transcripts` + any `net:` grant.
@@ -25,6 +30,7 @@ impl FlaggedCombination {
     /// A stable machine key (for labels, CI, and the store card wire form).
     pub fn key(&self) -> &'static str {
         match self {
+            FlaggedCombination::NotesAndNetwork => "notes+net",
             FlaggedCombination::ScreenCaptureAndNetwork => "screen-capture+net",
             FlaggedCombination::TranscriptsAndNetwork => "transcripts+net",
             FlaggedCombination::NativeAndNetwork => "native+net",
@@ -34,6 +40,9 @@ impl FlaggedCombination {
     /// Plain-language line shown to the user and the reviewer.
     pub fn reason(&self) -> &'static str {
         match self {
+            FlaggedCombination::NotesAndNetwork => {
+                "can read all your notes and send them over the network"
+            }
             FlaggedCombination::ScreenCaptureAndNetwork => {
                 "can capture your screen and send it over the network"
             }
@@ -62,6 +71,9 @@ pub fn flagged_combinations(permissions: &[String], tier: Tier) -> Vec<FlaggedCo
         return Vec::new();
     }
     let mut flags = Vec::new();
+    if permissions.iter().any(|p| p == "notes") {
+        flags.push(FlaggedCombination::NotesAndNetwork);
+    }
     if permissions.iter().any(|p| p == "screen:capture") {
         flags.push(FlaggedCombination::ScreenCaptureAndNetwork);
     }
