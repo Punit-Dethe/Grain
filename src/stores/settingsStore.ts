@@ -191,6 +191,10 @@ const settingUpdaters: {
     commands.changeGrainSpaceEnabledSetting(value as boolean),
   grain_space_semantic: (value) =>
     commands.changeGrainSpaceSemanticSetting(value as boolean),
+  // [GRAIN] The MCP bridge. Turning it on mints the proxy's token; off
+  // revokes it, so a client that was connected stops being able to return.
+  grain_space_mcp: (value) =>
+    commands.changeGrainSpaceMcpSetting(value as boolean),
   grain_space_auto_reminders: (value) =>
     commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
   // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md): a hard switch between

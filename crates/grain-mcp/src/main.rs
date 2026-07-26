@@ -29,10 +29,8 @@ use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler, ServiceExt
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-mod app;
-
 /// What the app is reachable through, and what to say when it is not.
-use app::AppLink;
+use grain_mcp::AppLink;
 
 #[derive(Clone)]
 struct GrainSpace {

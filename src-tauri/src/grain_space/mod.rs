@@ -91,12 +91,19 @@ pub fn emit_notes_changed(app: &AppHandle) {
 
 /// The shape one search hit crosses the wire in. Deliberately small: an agent
 /// deciding WHICH note to open should not be made to read every note first.
+///
+/// No `collection`: a note's folder is a property of where its FILE sits, which
+/// the card listing derives and a search result does not carry. Returning a
+/// field that is always null would tell the caller the notebook has no
+/// collections, which is worse than not answering.
 #[derive(serde::Serialize)]
 pub struct SpaceHit {
     pub id: String,
     pub title: String,
     pub snippet: String,
-    pub collection: Option<String>,
+    /// What the note is about — the same entity list the graph is built from.
+    /// Useful for deciding which of several hits to open in full.
+    pub entities: Vec<String>,
     pub saved_at: i64,
 }
 
@@ -133,7 +140,7 @@ pub async fn search(app: &AppHandle, query: &str, limit: usize) -> Result<Vec<Sp
         .take(limit)
         .map(|n| SpaceHit {
             snippet: n.tldr.clone(),
-            collection: None,
+            entities: n.entities.clone(),
             saved_at: n.timestamp,
             id: n.id,
             title: n.title,

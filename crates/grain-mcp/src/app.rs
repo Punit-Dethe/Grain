@@ -55,6 +55,14 @@ impl AppLink {
         }
     }
 
+    /// Point the link at a specific token file. The discovery path resolves one
+    /// per platform; a test needs to name its own.
+    pub fn for_token_file(path: PathBuf) -> Self {
+        Self {
+            token_path: Some(path),
+        }
+    }
+
     /// The current token and port, or the reason there isn't one.
     fn credentials(&self) -> Result<(String, u16)> {
         let Some(path) = &self.token_path else {

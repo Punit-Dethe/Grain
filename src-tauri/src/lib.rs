@@ -758,6 +758,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_post_process_enabled_setting,
             grain_commands::change_grain_space_enabled_setting,
             grain_commands::change_grain_space_mcp_setting,
+            grain_commands::grain_space_mcp_path,
             grain_commands::change_grain_space_semantic_setting,
             grain_commands::change_grain_space_auto_reminders_setting,
             grain_commands::change_grain_space_backend_setting,

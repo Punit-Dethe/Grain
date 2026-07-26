@@ -240,6 +240,30 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     crate::grain_space::apply_enabled(&app, enabled);
     Ok(())
 }
+/// [GRAIN] Where `grain-mcp` is on this machine, for the config snippet the
+/// Grain Space tab shows.
+///
+/// Resolved rather than assumed: the proxy sits beside the app binary in an
+/// install and beside it in the cargo target dir in development, and an MCP
+/// client is given an absolute path — it does not search a PATH we control.
+/// Falls back to the bare name so the snippet is still copyable (and the
+/// mistake obvious) if the binary has not been built yet.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_mcp_path() -> String {
+    let name = if cfg!(windows) {
+        "grain-mcp.exe"
+    } else {
+        "grain-mcp"
+    };
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(name)))
+        .filter(|path| path.exists())
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| name.to_string())
+}
+
 /// [GRAIN] The Grain Space MCP bridge. Switching it ON mints the proxy's token
 /// and writes it where `grain-mcp` looks; switching it OFF revokes the token and
 /// deletes the file, so a client that is already connected stops being able to

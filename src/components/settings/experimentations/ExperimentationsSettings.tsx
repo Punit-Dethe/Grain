@@ -18,6 +18,7 @@ import { DeveloperSection } from "./DeveloperSection";
 import { FeaturePanel, useFeatureEnabled } from "./FeaturePanel";
 import { ExtensionAnchor } from "./ExtensionSettings";
 import { GrainSpaceSettings } from "../grain-space/GrainSpaceSettings";
+import { McpBridge } from "../grain-space/McpBridge";
 
 type TabKey =
   | "overview"
@@ -326,7 +327,12 @@ export const ExperimentationsSettings: React.FC = () => {
             title="Grain Space"
             info="A local notebook you dictate into and ask questions across. Notes are plain Markdown on your disk; search runs on this machine over full text, meaning and the things your notes mention."
           />
-          {grainSpaceOn && <GrainSpaceSettings embedded />}
+          {grainSpaceOn && (
+            <>
+              <GrainSpaceSettings embedded />
+              <McpBridge />
+            </>
+          )}
           {/* Extensions extend Grain Space here — the MCP bridge is the first. */}
           <ExtensionAnchor anchor="grainspace.after" />
         </div>
