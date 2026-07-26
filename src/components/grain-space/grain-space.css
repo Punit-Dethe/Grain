@@ -192,70 +192,63 @@
   position: relative;
 }
 
-/* Brand title at top of sidebar — drag region, centered. */
-.gs-sidebar-brand {
+/* Rail header — the search box, and the exact/semantic switch when the semantic
+ * model is available. This is where search lives now: it drives the list right
+ * below it, and having it here gave the editor back the strip it used to sit in. */
+.gs-side-head {
   flex: none;
-  padding: 18px 14px 12px;
-  text-align: center;
-  font-size: var(--gs-fs-16);
-  font-weight: var(--gs-w-semi);
-  letter-spacing: 0.1px;
-  color: var(--ink);
+  padding: 14px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gs-sp-2);
 }
 
-/* Nav tab — a single sidebar row item (e.g. Calendar). */
-.gs-nav-tab {
+/* Rail footer — Calendar and Settings, pinned to the bottom edge. */
+.gs-side-foot {
+  flex: none;
+  display: flex;
+  gap: var(--gs-sp-1);
+  padding: var(--gs-sp-2) 10px 10px;
+  border-top: 1px solid var(--line-2);
+}
+
+.gs-foot-btn {
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
-  gap: var(--gs-sp-2);
-  width: 100%;
-  padding: 7px var(--gs-sp-3);
+  justify-content: center;
+  gap: 6px;
+  padding: 7px var(--gs-sp-2);
   border: none;
   background: none;
   border-radius: var(--gs-r-sm);
   font-family: var(--body);
-  font-size: var(--gs-fs-13);
+  font-size: var(--gs-fs-12);
   font-weight: var(--gs-w-medium);
-  color: var(--ink-2);
-  cursor: pointer;
-  text-align: left;
-  transition: background 120ms ease;
-  margin-bottom: 2px;
-}
-
-.gs-nav-tab:hover {
-  background: var(--hover);
-}
-
-.gs-nav-tab--on {
-  background: var(--hover);
-  color: var(--ink);
-  font-weight: var(--gs-w-semi);
-}
-
-.gs-nav-tab--on .gs-nav-tab-icon {
-  color: var(--ink);
-}
-
-.gs-nav-tab-icon {
-  flex: none;
   color: var(--muted);
-  display: flex;
-  align-items: center;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
 }
 
-.gs-nav-tab-label {
-  flex: 1 1 auto;
+.gs-foot-btn span {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* Create note + nav tabs wrapper below the brand. */
-.gs-sidebar-foot {
-  flex: none;
-  padding: 0 10px 10px;
+.gs-foot-btn:hover {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+
+.gs-foot-btn--on {
+  background: var(--hover);
+  color: var(--ink);
+  font-weight: var(--gs-w-semi);
 }
 
 /* Profile header (avatar + workspace / active store). */
@@ -369,6 +362,97 @@
 .gs-nav::-webkit-scrollbar-thumb:hover {
   background: var(--scroll-thumb-hover);
   background-clip: padding-box;
+}
+
+/* Section header row: the disclosure button, plus an optional action button on
+ * the right (new folder / new note). Two buttons, because a button cannot
+ * contain a button — and the action must not also toggle the section. */
+.gs-section-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--gs-sp-1);
+}
+
+.gs-section-row .gs-section {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.gs-section-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-bottom: 2px;
+  border: none;
+  background: none;
+  border-radius: var(--gs-r-sm);
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    background 120ms ease,
+    color 120ms ease,
+    opacity 120ms ease;
+}
+
+/* Revealed on hover OR keyboard focus — an action that only exists for a mouse
+ * is not an action. */
+.gs-section-row:hover .gs-section-action,
+.gs-section-action:focus-visible {
+  opacity: 1;
+}
+
+.gs-section-action:hover {
+  background: var(--hover);
+  color: var(--ink-2);
+}
+
+/* New-folder field: same shape as a folder row, so it reads as the row it is
+ * about to become. */
+.gs-newfolder {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px 7px 8px;
+  border-radius: 9px;
+  background: var(--hover);
+  color: var(--green);
+}
+
+.gs-newfolder input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--body);
+  font-size: 13px;
+  font-weight: 560;
+  color: var(--ink);
+}
+
+.gs-newfolder input::placeholder {
+  color: var(--ghost);
+  font-weight: 480;
+}
+
+/* Drag-to-file. The dashed ring says "this will take it" without moving
+ * anything, so nothing shifts under the cursor mid-drag. */
+.gs-row[data-drop="on"],
+.gs-drop-root[data-drop="on"] {
+  background: var(--sel);
+  box-shadow: inset 0 0 0 1px var(--sel-border);
+}
+
+.gs-drop-root {
+  border-radius: 9px;
+}
+
+.gs-row[draggable="true"]:active {
+  cursor: grabbing;
 }
 
 /* Section header — quiet disclosure row: chevron + label + count. */

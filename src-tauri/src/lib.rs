@@ -772,6 +772,8 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_list_cards,
             grain_space::commands::grain_space_list_folders,
             grain_space::commands::grain_space_move_note,
+            grain_space::commands::grain_space_list_all_folders,
+            grain_space::commands::grain_space_create_folder,
             grain_space::commands::grain_space_search_notes,
             grain_space::commands::grain_space_get_note,
             grain_space::commands::grain_space_export_notes,

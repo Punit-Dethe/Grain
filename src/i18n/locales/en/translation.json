@@ -904,6 +904,9 @@
     "notes": "Notes",
     "folders": "Folders",
     "collections": "Collections",
+    "newFolder": "New folder",
+    "newFolderPlaceholder": "Folder name",
+    "noFolders": "No folders yet.",
     "fromVault": "From your vault",
     "seeAll": "See all",
     "seeLess": "See less",
@@ -973,7 +976,10 @@
     "folderDescEdit": "Edit description",
     "folderDescPlaceholder": "What belongs in this collection? e.g. “Work at Acme — projects, meetings, deadlines.”",
     "folderDescSuggest": "Suggest",
-    "folderDescSuggesting": "Thinking…"
+    "folderDescSuggesting": "Thinking…",
+    "settings": "Settings",
+    "tabBlurb": "A notebook that lives on your disk as plain Markdown — dictate into it, write in it, or point it at an Obsidian vault you already have. Search runs on this machine.",
+    "tabZeroCost": "Nothing loads and nothing is written to disk until you turn it on."
   },
   "overlay": {
     "transcribing": "Transcribing...",

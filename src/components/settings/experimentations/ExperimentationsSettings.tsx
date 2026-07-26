@@ -5,7 +5,6 @@ import {
   Bot,
   Code2,
   LayoutGrid,
-  NotebookPen,
   Replace,
   Sparkles,
   Upload,
@@ -17,16 +16,8 @@ import { AgentSection } from "./AgentSection";
 import { DeveloperSection } from "./DeveloperSection";
 import { FeaturePanel, useFeatureEnabled } from "./FeaturePanel";
 import { ExtensionAnchor } from "./ExtensionSettings";
-import { GrainSpaceSettings } from "../grain-space/GrainSpaceSettings";
-import { McpBridge } from "../grain-space/McpBridge";
 
-type TabKey =
-  | "overview"
-  | "snippets"
-  | "context"
-  | "agent"
-  | "grainspace"
-  | "developer";
+type TabKey = "overview" | "snippets" | "context" | "agent" | "developer";
 
 // User-facing section name is "Extensions" (the internal folder/route keeps the
 // legacy "experimentations" id). Constant so the i18n lint treats brand chrome
@@ -59,11 +50,9 @@ const TABS: {
     label: "Agent",
     icon: <Bot width={15} height={15} />,
   },
-  {
-    key: "grainspace",
-    label: "Grain Space",
-    icon: <NotebookPen width={15} height={15} />,
-  },
+  // [GRAIN] No Grain Space tab. The notebook has its own top-level Notes tab now,
+  // and its settings are a page inside it — one home per feature, or the two
+  // drift.
 ];
 
 const DEVELOPER_TAB = {
@@ -85,7 +74,9 @@ const JUMP_TARGETS: Record<string, TabKey> = {
   "context.after": "context",
   "dictation.pipeline.after": "context",
   "agent.after": "agent",
-  "grainspace.after": "grainspace",
+  // `grainspace.after` is deliberately absent: it renders in the Notes tab, which
+  // is not in this hub. `jumpTo` returning false is a defined outcome — the caller
+  // opens the extension's own page, which is a real destination.
   "grain.snippets": "snippets",
   "grain.context-awareness": "context",
   "grain.agent": "agent",
@@ -110,7 +101,6 @@ export const ExperimentationsSettings: React.FC = () => {
   // The snippets EDITOR is a rich surface, not a settings row, so it lives
   // outside the feature's well and needs the flag directly to disappear with it.
   const snippetsOn = useFeatureEnabled("snippets_enabled");
-  const grainSpaceOn = useFeatureEnabled("grain_space_enabled");
   const [importNotice, setImportNotice] = useState<{
     kind: "success" | "error";
     text: string;
@@ -313,28 +303,6 @@ export const ExperimentationsSettings: React.FC = () => {
             <ContextAwareSection />
           </FeaturePanel>
           <ExtensionAnchor anchor="context.after" />
-        </div>
-      ) : tab === "grainspace" ? (
-        <div className="space-y-6">
-          {/* Grain Space is BUILT IN, like the three above it. It briefly
-              shipped as a `builtin`-tier extension you could install and
-              uninstall, which was theatre: the implementation is compiled into
-              Grain — a local embedding engine, a vector index, a native window
-              — and the "install" was a registry row in front of it. A feature
-              that cannot actually be removed should not offer to be. */}
-          <FeaturePanel
-            settingKey="grain_space_enabled"
-            title="Grain Space"
-            info="A local notebook you dictate into and ask questions across. Notes are plain Markdown on your disk; search runs on this machine over full text, meaning and the things your notes mention."
-          />
-          {grainSpaceOn && (
-            <>
-              <GrainSpaceSettings embedded />
-              <McpBridge />
-            </>
-          )}
-          {/* Extensions extend Grain Space here — the MCP bridge is the first. */}
-          <ExtensionAnchor anchor="grainspace.after" />
         </div>
       ) : tab === "agent" ? (
         <div className="space-y-6">

@@ -375,6 +375,31 @@ async grainSpaceListFolders() : Promise<Result<string[], string>> {
 }
 },
 /**
+ * Every Grain subfolder, including the empty ones — the sidebar's folder tree.
+ * Distinct from `grain_space_list_folders`, which answers "which folders hold
+ * notes" for capture routing; a folder the user just made holds none yet.
+ */
+async grainSpaceListAllFolders() : Promise<Result<string[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_list_all_folders") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Create a Grain subfolder. Returns the sanitized path actually created — the
+ * caller should adopt it rather than assume the name it sent.
+ */
+async grainSpaceCreateFolder(folder: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_create_folder", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * File a note into a Grain subfolder (or back to the Grain root when `folder`
  * is null/empty) — moving a note between collections, or
  * a manual re-file. Returns the moved note.

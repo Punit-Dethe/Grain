@@ -40,7 +40,15 @@ type ModelBanner =
  * handshake performed, for free. What that buys is also what makes the unmount
  * flush below load-bearing.
  */
-export function GrainSpaceOverlay() {
+export function GrainSpaceOverlay({
+  onOpenSettings,
+}: {
+  /** Show the notebook's settings. Owned by `NotesTab`, which swaps the whole tab
+   *  to a settings page — the settings are built on Grain's app tokens and the
+   *  workspace on `.gs-frame`'s own, so nesting one in the other would mix two
+   *  visual languages and collide on `data-theme`. */
+  onOpenSettings: () => void;
+}) {
   const { t } = useTranslation();
   // A workspace follows Grain's theme — not the OS, and not a toggle of its own.
   // It shares the window with the rest of the app now; two appearances in one
@@ -48,6 +56,10 @@ export function GrainSpaceOverlay() {
   const { isSettingsDark } = useTheme();
 
   const [cards, setCards] = useState<NoteCard[]>([]);
+  /** Every Grain subfolder, empty ones included — the rail's tree. Separate from
+   * the cards because a folder with nothing in it exists on disk and nowhere in
+   * the listing, and it still has to be there to drag a note onto. */
+  const [folders, setFolders] = useState<string[]>([]);
   const [results, setResults] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("exact");
@@ -245,6 +257,50 @@ export function GrainSpaceOverlay() {
     adopt(blankDraft(), false);
   }, [adopt, flushSave]);
 
+  /** Re-read the folder tree. Cheap (a bounded directory walk), and separate from
+   *  the card listing because folders change without notes changing. */
+  const refreshFolders = useCallback(async () => {
+    const result = await commands.grainSpaceListAllFolders();
+    if (result.status === "ok") setFolders(result.data);
+    else console.error("Grain Space: folder listing failed:", result.error);
+  }, []);
+
+  const createFolder = useCallback(
+    async (name: string) => {
+      const result = await commands.grainSpaceCreateFolder(name);
+      if (result.status !== "ok") {
+        console.error("Grain Space: create folder failed:", result.error);
+        return;
+      }
+      // Adopt the path the backend actually created — sanitizing can change it,
+      // and a tree built from what we ASKED for would disagree with the disk.
+      setFolders((current) =>
+        current.includes(result.data)
+          ? current
+          : [...current, result.data].sort(),
+      );
+    },
+    [],
+  );
+
+  const moveNote = useCallback(
+    async (id: string, folder: string | null) => {
+      // Flush first: the note being filed may be the open one with unsaved
+      // edits, and the move renames its file underneath us.
+      await flushSave();
+      const result = await commands.grainSpaceMoveNote(id, folder);
+      if (result.status !== "ok") {
+        console.error("Grain Space: move failed:", result.error);
+        return;
+      }
+      // The move emits notes-changed, which re-lists the cards; the folder tree
+      // needs its own nudge because filing the last note out of a folder does
+      // not delete the folder, and filing into a new one is already known.
+      await refreshFolders();
+    },
+    [flushSave, refreshFolders],
+  );
+
   /** Run the current browse/search and (optionally) refresh the open note. */
   const refresh = useCallback(
     async (refreshSelected = false) => {
@@ -319,8 +375,10 @@ export function GrainSpaceOverlay() {
     queryRef.current = "";
     setResults([]);
     setCards([]);
+    setFolders([]);
     adopt(null, false);
     try {
+      await refreshFolders();
       const settings = await commands.getAppSettings();
       if (settings.status === "ok") {
         setSemanticAvailable(settings.data.grain_space_semantic ?? false);
@@ -346,7 +404,7 @@ export function GrainSpaceOverlay() {
     } finally {
       setLoading(false);
     }
-  }, [adopt]);
+  }, [adopt, refreshFolders]);
 
   // Mount: settings + focus-note handoff + first listing + event wiring.
   useEffect(() => {
@@ -529,68 +587,35 @@ export function GrainSpaceOverlay() {
       <div className="gs-frame" data-theme={isSettingsDark ? "dark" : "light"}>
         <Sidebar
           cards={cards}
+          folders={folders}
           reminders={reminders}
-          searching={searching}
           results={results}
           selectedId={selected?.id ?? null}
           calendarOpen={calendarOpen}
+          query={query}
+          onQueryChange={setQuery}
+          mode={mode}
+          onModeChange={setMode}
+          semanticAvailable={semanticAvailable}
           onOpenCalendar={() => setCalendarOpen(true)}
+          onOpenSettings={onOpenSettings}
           onSelectCard={(card) => void selectCard(card)}
           onSelectResult={(note) => void selectResult(note)}
           onCreate={() => void newNote()}
+          onCreateFolder={(name) => void createFolder(name)}
+          onMoveNote={(id, folder) => void moveNote(id, folder)}
         />
 
         <div className="gs-main">
-          {/* No drag region, no window controls, no appearance toggle: this is a
-              tab in Grain's window, which owns its own title bar and theme.
-              (Phase B moves what is left of this strip into the rail.) */}
+          {/* [GRAIN] No strip over the editor any more. Search, the search mode
+              and New note all moved into the rail — search because that is where
+              its results render, the other two to be next to what they create —
+              and the window controls went with the window. What is left is the
+              chat toggle, which sits over the editor because that is what it
+              opens beside. The editor gets ~64px of height back, which counts now
+              the window is no longer a fixed canvas. */}
           <div className="gs-top">
-            <div className="gs-search">
-              <Search width={13} height={13} />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t("grainSpaceOverlay.searchPlaceholder")}
-                spellCheck={false}
-              />
-              {query && (
-                <button
-                  type="button"
-                  className="gs-iconbtn"
-                  title="Clear search"
-                  onClick={() => setQuery("")}
-                >
-                  <X width={12} height={12} />
-                </button>
-              )}
-            </div>
-            {semanticAvailable && (
-              <div className="gs-mode">
-                <button
-                  type="button"
-                  className={mode === "exact" ? "gs-mode--on" : ""}
-                  onClick={() => setMode("exact")}
-                >
-                  {t("grainSpaceOverlay.exact")}
-                </button>
-                <button
-                  type="button"
-                  className={mode === "semantic" ? "gs-mode--on" : ""}
-                  onClick={() => setMode("semantic")}
-                >
-                  {t("grainSpaceOverlay.semantic")}
-                </button>
-              </div>
-            )}
             <div className="gs-top-actions">
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title="New note (Ctrl+N)"
-                onClick={() => void newNote()}
-              >
-                <Plus width={16} height={16} />
-              </button>
               <button
                 type="button"
                 className={`gs-iconbtn${chatOpen ? " gs-iconbtn--active" : ""}`}

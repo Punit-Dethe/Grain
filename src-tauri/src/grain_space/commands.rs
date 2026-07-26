@@ -158,6 +158,29 @@ pub async fn grain_space_list_folders(app: AppHandle) -> Result<Vec<String>, Str
     blocking(move || backend::list_folders(&be)).await
 }
 
+/// Every Grain subfolder, including the empty ones — the sidebar's folder tree.
+/// Distinct from `grain_space_list_folders`, which answers "which folders hold
+/// notes" for capture routing; a folder the user just made holds none yet.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_list_all_folders(app: AppHandle) -> Result<Vec<String>, String> {
+    let be = gate(&app)?;
+    blocking(move || backend::list_all_folders(&be)).await
+}
+
+/// Create a Grain subfolder. Returns the sanitized path actually created — the
+/// caller should adopt it rather than assume the name it sent.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_create_folder(app: AppHandle, folder: String) -> Result<String, String> {
+    let be = gate(&app)?;
+    let result = blocking(move || backend::create_folder(&be, &folder)).await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+    }
+    result
+}
+
 /// File a note into a Grain subfolder (or back to the Grain root when `folder`
 /// is null/empty) — moving a note between collections, or
 /// a manual re-file. Returns the moved note.

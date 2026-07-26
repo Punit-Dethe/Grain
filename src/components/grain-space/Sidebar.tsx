@@ -1,22 +1,29 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CalendarDays,
   ChevronRight,
+  FolderPlus,
   Hash,
-  Pencil,
-  Sparkles,
+  Search,
+  Settings,
   SquarePen,
+  X,
 } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
 
 /**
- * [GRAIN] Workspace sidebar — premium three-section layout. A profile header,
- * a Create-note button, then BIG section headings (Reminders / Pinned /
- * Notes / Collections) each with their own colored icon tile on the left and
- * a collapse chevron on the right. Sections read as distinct areas, not a
- * folder tree. While a search runs the sections give way to a flat result
- * list in relevance order.
+ * [GRAIN] The Notes rail (NOTES-TAB-PLAN.md Phase B).
+ *
+ * Search at the top, then FOLDERS, then the loose notes, then reminders, then
+ * Calendar and Settings pinned to the bottom. That order is the one users asked
+ * for and it is also the honest one: folders are where you put things, loose
+ * notes are what you have not put anywhere yet, so a new folder appears above
+ * and a new note appears below.
+ *
+ * The search box lives here rather than in a strip over the editor because this
+ * is where its results render. Moving it down also let the editor have that
+ * strip's height back, which matters now the window can be any size.
  */
 
 const dayFormat = new Intl.DateTimeFormat(undefined, {
@@ -54,7 +61,7 @@ function fireLabel(fireAt: number): string {
   return dayFormat.format(new Date(fireAt));
 }
 
-/** A node in the folder tree built from card `folder` paths. */
+/** A node in the folder tree. */
 type FolderNode = {
   name: string;
   path: string;
@@ -62,28 +69,42 @@ type FolderNode = {
   children: Map<string, FolderNode>;
 };
 
-function buildTree(cards: NoteCard[]): FolderNode {
-  const root: FolderNode = {
-    name: "",
-    path: "",
-    notes: [],
-    children: new Map(),
-  };
+function emptyNode(name: string, path: string): FolderNode {
+  return { name, path, notes: [], children: new Map() };
+}
+
+/** Walk to (creating) the node at `path`, returning it. */
+function nodeAt(root: FolderNode, path: string): FolderNode {
+  let node = root;
+  let acc = "";
+  for (const seg of path.split("/")) {
+    if (!seg) continue;
+    acc = acc ? `${acc}/${seg}` : seg;
+    let child = node.children.get(seg);
+    if (!child) {
+      child = emptyNode(seg, acc);
+      node.children.set(seg, child);
+    }
+    node = child;
+  }
+  return node;
+}
+
+/**
+ * The folder tree, from BOTH the cards' folder paths and the backend's folder
+ * listing.
+ *
+ * Both are needed. Cards alone miss a folder you just created (it holds no notes
+ * yet, so nothing would be there to drag onto). The listing alone misses nothing
+ * in principle, but the cards are what arrive first and what a move updates, so
+ * building from both means the tree is never briefly wrong.
+ */
+function buildTree(cards: NoteCard[], folders: readonly string[]): FolderNode {
+  const root = emptyNode("", "");
+  for (const path of folders) nodeAt(root, path);
   for (const card of cards) {
     if (!card.folder) continue;
-    let node = root;
-    let acc = "";
-    for (const seg of card.folder.split("/")) {
-      if (!seg) continue;
-      acc = acc ? `${acc}/${seg}` : seg;
-      let child = node.children.get(seg);
-      if (!child) {
-        child = { name: seg, path: acc, notes: [], children: new Map() };
-        node.children.set(seg, child);
-      }
-      node = child;
-    }
-    node.notes.push(card);
+    nodeAt(root, card.folder).notes.push(card);
   }
   return root;
 }
@@ -94,7 +115,6 @@ function subtreeCount(node: FolderNode): number {
   for (const child of node.children.values()) n += subtreeCount(child);
   return n;
 }
-
 
 /** Two reminders at rest; expands to a scrollable ~6-row list. */
 const DOCK_REST = 2;
@@ -155,40 +175,69 @@ function RemindersDock({
   );
 }
 
+type SearchMode = "exact" | "semantic";
+
 type Props = {
   cards: NoteCard[];
+  /** Every Grain subfolder, including empty ones (grain_space_list_all_folders). */
+  folders: readonly string[];
   reminders: NoteCard[];
-  searching: boolean;
   results: Note[];
   selectedId: string | null;
   calendarOpen: boolean;
-  /** Folder path → routing description (empty when unset). */
+  query: string;
+  onQueryChange: (q: string) => void;
+  mode: SearchMode;
+  onModeChange: (m: SearchMode) => void;
+  semanticAvailable: boolean;
   onOpenCalendar: () => void;
+  onOpenSettings: () => void;
   onSelectCard: (card: NoteCard) => void;
   onSelectResult: (note: Note) => void;
   onCreate: () => void;
+  onCreateFolder: (name: string) => void;
+  /** File a note into a folder — `null` moves it back out to the Grain root. */
+  onMoveNote: (id: string, folder: string | null) => void;
 };
 
 export function Sidebar({
   cards,
+  folders,
   reminders,
-  searching,
   results,
   selectedId,
   calendarOpen,
+  query,
+  onQueryChange,
+  mode,
+  onModeChange,
+  semanticAvailable,
   onOpenCalendar,
+  onOpenSettings,
   onSelectCard,
   onSelectResult,
   onCreate,
+  onCreateFolder,
+  onMoveNote,
 }: Props) {
   const { t } = useTranslation();
+  const searching = query.trim().length > 0;
 
-  // Section collapse + per-folder expand + "see all" are sidebar-local UI.
+  // Section collapse + per-folder expand + "see all" are rail-local UI.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [openFolders, setOpenFolders] = useState<ReadonlySet<string>>(
     new Set(),
   );
   const [seeAll, setSeeAll] = useState<Record<string, boolean>>({});
+  /** The new-folder field, when open. Inline rather than a dialog: naming a
+   *  folder is one word, and a modal for one word is a ceremony. */
+  const [newFolder, setNewFolder] = useState<string | null>(null);
+
+  // Drag state. The note id rides in a ref as well as the dataTransfer, because
+  // `dragover` is not allowed to read the payload — and the drop target has to
+  // know whether to highlight before the drop happens.
+  const draggingRef = useRef<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const toggleSection = (key: string) =>
     setCollapsed((c) => ({ ...c, [key]: !c[key] }));
@@ -200,30 +249,74 @@ export function Sidebar({
       return next;
     });
 
-  // The "Notes" section holds loose notes (not in a Grain subfolder), split by
-  // a divider: Grain-authored notes above, notes authored in Obsidian inside
-  // the Grain folder (no `grain_id` yet — `readonly` flags them, though all are
-  // editable) below. Collections below are the Grain folder's subfolders.
   const pinned = cards.filter((c) => c.is_pinned);
+  // Loose notes are split by a divider: Grain-authored above, notes authored in
+  // Obsidian inside the Grain folder below (no `grain_id` yet — `readonly` flags
+  // them, though all are editable).
   const grainLoose = cards.filter(
     (c) => !c.folder && !c.is_pinned && !c.readonly,
   );
   const obsidianLoose = cards.filter(
     (c) => !c.folder && !c.is_pinned && c.readonly,
   );
-  const tree = useMemo(() => buildTree(cards), [cards]);
+  const tree = useMemo(() => buildTree(cards, folders), [cards, folders]);
   const topFolders = [...tree.children.values()].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
-  const collectionCount = useMemo(
+  const folderCount = useMemo(
     () => topFolders.reduce((n, f) => n + subtreeCount(f), 0),
     [topFolders],
   );
+
+  /** Card of the note being dragged, so a no-op move can be declined. */
+  const dragFolderOf = (id: string): string | null =>
+    cards.find((c) => c.id === id)?.folder ?? null;
+
+  const beginDrag = (id: string) => (e: React.DragEvent) => {
+    draggingRef.current = id;
+    e.dataTransfer.setData("text/plain", id);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const endDrag = () => {
+    draggingRef.current = null;
+    setDropTarget(null);
+  };
+
+  /** Drop-zone handlers for a folder path (`null` = the Grain root). */
+  const dropZone = (folder: string | null) => {
+    const key = folder ?? " root";
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        const id = draggingRef.current;
+        // Refusing the no-op keeps the highlight honest: no drop indicator on
+        // the folder the note is already in.
+        if (!id || dragFolderOf(id) === folder) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDropTarget(key);
+      },
+      onDragLeave: () => {
+        setDropTarget((current) => (current === key ? null : current));
+      },
+      onDrop: (e: React.DragEvent) => {
+        e.preventDefault();
+        const id = draggingRef.current ?? e.dataTransfer.getData("text/plain");
+        endDrag();
+        if (!id || dragFolderOf(id) === folder) return;
+        onMoveNote(id, folder);
+      },
+      "data-drop": dropTarget === key ? "on" : undefined,
+    };
+  };
 
   const cardRow = (card: NoteCard, depth = 0) => (
     <button
       key={card.id}
       type="button"
+      draggable
+      onDragStart={beginDrag(card.id)}
+      onDragEnd={endDrag}
       className={`gs-row${selectedId === card.id ? " gs-row--on" : ""}`}
       style={depth ? { paddingLeft: 12 + depth * 16 } : undefined}
       onClick={() => onSelectCard(card)}
@@ -263,6 +356,7 @@ export function Sidebar({
     const subs = [...node.children.values()].sort((a, b) =>
       a.name.localeCompare(b.name),
     );
+    const count = subtreeCount(node);
     return (
       <div key={node.path}>
         <button
@@ -270,6 +364,7 @@ export function Sidebar({
           className="gs-row gs-row--folder"
           style={{ paddingLeft: 8 + depth * 16 }}
           onClick={() => toggleFolder(node.path)}
+          {...dropZone(node.path)}
         >
           <span className={`gs-row-chev${open ? " gs-row-chev--open" : ""}`}>
             <ChevronRight width={13} height={13} />
@@ -278,7 +373,7 @@ export function Sidebar({
             <Hash width={12} height={12} />
           </span>
           <span className="gs-row-title">{node.name}</span>
-          <span className="gs-row-count">{subtreeCount(node)}</span>
+          {count > 0 && <span className="gs-row-count">{count}</span>}
         </button>
         {open && (
           <>
@@ -290,49 +385,91 @@ export function Sidebar({
     );
   };
 
-  /** Section heading — Mem style: a small disclosure chevron, a quiet label,
-   * and a subtle count. No icon tiles; hierarchy reads through restraint.
-   * Clicking toggles collapse. */
-  const sectionHead = (key: string, label: string, count?: number) => (
-    <button
-      type="button"
-      className="gs-section"
-      onClick={() => toggleSection(key)}
-    >
-      <span
-        className={`gs-section-chev${collapsed[key] ? " gs-section-chev--closed" : ""}`}
+  /** Section heading — a disclosure chevron, a quiet label, a count, and an
+   *  optional action. The label is its own button so the action can be one too
+   *  (a button cannot contain a button). */
+  const sectionHead = (
+    key: string,
+    label: string,
+    count?: number,
+    action?: { icon: React.ReactNode; title: string; onClick: () => void },
+  ) => (
+    <div className="gs-section-row">
+      <button
+        type="button"
+        className="gs-section"
+        onClick={() => toggleSection(key)}
       >
-        <ChevronRight width={12} height={12} />
-      </span>
-      <span className="gs-section-label">{label}</span>
-      {count != null && count > 0 && (
-        <span className="gs-section-count">{count}</span>
+        <span
+          className={`gs-section-chev${collapsed[key] ? " gs-section-chev--closed" : ""}`}
+        >
+          <ChevronRight width={12} height={12} />
+        </span>
+        <span className="gs-section-label">{label}</span>
+        {count != null && count > 0 && (
+          <span className="gs-section-count">{count}</span>
+        )}
+      </button>
+      {action && (
+        <button
+          type="button"
+          className="gs-section-action"
+          title={action.title}
+          aria-label={action.title}
+          onClick={action.onClick}
+        >
+          {action.icon}
+        </button>
       )}
-    </button>
+    </div>
   );
+
+  const submitNewFolder = () => {
+    const name = (newFolder ?? "").trim();
+    setNewFolder(null);
+    if (name) onCreateFolder(name);
+  };
 
   return (
     <aside className="gs-side">
-      <div className="gs-sidebar-brand">
-        {t("grainSpaceOverlay.brand")}
-      </div>
-      <div className="gs-sidebar-foot">
-        <button
-          type="button"
-          className={`gs-nav-tab${calendarOpen ? " gs-nav-tab--on" : ""}`}
-          onClick={onOpenCalendar}
-        >
-          <span className="gs-nav-tab-icon">
-            <CalendarDays width={13} height={13} />
-          </span>
-          <span className="gs-nav-tab-label">
-            {t("grainSpaceOverlay.calendar")}
-          </span>
-        </button>
-        <button type="button" className="gs-create" onClick={onCreate}>
-          <SquarePen width={15} height={15} />
-          <span>{t("grainSpaceOverlay.createNote")}</span>
-        </button>
+      <div className="gs-side-head">
+        <div className="gs-search">
+          <Search width={13} height={13} />
+          <input
+            value={query}
+            onChange={(e) => onQueryChange(e.target.value)}
+            placeholder={t("grainSpaceOverlay.searchPlaceholder")}
+            spellCheck={false}
+          />
+          {query && (
+            <button
+              type="button"
+              className="gs-iconbtn"
+              title="Clear search"
+              onClick={() => onQueryChange("")}
+            >
+              <X width={12} height={12} />
+            </button>
+          )}
+        </div>
+        {semanticAvailable && (
+          <div className="gs-mode">
+            <button
+              type="button"
+              className={mode === "exact" ? "gs-mode--on" : ""}
+              onClick={() => onModeChange("exact")}
+            >
+              {t("grainSpaceOverlay.exact")}
+            </button>
+            <button
+              type="button"
+              className={mode === "semantic" ? "gs-mode--on" : ""}
+              onClick={() => onModeChange("semantic")}
+            >
+              {t("grainSpaceOverlay.semantic")}
+            </button>
+          </div>
+        )}
       </div>
 
       <nav className="gs-nav">
@@ -377,12 +514,63 @@ export function Sidebar({
               pinned.map((c) => cardRow(c))}
 
             {sectionHead(
+              "folders",
+              t("grainSpaceOverlay.collections"),
+              folderCount,
+              {
+                icon: <FolderPlus width={13} height={13} />,
+                title: t("grainSpaceOverlay.newFolder"),
+                onClick: () => setNewFolder(""),
+              },
+            )}
+            {!collapsed.folders && (
+              <>
+                {newFolder != null && (
+                  <div className="gs-newfolder">
+                    <Hash width={12} height={12} />
+                    <input
+                      autoFocus
+                      value={newFolder}
+                      placeholder={t("grainSpaceOverlay.newFolderPlaceholder")}
+                      spellCheck={false}
+                      onChange={(e) => setNewFolder(e.target.value)}
+                      onBlur={submitNewFolder}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          submitNewFolder();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setNewFolder(null);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                {topFolders.length === 0 && newFolder == null && (
+                  <div className="gs-nav-hint">
+                    {t("grainSpaceOverlay.noFolders")}
+                  </div>
+                )}
+                {topFolders.map((node) => renderFolder(node, 0))}
+              </>
+            )}
+
+            {sectionHead(
               "notes",
               t("grainSpaceOverlay.notes"),
               grainLoose.length + obsidianLoose.length,
+              {
+                icon: <SquarePen width={13} height={13} />,
+                title: t("grainSpaceOverlay.createNote"),
+                onClick: onCreate,
+              },
             )}
             {!collapsed.notes && (
-              <>
+              // Also the drop zone that takes a note back OUT of a folder: the
+              // loose list is literally "notes in no folder", so dragging one
+              // here is the move it looks like.
+              <div className="gs-drop-root" {...dropZone(null)}>
                 {grainLoose.length === 0 && obsidianLoose.length === 0 && (
                   <div className="gs-nav-hint">
                     {t("grainSpaceOverlay.emptyList")}
@@ -395,22 +583,33 @@ export function Sidebar({
                     {looseList("obsidian", obsidianLoose)}
                   </>
                 )}
-              </>
+              </div>
             )}
-
-            {topFolders.length > 0 &&
-              sectionHead(
-                "folders",
-                t("grainSpaceOverlay.collections"),
-                collectionCount,
-              )}
-            {!collapsed.folders &&
-              topFolders.map((node) => renderFolder(node, 0))}
           </>
         )}
       </nav>
 
       <RemindersDock reminders={reminders} onSelectCard={onSelectCard} />
+
+      <div className="gs-side-foot">
+        <button
+          type="button"
+          className={`gs-foot-btn${calendarOpen ? " gs-foot-btn--on" : ""}`}
+          onClick={onOpenCalendar}
+        >
+          <CalendarDays width={13} height={13} />
+          <span>{t("grainSpaceOverlay.calendar")}</span>
+        </button>
+        <button
+          type="button"
+          className="gs-foot-btn"
+          onClick={onOpenSettings}
+          title={t("grainSpaceOverlay.settings")}
+        >
+          <Settings width={13} height={13} />
+          <span>{t("grainSpaceOverlay.settings")}</span>
+        </button>
+      </div>
     </aside>
   );
 }

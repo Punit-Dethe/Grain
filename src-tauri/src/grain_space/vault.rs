@@ -1537,9 +1537,111 @@ pub fn delete_note(v: &Vault, id: &str) -> Result<()> {
 
 // -- collections ------------------------------------------------------------
 
-/// The distinct collection paths (Grain subfolders that currently hold notes) —
+/// How deep the folder walk goes below the Grain folder. A notebook nested deeper
+/// than this is not a notebook; the cap is what stops a pathological vault (or a
+/// symlink loop) from turning a sidebar listing into a full-disk crawl.
+const MAX_FOLDER_DEPTH: usize = 6;
+
+/// Every Grain subfolder, INCLUDING empty ones — what the sidebar draws.
+///
+/// [GRAIN] Deliberately not [`list_folders`]. That one derives folders from the
+/// note index, which is right for its caller (routing a capture wants folders that
+/// hold notes) and wrong here: a folder you just created holds nothing, so it would
+/// vanish the moment you made it and there would be nothing to drag a note onto.
+/// Two callers with genuinely different questions, so two functions rather than one
+/// with a flag.
+pub fn list_all_folders(v: &Vault) -> Result<Vec<String>> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let mut out = std::collections::BTreeSet::new();
+    let root = v.grain_dir();
+    if !root.is_dir() {
+        return Ok(Vec::new()); // nothing captured yet — no folder to show
+    }
+    walk_folders(&root, "", 0, &mut out);
+    Ok(out.into_iter().collect())
+}
+
+/// Collect subfolder paths (relative to the Grain folder, `/`-separated).
+/// Unreadable directories are skipped rather than failing the whole listing — one
+/// permission-denied folder must not empty the sidebar.
+fn walk_folders(
+    dir: &Path,
+    prefix: &str,
+    depth: usize,
+    out: &mut std::collections::BTreeSet<String>,
+) {
+    if depth >= MAX_FOLDER_DEPTH {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        // `file_type` rather than `metadata`: it does not follow symlinks, so a
+        // link pointing back up the tree is skipped instead of recursed into.
+        if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Dotfolders are tooling, not collections — `.obsidian` above all.
+        if name.starts_with('.') {
+            continue;
+        }
+        let rel = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
+        out.insert(rel.clone());
+        walk_folders(&entry.path(), &rel, depth + 1, out);
+    }
+}
+
+/// Create a Grain subfolder. Returns the sanitized path actually created, which
+/// may differ from what was asked for — the caller should adopt it rather than
+/// assume its own string. Idempotent: an existing folder is a success.
+pub fn create_folder(v: &Vault, folder: &str) -> Result<String> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+    let mut dir = v.grain_dir();
+    let mut parts: Vec<String> = Vec::new();
+    for raw in folder.split(['/', '\\']) {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue; // "a//b" — a doubled separator names nothing
+        }
+        // A dot-segment is PATH SEMANTICS, not an illegal character, so it is
+        // refused rather than sanitized away. `sanitize_folder_segment` trims dots,
+        // which means "../../evil" would otherwise quietly become "evil" — the
+        // traversal is contained either way, but handing back a folder the user did
+        // not name is its own bug.
+        if raw.chars().all(|c| c == '.') {
+            return Err(anyhow!("A folder name cannot be dots."));
+        }
+        let seg = sanitize_folder_segment(raw);
+        if seg.is_empty() {
+            return Err(anyhow!("\"{raw}\" is not a usable folder name."));
+        }
+        if parts.len() >= MAX_FOLDER_DEPTH {
+            return Err(anyhow!("That folder is nested too deep."));
+        }
+        dir = dir.join(&seg);
+        parts.push(seg);
+    }
+    if parts.is_empty() {
+        // Nothing but separators and whitespace. Creating the Grain root here would
+        // look like the folder was made.
+        return Err(anyhow!("Give the folder a name."));
+    }
+    fs::create_dir_all(&dir).context("create folder in vault")?;
+    Ok(parts.join("/"))
+}
+
+/// The distinct collection paths (Grain subfolders that currently HOLD notes) —
 /// the candidate categories for routing a fresh capture. Cheap: derived from
 /// the index alone (no file reads), scoped to the Grain folder, sorted + unique.
+/// For what the sidebar draws, see [`list_all_folders`].
 pub fn list_folders(v: &Vault) -> Result<Vec<String>> {
     ensure_vault(v)?;
     let _guard = VAULT_LOCK.lock().unwrap();
@@ -2269,6 +2371,70 @@ mod tests {
         };
         assert_eq!(folder_of(&native, "note.md"), None);
         assert_eq!(folder_of(&native, "Sub/note.md"), Some("Sub".to_string()));
+        cleanup(&v);
+    }
+
+    #[test]
+    fn empty_folders_are_listed_so_a_new_one_is_a_drop_target() {
+        let v = temp_vault("all_folders");
+        // A folder with a note in it, and one with nothing in it. `list_folders`
+        // derives from the note index, so it can only ever see the first; the
+        // sidebar needs both, or a folder would vanish the moment you made it.
+        let note = grain_note("Standup", "body");
+        save_note(&v, &note).unwrap();
+        move_note_to_folder(&v, &note.id, Some("Work")).unwrap();
+        let created = create_folder(&v, "Personal/Trips").unwrap();
+        assert_eq!(created, "Personal/Trips");
+
+        let holding = list_folders(&v).unwrap();
+        assert_eq!(holding, vec!["Work".to_string()]);
+
+        let all = list_all_folders(&v).unwrap();
+        assert_eq!(
+            all,
+            vec![
+                "Personal".to_string(),
+                "Personal/Trips".to_string(),
+                "Work".to_string()
+            ]
+        );
+        cleanup(&v);
+    }
+
+    #[test]
+    fn create_folder_cannot_escape_the_grain_folder() {
+        let v = temp_vault("folder_escape");
+        // `..` sanitizes to nothing (the segment is all dots), so a traversal
+        // attempt cannot climb out — and must not silently "succeed" by creating
+        // the Grain root itself.
+        assert!(create_folder(&v, "../../evil").is_err());
+        assert!(create_folder(&v, "..").is_err());
+        assert!(create_folder(&v, "   ").is_err());
+        assert!(create_folder(&v, "/").is_err());
+        assert!(!v.root.parent().unwrap().join("evil").exists());
+
+        // Illegal filename characters are stripped, not rejected wholesale.
+        assert_eq!(create_folder(&v, "Q1: plans?").unwrap(), "Q1 plans");
+        assert!(v.grain_dir().join("Q1 plans").is_dir());
+
+        // Nesting past the cap is refused rather than truncated — a folder at a
+        // path the caller did not ask for is worse than an error.
+        let deep = (0..MAX_FOLDER_DEPTH + 1)
+            .map(|i| format!("d{i}"))
+            .collect::<Vec<_>>()
+            .join("/");
+        assert!(create_folder(&v, &deep).is_err());
+        cleanup(&v);
+    }
+
+    #[test]
+    fn folder_walk_skips_dotfolders_and_symlink_loops() {
+        let v = temp_vault("folder_walk");
+        create_folder(&v, "Work").unwrap();
+        // `.obsidian` and friends are tooling, not collections.
+        fs::create_dir_all(v.grain_dir().join(".obsidian/plugins")).unwrap();
+        let all = list_all_folders(&v).unwrap();
+        assert_eq!(all, vec!["Work".to_string()]);
         cleanup(&v);
     }
 

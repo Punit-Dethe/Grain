@@ -140,6 +140,16 @@ pub fn list_folders(b: &Backend) -> Result<Vec<String>> {
     vault::list_folders(b)
 }
 
+/// Every Grain subfolder, including empty ones — what the sidebar draws.
+pub fn list_all_folders(b: &Backend) -> Result<Vec<String>> {
+    vault::list_all_folders(b)
+}
+
+/// Create a Grain subfolder; returns the sanitized path actually created.
+pub fn create_folder(b: &Backend, folder: &str) -> Result<String> {
+    vault::create_folder(b, folder)
+}
+
 /// File a Grain note into a subfolder (or back to the Grain root when `None`),
 /// keeping its identity. Auto-categorization's filing action.
 pub fn move_note_to_folder(b: &Backend, id: &str, folder: Option<&str>) -> Result<Note> {
