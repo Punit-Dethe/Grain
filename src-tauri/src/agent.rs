@@ -1717,8 +1717,94 @@ pub async fn agent_run(
     let field = app
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
-    let text = run_conversation(&app, &messages, context.as_deref(), field.as_ref()).await?;
-    Ok(AgentReply::plain(text))
+    let full = build_messages(&messages, context.as_deref(), field.as_ref());
+    run_with_note_tools(&app, full).await
+}
+
+/// How many tool hops one turn may take before it is made to answer. Small on
+/// purpose: search → maybe read one in full → answer is the shape of nearly every
+/// real request, and an unbounded loop is a bill.
+const MAX_NOTE_TOOL_HOPS: usize = 4;
+
+/// Run one Agent turn with the notebook available as tools.
+///
+/// [GRAIN] This is the single door (NOTES-TAB-PLAN.md Phase E). Grain Space used to
+/// have its own summon chords for capture and recall, and the mode was fixed by
+/// whichever key fired — "two doors, not one door with a bouncer". Users were
+/// unanimous that four chords for one feature was too many, so there is one door
+/// now, and the bouncer is not a classifier: the model is simply given the tools
+/// and its choice IS the mode.
+///
+/// The cost is honest. A turn that never touches notes pays for the tool specs in
+/// the request and nothing else — no extra round-trip. A turn that does pays one
+/// hop per tool call, which is what buying a single chord costs.
+///
+/// With the notebook off, `specs` is empty and this degrades to exactly the old
+/// prose path.
+async fn run_with_note_tools(
+    app: &AppHandle,
+    full: Vec<(String, String)>,
+) -> Result<AgentReply, String> {
+    use crate::llm_client::ChatEntry;
+
+    let tools = crate::grain_space::agent_tools::specs(app);
+    if tools.is_empty() {
+        return Ok(AgentReply::plain(run_messages(app, full).await?));
+    }
+
+    let mut entries: Vec<ChatEntry> = full
+        .into_iter()
+        .map(|(role, content)| match role.as_str() {
+            "system" => ChatEntry::System(content),
+            "assistant" => ChatEntry::Assistant(content),
+            _ => ChatEntry::User(content),
+        })
+        .collect();
+
+    let mut log = crate::grain_space::agent_tools::TurnLog::default();
+    let mut reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools)).await?;
+
+    let mut hops = 0usize;
+    while !reply.tool_calls.is_empty() && hops < MAX_NOTE_TOOL_HOPS {
+        hops += 1;
+        entries.push(ChatEntry::AssistantToolCalls(reply.tool_calls.clone()));
+        for call in &reply.tool_calls {
+            let content = crate::grain_space::agent_tools::execute(app, call, &mut log).await;
+            entries.push(ChatEntry::ToolResult {
+                call_id: call.id.clone(),
+                content,
+            });
+        }
+        reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools)).await?;
+    }
+
+    // Still asking for tools at the cap. `entries` ends on a tool result, so this
+    // nudge is safe — advertising NO tools is what makes it terminate, and leaving
+    // a dangling assistant tool-call would be rejected by the API.
+    if !reply.tool_calls.is_empty() {
+        info!("[GRAIN] agent: note-tool hop cap ({MAX_NOTE_TOOL_HOPS}) reached; forcing an answer");
+        entries.push(ChatEntry::User(
+            "Answer now, using what you already have.".to_string(),
+        ));
+        reply = run_messages_with_tools(app, entries, Vec::new()).await?;
+    }
+
+    let sources: Vec<AgentSource> = log
+        .touched()
+        .iter()
+        .map(|t| AgentSource {
+            note_id: t.note_id.clone(),
+            title: t.title.clone(),
+            saved_at: t.saved_at,
+        })
+        .collect();
+
+    Ok(AgentReply {
+        text: reply.content,
+        sources,
+        not_found: false,
+        confirm_delete: None,
+    })
 }
 
 /// The Agent's LLM driver, shared by the panel (`agent_run`) and Quick Agent.

@@ -1405,22 +1405,26 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] Grain Space bindings. Only registered while `grain_space_enabled`
-    // is on (init + toggle both gate on it) — the ids existing in the map costs
-    // nothing. Quick Add is ctrl+shift+c per the feature spec (rebindable — it
-    // collides with terminal-copy on Linux and DevTools inspect in browsers).
-    #[cfg(target_os = "macos")]
-    let default_quick_add_shortcut = "cmd+shift+c";
-    #[cfg(not(target_os = "macos"))]
-    let default_quick_add_shortcut = "ctrl+shift+c";
+    // [GRAIN] The notebook's bindings. It had FOUR, which was the biggest single
+    // source of Grain's shortcut bloat; `grain_space_open` is gone (the notebook is
+    // a tab of the main window, so opening Grain opens it) and the Agent can now
+    // reach captures and recall through its own door, since it carries the notebook
+    // as tools. Retiring these last two entirely is a UX decision about the pill's
+    // in-place "Saved" card — see NOTES-TAB-PLAN.md Phase E.
+    //
+    // Quick add ships UNBOUND. A global chord is scarce, and a feature that is off
+    // by default should not hold one before the user has asked for it; anyone who
+    // wants it assigns a key in the notebook's settings. All of these register only
+    // while `grain_space_enabled` is on.
     bindings.insert(
         "grain_space_quick_add".to_string(),
         ShortcutBinding {
             id: "grain_space_quick_add".to_string(),
-            name: "Quick Add to Space".to_string(),
-            description: "Silently save the highlighted text as a Grain Space note.".to_string(),
-            default_binding: default_quick_add_shortcut.to_string(),
-            current_binding: default_quick_add_shortcut.to_string(),
+            name: "Quick Add to Notes".to_string(),
+            description: "Silently save the highlighted text as a note — no window, no AI."
+                .to_string(),
+            default_binding: String::new(),
+            current_binding: String::new(),
         },
     );
 
@@ -1440,14 +1444,6 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // [GRAIN] No `grain_space_open` binding: the notebook is a tab of the main
-    // window, so opening Grain opens it. Retired ids are pruned from existing
-    // settings files in `migrate` above.
-
-    // [GRAIN] Grain Recall — conversational memory retrieval. Its OWN shortcut,
-    // distinct from summon_agent: pressing this summons the Agent surfaces in
-    // memory mode (ask your notes, get an answer). The mode is fixed by which
-    // key fired — the AI never decides whether a request is assist vs recall.
     #[cfg(target_os = "macos")]
     let default_space_recall_shortcut = "option+shift+m";
     #[cfg(not(target_os = "macos"))]
@@ -1463,6 +1459,10 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: default_space_recall_shortcut.to_string(),
         },
     );
+
+    // [GRAIN] No `grain_space_open` binding: the notebook is a tab now. Retired ids
+    // are pruned from existing settings files in `migrate` above, so an upgrade
+    // releases the chord instead of leaving it registered against a missing action.
 
     AppSettings {
         bindings,

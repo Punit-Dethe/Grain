@@ -327,6 +327,12 @@ impl ShortcutAction for GrainSpaceQuickAddAction {
 // Grain Recall (RECALL-PLAN R1) — summons the Agent surfaces in memory
 // mode (ask your notes, get an answer). Its OWN binding, distinct from
 // summon_agent: the mode is fixed by which key fired, never guessed.
+//
+// [GRAIN] The Agent can now do this from its own door too — it carries the
+// notebook as tools (`grain_space::agent_tools`), so "what did I note about X"
+// works from the single summon chord. This binding survives because retiring it
+// means retiring `AgentMode::Recall`, and that cascade runs through the pill's
+// submit flow; see NOTES-TAB-PLAN.md Phase E.
 struct GrainSpaceRecallAction;
 
 impl ShortcutAction for GrainSpaceRecallAction {
@@ -339,8 +345,12 @@ impl ShortcutAction for GrainSpaceRecallAction {
 
 // Grain Space note capture — summons the Agent surfaces in Capture mode:
 // speak OR type a note (and any selected text comes along as the body), then it
-// is structured and saved. Replaces the old transcribe-pipeline capture so the
-// user gets the pill's text input for free. Its OWN binding; mode fixed here.
+// is structured and saved. Its OWN binding; mode fixed here.
+//
+// [GRAIN] Also reachable from the Agent's `save_note` tool now. The difference is
+// real, which is why this stayed: Capture confirms the save IN the pill card and
+// never opens a panel, where the tool path answers in the reply panel. Collapsing
+// the two is a UX decision, not a refactor.
 struct GrainSpaceCaptureAction;
 
 impl ShortcutAction for GrainSpaceCaptureAction {
@@ -911,10 +921,10 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "agent_followup".to_string(),
         Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
     );
-    // Grain Space: silent selection quick-add (Input C) and note capture
-    // (Inputs A/B — summons the Agent pill in Capture mode: speak or type, any
-    // selection becomes the body, then it's structured and saved). Both bindings
-    // only register while `grain_space_enabled` is on.
+    // Grain Space bindings. Quick add is the one the Agent's note tools cannot
+    // replace: no UI, no model, no wait — and it now ships unbound, because a
+    // global chord is scarce and a feature that is off by default should not hold
+    // one before the user asks. All register only while `grain_space_enabled` is on.
     map.insert(
         "grain_space_quick_add".to_string(),
         Arc::new(GrainSpaceQuickAddAction) as Arc<dyn ShortcutAction>,
