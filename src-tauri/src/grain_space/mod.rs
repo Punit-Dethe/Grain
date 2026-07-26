@@ -439,3 +439,35 @@ pub async fn set_pinned(app: &AppHandle, id: &str, pinned: bool) -> Result<(), S
     emit_notes_changed(app);
     Ok(())
 }
+
+
+/// Arm or clear a note's reminder. `fire_at` is a unix timestamp in seconds;
+/// `None` dismisses whatever was set.
+///
+/// The last thing a note viewer needs that reading and writing bodies does not
+/// cover — a reminder is a property of the note, and setting it from the window
+/// where you are reading it is the obvious place.
+///
+/// A timestamp rather than a local datetime string, matching the command the
+/// app's own UI calls: whoever renders the picker already knows the user's
+/// timezone, and re-parsing a formatted string in Rust would only add a place
+/// for the two to disagree.
+pub async fn set_reminder(app: &AppHandle, id: &str, fire_at: Option<i64>) -> Result<(), String> {
+    require_enabled(app)?;
+    let be = backend::resolve(app)?;
+    let id = id.to_string();
+    let state = match fire_at {
+        Some(at) => note::ReminderState {
+            status: note::ReminderStatus::Armed,
+            fire_at: Some(at),
+        },
+        None => note::ReminderState::default(),
+    };
+    tauri::async_runtime::spawn_blocking(move || backend::set_reminder(&be, &id, state))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    reminders::sync(app);
+    emit_notes_changed(app);
+    Ok(())
+}

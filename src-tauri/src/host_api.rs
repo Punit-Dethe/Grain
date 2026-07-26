@@ -126,7 +126,8 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         | "notes.update"
         | "notes.delete"
         | "notes.move"
-        | "notes.pin" => Some("notes"),
+        | "notes.pin"
+        | "notes.reminder" => Some("notes"),
         "open.url" => Some("open:url"),
         "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -1205,6 +1206,14 @@ pub async fn dispatch(
                 .map_err(internal_error)?;
             Ok(Value::Null)
         }
+        "notes.reminder" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let at = params.get("fireAt").and_then(Value::as_i64);
+            crate::grain_space::set_reminder(app, &id, at)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
+        }
         "open.url" => {
             // Scheme allowlist: http/https/mailto/tel ONLY. A decade of Electron
             // `openExternal` RCEs and Tauri's own shell-open advisory
@@ -1441,6 +1450,7 @@ mod tests {
             "notes.delete",
             "notes.move",
             "notes.pin",
+            "notes.reminder",
         ] {
             assert_eq!(required_capability(method), Some("notes"), "{method}");
         }

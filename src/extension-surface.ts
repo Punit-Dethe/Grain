@@ -116,7 +116,8 @@ const BRIDGE = `<script>(function(){
       update: function(id, fields){ fields = fields || {}; return call("notes.update", { id: String(id), title: fields.title, body: fields.body }); },
       "delete": function(id){ return call("notes.delete", { id: String(id) }); },
       move: function(id, folder){ return call("notes.move", { id: String(id), folder: folder }); },
-      pin: function(id, pinned){ return call("notes.pin", { id: String(id), pinned: pinned !== false }); }
+      pin: function(id, pinned){ return call("notes.pin", { id: String(id), pinned: pinned !== false }); },
+      reminder: function(id, fireAt){ return call("notes.reminder", { id: String(id), fireAt: fireAt == null ? null : Number(fireAt) }); }
     },
     workspace: { close: function(){ return call("workspace.close", {}); } },
     overlay: { dismiss: function(){ return call("overlay.dismiss", {}); } },

@@ -12,7 +12,11 @@ import {
   Sun,
   X,
 } from "lucide-react";
-import { commands, type Note, type NoteCard } from "@/bindings";
+import { type Note, type NoteCard } from "@/bindings";
+// [GRAIN] Not `@/bindings` directly: this component runs BOTH inside the app and
+// inside the extension surface the note UI is moving to, and the adapter is what
+// makes those the same code (NOTE-UI-EXTENSION-PLAN.md).
+import { commands } from "./hostAdapter";
 import { Sidebar } from "./Sidebar";
 import { EditorPane } from "./EditorPane";
 import { CalendarView } from "./CalendarView";
