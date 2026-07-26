@@ -122,7 +122,12 @@ pub struct Surfaces {
 pub struct WorkspaceDecl {
     pub title: String,
     /// `[width, height]`; the host clamps to what the display can show.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "minSize",
+        alias = "min_size",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub min_size: Option<[u32; 2]>,
     /// The workspace UI as a self-contained HTML document, embedded so a
     /// scripted pack stays one shareable file.
@@ -132,7 +137,7 @@ pub struct WorkspaceDecl {
     /// realm). That surrounding page is Grain's code and is the only thing
     /// holding the surface token, so the extension's own markup cannot forge an
     /// identity by asserting one in a payload.
-    #[serde(default)]
+    #[serde(default, rename = "uiSource", alias = "ui_source")]
     pub ui_source: String,
 }
 
@@ -143,12 +148,17 @@ pub struct OverlayDecl {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<[u32; 2]>,
     /// Auto-dismiss budget; the host caps this regardless of what is asked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "timeoutMs",
+        alias = "timeout_ms",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub timeout_ms: Option<u32>,
     /// The overlay UI as a self-contained HTML document, rendered into the same
     /// sandboxed iframe a workspace uses (SPEC §7.1). Embedded so the pack stays
     /// one shareable file.
-    #[serde(default)]
+    #[serde(default, rename = "uiSource", alias = "ui_source")]
     pub ui_source: String,
 }
 
@@ -1074,6 +1084,38 @@ mod tests {
 
     /// The v1 anchor list is contract surface copied from SPEC §4.3 — a typo or
     /// an invented anchor here is a promise we cannot take back.
+    /// A surface declared the way every other part of a manifest spells things.
+    ///
+    /// This read as an EMPTY ui_source before — serde filled the missing snake
+    /// field with its default and the camel one was ignored — so the pack built,
+    /// installed, and opened a window with nothing in it. Silence is the reason
+    /// this is a test and not a doc note.
+    #[test]
+    fn surfaces_accept_the_camel_case_spelling_the_rest_of_a_manifest_uses() {
+        let json = r#"{
+            "workspace": {
+                "title": "Notes",
+                "minSize": [900, 600],
+                "uiSource": "<p>hi</p>"
+            },
+            "overlay": { "timeoutMs": 3000, "uiSource": "<p>hud</p>" }
+        }"#;
+        let s: Surfaces = serde_json::from_str(json).unwrap();
+        let w = s.workspace.expect("workspace parsed");
+        assert_eq!(w.ui_source, "<p>hi</p>");
+        assert_eq!(w.min_size, Some([900, 600]));
+        let o = s.overlay.expect("overlay parsed");
+        assert_eq!(o.ui_source, "<p>hud</p>");
+        assert_eq!(o.timeout_ms, Some(3000));
+
+        // The snake spellings still read, so packs already published keep working.
+        let legacy = r#"{"workspace":{"title":"N","min_size":[800,600],"ui_source":"<p>x</p>"}}"#;
+        let s: Surfaces = serde_json::from_str(legacy).unwrap();
+        let w = s.workspace.expect("legacy workspace parsed");
+        assert_eq!(w.ui_source, "<p>x</p>");
+        assert_eq!(w.min_size, Some([800, 600]));
+    }
+
     #[test]
     fn anchor_list_matches_the_spec_v1_set() {
         assert_eq!(

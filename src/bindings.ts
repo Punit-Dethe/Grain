@@ -241,6 +241,44 @@ async grainSpaceMcpPath() : Promise<string> {
     return await TAURI_INVOKE("grain_space_mcp_path");
 },
 /**
+ * [GRAIN] Where the Grain store keeps its notes. Empty restores the default.
+ */
+async changeGrainSpaceStorePathSetting(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_store_path_setting", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Choose the folder the Grain store keeps notes in. `None` = cancelled.
+ * 
+ * Nothing is moved. Notes already written stay where they are, which is why the
+ * UI says so rather than implying a migration — a silent bulk move of the
+ * user's files is not something a folder picker should do.
+ */
+async grainSpacePickStoreFolder() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_pick_store_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The folder the Grain store is CURRENTLY using, resolved — so the settings row
+ * shows the real location rather than an empty string meaning "the default".
+ */
+async grainSpaceStoreFolder() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_store_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
  * download (opt-in consent flow) is driven by the frontend before it turns
  * this on. OFF must guarantee the embedding model never loads — any resident
@@ -457,30 +495,6 @@ async grainSpaceRebuildIndex() : Promise<Result<number, string>> {
  * needed. On pick, persists the path via the validated setting command and
  * returns it; `None` = user cancelled.
  */
-async changeGrainSpaceStorePathSetting(path: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_store_path_setting", { path }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async grainSpacePickStoreFolder() : Promise<Result<string | null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_pick_store_folder") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async grainSpaceStoreFolder() : Promise<Result<string, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_store_folder") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async grainSpacePickVault() : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_pick_vault") };
@@ -2227,6 +2241,16 @@ grain_space_enabled?: boolean;
  */
 grain_space_semantic?: boolean; 
 /**
+ * [GRAIN] Where the Grain store keeps its notes. Empty = the app's own
+ * data folder, which is the default and what most people want.
+ * 
+ * Choosable because notes are the user's files, not the app's: they may
+ * already have a synced folder, an encrypted volume, or a drive with room.
+ * Only the notes move — the derived index stays beside the app, since it is
+ * rebuildable and does not belong in a folder the user syncs.
+ */
+grain_space_store_path?: string; 
+/**
  * [GRAIN] The MCP bridge: when ON, Grain writes a token file that lets the
  * `grain-mcp` proxy authenticate, so an MCP client can search and read this
  * notebook. OFF by default — sharing the user's notes with another
@@ -2253,8 +2277,7 @@ grain_space_backend?: GrainSpaceBackend;
  * [GRAIN] Absolute path of the Obsidian vault (a plain folder of .md
  * files). Empty = not configured; the vault backend refuses to run.
  */
-grain_space_vault_path?: string;
-grain_space_store_path?: string; 
+grain_space_vault_path?: string; 
 /**
  * [GRAIN] Subfolder inside the vault where Grain writes its captures.
  * Grain only ever creates/edits files under this folder; the rest of the

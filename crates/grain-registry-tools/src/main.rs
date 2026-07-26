@@ -352,22 +352,43 @@ fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
         manifest.as_object_mut().unwrap().remove("entry");
     }
 
-    // Inline each surface's ui_source when it names a project file.
+    // Inline each surface's uiSource when it names a project file.
+    //
+    // Both spellings are read because the manifest schema accepts both; the
+    // camel one is what the rest of a manifest uses and what an author will
+    // write. A declared surface with NEITHER is an error rather than a default,
+    // which is the whole point: a missing uiSource used to build cleanly and
+    // ship a window with nothing in it.
     if let Some(surfaces) = manifest.get_mut("surfaces").and_then(|v| v.as_object_mut()) {
-        for (_name, surface) in surfaces.iter_mut() {
-            let ui_file = surface
-                .get("ui_source")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            if let Some(ui_file) = ui_file {
-                let candidate = src.join(&ui_file);
-                // Only inline when it is actually a file in the project (a short
-                // path); otherwise assume it is already inline HTML.
-                if candidate.is_file() {
-                    let html = fs::read_to_string(&candidate)
-                        .with_context(|| format!("read ui_source {ui_file}"))?;
-                    surface["ui_source"] = serde_json::Value::String(html);
-                }
+        for (name, surface) in surfaces.iter_mut() {
+            let key = if surface.get("uiSource").is_some() {
+                "uiSource"
+            } else {
+                "ui_source"
+            };
+            let ui_file = surface.get(key).and_then(|v| v.as_str()).map(String::from);
+            let Some(ui_file) = ui_file.filter(|f| !f.trim().is_empty()) else {
+                anyhow::bail!(
+                    "surface '{name}' declares no uiSource — a surface with no UI \
+                     would build and then open an empty window"
+                );
+            };
+            let candidate = src.join(&ui_file);
+            // Only inline when it is actually a file in the project (a short
+            // path); otherwise assume it is already inline HTML.
+            if candidate.is_file() {
+                let html = fs::read_to_string(&candidate)
+                    .with_context(|| format!("read uiSource {ui_file}"))?;
+                surface[key] = serde_json::Value::String(html);
+            } else if !ui_file.contains('<') {
+                // Neither a file we could find nor markup. Almost always a typo
+                // in the filename, and silently shipping the literal string as
+                // the UI is the least useful thing we could do with it.
+                anyhow::bail!(
+                    "surface '{name}' names uiSource '{ui_file}', which is not a file in \
+                     {} and does not look like HTML",
+                    src.display()
+                );
             }
         }
     }
