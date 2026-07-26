@@ -4,7 +4,6 @@ import { platform } from "@tauri-apps/plugin-os";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import { AgentPanel } from "./components/agent/AgentPanel";
-import { GrainSpaceHost } from "./components/grain-space/GrainSpaceHost";
 import { initUiScale } from "./lib/utils/uiScale";
 
 // Set platform before render so CSS can scope per-platform (e.g. scrollbar styles)
@@ -35,21 +34,11 @@ if (winLabel === "agent-panel") {
       <AgentPanel />
     </React.StrictMode>,
   );
-} else if (winLabel === "grain-space") {
-  // [GRAIN] Grain Space workspace: frameless, transparent, HIDDEN on close
-  // (hide-don't-destroy for instant re-summon). GrainSpaceHost reclaims the
-  // idle RAM instead: it unmounts the whole UI when the backend puts the
-  // window to sleep and remounts it on revive. Like the Agent panel it skips
-  // the main app's heavy init (UI scaling, model store).
-  document.documentElement.dataset.window = winLabel;
-  document.documentElement.style.background = "transparent";
-  document.body.style.background = "transparent";
-  root.render(
-    <React.StrictMode>
-      <GrainSpaceHost />
-    </React.StrictMode>,
-  );
 } else {
+  // [GRAIN] There is no `grain-space` branch any more. The notes workspace was a
+  // second frameless window with a sleep/revive handshake to reclaim its idle
+  // RAM; it is now the Notes tab of this window, where leaving the tab unmounts
+  // the tree and reclaims the same memory without a second webview.
   // [GRAIN] The main window is opaque + OS-rounded (DWM corner preference in
   // lib.rs). Unlike the Agent branch it is NOT transparent, so the page keeps
   // its background to fill client area outside the rounded React card.

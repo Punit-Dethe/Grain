@@ -22,12 +22,83 @@ pub mod note;
 pub mod recall;
 pub mod reminders;
 pub mod vault;
-pub mod window;
 
 use tauri::{AppHandle, Manager};
 
 /// Event emitted after any note mutation so open UI surfaces refresh.
 pub const NOTES_CHANGED_EVENT: &str = "grain-space://notes-changed";
+
+/// Event emitted when the active corpus is replaced wholesale (backend switch,
+/// different vault, different store folder). See [`emit_corpus_changed`].
+pub const CORPUS_CHANGED_EVENT: &str = "grain-space://corpus-changed";
+
+/// Backend → main window: bring the Notes tab forward (payload: the note id, or
+/// null for "just show me my notes"). Emitted by [`reveal_note`].
+pub const REVEAL_EVENT: &str = "grain-space://reveal";
+
+/// Emitted at an already-mounted Notes tab to make it select a note.
+pub const FOCUS_NOTE_EVENT: &str = "grain-space://focus-note";
+
+/// The note the Notes tab should open on mount, consumed once.
+///
+/// The workspace used to be its own window, and this rode along as that window's
+/// surface payload. It is a tab now, with no window to carry it — but the handoff
+/// still needs two halves, because the tab may or may not already be mounted when
+/// something asks to reveal a note: [`reveal_note`] stashes the id here AND emits
+/// [`FOCUS_NOTE_EVENT`]. A mounting tab takes the stash; a mounted one hears the
+/// event. Exactly one of the two lands.
+static FOCUS_NOTE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Show the main window with the Notes tab forward, optionally on a given note.
+/// The one entry point for "open this note in the UI" — used by the Agent's
+/// source chips and by the reminder rows in settings.
+pub fn reveal_note(app: &AppHandle, note_id: Option<String>) {
+    use tauri::Emitter;
+    if !is_enabled(app) {
+        return;
+    }
+    if let Ok(mut guard) = FOCUS_NOTE.lock() {
+        *guard = note_id.clone();
+    }
+    crate::show_main_window(app);
+    let _ = app.emit(REVEAL_EVENT, note_id.clone());
+    if let Some(id) = note_id {
+        let _ = app.emit(FOCUS_NOTE_EVENT, id);
+    }
+}
+
+/// Take the pending focus note, if any. Consuming: a stale id must never make a
+/// later mount jump to a note the user did not ask for.
+pub fn take_focus_note() -> Option<String> {
+    FOCUS_NOTE.lock().ok().and_then(|mut g| g.take())
+}
+
+/// Whether the Notes tab is currently mounted.
+///
+/// [GRAIN] This replaces "is the workspace window visible", which is what used to
+/// bound the embedding engine's lifetime. The window is gone, and "is the main
+/// window visible" is not the same question — the user can sit on the History tab
+/// all day with Grain in the foreground, and the model must not stay resident for
+/// that. The tab is the only thing that knows, so the tab says so: `NotesTab`
+/// sets this on mount and clears it on unmount, which is the same unmount that
+/// flushes pending saves.
+static WORKSPACE_MOUNTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Frontend → backend: the Notes tab mounted (`true`) or unmounted (`false`).
+pub fn set_workspace_mounted(app: &AppHandle, mounted: bool) {
+    WORKSPACE_MOUNTED.store(mounted, std::sync::atomic::Ordering::SeqCst);
+    if !mounted {
+        // Leaving the tab is the moment to reclaim the model — unless the Agent
+        // panel is still using it, which `_if_idle` is what checks.
+        embed::shutdown_engine_if_idle(app);
+    }
+}
+
+/// True while the Notes tab is on screen. See [`WORKSPACE_MOUNTED`].
+pub fn workspace_mounted() -> bool {
+    WORKSPACE_MOUNTED.load(std::sync::atomic::Ordering::SeqCst)
+}
 
 /// The feature's base directory: `{app_data_dir}/grain_space`. Nothing is
 /// created by calling this — the store creates directories lazily on first write.
@@ -69,8 +140,12 @@ pub fn is_enabled(app: &AppHandle) -> bool {
 
 /// Bring the running process in line with the flag, so OFF is zero-overhead
 /// without a restart: the feature's global shortcuts register or unregister
-/// immediately, the reminder timer arms or tears down, and turning off DESTROYS
-/// the workspace window (not sleeps it) and drops the embedding engine.
+/// immediately, the reminder timer arms or tears down, and turning off drops the
+/// embedding engine.
+///
+/// The workspace itself needs no teardown here any more — it is a tab, and
+/// `NotesTab` renders the on-ramp instead of the workspace the moment the flag
+/// goes false.
 ///
 /// Never touches note data on disk — disabling and uninstalling both leave every
 /// file exactly where it is.
@@ -88,7 +163,6 @@ pub fn apply_enabled(app: &AppHandle, enabled: bool) {
     }
     reminders::sync(app);
     if !enabled {
-        window::destroy(app);
         embed::shutdown_engine();
     }
 }
@@ -97,6 +171,20 @@ pub fn apply_enabled(app: &AppHandle, enabled: bool) {
 pub fn emit_notes_changed(app: &AppHandle) {
     use tauri::Emitter;
     let _ = app.emit(NOTES_CHANGED_EVENT, ());
+}
+
+/// Notify open surfaces that the whole CORPUS changed underneath them — a
+/// different backend, a different vault, a different store folder.
+///
+/// This used to be handled by destroying the workspace window, so the next open
+/// rebuilt against the new corpus. The workspace is a tab now: it is already
+/// mounted, and without this it would keep showing the old vault's notes until
+/// something else happened to refresh it. Distinct from
+/// [`NOTES_CHANGED_EVENT`] on purpose — that means "re-list"; this means "throw
+/// away everything you know, including the open note and the search".
+pub fn emit_corpus_changed(app: &AppHandle) {
+    use tauri::Emitter;
+    let _ = app.emit(CORPUS_CHANGED_EVENT, ());
 }
 
 // ── The MCP bridge's read surface ───────────────────────────────────────────

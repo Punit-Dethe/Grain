@@ -340,52 +340,40 @@ pub async fn grain_space_open_in_obsidian(app: AppHandle, id: String) -> Result<
     Ok(true)
 }
 
-// -- overlay window (Phase 3) ----------------------------------------------------
+// -- revealing a note in the UI --------------------------------------------------
+//
+// [GRAIN] What used to be five commands (open / close / ui_ready / sleep_ready /
+// take_focus_note) driving a second frameless window and its sleep handshake is
+// now one: the workspace is the Notes tab of the main window, so "show me this
+// note" is "show that window with that tab forward".
 
-/// Open the overlay (or refocus it), optionally landing on a note. Used by the
-/// settings tab's note rows; the global shortcut uses the toggle action.
+/// Show the Notes tab, optionally landing on a note. Used by the Agent's source
+/// chips and by the reminder rows in settings.
 #[tauri::command]
 #[specta::specta]
-pub async fn grain_space_open_window(
+pub async fn grain_space_reveal_note(
     app: AppHandle,
     note_id: Option<String>,
 ) -> Result<(), String> {
     gate(&app)?;
-    super::window::open(&app, note_id);
+    super::reveal_note(&app, note_id);
     Ok(())
 }
 
-/// Close (sleep) the overlay: the window hides and its renderer is suspended,
-/// but it survives for an instant re-summon. Deliberately NOT gated: the
-/// window must be closable even if the feature was just disabled underneath it.
-#[tauri::command]
-#[specta::specta]
-pub async fn grain_space_close_window(app: AppHandle) -> Result<(), String> {
-    super::window::close(&app);
-    Ok(())
-}
-
-/// Frontend ack (not gated): the workspace UI is mounted and painted — the
-/// backend may reveal the window now.
-#[tauri::command]
-#[specta::specta]
-pub fn grain_space_ui_ready(app: AppHandle) {
-    super::window::ui_ready(&app);
-}
-
-/// Frontend ack (not gated): the React tree is unmounted (DOM purged) — the
-/// backend may hide the window and suspend the webview now.
-#[tauri::command]
-#[specta::specta]
-pub fn grain_space_sleep_ready(app: AppHandle) {
-    super::window::sleep_ready(&app);
-}
-
-/// One-shot: the note id the overlay should select on mount, if any.
+/// One-shot: the note id the Notes tab should select on mount, if any.
 #[tauri::command]
 #[specta::specta]
 pub fn grain_space_take_focus_note() -> Option<String> {
-    super::window::take_focus_note()
+    super::take_focus_note()
+}
+
+/// The Notes tab mounted (`true`) or unmounted (`false`). Not gated — an unmount
+/// must be recorded even if the feature was switched off underneath it, or the
+/// embedding model would be stranded resident.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_workspace_mounted(app: AppHandle, mounted: bool) {
+    super::set_workspace_mounted(&app, mounted);
 }
 
 // -- semantic search (Phase 4) ---------------------------------------------------
@@ -462,15 +450,12 @@ pub async fn grain_space_semantic_search(
     if !settings.grain_space_semantic {
         return Err("semantic search is disabled".to_string());
     }
-    // Directive 7: the engine's lifetime is bound to the overlay window — and
-    // since hide-don't-destroy, to a VISIBLE overlay (a sleeping window must
-    // never spawn the model).
-    let overlay_visible = app
-        .get_webview_window(super::window::WINDOW_LABEL)
-        .map(|w| w.is_visible().unwrap_or(false))
-        .unwrap_or(false);
-    if !overlay_visible {
-        return Err("Grain Space window is not open".to_string());
+    // Directive 7: the engine's lifetime is bound to a surface being on screen.
+    // The workspace is a tab now, and it reports its own mount — so this refuses
+    // to spawn the model for a caller that is not actually being looked at,
+    // exactly as the old "is the overlay window visible" check did.
+    if !super::workspace_mounted() {
+        return Err("The Notes tab is not open".to_string());
     }
     if !super::embed::model_on_disk() {
         return Err("model-not-downloaded".to_string());

@@ -178,7 +178,7 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
   };
 
   const openInOverlay = (note: Note) => {
-    void commands.grainSpaceOpenWindow(note.id);
+    void commands.grainSpaceRevealNote(note.id);
   };
 
   // Open the note's file in Obsidian via its deep link (vault backend only;

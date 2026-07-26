@@ -15,7 +15,6 @@ import TitleBar from "./components/titlebar";
 import Onboarding, { AccessibilityOnboarding } from "./components/onboarding";
 import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { QuickPanel } from "./components/quick-panel/QuickPanel";
-import { ScaledStage } from "./components/quick-panel/ScaledStage";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
 import { commands } from "@/bindings";
@@ -29,6 +28,12 @@ const renderSettingsContent = (section: SidebarSection) => {
     SECTIONS_CONFIG[section]?.component || SECTIONS_CONFIG.general.component;
   return <ActiveComponent />;
 };
+
+/** [GRAIN] A workspace section owns its whole content box — see `fullBleed` in
+ * SECTIONS_CONFIG. Everything else is a settings console: a centered column with
+ * page padding, a permissions banner above it and the footer below. */
+const isFullBleed = (section: SidebarSection): boolean =>
+  "fullBleed" in SECTIONS_CONFIG[section];
 
 // Inner component reads the theme context (must be inside ThemeProvider).
 function AppInner() {
@@ -118,6 +123,20 @@ function AppInner() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [settings?.debug_mode, updateSetting]);
+
+  // [GRAIN] Something outside this window asked to show a note — an Agent source
+  // chip, a reminder row. The backend has already brought the window forward; all
+  // that is left is to select the tab. Which note (if any) is carried separately:
+  // a mounting workspace takes the stashed id, an already-mounted one hears
+  // `grain-space://focus-note`.
+  useEffect(() => {
+    const unlisten = listen("grain-space://reveal", () => {
+      setCurrentSection("notes");
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   // Listen for recording errors from the backend and show a toast
   useEffect(() => {
@@ -292,50 +311,69 @@ function AppInner() {
         style={{ backgroundColor: "#0c0b0a" }}
       >
         {/* ── LAYER 1: Settings (always mounted, sits underneath) ── */}
-      {/* Chassis fill — no rounded corners. */}
+      {/* Chassis fill. Nothing letterboxes onto it any more — the card below
+          fills the window — but it still paints the client area outside the
+          DWM-rounded window frame on Windows. */}
       <div
         className="absolute inset-0 overflow-hidden"
         style={{ backgroundColor: isSettingsDark ? "#0e0c0b" : "#0c0b0a" }}
       >
-        <ScaledStage designWidth={1280} designHeight={760}>
-          {/* Settings card — no rounded corners. data-theme drives CSS token overrides in App.css. */}
-          <div
-            className="relative w-full h-full overflow-hidden flex"
-            style={{ backgroundColor: "var(--color-paper)" }}
-            data-theme={isSettingsDark ? "dark" : "light"}
-          >
-            {/* TitleBar: absolutely positioned behind the sidebar (z-10).
-                The sidebar covers the left portion; the right strip (window
-                controls + drag region) stays fully exposed and functional. */}
-            <div className="absolute inset-x-0 top-0 z-10">
-              <TitleBar />
-            </div>
-
-            {/* Sidebar: full height, sits above the TitleBar on the left (z-20). */}
-            <div className="relative z-20 h-full shrink-0">
-              <Sidebar
-                activeSection={currentSection}
-                onSectionChange={setCurrentSection}
-                onOpenQuickPanel={() => setIsQuickOpen(true)}
-              />
-            </div>
-
-            {/* Main content: offset from top by TitleBar height (h-9 = 36px). */}
-            <div className="flex-1 flex flex-col overflow-hidden pt-9">
-              <div className="flex-1 overflow-y-auto">
-                {/* key forces remount on tab switch → grain-section-enter animation */}
-                <div
-                  key={currentSection}
-                  className="grain-section-enter flex flex-col items-center px-12 py-9 gap-4"
-                >
-                  <AccessibilityPermissions />
-                  {renderSettingsContent(currentSection)}
-                </div>
-              </div>
-              <Footer />
-            </div>
+        {/* [GRAIN] The settings card fills the window and REFLOWS. It used to be
+            a fixed 1280×760 canvas under one `transform: scale()`, with the
+            window locked to that aspect ratio so the letterboxing never showed.
+            Grain Note lives in this window now: people maximise it to write, and
+            a uniform scale would render the same handful of lines at twice the
+            size instead of showing more of the note. (The Quick Panel keeps its
+            scaled canvas — it is an instrument face, not a document.) */}
+        <div
+          className="relative w-full h-full overflow-hidden flex"
+          style={{ backgroundColor: "var(--color-paper)" }}
+          data-theme={isSettingsDark ? "dark" : "light"}
+        >
+          {/* TitleBar: absolutely positioned behind the sidebar (z-10).
+              The sidebar covers the left portion; the right strip (window
+              controls + drag region) stays fully exposed and functional. */}
+          <div className="absolute inset-x-0 top-0 z-10">
+            <TitleBar />
           </div>
-        </ScaledStage>
+
+          {/* Sidebar: full height, sits above the TitleBar on the left (z-20). */}
+          <div className="relative z-20 h-full shrink-0">
+            <Sidebar
+              activeSection={currentSection}
+              onSectionChange={setCurrentSection}
+              onOpenQuickPanel={() => setIsQuickOpen(true)}
+            />
+          </div>
+
+          {/* Main content: offset from top by TitleBar height (h-9 = 36px).
+              `key={currentSection}` is what animates a tab change — and, for a
+              workspace section, what tears its whole tree down when you leave
+              (see GrainSpaceOverlay's unmount flush). */}
+          <div className="flex-1 flex flex-col overflow-hidden pt-9">
+            {isFullBleed(currentSection) ? (
+              <div
+                key={currentSection}
+                className="grain-section-enter flex-1 min-h-0 overflow-hidden"
+              >
+                {renderSettingsContent(currentSection)}
+              </div>
+            ) : (
+              <>
+                <div className="flex-1 overflow-y-auto">
+                  <div
+                    key={currentSection}
+                    className="grain-section-enter flex flex-col items-center px-12 py-9 gap-4"
+                  >
+                    <AccessibilityPermissions />
+                    {renderSettingsContent(currentSection)}
+                  </div>
+                </div>
+                <Footer />
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
 

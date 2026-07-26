@@ -19,7 +19,6 @@ import { FeaturePanel, useFeatureEnabled } from "./FeaturePanel";
 import { ExtensionAnchor } from "./ExtensionSettings";
 import { GrainSpaceSettings } from "../grain-space/GrainSpaceSettings";
 import { McpBridge } from "../grain-space/McpBridge";
-import { NoteWindowRow } from "../grain-space/NoteWindowRow";
 
 type TabKey =
   | "overview"
@@ -331,7 +330,6 @@ export const ExperimentationsSettings: React.FC = () => {
           {grainSpaceOn && (
             <>
               <GrainSpaceSettings embedded />
-              <NoteWindowRow />
               <McpBridge />
             </>
           )}

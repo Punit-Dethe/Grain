@@ -313,7 +313,7 @@ export function Sidebar({
 
   return (
     <aside className="gs-side">
-      <div className="gs-sidebar-brand" data-tauri-drag-region>
+      <div className="gs-sidebar-brand">
         {t("grainSpaceOverlay.brand")}
       </div>
       <div className="gs-sidebar-foot">

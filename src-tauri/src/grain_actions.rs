@@ -318,18 +318,11 @@ impl ShortcutAction for GrainSpaceQuickAddAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
-// Grain Space overlay toggle (Phase 3) — tap creates the notes window,
-// tap again destroys it. All window work hops to the async runtime inside
-// `window::toggle` (tauri#3990), so this returns instantly.
-struct GrainSpaceOpenAction;
-
-impl ShortcutAction for GrainSpaceOpenAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        crate::grain_space::window::toggle(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
+// [GRAIN] There is no `grain_space_open` action any more. It toggled a second
+// frameless notes window; the notebook is the Notes tab of the main window now,
+// so "open my notes" is opening Grain. Removing a global chord that duplicated
+// the app's own front door is part of the shortcut-bloat cleanup
+// (NOTES-TAB-PLAN.md Phase E).
 
 // Grain Recall (RECALL-PLAN R1) — summons the Agent surfaces in memory
 // mode (ask your notes, get an answer). Its OWN binding, distinct from
@@ -929,10 +922,6 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "grain_space_capture".to_string(),
         Arc::new(GrainSpaceCaptureAction) as Arc<dyn ShortcutAction>,
-    );
-    map.insert(
-        "grain_space_open".to_string(),
-        Arc::new(GrainSpaceOpenAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "grain_space_recall".to_string(),

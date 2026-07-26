@@ -50,7 +50,7 @@
     "advanced": "Advanced",
     "postProcessing": "Processing",
     "experimentations": "Extensions",
-    "grainSpace": "Grain Space",
+    "notes": "Notes",
     "history": "History",
     "debug": "Debug",
     "about": "About"
@@ -938,6 +938,7 @@
     "emptyList": "No notes yet — start typing.",
     "noMatches": "No matches.",
     "noSelection": "Select a note, or press Ctrl+N for a new one.",
+    "reading": "Reading your notes…",
     "titlePlaceholder": "Title",
     "bodyPlaceholder": "Write, or dictate with your capture shortcut…",
     "todos": "To-dos",

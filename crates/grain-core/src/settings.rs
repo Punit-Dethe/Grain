@@ -1198,7 +1198,6 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         "transcribe_native_asr",
         "grain_space_quick_add",
         "grain_space_capture",
-        "grain_space_open",
         "grain_space_recall",
     ] {
         if !settings.bindings.contains_key(id) {
@@ -1206,6 +1205,21 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                 settings.bindings.insert(id.to_string(), binding.clone());
                 changed = true;
             }
+        }
+    }
+
+    // [GRAIN] Drop bindings for actions that no longer exist. A settings file is
+    // long-lived, so a retired id survives an upgrade and keeps occupying a real
+    // global chord — registered against an action that was removed, which means a
+    // key the user can never use and can never see to rebind. Add ids here when
+    // an action is deleted; never reuse one for something else.
+    for id in [
+        // The notes workspace is the Notes tab of the main window, not a second
+        // window to toggle (NOTES-TAB-PLAN.md).
+        "grain_space_open",
+    ] {
+        if settings.bindings.remove(id).is_some() {
+            changed = true;
         }
     }
 
@@ -1426,22 +1440,9 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
-    // Tap toggle for the Grain Space overlay browser (Phase 3): create the
-    // window if absent, destroy it if open.
-    #[cfg(target_os = "macos")]
-    let default_space_open_shortcut = "option+shift+g";
-    #[cfg(not(target_os = "macos"))]
-    let default_space_open_shortcut = "ctrl+shift+g";
-    bindings.insert(
-        "grain_space_open".to_string(),
-        ShortcutBinding {
-            id: "grain_space_open".to_string(),
-            name: "Open Space".to_string(),
-            description: "Open or close the Grain Space notes window.".to_string(),
-            default_binding: default_space_open_shortcut.to_string(),
-            current_binding: default_space_open_shortcut.to_string(),
-        },
-    );
+    // [GRAIN] No `grain_space_open` binding: the notebook is a tab of the main
+    // window, so opening Grain opens it. Retired ids are pruned from existing
+    // settings files in `migrate` above.
 
     // [GRAIN] Grain Recall — conversational memory retrieval. Its OWN shortcut,
     // distinct from summon_agent: pressing this summons the Agent surfaces in

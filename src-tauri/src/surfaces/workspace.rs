@@ -145,31 +145,12 @@ pub fn get(id: &str) -> Option<Arc<Surface>> {
     surfaces().lock().unwrap().get(id).cloned()
 }
 
-/// Toggle the workspace. Safe from a shortcut handler — returns immediately.
-/// Semantics that keep the window reachable:
-/// - not built / asleep → wake it,
-/// - awake but behind   → bring it forward (never sleep — don't lose the user's
-///                        place just because they clicked away),
-/// - awake + focused    → sleep.
-pub fn toggle(app: &AppHandle, surface: &Arc<Surface>) {
-    let app = app.clone();
-    let surface = Arc::clone(surface);
-    tauri::async_runtime::spawn(async move {
-        match app.get_webview_window(&surface.spec.label) {
-            Some(win) => {
-                if !surface.is_awake() || !win.is_visible().unwrap_or(false) {
-                    wake(&app, &surface);
-                } else if win.is_focused().unwrap_or(false) {
-                    close(&app, &surface.spec.id);
-                } else {
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
-            }
-            None => build(&app, &surface),
-        }
-    });
-}
+// [GRAIN] There is no `toggle` here any more. It existed for Grain Space's global
+// shortcut — press to show the notes window, press again to sleep it — and Grain
+// Space was its only caller. The notebook is a tab of the main window now, so that
+// shortcut is gone and nothing else wants toggle semantics: an extension opens its
+// workspace from its own UI and closes it from the window. `open`, `close` and
+// `destroy` are the whole surface.
 
 /// Open (or wake, or refocus) the workspace, optionally handing the frontend a
 /// payload. Safe to call from any thread.

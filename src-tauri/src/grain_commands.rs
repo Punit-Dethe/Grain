@@ -244,9 +244,17 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
 #[tauri::command]
 #[specta::specta]
 pub fn change_grain_space_store_path_setting(app: AppHandle, path: String) -> Result<(), String> {
+    let trimmed = path.trim().to_string();
     let mut settings = settings::get_settings(&app);
-    settings.grain_space_store_path = path.trim().to_string();
+    if settings.grain_space_store_path == trimmed {
+        return Ok(());
+    }
+    settings.grain_space_store_path = trimmed;
     settings::write_settings(&app, settings);
+    // A different notes folder is a different corpus.
+    crate::grain_space::emit_corpus_changed(&app);
+    crate::grain_space::embed::shutdown_engine();
+    crate::grain_space::reminders::sync(&app);
     Ok(())
 }
 
@@ -320,9 +328,10 @@ pub fn change_grain_space_backend_setting(
     }
     settings.grain_space_backend = backend;
     settings::write_settings(&app, settings);
-    // The corpus changes wholesale — destroy the window so it rebuilds against
-    // the new backend rather than showing a stale (slept) view of the old one.
-    crate::grain_space::window::destroy(&app);
+    // The corpus changes wholesale — tell the Notes tab to drop everything it is
+    // showing and re-list, and drop the embedding engine so nothing keeps serving
+    // the old backend's vectors.
+    crate::grain_space::emit_corpus_changed(&app);
     crate::grain_space::embed::shutdown_engine();
     crate::grain_space::reminders::sync(&app);
     Ok(())
@@ -340,8 +349,8 @@ pub fn change_grain_space_vault_path_setting(app: AppHandle, path: String) -> Re
     let mut settings = settings::get_settings(&app);
     settings.grain_space_vault_path = trimmed;
     settings::write_settings(&app, settings);
-    // Different vault ⇒ different corpus: destroy so it rebuilds fresh.
-    crate::grain_space::window::destroy(&app);
+    // Different vault ⇒ different corpus: re-list from scratch, drop the vectors.
+    crate::grain_space::emit_corpus_changed(&app);
     crate::grain_space::embed::shutdown_engine();
     crate::grain_space::reminders::sync(&app);
     Ok(())
@@ -365,8 +374,15 @@ pub fn change_grain_space_vault_folder_setting(
         return Err("Folder must be a plain name like \"Grain\".".to_string());
     }
     let mut settings = settings::get_settings(&app);
+    if settings.grain_space_vault_folder == trimmed {
+        return Ok(());
+    }
     settings.grain_space_vault_folder = trimmed;
     settings::write_settings(&app, settings);
+    // Which subfolder is "Grain's" decides which of the vault's notes are ours
+    // and which are foreign, so this changes the corpus as surely as swapping the
+    // vault does.
+    crate::grain_space::emit_corpus_changed(&app);
     Ok(())
 }
 

@@ -76,48 +76,52 @@ export function EditorPane({
 
   return (
     <section className="gs-sheet">
-      <div className="gs-meta">
-        <span>{dateFormat.format(new Date(note.timestamp))}</span>
-        {folder && <span className="gs-chip">{`#${folder}`}</span>}
-        {readonly && (
-          <span className="gs-chip gs-chip--quiet">
-            <Lock width={9} height={9} />
-            {t("grainSpaceOverlay.readonly")}
-          </span>
-        )}
-      </div>
-      <input
-        className="gs-title"
-        value={note.title}
-        placeholder={t("grainSpaceOverlay.titlePlaceholder")}
-        spellCheck={false}
-        disabled={readonly}
-        onChange={(e) => onEdit({ ...note, title: e.target.value })}
-        onBlur={onFlush}
-      />
-
-      <Suspense
-        fallback={
-          <div className="gs-ed-loading">
-            <textarea
-              className="gs-bodytext"
-              defaultValue={note.body}
-              readOnly
-              placeholder={t("grainSpaceOverlay.bodyPlaceholder")}
-            />
-          </div>
-        }
-      >
-        <MarkdownEditor
-          ref={editorRef}
-          docKey={docKey}
-          value={note.body}
-          readOnly={readonly}
-          placeholder={t("grainSpaceOverlay.bodyPlaceholder")}
-          onChange={(body) => onEdit({ ...note, body })}
+      {/* Everything that is prose shares one capped, centered column
+          (`--gs-measure`); the action bar below spans the whole sheet. */}
+      <div className="gs-column">
+        <div className="gs-meta">
+          <span>{dateFormat.format(new Date(note.timestamp))}</span>
+          {folder && <span className="gs-chip">{`#${folder}`}</span>}
+          {readonly && (
+            <span className="gs-chip gs-chip--quiet">
+              <Lock width={9} height={9} />
+              {t("grainSpaceOverlay.readonly")}
+            </span>
+          )}
+        </div>
+        <input
+          className="gs-title"
+          value={note.title}
+          placeholder={t("grainSpaceOverlay.titlePlaceholder")}
+          spellCheck={false}
+          disabled={readonly}
+          onChange={(e) => onEdit({ ...note, title: e.target.value })}
           onBlur={onFlush}
         />
-      </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="gs-ed-loading">
+              <textarea
+                className="gs-bodytext"
+                defaultValue={note.body}
+                readOnly
+                placeholder={t("grainSpaceOverlay.bodyPlaceholder")}
+              />
+            </div>
+          }
+        >
+          <MarkdownEditor
+            ref={editorRef}
+            docKey={docKey}
+            value={note.body}
+            readOnly={readonly}
+            placeholder={t("grainSpaceOverlay.bodyPlaceholder")}
+            onChange={(body) => onEdit({ ...note, body })}
+            onBlur={onFlush}
+          />
+        </Suspense>
+      </div>
 
       <div className="gs-actions">
         {!readonly && (

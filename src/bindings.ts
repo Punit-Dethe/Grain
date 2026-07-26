@@ -518,49 +518,30 @@ async grainSpaceOpenInObsidian(id: string) : Promise<Result<boolean, string>> {
 }
 },
 /**
- * Open the overlay (or refocus it), optionally landing on a note. Used by the
- * settings tab's note rows; the global shortcut uses the toggle action.
+ * Show the Notes tab, optionally landing on a note. Used by the Agent's source
+ * chips and by the reminder rows in settings.
  */
-async grainSpaceOpenWindow(noteId: string | null) : Promise<Result<null, string>> {
+async grainSpaceRevealNote(noteId: string | null) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_open_window", { noteId }) };
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_reveal_note", { noteId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Close (sleep) the overlay: the window hides and its renderer is suspended,
- * but it survives for an instant re-summon. Deliberately NOT gated: the
- * window must be closable even if the feature was just disabled underneath it.
- */
-async grainSpaceCloseWindow() : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_close_window") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Frontend ack (not gated): the workspace UI is mounted and painted — the
- * backend may reveal the window now.
- */
-async grainSpaceUiReady() : Promise<void> {
-    await TAURI_INVOKE("grain_space_ui_ready");
-},
-/**
- * Frontend ack (not gated): the React tree is unmounted (DOM purged) — the
- * backend may hide the window and suspend the webview now.
- */
-async grainSpaceSleepReady() : Promise<void> {
-    await TAURI_INVOKE("grain_space_sleep_ready");
-},
-/**
- * One-shot: the note id the overlay should select on mount, if any.
+ * One-shot: the note id the Notes tab should select on mount, if any.
  */
 async grainSpaceTakeFocusNote() : Promise<string | null> {
     return await TAURI_INVOKE("grain_space_take_focus_note");
+},
+/**
+ * The Notes tab mounted (`true`) or unmounted (`false`). Not gated — an unmount
+ * must be recorded even if the feature was switched off underneath it, or the
+ * embedding model would be stranded resident.
+ */
+async grainSpaceWorkspaceMounted(mounted: boolean) : Promise<void> {
+    await TAURI_INVOKE("grain_space_workspace_mounted", { mounted });
 },
 async grainSpaceEmbedModelStatus() : Promise<EmbedModelStatus> {
     return await TAURI_INVOKE("grain_space_embed_model_status");

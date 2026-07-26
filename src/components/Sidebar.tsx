@@ -6,12 +6,14 @@ import {
   FlaskConical,
   History,
   Info,
+  NotebookPen,
   Sparkles,
   AudioLines,
 } from "lucide-react";
 import HandyHand from "./icons/HandyHand";
 import { useSettings } from "../hooks/useSettings";
 import { useTheme } from "../contexts/ThemeContext";
+import { NotesTab } from "./grain-space/NotesTab";
 import {
   GeneralSettings,
   AdvancedSettings,
@@ -46,6 +48,10 @@ interface SectionConfig {
   icon: React.ComponentType<IconProps>;
   component: React.ComponentType;
   enabled: (settings: any) => boolean;
+  /** [GRAIN] Render as a workspace, not a settings console: the section owns the
+   * whole content box — no centering column, no page padding, no footer. A flag
+   * rather than a special case in App.tsx, so the next one of these is free. */
+  fullBleed?: true;
 }
 
 export const SECTIONS_CONFIG = {
@@ -54,6 +60,18 @@ export const SECTIONS_CONFIG = {
     icon: HandyHand,
     component: GeneralSettings,
     enabled: () => true,
+  },
+  // [GRAIN] Grain Note is a primary feature, so it gets a primary tab — second,
+  // above History. It briefly had no tab at all (it was going to be an
+  // installable extension); users, testers and contributors were unanimous that
+  // a notebook you have to go and install is a notebook nobody uses. The tab
+  // renders the workspace itself, not a settings console — hence `fullBleed`.
+  notes: {
+    labelKey: "sidebar.notes",
+    icon: NotebookPen,
+    component: NotesTab,
+    enabled: () => true,
+    fullBleed: true,
   },
   history: {
     labelKey: "sidebar.history",
@@ -87,11 +105,6 @@ export const SECTIONS_CONFIG = {
     component: ExperimentationsSettings,
     enabled: () => true,
   },
-  // [GRAIN] NOTE: Grain Space no longer has a tab. It is a `builtin`-tier
-  // extension — installed from the store, and its settings live on its own
-  // extension page (host view `grain://grain-space/settings`). Do not add it
-  // back here; SPEC §5.2 is that features reached this way get a drill-in page,
-  // not a tab.
   debug: {
     labelKey: "sidebar.debug",
     icon: FlaskConical,

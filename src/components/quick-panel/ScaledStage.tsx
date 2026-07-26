@@ -5,27 +5,41 @@ interface ScaledStageProps {
   designWidth: number;
   /** The fixed design height the children are authored at (px). */
   designHeight: number;
+  /**
+   * Ceiling on the scale factor. Unbounded by default. A fixed-composition
+   * surface wants one: past a point "bigger" stops meaning "better fitted" and
+   * starts meaning a billboard, and the extra space is better left as chassis.
+   */
+  maxScale?: number;
   children: React.ReactNode;
   className?: string;
 }
 
 /**
- * [GRAIN] Immaculate, look-preserving scaling.
+ * [GRAIN] Immaculate, look-preserving scaling — for FIXED-COMPOSITION surfaces.
  *
  * Children are authored ONCE at a fixed `designWidth × designHeight` canvas (in
  * absolute px — every font, gap, radius and border is a real pixel value). This
  * component measures its container and applies a single `transform: scale()` so
  * the whole canvas grows/shrinks as one unit to fit the window, centered. Because
  * it's a uniform transform (not a reflow), the layout is pixel-identical at any
- * size — nothing wraps, nothing squashes, the look is exactly preserved. This is
- * the web-native equivalent of how the old QML console *should* have scaled.
+ * size — nothing wraps, nothing squashes, the look is exactly preserved.
  *
  * "contain" fit: scale = min(w/designW, h/designH), so the canvas always fits
  * fully; any leftover space becomes symmetric margin filled by the window bg.
+ *
+ * [GRAIN] SCOPE: the Quick Panel console, and nothing else. The settings view
+ * used to be wrapped in this too, with the main window locked to the same aspect
+ * ratio to hide the letterboxing. That is gone: Grain Note lives in the main
+ * window now, and scaling a text editor up renders the same few lines twice as
+ * large instead of showing more of the note. Reach for this ONLY when the surface
+ * is an instrument face with no scrolling content — otherwise write a fluid
+ * layout.
  */
 export const ScaledStage: React.FC<ScaledStageProps> = ({
   designWidth,
   designHeight,
+  maxScale,
   children,
   className,
 }) => {
@@ -46,7 +60,8 @@ export const ScaledStage: React.FC<ScaledStageProps> = ({
     const apply = () => {
       const { width, height } = el.getBoundingClientRect();
       if (width === 0 || height === 0) return;
-      const scale = Math.min(width / designWidth, height / designHeight);
+      let scale = Math.min(width / designWidth, height / designHeight);
+      if (maxScale != null) scale = Math.min(scale, maxScale);
       inner.style.transform = `scale(${scale})`;
     };
 
@@ -54,7 +69,7 @@ export const ScaledStage: React.FC<ScaledStageProps> = ({
     const ro = new ResizeObserver(apply);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [designWidth, designHeight]);
+  }, [designWidth, designHeight, maxScale]);
 
   return (
     <div

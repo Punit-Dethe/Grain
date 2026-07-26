@@ -688,10 +688,11 @@ export function AgentPanel() {
   }, [position, startCompose]);
 
 
-  /** Open the memory browser — on a specific note (source chip) or unfocused
-   * (the not-found escape hatch). Both go through the existing overlay command. */
+  /** Open the notebook — on a specific note (source chip) or unfocused (the
+   * not-found escape hatch). Brings Grain forward with the Notes tab selected;
+   * there is no separate notes window to summon any more. */
   const openNote = useCallback((noteId: string | null) => {
-    void commands.grainSpaceOpenWindow(noteId).catch(() => {});
+    void commands.grainSpaceRevealNote(noteId).catch(() => {});
   }, []);
 
   // Resolution of each `forget` confirmation, keyed by note id — a forget for a

@@ -13,6 +13,11 @@ import "./quickPanel.css";
 
 const DESIGN_W = 1280;
 const DESIGN_H = 760;
+/** [GRAIN] The console scales to fit, but stops growing here. The main window is
+ *  no longer locked to this canvas's aspect ratio, so on a large display it would
+ *  otherwise keep inflating — a 12px label rendered at 24px is not a better
+ *  instrument face, it is a billboard. Past the cap the extra room stays chassis. */
+const MAX_SCALE = 1.6;
 
 interface QuickPanelProps {
   /** Switch to the full Advanced (settings) view. */
@@ -215,7 +220,11 @@ export const QuickPanel: React.FC<QuickPanelProps> = ({ onOpenAdvanced }) => {
       // OS-rounded (DWM), so this fills the frame outside the rounded card.
       style={{ backgroundColor: "#0c0b0a" }}
     >
-      <ScaledStage designWidth={DESIGN_W} designHeight={DESIGN_H}>
+      <ScaledStage
+        designWidth={DESIGN_W}
+        designHeight={DESIGN_H}
+        maxScale={MAX_SCALE}
+      >
         <div
           className="relative w-full h-full overflow-hidden flex flex-col"
           style={{

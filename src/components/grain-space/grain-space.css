@@ -1,11 +1,13 @@
-/* [GRAIN] Grain Space workspace — premium three-pane surface. Refined warm
- * palette, generous whitespace, bold section headings, subtle depth. The
- * window is transparent and card-sized so the corners read as a floating
- * workspace. Self-contained: loads no other app CSS. */
+/* [GRAIN] Grain Note workspace — refined warm palette, generous whitespace, bold
+ * section headings, subtle depth. Rendered as the Notes TAB of the main window
+ * (NOTES-TAB-PLAN.md): it fills the tab's content box rather than being a
+ * card-sized floating window, so there is no rounding, border or drop shadow to
+ * read as an edge. Still self-contained — it loads no other app CSS, and every
+ * token below is scoped to `.gs-frame`. */
 
 .gs-root {
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   background: transparent;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
@@ -54,8 +56,6 @@
   --selected-row: rgba(30, 27, 22, 0.075);
   --danger-soft: rgba(192, 57, 47, 0.08);
   --inset-highlight: rgba(255, 255, 255, 0.6);
-  --frame-border: rgba(30, 27, 22, 0.1);
-  --frame-shadow: 0 24px 60px -12px rgba(30, 27, 22, 0.18);
   --shadow-sm: 0 1px 2px rgba(30, 27, 22, 0.04);
   --shadow-md: 0 2px 8px rgba(30, 27, 22, 0.05);
   --shadow-lg: 0 4px 16px rgba(30, 27, 22, 0.06);
@@ -89,17 +89,17 @@
   --gs-r-md: 10px;
   --gs-r-lg: 14px;
   --gs-r-xl: 18px;
+  /* Measure — the width of the note's text column. The workspace fills the
+   * window now, and a maximised editor without this runs a line of prose across
+   * two thousand pixels. px, not ch: `ch` resolves against each element's own
+   * font-size, so a 26px title and 16px body would land on different widths. */
+  --gs-measure: 720px;
 
   box-sizing: border-box;
   width: 100%;
   height: 100%;
   display: flex;
   background: var(--paper);
-  border-radius: 18px;
-  border: 1px solid var(--frame-border);
-  box-shadow:
-    inset 0 0 0 1px var(--inset-highlight),
-    var(--frame-shadow);
   color: var(--ink);
   font-family: var(--body);
   overflow: hidden;
@@ -157,8 +157,6 @@
   --selected-row: rgba(255, 255, 255, 0.1);
   --danger-soft: rgba(255, 138, 143, 0.14);
   --inset-highlight: rgba(255, 255, 255, 0.08);
-  --frame-border: rgba(255, 255, 255, 0.12);
-  --frame-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.5);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 3px 10px rgba(0, 0, 0, 0.26);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.28);
@@ -603,14 +601,6 @@
   gap: 4px;
 }
 
-/* Thin vertical divider between note-actions and window controls. */
-.gs-win-sep {
-  flex: none;
-  width: 1px;
-  height: 14px;
-  margin: 0 4px;
-  background: var(--line);
-}
 
 .gs-iconbtn {
   flex: none;
@@ -775,6 +765,20 @@
     var(--shadow-lg),
     inset 0 1px 0 var(--inset-highlight);
   overflow: hidden;
+}
+
+/* The note's text column: date/chips, title and body share ONE capped, centered
+ * track so their left edges line up (each keeps its own 26px inset, which is why
+ * the cap lives on the wrapper and not on the three elements separately). The
+ * bottom action bar deliberately stays outside it and spans the sheet. */
+.gs-column {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: calc(var(--gs-measure) + 52px);
+  margin-inline: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .gs-sheet-empty {

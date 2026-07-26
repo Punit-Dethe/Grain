@@ -15,5 +15,11 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
     environment: "node",
+    // [GRAIN] The suite is currently empty: its only subject was the note UI's
+    // in-app/in-surface adapter, which went away when the workspace became a tab
+    // and stopped needing to run in two hosts. Keeping the runner green rather
+    // than failing on "no test files" — the folder-tree and drag-target logic
+    // landing next is what it is for.
+    passWithNoTests: true,
   },
 });

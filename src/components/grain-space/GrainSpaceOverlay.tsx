@@ -1,34 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Maximize2,
-  MessageSquare,
-  Minus,
-  Moon,
-  Plus,
-  Search,
-  Sun,
-  X,
-} from "lucide-react";
-import { type Note, type NoteCard } from "@/bindings";
-// [GRAIN] Not `@/bindings` directly: this component runs BOTH inside the app and
-// inside the extension surface the note UI is moving to, and the adapter is what
-// makes those the same code (NOTE-UI-EXTENSION-PLAN.md).
-import {
-  commands,
-  hostListen as listen,
-  hostWindow,
-  inExtension,
-} from "./hostAdapter";
+import { listen } from "@tauri-apps/api/event";
+import { MessageSquare, Plus, Search, X } from "lucide-react";
+import { commands, type Note, type NoteCard } from "@/bindings";
+import { useTheme } from "@/contexts/ThemeContext";
 import { Sidebar } from "./Sidebar";
 import { EditorPane } from "./EditorPane";
 import { CalendarView } from "./CalendarView";
 import { ChatRail } from "./ChatRail";
-import { flushBridge } from "./sleepBridge";
 import "./grain-space.css";
 
 /** Backend events (see src-tauri/src/grain_space). */
 const NOTES_CHANGED_EVENT = "grain-space://notes-changed";
+const CORPUS_CHANGED_EVENT = "grain-space://corpus-changed";
 const FOCUS_NOTE_EVENT = "grain-space://focus-note";
 const MODEL_PROGRESS_EVENT = "grain-space://embed-model-progress";
 const MODEL_COMPLETE_EVENT = "grain-space://embed-model-complete";
@@ -42,26 +26,27 @@ type ModelBanner =
   | { kind: "error"; message: string };
 
 /**
- * [GRAIN] The Grain Space workspace shell (TAURI-OVERLAY-PLAN.md): a Mem/
- * Obsidian-style three-pane surface — sidebar (Reminders / Pinned / Notes /
- * Collections), markdown editor sheet, and a slide-in chat rail scaffold.
- * The sidebar lists light `NoteCard`s (no bodies); the full note loads on
- * select. On the vault backend the whole vault appears — the store's folders
- * ARE the collections — and foreign files open read-only. The shell owns all
- * state; the window host above it unmounts everything on sleep (DOM purge).
+ * [GRAIN] The Grain Note workspace (NOTES-TAB-PLAN.md): a Mem/Obsidian-style
+ * two-pane surface — a folder/notes rail and a markdown editor sheet — rendered
+ * as the **Notes tab of the main window**. The rail lists light `NoteCard`s (no
+ * bodies); the full note loads on select. On the vault backend the whole vault
+ * appears — the store's folders ARE the collections — and foreign files open
+ * read-only.
+ *
+ * It used to be its own frameless window with a sleep/revive handshake to
+ * reclaim idle RAM. It does not need one: `App.tsx` keys the section container
+ * on the active tab, so leaving Notes unmounts this whole tree — including the
+ * lazily-loaded editor chunk's instances — which is the same DOM purge the sleep
+ * handshake performed, for free. What that buys is also what makes the unmount
+ * flush below load-bearing.
  */
 export function GrainSpaceOverlay() {
   const { t } = useTranslation();
+  // A workspace follows Grain's theme — not the OS, and not a toggle of its own.
+  // It shares the window with the rest of the app now; two appearances in one
+  // window is not a preference, it is a bug.
+  const { isSettingsDark } = useTheme();
 
-  // GrainSpaceHost unmounts this overlay on sleep. Keep the preference as one
-  // small local value so it is rehydrated on revive without a resident store.
-  const [darkMode, setDarkMode] = useState(() => {
-    try {
-      return window.localStorage.getItem("grain-space-theme") === "dark";
-    } catch {
-      return false;
-    }
-  });
   const [cards, setCards] = useState<NoteCard[]>([]);
   const [results, setResults] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
@@ -73,6 +58,10 @@ export function GrainSpaceOverlay() {
   const [chatOpen, setChatOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
   const [banner, setBanner] = useState<ModelBanner | null>(null);
+  /** A corpus read is in flight (first mount, or a vault/backend/folder switch).
+   * Reconciling a fresh vault is a stat-scan of every file in it, so this is the
+   * difference between "changing vault takes a moment" and "the app froze". */
+  const [loading, setLoading] = useState(true);
 
   const queryRef = useRef("");
   const modeRef = useRef<SearchMode>("exact");
@@ -181,13 +170,26 @@ export function GrainSpaceOverlay() {
     await saveSelected();
   }, [saveSelected]);
 
-  // The host flushes through this bridge right before the sleep-unmount.
+  // [GRAIN] Flush on unmount. This is the one thing a tab does not get for free
+  // that the old sleeping window did: the sleep handshake flushed before the
+  // unmount, but switching tabs just tears the tree down, and the save is
+  // debounced 600 ms. Without this, the last thing you typed before clicking
+  // History is gone.
   useEffect(() => {
-    flushBridge.flush = flushSave;
     return () => {
-      flushBridge.flush = null;
+      void flushSave();
     };
   }, [flushSave]);
+
+  // [GRAIN] Tell the backend we are on screen. This is what bounds the embedding
+  // model's lifetime now that there is no window whose visibility could be
+  // checked: leaving the tab reclaims it (unless the Agent panel still wants it).
+  useEffect(() => {
+    void commands.grainSpaceWorkspaceMounted(true);
+    return () => {
+      void commands.grainSpaceWorkspaceMounted(false);
+    };
+  }, []);
 
   /** Switch the editor to another note (flushing pending edits first). */
   const adopt = useCallback((note: Note | null, readonly: boolean) => {
@@ -298,10 +300,62 @@ export function GrainSpaceOverlay() {
     [],
   );
 
+  /**
+   * Read the corpus from scratch: backend settings, then the listing, then open
+   * whichever note we should land on.
+   *
+   * Used on mount AND on `corpus-changed` — a vault switch, a backend switch, a
+   * different notes folder. Nothing is carried across: the previous vault's cards,
+   * search and open note all belong to a notebook that is no longer the one on
+   * screen. `loading` is what keeps the swap from looking frozen, because the
+   * first listing against a fresh vault reconciles it (a stat-scan of every file)
+   * before it can answer.
+   */
+  const reload = useCallback(async () => {
+    setLoading(true);
+    dirtyRef.current = false;
+    window.clearTimeout(saveTimer.current);
+    setQuery("");
+    queryRef.current = "";
+    setResults([]);
+    setCards([]);
+    adopt(null, false);
+    try {
+      const settings = await commands.getAppSettings();
+      if (settings.status === "ok") {
+        setSemanticAvailable(settings.data.grain_space_semantic ?? false);
+        setIsObsidian(settings.data.grain_space_backend === "obsidian");
+      }
+      const focus = await commands.grainSpaceTakeFocusNote();
+      const list = await commands.grainSpaceListCards();
+      if (list.status !== "ok") {
+        console.error("Grain Space: list failed:", list.error);
+        return;
+      }
+      setCards(list.data);
+      const target = focus
+        ? (list.data.find((c) => c.id === focus) ?? list.data[0])
+        : list.data[0];
+      if (!target) {
+        // No notes at all ⇒ open straight into a new blank note.
+        adopt(blankDraft(), false);
+        return;
+      }
+      const note = await commands.grainSpaceGetNote(target.id);
+      if (note.status === "ok") adopt(note.data, false);
+    } finally {
+      setLoading(false);
+    }
+  }, [adopt]);
+
   // Mount: settings + focus-note handoff + first listing + event wiring.
   useEffect(() => {
     const unlistens = [
       listen(NOTES_CHANGED_EVENT, () => void refresh(true)),
+      // The corpus was replaced underneath us. Do NOT flush first: the pending
+      // edit belongs to a note in the vault we are leaving, and the backend has
+      // already switched, so a save now would write it into the new one.
+      listen(CORPUS_CHANGED_EVENT, () => void reload()),
       listen<string>(FOCUS_NOTE_EVENT, async (event) => {
         await flushSave();
         const result = await commands.grainSpaceGetNote(event.payload);
@@ -326,36 +380,13 @@ export function GrainSpaceOverlay() {
 
     if (!mountedRef.current) {
       mountedRef.current = true;
-      void (async () => {
-        const settings = await commands.getAppSettings();
-        if (settings.status === "ok") {
-          setSemanticAvailable(settings.data.grain_space_semantic ?? false);
-          setIsObsidian(settings.data.grain_space_backend === "obsidian");
-        }
-        const focus = await commands.grainSpaceTakeFocusNote();
-        const list = await commands.grainSpaceListCards();
-        if (list.status !== "ok") {
-          console.error("Grain Space: list failed:", list.error);
-          return;
-        }
-        setCards(list.data);
-        const target = focus
-          ? (list.data.find((c) => c.id === focus) ?? list.data[0])
-          : list.data[0];
-        if (!target) {
-          // No notes at all ⇒ open straight into a new blank note.
-          adopt(blankDraft(), false);
-          return;
-        }
-        const note = await commands.grainSpaceGetNote(target.id);
-        if (note.status === "ok") adopt(note.data, false);
-      })();
+      void reload();
     }
 
     return () => {
       unlistens.forEach((p) => void p.then((fn) => fn()));
     };
-  }, [adopt, flushSave, refresh]);
+  }, [adopt, flushSave, refresh, reload]);
 
   // Debounced search-as-you-type (semantic waits a bit longer per keystroke).
   useEffect(() => {
@@ -367,36 +398,14 @@ export function GrainSpaceOverlay() {
     return () => window.clearTimeout(searchTimer.current);
   }, [query, mode, refresh]);
 
-  const closeWindow = useCallback(() => {
-    void flushSave().then(() => void commands.grainSpaceCloseWindow());
-  }, [flushSave]);
-
-  const toggleTheme = useCallback(() => {
-    setDarkMode((current) => {
-      const next = !current;
-      try {
-        window.localStorage.setItem(
-          "grain-space-theme",
-          next ? "dark" : "light",
-        );
-      } catch {
-        // Storage can be unavailable in restricted webviews; the local state
-        // still lets this session use the selected appearance.
-      }
-      return next;
-    });
-  }, []);
-
-  // Esc: clear the search first, then put the window to sleep. Ctrl+N: new note.
+  // Esc clears the search. It no longer closes anything — this is a tab, and a
+  // stray Escape must never take the user out of the app. Ctrl+N: new note.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        if (!queryRef.current) return;
         e.preventDefault();
-        if (queryRef.current) {
-          setQuery("");
-        } else {
-          closeWindow();
-        }
+        setQuery("");
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "n") {
         e.preventDefault();
         void newNote();
@@ -404,7 +413,7 @@ export function GrainSpaceOverlay() {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [closeWindow, newNote]);
+  }, [newNote]);
 
   // Safety net: flush pending edits if the window is truly torn down.
   useEffect(() => {
@@ -517,7 +526,7 @@ export function GrainSpaceOverlay() {
 
   return (
     <div className="gs-root">
-      <div className="gs-frame" data-theme={darkMode ? "dark" : "light"}>
+      <div className="gs-frame" data-theme={isSettingsDark ? "dark" : "light"}>
         <Sidebar
           cards={cards}
           reminders={reminders}
@@ -532,7 +541,10 @@ export function GrainSpaceOverlay() {
         />
 
         <div className="gs-main">
-          <div className="gs-top" data-tauri-drag-region>
+          {/* No drag region, no window controls, no appearance toggle: this is a
+              tab in Grain's window, which owns its own title bar and theme.
+              (Phase B moves what is left of this strip into the rail.) */}
+          <div className="gs-top">
             <div className="gs-search">
               <Search width={13} height={13} />
               <input
@@ -586,49 +598,6 @@ export function GrainSpaceOverlay() {
                 onClick={() => setChatOpen((v) => !v)}
               >
                 <MessageSquare width={15} height={15} />
-              </button>
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title={
-                  darkMode ? "Use light appearance" : "Use dark appearance"
-                }
-                aria-label={
-                  darkMode ? "Use light appearance" : "Use dark appearance"
-                }
-                aria-pressed={darkMode}
-                onClick={toggleTheme}
-              >
-                {darkMode ? (
-                  <Sun width={15} height={15} />
-                ) : (
-                  <Moon width={15} height={15} />
-                )}
-              </button>
-              <span className="gs-win-sep" />
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title="Minimize"
-                onClick={() => hostWindow.minimize()}
-              >
-                <Minus width={14} height={14} />
-              </button>
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title="Maximize"
-                onClick={() => hostWindow.toggleMaximize()}
-              >
-                <Maximize2 width={14} height={14} />
-              </button>
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title="Close"
-                onClick={closeWindow}
-              >
-                <X width={16} height={16} />
               </button>
             </div>
           </div>
@@ -708,7 +677,13 @@ export function GrainSpaceOverlay() {
           )}
 
           <div className="gs-stage">
-            {calendarOpen ? (
+            {loading ? (
+              <section className="gs-sheet">
+                <div className="gs-sheet-empty">
+                  {t("grainSpaceOverlay.reading")}
+                </div>
+              </section>
+            ) : calendarOpen ? (
               <CalendarView
                 reminders={reminders}
                 onSelectCard={(card) => void selectCard(card)}

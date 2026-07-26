@@ -184,12 +184,13 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let mut win_builder =
         tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
             .title("Grain")
-            // [GRAIN] Native Quick Panel console size (1280×760). The window is
-            // locked to this 1280:760 aspect ratio (see the Resized handler) so it
-            // only scales up/down — never stretches — and the content (scaled by a
-            // single transform) stays pixel-proportional with no letterboxing.
+            // [GRAIN] Opens at the Quick Panel console's size (1280×760), which is
+            // what that console is drawn at — but only as an OPENING size. The
+            // window is fluid and resizes to any shape; the minimum is a real floor
+            // for the settings and notes layouts, not a scaled-down proportion of
+            // the old fixed canvas.
             .inner_size(1280.0, 760.0)
-            .min_inner_size(960.0, 570.0)
+            .min_inner_size(920.0, 620.0)
             .resizable(true)
             // [GRAIN] Custom themed title bar: drop the native OS frame and let
             // the webview own the top strip (drag region + minimize/maximize/
@@ -783,11 +784,9 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_rebuild_index,
             grain_space::commands::grain_space_pick_vault,
             grain_space::commands::grain_space_open_in_obsidian,
-            grain_space::commands::grain_space_open_window,
-            grain_space::commands::grain_space_close_window,
-            grain_space::commands::grain_space_ui_ready,
-            grain_space::commands::grain_space_sleep_ready,
+            grain_space::commands::grain_space_reveal_note,
             grain_space::commands::grain_space_take_focus_note,
+            grain_space::commands::grain_space_workspace_mounted,
             grain_space::commands::grain_space_embed_model_status,
             grain_space::commands::grain_space_uninstall_embed_model,
             grain_space::commands::grain_space_download_embed_model,
@@ -1252,51 +1251,13 @@ pub fn run(cli_args: CliArgs) {
                 // Update tray icon to match new theme, maintaining idle state
                 utils::change_tray_icon(&window.app_handle(), utils::TrayIconState::Idle);
             }
-            tauri::WindowEvent::Resized(size) => {
-                // [GRAIN] Lock the MAIN window to the console's 1280:760 aspect ratio
-                // so it only scales up/down — never stretches thicker/longer. The
-                // Agent windows are backend-placed and must stay exempt.
-                if window.label() != "main" {
-                    return;
-                }
-                const RATIO: f64 = 1280.0 / 760.0;
-                if window.is_maximized().unwrap_or(false) || size.width == 0 || size.height == 0 {
-                    return;
-                }
-
-                use std::sync::atomic::{AtomicU64, Ordering};
-                static LAST_SEEN: AtomicU64 = AtomicU64::new(0);
-                static LAST_SET: AtomicU64 = AtomicU64::new(0);
-                let pack = |w: u32, h: u32| ((w as u64) << 32) | h as u64;
-                let cur = pack(size.width, size.height);
-
-                // Ignore the Resized event our own set_size triggers — that feedback
-                // loop is what made the window wobble/jitter during a drag.
-                if cur == LAST_SET.load(Ordering::Relaxed) {
-                    return;
-                }
-
-                let prev = LAST_SEEN.swap(cur, Ordering::Relaxed);
-                let dw = (size.width as i64 - (prev >> 32) as i64).abs();
-                let dh = (size.height as i64 - (prev & 0xFFFF_FFFF) as i64).abs();
-
-                // Follow the edge the user is actively dragging: derive the OTHER
-                // dimension from it, so neither edge snaps back mid-drag.
-                let (target_w, target_h) = if dh > dw {
-                    (((size.height as f64) * RATIO).round() as u32, size.height)
-                } else {
-                    (size.width, ((size.width as f64) / RATIO).round() as u32)
-                };
-
-                if target_w > 0
-                    && target_h > 0
-                    && ((size.width as i64 - target_w as i64).abs() > 1
-                        || (size.height as i64 - target_h as i64).abs() > 1)
-                {
-                    LAST_SET.store(pack(target_w, target_h), Ordering::Relaxed);
-                    let _ = window.set_size(tauri::PhysicalSize::new(target_w, target_h));
-                }
-            }
+            // [GRAIN] There is deliberately no `Resized` handler. The main window
+            // used to be locked to a 1280:760 aspect ratio here, because its whole
+            // contents were ONE `transform: scale()` on a fixed design canvas — so
+            // any other shape would have letterboxed. Grain Note now lives in this
+            // window, people maximise it to write, and scaling an editor up just
+            // renders the same few lines at twice the size on a monitor that could
+            // have shown twice as many. The window is an ordinary fluid window.
             _ => {}
         })
         .invoke_handler(invoke_handler)
