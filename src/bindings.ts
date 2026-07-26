@@ -228,6 +228,19 @@ async changeGrainSpaceMcpSetting(enabled: boolean) : Promise<Result<null, string
 }
 },
 /**
+ * [GRAIN] Where `grain-mcp` is on this machine, for the config snippet the
+ * Grain Space tab shows.
+ * 
+ * Resolved rather than assumed: the proxy sits beside the app binary in an
+ * install and beside it in the cargo target dir in development, and an MCP
+ * client is given an absolute path — it does not search a PATH we control.
+ * Falls back to the bare name so the snippet is still copyable (and the
+ * mistake obvious) if the binary has not been built yet.
+ */
+async grainSpaceMcpPath() : Promise<string> {
+    return await TAURI_INVOKE("grain_space_mcp_path");
+},
+/**
  * [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
  * download (opt-in consent flow) is driven by the frontend before it turns
  * this on. OFF must guarantee the embedding model never loads — any resident
@@ -444,6 +457,30 @@ async grainSpaceRebuildIndex() : Promise<Result<number, string>> {
  * needed. On pick, persists the path via the validated setting command and
  * returns it; `None` = user cancelled.
  */
+async changeGrainSpaceStorePathSetting(path: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_grain_space_store_path_setting", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpacePickStoreFolder() : Promise<Result<string | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_pick_store_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async grainSpaceStoreFolder() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_store_folder") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async grainSpacePickVault() : Promise<Result<string | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_pick_vault") };
@@ -2216,7 +2253,8 @@ grain_space_backend?: GrainSpaceBackend;
  * [GRAIN] Absolute path of the Obsidian vault (a plain folder of .md
  * files). Empty = not configured; the vault backend refuses to run.
  */
-grain_space_vault_path?: string; 
+grain_space_vault_path?: string;
+grain_space_store_path?: string; 
 /**
  * [GRAIN] Subfolder inside the vault where Grain writes its captures.
  * Grain only ever creates/edits files under this folder; the rest of the

@@ -195,6 +195,9 @@ const settingUpdaters: {
   // revokes it, so a client that was connected stops being able to return.
   grain_space_mcp: (value) =>
     commands.changeGrainSpaceMcpSetting(value as boolean),
+  // [GRAIN] Where the Grain store keeps notes. Empty = the app's data folder.
+  grain_space_store_path: (value) =>
+    commands.changeGrainSpaceStorePathSetting(value as string),
   grain_space_auto_reminders: (value) =>
     commands.changeGrainSpaceAutoRemindersSetting(value as boolean),
   // [GRAIN] Obsidian vault backend (OBSIDIAN-PLAN.md): a hard switch between

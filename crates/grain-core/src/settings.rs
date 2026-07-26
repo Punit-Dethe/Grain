@@ -781,6 +781,15 @@ pub struct AppSettings {
     /// shipped with the app).
     #[serde(default)]
     pub grain_space_semantic: bool,
+    /// [GRAIN] Where the Grain store keeps its notes. Empty = the app's own
+    /// data folder, which is the default and what most people want.
+    ///
+    /// Choosable because notes are the user's files, not the app's: they may
+    /// already have a synced folder, an encrypted volume, or a drive with room.
+    /// Only the notes move — the derived index stays beside the app, since it is
+    /// rebuildable and does not belong in a folder the user syncs.
+    #[serde(default)]
+    pub grain_space_store_path: String,
     /// [GRAIN] The MCP bridge: when ON, Grain writes a token file that lets the
     /// `grain-mcp` proxy authenticate, so an MCP client can search and read this
     /// notebook. OFF by default — sharing the user's notes with another
@@ -1535,6 +1544,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_panel_position: AgentPanelPosition::default(),
         grain_space_enabled: false,
         grain_space_semantic: false,
+        grain_space_store_path: String::new(),
         grain_space_mcp: false,
         grain_space_auto_reminders: true,
         grain_space_decay_half_life_days: default_grain_space_decay_half_life_days(),

@@ -37,6 +37,26 @@ pub fn base_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .map_err(|e| format!("failed to resolve app data dir: {e}"))
 }
 
+/// Where the Grain store keeps its NOTES: the user's chosen folder, or the
+/// app's own data folder when they have not chosen one.
+///
+/// Deliberately separate from [`base_dir`], which stays the home of the derived
+/// index. The index is rebuildable and machine-local; putting it inside a folder
+/// the user syncs would ship a SQLite file between machines to no benefit and
+/// some risk.
+pub fn store_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let chosen = crate::settings::get_settings(app).grain_space_store_path;
+    let chosen = chosen.trim();
+    if chosen.is_empty() {
+        return base_dir(app);
+    }
+    let path = std::path::PathBuf::from(chosen);
+    if !path.is_dir() {
+        return Err(format!("Notes folder not found: {chosen}"));
+    }
+    Ok(path)
+}
+
 /// Master gate. Every Grain Space entry point checks this first.
 ///
 /// `grain_space_enabled` remains the ONE runtime flag (the shortcut-registration

@@ -240,6 +240,16 @@ pub fn change_grain_space_enabled_setting(app: AppHandle, enabled: bool) -> Resu
     crate::grain_space::apply_enabled(&app, enabled);
     Ok(())
 }
+/// [GRAIN] Where the Grain store keeps its notes. Empty restores the default.
+#[tauri::command]
+#[specta::specta]
+pub fn change_grain_space_store_path_setting(app: AppHandle, path: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.grain_space_store_path = path.trim().to_string();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Where `grain-mcp` is on this machine, for the config snippet the
 /// Grain Space tab shows.
 ///

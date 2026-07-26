@@ -274,6 +274,39 @@ pub async fn grain_space_pick_vault(app: AppHandle) -> Result<Option<String>, St
     Ok(Some(path))
 }
 
+/// Choose the folder the Grain store keeps notes in. `None` = cancelled.
+///
+/// Nothing is moved. Notes already written stay where they are, which is why the
+/// UI says so rather than implying a migration — a silent bulk move of the
+/// user's files is not something a folder picker should do.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_pick_store_folder(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if !is_enabled(&app) {
+        return Err("Grain Space is disabled".to_string());
+    }
+    let app2 = app.clone();
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || app2.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| e.to_string())?;
+    let Some(folder) = picked.and_then(|f| f.into_path().ok()) else {
+        return Ok(None);
+    };
+    let path = folder.to_string_lossy().to_string();
+    crate::grain_commands::change_grain_space_store_path_setting(app, path.clone())?;
+    Ok(Some(path))
+}
+
+/// The folder the Grain store is CURRENTLY using, resolved — so the settings row
+/// shows the real location rather than an empty string meaning "the default".
+#[tauri::command]
+#[specta::specta]
+pub fn grain_space_store_folder(app: AppHandle) -> Result<String, String> {
+    super::store_dir(&app).map(|p| p.display().to_string())
+}
+
 /// Open a note's file in Obsidian via its `obsidian://open?path=…` deep link
 /// (vault backend only). Returns `true` when a link was opened, `false` for the
 /// grain store (its notes have no external file). Opened backend-side so no

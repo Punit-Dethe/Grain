@@ -27,7 +27,7 @@ pub fn resolve(app: &AppHandle) -> std::result::Result<Backend, String> {
     let settings = crate::settings::get_settings(app);
     match settings.grain_space_backend {
         crate::settings::GrainSpaceBackend::Grain => {
-            let v = Vault::native(super::base_dir(app)?);
+            let v = Vault::native(super::store_dir(app)?);
             // One-time (per run, cheap after the first call): fold any legacy
             // pre-unification JSON notes into the native vault.
             vault::migrate_legacy_json_once(&v);

@@ -9,6 +9,7 @@ import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Switch } from "../../ui/Switch";
 import { InfoHint } from "../../ui/InfoHint";
+import { StorageSection } from "./StorageSection";
 import { CountChip } from "../../ui/CountChip";
 import { ShortcutInput } from "../ShortcutInput";
 
@@ -313,69 +314,7 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
 
       {enabled && (
         <>
-          <SettingsGroup
-            title="Storage"
-            info="Where your notes live. The built-in Grain store keeps them as plain files in the app's data folder. Or point Grain at an Obsidian vault: notes become ordinary Markdown files you own — searchable here, editable in Obsidian, synced by whatever your vault already uses. Switching is a hard swap between the two stores; nothing is migrated or deleted."
-          >
-            <ToggleSwitch
-              label="Store notes in an Obsidian vault"
-              description="Capture writes Markdown into your vault; search and Recall cover the whole vault."
-              descriptionMode="tooltip"
-              grouped
-              checked={backend === "obsidian"}
-              isUpdating={isUpdating("grain_space_backend")}
-              onChange={(v) => void onBackendToggle(v)}
-            />
-            {backend === "obsidian" && (
-              <>
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm text-ink">
-                      {t("settings.grainSpace.vaultFolderLabel")}
-                    </div>
-                    <div
-                      className="text-xs text-ink-soft truncate"
-                      title={vaultPath}
-                    >
-                      {vaultPath || t("settings.grainSpace.vaultUnset")}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void pickVault()}
-                    className="text-xs font-medium text-accent hover:underline shrink-0"
-                  >
-                    {t("settings.grainSpace.chooseVault")}
-                  </button>
-                </div>
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <div className="flex-1 min-w-0 flex items-center gap-2">
-                    <div className="text-sm text-ink">
-                      {t("settings.grainSpace.subfolderLabel")}
-                    </div>
-                    <InfoHint text={t("settings.grainSpace.subfolderHint")} />
-                  </div>
-                  <input
-                    type="text"
-                    value={folderDraft ?? vaultFolder}
-                    onChange={(e) => setFolderDraft(e.target.value)}
-                    onBlur={() => void commitFolder()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter")
-                        (e.target as HTMLInputElement).blur();
-                    }}
-                    spellCheck={false}
-                    className="w-36 shrink-0 rounded border border-line bg-transparent px-2 py-1 text-sm text-ink focus:border-accent focus:outline-none"
-                  />
-                </div>
-                {vaultMsg && (
-                  <div className="px-4 pb-3 text-xs text-red-500">
-                    {vaultMsg}
-                  </div>
-                )}
-              </>
-            )}
-          </SettingsGroup>
+          <StorageSection />
 
           <SettingsGroup
             title="Capture"
