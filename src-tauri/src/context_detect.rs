@@ -1081,6 +1081,27 @@ mod windows_impl {
                 _ => category,
             };
 
+            // [GRAIN] One line describing what resolution actually concluded.
+            // UI Automation is an external surface that varies by app, browser
+            // and version, and every read here degrades silently by design — so
+            // without this, a wrong or empty result is indistinguishable from
+            // the feature being off. Content is never logged: counts and shapes
+            // only, so raising the log level can't turn into a transcript of
+            // what the user was typing.
+            log::debug!(
+                "[GRAIN] context: exe={exe} category={category:?} field={:?} \
+                 confidence={:?} host={} region={} caret={} terms={}",
+                scan.field,
+                scan.confidence,
+                scan.url_host.as_deref().unwrap_or("-"),
+                scan.region.as_deref().unwrap_or("-"),
+                scan.caret
+                    .as_ref()
+                    .map(|c| format!("{}/{}", c.before.len(), c.after.len()))
+                    .unwrap_or_else(|| "-".into()),
+                scan.terms.len(),
+            );
+
             Some(ActiveContext {
                 app_name,
                 exe,
