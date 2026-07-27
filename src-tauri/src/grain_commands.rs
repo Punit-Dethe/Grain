@@ -93,6 +93,19 @@ pub fn change_context_nearby_terms_setting(app: AppHandle, enabled: bool) -> Res
     Ok(())
 }
 
+/// [GRAIN] Toggle seamless insertion — reading a short span either side of the
+/// caret so dictated text flows into what surrounds it. Its own switch rather
+/// than part of nearby terms, because it sends a raw excerpt where that one
+/// promises only unique tokens. Only effective when context awareness is on.
+#[tauri::command]
+#[specta::specta]
+pub fn change_context_caret_text_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.context_caret_text = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Agent auto-copy policy (off / first reply / all replies).
 #[tauri::command]
 #[specta::specta]
@@ -203,7 +216,7 @@ pub fn sync_agent_reply_surface_slot(app: &AppHandle) {
 #[specta::specta]
 pub fn detect_active_app() -> Option<DetectedApp> {
     // The capture button only needs the app/URL, not focused-field terms.
-    crate::context_detect::detect_active_context(false).map(|c| DetectedApp {
+    crate::context_detect::detect_active_context(false, false).map(|c| DetectedApp {
         exe: c.exe,
         exe_path: c.exe_path,
         name: c.app_name,

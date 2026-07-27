@@ -219,6 +219,35 @@ pub enum FieldKind {
     Unknown,
 }
 
+/// The text immediately around the caret, for seamless insertion.
+///
+/// Dictating into the middle of an existing sentence is where the pipeline is
+/// most obviously wrong today: it capitalizes the first word and drops the
+/// leading space, so the user fixes the same two things by hand every time. The
+/// model can only get that right if it can see what it is landing between.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CaretContext {
+    /// Text immediately before the caret (tail-most [`MAX_CARET_CHARS`]).
+    pub before: String,
+    /// Text immediately after the caret (head-most [`MAX_CARET_CHARS`]).
+    pub after: String,
+}
+
+impl CaretContext {
+    fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.after.is_empty()
+    }
+}
+
+/// How much text either side of the caret is worth sending.
+///
+/// Small on purpose. What the model needs is the *seam* — the few words it must
+/// join onto and the punctuation it must not duplicate — not the document. This
+/// is also the context-rot argument in miniature: surrounding prose is the most
+/// confusable possible distractor for a task whose output is also prose, so the
+/// budget stays at the joint.
+const MAX_CARET_CHARS: usize = 320;
+
 /// How much we trust the resolved surface.
 ///
 /// The gating rule this exists for: **a wrong rule is worse than no rule.** A
@@ -792,6 +821,9 @@ pub struct ActiveContext {
     /// How much of the above is structural evidence rather than a heuristic.
     /// Gates whether the site may override the app category.
     pub confidence: Confidence,
+    /// Text either side of the caret, when the seamless-insertion opt-in is on
+    /// and the surface exposes a caret. Ephemeral: never stored, never logged.
+    pub caret: Option<CaretContext>,
     /// Unique non-dictionary tokens read from the focused field (proper nouns,
     /// identifiers, library names) — an ADDITIVE bias hint, never raw text. Empty
     /// unless the nearby-terms opt-in is on and something was found.
@@ -832,7 +864,8 @@ pub fn compose_prompt(
     // capitalizing and adding a full stop is wrong in a search box and the user
     // has to delete it every time.
     let one_line = ctx.is_some_and(|c| c.field == FieldKind::SingleLine);
-    let has_ctx = soft.is_some() || !terms.is_empty() || one_line;
+    let caret = ctx.and_then(|c| c.caret.as_ref());
+    let has_ctx = soft.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
     if spoken.is_none() && !has_ctx {
         return base.to_string(); // nothing to add — untouched.
@@ -896,6 +929,31 @@ pub fn compose_prompt(
                  user dictated it that way.\n",
             );
         }
+        // The seam contract. Everything here is about the JOIN, not the content:
+        // the model is told what it is landing between and, emphatically, that
+        // the surrounding text is not its to repeat or rewrite. Without that last
+        // instruction a model handed context will happily continue the sentence
+        // it can see instead of formatting the one it was given.
+        if let Some(caret) = caret {
+            pre.push_str(
+                "The transcript will be inserted EXACTLY between the two excerpts \
+                 below. Make it read naturally there: fix the leading and trailing \
+                 spacing, continue mid-sentence without re-capitalizing, do not \
+                 duplicate punctuation that is already present, and NEVER repeat, \
+                 continue or rewrite the surrounding text — it is context, not \
+                 input.\n",
+            );
+            if !caret.before.is_empty() {
+                pre.push_str("<before_text>");
+                pre.push_str(&caret.before);
+                pre.push_str("</before_text>\n");
+            }
+            if !caret.after.is_empty() {
+                pre.push_str("<after_text>");
+                pre.push_str(&caret.after);
+                pre.push_str("</after_text>\n");
+            }
+        }
         if !terms.is_empty() {
             // Additive, LOW authority: only fix a term to one of these spellings when
             // the transcript clearly meant it; otherwise ignore. Never insert them.
@@ -921,16 +979,16 @@ pub fn compose_prompt(
 
 /// Detect the foreground app/site. `None` on unsupported platforms or on any
 /// failure (caller then falls back to BASE-only). Cheap: one Win32 round-trip for
-/// the app; UI Automation is consulted only for browser URLs and — when
-/// `read_nearby_terms` is set — the focused field's unique terms.
-pub fn detect_active_context(read_nearby_terms: bool) -> Option<ActiveContext> {
+/// the app; UI Automation is consulted only for browser URLs and for whichever
+/// of the two content opt-ins (`read_nearby_terms`, `read_caret`) are on.
+pub fn detect_active_context(read_nearby_terms: bool, read_caret: bool) -> Option<ActiveContext> {
     #[cfg(windows)]
     {
-        windows_impl::detect(read_nearby_terms)
+        windows_impl::detect(read_nearby_terms, read_caret)
     }
     #[cfg(not(windows))]
     {
-        let _ = read_nearby_terms;
+        let _ = (read_nearby_terms, read_caret);
         None
     }
 }
@@ -961,7 +1019,7 @@ mod windows_impl {
         GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
     };
 
-    pub(super) fn detect(read_nearby_terms: bool) -> Option<ActiveContext> {
+    pub(super) fn detect(read_nearby_terms: bool, read_caret: bool) -> Option<ActiveContext> {
         unsafe {
             let hwnd: HWND = GetForegroundWindow();
             if hwnd.0.is_null() {
@@ -992,8 +1050,8 @@ mod windows_impl {
             // a browser (for the URL) or the nearby-terms opt-in. Everything here
             // is best-effort and SILENT — any failure just yields None/empty.
             let is_browser = category == AppCategory::Browser;
-            let scan = if is_browser || read_nearby_terms {
-                super::uia::read(hwnd, is_browser, read_nearby_terms)
+            let scan = if is_browser || read_nearby_terms || read_caret {
+                super::uia::read(hwnd, is_browser, read_nearby_terms, read_caret)
             } else {
                 // Neither the URL nor the terms are wanted, so UI Automation is
                 // never spun up at all — the common non-browser path costs one
@@ -1032,6 +1090,7 @@ mod windows_impl {
                 field: scan.field,
                 region: scan.region,
                 confidence: scan.confidence,
+                caret: scan.caret,
                 nearby_terms: scan.terms,
             })
         }
@@ -1076,7 +1135,9 @@ mod windows_impl {
 /// into `None`/empty, and password fields are never read. No UI is ever shown.
 #[cfg(windows)]
 mod uia {
-    use super::{extract_unique_terms, host_from_url, Confidence, FieldKind};
+    use super::{
+        extract_unique_terms, host_from_url, CaretContext, Confidence, FieldKind, MAX_CARET_CHARS,
+    };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
@@ -1088,6 +1149,9 @@ mod uia {
         IUIAutomationValuePattern, TreeScope_Descendants, TreeScope_Element,
         UIA_AriaRolePropertyId, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
         UIA_EditControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
+    };
+    use windows::Win32::UI::Accessibility::{
+        TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
     };
 
     /// Cap on focused-field text scanned (bounds cost on huge documents).
@@ -1124,6 +1188,7 @@ mod uia {
         pub region: Option<String>,
         pub confidence: Confidence,
         pub terms: Vec<String>,
+        pub caret: Option<CaretContext>,
     }
 
     /// How far up the ancestor chain to walk before giving up. Real chains from a
@@ -1156,7 +1221,12 @@ mod uia {
     /// It is also cheaper than what it replaces: one upward walk of ~15 hops
     /// instead of a subtree sweep, with every property for each hop fetched in a
     /// single cross-process call via the cache request.
-    pub(super) fn read(hwnd: HWND, want_url: bool, want_terms: bool) -> FocusScan {
+    pub(super) fn read(
+        hwnd: HWND,
+        want_url: bool,
+        want_terms: bool,
+        want_caret: bool,
+    ) -> FocusScan {
         unsafe {
             let _com = ComGuard::init();
             let automation: IUIAutomation =
@@ -1198,6 +1268,10 @@ mod uia {
                     Some(text) => extract_unique_terms(&text),
                     None => Vec::new(),
                 };
+            }
+
+            if want_caret {
+                scan.caret = read_caret(&focused).filter(|c| !c.is_empty());
             }
 
             let (url, region) = walk_ancestors(&automation, &focused, want_url);
@@ -1312,6 +1386,91 @@ mod uia {
                 | "dialog"
                 | "region"
         )
+    }
+
+    /// Read a bounded span of text either side of the caret.
+    ///
+    /// Both ranges are built by taking the caret (or, if text is selected, the
+    /// selection — dictation replaces it, so the seam is still its two edges),
+    /// collapsing to that edge, and walking outward a fixed number of
+    /// CHARACTERS. Walking outward rather than reading from the document start
+    /// is what keeps this bounded on a large document: the alternative,
+    /// `GetText` over a doc-anchored range, returns text from the top of the
+    /// file, which is both expensive and not the text we need.
+    unsafe fn read_caret(element: &IUIAutomationElement) -> Option<CaretContext> {
+        let pattern: IUIAutomationTextPattern = element
+            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            .ok()?;
+        let selection = pattern.GetSelection().ok()?;
+        // No selection array at all means no caret to anchor on (some read-only
+        // surfaces). Nothing to do; not an error.
+        let caret = selection.GetElement(0).ok()?;
+        let span = MAX_CARET_CHARS as i32;
+
+        // Before: collapse to the leading edge, then extend backwards.
+        let before = caret
+            .Clone()
+            .ok()
+            .and_then(|range| {
+                range
+                    .MoveEndpointByRange(
+                        TextPatternRangeEndpoint_End,
+                        &caret,
+                        TextPatternRangeEndpoint_Start,
+                    )
+                    .ok()?;
+                range
+                    .MoveEndpointByUnit(
+                        TextPatternRangeEndpoint_Start,
+                        TextUnit_Character,
+                        -span,
+                    )
+                    .ok()?;
+                range.GetText(-1).ok()
+            })
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        // After: collapse to the trailing edge, then extend forwards.
+        let after = caret
+            .Clone()
+            .ok()
+            .and_then(|range| {
+                range
+                    .MoveEndpointByRange(
+                        TextPatternRangeEndpoint_Start,
+                        &caret,
+                        TextPatternRangeEndpoint_End,
+                    )
+                    .ok()?;
+                range
+                    .MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, span)
+                    .ok()?;
+                range.GetText(-1).ok()
+            })
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        Some(CaretContext {
+            before: cap_tail(&before),
+            after: cap_head(&after),
+        })
+    }
+
+    /// Keep the LAST `MAX_CARET_CHARS` characters — the end of `before` is the
+    /// part adjacent to the caret, so that is the part that matters.
+    fn cap_tail(s: &str) -> String {
+        let count = s.chars().count();
+        if count <= MAX_CARET_CHARS {
+            return s.to_string();
+        }
+        s.chars().skip(count - MAX_CARET_CHARS).collect()
+    }
+
+    /// Keep the FIRST `MAX_CARET_CHARS` characters — the start of `after` is the
+    /// part adjacent to the caret.
+    fn cap_head(s: &str) -> String {
+        s.chars().take(MAX_CARET_CHARS).collect()
     }
 
     /// What shape of field the caret is in.
@@ -1501,6 +1660,7 @@ mod tests {
             field: FieldKind::Unknown,
             region: None,
             confidence: Confidence::Guess,
+            caret: None,
             nearby_terms: Vec::new(),
         }
     }
@@ -1609,6 +1769,70 @@ mod tests {
         c.field = FieldKind::MultiLine;
         let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
         assert!(!out.contains("SINGLE-LINE"));
+    }
+
+    /// The seam contract must both supply the surroundings AND forbid the model
+    /// from treating them as input — a model handed context will otherwise
+    /// continue the sentence it can see instead of formatting the one it was given.
+    #[test]
+    fn caret_context_supplies_the_seam_and_forbids_continuing_it() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("winword", AppCategory::Docs);
+        c.caret = Some(CaretContext {
+            before: "We agreed the release ".into(),
+            after: " before the holidays.".into(),
+        });
+        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+
+        assert!(out.contains("<before_text>We agreed the release </before_text>"));
+        assert!(out.contains("<after_text> before the holidays.</after_text>"));
+        assert!(out.contains("inserted EXACTLY between"));
+        assert!(out.contains("NEVER repeat, continue or rewrite the surrounding text"));
+        // The base prompt still lands verbatim at the tail.
+        assert!(out.ends_with("BASE ${output}"));
+    }
+
+    /// One side of the seam may be empty (dictating at the start or end of a
+    /// field); the empty tag must not be emitted at all.
+    #[test]
+    fn empty_caret_side_emits_no_tag() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("winword", AppCategory::Docs);
+        c.caret = Some(CaretContext {
+            before: "Dear Rita,".into(),
+            after: String::new(),
+        });
+        let out = compose_prompt("BASE", &s, Some(&c), None);
+        assert!(out.contains("<before_text>"));
+        assert!(!out.contains("<after_text>"));
+    }
+
+    /// Off means off: with the opt-in disabled nothing is captured, so no caret
+    /// reaches the prompt and the base is untouched.
+    #[test]
+    fn no_caret_context_leaves_the_prompt_alone() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let c = ctx("unknownapp", AppCategory::Other); // no soft line, no terms
+        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+    }
+
+    /// The spoken instruction still outranks the seam, same as every other layer.
+    #[test]
+    fn spoken_instruction_still_outranks_caret_context() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("winword", AppCategory::Docs);
+        c.caret = Some(CaretContext {
+            before: "before".into(),
+            after: "after".into(),
+        });
+        let out = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
+        let spoken = out.find("make it a haiku").unwrap();
+        let seam = out.find("<before_text>").unwrap();
+        assert!(spoken < seam, "spoken instruction must precede the seam");
     }
 
     /// A site may only override the app category on structural evidence. This is

@@ -726,6 +726,18 @@ pub struct AppSettings {
     /// field's content; password fields are always skipped.
     #[serde(default)]
     pub context_nearby_terms: bool,
+    /// [GRAIN] Seamless insertion: read a short span of text on either side of
+    /// the caret and give it to the post-processing LLM as `<before_text>` /
+    /// `<after_text>`, so dictating into the middle of a sentence produces text
+    /// that flows — correct leading space, no stray capital, no repeated words.
+    ///
+    /// **This is a SEPARATE opt-in from [`Self::context_nearby_terms`] on
+    /// purpose.** That one promises to send unique tokens and explicitly never
+    /// raw text; this one sends a raw excerpt of what surrounds the caret.
+    /// Folding it into the same switch would quietly break the narrower
+    /// promise, so it gets its own. OFF by default; password fields skipped.
+    #[serde(default)]
+    pub context_caret_text: bool,
     /// [GRAIN] Auto-add to dictionary: when on, Grain briefly watches the field it
     /// just pasted into (~10s) and, if you re-spell one of the pasted words the
     /// same way across a couple of pastes, offers to add that spelling to your
@@ -1535,6 +1547,7 @@ pub fn get_default_settings() -> AppSettings {
         extensions_imported_v1: false,
         extension_developer_mode: false,
         context_nearby_terms: false,
+        context_caret_text: false,
         auto_dictionary_enabled: false,
         dictionary_candidates: Vec::new(),
         agent_autocopy: AgentAutocopy::default(),

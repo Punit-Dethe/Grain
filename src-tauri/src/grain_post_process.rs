@@ -114,7 +114,10 @@ pub(crate) async fn post_process_transcription(
     // `compose_prompt` is always consulted — it returns the base untouched when
     // there is neither a spoken instruction nor any context layer to add.
     let ctx = if settings.context_awareness_enabled {
-        crate::context_detect::detect_active_context(settings.context_nearby_terms)
+        crate::context_detect::detect_active_context(
+            settings.context_nearby_terms,
+            settings.context_caret_text,
+        )
     } else {
         None
     };
