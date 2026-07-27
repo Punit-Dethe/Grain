@@ -868,7 +868,14 @@ pub fn compose_prompt(
     let has_ctx = soft.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
     if spoken.is_none() && !has_ctx {
-        return base.to_string(); // nothing to add — untouched.
+        // The quiet case that most looks like a bug: the feature is on,
+        // detection may even have succeeded, and the prompt still goes out
+        // untouched — because the app resolved to `Other`, which adds nothing by
+        // design. Said out loud, but only to someone who opted in.
+        if settings.context_awareness_enabled {
+            log::info!("[GRAIN] context: prompt unchanged — nothing to add for this surface");
+        }
+        return base.to_string();
     }
 
     let mut pre = String::with_capacity(base.len() + 640);
@@ -973,6 +980,37 @@ pub fn compose_prompt(
         );
     }
 
+    // [GRAIN] What actually reached the model. Detection succeeding and the
+    // prompt changing are different questions — context awareness can be off,
+    // or the category can be `Other`, and detection will still have logged a
+    // confident-looking result while the prompt went out untouched. This is the
+    // line that closes that gap. Layer names only; no prompt text.
+    let mut layers: Vec<&str> = Vec::new();
+    if spoken.is_some() {
+        layers.push("spoken");
+    }
+    if soft.is_some() {
+        layers.push("soft");
+    }
+    if one_line {
+        layers.push("one-line");
+    }
+    if caret.is_some() {
+        layers.push("caret");
+    }
+    if !terms.is_empty() {
+        layers.push("terms");
+    }
+    log::info!(
+        "[GRAIN] context: prompt layers applied: {} (+{} bytes)",
+        if layers.is_empty() {
+            "none".to_string()
+        } else {
+            layers.join("+")
+        },
+        pre.len(),
+    );
+
     pre.push_str(base);
     pre
 }
@@ -1009,7 +1047,7 @@ pub fn read_focused_text() -> Option<String> {
 
 #[cfg(windows)]
 mod windows_impl {
-    use super::{category_for_exe, ActiveContext, AppCategory};
+    use super::{category_for_exe, ActiveContext, AppCategory, Confidence};
     use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -1021,18 +1059,33 @@ mod windows_impl {
 
     pub(super) fn detect(read_nearby_terms: bool, read_caret: bool) -> Option<ActiveContext> {
         unsafe {
+            // Each of these bails to BASE-only behavior. They used to bail
+            // SILENTLY, which made "the feature did nothing" and "the feature is
+            // off" produce identical evidence — the one distinction anyone
+            // diagnosing this actually needs.
             let hwnd: HWND = GetForegroundWindow();
             if hwnd.0.is_null() {
+                log::info!("[GRAIN] context: no context — no foreground window");
                 return None;
             }
 
             let mut pid: u32 = 0;
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
             if pid == 0 {
+                log::info!("[GRAIN] context: no context — foreground window has no process");
                 return None;
             }
 
-            let exe_path = process_image_path(pid)?;
+            let Some(exe_path) = process_image_path(pid) else {
+                // Usually an elevated target: an unelevated Grain cannot open a
+                // handle to it. Worth naming, because the fix is a user action
+                // (run Grain as admin) rather than a bug.
+                log::info!(
+                    "[GRAIN] context: no context — cannot read process {pid} \
+                     (elevated target?)"
+                );
+                return None;
+            };
             // Stem = file name without extension, lowercased.
             let exe = std::path::Path::new(&exe_path)
                 .file_stem()
@@ -1040,6 +1093,7 @@ mod windows_impl {
                 .unwrap_or("")
                 .to_ascii_lowercase();
             if exe.is_empty() {
+                log::info!("[GRAIN] context: no context — unnamed executable");
                 return None;
             }
 
@@ -1074,6 +1128,7 @@ mod windows_impl {
             //
             // An unknown site keeps `category` as-is, which for a browser is
             // `Browser`: refining is strictly additive, never a downgrade.
+            let app_category = category;
             let category = match scan.url_host.as_deref() {
                 Some(host) if scan.confidence.allows_site_category() => {
                     super::category_for_site(host).unwrap_or(category)
@@ -1081,25 +1136,49 @@ mod windows_impl {
                 _ => category,
             };
 
-            // [GRAIN] One line describing what resolution actually concluded.
+            // [GRAIN] One line saying what resolution concluded AND why.
+            //
             // UI Automation is an external surface that varies by app, browser
-            // and version, and every read here degrades silently by design — so
-            // without this, a wrong or empty result is indistinguishable from
-            // the feature being off. Content is never logged: counts and shapes
-            // only, so raising the log level can't turn into a transcript of
-            // what the user was typing.
-            log::debug!(
-                "[GRAIN] context: exe={exe} category={category:?} field={:?} \
-                 confidence={:?} host={} region={} caret={} terms={}",
+            // and version, and every read in the scan degrades silently by
+            // design. That is correct behavior and it is also why this line has
+            // to exist: without it, "resolved nothing" and "switched off" leave
+            // identical evidence.
+            //
+            // At INFO rather than DEBUG deliberately. Context awareness is
+            // opt-in and off by default, so this costs a line per dictation
+            // only for someone who turned it on — and that is exactly the person
+            // asking whether it works. Making them first discover a log-level
+            // setting to answer that would defeat the purpose.
+            //
+            // Never logs content: shapes, counts and decisions only, so turning
+            // logging up can never become a transcript of what was typed. The
+            // host is the one identifier included, because "did site detection
+            // work" is unanswerable without it.
+            let site_note = match (&scan.url_host, scan.confidence) {
+                (Some(_), Confidence::Exact) if category != app_category => "site→category",
+                (Some(_), Confidence::Exact) => "site known, no rule",
+                // The distinction that matters most when a browser looks wrong:
+                // the URL was found by scanning rather than structurally, so it
+                // is deliberately NOT trusted to change anything.
+                (Some(_), _) => "site untrusted (scan fallback), category unchanged",
+                (None, _) => "no site",
+            };
+            log::info!(
+                "[GRAIN] context: {exe} → {category:?} [{site_note}] | field={:?} \
+                 confidence={:?} host={} region={} | caret={} terms={}",
                 scan.field,
                 scan.confidence,
                 scan.url_host.as_deref().unwrap_or("-"),
                 scan.region.as_deref().unwrap_or("-"),
                 scan.caret
                     .as_ref()
-                    .map(|c| format!("{}/{}", c.before.len(), c.after.len()))
-                    .unwrap_or_else(|| "-".into()),
-                scan.terms.len(),
+                    .map(|c| format!("{}b/{}b", c.before.len(), c.after.len()))
+                    .unwrap_or_else(|| if read_caret { "none".into() } else { "off".into() }),
+                if read_nearby_terms {
+                    scan.terms.len().to_string()
+                } else {
+                    "off".to_string()
+                },
             );
 
             Some(ActiveContext {

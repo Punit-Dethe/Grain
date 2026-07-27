@@ -216,6 +216,7 @@ pub fn arm_session(app: &tauri::AppHandle) {
     if !settings.context_awareness_enabled || !settings.context_nearby_terms {
         return;
     }
+    log::debug!("[GRAIN] bias: capturing surface terms for this recording");
     std::thread::spawn(move || {
         let Some(text) = crate::context_detect::read_focused_text() else {
             return;
@@ -246,10 +247,34 @@ pub fn arm_session(app: &tauri::AppHandle) {
 /// about *this* utterance than a global entry is.
 pub fn for_transcription(settings: &grain_core::AppSettings) -> Option<String> {
     let mut set = from_custom_words(&settings.custom_words);
+    let dictionary_terms = set.terms.len();
     if let Ok(mut guard) = SESSION_TERMS.lock() {
         set.extend(std::mem::take(&mut *guard));
     }
-    set.render()
+    let surface_terms = set.terms.len() - dictionary_terms;
+    let rendered = set.render();
+
+    // [GRAIN] Whether the recognizer was actually biased, and by how much of
+    // what was offered. `kept` below `dictionary+surface` is the budget doing
+    // its job — the visible signal for the truncation that used to happen
+    // silently inside whisper. Counts and byte lengths only, never the terms.
+    if let Some(prefix) = &rendered {
+        let kept = prefix.split(SEPARATOR).count();
+        log::info!(
+            "[GRAIN] bias: {kept} term(s), {} bytes (from {dictionary_terms} dictionary \
+             + {surface_terms} surface{})",
+            prefix.len(),
+            if kept < dictionary_terms + surface_terms {
+                ", budget trimmed the rest"
+            } else {
+                ""
+            },
+        );
+    } else if dictionary_terms + surface_terms > 0 {
+        log::info!("[GRAIN] bias: nothing usable from {dictionary_terms} dictionary term(s)");
+    }
+
+    rendered
 }
 
 #[cfg(test)]
