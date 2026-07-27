@@ -1151,14 +1151,12 @@ impl TranscriptionManager {
                 let family = if !model_is_whisper {
                     None
                 } else {
-                    crate::context_bias::from_custom_words(&settings.custom_words)
-                        .render()
-                        .map(|initial_prompt| {
-                            RunExtension::Whisper(WhisperRunOptions {
-                                initial_prompt: Some(initial_prompt),
-                                ..Default::default()
-                            })
+                    crate::context_bias::for_transcription(&settings).map(|initial_prompt| {
+                        RunExtension::Whisper(WhisperRunOptions {
+                            initial_prompt: Some(initial_prompt),
+                            ..Default::default()
                         })
+                    })
                 };
 
                 let run_plan = transcribe_cpp_run_plan(
