@@ -735,13 +735,14 @@ window.UPSTREAM_STATUS = {
     ".nix/bun-lock-hash",
     "package.json",
     "scripts/gen_catalog.py",
+    "src-tauri/.gitignore",
     "src-tauri/Cargo.toml",
+    "src-tauri/build.rs",
     "src-tauri/src/handy/managers/transcription.rs",
     "src-tauri/src/lib.rs",
     "src/components/Sidebar.tsx",
-    "src/components/settings/AccelerationSelector.tsx",
-    "src/i18n/locales/da/translation.json"
+    "src/components/settings/AccelerationSelector.tsx"
   ],
   "drift": [],
-  "checked_at": "2026-07-27T18:12:58Z"
+  "checked_at": "2026-07-27T19:05:12Z"
 };
