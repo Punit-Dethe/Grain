@@ -1,10 +1,10 @@
-name: Deploy website to GitHub Pages
+name: Deploy upstream tracker to GitHub Pages
 
 on:
   push:
     branches: [main]
     paths:
-      - "website/**"
+      - "Upstream/**"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
@@ -30,10 +30,10 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload website
+      - name: Upload upstream tracker
         uses: actions/upload-pages-artifact@v3
         with:
-          path: website
+          path: Upstream
 
       - name: Deploy
         id: deployment
