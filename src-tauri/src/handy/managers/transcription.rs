@@ -1144,13 +1144,21 @@ impl TranscriptionManager {
                 // the arch string, not the feature flag, so they fall through to
                 // the fuzzy post-correction path instead.
                 let model_is_whisper = model.arch() == "whisper";
-                let family = if settings.custom_words.is_empty() || !model_is_whisper {
+                // [GRAIN] The prefix is budgeted, not just joined: whisper caps it
+                // at ~224 tokens and silently drops tokens from the FRONT past
+                // that, so a large dictionary was losing terms invisibly. See
+                // `crate::context_bias`.
+                let family = if !model_is_whisper {
                     None
                 } else {
-                    Some(RunExtension::Whisper(WhisperRunOptions {
-                        initial_prompt: Some(settings.custom_words.join(", ")),
-                        ..Default::default()
-                    }))
+                    crate::context_bias::from_custom_words(&settings.custom_words)
+                        .render()
+                        .map(|initial_prompt| {
+                            RunExtension::Whisper(WhisperRunOptions {
+                                initial_prompt: Some(initial_prompt),
+                                ..Default::default()
+                            })
+                        })
                 };
 
                 let run_plan = transcribe_cpp_run_plan(

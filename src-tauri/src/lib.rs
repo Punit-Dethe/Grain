@@ -30,6 +30,7 @@ pub mod cli;
 mod clipboard;
 #[path = "handy/commands/mod.rs"]
 mod commands;
+mod context_bias; // [GRAIN] budgeted whisper decoder-prefix hotwords
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod dev_extensions; // [GRAIN] validated load-unpacked project reader
