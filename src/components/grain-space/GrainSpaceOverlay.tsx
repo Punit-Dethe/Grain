@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { MessageSquare, Plus, Search, X } from "lucide-react";
+import { MessageSquare } from "lucide-react";
 import { commands, type Note, type NoteCard } from "@/bindings";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Sidebar } from "./Sidebar";
@@ -14,16 +14,21 @@ import "./grain-space.css";
 const NOTES_CHANGED_EVENT = "grain-space://notes-changed";
 const CORPUS_CHANGED_EVENT = "grain-space://corpus-changed";
 const FOCUS_NOTE_EVENT = "grain-space://focus-note";
-const MODEL_PROGRESS_EVENT = "grain-space://embed-model-progress";
-const MODEL_COMPLETE_EVENT = "grain-space://embed-model-complete";
-const MODEL_ERROR_EVENT = "grain-space://embed-model-error";
 
-type SearchMode = "exact" | "semantic";
-
-type ModelBanner =
-  | { kind: "consent" }
-  | { kind: "downloading"; percentage: number }
-  | { kind: "error"; message: string };
+/**
+ * [GRAIN] Search is STAGED, and the two delays are the whole design.
+ *
+ * The lexical pass is a SQLite FTS query — milliseconds — so it fires almost
+ * immediately and the list moves while you type. The hybrid pass may have to spawn
+ * the embedding model (seconds, the first time after the tab mounts), so it waits
+ * for a real pause and then supersedes the lexical results in place.
+ *
+ * Firing only the hybrid call would freeze the box on the first query of a session.
+ * Firing only the lexical one would throw away the meaning leg. Staging gives the
+ * instant feel of the first and the ranking of the second.
+ */
+const LEXICAL_DEBOUNCE_MS = 140;
+const HYBRID_DEBOUNCE_MS = 380;
 
 /**
  * [GRAIN] The Grain Note workspace (NOTES-TAB-PLAN.md): a Mem/Obsidian-style
@@ -62,30 +67,31 @@ export function GrainSpaceOverlay({
   const [folders, setFolders] = useState<string[]>([]);
   const [results, setResults] = useState<Note[]>([]);
   const [query, setQuery] = useState("");
-  const [mode, setMode] = useState<SearchMode>("exact");
-  const [semanticAvailable, setSemanticAvailable] = useState(false);
   const [isObsidian, setIsObsidian] = useState(false);
   const [selected, setSelected] = useState<Note | null>(null);
   const [selectedReadonly, setSelectedReadonly] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const [banner, setBanner] = useState<ModelBanner | null>(null);
   /** A corpus read is in flight (first mount, or a vault/backend/folder switch).
    * Reconciling a fresh vault is a stat-scan of every file in it, so this is the
    * difference between "changing vault takes a moment" and "the app froze". */
   const [loading, setLoading] = useState(true);
 
   const queryRef = useRef("");
-  const modeRef = useRef<SearchMode>("exact");
   const selectedRef = useRef<Note | null>(null);
   const readonlyRef = useRef(false);
   const dirtyRef = useRef(false);
   const savingRef = useRef(false);
   const saveTimer = useRef<number | undefined>(undefined);
-  const searchTimer = useRef<number | undefined>(undefined);
+  const lexicalTimer = useRef<number | undefined>(undefined);
+  const hybridTimer = useRef<number | undefined>(undefined);
+  /** Bumped per search. A staged search has two responses in flight and the slow
+   * one can land after the user has typed further, so every write to `results` is
+   * checked against this — without it, a late hybrid reply for "wif" overwrites
+   * the correct results for "wifi password". */
+  const searchGen = useRef(0);
   const mountedRef = useRef(false);
   queryRef.current = query;
-  modeRef.current = mode;
   selectedRef.current = selected;
   readonlyRef.current = selectedReadonly;
 
@@ -265,23 +271,20 @@ export function GrainSpaceOverlay({
     else console.error("Grain Space: folder listing failed:", result.error);
   }, []);
 
-  const createFolder = useCallback(
-    async (name: string) => {
-      const result = await commands.grainSpaceCreateFolder(name);
-      if (result.status !== "ok") {
-        console.error("Grain Space: create folder failed:", result.error);
-        return;
-      }
-      // Adopt the path the backend actually created — sanitizing can change it,
-      // and a tree built from what we ASKED for would disagree with the disk.
-      setFolders((current) =>
-        current.includes(result.data)
-          ? current
-          : [...current, result.data].sort(),
-      );
-    },
-    [],
-  );
+  const createFolder = useCallback(async (name: string) => {
+    const result = await commands.grainSpaceCreateFolder(name);
+    if (result.status !== "ok") {
+      console.error("Grain Space: create folder failed:", result.error);
+      return;
+    }
+    // Adopt the path the backend actually created — sanitizing can change it,
+    // and a tree built from what we ASKED for would disagree with the disk.
+    setFolders((current) =>
+      current.includes(result.data)
+        ? current
+        : [...current, result.data].sort(),
+    );
+  }, []);
 
   const moveNote = useCallback(
     async (id: string, folder: string | null) => {
@@ -301,59 +304,55 @@ export function GrainSpaceOverlay({
     [flushSave, refreshFolders],
   );
 
+  /**
+   * Accept a search response, unless a newer search has started since it was
+   * issued. Results are scoped to the Grain folder, matching the browse list:
+   * `cardById` holds exactly those notes, so a hit outside it — the user's own
+   * vault, on the Obsidian backend — is dropped. Backend recall stays whole-vault.
+   */
+  const acceptResults = useCallback((gen: number, hits: Note[]) => {
+    if (searchGen.current !== gen) return;
+    setResults(hits.filter((n) => cardByIdRef.current.has(n.id)));
+  }, []);
+
   /** Run the current browse/search and (optionally) refresh the open note. */
   const refresh = useCallback(
     async (refreshSelected = false) => {
-    const q = queryRef.current.trim();
-    if (!q) {
-      const list = await commands.grainSpaceListCards();
-      if (list.status !== "ok") {
-        console.error("Grain Space: list failed:", list.error);
-        return;
-      }
-      setCards(list.data);
-      setResults([]);
-    } else {
-      let result;
-      if (modeRef.current === "semantic") {
-        result = await commands.grainSpaceSemanticSearch(q);
-        if (result.status === "error") {
-          if (result.error === "model-not-downloaded") {
-            setBanner((b) =>
-              b?.kind === "downloading" ? b : { kind: "consent" },
-            );
-          } else {
-            console.error("Grain Space: semantic search failed:", result.error);
-          }
-          result = await commands.grainSpaceSearchNotes(q);
+      const q = queryRef.current.trim();
+      if (!q) {
+        const list = await commands.grainSpaceListCards();
+        if (list.status !== "ok") {
+          console.error("Grain Space: list failed:", list.error);
+          return;
         }
+        setCards(list.data);
+        setResults([]);
       } else {
-        result = await commands.grainSpaceSearchNotes(q);
+        // Re-running a live search (notes changed underneath it). One call, the
+        // full one — there is nothing to stage when the user is not typing.
+        const gen = ++searchGen.current;
+        const result = await commands.grainSpaceSearch(q);
+        if (result.status !== "ok") {
+          console.error("Grain Space: search failed:", result.error);
+          return;
+        }
+        acceptResults(gen, result.data);
       }
-      if (result.status !== "ok") {
-        console.error("Grain Space: search failed:", result.error);
-        return;
-      }
-      // Scope results to the Grain folder (matching the browse): `cardById`
-      // holds exactly the Grain-folder notes, so any hit outside it — the
-      // user's own vault — is dropped. Backend recall stays whole-vault.
-      setResults(result.data.filter((n) => cardByIdRef.current.has(n.id)));
-    }
 
-    // Quiet content refresh for the open note (e.g. quick-add elsewhere
-    // touched it) — only when there are no pending local edits.
-    if (refreshSelected) {
-      const current = selectedRef.current;
-      if (current?.id && !dirtyRef.current) {
-        const fresh = await commands.grainSpaceGetNote(current.id);
-        if (fresh.status === "ok" && selectedRef.current?.id === current.id) {
-          setSelected(fresh.data);
-          selectedRef.current = fresh.data;
+      // Quiet content refresh for the open note (e.g. quick-add elsewhere
+      // touched it) — only when there are no pending local edits.
+      if (refreshSelected) {
+        const current = selectedRef.current;
+        if (current?.id && !dirtyRef.current) {
+          const fresh = await commands.grainSpaceGetNote(current.id);
+          if (fresh.status === "ok" && selectedRef.current?.id === current.id) {
+            setSelected(fresh.data);
+            selectedRef.current = fresh.data;
+          }
         }
       }
-    }
     },
-    [],
+    [acceptResults],
   );
 
   /**
@@ -381,7 +380,9 @@ export function GrainSpaceOverlay({
       await refreshFolders();
       const settings = await commands.getAppSettings();
       if (settings.status === "ok") {
-        setSemanticAvailable(settings.data.grain_space_semantic ?? false);
+        // Only the backend matters to the UI now. Whether the meaning leg is
+        // available is the search command's business, not a mode this has to
+        // know about in order to draw a switch.
         setIsObsidian(settings.data.grain_space_backend === "obsidian");
       }
       const focus = await commands.grainSpaceTakeFocusNote();
@@ -421,19 +422,6 @@ export function GrainSpaceOverlay({
           adopt(result.data, false);
         }
       }),
-      listen<{ percentage: number }>(MODEL_PROGRESS_EVENT, (event) => {
-        setBanner({
-          kind: "downloading",
-          percentage: event.payload.percentage,
-        });
-      }),
-      listen(MODEL_COMPLETE_EVENT, () => {
-        setBanner(null);
-        void refresh();
-      }),
-      listen<string>(MODEL_ERROR_EVENT, (event) => {
-        setBanner({ kind: "error", message: event.payload });
-      }),
     ];
 
     if (!mountedRef.current) {
@@ -446,15 +434,38 @@ export function GrainSpaceOverlay({
     };
   }, [adopt, flushSave, refresh, reload]);
 
-  // Debounced search-as-you-type (semantic waits a bit longer per keystroke).
+  // Staged search-as-you-type. There is no mode to pick: the lexical pass lands
+  // fast so the list moves while you type, and the hybrid pass (which may have to
+  // spawn the embedding model) supersedes it on a real pause. Both writes are
+  // gated on `searchGen`, so a slow reply for an older query can never win.
   useEffect(() => {
-    window.clearTimeout(searchTimer.current);
-    searchTimer.current = window.setTimeout(
-      () => void refresh(),
-      mode === "semantic" ? 350 : 160,
-    );
-    return () => window.clearTimeout(searchTimer.current);
-  }, [query, mode, refresh]);
+    const q = query.trim();
+    window.clearTimeout(lexicalTimer.current);
+    window.clearTimeout(hybridTimer.current);
+    if (!q) {
+      // Cancels any search still in flight AND makes its late reply a no-op.
+      searchGen.current += 1;
+      setResults([]);
+      return;
+    }
+    const gen = ++searchGen.current;
+    lexicalTimer.current = window.setTimeout(() => {
+      void commands.grainSpaceSearchNotes(q).then((r) => {
+        if (r.status === "ok") acceptResults(gen, r.data);
+        else console.error("Grain Space: lexical search failed:", r.error);
+      });
+    }, LEXICAL_DEBOUNCE_MS);
+    hybridTimer.current = window.setTimeout(() => {
+      void commands.grainSpaceSearch(q).then((r) => {
+        if (r.status === "ok") acceptResults(gen, r.data);
+        else console.error("Grain Space: search failed:", r.error);
+      });
+    }, HYBRID_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(lexicalTimer.current);
+      window.clearTimeout(hybridTimer.current);
+    };
+  }, [query, acceptResults]);
 
   // Esc clears the search. It no longer closes anything — this is a tab, and a
   // stray Escape must never take the user out of the app. Ctrl+N: new note.
@@ -545,17 +556,12 @@ export function GrainSpaceOverlay({
     void commands.grainSpaceOpenInObsidian(note.id);
   };
 
-  const startModelDownload = () => {
-    setBanner({ kind: "downloading", percentage: 0 });
-    commands.grainSpaceDownloadEmbedModel().then((result) => {
-      if (result.status === "error") {
-        // The error event usually beat us here; keep whichever message exists.
-        setBanner((b) =>
-          b?.kind === "error" ? b : { kind: "error", message: result.error },
-        );
-      }
-    });
-  };
+  // [GRAIN] No model banner here any more. It existed to catch the one case where
+  // picking "Semantic" hit a model that had never been downloaded — consent,
+  // progress and errors, in a bar over the notes. There is no mode to pick now:
+  // search uses the meaning leg when it is available and lexical ranking when it
+  // is not, silently. Downloading the model is a decision made once, in Settings,
+  // which already owns that whole flow.
 
   const searching = query.trim().length > 0;
   const selectedFolder =
@@ -594,9 +600,6 @@ export function GrainSpaceOverlay({
           calendarOpen={calendarOpen}
           query={query}
           onQueryChange={setQuery}
-          mode={mode}
-          onModeChange={setMode}
-          semanticAvailable={semanticAvailable}
           onOpenCalendar={() => setCalendarOpen(true)}
           onOpenSettings={onOpenSettings}
           onSelectCard={(card) => void selectCard(card)}
@@ -607,101 +610,26 @@ export function GrainSpaceOverlay({
         />
 
         <div className="gs-main">
-          {/* [GRAIN] No strip over the editor any more. Search, the search mode
-              and New note all moved into the rail — search because that is where
-              its results render, the other two to be next to what they create —
-              and the window controls went with the window. What is left is the
-              chat toggle, which sits over the editor because that is what it
-              opens beside. The editor gets ~64px of height back, which counts now
-              the window is no longer a fixed canvas. */}
-          <div className="gs-top">
-            <div className="gs-top-actions">
-              <button
-                type="button"
-                className={`gs-iconbtn${chatOpen ? " gs-iconbtn--active" : ""}`}
-                title="Toggle chat"
-                onClick={() => setChatOpen((v) => !v)}
-              >
-                <MessageSquare width={15} height={15} />
-              </button>
-            </div>
-          </div>
+          {/* [GRAIN] Nothing above the note. The strip that used to sit here held
+              search, the search-mode switch and the window controls; search moved
+              into the rail (where its results render), the mode switch is gone
+              entirely, and the window controls went with the window. The note now
+              owns the whole right-hand side, edge to edge.
 
-          {banner && (
-            <div className="gs-banner">
-              {banner.kind === "consent" && (
-                <>
-                  <span className="gs-banner-text">
-                    {t("grainSpaceOverlay.consent")}
-                  </span>
-                  <button
-                    type="button"
-                    className="gs-btn"
-                    onClick={startModelDownload}
-                  >
-                    {t("grainSpaceOverlay.download")}
-                  </button>
-                  <button
-                    type="button"
-                    className="gs-btn gs-btn--quiet"
-                    onClick={() => {
-                      setBanner(null);
-                      setMode("exact");
-                    }}
-                  >
-                    {t("grainSpaceOverlay.notNow")}
-                  </button>
-                </>
-              )}
-              {banner.kind === "downloading" && (
-                <>
-                  <span className="gs-banner-text">
-                    {t("grainSpaceOverlay.downloading")}
-                  </span>
-                  <div className="gs-progress">
-                    <span
-                      style={{ width: `${banner.percentage.toFixed(1)}%` }}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    className="gs-btn gs-btn--quiet"
-                    onClick={() => {
-                      void commands.grainSpaceCancelEmbedModelDownload();
-                      setBanner(null);
-                    }}
-                  >
-                    {t("grainSpaceOverlay.cancel")}
-                  </button>
-                </>
-              )}
-              {banner.kind === "error" && (
-                <>
-                  <span className="gs-banner-text gs-banner-error">
-                    {t("grainSpaceOverlay.downloadFailed", {
-                      message: banner.message,
-                    })}
-                  </span>
-                  <button
-                    type="button"
-                    className="gs-btn"
-                    onClick={startModelDownload}
-                  >
-                    {t("grainSpaceOverlay.retry")}
-                  </button>
-                  <button
-                    type="button"
-                    className="gs-btn gs-btn--quiet"
-                    onClick={() => setBanner(null)}
-                  >
-                    {t("grainSpaceOverlay.dismiss")}
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-
+              The chat toggle floats INSIDE the note's top-right corner rather than
+              in a bar of its own — a full-width strip to carry one button is a lot
+              of vertical space for one button. */}
           <div className="gs-stage">
+            <button
+              type="button"
+              className={`gs-chat-toggle${chatOpen ? " gs-chat-toggle--on" : ""}`}
+              title={t("grainSpaceOverlay.chat")}
+              aria-label={t("grainSpaceOverlay.chat")}
+              aria-pressed={chatOpen}
+              onClick={() => setChatOpen((v) => !v)}
+            >
+              <MessageSquare width={15} height={15} />
+            </button>
             {loading ? (
               <section className="gs-sheet">
                 <div className="gs-sheet-empty">

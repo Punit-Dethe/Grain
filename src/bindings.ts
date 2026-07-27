@@ -375,6 +375,19 @@ async grainSpaceListFolders() : Promise<Result<string[], string>> {
 }
 },
 /**
+ * File a note into a Grain subfolder (or back to the Grain root when `folder`
+ * is null/empty) — moving a note between collections, or
+ * a manual re-file. Returns the moved note.
+ */
+async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Note, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_move_note", { id, folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Every Grain subfolder, including the empty ones — the sidebar's folder tree.
  * Distinct from `grain_space_list_folders`, which answers "which folders hold
  * notes" for capture routing; a folder the user just made holds none yet.
@@ -394,19 +407,6 @@ async grainSpaceListAllFolders() : Promise<Result<string[], string>> {
 async grainSpaceCreateFolder(folder: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_create_folder", { folder }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * File a note into a Grain subfolder (or back to the Grain root when `folder`
- * is null/empty) — moving a note between collections, or
- * a manual re-file. Returns the moved note.
- */
-async grainSpaceMoveNote(id: string, folder: string | null) : Promise<Result<Note, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_move_note", { id, folder }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -606,16 +606,39 @@ async grainSpaceCancelEmbedModelDownload() : Promise<Result<null, string>> {
 }
 },
 /**
- * Semantic-mode search — actually HYBRID: exact FTS ∪ meaning-based KNN,
- * fused with Reciprocal Rank Fusion, so typing a literal title in semantic
- * mode can never miss it (either leg alone loses queries the other wins).
- * Spawns the engine lazily on first use — allowed only while the overlay
- * window exists, so the weights can never outlive it. Re-embeds stale notes
- * before serving so results stay truthful.
+ * The workspace's search. ONE search — there is no mode to choose.
+ * 
+ * # Why there is no toggle
+ * 
+ * There used to be an Exact / Semantic switch over the results list. It asked the
+ * user a question they have no way to answer ("is what you're looking for a word
+ * match or a meaning match?") — and the honest answer was that it never really
+ * was a choice: "semantic" mode was ALREADY fusing the lexical leg, because
+ * meaning-only search loses anyone typing a literal title. So the switch offered
+ * "lexical" versus "lexical plus meaning", labelled as if they were opposites.
+ * 
+ * Now the legs are simply whichever ones can run:
+ * 
+ * - the lexical leg ALWAYS (precise as-you-type AND matching, falling back to
+ * stopword-filtered OR so a typed sentence still matches something),
+ * - the meaning leg WHEN it can help and is available — semantic search enabled,
+ * the model on disk, the tab on screen, and a query long enough not to be
+ * navigational.
+ * 
+ * Fused with Reciprocal Rank Fusion (`recall::fuse_scored`, k=60), because BM25
+ * scores and cosine distances are not on comparable scales and RRF never asks
+ * them to be.
+ * 
+ * # Degrading is not failing
+ * 
+ * Every way the meaning leg can be unavailable — switched off, never downloaded,
+ * engine failed to spawn, embedding errored — returns lexical results rather than
+ * an error. The user asked to find a note, and a worse ranking is an answer where
+ * a red box is not. Only a broken lexical leg fails the call.
  */
-async grainSpaceSemanticSearch(query: string) : Promise<Result<Note[], string>> {
+async grainSpaceSearch(query: string) : Promise<Result<Note[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_space_semantic_search", { query }) };
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_search", { query }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

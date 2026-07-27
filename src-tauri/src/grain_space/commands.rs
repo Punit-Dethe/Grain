@@ -456,70 +456,123 @@ pub fn grain_space_cancel_embed_model_download() -> Result<(), String> {
     Ok(())
 }
 
-/// Semantic-mode search — actually HYBRID: exact FTS ∪ meaning-based KNN,
-/// fused with Reciprocal Rank Fusion, so typing a literal title in semantic
-/// mode can never miss it (either leg alone loses queries the other wins).
-/// Spawns the engine lazily on first use — allowed only while the overlay
-/// window exists, so the weights can never outlive it. Re-embeds stale notes
-/// before serving so results stay truthful.
+/// Result cap for the workspace's search — a sidebar list, not a corpus dump.
+const HYBRID_UI_RESULTS: usize = 40;
+
+/// Below this many characters the meaning leg is skipped and search stays purely
+/// lexical.
+///
+/// [GRAIN] Not a performance hack — a relevance one. A one- to three-character
+/// query is navigational: the user is prefix-matching a title they already have in
+/// mind, which is exactly the case BM25 wins outright and an embedding of "we" or
+/// "pro" is noise. (Current hybrid-search practice says the same: skip the dense
+/// leg for navigational queries, where lexical is both better and cheaper.) It
+/// also means the common as-you-type keystroke never touches the model.
+const MEANING_LEG_MIN_CHARS: usize = 4;
+
+/// The workspace's search. ONE search — there is no mode to choose.
+///
+/// # Why there is no toggle
+///
+/// There used to be an Exact / Semantic switch over the results list. It asked the
+/// user a question they have no way to answer ("is what you're looking for a word
+/// match or a meaning match?") — and the honest answer was that it never really
+/// was a choice: "semantic" mode was ALREADY fusing the lexical leg, because
+/// meaning-only search loses anyone typing a literal title. So the switch offered
+/// "lexical" versus "lexical plus meaning", labelled as if they were opposites.
+///
+/// Now the legs are simply whichever ones can run:
+///
+/// - the lexical leg ALWAYS (precise as-you-type AND matching, falling back to
+///   stopword-filtered OR so a typed sentence still matches something),
+/// - the meaning leg WHEN it can help and is available — semantic search enabled,
+///   the model on disk, the tab on screen, and a query long enough not to be
+///   navigational.
+///
+/// Fused with Reciprocal Rank Fusion (`recall::fuse_scored`, k=60), because BM25
+/// scores and cosine distances are not on comparable scales and RRF never asks
+/// them to be.
+///
+/// # Degrading is not failing
+///
+/// Every way the meaning leg can be unavailable — switched off, never downloaded,
+/// engine failed to spawn, embedding errored — returns lexical results rather than
+/// an error. The user asked to find a note, and a worse ranking is an answer where
+/// a red box is not. Only a broken lexical leg fails the call.
 #[tauri::command]
 #[specta::specta]
-pub async fn grain_space_semantic_search(
-    app: AppHandle,
-    query: String,
-) -> Result<Vec<Note>, String> {
+pub async fn grain_space_search(app: AppHandle, query: String) -> Result<Vec<Note>, String> {
     let be = gate(&app)?;
     let settings = crate::settings::get_settings(&app);
-    if !settings.grain_space_semantic {
-        return Err("semantic search is disabled".to_string());
+    let trimmed = query.trim().to_string();
+    if trimmed.is_empty() {
+        return blocking(move || backend::list_notes(&be)).await;
     }
-    // Directive 7: the engine's lifetime is bound to a surface being on screen.
-    // The workspace is a tab now, and it reports its own mount — so this refuses
-    // to spawn the model for a caller that is not actually being looked at,
-    // exactly as the old "is the overlay window visible" check did.
-    if !super::workspace_mounted() {
-        return Err("The Notes tab is not open".to_string());
-    }
-    if !super::embed::model_on_disk() {
-        return Err("model-not-downloaded".to_string());
-    }
+
+    // The meaning leg needs all four to be true. `workspace_mounted` is the one
+    // that is about resources rather than relevance: it is what stops a caller
+    // that is not on screen from spawning the model (see `set_workspace_mounted`).
+    let meaning = settings.grain_space_semantic
+        && trimmed.chars().count() >= MEANING_LEG_MIN_CHARS
+        && super::workspace_mounted()
+        && super::embed::model_on_disk();
     let half_life_days = settings.grain_space_decay_half_life_days;
+
     blocking(move || {
-        let trimmed = query.trim().to_string();
-        if trimmed.is_empty() {
-            return backend::list_notes(&be);
+        // Lexical: precise AND first; if the query reads like a sentence and AND
+        // finds nothing, the stopword-filtered OR leg still finds keyword hits.
+        let mut lexical = backend::search_notes(&be, &trimmed)?;
+        if lexical.is_empty() {
+            lexical = backend::search_notes_natural(&be, &trimmed, None)?;
         }
-        // Batch re-embed everything stale (covers engine spawn + edits made
-        // while the engine was resident — save marks stale, search refreshes).
-        let stale = backend::stale_embed_texts(&be)?;
-        if !stale.is_empty() {
-            let texts: Vec<String> = stale.iter().map(|(_, t)| t.clone()).collect();
-            let vectors = super::embed::embed(texts)?;
-            let items: Vec<(String, Vec<f32>)> =
-                stale.into_iter().map(|(id, _)| id).zip(vectors).collect();
-            backend::store_embeddings(&be, &items)?;
+        if !meaning {
+            lexical.truncate(HYBRID_UI_RESULTS);
+            return Ok(lexical);
         }
-        // Asymmetric query embedding (BGE retrieval instruction on the query
-        // side only; stored note vectors stay bare).
-        let query_vec = super::embed::embed_query(trimmed.clone())?;
-        let semantic = backend::semantic_search(&be, &query_vec, half_life_days)?;
-        // Lexical leg: the precise as-you-type AND matcher first; if the query
-        // reads like a sentence and AND finds nothing, the stopword-filtered
-        // OR leg still contributes exact-keyword hits.
-        let mut fts = backend::search_notes(&be, &trimmed)?;
-        if fts.is_empty() {
-            fts = backend::search_notes_natural(&be, &trimmed, None)?;
-        }
-        Ok(super::recall::fuse_scored(fts, semantic, HYBRID_UI_RESULTS)
-            .into_iter()
-            .map(|(note, _)| note)
-            .collect())
+
+        // From here every failure logs and returns what lexical already found.
+        let meaning_hits = match meaning_leg(&be, &trimmed, half_life_days) {
+            Ok(hits) => hits,
+            Err(e) => {
+                log::warn!("[GRAIN] space search: meaning leg unavailable ({e:#}); lexical only");
+                lexical.truncate(HYBRID_UI_RESULTS);
+                return Ok(lexical);
+            }
+        };
+
+        Ok(
+            super::recall::fuse_scored(lexical, meaning_hits, HYBRID_UI_RESULTS)
+                .into_iter()
+                .map(|(note, _)| note)
+                .collect(),
+        )
     })
     .await
 }
 
-/// Result cap for the overlay's hybrid search — a sidebar list, not a corpus dump.
-const HYBRID_UI_RESULTS: usize = 40;
+/// The meaning leg: refresh stale vectors, embed the query, KNN. Split out so the
+/// caller can treat the whole thing as one fallible unit — every step of it is a
+/// step that can fail without the search failing.
+fn meaning_leg(
+    be: &backend::Backend,
+    query: &str,
+    half_life_days: u32,
+) -> anyhow::Result<Vec<Note>> {
+    // Batch re-embed everything stale (covers engine spawn plus edits made while
+    // the engine was resident — a save marks stale, a search refreshes).
+    let stale = backend::stale_embed_texts(be)?;
+    if !stale.is_empty() {
+        let texts: Vec<String> = stale.iter().map(|(_, t)| t.clone()).collect();
+        let vectors = super::embed::embed(texts)?;
+        let items: Vec<(String, Vec<f32>)> =
+            stale.into_iter().map(|(id, _)| id).zip(vectors).collect();
+        backend::store_embeddings(be, &items)?;
+    }
+    // Asymmetric query embedding: BGE's retrieval instruction goes on the query
+    // side only; stored note vectors stay bare.
+    let query_vec = super::embed::embed_query(query.to_string())?;
+    backend::semantic_search(be, &query_vec, half_life_days)
+}
 
 // -- conversational recall in the overlay's chat rail ----------------------------
 

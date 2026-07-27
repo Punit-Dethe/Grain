@@ -175,8 +175,6 @@ function RemindersDock({
   );
 }
 
-type SearchMode = "exact" | "semantic";
-
 type Props = {
   cards: NoteCard[];
   /** Every Grain subfolder, including empty ones (grain_space_list_all_folders). */
@@ -187,9 +185,6 @@ type Props = {
   calendarOpen: boolean;
   query: string;
   onQueryChange: (q: string) => void;
-  mode: SearchMode;
-  onModeChange: (m: SearchMode) => void;
-  semanticAvailable: boolean;
   onOpenCalendar: () => void;
   onOpenSettings: () => void;
   onSelectCard: (card: NoteCard) => void;
@@ -209,9 +204,6 @@ export function Sidebar({
   calendarOpen,
   query,
   onQueryChange,
-  mode,
-  onModeChange,
-  semanticAvailable,
   onOpenCalendar,
   onOpenSettings,
   onSelectCard,
@@ -432,9 +424,13 @@ export function Sidebar({
 
   return (
     <aside className="gs-side">
+      {/* One search box and no mode switch. The old Exact / Semantic pair asked a
+          question the user cannot answer, and was not even a real choice —
+          "semantic" already fused the lexical leg. Search now uses whichever legs
+          are available; see `grain_space_search`. */}
       <div className="gs-side-head">
         <div className="gs-search">
-          <Search width={13} height={13} />
+          <Search width={12} height={12} />
           <input
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
@@ -444,32 +440,15 @@ export function Sidebar({
           {query && (
             <button
               type="button"
-              className="gs-iconbtn"
+              className="gs-search-clear"
               title="Clear search"
+              aria-label="Clear search"
               onClick={() => onQueryChange("")}
             >
-              <X width={12} height={12} />
+              <X width={11} height={11} />
             </button>
           )}
         </div>
-        {semanticAvailable && (
-          <div className="gs-mode">
-            <button
-              type="button"
-              className={mode === "exact" ? "gs-mode--on" : ""}
-              onClick={() => onModeChange("exact")}
-            >
-              {t("grainSpaceOverlay.exact")}
-            </button>
-            <button
-              type="button"
-              className={mode === "semantic" ? "gs-mode--on" : ""}
-              onClick={() => onModeChange("semantic")}
-            >
-              {t("grainSpaceOverlay.semantic")}
-            </button>
-          </div>
-        )}
       </div>
 
       <nav className="gs-nav">
