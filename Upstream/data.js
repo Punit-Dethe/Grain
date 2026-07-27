@@ -16,8 +16,8 @@ window.UPSTREAM_DATA = [
     "ts": "2026-07-23T13:00:15Z",
     "sha": "390729a8007a9c09be38416bc7755e4fa04165c3",
     "commit": "bump handy keys 0.3.2",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Applied handy-keys 0.3.2; lockfile already resolved this version.",
     "pr": ""
   },
   {
@@ -140,8 +140,8 @@ window.UPSTREAM_DATA = [
   {
     "date": "Jul 20, 2026",
     "commit": "bump to handy-keys 0.3.1",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Superseded by and absorbed into handy-keys 0.3.2.",
     "pr": "",
     "sha": "468129fdf1f7b1b8275f4b40c572f28b91d7f701",
     "ts": "2026-07-20T12:10:48Z"
@@ -743,5 +743,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-27T16:05:15Z"
+  "checked_at": "2026-07-27T17:52:54Z"
 };
