@@ -57,8 +57,7 @@
       "moonshine-base": {
         "name": "Moonshine Base",
         "description": "Meget hurtig, kun engelsk. Håndterer accenter godt."
-      }
-,
+      },
       "moonshine-tiny-streaming-en": {
         "name": "Moonshine V2 Tiny",
         "description": "Ultrahurtig, kun engelsk"
@@ -119,8 +118,7 @@
         "requestFailed": "Kunne ikke anmode om tilladelse. Prøv igen."
       }
     }
-  }
-,
+  },
   "modelSelector": {
     "custom": "Brugerdefineret",
     "legacy": "Forældet",
@@ -154,8 +152,7 @@
       "translate": "Oversæt",
       "streaming": "Viser live transskription, mens du taler"
     }
-  }
-,
+  },
   "settings": {
     "modelSettings": {
       "title": "{{model}}-indstillinger"
@@ -200,8 +197,7 @@
         "label": "Tryk-for-at-tale",
         "description": "Hold nede for at optage, slip for at stoppe"
       }
-    }
-,
+    },
     "models": {
       "title": "Transskriptionsmodeller",
       "description": "Vælg en transskriptionsmodel, eller download flere modeller. Forskellige modeller tilbyder varierende niveauer af nøjagtighed og hastighed.",
@@ -242,8 +238,7 @@
         "title": "Lydstyrke",
         "description": "Juster lydstyrken for lydfeedback"
       }
-    }
-,
+    },
     "advanced": {
       "groups": {
         "app": "App",
@@ -284,8 +279,7 @@
       "showTrayIcon": {
         "label": "Vis proceslinjeikon",
         "description": "Vis Handy-ikonet i meddelelsesområdet."
-      }
-,
+      },
       "overlay": {
         "style": {
           "title": "Overlay",
@@ -324,8 +318,7 @@
         "options": {
           "auto": "Auto (anbefalet)"
         }
-      }
-,
+      },
       "clipboardHandling": {
         "title": "Håndtering af udklipsholder",
         "description": "Rør ikke ved udklipsholder bevarer dit nuværende udklipsholderindhold efter transskription. Kopiér til udklipsholder efterlader transskriptionsresultatet i din udklipsholder efter indsætning.",
@@ -362,8 +355,7 @@
           "hour1": "Efter 1 time",
           "sec15": "Efter 15 sekunder (fejlfinding)"
         }
-      }
-,
+      },
       "customWords": {
         "title": "Brugerdefinerede ord",
         "description": "Hjælp understøttede modeller med at genkende navne og specialiserede udtryk. Fuzzy-korrektion er i øjeblikket begrænset til ord, der bruger A-Z og tal.",
@@ -408,8 +400,7 @@
           "placeholderNoOptions": "Skriv et modelnavn",
           "refreshModels": "Opdater modeller"
         }
-      }
-,
+      },
       "prompts": {
         "title": "Prompt",
         "selectedPrompt": {
@@ -446,8 +437,7 @@
       "retranscribeError": "Kunne ikke transskribere igen. Prøv igen.",
       "transcribing": "Transskriberer...",
       "transcriptionFailed": "Transskription mislykkedes. Du kan transskribere igen ved hjælp af genforsøgsikonet."
-    }
-,
+    },
     "debug": {
       "title": "Fejlfinding",
       "logDirectory": {
@@ -487,8 +477,7 @@
       "wordCorrectionThreshold": {
         "title": "Tærskel for ordkorrektion",
         "description": "Følsomhed for brugerdefinerede ordkorrektioner"
-      }
-,
+      },
       "historyLimit": {
         "title": "Historikgrænse",
         "description": "Maksimalt antal historikposter, der skal beholdes",
@@ -528,8 +517,7 @@
         "title": "Tastaturimplementering",
         "description": "Vælg backend til tastaturgenveje.",
         "bindingsReset": "Tastaturgenveje var inkompatible og blev nulstillet til standard"
-      }
-,
+      },
       "paths": {
         "appData": "Appdata:",
         "models": "Modeller:",
@@ -571,8 +559,7 @@
         "title": "Støt udviklingen",
         "description": "Hjælp os med at fortsætte udviklingen af Handy",
         "button": "Donér"
-      }
-,
+      },
       "acknowledgments": {
         "title": "Anerkendelser",
         "ggml": {
@@ -611,8 +598,7 @@
   "accessibility": {
     "permissionsDescription": "Handy har brug for tilgængelighedstilladelser for at skrive den transskriberede tekst.",
     "openSettings": "Åbn systemindstillinger"
-  }
-,
+  },
   "errors": {
     "loadDirectory": "Fejl ved indlæsning af mappe: {{error}}",
     "micPermissionDeniedTitle": "Mikrofonadgang nægtet",
