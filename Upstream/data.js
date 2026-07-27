@@ -158,8 +158,8 @@ window.UPSTREAM_DATA = [
   {
     "date": "Jul 20, 2026",
     "commit": "fix update checker overlay",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Applied upstream portable-update dialog theme tokens verbatim.",
     "pr": "",
     "sha": "86616891af0f1ba43620f4f9601593a38e71f320",
     "ts": "2026-07-20T07:48:59Z"
@@ -743,5 +743,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-27T17:52:54Z"
+  "checked_at": "2026-07-27T17:56:40Z"
 };
