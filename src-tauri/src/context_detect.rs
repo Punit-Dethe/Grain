@@ -198,6 +198,56 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("hackmd.io", AppCategory::Docs),
 ];
 
+/// What kind of text field the caret is in. Derived from the focused element's
+/// control type and flags — see `uia::focus_chain`.
+///
+/// This exists mainly for [`FieldKind::SingleLine`]. A large share of dictation
+/// goes into search boxes and one-line inputs, where the pipeline's reflex to
+/// capitalize the first word and add a full stop produces something the user
+/// then has to delete. Knowing the field is one line is enough to stop that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FieldKind {
+    /// A one-line input: search box, name field, URL bar, chat composer.
+    SingleLine,
+    /// A multi-line editor or document body.
+    MultiLine,
+    /// A password field. Nothing is ever read from one; recorded so callers can
+    /// see the difference between "read nothing" and "refused to read".
+    Password,
+    /// Focus resolved, but the element says nothing useful about its shape.
+    #[default]
+    Unknown,
+}
+
+/// How much we trust the resolved surface.
+///
+/// The gating rule this exists for: **a wrong rule is worse than no rule.** A
+/// mis-resolved surface that still applies its formatting silently rewrites the
+/// user's email as a chat message, which is far worse than adding no context at
+/// all. So low confidence degrades to less context, never to a guess applied at
+/// full strength.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum Confidence {
+    /// Structural evidence: the URL came off the focused element's own Document
+    /// ancestor, so it is the tab the caret is in and cannot be another tab.
+    Exact,
+    /// Heuristic evidence: window title, or the legacy address-bar scan.
+    Probable,
+    /// No evidence beyond the executable.
+    #[default]
+    Guess,
+}
+
+impl Confidence {
+    /// Whether a *site*-derived category may be applied. Site resolution is the
+    /// strongest claim this layer makes (it overrides the app), so it demands
+    /// structural evidence; a `Probable` URL still names the site in the prompt
+    /// but does not get to change the category.
+    fn allows_site_category(self) -> bool {
+        self == Confidence::Exact
+    }
+}
+
 /// Resolve an address-bar host to a category, or `None` when the site is
 /// unknown (the caller then keeps the generic [`AppCategory::Browser`]).
 pub(crate) fn category_for_site(host: &str) -> Option<AppCategory> {
@@ -733,6 +783,15 @@ pub struct ActiveContext {
     /// Browser address-bar host, when the foreground app is a browser and UI
     /// Automation resolved it (e.g. `mail.google.com`). `None` otherwise.
     pub url_host: Option<String>,
+    /// The shape of the field the caret is in. Drives the one-line punctuation
+    /// suppression — see [`FieldKind::SingleLine`].
+    pub field: FieldKind,
+    /// The ARIA landmark of the nearest enclosing region ("main",
+    /// "complementary", …), when the surface exposes one.
+    pub region: Option<String>,
+    /// How much of the above is structural evidence rather than a heuristic.
+    /// Gates whether the site may override the app category.
+    pub confidence: Confidence,
     /// Unique non-dictionary tokens read from the focused field (proper nouns,
     /// identifiers, library names) — an ADDITIVE bias hint, never raw text. Empty
     /// unless the nearby-terms opt-in is on and something was found.
@@ -769,7 +828,11 @@ pub fn compose_prompt(
     };
     let soft = ctx.and_then(|c| c.category.soft_line());
     let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
-    let has_ctx = soft.is_some() || !terms.is_empty();
+    // A one-line field gets one extra clause, because the pipeline's habit of
+    // capitalizing and adding a full stop is wrong in a search box and the user
+    // has to delete it every time.
+    let one_line = ctx.is_some_and(|c| c.field == FieldKind::SingleLine);
+    let has_ctx = soft.is_some() || !terms.is_empty() || one_line;
 
     if spoken.is_none() && !has_ctx {
         return base.to_string(); // nothing to add — untouched.
@@ -800,8 +863,24 @@ pub fn compose_prompt(
                 "The user is dictating into \"{}\".",
                 c.app_name.trim()
             ));
-            if let Some(host) = &c.url_host {
+            // Only assert the site when the URL came structurally off the
+            // focused element's own Document ancestor. A `Probable` host was
+            // found by scanning the window for something URL-shaped, which on a
+            // multi-tab or split-view window can belong to a tab the user is NOT
+            // typing into — and naming the wrong site is worse than naming none.
+            // It stays on `ActiveContext` either way, with its confidence, so
+            // callers that want it (the extension API) can judge for themselves.
+            if let Some(host) = c
+                .url_host
+                .as_deref()
+                .filter(|_| c.confidence == Confidence::Exact)
+            {
                 pre.push_str(&format!(" (website: {host})"));
+            }
+            // Only worth a few tokens when it actually disambiguates: "main"
+            // says nothing a prompt can act on, but a sidebar or a dialog does.
+            if let Some(region) = c.region.as_deref().filter(|r| *r != "main") {
+                pre.push_str(&format!(" (page region: {region})"));
             }
             pre.push('\n');
         }
@@ -809,6 +888,13 @@ pub fn compose_prompt(
             pre.push_str("Soft context (tone/vocabulary only, never restructure): ");
             pre.push_str(line);
             pre.push('\n');
+        }
+        if one_line {
+            pre.push_str(
+                "The target is a SINGLE-LINE field (a search or entry box): output one \
+                 line, and do not add a trailing period or sentence-case it unless the \
+                 user dictated it that way.\n",
+            );
         }
         if !terms.is_empty() {
             // Additive, LOW authority: only fix a term to one of these spellings when
@@ -906,10 +992,13 @@ mod windows_impl {
             // a browser (for the URL) or the nearby-terms opt-in. Everything here
             // is best-effort and SILENT — any failure just yields None/empty.
             let is_browser = category == AppCategory::Browser;
-            let (url_host, nearby_terms) = if is_browser || read_nearby_terms {
+            let scan = if is_browser || read_nearby_terms {
                 super::uia::read(hwnd, is_browser, read_nearby_terms)
             } else {
-                (None, Vec::new())
+                // Neither the URL nor the terms are wanted, so UI Automation is
+                // never spun up at all — the common non-browser path costs one
+                // Win32 round-trip and nothing else.
+                Default::default()
             };
 
             // [GRAIN] Site beats app. The host was already being resolved and
@@ -918,11 +1007,20 @@ mod windows_impl {
             // people's mail, chat, docs and social all live in a tab, the
             // majority of real dictation landed in the weakest bucket.
             //
+            // Gated on confidence: only a URL taken structurally from the focused
+            // element's own Document ancestor may override the category. A
+            // `Probable` host (window title, or the legacy address-bar scan)
+            // still names the site in the prompt but does not get to change how
+            // the text is treated — a wrong rule is worse than no rule, and this
+            // is where that principle is enforced.
+            //
             // An unknown site keeps `category` as-is, which for a browser is
             // `Browser`: refining is strictly additive, never a downgrade.
-            let category = match url_host.as_deref() {
-                Some(host) => super::category_for_site(host).unwrap_or(category),
-                None => category,
+            let category = match scan.url_host.as_deref() {
+                Some(host) if scan.confidence.allows_site_category() => {
+                    super::category_for_site(host).unwrap_or(category)
+                }
+                _ => category,
             };
 
             Some(ActiveContext {
@@ -930,8 +1028,11 @@ mod windows_impl {
                 exe,
                 exe_path,
                 category,
-                url_host,
-                nearby_terms,
+                url_host: scan.url_host,
+                field: scan.field,
+                region: scan.region,
+                confidence: scan.confidence,
+                nearby_terms: scan.terms,
             })
         }
     }
@@ -975,7 +1076,7 @@ mod windows_impl {
 /// into `None`/empty, and password fields are never read. No UI is ever shown.
 #[cfg(windows)]
 mod uia {
-    use super::{extract_unique_terms, host_from_url};
+    use super::{extract_unique_terms, host_from_url, Confidence, FieldKind};
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
@@ -984,7 +1085,8 @@ mod uia {
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-        IUIAutomationValuePattern, TreeScope_Descendants, UIA_ControlTypePropertyId,
+        IUIAutomationValuePattern, TreeScope_Descendants, TreeScope_Element,
+        UIA_AriaRolePropertyId, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
         UIA_EditControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
     };
 
@@ -1013,32 +1115,231 @@ mod uia {
         }
     }
 
-    /// Read the URL host (when `want_url`) and the focused-field unique terms
-    /// (when `want_terms`). Returns `(None, vec![])` on any failure.
-    pub(super) fn read(
-        hwnd: HWND,
-        want_url: bool,
-        want_terms: bool,
-    ) -> (Option<String>, Vec<String>) {
+    /// Everything one focus-anchored scan yields. Every field is best-effort and
+    /// degrades to its default rather than failing the scan.
+    #[derive(Default)]
+    pub(super) struct FocusScan {
+        pub url_host: Option<String>,
+        pub field: FieldKind,
+        pub region: Option<String>,
+        pub confidence: Confidence,
+        pub terms: Vec<String>,
+    }
+
+    /// How far up the ancestor chain to walk before giving up. Real chains from a
+    /// text box to its document are 5–15 hops; the cap only stops a pathological
+    /// tree from turning a bounded read into an unbounded one.
+    const MAX_ANCESTOR_HOPS: usize = 24;
+
+    /// Scan the focused element and its ancestors.
+    ///
+    /// # Why this walks UP instead of searching DOWN
+    ///
+    /// The old path started at the window root and ran
+    /// `FindAll(TreeScope_Descendants, Edit)`, then guessed which of up to 60
+    /// results was the address bar. That is a search that guesses, it is the
+    /// exact pattern Microsoft documents as the UIA performance anti-pattern,
+    /// and on a page full of inputs it can pick the wrong one.
+    ///
+    /// Grain does not need to understand the page. It needs one thing: where is
+    /// the text about to land? That is never ambiguous —
+    /// `GetFocusedElement` returns exactly the element that will receive the
+    /// keystrokes. Everything else falls out of its ancestor chain:
+    ///
+    /// - the element itself → [`FieldKind`]
+    /// - the first ancestor carrying an ARIA role → which region of the page
+    ///   (sidebar vs main vs a card), since Chromium maps ARIA landmarks through
+    /// - the first `Document` ancestor → **the tab the caret is in.** A tab you
+    ///   are not typing into cannot be an ancestor of the element you are typing
+    ///   into, so split views and multi-tab windows disambiguate for free.
+    ///
+    /// It is also cheaper than what it replaces: one upward walk of ~15 hops
+    /// instead of a subtree sweep, with every property for each hop fetched in a
+    /// single cross-process call via the cache request.
+    pub(super) fn read(hwnd: HWND, want_url: bool, want_terms: bool) -> FocusScan {
         unsafe {
             let _com = ComGuard::init();
             let automation: IUIAutomation =
                 match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
                     Ok(a) => a,
-                    Err(_) => return (None, Vec::new()),
+                    Err(_) => return FocusScan::default(),
                 };
-            let url = if want_url {
-                read_url(&automation, hwnd)
-            } else {
-                None
+
+            let mut scan = FocusScan::default();
+
+            // The focused element anchors everything. If it cannot be resolved we
+            // know nothing structurally, and only then is the legacy scan worth
+            // running.
+            let Ok(focused) = automation.GetFocusedElement() else {
+                if want_url {
+                    // No anchor: fall back to the old address-bar hunt, marked
+                    // `Probable` so it can name the site without being trusted
+                    // enough to change the category.
+                    scan.url_host = read_url(&automation, hwnd);
+                    scan.confidence = if scan.url_host.is_some() {
+                        Confidence::Probable
+                    } else {
+                        Confidence::Guess
+                    };
+                }
+                return scan;
             };
-            let terms = if want_terms {
-                read_focused_terms(&automation)
-            } else {
-                Vec::new()
-            };
-            (url, terms)
+
+            scan.field = field_kind(&focused);
+
+            // A password field is never read, and never contributes terms. This
+            // is checked before anything else touches its content.
+            if scan.field == FieldKind::Password {
+                return scan;
+            }
+
+            if want_terms {
+                scan.terms = match read_text_content(&focused) {
+                    Some(text) => extract_unique_terms(&text),
+                    None => Vec::new(),
+                };
+            }
+
+            let (url, region) = walk_ancestors(&automation, &focused, want_url);
+            scan.region = region;
+
+            if want_url {
+                match url.as_deref().and_then(host_from_url) {
+                    // Structural: this URL belongs to the document containing the
+                    // caret, so it is the right tab by construction.
+                    Some(host) => {
+                        scan.url_host = Some(host);
+                        scan.confidence = Confidence::Exact;
+                    }
+                    // No Document ancestor — either the focus sits in browser
+                    // chrome (the address bar itself) or this browser does not
+                    // expose one. Both are handled by falling back and demoting:
+                    // a `Probable` host still names the site in the prompt but is
+                    // not allowed to override the category, so typing in the
+                    // omnibox cannot borrow the loaded page's tone.
+                    None => {
+                        scan.url_host = read_url(&automation, hwnd);
+                        scan.confidence = if scan.url_host.is_some() {
+                            Confidence::Probable
+                        } else {
+                            Confidence::Guess
+                        };
+                    }
+                }
+            }
+
+            scan
         }
+    }
+
+    /// Walk from `focused` up to the document root, collecting the page region
+    /// and the containing document's URL.
+    ///
+    /// Properties for every hop come back in ONE cross-process call each, via a
+    /// cache request — the documented fix for UIA's cost model, where fetching
+    /// properties one at a time means one round-trip per property. `ControlView`
+    /// rather than `RawView` because the raw tree carries an order of magnitude
+    /// more structural noise for the same answer.
+    unsafe fn walk_ancestors(
+        automation: &IUIAutomation,
+        focused: &IUIAutomationElement,
+        want_url: bool,
+    ) -> (Option<String>, Option<String>) {
+        let Ok(cache) = automation.CreateCacheRequest() else {
+            return (None, None);
+        };
+        let _ = cache.AddProperty(UIA_ControlTypePropertyId);
+        let _ = cache.AddProperty(UIA_AriaRolePropertyId);
+        let _ = cache.SetTreeScope(TreeScope_Element);
+
+        let Ok(walker) = automation.ControlViewWalker() else {
+            return (None, None);
+        };
+
+        let mut region: Option<String> = None;
+        let mut url: Option<String> = None;
+        let mut current: IUIAutomationElement = focused.clone();
+
+        for _ in 0..MAX_ANCESTOR_HOPS {
+            let Ok(parent) = walker.GetParentElementBuildCache(&current, &cache) else {
+                break;
+            };
+
+            // The nearest ancestor with an ARIA role names the region the caret
+            // is in — "complementary" for a sidebar, "main" for the body, "form"
+            // for a card. First one wins: it is the tightest enclosing scope.
+            if region.is_none() {
+                if let Ok(role) = parent.CachedAriaRole() {
+                    let role = role.to_string().trim().to_ascii_lowercase();
+                    if is_meaningful_region(&role) {
+                        region = Some(role);
+                    }
+                }
+            }
+
+            // The Document ancestor IS the focused tab.
+            if want_url
+                && url.is_none()
+                && parent.CachedControlType().map(|t| t == UIA_DocumentControlTypeId)
+                    == Ok(true)
+            {
+                url = read_value(&parent);
+                if url.is_some() {
+                    break; // reached the tab root with what we came for
+                }
+            }
+
+            current = parent;
+        }
+
+        (url, region)
+    }
+
+    /// ARIA roles worth reporting as a region. Anything else (`generic`,
+    /// `presentation`, an empty role) says nothing a prompt could use, and
+    /// passing it on would spend tokens to describe a `<div>`.
+    fn is_meaningful_region(role: &str) -> bool {
+        matches!(
+            role,
+            "main"
+                | "navigation"
+                | "complementary"
+                | "banner"
+                | "contentinfo"
+                | "form"
+                | "search"
+                | "article"
+                | "dialog"
+                | "region"
+        )
+    }
+
+    /// What shape of field the caret is in.
+    ///
+    /// The single/multi-line split leans on a finding already recorded in
+    /// [`read_text_content`]: multiline editors expose `TextPattern` but often
+    /// NOT `ValuePattern`, while one-line inputs do the reverse. These are
+    /// current-property calls rather than cached ones, but they are made against
+    /// exactly ONE element, so the round-trips the cache request exists to
+    /// eliminate are not in play here.
+    unsafe fn field_kind(element: &IUIAutomationElement) -> FieldKind {
+        if is_password(element) {
+            return FieldKind::Password;
+        }
+        let control_type = element.CurrentControlType().ok();
+        if control_type == Some(UIA_DocumentControlTypeId) {
+            return FieldKind::MultiLine;
+        }
+        let has_text = element
+            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            .is_ok();
+        if has_text {
+            return FieldKind::MultiLine;
+        }
+        if control_type == Some(UIA_EditControlTypeId) {
+            return FieldKind::SingleLine;
+        }
+        FieldKind::Unknown
     }
 
     /// Address-bar URL → host, **browser-agnostic**. Rather than assume the first
@@ -1074,20 +1375,10 @@ mod uia {
         None
     }
 
-    /// Unique non-dictionary terms from the currently focused element's value.
-    /// Password fields are skipped outright.
-    unsafe fn read_focused_terms(automation: &IUIAutomation) -> Vec<String> {
-        let Ok(el) = automation.GetFocusedElement() else {
-            return Vec::new();
-        };
-        if is_password(&el) {
-            return Vec::new();
-        }
-        match read_text_content(&el) {
-            Some(text) => extract_unique_terms(&text),
-            None => Vec::new(),
-        }
-    }
+    // [GRAIN] `read_focused_terms` used to fetch the focused element a second
+    // time to extract terms. The focus-anchored scan already holds that element,
+    // so the term extraction is inline in `read` and this is gone rather than
+    // kept as a second way to do the same thing.
 
     /// The focused field's raw text (auto-dictionary watcher). Own COM scope so it
     /// is safe to call standalone from the watcher thread. Password fields skipped.
@@ -1207,6 +1498,9 @@ mod tests {
             exe_path: String::new(),
             category,
             url_host: None,
+            field: FieldKind::Unknown,
+            region: None,
+            confidence: Confidence::Guess,
             nearby_terms: Vec::new(),
         }
     }
@@ -1290,6 +1584,75 @@ mod tests {
         assert_eq!(category_for_site("chat.google.com"), Some(AppCategory::WorkChat));
         assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Docs));
         assert_eq!(category_for_site("gemini.google.com"), Some(AppCategory::AiChat));
+    }
+
+    /// A single-line field must not get a trailing period bolted on. This is the
+    /// daily papercut the field detection exists for.
+    #[test]
+    fn single_line_field_suppresses_terminal_punctuation() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("chrome", AppCategory::Browser);
+        c.field = FieldKind::SingleLine;
+        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        assert!(out.contains("SINGLE-LINE"));
+        assert!(out.contains("do not add a trailing period"));
+    }
+
+    /// A multi-line editor must NOT get the one-line clause — that would stop
+    /// ordinary prose from being punctuated at all.
+    #[test]
+    fn multiline_field_keeps_normal_punctuation() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("winword", AppCategory::Docs);
+        c.field = FieldKind::MultiLine;
+        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        assert!(!out.contains("SINGLE-LINE"));
+    }
+
+    /// A site may only override the app category on structural evidence. This is
+    /// the "a wrong rule is worse than no rule" gate.
+    #[test]
+    fn probable_confidence_does_not_assert_the_site() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+
+        let mut exact = ctx("chrome", AppCategory::Email);
+        exact.url_host = Some("mail.google.com".into());
+        exact.confidence = Confidence::Exact;
+        let out = compose_prompt("BASE", &s, Some(&exact), None);
+        assert!(out.contains("website: mail.google.com"));
+
+        // Same host, weaker evidence: it may have come from another tab, so the
+        // prompt must not claim it.
+        let mut probable = exact.clone();
+        probable.confidence = Confidence::Probable;
+        let out = compose_prompt("BASE", &s, Some(&probable), None);
+        assert!(!out.contains("website:"));
+    }
+
+    #[test]
+    fn only_exact_confidence_may_override_the_app_category() {
+        assert!(Confidence::Exact.allows_site_category());
+        assert!(!Confidence::Probable.allows_site_category());
+        assert!(!Confidence::Guess.allows_site_category());
+    }
+
+    /// "main" is the default region of every page and says nothing worth tokens;
+    /// a sidebar or dialog genuinely disambiguates.
+    #[test]
+    fn only_disambiguating_regions_reach_the_prompt() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+
+        let mut main = ctx("chrome", AppCategory::Docs);
+        main.region = Some("main".into());
+        assert!(!compose_prompt("BASE", &s, Some(&main), None).contains("page region"));
+
+        let mut side = ctx("chrome", AppCategory::Docs);
+        side.region = Some("complementary".into());
+        assert!(compose_prompt("BASE", &s, Some(&side), None).contains("page region: complementary"));
     }
 
     /// The AI-prompt line has to say "do less" — smoothing a prompt's wording
