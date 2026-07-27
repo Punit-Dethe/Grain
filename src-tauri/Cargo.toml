@@ -103,7 +103,7 @@ transcribe-cpp = { version = "0.1.3", default-features = false }
 hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downloads", features = [
   "tokio",
 ] }
-handy-keys = "0.3.1"
+handy-keys = "0.3.2"
 ferrous-opencc = "0.2.3"
 clap = { version = "4", features = ["derive"] }
 # [GRAIN] `serde_json`: an extension setting's value is polymorphic by kind, so
