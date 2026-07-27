@@ -29,8 +29,11 @@ use grain_core::AppSettings;
 /// context at all, so behavior degrades safely for the long tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppCategory {
-    /// Code editors, IDEs, and terminals — technical vocabulary, keep jargon.
+    /// Code editors and IDEs — technical vocabulary, keep jargon.
     Ide,
+    /// Shells and terminals. Split from [`AppCategory::Ide`] because the output
+    /// wanted is a *command*, not prose: no sentence casing, no trailing period.
+    Terminal,
     /// Email composers — slightly polished, but NO email layout unless dictated.
     Email,
     /// Work chat (Slack/Teams/…): professional but concise and conversational.
@@ -41,7 +44,16 @@ pub enum AppCategory {
     Social,
     /// Docs / notes editors (Notion/Docs/Word): readable prose, preserve structure.
     Docs,
-    /// A web browser with no site-level refinement yet: tone-neutral light cleanup.
+    /// A pull-request or issue body: prose mixed with identifiers, and markdown.
+    /// Neither [`AppCategory::Ide`] (not code) nor [`AppCategory::Docs`] (not
+    /// prose) fits it.
+    CodeReview,
+    /// A prompt box for an AI assistant. The user is writing an *instruction*, so
+    /// the usual "polish it" reflex is actively harmful — see [`soft_line`].
+    AiChat,
+    /// An issue tracker (Jira/Linear/Asana): imperative, factual, no narration.
+    Ticket,
+    /// A web browser whose site we could not resolve: tone-neutral light cleanup.
     Browser,
     /// Anything unrecognized — no soft context is added.
     Other,
@@ -51,18 +63,173 @@ impl AppCategory {
     /// The SOFT context line for this category, or `None` when nothing should be
     /// added (`Other`). Kept to ≤2 sentences and explicitly non-restructuring so
     /// it stays token-cheap and honors the "no hard formatting" constraint.
+    ///
+    /// These are deliberately terse. They ride on EVERY dictation once context
+    /// awareness is on, so a wasted clause is a wasted clause a few thousand
+    /// times a week; the earlier wording spent ~55 tokens on the IDE line alone.
+    /// What must survive compression are the *negative* guards ("do not add",
+    /// "unless dictated") — they are what keeps this layer soft, and dropping
+    /// them would quietly turn tone hints into hard formatting.
     fn soft_line(self) -> Option<&'static str> {
         Some(match self {
-            AppCategory::Ide => "It is a code editor / IDE / terminal. Preserve technical terms, identifiers, and library/framework names exactly (e.g. Tauri, Rust, useEffect) — do NOT 'correct' jargon into ordinary English — and wrap code-like tokens in backticks. Keep it terse.",
-            AppCategory::Email => "It is an email composer. Use a slightly more polished, professional tone, but do NOT add a subject line, greeting, or sign-off and do NOT reformat into an email layout unless the user dictated it.",
-            AppCategory::WorkChat => "It is a work chat (e.g. Slack/Teams). Keep it professional but concise and conversational; do not add greetings or restructure into formal paragraphs.",
-            AppCategory::PersonalChat => "It is a casual personal messenger. Keep the user's own casual tone, slang, and phrasing; do light cleanup only and do not formalize.",
-            AppCategory::Social => "It is a social-post composer. Keep it casual and punchy in the user's own voice; do not add hashtags, emoji, or restructure unless the user dictated it.",
-            AppCategory::Docs => "It is a document/notes editor. Clean, readable prose is welcome, but preserve the user's wording and structure; do not impose headings or lists unless dictated.",
-            AppCategory::Browser => "It is a text field in a web browser. Apply light, tone-neutral cleanup and match the style the user is already writing in.",
+            AppCategory::Ide => "A code editor. Keep identifiers and library names exactly as spoken (Tauri, useEffect); never 'correct' jargon into plain English. Terse; backtick code-like tokens.",
+            AppCategory::Terminal => "A terminal. This is a command or path, not prose: no sentence casing, no trailing period, and keep flags, paths and casing verbatim.",
+            AppCategory::Email => "An email composer. Slightly more polished and professional, but add no subject, greeting or sign-off, and impose no email layout unless dictated.",
+            AppCategory::WorkChat => "Work chat (Slack/Teams). Professional but concise and conversational; add no greeting and do not restructure into formal paragraphs.",
+            AppCategory::PersonalChat => "A casual messenger. Keep the user's own slang and phrasing; light cleanup only, never formalize.",
+            AppCategory::Social => "A social post composer. Casual and punchy in the user's own voice; add no hashtags or emoji unless dictated.",
+            AppCategory::Docs => "A document or notes editor. Readable prose is welcome, but preserve the user's wording and structure; impose no headings or lists unless dictated.",
+            AppCategory::CodeReview => "A pull-request or issue box: prose mixed with code. Keep identifiers exact and backticked, stay direct, and do not pad.",
+            // The one category whose instruction is "do LESS". A prompt is an
+            // instruction the user is composing for another model, where
+            // smoothing wording away is the exact failure mode: specifics are
+            // the payload.
+            AppCategory::AiChat => "A prompt box for an AI assistant. This is an instruction the user is writing, not prose to polish: preserve their exact intent, wording and specifics, and never soften, summarize or generalize it.",
+            AppCategory::Ticket => "An issue tracker (Jira/Linear). Factual and imperative; do not narrate or add pleasantries.",
+            // The fallback for an unresolved site, so it fires on the widest
+            // range of unknown surfaces — which is exactly why it, of all the
+            // lines, must say plainly that it does not restructure.
+            AppCategory::Browser => "A text field in a web browser. Light, tone-neutral cleanup; match the style the user is already writing in and do not restructure.",
             AppCategory::Other => return None,
         })
     }
+}
+
+/// Address-bar host → category. **This is the table that makes context awareness
+/// work at all for most people**: email, chat, docs and social overwhelmingly
+/// live in a browser tab, and until this existed every one of them resolved to
+/// the generic [`AppCategory::Browser`] line — the weakest bucket — even though
+/// the host was already being read and then thrown away.
+///
+/// Ordered MOST SPECIFIC FIRST and matched in order, because [`host_matches`]
+/// also accepts subdomains: `mail.google.com` would match a bare `google.com`
+/// entry, so the specific row has to be seen first.
+///
+/// Hosts only, no paths, for now. Path scoping (`github.com/pulls` →
+/// `CodeReview` while `github.com/docs` is not) needs the full URL, which
+/// arrives with the focus-anchored resolver; this table is shaped so adding it
+/// is a second column, not a rewrite.
+static SITE_TABLE: &[(&str, AppCategory)] = &[
+    // -- Email (webmail) --
+    ("mail.google.com", AppCategory::Email),
+    ("mail.proton.me", AppCategory::Email),
+    ("outlook.office.com", AppCategory::Email),
+    ("outlook.office365.com", AppCategory::Email),
+    ("outlook.live.com", AppCategory::Email),
+    ("mail.yahoo.com", AppCategory::Email),
+    ("mail.zoho.com", AppCategory::Email),
+    ("fastmail.com", AppCategory::Email),
+    ("hey.com", AppCategory::Email),
+    ("superhuman.com", AppCategory::Email),
+    ("roundcube.", AppCategory::Email),
+    // -- AI assistants (prompt boxes) --
+    ("claude.ai", AppCategory::AiChat),
+    ("chatgpt.com", AppCategory::AiChat),
+    ("chat.openai.com", AppCategory::AiChat),
+    ("gemini.google.com", AppCategory::AiChat),
+    ("aistudio.google.com", AppCategory::AiChat),
+    ("perplexity.ai", AppCategory::AiChat),
+    ("poe.com", AppCategory::AiChat),
+    ("copilot.microsoft.com", AppCategory::AiChat),
+    ("chat.deepseek.com", AppCategory::AiChat),
+    ("chat.mistral.ai", AppCategory::AiChat),
+    ("grok.com", AppCategory::AiChat),
+    ("t3.chat", AppCategory::AiChat),
+    ("openrouter.ai", AppCategory::AiChat),
+    // -- Code review / repo hosts. Writing into a text box on these is almost
+    //    always a PR body, an issue, or a review comment.
+    ("github.com", AppCategory::CodeReview),
+    ("gitlab.com", AppCategory::CodeReview),
+    ("bitbucket.org", AppCategory::CodeReview),
+    ("codeberg.org", AppCategory::CodeReview),
+    ("gerrit.", AppCategory::CodeReview),
+    ("stackoverflow.com", AppCategory::CodeReview),
+    // -- Issue trackers --
+    ("atlassian.net", AppCategory::Ticket),
+    ("jira.", AppCategory::Ticket),
+    ("linear.app", AppCategory::Ticket),
+    ("app.asana.com", AppCategory::Ticket),
+    ("trello.com", AppCategory::Ticket),
+    ("shortcut.com", AppCategory::Ticket),
+    ("height.app", AppCategory::Ticket),
+    ("monday.com", AppCategory::Ticket),
+    ("clickup.com", AppCategory::Ticket),
+    // -- Work chat --
+    ("slack.com", AppCategory::WorkChat),
+    ("teams.microsoft.com", AppCategory::WorkChat),
+    ("teams.live.com", AppCategory::WorkChat),
+    ("discord.com", AppCategory::WorkChat),
+    ("chat.google.com", AppCategory::WorkChat),
+    ("webex.com", AppCategory::WorkChat),
+    ("zoom.us", AppCategory::WorkChat),
+    // -- Personal messengers --
+    ("web.whatsapp.com", AppCategory::PersonalChat),
+    ("web.telegram.org", AppCategory::PersonalChat),
+    ("messenger.com", AppCategory::PersonalChat),
+    ("signal.org", AppCategory::PersonalChat),
+    ("instagram.com", AppCategory::PersonalChat),
+    // -- Social composers --
+    ("x.com", AppCategory::Social),
+    ("twitter.com", AppCategory::Social),
+    ("reddit.com", AppCategory::Social),
+    ("bsky.app", AppCategory::Social),
+    ("threads.net", AppCategory::Social),
+    ("mastodon.social", AppCategory::Social),
+    ("linkedin.com", AppCategory::Social),
+    ("news.ycombinator.com", AppCategory::Social),
+    // -- Docs / notes / long-form --
+    ("docs.google.com", AppCategory::Docs),
+    ("notion.so", AppCategory::Docs),
+    ("notion.site", AppCategory::Docs),
+    ("coda.io", AppCategory::Docs),
+    ("obsidian.md", AppCategory::Docs),
+    ("roamresearch.com", AppCategory::Docs),
+    ("workflowy.com", AppCategory::Docs),
+    ("evernote.com", AppCategory::Docs),
+    ("onenote.com", AppCategory::Docs),
+    ("dropbox.com", AppCategory::Docs),
+    ("medium.com", AppCategory::Docs),
+    ("substack.com", AppCategory::Docs),
+    ("ghost.io", AppCategory::Docs),
+    ("wordpress.com", AppCategory::Docs),
+    ("confluence.", AppCategory::Docs),
+    ("sharepoint.com", AppCategory::Docs),
+    ("quip.com", AppCategory::Docs),
+    ("hackmd.io", AppCategory::Docs),
+];
+
+/// Resolve an address-bar host to a category, or `None` when the site is
+/// unknown (the caller then keeps the generic [`AppCategory::Browser`]).
+pub(crate) fn category_for_site(host: &str) -> Option<AppCategory> {
+    let host = host.trim().trim_start_matches("www.");
+    SITE_TABLE
+        .iter()
+        .find(|(pattern, _)| host_matches(host, pattern))
+        .map(|(_, category)| *category)
+}
+
+/// Whether `host` IS `pattern` or is a subdomain of it.
+///
+/// The dot boundary is the whole point: a plain `ends_with` would match
+/// `notgithub.com` against `github.com` and `evil-slack.com` against
+/// `slack.com`, handing an attacker-chosen domain the tone of a trusted one.
+/// Patterns ending in `.` are prefix wildcards instead (`jira.` matches
+/// `jira.acme.com`), which is how self-hosted installs of Jira, Confluence,
+/// Gerrit and Roundcube name themselves.
+fn host_matches(host: &str, pattern: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix('.') {
+        // `jira.` → matches `jira.acme.com`, but not `myjira.acme.com`.
+        return host
+            .split('.')
+            .next()
+            .is_some_and(|label| label == prefix);
+    }
+    if host == pattern {
+        return true;
+    }
+    host.len() > pattern.len()
+        && host.ends_with(pattern)
+        && host.as_bytes()[host.len() - pattern.len() - 1] == b'.'
 }
 
 /// Map an executable stem (lowercased, no extension) to a coarse [`AppCategory`].
@@ -70,7 +237,8 @@ impl AppCategory {
 /// Match is a substring/stem check so channel variants (`code`, `code - insiders`,
 /// `WhatsApp`, `WhatsAppDesktop`) all resolve.
 fn category_for_exe(stem: &str) -> AppCategory {
-    // IDEs / editors / terminals.
+    // IDEs / editors. Terminals used to live here; they are their own category
+    // now because they want a command, not a sentence.
     const IDE: &[&str] = &[
         "code",
         "cursor",
@@ -91,6 +259,9 @@ fn category_for_exe(stem: &str) -> AppCategory {
         "zed",
         "nvim",
         "vim",
+    ];
+    // Shells and terminal emulators.
+    const TERMINAL: &[&str] = &[
         "windowsterminal",
         "wt",
         "powershell",
@@ -102,6 +273,8 @@ fn category_for_exe(stem: &str) -> AppCategory {
         "kitty",
         "conemu",
         "hyper",
+        "ghostty",
+        "tabby",
     ];
     // Email clients.
     const EMAIL: &[&str] = &[
@@ -176,6 +349,8 @@ fn category_for_exe(stem: &str) -> AppCategory {
     };
     if hit(IDE) {
         AppCategory::Ide
+    } else if hit(TERMINAL) {
+        AppCategory::Terminal
     } else if hit(EMAIL) {
         AppCategory::Email
     } else if hit(WORK_CHAT) {
@@ -737,6 +912,19 @@ mod windows_impl {
                 (None, Vec::new())
             };
 
+            // [GRAIN] Site beats app. The host was already being resolved and
+            // then used only as a display string, so Gmail in Chrome got the
+            // generic Browser line instead of the Email one — and since most
+            // people's mail, chat, docs and social all live in a tab, the
+            // majority of real dictation landed in the weakest bucket.
+            //
+            // An unknown site keeps `category` as-is, which for a browser is
+            // `Browser`: refining is strictly additive, never a downgrade.
+            let category = match url_host.as_deref() {
+                Some(host) => super::category_for_site(host).unwrap_or(category),
+                None => category,
+            };
+
             Some(ActiveContext {
                 app_name,
                 exe,
@@ -1033,6 +1221,119 @@ mod tests {
         assert_eq!(category_for_exe("notion"), AppCategory::Docs);
         assert_eq!(category_for_exe("chrome"), AppCategory::Browser);
         assert_eq!(category_for_exe("some_unknown_app"), AppCategory::Other);
+    }
+
+    /// Terminals are no longer IDEs: a shell wants a command, an editor wants
+    /// code, and the two soft lines say different things.
+    #[test]
+    fn terminals_split_from_ides() {
+        assert_eq!(category_for_exe("pwsh"), AppCategory::Terminal);
+        assert_eq!(category_for_exe("wt"), AppCategory::Terminal);
+        assert_eq!(category_for_exe("alacritty"), AppCategory::Terminal);
+        assert_eq!(category_for_exe("ghostty"), AppCategory::Terminal);
+        // …and the editors stayed put.
+        assert_eq!(category_for_exe("code"), AppCategory::Ide);
+        assert_eq!(category_for_exe("nvim"), AppCategory::Ide);
+    }
+
+    /// The hole this phase exists to close: a browser tab now resolves to what
+    /// the SITE is, not to "a browser".
+    #[test]
+    fn site_table_resolves_webapps_to_real_categories() {
+        assert_eq!(category_for_site("mail.google.com"), Some(AppCategory::Email));
+        assert_eq!(category_for_site("claude.ai"), Some(AppCategory::AiChat));
+        assert_eq!(category_for_site("github.com"), Some(AppCategory::CodeReview));
+        assert_eq!(category_for_site("linear.app"), Some(AppCategory::Ticket));
+        assert_eq!(category_for_site("app.slack.com"), Some(AppCategory::WorkChat));
+        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Docs));
+        assert_eq!(category_for_site("x.com"), Some(AppCategory::Social));
+        // Unknown sites resolve to nothing, so the caller keeps `Browser`.
+        assert_eq!(category_for_site("example.com"), None);
+    }
+
+    /// Subdomains inherit, and `www.` is irrelevant.
+    #[test]
+    fn site_matching_accepts_subdomains_and_strips_www() {
+        assert_eq!(category_for_site("www.github.com"), Some(AppCategory::CodeReview));
+        assert_eq!(category_for_site("gist.github.com"), Some(AppCategory::CodeReview));
+        assert_eq!(category_for_site("acme.atlassian.net"), Some(AppCategory::Ticket));
+    }
+
+    /// The dot boundary is a security property, not a nicety: a bare
+    /// `ends_with` would hand any attacker-registered lookalike the tone (and
+    /// later, the per-site rules) of the domain it impersonates.
+    #[test]
+    fn site_matching_refuses_lookalike_domains() {
+        assert_eq!(category_for_site("notgithub.com"), None);
+        assert_eq!(category_for_site("evil-slack.com"), None);
+        assert_eq!(category_for_site("fakex.com"), None);
+        assert_eq!(category_for_site("mail.google.com.evil.tld"), None);
+    }
+
+    /// Trailing-dot patterns are prefix wildcards, for self-hosted installs
+    /// that name themselves by product (`jira.acme.com`).
+    #[test]
+    fn site_matching_supports_selfhosted_prefixes() {
+        assert_eq!(category_for_site("jira.acme.com"), Some(AppCategory::Ticket));
+        assert_eq!(category_for_site("confluence.acme.com"), Some(AppCategory::Docs));
+        // A prefix wildcard must not match a longer first label.
+        assert_eq!(category_for_site("myjira.acme.com"), None);
+    }
+
+    /// Ordering contract: specific rows are matched before the general ones
+    /// they are subdomains of. If the table is ever reordered so a general row
+    /// shadows a specific one, this catches it.
+    #[test]
+    fn specific_sites_win_over_general_ones() {
+        // chat.google.com is WorkChat even though docs.google.com is Docs —
+        // neither may collapse into the other.
+        assert_eq!(category_for_site("chat.google.com"), Some(AppCategory::WorkChat));
+        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Docs));
+        assert_eq!(category_for_site("gemini.google.com"), Some(AppCategory::AiChat));
+    }
+
+    /// The AI-prompt line has to say "do less" — smoothing a prompt's wording
+    /// away is the failure mode there, so guard the wording that prevents it.
+    #[test]
+    fn ai_chat_soft_line_forbids_polishing() {
+        let line = AppCategory::AiChat.soft_line().unwrap();
+        assert!(line.contains("instruction"));
+        assert!(line.contains("never soften"));
+    }
+
+    /// Every category that adds context must keep at least one negative guard;
+    /// that is what makes this layer SOFT rather than hard formatting.
+    #[test]
+    fn soft_lines_stay_soft_and_bounded() {
+        for category in [
+            AppCategory::Ide,
+            AppCategory::Terminal,
+            AppCategory::Email,
+            AppCategory::WorkChat,
+            AppCategory::PersonalChat,
+            AppCategory::Social,
+            AppCategory::Docs,
+            AppCategory::CodeReview,
+            AppCategory::AiChat,
+            AppCategory::Ticket,
+            AppCategory::Browser,
+        ] {
+            let line = category.soft_line().expect("category adds context");
+            let lower = line.to_ascii_lowercase();
+            assert!(
+                ["no ", "not ", "never", "unless dictated"]
+                    .iter()
+                    .any(|guard| lower.contains(guard)),
+                "{category:?} lost its negative guard: {line}"
+            );
+            // Rides on every dictation — keep it cheap (~4 bytes/token).
+            assert!(
+                line.len() <= 260,
+                "{category:?} soft line is {} bytes, too costly per utterance",
+                line.len()
+            );
+        }
+        assert!(AppCategory::Other.soft_line().is_none());
     }
 
     #[test]
