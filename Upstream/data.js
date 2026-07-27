@@ -744,5 +744,5 @@ window.UPSTREAM_STATUS = {
     "src/components/settings/AccelerationSelector.tsx"
   ],
   "drift": [],
-  "checked_at": "2026-07-27T19:05:12Z"
+  "checked_at": "2026-07-27T20:57:28Z"
 };
