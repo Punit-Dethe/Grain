@@ -129,10 +129,12 @@ sudo cp -r usr/share/icons/hicolor/* /usr/share/icons/hicolor/
 sudo cp usr/share/applications/Grain.desktop /usr/share/applications/
 ```
 
-After subsequent rebuilds, only the binary needs re-copying:
+After subsequent rebuilds, copy the binary and refresh the private runtime libraries:
 
 ```bash
 sudo cp src-tauri/target/release/Grain /usr/bin/
+sudo mkdir -p /usr/lib/Grain
+sudo cp -a src-tauri/transcribe-libs/. /usr/lib/Grain/
 ```
 
 Resources only need re-copying if they change upstream (new icons, sounds, etc.).

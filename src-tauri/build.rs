@@ -8,12 +8,12 @@ fn main() {
     // backend modules (the `dynamic-backends` posture in Cargo.toml). Bake an
     // $ORIGIN-relative rpath into the `handy` binary so it finds libtranscribe
     // next to it in the package — AppImage `usr/bin/handy` -> `usr/lib`, and
-    // deb/rpm `/usr/bin/handy` -> `/usr/lib`. transcribe's
+    // deb/rpm `/usr/bin/handy` -> `/usr/lib/Grain`. transcribe's
     // init_backends_default() then loads the ggml modules co-located there.
     // (Windows resolves DLLs from the exe directory, so it needs no rpath;
     // macOS links transcribe-cpp statically via the `metal` feature.)
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib/Grain:$ORIGIN/../lib");
     }
 
     // Stage transcribe-cpp's shared runtime libraries (and the dlopen'd ggml
@@ -157,10 +157,10 @@ fn stage_onnxruntime_dll() {
 /// ggml modules) may be the same dir — the `BTreeSet` below dedups them.
 ///
 /// Where the staged dir lands: Windows bundles it beside `handy.exe` (DLLs resolve
-/// from the exe dir); Linux maps it into `/usr/lib`, on the binary's
-/// `$ORIGIN/../lib` rpath.
+/// from the exe dir); Linux deb/rpm packages map it into `/usr/lib/Grain`, on
+/// the binary's `$ORIGIN/../lib/Grain` rpath. AppImage keeps it in `/usr/lib`.
 fn stage_transcribe_runtime_libs() {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
     println!("cargo:rerun-if-env-changed=DEP_TRANSCRIBE_CPP_RUNTIME_DIR");
@@ -190,7 +190,7 @@ fn stage_transcribe_runtime_libs() {
     let _ = std::fs::remove_dir_all(&dest);
     std::fs::create_dir_all(&dest).expect("create transcribe-libs staging dir");
 
-    let mut copied = 0usize;
+    let mut libraries = BTreeMap::new();
     for dir in &dirs {
         println!("cargo:rerun-if-changed={}", dir.display());
         for entry in std::fs::read_dir(dir)
@@ -209,11 +209,34 @@ fn stage_transcribe_runtime_libs() {
                 || name.ends_with(".so")
                 || name.contains(".so.");
             if is_lib {
-                std::fs::copy(&src, dest.join(name))
-                    .unwrap_or_else(|e| panic!("copy {}: {e}", src.display()));
-                copied += 1;
+                libraries.insert(name.to_owned(), src);
             }
         }
+    }
+
+    // Keep one loader-facing file per Linux shared-library family. This avoids
+    // packaging duplicate symlink targets as real files.
+    let mut best = BTreeMap::new();
+    for (name, src) in &libraries {
+        let (stem, rank) = match split_versioned_so(name) {
+            Some((stem, depth)) if depth == 1 => (stem, 0),
+            Some((stem, depth)) => (stem, depth + 1),
+            None => (name.as_str(), 0),
+        };
+
+        match best.get(stem) {
+            Some((_, _, existing_rank)) if *existing_rank <= rank => {}
+            _ => {
+                best.insert(stem, (name.as_str(), src, rank));
+            }
+        }
+    }
+
+    let mut copied = 0usize;
+    for (_, (name, src, _)) in best {
+        std::fs::copy(src, dest.join(name))
+            .unwrap_or_else(|e| panic!("copy {}: {e}", src.display()));
+        copied += 1;
     }
     if copied == 0 {
         panic!(
@@ -223,6 +246,23 @@ fn stage_transcribe_runtime_libs() {
         );
     }
     println!("cargo:warning=Staged {copied} transcribe-cpp runtime library file(s)");
+}
+
+fn split_versioned_so(name: &str) -> Option<(&str, usize)> {
+    let suffix_index = name.find(".so")?;
+    let (stem, suffix) = (&name[..suffix_index], &name[suffix_index + 3..]);
+    if suffix.is_empty() {
+        return Some((stem, 0));
+    }
+
+    let components = suffix.strip_prefix('.')?.split('.');
+    if components.clone().all(|component| {
+        !component.is_empty() && component.bytes().all(|byte| byte.is_ascii_digit())
+    }) {
+        Some((stem, components.count()))
+    } else {
+        None
+    }
 }
 
 /// Generate tray menu translations from frontend locale files.

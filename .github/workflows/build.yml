@@ -334,12 +334,10 @@ jobs:
               cp -L "$f" "$f.real" && mv "$f.real" "$f"
             fi
           done
-          # Add the shared libs to the deb package under /usr/lib
-          # deb.files key = destination in package, value = source on disk
-          jq --arg so "$ORT_DIR/lib/libonnxruntime.so" \
-             --arg so1 "$ORT_DIR/lib/libonnxruntime.so.1" \
-             --arg sov "$ORT_DIR/lib/libonnxruntime.so.1.24.2" \
-            '.bundle.linux.deb.files["/usr/lib/libonnxruntime.so"] = $so | .bundle.linux.deb.files["/usr/lib/libonnxruntime.so.1"] = $so1 | .bundle.linux.deb.files["/usr/lib/libonnxruntime.so.1.24.2"] = $sov' \
+          # Bundle only the loader-facing SONAME in Grain's private runtime dir.
+          # deb.files key = destination in package, value = source on disk.
+          jq --arg soname "$ORT_DIR/lib/libonnxruntime.so.1" \
+            '.bundle.linux.deb.files["/usr/lib/Grain/libonnxruntime.so.1"] = $soname' \
             src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
 
       - name: Build with Tauri

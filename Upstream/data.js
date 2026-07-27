@@ -149,8 +149,8 @@ window.UPSTREAM_DATA = [
   {
     "date": "Jul 20, 2026",
     "commit": "fix(linux): install app-private libs to /usr/lib/Handy (#1639) (#1727)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Adapted app-private Linux runtime libraries to /usr/lib/Grain, with SONAME staging and rpath.",
     "pr": "1639",
     "sha": "d1180c42ceb344c8219ac419ba6a71c7c938d15c",
     "ts": "2026-07-20T09:21:28Z"
@@ -743,5 +743,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/da/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-27T17:56:40Z"
+  "checked_at": "2026-07-27T18:12:58Z"
 };
