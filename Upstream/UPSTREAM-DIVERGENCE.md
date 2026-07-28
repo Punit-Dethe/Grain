@@ -24,7 +24,7 @@ default: 3-way merge normally, prefer upstream in the STT core.
 | `actions.rs` | Heavy (+1263/−306): pill session events, Prompt Record, cloud-routing model warm-up, cancel-generation output guard, no webview overlay calls | Keep Grain structure; thread upstream fixes into it |
 | `shortcut/mod.rs` | Heavy (+434/−128): Grain bindings (agent summon, Grain Space recall, send-to-AI), cancel shortcut lifecycle | Keep Grain; take upstream's key-handling fixes |
 | `llm_client.rs` | **Reclassified 2026-07-19**: byte-identical to upstream but UN-COMPILED (no `mod llm_client;`). Grain's multi-provider client lives in `grain_llm_client.rs` (aliased as `crate::llm_client`) | Take upstream verbatim — the file is inert; port relevant provider fixes to `grain_llm_client.rs` by hand |
-| `managers/transcription.rs` | Heavy (+354/−441): transcribe-cpp unification, shared model across Batch/Rolling/Native ASR, stream router | Keep Grain; upstream decode-parameter fixes DO matter — port them |
+| `managers/transcription.rs` | Heavy (+354/−441): transcribe-cpp unification, shared model across Batch/Rolling/Native ASR, stream router. Plus one `[GRAIN]` hook (2026-07-28): the whisper `initial_prompt` source is `context_bias::for_transcription` rather than `custom_words.join(", ")`, because the prefix needs a byte budget — whisper drops tokens past ~224 from the FRONT, silently | Keep Grain; upstream decode-parameter fixes DO matter — port them. Re-thread the `initial_prompt` hook if upstream rewrites that block |
 | `managers/model.rs` | Deliberate (−461): legacy ONNX model entries (Parakeet/Moonshine/SenseVoice/GigaAM/Canary via transcribe-rs) REMOVED — every family ships as GGUF via the catalog | Ours for the model list; take upstream download/verify-flow fixes |
 | `settings.rs` (src-tauri) | **Reclassified 2026-07-20**: byte-identical to upstream but UN-COMPILED (no `mod settings;`). Grain's facade over grain-core `AppContext` is `grain_settings.rs` (aliased as `crate::settings`) | Take upstream verbatim — the file is inert. Port upstream settings fixes into `crates/grain-core` |
 | `actions.rs` | Grain's actions, post-processing and settings commands extracted (2026-07-20). What remains is upstream's shape + thin `[GRAIN]` hooks. **One deliberate hole**: upstream's `post_process_transcription` is absent (it cannot compile against Grain's `llm_client` signature) — expect a modify/delete conflict there and port into `grain_post_process.rs` | Merge upstream freely; re-thread the marked hooks |
@@ -51,7 +51,7 @@ default: 3-way merge normally, prefer upstream in the STT core.
 `audio_toolkit/grain_text.rs` (all `grain_*` files are Grain-owned by
 convention — upstream has no counterpart, so they never conflict),
 `crates/*` (grain-core, grain-pill, grain-editor, provider-router),
-`src-tauri/src/{rolling,stt_router,post_process_router,rotation_state,agent,bridge,events_server,context_detect,grain_space/**,stt_client}.rs`,
+`src-tauri/src/{rolling,stt_router,post_process_router,rotation_state,agent,bridge,events_server,context_detect,context_bias,context_screen,grain_space/**,stt_client}.rs`,
 `Upstream/`, `docs/`.
 
 ## Frontend
