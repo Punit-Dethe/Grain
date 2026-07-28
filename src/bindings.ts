@@ -2217,20 +2217,20 @@ extension_developer_mode?: boolean;
  * never surfaced in the UI. OFF by default because it reads the focused
  * field's content; password fields are always skipped.
  */
-context_nearby_terms?: boolean;
+context_nearby_terms?: boolean; 
 /**
  * [GRAIN] Seamless insertion: read a short span of text on either side of
  * the caret and give it to the post-processing LLM as `<before_text>` /
  * `<after_text>`, so dictating into the middle of a sentence produces text
  * that flows — correct leading space, no stray capital, no repeated words.
- *
- * **This is a SEPARATE opt-in from `context_nearby_terms` on
+ * 
+ * **This is a SEPARATE opt-in from [`Self::context_nearby_terms`] on
  * purpose.** That one promises to send unique tokens and explicitly never
  * raw text; this one sends a raw excerpt of what surrounds the caret.
  * Folding it into the same switch would quietly break the narrower
  * promise, so it gets its own. OFF by default; password fields skipped.
  */
-context_caret_text?: boolean;
+context_caret_text?: boolean; 
 /**
  * [GRAIN] Auto-add to dictionary: when on, Grain briefly watches the field it
  * just pasted into (~10s) and, if you re-spell one of the pasted words the
