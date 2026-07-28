@@ -32,12 +32,18 @@ const CAPABILITY_LABELS: Record<string, string> = {
   "session:start": "Start a recording session itself",
   storage: "Store its own data on this device",
   settings: "Save its own settings",
-  llm: "Send text to your configured AI provider",
+  // "and images" is not padding: llm can carry a picture now, and someone
+  // approving this should not have to infer that from another row.
+  llm: "Send text and images to your configured AI provider",
   embed: "Turn text into embeddings",
   // The widest grant there is: say so, rather than "access notes".
   notes: "Read and change all your Grain Space notes",
   "capture:selection": "Read your currently selected text",
   "capture:app": "See which app you're currently using",
+  "capture:screen-text": "Read all the text on the window you're using",
+  // Say "screenshot". Anything softer ("capture screen content") lets someone
+  // approve a photograph of their screen without realising that is what it is.
+  "capture:screen-image": "Take a screenshot of the window you're using",
   "open:url": "Open web links in your browser",
   "open:app": "Launch apps you choose",
 };

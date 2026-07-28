@@ -18,8 +18,10 @@ pub enum FlaggedCombination {
     /// is a real thing to want — but it is the combination that most warrants a
     /// human reading the source before it is listed.
     NotesAndNetwork,
-    /// `screen:capture` + any `net:` grant.
+    /// `capture:screen-image` + any `net:` grant.
     ScreenCaptureAndNetwork,
+    /// `capture:screen-text` + any `net:` grant.
+    ScreenTextAndNetwork,
     /// `events:transcripts` + any `net:` grant.
     TranscriptsAndNetwork,
     /// A `native`-tier extension + any `net:` grant.
@@ -32,6 +34,7 @@ impl FlaggedCombination {
         match self {
             FlaggedCombination::NotesAndNetwork => "notes+net",
             FlaggedCombination::ScreenCaptureAndNetwork => "screen-capture+net",
+            FlaggedCombination::ScreenTextAndNetwork => "screen-text+net",
             FlaggedCombination::TranscriptsAndNetwork => "transcripts+net",
             FlaggedCombination::NativeAndNetwork => "native+net",
         }
@@ -44,7 +47,10 @@ impl FlaggedCombination {
                 "can read all your notes and send them over the network"
             }
             FlaggedCombination::ScreenCaptureAndNetwork => {
-                "can capture your screen and send it over the network"
+                "can take screenshots of your screen and send them over the network"
+            }
+            FlaggedCombination::ScreenTextAndNetwork => {
+                "can read the text on your screen and send it over the network"
             }
             FlaggedCombination::TranscriptsAndNetwork => {
                 "can read your transcripts and send them over the network"
@@ -74,8 +80,16 @@ pub fn flagged_combinations(permissions: &[String], tier: Tier) -> Vec<FlaggedCo
     if permissions.iter().any(|p| p == "notes") {
         flags.push(FlaggedCombination::NotesAndNetwork);
     }
-    if permissions.iter().any(|p| p == "screen:capture") {
+    // [GRAIN] These check the capability names that actually exist. They used to
+    // check `screen:capture`, which was never in KNOWN_CAPABILITIES and so could
+    // never appear in an importable manifest — the flag was written ahead of the
+    // capability and then pointed at a name the capability never took, meaning
+    // it had never once fired.
+    if permissions.iter().any(|p| p == "capture:screen-image") {
         flags.push(FlaggedCombination::ScreenCaptureAndNetwork);
+    }
+    if permissions.iter().any(|p| p == "capture:screen-text") {
+        flags.push(FlaggedCombination::ScreenTextAndNetwork);
     }
     if permissions.iter().any(|p| p == "events:transcripts") {
         flags.push(FlaggedCombination::TranscriptsAndNetwork);
@@ -96,7 +110,7 @@ mod tests {
 
     #[test]
     fn no_network_means_no_flags() {
-        let f = flagged_combinations(&perms(&["screen:capture", "events:transcripts"]), Tier::Native);
+        let f = flagged_combinations(&perms(&["capture:screen-image", "events:transcripts"]), Tier::Native);
         assert!(f.is_empty(), "flags require a net grant to be present");
     }
 
@@ -112,7 +126,7 @@ mod tests {
     #[test]
     fn screen_capture_plus_net_is_flagged() {
         let f = flagged_combinations(
-            &perms(&["screen:capture", "net:collector.example.com"]),
+            &perms(&["capture:screen-image", "net:collector.example.com"]),
             Tier::Scripted,
         );
         assert_eq!(f, vec![FlaggedCombination::ScreenCaptureAndNetwork]);
@@ -127,15 +141,44 @@ mod tests {
     #[test]
     fn multiple_flags_can_coexist() {
         let f = flagged_combinations(
-            &perms(&["events:transcripts", "screen:capture", "net:x.example.com"]),
+            &perms(&["events:transcripts", "capture:screen-image", "net:x.example.com"]),
             Tier::Native,
         );
         assert_eq!(f.len(), 3);
     }
 
     #[test]
+    fn screen_text_plus_net_is_flagged() {
+        let f = flagged_combinations(
+            &perms(&["capture:screen-text", "net:collector.example.com"]),
+            Tier::Scripted,
+        );
+        assert_eq!(f, vec![FlaggedCombination::ScreenTextAndNetwork]);
+    }
+
+    #[test]
     fn storage_only_is_not_flagged() {
         let f = flagged_combinations(&perms(&["storage", "llm"]), Tier::Scripted);
         assert!(f.is_empty());
+    }
+
+    /// Every capability a flag watches for must be one a manifest can actually
+    /// declare.
+    ///
+    /// This is the bug this test exists for, not a hypothetical: the screen flag
+    /// checked `screen:capture` for as long as it existed, a name that was never
+    /// in `KNOWN_CAPABILITIES`. The import path rejects unknown capabilities, so
+    /// no manifest could ever carry it and the flag could never fire — a warning
+    /// that silently did nothing, which is worse than no warning at all. Nothing
+    /// caught it because the tests asserted against the same wrong string.
+    #[test]
+    fn every_watched_capability_is_a_real_one() {
+        use crate::manifest::KNOWN_CAPABILITIES;
+        for watched in ["notes", "capture:screen-image", "capture:screen-text", "events:transcripts"] {
+            assert!(
+                KNOWN_CAPABILITIES.contains(&watched),
+                "flagged.rs watches '{watched}', which no manifest can declare"
+            );
+        }
     }
 }
