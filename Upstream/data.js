@@ -3,6 +3,15 @@
 // where the browser blocks fetch('data.json').
 window.UPSTREAM_DATA = [
   {
+    "date": "Jul 28, 2026",
+    "ts": "2026-07-28T07:33:46Z",
+    "sha": "292db6470e7463487aabb7aad83f18c5831b574c",
+    "commit": " Harden Hugging Face downloads and use mirror fallback (#1773)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1773"
+  },
+  {
     "date": "Jul 27, 2026",
     "ts": "2026-07-27T23:43:50Z",
     "sha": "09a6a71015db794b47dd4916333be1a8b3ad2dac",
@@ -733,14 +742,15 @@ window.UPSTREAM_DATA = [
   }
 ];
 window.UPSTREAM_STATUS = {
-  "upstream_head": "09a6a710",
-  "upstream_subject": "fix(i18n): complete zh-TW translations for newer UI strings (#1795)",
-  "upstream_date": "2026-07-28T07:43:50+08:00",
+  "upstream_head": "292db647",
+  "upstream_subject": " Harden Hugging Face downloads and use mirror fallback (#1773)",
+  "upstream_date": "2026-07-28T15:33:46+08:00",
   "latest_tag": "v0.9.4",
   "merge_base": "cdbc2239",
-  "behind": 20,
+  "behind": 21,
   "trial_clean": false,
   "conflicts": [
+    ".gitignore",
     ".nix/bun-lock-hash",
     "package.json",
     "scripts/gen_catalog.py",
@@ -754,5 +764,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/zh-TW/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-28T04:49:24Z"
+  "checked_at": "2026-07-28T08:07:59Z"
 };
