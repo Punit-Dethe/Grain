@@ -7,8 +7,8 @@ window.UPSTREAM_DATA = [
     "ts": "2026-07-28T10:06:22Z",
     "sha": "ea3c20a3a67c7401d8b19198723760da9d40ac45",
     "commit": "fix(i18n): resolve zh-Hant-* system locales to Traditional Chinese (zh-TW) (#1798)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Cherry-picked as 0eac7cab; rename-conflict resolved into handy/tray_i18n.rs (blob byte-identical to upstream 2bdc84ca).",
     "pr": "1798"
   },
   {
@@ -25,8 +25,8 @@ window.UPSTREAM_DATA = [
     "ts": "2026-07-27T23:43:50Z",
     "sha": "09a6a71015db794b47dd4916333be1a8b3ad2dac",
     "commit": "fix(i18n): complete zh-TW translations for newer UI strings (#1795)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Cherry-picked (2c17bfbd); conflicts resolved per divergence map: kept Grain keys (multiLanguage, flat overlay, whisper ack, snippets), took selectModel/languageCount/VAD translations, dropped unreferenced model-list keys. Cherry-pick \u2014 needs close-out with the batch.",
     "pr": "1795"
   },
   {
@@ -773,5 +773,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/zh-TW/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-28T17:17:32Z"
+  "checked_at": "2026-07-28T17:38:22Z"
 };

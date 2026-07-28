@@ -4,8 +4,8 @@
     "ts": "2026-07-28T10:06:22Z",
     "sha": "ea3c20a3a67c7401d8b19198723760da9d40ac45",
     "commit": "fix(i18n): resolve zh-Hant-* system locales to Traditional Chinese (zh-TW) (#1798)",
-    "status": "Pending",
-    "notes": "",
+    "status": "Merged",
+    "notes": "Cherry-picked as 0eac7cab; rename-conflict resolved into handy/tray_i18n.rs (blob byte-identical to upstream 2bdc84ca).",
     "pr": "1798"
   },
   {
@@ -201,7 +201,7 @@
     "date": "Jul 18, 2026",
     "commit": "Add missing translations (#1709)",
     "status": "Merged",
-    "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) \u2014 clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) \u2192 conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
+    "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) — clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) → conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate).",
     "pr": "1709",
     "sha": "cdbc22390987643237756382ef367f7244b2844f",
     "ts": "2026-07-18T09:41:24Z"
