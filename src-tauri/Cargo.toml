@@ -83,6 +83,12 @@ uuid = { version = "1", features = ["v4"] } # [GRAIN] Grain Space note ids
 # opt-in BGE-small embedding model, plus zerocopy to hand &[f32] to sqlite-vec
 # without copies. The model itself is downloaded on consent, never bundled.
 zerocopy = "0.8"
+# [GRAIN] Screen-image capability (extension platform only — core never captures
+# an image). `image` downscales and encodes the grab; `base64` builds the data URI
+# the OpenAI-compatible vision wire format takes. Both are already in the tree as
+# transitive dependencies, so this only promotes them to direct use.
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
 candle-core = "0.9"
 candle-nn = "0.9"
 candle-transformers = "0.9"
@@ -138,6 +144,11 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_WindowsAndMessaging",
   "Win32_Graphics_Dwm",
+  # [GRAIN] Window capture for the screen-image capability: PrintWindow into a
+  # DIB section. Only ever the foreground window — never the desktop.
+  "Win32_Graphics_Gdi",
+  # PrintWindow is filed under Storage_Xps in the windows crate.
+  "Win32_Storage_Xps",
   # [GRAIN] Context awareness: UI Automation for browser URL + silent nearby-term
   # reading; COM for the automation object.
   "Win32_UI_Accessibility",

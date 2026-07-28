@@ -32,6 +32,7 @@ mod clipboard;
 mod commands;
 mod context_bias; // [GRAIN] budgeted whisper decoder-prefix hotwords
 mod context_detect; // [GRAIN] foreground app/site detection + three-stage prompt composition
+mod context_screen; // [GRAIN] foreground-window image capture — extension capability, no core caller
 mod dictionary; // [GRAIN] auto-add-to-dictionary: watch pasted-field edits, learn respellings
 mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)

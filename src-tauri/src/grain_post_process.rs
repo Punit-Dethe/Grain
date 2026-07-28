@@ -572,3 +572,64 @@ pub(crate) async fn complete_for_extension(
         _ => Err("the LLM call failed or returned nothing".into()),
     }
 }
+
+/// [GRAIN] The same completion, with an image attached to the user turn.
+///
+/// The vision half of the extension platform. Grain's own features never call
+/// this — an image only ever reaches a model because an extension the user
+/// installed and granted `capture:screen-image` chose to send one.
+///
+/// Degradation is handled inside [`crate::llm_client::send_chat_with_image`]: a
+/// model that cannot take images gets the identical request again without it,
+/// and the extension still receives an answer rather than an error. The caller
+/// is not told which happened, because there is nothing useful it could do
+/// differently — and a "the image was ignored" string in the reply is exactly
+/// the noise that makes a model talk about itself instead of answering.
+pub(crate) async fn complete_for_extension_with_image(
+    app: &tauri::AppHandle,
+    prompt: &str,
+    image_mime: &str,
+    image_base64: &str,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let settings = crate::settings::get_settings(app);
+    let provider = settings
+        .active_post_process_provider()
+        .cloned()
+        .ok_or("no post-processing provider is configured")?;
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    if model.trim().is_empty() {
+        return Err("the active provider has no model configured".into());
+    }
+    let api_key = settings
+        .post_process_api_keys
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+    let http_client = app
+        .try_state::<reqwest::Client>()
+        .ok_or("shared HTTP client unavailable")?
+        .inner()
+        .clone();
+
+    crate::llm_client::send_chat_with_image(
+        &http_client,
+        &provider,
+        api_key,
+        &model,
+        vec![("user".to_string(), prompt.to_string())],
+        image_mime,
+        image_base64,
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| format!("the LLM call failed: {e}"))?
+    .content
+    .filter(|text| !text.trim().is_empty())
+    .ok_or_else(|| "the LLM returned nothing".to_string())
+}

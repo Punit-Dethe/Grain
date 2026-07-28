@@ -399,6 +399,15 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // are never in frame, and password fields are skipped. Flagged, because it
     // can still see whatever is on the window the user is looking at.
     "capture:screen-text",
+    // [GRAIN] Capture the foreground window as an IMAGE. The widest-reaching
+    // capture grant there is: a frame carries whatever happened to be on that
+    // window, and unlike the accessibility tree there is no per-element flag to
+    // skip a password with. Grain's own code never calls it — the capability
+    // exists so an extension the user installed and granted deliberately can,
+    // which keeps that decision with a component they opted into rather than
+    // with the dictation app running all day. Flagged, and its permission sheet
+    // says what a screenshot is in those words.
+    "capture:screen-image",
     // Phase 5C (SPEC §1.3): launch side effects. Both are danger-marked and the
     // host enforces the security, not the extension:
     //  · `open:url` opens a link in the user's browser — the host allows ONLY

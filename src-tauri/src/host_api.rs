@@ -109,6 +109,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "capture.selection" => Some("capture:selection"),
         "capture.app" => Some("capture:app"),
         "capture.screenText" => Some("capture:screen-text"),
+        "capture.screenImage" => Some("capture:screen-image"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
         "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
         // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
@@ -981,9 +982,35 @@ pub async fn dispatch(
         }
         "llm.complete" => {
             let prompt = param_str(&params, "prompt")?;
-            let text = crate::grain_post_process::complete_for_extension(app, &prompt)
-                .await
-                .map_err(|error| service_error("LLM provider", error))?;
+            // [GRAIN] Optional image, as returned by `capture.screenImage` (or
+            // any base64 the extension already holds). No extra grant is needed
+            // to SEND one — obtaining it is what `capture:screen-image` gates,
+            // and an extension that already has an image by other means is
+            // already trusted with it.
+            //
+            // A model that cannot take images is handled below the boundary:
+            // the same request is retried without it and the extension still
+            // gets an answer. That is why there is no "does this model support
+            // vision" query for extensions to get wrong.
+            let image = params.get("image").and_then(Value::as_object);
+            let text = match image {
+                Some(image) => {
+                    let base64 = image
+                        .get("base64")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| invalid_argument("image.base64 must be a string"))?;
+                    let mime = image
+                        .get("mime")
+                        .and_then(Value::as_str)
+                        .unwrap_or("image/png");
+                    crate::grain_post_process::complete_for_extension_with_image(
+                        app, &prompt, mime, base64,
+                    )
+                    .await
+                }
+                None => crate::grain_post_process::complete_for_extension(app, &prompt).await,
+            }
+            .map_err(|error| service_error("LLM provider", error))?;
             Ok(json!({ "text": text }))
         }
         "net.fetch" => {
@@ -1055,6 +1082,31 @@ pub async fn dispatch(
                 .map_err(|e| internal_error(format!("screen text read failed: {e}")))?;
             Ok(match text {
                 Some(text) => json!({ "text": text }),
+                None => Value::Null,
+            })
+        }
+        "capture.screenImage" => {
+            // [GRAIN] The foreground window as a PNG data URI. Gated by
+            // `capture:screen-image`, the widest capture grant there is.
+            //
+            // Core has no caller for this and is not meant to grow one: the
+            // decision to photograph the user's screen belongs to an extension
+            // they installed on purpose. See `context_screen` for the reasoning.
+            //
+            // `spawn_blocking` because GDI capture plus PNG encoding is CPU work
+            // measured in tens of milliseconds — long enough to matter on an
+            // async worker.
+            let captured =
+                tokio::task::spawn_blocking(crate::context_screen::capture_foreground_window)
+                    .await
+                    .map_err(|e| internal_error(format!("screen capture failed: {e}")))?;
+            Ok(match captured {
+                Some(image) => json!({
+                    "mime": image.mime,
+                    "width": image.width,
+                    "height": image.height,
+                    "base64": image.to_base64(),
+                }),
                 None => Value::Null,
             })
         }

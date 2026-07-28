@@ -73,6 +73,15 @@ export interface GrainApi {
   /** The foreground window's visible text from its accessibility tree — never a
    * screenshot (needs capture:screen-text). Null when nothing is readable. */
   screenText(): Promise<string | null>;
+  /** A PNG of the foreground window (needs capture:screen-image), or null.
+   * Grain's own features never capture one — this exists so an extension the
+   * user installed deliberately can. Feed it straight to `llm.complete`. */
+  screenImage(): Promise<{
+    mime: string;
+    width: number;
+    height: number;
+    base64: string;
+  } | null>;
   /** The foreground app right now (needs capture:app), or null. */
   focusedApp(): Promise<{
     name: string;
@@ -85,7 +94,13 @@ export interface GrainApi {
     set(key: string, value: JsonValue): Promise<unknown>;
   };
   readonly llm: {
-    complete(prompt: string): Promise<string>;
+    /** Complete a prompt. Pass `image` (from `screenImage()`) to ask about a
+     * picture; a model that cannot read images is retried without it by the
+     * host, so this still resolves to an answer. */
+    complete(
+      prompt: string,
+      image?: { base64: string; mime?: string },
+    ): Promise<string>;
   };
   readonly net: {
     fetch(

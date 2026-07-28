@@ -3062,6 +3062,7 @@ name = "handy"
 version = "0.9.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "candle-core",
  "candle-nn",
  "candle-transformers",
@@ -3082,6 +3083,7 @@ dependencies = [
  "handy-keys",
  "hf-hub",
  "hound",
+ "image",
  "log",
  "natural",
  "once_cell",

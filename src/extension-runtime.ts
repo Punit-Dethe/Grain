@@ -179,13 +179,28 @@ export const GRAIN_RUNTIME_JS = `(function () {
     screenText: function () {
       return req("capture.screenText", {}).then(function (r) { return r && r.text != null ? r.text : null; });
     },
+    // A PNG of the foreground window (needs the capture:screen-image grant) as
+    // { mime, width, height, base64 }, or null. Pass it straight to llm() to ask
+    // a model about it. Grain itself never captures one.
+    screenImage: function () {
+      return req("capture.screenImage", {});
+    },
     settings: {
       get: function (k) { return req("settings.get", { key: String(k) }); },
       set: function (k, v) { return req("settings.set", { key: String(k), value: v }); }
     },
     llm: {
-      complete: function (prompt) {
-        return req("llm.complete", { prompt: String(prompt) }).then(function (r) {
+      // The second argument is optional and takes what screenImage() returns.
+      // A model that cannot read images is handled by the host: the same call
+      // is retried without it, so this still resolves to an answer rather than
+      // throwing. (No backticks in here — this whole body is a template
+      // literal, see the note at the top of the file.)
+      complete: function (prompt, image) {
+        var params = { prompt: String(prompt) };
+        if (image && image.base64) {
+          params.image = { base64: String(image.base64), mime: String(image.mime || "image/png") };
+        }
+        return req("llm.complete", params).then(function (r) {
           return r && r.text != null ? r.text : r;
         });
       }

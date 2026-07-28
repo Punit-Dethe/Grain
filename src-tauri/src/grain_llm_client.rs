@@ -11,6 +11,35 @@ use std::time::Duration;
 /// timeout stays configured on the shared client.
 const LLM_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// A message body: a plain string, or OpenAI's multi-part array once an image is
+/// attached.
+///
+/// `Text` serializes as a bare JSON string, so every existing call is
+/// byte-identical on the wire — a provider that has never been sent an image
+/// cannot tell this type was introduced.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum MessageContent {
+    Text(String),
+    Parts(Vec<ContentPart>),
+}
+
+/// One part of a multi-part message. Only the two shapes Grain ever sends.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ImageUrl },
+}
+
+#[derive(Debug, Serialize)]
+struct ImageUrl {
+    /// Always a `data:` URI, never a remote URL. The provider must not be asked
+    /// to fetch anything on the user's behalf, and an image Grain captured does
+    /// not exist anywhere it could be fetched from.
+    url: String,
+}
+
 #[derive(Debug, Serialize)]
 struct ChatMessage {
     role: String,
@@ -19,7 +48,7 @@ struct ChatMessage {
     /// text turns this is always `Some(_)` → byte-identical to the old wire
     /// format (the field is only skipped when genuinely `None`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<String>,
+    content: Option<MessageContent>,
     /// Present only on an assistant turn that requested tool calls.
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<WireToolCall>>,
@@ -34,11 +63,55 @@ impl ChatMessage {
     fn text(role: impl Into<String>, content: String) -> Self {
         Self {
             role: role.into(),
-            content: Some(content),
+            content: Some(MessageContent::Text(content)),
             tool_calls: None,
             tool_call_id: None,
         }
     }
+
+    /// A user turn carrying text plus one image, as a `data:` URI.
+    ///
+    /// Text first, image second: the array is ordered, and putting the
+    /// instruction ahead of the picture makes the picture evidence for a
+    /// question rather than the subject of an open-ended one.
+    fn text_with_image(content: String, mime: &str, base64_data: &str) -> Self {
+        Self {
+            role: "user".to_string(),
+            content: Some(MessageContent::Parts(vec![
+                ContentPart::Text { text: content },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: format!("data:{mime};base64,{base64_data}"),
+                    },
+                },
+            ])),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+}
+
+/// Whether a provider error means "this model cannot take images".
+///
+/// There is no capability signal to check first: the OpenAI-compatible `/models`
+/// response carries no modality metadata, so every client that tries to know in
+/// advance ends up with a hardcoded list that goes stale — or strips the image
+/// silently and tells the model it failed, which makes the model narrate a
+/// limitation instead of answering.
+///
+/// Grain asks the provider instead. It sends the image and treats a failure
+/// naming an image/vision/modality problem as the answer.
+fn is_vision_unsupported_error(body: &str) -> bool {
+    let body = body.to_ascii_lowercase();
+    const SIGNALS: &[&str] = &[
+        "image",
+        "vision",
+        "multimodal",
+        "modalit",
+        "content type",
+        "image_url",
+    ];
+    SIGNALS.iter().any(|signal| body.contains(signal))
 }
 
 /// OpenAI tool-calling wire types. Kept separate from the public
@@ -346,6 +419,75 @@ pub async fn send_chat(
     send_request(client, &url, headers, &request_body).await
 }
 
+/// [GRAIN] Like [`send_chat`], but the final user turn also carries an image.
+///
+/// # Degrading rather than failing
+///
+/// Whether a given provider/model pair accepts an image cannot be known ahead of
+/// time, so this asks and handles the answer:
+///
+/// 1. Send with the image.
+/// 2. If the provider rejects it *as an image problem*, send the identical
+///    request again with the image removed.
+/// 3. Any other failure is returned unchanged — a rate limit is a rate limit,
+///    and retrying it as a text call would hide it.
+///
+/// The retry deliberately does **not** tell the model an image was dropped.
+/// Injecting "ERROR: cannot read image" is what makes a model answer *about* its
+/// limitation instead of answering the question, and the caller usually cannot
+/// act on it anyway. It answers from the text it has.
+#[allow(clippy::too_many_arguments)]
+pub async fn send_chat_with_image(
+    client: &reqwest::Client,
+    provider: &PostProcessProvider,
+    api_key: String,
+    model: &str,
+    messages: Vec<(String, String)>,
+    image_mime: &str,
+    image_base64: &str,
+    reasoning_effort: Option<String>,
+    reasoning: Option<ReasoningConfig>,
+) -> Result<LlmSuccess, LlmError> {
+    let base_url = provider.base_url.trim_end_matches('/');
+    let url = format!("{}/chat/completions", base_url);
+    let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
+
+    // The image rides on the LAST user turn — the one the model is answering.
+    let build = |with_image: bool| -> Vec<ChatMessage> {
+        let last_user = messages.iter().rposition(|(role, _)| role == "user");
+        messages
+            .iter()
+            .enumerate()
+            .map(|(i, (role, content))| {
+                if with_image && Some(i) == last_user {
+                    ChatMessage::text_with_image(content.clone(), image_mime, image_base64)
+                } else {
+                    ChatMessage::text(role.clone(), content.clone())
+                }
+            })
+            .collect()
+    };
+
+    let request = |messages| ChatCompletionRequest {
+        model: model.to_string(),
+        messages,
+        response_format: None,
+        reasoning_effort: reasoning_effort.clone(),
+        reasoning: reasoning.clone(),
+        tools: None,
+        tool_choice: None,
+    };
+
+    match send_request(client, &url, headers.clone(), &request(build(true))).await {
+        Ok(success) => Ok(success),
+        Err(LlmError::Other(body)) if is_vision_unsupported_error(&body) => {
+            log::info!("[GRAIN] llm: '{model}' rejected the image; retrying text-only");
+            send_request(client, &url, headers, &request(build(false))).await
+        }
+        Err(other) => Err(other),
+    }
+}
+
 /// [GRAIN] Send a tool-enabled multi-turn chat completion (Grain Recall's
 /// native `search_memory`). Same OpenAI-compatible endpoint as [`send_chat`],
 /// but the request advertises `tools` and the response may come back as one or
@@ -393,7 +535,7 @@ pub async fn send_chat_with_tools(
             },
             ChatEntry::ToolResult { call_id, content } => ChatMessage {
                 role: "tool".to_string(),
-                content: Some(content),
+                content: Some(MessageContent::Text(content)),
                 tool_calls: None,
                 tool_call_id: Some(call_id),
             },
