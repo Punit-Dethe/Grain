@@ -13,7 +13,8 @@ Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 CI trial-merges `upstream/main`. If Handy moved and the merge is clean, CI
 opens (or refreshes) the **`sync/auto-upstream` PR** with the merge already
 done, the commit list in the body, and the divergence ratchet already run.
-Review it, record verdicts in the ledger, merge it. Done.
+Review it, merge it. Done — merged commits file themselves as `Merged` on the
+dashboard, because being in our ancestry *is* the record.
 
 Only a *conflicted* merge needs a human driver — and
 [merge-report.md](merge-report.md) will have told you the exact conflicting
@@ -92,23 +93,27 @@ tooling.
 
 ### 3. Automation — CI does the waiting
 
-[`upstream-sync.yml`](../.github/workflows/upstream-sync.yml), every 2 hours:
+[`upstream-sync.yml`](../.github/workflows/upstream-sync.yml), every 2 hours
+(and on any push touching `Upstream/`):
 
-1. **Ledger**: [sync_upstream.py](sync_upstream.py) pulls new upstream commits
-   into [data.json](data.json) as `Pending` — rendered by
-   [index.html](index.html), the tracker dashboard. It pages the API until it
-   reaches the ledger's oldest entry (a single page silently dropped commits
-   whenever upstream landed a burst), keys on **SHA** (subjects repeat —
-   `update catalog`, `bump tauri global shortcut`), and pre-files a commit
-   already in our ancestry as `Merged` rather than inventing review work.
-2. **Trial merge** → [merge-report.md](merge-report.md): the next sync's
+1. **Trial merge** → [merge-report.md](merge-report.md): the next sync's
    conflict surface, always known in advance. Its machine-readable twin
    `status.json` (behind count, trial result, conflicting files, ancestry
    drift) is what puts sync health on the dashboard, so "are we keeping up?"
    never requires reading CI logs.
+2. **Ledger**: [sync_upstream.py](sync_upstream.py) rebuilds `data.json` — the
+   per-commit board [index.html](index.html) renders. It pages the API back to
+   `TRACKING_FLOOR_TS` (a single page silently dropped commits whenever
+   upstream landed a burst) and keys on **SHA**, because subjects repeat
+   (`update catalog`, `bump tauri global shortcut`).
 3. **Ancestry audit**: flags upstream commits that are already applied here but
-   unrecorded (see D below) — and gates step 4 on it.
-4. **Auto-PR**: clean merge + new commits + no ancestry drift → the
+   unrecorded (see D below) — and gates step 5 on it.
+4. **Publish**: the dashboard is uploaded to GitHub Pages *in this same job*.
+   It used to be a second, push-triggered workflow, which never fired: GitHub
+   does not run `on: push` workflows for pushes made with `GITHUB_TOKEN`, so
+   the site only refreshed when a human happened to push. Deploying inline
+   removes the chain rather than patching it.
+5. **Auto-PR**: clean merge + new commits + no ancestry drift → the
    `sync/auto-upstream` branch is (re)built, the ratchet must pass on the
    merged result, and a PR is opened/updated with the commit list and a review
    checklist. Conflicted merges, ratchet failures and drift all suppress the
@@ -117,12 +122,42 @@ tooling.
 [`divergence-ratchet.yml`](../.github/workflows/divergence-ratchet.yml) on
 every push/PR touching `src-tauri/`: the boundary cannot silently erode.
 
+#### The ledger is derived — one file is yours
+
+`data.json`, `data.js`, `status.json` and `merge-report.md` are **gitignored
+build products**. Nothing commits them; every run recomputes them from three
+inputs:
+
+| Input | Answers |
+| --- | --- |
+| upstream's commit list | what happened |
+| our git ancestry | what we absorbed — a commit reachable from `HEAD` is `Merged` |
+| [verdicts.json](verdicts.json) | what only a human knows: `Ignored`, cherry-picks, notes |
+
+So the output is a pure function of its inputs: idempotent, and impossible to
+drift. That matters because it used to drift constantly — verdicts were typed
+into the generated `data.json` while `data.js` kept an older answer, and a bot
+commit landed on `main` every 2 hours carrying nothing but a new timestamp.
+
+Record the rare verdict with the tool, never by hand:
+
+```bash
+python Upstream/verdict.py --pending                    # what still needs one
+python Upstream/verdict.py <sha|#PR> Ignored "why"      # Grain replaced that surface
+python Upstream/verdict.py <sha|#PR> --note "detail"    # just annotate
+python Upstream/verdict.py <sha|#PR> --clear            # back to derived
+```
+
+It refuses to store a status ancestry already implies, so `verdicts.json` only
+ever holds real decisions. **A merged sync needs no verdict at all.**
+
 **The dashboard is a plain file — open `Upstream/index.html` and it works.**
 Browsers forbid `fetch()` on a `file://` origin, so the page also ships a
 generated `data.js` (ledger + status baked into a `<script>`) and falls back to
-it, labelling itself `offline copy`. Regenerate all three outputs — `data.json`,
-`status.json`, `data.js` — with `python Upstream/sync_upstream.py`; never edit
-`data.js` or `status.json` by hand.
+it, labelling itself `offline copy`. Both are written by the same call, so they
+cannot disagree. Regenerate everything with `python Upstream/sync_upstream.py`.
+The header shows when the page was **built**, linking to the run that built it
+— a stale deploy is visible instead of looking like a quiet upstream.
 
 ### 4. Guards — the boundary is enforced, not hoped for
 
@@ -138,13 +173,15 @@ measures HEAD, not the working tree).
 
 ### A. The auto-PR is open (common case)
 
-1. Read the PR body's commit list. For each commit, set a verdict in
-   [data.json](data.json): `Merged`, or `Ignored` + a one-line note (Grain
-   replaced that surface — the divergence map says where).
+1. Read the PR body's commit list. Anything Grain does **not** actually take
+   needs saying so — `python Upstream/verdict.py <sha> Ignored "why"` (the
+   divergence map says where Grain replaced that surface). Everything merged
+   needs nothing: ancestry files it.
 2. CI must be green (build, tests, ratchet). If the ratchet flags a stray
    file, `git mv` it into `handy/` on the branch.
 3. Merge the PR with a **merge commit — never squash** (squashing discards
-   the recorded ancestry and the next sync re-fights everything).
+   the recorded ancestry, so the board would forget these commits were merged
+   *and* the next sync re-fights them).
 
 ### B. The trial merge reports conflicts (rare case)
 
@@ -157,7 +194,8 @@ git merge vX.Y.Z            # or upstream/main; oldest release first
 python Upstream/rerere_cache.py save   # share NEW resolutions; commit them
 python Upstream/ratchet.py             # strays + drift
 bun install && cargo check             # regenerate lockfiles
-# verify (below), record data.json verdicts, merge into main, push
+# verify (below), merge into main, push
+python Upstream/verdict.py --pending    # anything left unassessed? record it
 ```
 
 If upstream changed code Grain relocated (settings → `crates/grain-core`,
@@ -168,7 +206,8 @@ lists every relocation.
 
 ### C. Closing out a release (do not skip)
 
-Once every commit of a release has a verdict in `data.json` (zero `Pending`):
+Once every commit of a release has a verdict (`python Upstream/verdict.py
+--pending` comes back empty for it):
 
 ```bash
 git merge -s ours vX.Y.Z              # tree untouched; ancestry says "assessed"
@@ -189,7 +228,8 @@ The single most common way this fork's bookkeeping goes wrong. Symptoms:
 - `git rev-list --count HEAD..upstream/main` stays stubbornly non-zero;
 - the same file (historically `es/translation.json`) conflicts in *every*
   trial merge;
-- `Upstream/data.json` says `Merged` for those very commits.
+- the board says `Merged` for those very commits (a `verdicts.json` override
+  said so, since ancestry could not).
 
 **Cause:** the work was applied by cherry-pick or by hand. Git tracks
 *ancestry*, not content — so the content is in the tree, the ledger is
@@ -266,3 +306,4 @@ same commit.
 | 2026-07-20 | infra | This architecture: auto-sync PRs, shared rerere cache, stray-file guard, `Upstream/` as the single home for all sync machinery. |
 | 2026-07-22 | tracker repairs | Ledger was losing commits: one 30-commit API page (no paging) and a **subject** dedup key that swallowed upstream's repeated subjects. Re-keyed on SHA + PR number; two commits it had dropped (#1529, #1447) recovered, and commits already in our ancestry now pre-file as `Merged` instead of padding the review queue. Dashboard opened to an error off the filesystem (`fetch()` is blocked on `file://`) — it now falls back to a generated `data.js`, and shows behind-count / conflicts / drift from `status.json`. Ratchet was red on `main` (extension-platform `[GRAIN]` hooks landed unbudgeted), re-baselined — while red it also gated the auto-sync PR. |
 | 2026-07-20 | `cdbc2239` closed out | #1697/#1701/#1708/#1709 were applied by cherry-pick, so git still counted them unmerged — the cause of the recurring `es/translation.json` conflict. Content verified (3 files byte-identical; the 4 keys the Spanish pick dropped belong to upstream's replaced model-list UI and are referenced nowhere in Grain), then recorded with `merge -s ours`. Trial merge: 1 conflict / 4 behind → **clean / 0 behind**. Ancestry-drift detection added so this cannot recur silently. |
+| 2026-07-28 | tracker rebuilt | Three faults, one cause — the tracker's data was *committed*. (1) The site never refreshed from CI: the sync job pushed with `GITHUB_TOKEN`, and GitHub does not fire `on: push` workflows for those pushes, so the separate `deploy-pages.yml` never ran. (2) Verdicts hand-typed into the generated `data.json` left `data.js` holding an older answer; the page silently preferred whichever it could read (two rows were drifted when this was found). (3) `checked_at` changed every run, so a `chore: sync upstream commits` commit landed on `main` every 2 hours carrying no information — ~60 of them. Fix: derived files (`data.json`, `data.js`, `status.json`, `merge-report.md`) are gitignored build products, rebuilt each run as a pure function of upstream's commits + our ancestry + the new hand-owned `verdicts.json`, and deployed to Pages *by the same job*. `verdict.py` replaces hand-editing; ancestry alone files a merged commit as `Merged`. Also: dropped the dashboard's PAT-in-`localStorage` trigger button for a link to the workflow, added a "Built <ago>" stamp linking to the run, and CI now `rerere_cache.py save`s the resolutions it learns instead of discarding them. Verified: regenerated ledger matches the last committed one on all 83 rows bar 4 stale hand-typed dates and one PR number (`#1261` → `#1310`, the PR that actually landed it). |

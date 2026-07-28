@@ -2,27 +2,50 @@ name: Upstream Sync
 
 # Grain's upstream (Handy) intake, end to end — see Upstream/UPSTREAM.md.
 #
-# Every 2 hours this workflow:
-#   1. refreshes Upstream/data.json (the per-commit assessment ledger the
-#      Upstream/index.html dashboard renders) plus Upstream/data.js, the
-#      offline copy that lets the dashboard open straight off the filesystem;
-#   2. trial-merges upstream/main and writes Upstream/merge-report.md (and its
-#      machine-readable twin Upstream/status.json, which puts the behind-count
-#      and conflict list on the dashboard) so the next sync's conflict surface
-#      is always known in advance;
+# This workflow both BUILDS the tracker and PUBLISHES it, in one job. That is
+# deliberate: it used to commit the generated files and let a second, push-
+# triggered workflow deploy them — but GitHub never fires `on: push` for a push
+# made with GITHUB_TOKEN, so the site only ever refreshed when a human happened
+# to push something under Upstream/. Building and deploying in the same run
+# removes the chain instead of patching it.
+#
+# Nothing is committed. Upstream/data.json, data.js, status.json and
+# merge-report.md are gitignored build products, regenerated from upstream's
+# commit list, our git ancestry, and the human-owned Upstream/verdicts.json.
+#
+# Each run:
+#   1. trial-merges upstream/main and writes merge-report.md + status.json, so
+#      the next sync's conflict surface is always known in advance;
+#   2. rebuilds the ledger and audits ancestry drift;
 #   3. if upstream has new commits AND the merge is clean, opens (or updates)
-#      an automatic sync PR — reviewing that PR is the entire sync workflow
-#      for the common case. Conflicted merges are never auto-opened; the
-#      report lists the files and the runbook takes over.
+#      an automatic sync PR — reviewing that PR is the entire sync workflow for
+#      the common case. Conflicted merges are never auto-opened; the report
+#      lists the files and the runbook takes over;
+#   4. publishes the dashboard to GitHub Pages.
 
 on:
   schedule:
     - cron: '0 */2 * * *' # Runs every 2 hours
+  push:
+    # A human recording a verdict republishes immediately. (Human pushes do
+    # trigger workflows; the bot's would not — which is why it no longer pushes.)
+    branches: [main]
+    paths:
+      - 'Upstream/**'
+      - '.github/workflows/upstream-sync.yml'
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 permissions:
   contents: write
   pull-requests: write
+  pages: write
+  id-token: write
+
+concurrency:
+  # Pages allows one deployment at a time; a scheduled run and a push run must
+  # queue rather than race.
+  group: github-pages
+  cancel-in-progress: false
 
 env:
   SYNC_BRANCH: sync/auto-upstream
@@ -30,11 +53,14 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history required for the trial merge
+          fetch-depth: 0 # full history required for the trial merge and the ancestry audit
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -130,7 +156,7 @@ jobs:
       # Ledger + ancestry audit. Runs BEFORE the PR step because it detects
       # already-applied commits (cherry-picked work git has no ancestry for) —
       # auto-merging those would replay resolved work and its conflicts.
-      - name: Refresh ledger and audit ancestry
+      - name: Rebuild ledger and audit ancestry
         id: ledger
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -152,6 +178,22 @@ jobs:
             echo "drift=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Publish in this same run, and BEFORE the PR step: the generated files
+      # are never committed, so this is the only thing that puts them in front
+      # of anyone, and a red ratchet must not also cost us the dashboard.
+      # A failed ledger step skips these, leaving the last good site up.
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload upstream tracker
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: Upstream
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+
       - name: Open or update the automatic sync PR
         if: >-
           steps.trial.outputs.clean == 'true' &&
@@ -164,6 +206,11 @@ jobs:
           git checkout -B "$SYNC_BRANCH" HEAD
           git merge --no-ff upstream/main \
             -m "merge: upstream/main $(git rev-parse --short upstream/main) (auto-sync)"
+          # Any conflict rerere replayed during that merge is knowledge this
+          # repo should keep; without saving it, the next clone re-resolves it.
+          python Upstream/rerere_cache.py save
+          git add Upstream/rr-cache
+          git diff --cached --quiet || git commit -m "chore(upstream): share new rerere resolutions"
           # The boundary must hold on the merged result, or there is no PR:
           # better no PR than one that quietly erodes the Handy/Grain split.
           python Upstream/ratchet.py
@@ -178,7 +225,9 @@ jobs:
             echo
             echo "Before merging:"
             echo "- [ ] CI green (build, tests, ratchet)"
-            echo "- [ ] \`Upstream/data.json\` verdict recorded for each commit"
+            echo "- [ ] Anything **not** simply merged? Record it:"
+            echo "      \`python Upstream/verdict.py <sha> Ignored \"why\"\`."
+            echo "      Merged commits need nothing — ancestry files them itself."
             echo "- [ ] New settings/bindings? Regenerate \`src/bindings.ts\` on a dev run"
             echo
             echo "Merge with a merge commit — **never squash** (squashing discards the"
@@ -191,9 +240,3 @@ jobs:
               --title "sync: merge upstream/main (auto)" --body-file /tmp/body.md
           fi
           git checkout main
-
-      - name: Commit and Push Changes
-        run: |
-          git add Upstream/data.json Upstream/data.js Upstream/status.json Upstream/merge-report.md
-          # Only commit if there are changes
-          git diff --quiet && git diff --staged --quiet || (git commit -m "chore: sync upstream commits" && git push)
