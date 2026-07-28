@@ -4,6 +4,15 @@
 window.UPSTREAM_DATA = [
   {
     "date": "Jul 28, 2026",
+    "ts": "2026-07-28T10:06:22Z",
+    "sha": "ea3c20a3a67c7401d8b19198723760da9d40ac45",
+    "commit": "fix(i18n): resolve zh-Hant-* system locales to Traditional Chinese (zh-TW) (#1798)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1798"
+  },
+  {
+    "date": "Jul 28, 2026",
     "ts": "2026-07-28T07:33:46Z",
     "sha": "292db6470e7463487aabb7aad83f18c5831b574c",
     "commit": " Harden Hugging Face downloads and use mirror fallback (#1773)",
@@ -742,12 +751,12 @@ window.UPSTREAM_DATA = [
   }
 ];
 window.UPSTREAM_STATUS = {
-  "upstream_head": "292db647",
-  "upstream_subject": " Harden Hugging Face downloads and use mirror fallback (#1773)",
-  "upstream_date": "2026-07-28T15:33:46+08:00",
+  "upstream_head": "ea3c20a3",
+  "upstream_subject": "fix(i18n): resolve zh-Hant-* system locales to Traditional Chinese (zh-TW) (#1798)",
+  "upstream_date": "2026-07-28T18:06:22+08:00",
   "latest_tag": "v0.9.4",
   "merge_base": "cdbc2239",
-  "behind": 21,
+  "behind": 22,
   "trial_clean": false,
   "conflicts": [
     ".gitignore",
@@ -764,5 +773,5 @@ window.UPSTREAM_STATUS = {
     "src/i18n/locales/zh-TW/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-28T08:07:59Z"
+  "checked_at": "2026-07-28T11:48:24Z"
 };
