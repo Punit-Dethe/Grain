@@ -3,6 +3,15 @@
 // where the browser blocks fetch('data.json').
 window.UPSTREAM_DATA = [
   {
+    "date": "Jul 27, 2026",
+    "ts": "2026-07-27T23:43:50Z",
+    "sha": "09a6a71015db794b47dd4916333be1a8b3ad2dac",
+    "commit": "fix(i18n): complete zh-TW translations for newer UI strings (#1795)",
+    "status": "Pending",
+    "notes": "",
+    "pr": "1795"
+  },
+  {
     "date": "Jul 25, 2026",
     "ts": "2026-07-25T06:35:53Z",
     "sha": "6cad594cdba3aaa99555183fcb1e7b5a3967168e",
@@ -724,12 +733,12 @@ window.UPSTREAM_DATA = [
   }
 ];
 window.UPSTREAM_STATUS = {
-  "upstream_head": "6cad594c",
-  "upstream_subject": "maximize-window: enable maximize and snap support (#1778)",
-  "upstream_date": "2026-07-25T14:35:53+08:00",
+  "upstream_head": "09a6a710",
+  "upstream_subject": "fix(i18n): complete zh-TW translations for newer UI strings (#1795)",
+  "upstream_date": "2026-07-28T07:43:50+08:00",
   "latest_tag": "v0.9.4",
   "merge_base": "cdbc2239",
-  "behind": 19,
+  "behind": 20,
   "trial_clean": false,
   "conflicts": [
     ".nix/bun-lock-hash",
@@ -741,8 +750,9 @@ window.UPSTREAM_STATUS = {
     "src-tauri/src/handy/managers/transcription.rs",
     "src-tauri/src/lib.rs",
     "src/components/Sidebar.tsx",
-    "src/components/settings/AccelerationSelector.tsx"
+    "src/components/settings/AccelerationSelector.tsx",
+    "src/i18n/locales/zh-TW/translation.json"
   ],
   "drift": [],
-  "checked_at": "2026-07-27T22:46:20Z"
+  "checked_at": "2026-07-28T01:11:42Z"
 };
