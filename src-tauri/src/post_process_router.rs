@@ -88,15 +88,21 @@ pub fn record_usage(app: &AppHandle, provider_id: &str) {
     }
 }
 
-/// Token-efficient seam-repair layer appended to the post-process prompt ONLY
-/// for rolling-window transcripts. Rolling text is assembled from sequential
-/// audio segments, so its residual defects are seam-shaped (casing, stray or
-/// missing sentence punctuation, doubled boundary words) — this line aims the
-/// LLM at exactly those, and at nothing else. ~40 tokens; invisible to the user.
-pub const ROLLING_SEAM_PROMPT: &str = "\n[Live dictation]\nThe text was assembled \
-from sequential speech segments. Repair segment-join artifacts: wrong \
-capitalization, stray or missing periods/commas, doubled words, extra spaces. \
-Never reword, reorder, or drop content.";
+/// Seam-repair layer appended to the post-process prompt ONLY for rolling-window
+/// transcripts. Rolling text is assembled from sequential audio segments, so its
+/// residual defects are seam-shaped — this aims the LLM at exactly those.
+///
+/// Deliberately tiny, and deliberately free of bracketed headers. The previous
+/// version opened with `[Live dictation]` and spent ~45 tokens describing the
+/// assembly process; both were mistakes. A bracketed heading reads like a label
+/// on a piece of content, and models echoed it into the user's document
+/// verbatim. Explaining *why* the text looks the way it does also invited the
+/// model to comment on it rather than just fix it. What is left is only the
+/// repairs that are actually wanted: spacing, casing, doubled boundary words,
+/// and punctuation that landed in the wrong place.
+pub const ROLLING_SEAM_PROMPT: &str = "\nThis text was joined from speech \
+segments. Fix ONLY spacing, capitalization, doubled words at the joins, and \
+commas or periods that landed in the wrong place. Change nothing else.";
 
 /// Hard ceiling on a single post-process provider call. A provider that accepts
 /// the connection but never responds must not hang the transcribe→paste pipeline

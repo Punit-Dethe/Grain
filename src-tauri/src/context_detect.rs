@@ -936,30 +936,40 @@ pub fn compose_prompt(
                  user dictated it that way.\n",
             );
         }
-        // The seam contract. Everything here is about the JOIN, not the content:
-        // the model is told what it is landing between and, emphatically, that
-        // the surrounding text is not its to repeat or rewrite. Without that last
-        // instruction a model handed context will happily continue the sentence
-        // it can see instead of formatting the one it was given.
+        // The seam block. Two things had to change after it leaked verbatim into
+        // a user's email draft:
+        //
+        // 1. The excerpts are no longer wrapped in `<before_text>` /
+        //    `<after_text>`. XML-ish tags around a block of prose read as
+        //    "content to emit" to a model that is already being asked to return
+        //    text, and that is exactly what it did — tags included.
+        // 2. The prohibition now comes AFTER the excerpts as well as before. The
+        //    last thing read about the excerpts is that they are not the input.
+        //
+        // The output-format guard appended at the very end of the whole prompt
+        // (see below) is the third layer, and the only one that does not depend
+        // on the model choosing to comply with prose.
         if let Some(caret) = caret {
             pre.push_str(
-                "The transcript will be inserted EXACTLY between the two excerpts \
-                 below. Make it read naturally there: fix the leading and trailing \
-                 spacing, continue mid-sentence without re-capitalizing, do not \
-                 duplicate punctuation that is already present, and NEVER repeat, \
-                 continue or rewrite the surrounding text — it is context, not \
-                 input.\n",
+                "Reference only — the text already around the cursor, NOT input, NOT \
+                 to be repeated:\n",
             );
             if !caret.before.is_empty() {
-                pre.push_str("<before_text>");
-                pre.push_str(&caret.before);
-                pre.push_str("</before_text>\n");
+                pre.push_str("  …immediately before: ");
+                pre.push_str(caret.before.trim());
+                pre.push('\n');
             }
             if !caret.after.is_empty() {
-                pre.push_str("<after_text>");
-                pre.push_str(&caret.after);
-                pre.push_str("</after_text>\n");
+                pre.push_str("  …immediately after: ");
+                pre.push_str(caret.after.trim());
+                pre.push('\n');
             }
+            pre.push_str(
+                "Use those two ONLY to make the transcript join cleanly: correct \
+                 leading/trailing spacing, continue mid-sentence without \
+                 re-capitalizing, and do not repeat punctuation already there. Never \
+                 output any part of them.\n",
+            );
         }
         if !terms.is_empty() {
             // Additive, LOW authority: only fix a term to one of these spellings when
@@ -1012,6 +1022,25 @@ pub fn compose_prompt(
     );
 
     pre.push_str(base);
+
+    // [GRAIN] Terminal output constraint, and the reason it is LAST.
+    //
+    // Everything this function prepends is reference material — the app name,
+    // the site, the text around the cursor — and every piece of it is a thing a
+    // model can mistake for content to return. One did: a user's email draft
+    // received the surrounding text and the seam instructions verbatim.
+    //
+    // Prose telling the model not to do that sits at the TOP of the prompt,
+    // which is the least-attended position. This sits at the very end, after
+    // the user's own prompt, which is the most-attended one. It is added only
+    // when a context layer was actually applied, so a plain dictation with no
+    // context is byte-for-byte what it was before.
+    if has_ctx {
+        pre.push_str(
+            "\n\nOutput ONLY the corrected transcript itself — no surrounding text, \
+             no labels, no notes, no explanation.",
+        );
+    }
     pre
 }
 
@@ -1451,15 +1480,29 @@ mod uia {
                 }
             }
 
-            // The Document ancestor IS the focused tab.
-            if want_url
-                && url.is_none()
-                && parent.CachedControlType().map(|t| t == UIA_DocumentControlTypeId)
-                    == Ok(true)
-            {
-                url = read_value(&parent);
-                if url.is_some() {
-                    break; // reached the tab root with what we came for
+            // The tab's URL, from the chain that contains the caret.
+            //
+            // This deliberately does NOT require the ancestor to be a
+            // `Document`. It used to, and that broke every Gecko-based browser:
+            // Firefox and its forks (Zen, LibreWolf, Floorp, Waterfox) do not
+            // reliably present the page root with that control type the way
+            // Chromium does, so the walk climbed past the right element and
+            // fell back to scanning the window — which is what made Gmail in
+            // Zen resolve as a generic browser.
+            //
+            // What actually matters is not the control type but the structural
+            // guarantee: this element is an ancestor of the focused one, so any
+            // URL it carries belongs to the tab the caret is in and cannot be
+            // another tab's. Reading the value of each ancestor and taking the
+            // first that parses as a host keeps that guarantee and drops the
+            // browser-engine assumption. `host_from_url` rejects anything not
+            // host-shaped, so a non-URL value simply does not match.
+            if want_url && url.is_none() {
+                if let Some(value) = read_value(&parent) {
+                    if host_from_url(&value).is_some() {
+                        url = Some(value);
+                        break; // found the tab this caret belongs to
+                    }
                 }
             }
 
@@ -1875,7 +1918,7 @@ mod tests {
     /// from treating them as input — a model handed context will otherwise
     /// continue the sentence it can see instead of formatting the one it was given.
     #[test]
-    fn caret_context_supplies_the_seam_and_forbids_continuing_it() {
+    fn caret_context_supplies_the_seam_and_forbids_echoing_it() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let mut c = ctx("winword", AppCategory::Docs);
@@ -1885,18 +1928,37 @@ mod tests {
         });
         let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
 
-        assert!(out.contains("<before_text>We agreed the release </before_text>"));
-        assert!(out.contains("<after_text> before the holidays.</after_text>"));
-        assert!(out.contains("inserted EXACTLY between"));
-        assert!(out.contains("NEVER repeat, continue or rewrite the surrounding text"));
-        // The base prompt still lands verbatim at the tail.
-        assert!(out.ends_with("BASE ${output}"));
+        assert!(out.contains("We agreed the release"));
+        assert!(out.contains("before the holidays."));
+        // The prohibition must bracket the excerpts — before AND after — and the
+        // whole prompt must end with the output constraint.
+        assert!(out.contains("NOT input, NOT \nto be repeated") || out.contains("NOT input"));
+        assert!(out.contains("Never output any part of them"));
+        assert!(out.trim_end().ends_with("no notes, no explanation."));
+        // The user's own prompt still survives verbatim inside.
+        assert!(out.contains("BASE ${output}"));
+    }
+
+    /// Excerpts must NOT be wrapped in XML-ish tags. Tags around prose read as
+    /// "content to emit" and were echoed into a user's email draft verbatim.
+    #[test]
+    fn caret_excerpts_carry_no_xml_tags() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("winword", AppCategory::Docs);
+        c.caret = Some(CaretContext {
+            before: "Dear Rita,".into(),
+            after: "Regards".into(),
+        });
+        let out = compose_prompt("BASE", &s, Some(&c), None);
+        assert!(!out.contains("<before_text>"));
+        assert!(!out.contains("<after_text>"));
     }
 
     /// One side of the seam may be empty (dictating at the start or end of a
-    /// field); the empty tag must not be emitted at all.
+    /// field); that side must not be mentioned at all.
     #[test]
-    fn empty_caret_side_emits_no_tag() {
+    fn empty_caret_side_is_omitted() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let mut c = ctx("winword", AppCategory::Docs);
@@ -1905,8 +1967,22 @@ mod tests {
             after: String::new(),
         });
         let out = compose_prompt("BASE", &s, Some(&c), None);
-        assert!(out.contains("<before_text>"));
-        assert!(!out.contains("<after_text>"));
+        assert!(out.contains("immediately before:"));
+        assert!(!out.contains("immediately after:"));
+    }
+
+    /// Any applied context layer must be followed by the terminal output
+    /// constraint — the one instruction that sits in the most-attended position.
+    #[test]
+    fn context_always_ends_with_the_output_constraint() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Ide)), None);
+        assert!(out.trim_end().ends_with("no notes, no explanation."));
+
+        // …and a prompt with NO context added stays byte-for-byte the base.
+        let bare = ctx("unknownapp", AppCategory::Other);
+        assert_eq!(compose_prompt("BASE", &s, Some(&bare), None), "BASE");
     }
 
     /// Off means off: with the opt-in disabled nothing is captured, so no caret
@@ -1931,7 +2007,7 @@ mod tests {
         });
         let out = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
         let spoken = out.find("make it a haiku").unwrap();
-        let seam = out.find("<before_text>").unwrap();
+        let seam = out.find("immediately before:").unwrap();
         assert!(spoken < seam, "spoken instruction must precede the seam");
     }
 
@@ -2052,7 +2128,9 @@ mod tests {
         let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide)), None);
         assert!(out.starts_with("[Context awareness]"));
         assert!(out.contains("code editor"));
-        assert!(out.ends_with(base)); // base preserved verbatim at the tail.
+        // The base survives verbatim; the terminal output constraint follows it
+        // (see `context_always_ends_with_the_output_constraint`).
+        assert!(out.contains(base));
     }
 
     #[test]

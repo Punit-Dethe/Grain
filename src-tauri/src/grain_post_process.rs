@@ -130,11 +130,127 @@ pub(crate) async fn post_process_transcription(
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
     // post-processing keeps its own provider list.
-    if settings.post_process_smart_rotation {
-        return crate::post_process_router::post_process_rotated(app, &prompt, transcription).await;
+    let result = if settings.post_process_smart_rotation {
+        crate::post_process_router::post_process_rotated(app, &prompt, transcription).await
+    } else {
+        run_single_provider(app, settings, &prompt, transcription).await
+    };
+
+    // [GRAIN] Last line of defence against the model returning the prompt.
+    //
+    // Everything layered into the system prompt — the app and site, the text
+    // around the cursor, the seam instructions — is reference material, and a
+    // model that mistakes it for content emits it into whatever the user is
+    // typing into. That happened: an email draft received the surrounding page
+    // text and the seam instructions verbatim.
+    //
+    // Prompt wording makes that rarer; it cannot make it impossible, and the
+    // cost of the rare case is corrupted text in a document the user is about
+    // to send. So the reply is checked for fragments only we could have written.
+    // Finding one means the post-processing round is a write-off, and `None` is
+    // exactly how this function already says "use the raw transcript" — the user
+    // loses the cleanup, never their words.
+    result.filter(|reply| {
+        let echoed = reply_contains_scaffolding(reply);
+        if echoed {
+            warn!(
+                "[GRAIN] post-process: reply echoed prompt scaffolding; \
+                 discarding it and pasting the raw transcript instead"
+            );
+        }
+        !echoed
+    })
+}
+
+/// Fragments that can only have come from Grain's own prompt scaffolding.
+///
+/// Chosen to be things no one dictates. A false positive costs one round of
+/// cleanup; a false negative costs the user a corrupted document, so the list
+/// leans deliberately toward catching too much. Retired wordings stay listed —
+/// they cost one `contains` each and a stale prompt should still be caught.
+const SCAFFOLDING_MARKERS: &[&str] = &[
+    // Caret / seam block, current and retired forms.
+    "<before_text>",
+    "<after_text>",
+    "immediately before:",
+    "immediately after:",
+    "Reference only — the text already around the cursor",
+    "Never output any part of them",
+    // Context-awareness block headers.
+    "[Context awareness]",
+    "[Spoken instruction",
+    "Soft context (tone",
+    "Nearby terms the user may be referring to",
+    // Rolling seam layer, current and retired forms.
+    "[Live dictation]",
+    "This text was joined from speech segments",
+    "The text was assembled from sequential speech segments",
+    // The terminal output constraint.
+    "Output ONLY the corrected transcript",
+];
+
+fn reply_contains_scaffolding(reply: &str) -> bool {
+    SCAFFOLDING_MARKERS
+        .iter()
+        .any(|marker| reply.contains(marker))
+}
+
+#[cfg(test)]
+mod scaffolding_tests {
+    use super::*;
+
+    /// The exact shape that reached a user's email draft: the text around the
+    /// cursor, the transcript, and the seam instructions, all pasted as one.
+    #[test]
+    fn catches_the_leak_that_happened() {
+        let leaked = "he platform. We regularly share updates on internships, jobs, \
+             competitions... noreply@unstop.news Draft saved So we have a few features \
+             to work on inside Grain, like the snippets, context aware. And what time \
+             is it right now? [Live dictation] The text was assembled from sequential \
+             speech segments. Repair segment-join artifacts: wrong capitalization, \
+             stray or missing periods/commas, doubled words, extra spaces.";
+        assert!(reply_contains_scaffolding(leaked));
     }
 
-    // Default single-provider path — unchanged behavior.
+    #[test]
+    fn catches_every_scaffolding_form() {
+        for marker in SCAFFOLDING_MARKERS {
+            let reply = format!("Sure, here you go: {marker} and the rest.");
+            assert!(
+                reply_contains_scaffolding(&reply),
+                "marker not caught: {marker}"
+            );
+        }
+    }
+
+    /// The guard must not fire on ordinary dictation. A false positive costs one
+    /// round of cleanup, which is survivable — but it should still be rare.
+    #[test]
+    fn ordinary_transcripts_pass_through() {
+        for ordinary in [
+            "So we have a few features to work on inside Grain, like the snippets.",
+            "Let's move the release to Thursday before the holidays.",
+            "The text was fine, so I sent it.",
+            "Can you output only the summary?",
+            "I was reading about live dictation software yesterday.",
+            "",
+        ] {
+            assert!(
+                !reply_contains_scaffolding(ordinary),
+                "false positive on: {ordinary:?}"
+            );
+        }
+    }
+}
+
+/// The default single-provider path — unchanged behavior, lifted out so both it
+/// and the rotation path funnel through the scaffolding guard above.
+async fn run_single_provider(
+    app: &AppHandle,
+    settings: &AppSettings,
+    prompt: &str,
+    transcription: &str,
+) -> Option<String> {
     let provider = match settings.active_post_process_provider().cloned() {
         Some(provider) => provider,
         None => {
@@ -181,7 +297,7 @@ pub(crate) async fn post_process_transcription(
         &provider,
         model,
         api_key,
-        &prompt,
+        prompt,
         transcription,
     )
     .await
