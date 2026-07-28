@@ -96,7 +96,8 @@
     },
     "errors": {
       "loadModels": "無法載入可用模型",
-      "downloadModel": "模型下載失敗: {{error}}"
+      "downloadModel": "模型下載失敗: {{error}}",
+      "selectModel": "選擇模型失敗"
     },
     "permissions": {
       "title": "需要權限",
@@ -145,6 +146,7 @@
       "languageSelection": "支援多種輸入語言",
       "singleLanguage": "僅支援此語言",
       "multiLanguage": "多語言",
+      "languageCount": "{{total}} 種語言",
       "languageOnly": "僅 {{language}}",
       "translation": "可翻譯為英語",
       "translate": "翻譯為英語"
@@ -186,7 +188,7 @@
       },
       "language": {
         "title": "語言",
-        "description": "選擇語音識別的語言。選擇自動將自動判定語言，選擇特定語言可以提高該語言的準確度",
+        "description": "選擇語音辨識的語言。選擇自動將自動判定語言，選擇特定語言可以提高該語言的準確度",
         "descriptionUnsupported": "Parakeet 模型會自動偵測語言，無需手動選擇",
         "searchPlaceholder": "搜尋語言...",
         "noResults": "未找到語言",
@@ -356,6 +358,10 @@
         "add": "新增",
         "remove": "刪除 {{word}}",
         "duplicate": "「{{word}}」已存在"
+      },
+      "voiceActivityDetection": {
+        "title": "語音活動偵測",
+        "description": "過濾錄音中的靜音。支援串流的模型會使用較長的 VAD 尾段；停用 VAD 則會錄製原始音訊"
       }
     },
     "postProcessing": {
@@ -537,7 +543,7 @@
         "title": "致謝",
         "whisper": {
           "title": "Whisper.cpp",
-          "description": "針對 OpenAI Whisper 自動語音識別模型的高效能推理引擎",
+          "description": "針對 OpenAI Whisper 自動語音辨識模型的高效能推理引擎",
           "details": "Handy 使用 Whisper.cpp 進行快速的本機語音轉文字處理。感謝 Georgi Gerganov 和貢獻者們的傑出工作"
         }
       }
