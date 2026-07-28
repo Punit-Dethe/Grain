@@ -89,6 +89,9 @@ zerocopy = "0.8"
 # transitive dependencies, so this only promotes them to direct use.
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+# Guaranteed clearing of the captured frame on drop. A plain write loop over a
+# buffer about to be freed is a dead store the optimizer may remove.
+zeroize = "1"
 candle-core = "0.9"
 candle-nn = "0.9"
 candle-transformers = "0.9"

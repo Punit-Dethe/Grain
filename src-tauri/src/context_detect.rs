@@ -1453,18 +1453,34 @@ mod uia {
 
     /// How many descendants of the window have a given control type. Diagnostic
     /// only, and only ever run on the path where everything else already failed.
-    unsafe fn count_descendants(automation: &IUIAutomation, hwnd: HWND, control_type: i32) -> i32 {
+    unsafe fn count_descendants(automation: &IUIAutomation, hwnd: HWND, control_type: i32) -> usize {
+        descendants_of_type(automation, hwnd, control_type, i32::MAX).len()
+    }
+
+    /// Every descendant of `hwnd` with a given control type, capped.
+    ///
+    /// The one place that builds a window-scoped `FindAll`. Four callers used to
+    /// repeat this preamble — resolve the root, build a property condition, run
+    /// the scan, bound the result — with four chances to forget the bound.
+    unsafe fn descendants_of_type(
+        automation: &IUIAutomation,
+        hwnd: HWND,
+        control_type: i32,
+        cap: i32,
+    ) -> Vec<IUIAutomationElement> {
         let Ok(root) = automation.ElementFromHandle(hwnd) else {
-            return -1;
+            return Vec::new();
         };
         let Ok(condition) = automation
             .CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(control_type))
         else {
-            return -1;
+            return Vec::new();
         };
-        root.FindAll(TreeScope_Descendants, &condition)
-            .and_then(|found| found.Length())
-            .unwrap_or(-1)
+        let Ok(found) = root.FindAll(TreeScope_Descendants, &condition) else {
+            return Vec::new();
+        };
+        let len = found.Length().unwrap_or(0).min(cap);
+        (0..len).filter_map(|i| found.GetElement(i).ok()).collect()
     }
 
     /// Values of every on-screen `Document` in the window.
@@ -1473,32 +1489,16 @@ mod uia {
     /// background tab that still has an accessibility tree; keeping them would
     /// make "which tab am I in" ambiguous exactly when it matters.
     unsafe fn visible_document_urls(automation: &IUIAutomation, hwnd: HWND) -> Vec<String> {
-        let Ok(root) = automation.ElementFromHandle(hwnd) else {
-            return Vec::new();
-        };
-        let Ok(condition) = automation.CreatePropertyCondition(
-            UIA_ControlTypePropertyId,
-            &VARIANT::from(UIA_DocumentControlTypeId.0),
-        ) else {
-            return Vec::new();
-        };
-        let Ok(found) = root.FindAll(TreeScope_Descendants, &condition) else {
-            return Vec::new();
-        };
-
-        let mut out = Vec::new();
-        for i in 0..found.Length().unwrap_or(0).min(MAX_DOCUMENT_SCAN) {
-            let Ok(document) = found.GetElement(i) else {
-                continue;
-            };
-            if document.CurrentIsOffscreen().map(|b| b.as_bool()) == Ok(true) {
-                continue;
-            }
-            if let Some(value) = read_value(&document) {
-                out.push(value);
-            }
-        }
-        out
+        descendants_of_type(
+            automation,
+            hwnd,
+            UIA_DocumentControlTypeId.0,
+            MAX_DOCUMENT_SCAN,
+        )
+        .into_iter()
+        .filter(|d| d.CurrentIsOffscreen().map(|b| b.as_bool()) != Ok(true))
+        .filter_map(|d| read_value(&d))
+        .collect()
     }
 
     /// How far up the ancestor chain to walk before giving up. Real chains from a
@@ -1816,28 +1816,20 @@ mod uia {
     /// of the tree (e.g. Zen compact mode with the bar hidden), nothing is found
     /// and we degrade to the generic Browser category — no error, no UI.
     unsafe fn read_url(automation: &IUIAutomation, hwnd: HWND) -> Option<String> {
-        let root = automation.ElementFromHandle(hwnd).ok()?;
-        let cond = automation
-            .CreatePropertyCondition(
-                UIA_ControlTypePropertyId,
-                &VARIANT::from(UIA_EditControlTypeId.0),
-            )
-            .ok()?;
-        let edits = root.FindAll(TreeScope_Descendants, &cond).ok()?;
-        let len = edits.Length().unwrap_or(0);
-        // Cap the scan so a page with many inputs can't make this expensive.
-        for i in 0..len.min(MAX_EDIT_SCAN) {
-            let Ok(edit) = edits.GetElement(i) else {
-                continue;
-            };
-            // The URL can surface as the edit's value (typical) or, on some
-            // browsers, its name — try both.
-            let candidate = read_value(&edit).or_else(|| read_name(&edit));
-            if let Some(host) = candidate.and_then(|v| host_from_url(&v)) {
-                return Some(host);
-            }
-        }
-        None
+        descendants_of_type(
+            automation,
+            hwnd,
+            UIA_EditControlTypeId.0,
+            MAX_EDIT_SCAN,
+        )
+        .into_iter()
+        // The URL can surface as the edit's value (typical) or, on some
+        // browsers, its name — try both.
+        .find_map(|edit| {
+            read_value(&edit)
+                .or_else(|| read_name(&edit))
+                .and_then(|v| host_from_url(&v))
+        })
     }
 
     // [GRAIN] `read_focused_terms` used to fetch the focused element a second
@@ -1863,34 +1855,27 @@ mod uia {
             let automation: IUIAutomation =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
             let hwnd = super::windows_impl::foreground_window()?;
-            let root = automation.ElementFromHandle(hwnd).ok()?;
 
             let mut out = String::new();
+            // Tracked incrementally rather than recomputed. `out.chars().count()`
+            // is O(len), and checking it per element made the harvest quadratic
+            // in the amount of text collected — on a busy page, the dominant cost.
+            let mut collected = 0usize;
             let mut seen = std::collections::HashSet::new();
 
-            for control_type in [
+            'outer: for control_type in [
                 UIA_TextControlTypeId.0,
                 UIA_EditControlTypeId.0,
                 UIA_DocumentControlTypeId.0,
             ] {
-                let Ok(condition) = automation
-                    .CreatePropertyCondition(
-                        UIA_ControlTypePropertyId,
-                        &VARIANT::from(control_type),
-                    )
-                else {
-                    continue;
-                };
-                let Ok(found) = root.FindAll(TreeScope_Descendants, &condition) else {
-                    continue;
-                };
-                for i in 0..found.Length().unwrap_or(0).min(MAX_WINDOW_ELEMENT_SCAN) {
-                    if out.chars().count() >= super::MAX_WINDOW_TEXT_CHARS {
-                        break;
+                for element in
+                    descendants_of_type(&automation, hwnd, control_type, MAX_WINDOW_ELEMENT_SCAN)
+                {
+                    if collected >= super::MAX_WINDOW_TEXT_CHARS {
+                        // Full: stop entirely rather than fall through to another
+                        // whole-tree scan whose results cannot be used.
+                        break 'outer;
                     }
-                    let Ok(element) = found.GetElement(i) else {
-                        continue;
-                    };
                     if is_password(&element) {
                         continue;
                     }
@@ -1900,7 +1885,8 @@ mod uia {
                         continue;
                     };
                     let text = text.trim();
-                    if text.is_empty() || text.chars().count() < 2 {
+                    let len = text.chars().count();
+                    if len < 2 {
                         continue;
                     }
                     if !seen.insert(text.to_string()) {
@@ -1908,6 +1894,7 @@ mod uia {
                     }
                     out.push_str(text);
                     out.push('\n');
+                    collected += len + 1;
                 }
             }
 

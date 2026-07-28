@@ -50,8 +50,15 @@ impl Drop for CapturedImage {
     fn drop(&mut self) {
         // Zero before release. An encoded screenshot sitting in freed heap is
         // readable by whatever allocates next in-process; this costs one pass
-        // over a few hundred KB and removes that window entirely.
-        self.bytes.iter_mut().for_each(|b| *b = 0);
+        // over a few hundred KB and closes that window.
+        //
+        // `zeroize` rather than a plain loop: writing to a buffer that is about
+        // to be freed is a dead store, and the compiler is entirely within its
+        // rights to delete it. `Zeroize` guarantees the writes with volatile
+        // semantics plus a barrier, which is the difference between this
+        // actually clearing the frame and only appearing to.
+        use zeroize::Zeroize;
+        self.bytes.zeroize();
     }
 }
 
@@ -164,25 +171,31 @@ mod windows_impl {
     /// today means every browser and every Electron app — come back blank.
     const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(2);
 
-    /// RAII for the GDI objects, so every early return still releases them.
-    /// A leaked DC or bitmap here would be a slow drain on a process that is
-    /// meant to run all day.
+    /// RAII for the GDI objects.
+    ///
+    /// It owns each handle from the moment that handle exists, and the later
+    /// ones are `Option` precisely so it can. An earlier version built the guard
+    /// only after the bitmap was created, which meant a `CreateDIBSection`
+    /// failure returned while the device contexts were still held — a GDI handle
+    /// leak on the error path of a process that runs all day.
     struct Gdi {
         window: HWND,
         screen_dc: windows::Win32::Graphics::Gdi::HDC,
         mem_dc: windows::Win32::Graphics::Gdi::HDC,
-        bitmap: HBITMAP,
-        previous: HGDIOBJ,
+        bitmap: Option<HBITMAP>,
+        previous: Option<HGDIOBJ>,
     }
 
     impl Drop for Gdi {
         fn drop(&mut self) {
             unsafe {
-                if !self.previous.is_invalid() {
-                    SelectObject(self.mem_dc, self.previous);
+                // Reverse order of acquisition: deselect the bitmap before
+                // deleting it, delete it before the DC it was selected into.
+                if let Some(previous) = self.previous.take() {
+                    SelectObject(self.mem_dc, previous);
                 }
-                if !self.bitmap.is_invalid() {
-                    let _ = DeleteObject(self.bitmap.into());
+                if let Some(bitmap) = self.bitmap.take() {
+                    let _ = DeleteObject(bitmap.into());
                 }
                 if !self.mem_dc.is_invalid() {
                     let _ = DeleteDC(self.mem_dc);
@@ -218,11 +231,19 @@ mod windows_impl {
                 return None;
             }
             let mem_dc = CreateCompatibleDC(Some(screen_dc));
+            // Guard takes ownership NOW, before anything else can fail.
+            let mut gdi = Gdi {
+                window,
+                screen_dc,
+                mem_dc,
+                bitmap: None,
+                previous: None,
+            };
 
             // Top-down 32bpp: a negative height flips the DIB so row 0 is the
             // top, which is the order image encoders expect. Reading a
             // bottom-up DIB straight into one is the classic upside-down bug.
-            let mut info = BITMAPINFO {
+            let info = BITMAPINFO {
                 bmiHeader: BITMAPINFOHEADER {
                     biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
                     biWidth: width,
@@ -238,23 +259,15 @@ mod windows_impl {
             let mut pixels: *mut core::ffi::c_void = std::ptr::null_mut();
             let bitmap = CreateDIBSection(
                 Some(screen_dc),
-                &info as *const _,
+                &info,
                 DIB_RGB_COLORS,
                 &mut pixels,
                 None,
                 0,
             )
-            .ok()?;
-
-            let previous = SelectObject(mem_dc, bitmap.into());
-            let _gdi = Gdi {
-                window,
-                screen_dc,
-                mem_dc,
-                bitmap,
-                previous,
-            };
-            let _ = &mut info; // keep `info` alive alongside the DIB section
+            .ok()?; // guard above releases both DCs on this path
+            gdi.bitmap = Some(bitmap);
+            gdi.previous = Some(SelectObject(mem_dc, bitmap.into()));
 
             if !PrintWindow(window, mem_dc, PW_RENDERFULLCONTENT).as_bool() {
                 return None;
