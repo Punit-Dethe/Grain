@@ -1194,10 +1194,11 @@ mod windows_impl {
             };
             log::info!(
                 "[GRAIN] context: {exe} → {category:?} [{site_note}] | field={:?} \
-                 confidence={:?} host={} region={} | caret={} terms={}",
+                 confidence={:?} url={}({}) region={} | caret={} terms={}",
                 scan.field,
                 scan.confidence,
                 scan.url_host.as_deref().unwrap_or("-"),
+                scan.url_source,
                 scan.region.as_deref().unwrap_or("-"),
                 scan.caret
                     .as_ref()
@@ -1290,6 +1291,11 @@ mod uia {
     /// keeps a page full of inputs from making URL detection expensive.
     const MAX_EDIT_SCAN: i32 = 60;
 
+    /// Upper bound on `Document` elements inspected. A browser window has one
+    /// per rendered tab (plus the odd embedded frame), so this is generous;
+    /// it only exists so a pathological page cannot make the scan unbounded.
+    const MAX_DOCUMENT_SCAN: i32 = 16;
+
     /// RAII COM init: balances a successful `CoInitializeEx` with `CoUninitialize`.
     /// If the thread was already in a different apartment (`RPC_E_CHANGED_MODE`),
     /// COM is still usable and we leave it alone.
@@ -1310,7 +1316,6 @@ mod uia {
 
     /// Everything one focus-anchored scan yields. Every field is best-effort and
     /// degrades to its default rather than failing the scan.
-    #[derive(Default)]
     pub(super) struct FocusScan {
         pub url_host: Option<String>,
         pub field: FieldKind,
@@ -1318,6 +1323,138 @@ mod uia {
         pub confidence: Confidence,
         pub terms: Vec<String>,
         pub caret: Option<CaretContext>,
+        /// Which rung of the URL ladder produced the host. Logged, so a browser
+        /// that resolves badly can be diagnosed without guessing at which
+        /// mechanism failed.
+        pub url_source: &'static str,
+    }
+
+    impl Default for FocusScan {
+        fn default() -> Self {
+            Self {
+                url_host: None,
+                field: FieldKind::default(),
+                region: None,
+                confidence: Confidence::default(),
+                terms: Vec::new(),
+                caret: None,
+                url_source: "not-attempted",
+            }
+        }
+    }
+
+    /// Resolve the page URL, best evidence first.
+    ///
+    /// Browsers disagree about how they expose this, so one mechanism is not
+    /// enough — Chromium answers on the first rung and Gecko does not.
+    ///
+    /// 1. **Focus chain.** An ancestor of the focused element carrying a
+    ///    host-shaped value. Strongest: an ancestor of the caret belongs to the
+    ///    caret's own tab, so split views and background tabs cannot intrude.
+    /// 2. **The one visible document.** Gecko does not reliably present the page
+    ///    root the way the walk expects, so look for `Document` elements
+    ///    directly. If exactly ONE is on screen, it is unambiguously the tab
+    ///    being looked at — background tabs are either absent from the tree or
+    ///    marked offscreen — and that uniqueness is what earns it `Exact`.
+    /// 3. **Several visible documents** (a split view): take the first, but
+    ///    demote to `Probable`, because "first" is not "the one with the caret".
+    /// 4. **Address-bar scan.** The old mechanism, kept last. It reads whatever
+    ///    looks like a URL anywhere in the window, which can be a different tab
+    ///    or a page input, so it never earns better than `Probable`.
+    ///
+    /// Only `Exact` may change the app category (see
+    /// [`Confidence::allows_site_category`]), so the weak rungs still name the
+    /// site without being trusted to act on it.
+    unsafe fn resolve_url(
+        automation: &IUIAutomation,
+        hwnd: HWND,
+        from_focus_chain: Option<&str>,
+    ) -> (Option<String>, Confidence, &'static str) {
+        if let Some(host) = from_focus_chain.and_then(host_from_url) {
+            return (Some(host), Confidence::Exact, "focus-chain");
+        }
+
+        match visible_document_urls(automation, hwnd).as_slice() {
+            [] => {}
+            [only] => {
+                if let Some(host) = host_from_url(only) {
+                    return (Some(host), Confidence::Exact, "sole-document");
+                }
+            }
+            many => {
+                if let Some(host) = many.iter().find_map(|u| host_from_url(u)) {
+                    return (Some(host), Confidence::Probable, "multi-document");
+                }
+            }
+        }
+
+        match read_url(automation, hwnd) {
+            Some(host) => (Some(host), Confidence::Probable, "address-bar-scan"),
+            None => {
+                // Every rung failed. The two causes need different fixes and
+                // look identical from outside, so count what the tree actually
+                // contained: zero of everything means the browser never built an
+                // accessibility tree for us (Gecko instantiates lazily), while
+                // elements-but-no-URL means the tree is there and the URL simply
+                // is not where we looked.
+                log::debug!(
+                    "[GRAIN] context: no URL on any rung — tree had {} document(s), {} edit(s)",
+                    count_descendants(automation, hwnd, UIA_DocumentControlTypeId.0),
+                    count_descendants(automation, hwnd, UIA_EditControlTypeId.0),
+                );
+                (None, Confidence::Guess, "none")
+            }
+        }
+    }
+
+    /// How many descendants of the window have a given control type. Diagnostic
+    /// only, and only ever run on the path where everything else already failed.
+    unsafe fn count_descendants(automation: &IUIAutomation, hwnd: HWND, control_type: i32) -> i32 {
+        let Ok(root) = automation.ElementFromHandle(hwnd) else {
+            return -1;
+        };
+        let Ok(condition) = automation
+            .CreatePropertyCondition(UIA_ControlTypePropertyId, &VARIANT::from(control_type))
+        else {
+            return -1;
+        };
+        root.FindAll(TreeScope_Descendants, &condition)
+            .and_then(|found| found.Length())
+            .unwrap_or(-1)
+    }
+
+    /// Values of every on-screen `Document` in the window.
+    ///
+    /// Offscreen ones are dropped because that is how a browser represents a
+    /// background tab that still has an accessibility tree; keeping them would
+    /// make "which tab am I in" ambiguous exactly when it matters.
+    unsafe fn visible_document_urls(automation: &IUIAutomation, hwnd: HWND) -> Vec<String> {
+        let Ok(root) = automation.ElementFromHandle(hwnd) else {
+            return Vec::new();
+        };
+        let Ok(condition) = automation.CreatePropertyCondition(
+            UIA_ControlTypePropertyId,
+            &VARIANT::from(UIA_DocumentControlTypeId.0),
+        ) else {
+            return Vec::new();
+        };
+        let Ok(found) = root.FindAll(TreeScope_Descendants, &condition) else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for i in 0..found.Length().unwrap_or(0).min(MAX_DOCUMENT_SCAN) {
+            let Ok(document) = found.GetElement(i) else {
+                continue;
+            };
+            if document.CurrentIsOffscreen().map(|b| b.as_bool()) == Ok(true) {
+                continue;
+            }
+            if let Some(value) = read_value(&document) {
+                out.push(value);
+            }
+        }
+        out
     }
 
     /// How far up the ancestor chain to walk before giving up. Real chains from a
@@ -1407,28 +1544,10 @@ mod uia {
             scan.region = region;
 
             if want_url {
-                match url.as_deref().and_then(host_from_url) {
-                    // Structural: this URL belongs to the document containing the
-                    // caret, so it is the right tab by construction.
-                    Some(host) => {
-                        scan.url_host = Some(host);
-                        scan.confidence = Confidence::Exact;
-                    }
-                    // No Document ancestor — either the focus sits in browser
-                    // chrome (the address bar itself) or this browser does not
-                    // expose one. Both are handled by falling back and demoting:
-                    // a `Probable` host still names the site in the prompt but is
-                    // not allowed to override the category, so typing in the
-                    // omnibox cannot borrow the loaded page's tone.
-                    None => {
-                        scan.url_host = read_url(&automation, hwnd);
-                        scan.confidence = if scan.url_host.is_some() {
-                            Confidence::Probable
-                        } else {
-                            Confidence::Guess
-                        };
-                    }
-                }
+                let (host, confidence, source) = resolve_url(&automation, hwnd, url.as_deref());
+                scan.url_host = host;
+                scan.confidence = confidence;
+                scan.url_source = source;
             }
 
             scan
