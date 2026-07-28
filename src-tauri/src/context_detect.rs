@@ -1060,6 +1060,38 @@ pub fn detect_active_context(read_nearby_terms: bool, read_caret: bool) -> Optio
     }
 }
 
+/// Cap on the text harvested from a whole window. Big enough for an email
+/// thread or an article, small enough that it cannot dominate a model's context.
+pub const MAX_WINDOW_TEXT_CHARS: usize = 4000;
+
+/// Read the visible text of the foreground window from its accessibility tree.
+///
+/// # Why not a screenshot
+///
+/// This is what "read my screen" costs elsewhere in this market: a screen
+/// recording permission, a frame encoded and shipped to a vision model, and in
+/// one competitor's case a public trust incident. The accessibility tree already
+/// holds the text, structured, with no permission prompt on Windows, no image
+/// ever created, and no other application in frame — only the window the user is
+/// actually typing into.
+///
+/// It genuinely misses things a screenshot would catch (canvas, video, scanned
+/// PDFs, Figma). That is what the image path is for; this is the one that should
+/// be reached for first.
+///
+/// `None` on unsupported platforms or when nothing readable was found. Password
+/// fields are skipped, as everywhere else.
+pub fn read_window_text() -> Option<String> {
+    #[cfg(windows)]
+    {
+        uia::read_window_text()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// Read the currently focused editable field's full text via UI Automation, for
 /// the auto-dictionary watcher. `None` on unsupported platforms, password fields,
 /// or any failure. Silent — no UI.
@@ -1243,6 +1275,13 @@ mod windows_impl {
         Some(String::from_utf16_lossy(&buf[..len as usize]))
     }
 
+    /// The foreground window, or `None` when there isn't one. Shared with the
+    /// standalone window-text reader, which has no scan of its own to ride on.
+    pub(super) fn foreground_window() -> Option<HWND> {
+        let hwnd = unsafe { GetForegroundWindow() };
+        (!hwnd.0.is_null()).then_some(hwnd)
+    }
+
     /// The foreground window's title (for display + UWP fallback), if non-empty.
     unsafe fn window_title(hwnd: HWND) -> Option<String> {
         let mut buf = [0u16; 512];
@@ -1278,7 +1317,7 @@ mod uia {
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
         IUIAutomationValuePattern, TreeScope_Descendants, TreeScope_Element,
         UIA_AriaRolePropertyId, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
-        UIA_EditControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
+        UIA_EditControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
     };
     use windows::Win32::UI::Accessibility::{
         TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
@@ -1295,6 +1334,11 @@ mod uia {
     /// per rendered tab (plus the odd embedded frame), so this is generous;
     /// it only exists so a pathological page cannot make the scan unbounded.
     const MAX_DOCUMENT_SCAN: i32 = 16;
+
+    /// Upper bound on elements inspected per control type when harvesting a
+    /// whole window's text. A busy page has thousands; the character cap would
+    /// stop us anyway, but this bounds the tree traversal itself.
+    const MAX_WINDOW_ELEMENT_SCAN: i32 = 400;
 
     /// RAII COM init: balances a successful `CoInitializeEx` with `CoUninitialize`.
     /// If the thread was already in a different apartment (`RPC_E_CHANGED_MODE`),
@@ -1800,6 +1844,78 @@ mod uia {
     // time to extract terms. The focus-anchored scan already holds that element,
     // so the term extraction is inline in `read` and this is gone rather than
     // kept as a second way to do the same thing.
+
+    /// Harvest the foreground window's visible text from its accessibility tree.
+    ///
+    /// Collects `Text`, `Edit` and `Document` elements — static labels and prose
+    /// come through as `Text`, editable and document content through the other
+    /// two — and stops at [`MAX_WINDOW_TEXT_CHARS`].
+    ///
+    /// Two things it deliberately does NOT do. It never touches a password
+    /// field, checked per element rather than assumed from the control type. And
+    /// it de-duplicates, because accessibility trees repeat the same string at
+    /// several levels (a button's label appears on the button, its text child,
+    /// and often a wrapper) and a naive harvest is mostly the same words over and
+    /// over — which wastes exactly the context budget this is spending.
+    pub(in crate::context_detect) fn read_window_text() -> Option<String> {
+        unsafe {
+            let _com = ComGuard::init();
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let hwnd = super::windows_impl::foreground_window()?;
+            let root = automation.ElementFromHandle(hwnd).ok()?;
+
+            let mut out = String::new();
+            let mut seen = std::collections::HashSet::new();
+
+            for control_type in [
+                UIA_TextControlTypeId.0,
+                UIA_EditControlTypeId.0,
+                UIA_DocumentControlTypeId.0,
+            ] {
+                let Ok(condition) = automation
+                    .CreatePropertyCondition(
+                        UIA_ControlTypePropertyId,
+                        &VARIANT::from(control_type),
+                    )
+                else {
+                    continue;
+                };
+                let Ok(found) = root.FindAll(TreeScope_Descendants, &condition) else {
+                    continue;
+                };
+                for i in 0..found.Length().unwrap_or(0).min(MAX_WINDOW_ELEMENT_SCAN) {
+                    if out.chars().count() >= super::MAX_WINDOW_TEXT_CHARS {
+                        break;
+                    }
+                    let Ok(element) = found.GetElement(i) else {
+                        continue;
+                    };
+                    if is_password(&element) {
+                        continue;
+                    }
+                    // Static text carries its content in Name; editable and
+                    // document elements carry it in Value.
+                    let Some(text) = read_value(&element).or_else(|| read_name(&element)) else {
+                        continue;
+                    };
+                    let text = text.trim();
+                    if text.is_empty() || text.chars().count() < 2 {
+                        continue;
+                    }
+                    if !seen.insert(text.to_string()) {
+                        continue;
+                    }
+                    out.push_str(text);
+                    out.push('\n');
+                }
+            }
+
+            let out: String = out.chars().take(super::MAX_WINDOW_TEXT_CHARS).collect();
+            let out = out.trim().to_string();
+            (!out.is_empty()).then_some(out)
+        }
+    }
 
     /// The focused field's raw text (auto-dictionary watcher). Own COM scope so it
     /// is safe to call standalone from the watcher thread. Password fields skipped.

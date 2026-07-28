@@ -21,6 +21,7 @@ const CONTEXT_OPTIONS: { value: AgentContextMode; label: string }[] = [
   { value: "off", label: "Off" },
   { value: "unique", label: "Unique terms only" },
   { value: "full", label: "Full field text" },
+  { value: "screen", label: "Whole window text" },
 ];
 
 const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
@@ -133,8 +134,8 @@ export const AgentSection: React.FC = () => {
 
       {/* 5. What it is allowed to read. */}
       <SettingContainer
-        title="Field context"
-        description="What the Agent reads from the focused field at summon. 'Unique terms' passes only high-signal names and identifiers (never raw text); 'Full field text' sends the field content (capped) so the Agent understands the surrounding document. Selected text always stays the subject — the field content is reference only. Password fields are never read."
+        title="Context"
+        description="What the Agent reads at summon, from least to most. 'Unique terms' passes only high-signal names and identifiers, never raw text. 'Full field text' sends the field you're in (capped). 'Whole window text' also sends what surrounds it — the email thread you're replying to, the page you're on — read from the window's accessibility tree, never a screenshot, and only the window you're in. Selected text always stays the subject; context is reference only. Password fields are never read."
         descriptionMode="tooltip"
         grouped
       >

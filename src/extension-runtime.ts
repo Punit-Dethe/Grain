@@ -173,6 +173,12 @@ export const GRAIN_RUNTIME_JS = `(function () {
     focusedApp: function () {
       return req("capture.app", {});
     },
+    // The foreground window's visible text, from its accessibility tree — never
+    // a screenshot (needs the capture:screen-text grant). Resolves to the text,
+    // or null when the surface exposes nothing readable.
+    screenText: function () {
+      return req("capture.screenText", {}).then(function (r) { return r && r.text != null ? r.text : null; });
+    },
     settings: {
       get: function (k) { return req("settings.get", { key: String(k) }); },
       set: function (k, v) { return req("settings.set", { key: String(k), value: v }); }

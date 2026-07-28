@@ -108,6 +108,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "session.start" => Some("session:start"),
         "capture.selection" => Some("capture:selection"),
         "capture.app" => Some("capture:app"),
+        "capture.screenText" => Some("capture:screen-text"),
         "workspace.open" | "workspace.close" => Some("surface:workspace"),
         "overlay.show" | "overlay.dismiss" => Some("surface:overlay"),
         // [GRAIN] Grain Space over MCP. `space` is NOT in KNOWN_CAPABILITIES, so
@@ -1038,6 +1039,22 @@ pub async fn dispatch(
                     "exePath": a.exe_path,
                     "urlHost": a.url_host,
                 }),
+                None => Value::Null,
+            })
+        }
+        "capture.screenText" => {
+            // [GRAIN] The foreground window's visible text, from its
+            // accessibility tree — never a screenshot. `null` when the surface
+            // exposes nothing readable. Gated by `capture:screen-text`.
+            //
+            // `spawn_blocking` because this is a synchronous COM/UIA traversal:
+            // running it on the async runtime would park a worker thread for the
+            // duration of a cross-process tree walk.
+            let text = tokio::task::spawn_blocking(crate::context_detect::read_window_text)
+                .await
+                .map_err(|e| internal_error(format!("screen text read failed: {e}")))?;
+            Ok(match text {
+                Some(text) => json!({ "text": text }),
                 None => Value::Null,
             })
         }

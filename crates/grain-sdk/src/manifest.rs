@@ -392,6 +392,13 @@ pub const KNOWN_CAPABILITIES: &[&str] = &[
     // app the user is in — and the foundation any context-aware extension needs
     // (the same primitive Grain's own Context Awareness uses).
     "capture:app",
+    // [GRAIN] Read the foreground window's visible text from its accessibility
+    // tree. Wider than `capture:selection` (which is only what the user
+    // deliberately highlighted) and narrower than a screenshot: no image is ever
+    // produced, no screen-recording permission is involved, other applications
+    // are never in frame, and password fields are skipped. Flagged, because it
+    // can still see whatever is on the window the user is looking at.
+    "capture:screen-text",
     // Phase 5C (SPEC §1.3): launch side effects. Both are danger-marked and the
     // host enforces the security, not the extension:
     //  · `open:url` opens a link in the user's browser — the host allows ONLY

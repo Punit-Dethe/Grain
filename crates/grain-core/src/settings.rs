@@ -137,6 +137,16 @@ pub enum AgentContextMode {
     Off,
     Unique,
     Full,
+    /// The whole foreground window's visible text, from its accessibility tree.
+    ///
+    /// The rung above `Full`: `Full` sends the field being typed into, this
+    /// sends what surrounds it. It is what makes "reply saying I can't make
+    /// Thursday" answerable — the thread being replied to lives outside the
+    /// compose box, so no amount of field context reaches it.
+    ///
+    /// Never a screenshot: no screen-recording permission, no image, and only
+    /// the foreground window is ever read.
+    Screen,
 }
 
 /// [GRAIN] Where the Agent reply surface appears. `Side` (default) is the

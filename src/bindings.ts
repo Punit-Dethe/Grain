@@ -2063,7 +2063,7 @@ export type AgentAutocopy = "off" | "first" | "all"
  * nearby-terms extractor (high-signal identifiers/names only); `Full` sends the
  * capped raw field text. OFF by default — reading field content is opt-in.
  */
-export type AgentContextMode = "off" | "unique" | "full"
+export type AgentContextMode = "off" | "unique" | "full" | "screen"
 /**
  * One conversation turn from the frontend.
  */

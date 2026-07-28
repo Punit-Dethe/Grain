@@ -70,6 +70,9 @@ export interface GrainApi {
     list(): Promise<string[]>;
   };
   captureSelection(): Promise<string | null>;
+  /** The foreground window's visible text from its accessibility tree — never a
+   * screenshot (needs capture:screen-text). Null when nothing is readable. */
+  screenText(): Promise<string | null>;
   /** The foreground app right now (needs capture:app), or null. */
   focusedApp(): Promise<{
     name: string;

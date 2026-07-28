@@ -797,6 +797,27 @@ fn capture_field_context(mode: AgentContextMode) -> Option<FieldContext> {
                 text: trimmed.chars().take(FIELD_CONTEXT_MAX_CHARS).collect(),
             })
         }
+        // [GRAIN] The rung above Full: what SURROUNDS the field, not the field.
+        //
+        // "Reply saying I can't make Thursday" is unanswerable from the compose
+        // box alone — the thread being replied to is elsewhere on screen. This
+        // is the mode that reaches it, and it is why screen text exists at all.
+        //
+        // Falls back to the field when the window yields nothing (a surface with
+        // no accessibility text), so choosing the deepest mode never returns
+        // less context than the shallower one would have.
+        AgentContextMode::Screen => {
+            let text = crate::context_detect::read_window_text()
+                .or_else(crate::context_detect::read_focused_text)?;
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            Some(FieldContext {
+                full: true,
+                text: trimmed.chars().take(FIELD_CONTEXT_MAX_CHARS).collect(),
+            })
+        }
     }
 }
 
