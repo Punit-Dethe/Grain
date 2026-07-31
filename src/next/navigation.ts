@@ -10,6 +10,7 @@ export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
 
 export type AppRoute =
   | { page: "overview" }
+  | { page: "notes" }
   | { page: "history" }
   | { page: "settings"; section: SettingsSectionId };
 
@@ -19,6 +20,7 @@ export function routeFromHash(hash: string): AppRoute {
   const path = hash.replace(/^#/, "").split(/[?#]/, 1)[0].replace(/\/+$/, "");
 
   if (path === "/history") return { page: "history" };
+  if (path === "/notes") return { page: "notes" };
 
   const settingsMatch = path.match(/^\/settings\/([^/]+)$/);
   if (settingsMatch && settingsSections.has(settingsMatch[1])) {

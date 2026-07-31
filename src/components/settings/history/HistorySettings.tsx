@@ -20,6 +20,11 @@ import { useOsType } from "@/hooks/useOsType";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
+import {
+  NextHistoryCard,
+  type NextHistoryViewMode,
+} from "@/next/history/NextHistoryCard";
+import type { NextHistoryController } from "@/next/history/useNextHistoryController";
 
 const IconButton: React.FC<{
   onClick: () => void;
@@ -67,9 +72,10 @@ const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
 
 interface HistorySettingsProps {
   variant?: "settings" | "next";
+  controller?: NextHistoryController;
 }
 
-type HistoryViewMode = "original" | "processed";
+type HistoryViewMode = NextHistoryViewMode;
 type HistoryFilter = "all" | "today" | "flow" | "standard";
 
 const PROTOTYPE_HISTORY_COPY = {
@@ -90,6 +96,7 @@ const PrototypeIcon: React.FC<{ name: string }> = ({ name }) => (
 
 export const HistorySettings: React.FC<HistorySettingsProps> = ({
   variant = "settings",
+  controller,
 }) => {
   const { t } = useTranslation();
   const osType = useOsType();
@@ -104,10 +111,15 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   const [filter, setFilter] = useState<HistoryFilter>("all");
   const [viewMode, setViewMode] = useState<HistoryViewMode>("original");
 
+  const activeEntries = controller?.entries ?? entries;
+  const activeLoading = controller?.loading ?? loading;
+  const activeLoadError = controller?.loadError ?? loadError;
+  const activeHasMore = controller?.hasMore ?? hasMore;
+
   // Keep ref in sync for use in IntersectionObserver callback
   useEffect(() => {
-    entriesRef.current = entries;
-  }, [entries]);
+    entriesRef.current = activeEntries;
+  }, [activeEntries]);
 
   const loadPage = useCallback(async (cursor?: number) => {
     const isFirstPage = cursor === undefined;
@@ -142,20 +154,25 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
 
   // Initial load
   useEffect(() => {
+    if (controller) return;
     loadPage();
-  }, [loadPage]);
+  }, [controller, loadPage]);
 
   // Infinite scroll via IntersectionObserver
   useEffect(() => {
-    if (loading) return;
+    if (activeLoading) return;
 
     const sentinel = sentinelRef.current;
-    if (!sentinel || !hasMore) return;
+    if (!sentinel || !activeHasMore) return;
 
     const observer = new IntersectionObserver(
       (observerEntries) => {
         const first = observerEntries[0];
         if (first.isIntersecting) {
+          if (controller) {
+            void controller.loadMore();
+            return;
+          }
           const lastEntry = entriesRef.current[entriesRef.current.length - 1];
           if (lastEntry) {
             loadPage(lastEntry.id);
@@ -167,10 +184,11 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [loading, hasMore, loadPage]);
+  }, [activeHasMore, activeLoading, controller, loadPage]);
 
   // Listen for new entries added from the transcription pipeline
   useEffect(() => {
+    if (controller) return;
     const unlisten = events.historyUpdatePayload.listen((event) => {
       const payload: HistoryUpdatePayload = event.payload;
       if (payload.action === "added") {
@@ -187,7 +205,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     return () => {
       unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [controller]);
 
   const toggleSaved = async (id: number) => {
     // Optimistic update
@@ -278,7 +296,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    return entries.filter((entry) => {
+    return activeEntries.filter((entry) => {
       const searchableText =
         `${entry.title} ${entry.transcription_text} ${entry.post_processed_text ?? ""}`.toLocaleLowerCase();
       if (normalizedQuery && !searchableText.includes(normalizedQuery)) {
@@ -292,21 +310,25 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
           : entry.timestamp * 1000;
       return timestamp >= startOfToday.getTime();
     });
-  }, [entries, filter, query]);
+  }, [activeEntries, filter, query]);
 
   if (variant === "next") {
     let nextContent: React.ReactNode;
-    if (loading) {
+    if (activeLoading) {
       nextContent = (
         <div className="history-state" role="status">
           {t("settings.history.loading")}
         </div>
       );
-    } else if (loadError && entries.length === 0) {
+    } else if (activeLoadError && activeEntries.length === 0) {
       nextContent = (
         <div className="history-state history-state-error">
           <p>{t("settings.history.loadError")}</p>
-          <button className="button" type="button" onClick={() => loadPage()}>
+          <button
+            className="button"
+            type="button"
+            onClick={() => void (controller ? controller.reload() : loadPage())}
+          >
             {t("settings.history.retryLoad")}
           </button>
         </div>
@@ -318,19 +340,28 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     } else {
       nextContent = (
         <AudioPlayerGroup>
-          {visibleEntries.map((entry) => (
-            <HistoryEntryComponent
-              key={entry.id}
-              entry={entry}
-              variant="next"
-              viewMode={viewMode}
-              onToggleSaved={() => toggleSaved(entry.id)}
-              copyText={copyToClipboard}
-              getAudioUrl={getAudioUrl}
-              deleteAudio={deleteAudioEntry}
-              retryTranscription={retryHistoryEntry}
-            />
-          ))}
+          {visibleEntries.map((entry) =>
+            controller ? (
+              <NextHistoryCard
+                key={entry.id}
+                entry={entry}
+                viewMode={viewMode}
+                controller={controller}
+              />
+            ) : (
+              <HistoryEntryComponent
+                key={entry.id}
+                entry={entry}
+                variant="next"
+                viewMode={viewMode}
+                onToggleSaved={() => toggleSaved(entry.id)}
+                copyText={copyToClipboard}
+                getAudioUrl={getAudioUrl}
+                deleteAudio={deleteAudioEntry}
+                retryTranscription={retryHistoryEntry}
+              />
+            ),
+          )}
         </AudioPlayerGroup>
       );
     }

@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { hashForRoute, routeFromHash } from "./navigation";
 
 describe("UI 2.0 hash navigation", () => {
+  it("round-trips the Notes workspace", () => {
+    const route = { page: "notes" } as const;
+    expect(hashForRoute(route)).toBe("#/notes");
+    expect(routeFromHash("#/notes")).toEqual(route);
+  });
+
   it.each([
     "general",
     "advanced",

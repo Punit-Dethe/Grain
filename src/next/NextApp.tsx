@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { platform } from "@tauri-apps/plugin-os";
 import { Toaster } from "sonner";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
+import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, { AccessibilityOnboarding } from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
@@ -16,6 +17,15 @@ import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
 import { routeFromHash, type AppRoute } from "./navigation";
 import { SettingsPage } from "./pages/SettingsPage";
+import { NotesPage } from "./pages/NotesPage";
+import {
+  NextHistoryCard,
+  type NextHistoryViewMode,
+} from "./history/NextHistoryCard";
+import {
+  useNextHistoryController,
+  type NextHistoryController,
+} from "./history/useNextHistoryController";
 import "./next.css";
 
 let onboardingResolution: ReturnType<
@@ -41,6 +51,10 @@ const PROTOTYPE_COPY = {
   recent: "Recent transcriptions",
   recentBody: "Text first. Audio remains available when you need to verify it.",
   viewAll: "View all",
+  recentLoading: "Loading recent transcriptions…",
+  recentError: "Recent transcriptions could not be loaded.",
+  recentEmpty: "No transcriptions yet.",
+  retry: "Retry",
 } as const;
 
 function resolveOnboardingState() {
@@ -245,9 +259,11 @@ function WindowChrome({ route }: { route: AppRoute }) {
       <div className="workspace-title">
         {route.page === "settings"
           ? "Settings"
-          : route.page === "history"
-            ? "History"
-            : "Overview"}
+          : route.page === "notes"
+            ? "Notes"
+            : route.page === "history"
+              ? "History"
+              : "Overview"}
       </div>
       <div
         className="window-actions"
@@ -309,7 +325,7 @@ const NAV_GROUPS = [
     label: "Workspace",
     items: [
       { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
-      { page: "notes", label: "Notes", icon: "note" },
+      { page: "notes", label: "Notes", icon: "note", href: "#/notes" },
       { page: "history", label: "History", icon: "clock", href: "#/history" },
     ],
   },
@@ -620,36 +636,6 @@ function DitherCanvas() {
   return <canvas ref={canvasRef} aria-hidden="true" />;
 }
 
-const SAMPLE_TRANSCRIPTS = [
-  {
-    time: "Today · 4:23 PM",
-    mode: "Flow · 00:18",
-    duration: "0:18",
-    original:
-      "Take a look at how clean this interface is and how easy it will be to navigate this compared to a CLI.",
-    processed:
-      "Take a look at how clean this interface is, and how much easier it will be to navigate than a CLI.",
-  },
-  {
-    time: "Today · 3:48 PM",
-    mode: "Standard · 00:12",
-    duration: "0:12",
-    original:
-      "This fork is already live on GitHub right now. It is only for Codex CLI, and we are working on Claude Code next.",
-    processed:
-      "The fork is already live on GitHub. It currently supports Codex CLI, with Claude Code support in progress.",
-  },
-  {
-    time: "Today · 1:16 PM",
-    mode: "Flow · 00:09",
-    duration: "0:09",
-    original:
-      "The interface needs to feel expressive, but not decorated just for the sake of it.",
-    processed:
-      "The interface should feel expressive without becoming decorative for its own sake.",
-  },
-] as const;
-
 function ViewSwitch({
   mode,
   onChange,
@@ -679,8 +665,8 @@ function ViewSwitch({
   );
 }
 
-function OverviewPage() {
-  const [mode, setMode] = useState<"original" | "processed">("original");
+function OverviewPage({ history }: { history: NextHistoryController }) {
+  const [mode, setMode] = useState<NextHistoryViewMode>("original");
 
   return (
     <section className="page active" data-page-panel="overview">
@@ -709,7 +695,13 @@ function OverviewPage() {
               <button className="button primary" type="button" disabled>
                 {PROTOTYPE_COPY.startFlow}
               </button>
-              <button className="button secondary-glass" type="button" disabled>
+              <button
+                className="button secondary-glass"
+                type="button"
+                onClick={() => {
+                  window.location.hash = "/notes";
+                }}
+              >
                 {PROTOTYPE_COPY.openNotes}
               </button>
             </div>
@@ -775,38 +767,35 @@ function OverviewPage() {
           </div>
         </div>
         <div className="transcript-feed recent-feed">
-          {SAMPLE_TRANSCRIPTS.map((entry) => (
-            <article className="transcript-card" key={entry.time}>
-              <div className="transcript-head">
-                <div>
-                  <time>{entry.time}</time>
-                  <span className="capture-mode">{entry.mode}</span>
-                </div>
-                <div className="transcript-actions">
-                  {(["copy", "star", "refresh", "trash"] as const).map(
-                    (icon) => (
-                      <button type="button" disabled key={icon} tabIndex={-1}>
-                        <Icon name={icon} small />
-                      </button>
-                    ),
-                  )}
-                </div>
-              </div>
-              <p className="transcript-body">
-                {mode === "processed" ? entry.processed : entry.original}
-              </p>
-              <div className="audio-strip">
-                <button className="play-mini" type="button" disabled>
-                  <Icon name="play" small />
-                </button>
-                <span className="audio-time">0:00</span>
-                <span className="audio-track">
-                  <i style={{ width: "0%" }} />
-                </span>
-                <span className="audio-time">{entry.duration}</span>
-              </div>
-            </article>
-          ))}
+          {history.loading ? (
+            <div className="history-state" role="status">
+              {PROTOTYPE_COPY.recentLoading}
+            </div>
+          ) : history.loadError && history.entries.length === 0 ? (
+            <div className="history-state history-state-error">
+              <p>{PROTOTYPE_COPY.recentError}</p>
+              <button
+                className="button"
+                type="button"
+                onClick={() => void history.reload()}
+              >
+                {PROTOTYPE_COPY.retry}
+              </button>
+            </div>
+          ) : history.entries.length === 0 ? (
+            <div className="history-state">{PROTOTYPE_COPY.recentEmpty}</div>
+          ) : (
+            <AudioPlayerGroup>
+              {history.entries.slice(0, 3).map((entry) => (
+                <NextHistoryCard
+                  key={entry.id}
+                  entry={entry}
+                  viewMode={mode}
+                  controller={history}
+                />
+              ))}
+            </AudioPlayerGroup>
+          )}
         </div>
       </div>
     </section>
@@ -867,6 +856,7 @@ function ActionCard({
 
 function NextShell() {
   const route = useHashRoute();
+  const history = useNextHistoryController();
   const { isDark } = useTheme();
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
@@ -962,7 +952,7 @@ function NextShell() {
 
   return (
     <div
-      className={`app next-root${route.page === "settings" ? " notes-mode" : ""}`}
+      className={`app next-root${route.page === "settings" || route.page === "notes" ? " notes-mode" : ""}`}
       data-theme={isDark ? "dark" : "light"}
     >
       <IconSprite />
@@ -970,11 +960,13 @@ function NextShell() {
       <Sidebar route={route} />
       <main className="main">
         {route.page === "history" ? (
-          <HistorySettings variant="next" />
+          <HistorySettings variant="next" controller={history} />
+        ) : route.page === "notes" ? (
+          <NotesPage />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
         ) : (
-          <OverviewPage />
+          <OverviewPage history={history} />
         )}
       </main>
       <Toaster theme={isDark ? "dark" : "light"} />

@@ -30,7 +30,11 @@ const TITLE = "Notes";
  * visual languages inside one frame (and collides on `data-theme`). Same pattern
  * as an extension's own page.
  */
-export function NotesTab() {
+export function NotesTab({
+  variant = "default",
+}: {
+  variant?: "default" | "next";
+}) {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = (getSetting("grain_space_enabled") as boolean) ?? false;
@@ -38,7 +42,9 @@ export function NotesTab() {
 
   if (!enabled) {
     return (
-      <div className="w-full h-full flex items-center justify-center p-12">
+      <div
+        className={`w-full h-full flex items-center justify-center p-12${variant === "next" ? " gs-next-onramp" : ""}`}
+      >
         <div className="max-w-md text-center space-y-4">
           <h1 className="text-2xl font-semibold tracking-tight text-ink">
             {TITLE}
@@ -64,7 +70,9 @@ export function NotesTab() {
 
   if (settingsOpen) {
     return (
-      <div className="w-full h-full overflow-y-auto">
+      <div
+        className={`w-full h-full overflow-y-auto${variant === "next" ? " gs-next-settings" : ""}`}
+      >
         <div className="max-w-4xl w-full mx-auto px-12 py-9 space-y-6">
           <button
             type="button"
@@ -91,5 +99,10 @@ export function NotesTab() {
     );
   }
 
-  return <GrainSpaceOverlay onOpenSettings={() => setSettingsOpen(true)} />;
+  return (
+    <GrainSpaceOverlay
+      variant={variant}
+      onOpenSettings={() => setSettingsOpen(true)}
+    />
+  );
 }

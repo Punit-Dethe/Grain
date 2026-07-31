@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Settings } from "lucide-react";
 import { commands, type Note, type NoteCard } from "@/bindings";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Sidebar } from "./Sidebar";
@@ -47,12 +47,14 @@ const HYBRID_DEBOUNCE_MS = 380;
  */
 export function GrainSpaceOverlay({
   onOpenSettings,
+  variant = "default",
 }: {
   /** Show the notebook's settings. Owned by `NotesTab`, which swaps the whole tab
    *  to a settings page — the settings are built on Grain's app tokens and the
    *  workspace on `.gs-frame`'s own, so nesting one in the other would mix two
    *  visual languages and collide on `data-theme`. */
   onOpenSettings: () => void;
+  variant?: "default" | "next";
 }) {
   const { t } = useTranslation();
   // A workspace follows Grain's theme — not the OS, and not a toggle of its own.
@@ -589,9 +591,10 @@ export function GrainSpaceOverlay({
   }, [cards]);
 
   return (
-    <div className="gs-root">
+    <div className={`gs-root${variant === "next" ? " gs-next" : ""}`}>
       <div className="gs-frame" data-theme={isSettingsDark ? "dark" : "light"}>
         <Sidebar
+          variant={variant}
           cards={cards}
           folders={folders}
           reminders={reminders}
@@ -601,6 +604,7 @@ export function GrainSpaceOverlay({
           query={query}
           onQueryChange={setQuery}
           onOpenCalendar={() => setCalendarOpen(true)}
+          onOpenAll={() => setCalendarOpen(false)}
           onOpenSettings={onOpenSettings}
           onSelectCard={(card) => void selectCard(card)}
           onSelectResult={(note) => void selectResult(note)}
@@ -610,6 +614,34 @@ export function GrainSpaceOverlay({
         />
 
         <div className="gs-main">
+          {variant === "next" && (
+            <div className="gs-next-editor-toolbar">
+              <span className="gs-next-breadcrumb">
+                {calendarOpen
+                  ? t("grainSpaceOverlay.calendar")
+                  : selectedFolder || t("grainSpaceOverlay.notes")}
+              </span>
+              <span className="gs-next-toolbar-spacer" />
+              <button
+                type="button"
+                className={`gs-next-ai-toggle${chatOpen ? " is-open" : ""}`}
+                aria-pressed={chatOpen}
+                onClick={() => setChatOpen((value) => !value)}
+              >
+                <span>AI</span>
+                {t("grainSpaceOverlay.chat")}
+              </button>
+              <button
+                type="button"
+                className="gs-iconbtn"
+                title={t("grainSpaceOverlay.settings")}
+                aria-label={t("grainSpaceOverlay.settings")}
+                onClick={onOpenSettings}
+              >
+                <Settings width={15} height={15} />
+              </button>
+            </div>
+          )}
           {/* [GRAIN] Nothing above the note. The strip that used to sit here held
               search, the search-mode switch and the window controls; search moved
               into the rail (where its results render), the mode switch is gone
@@ -622,7 +654,7 @@ export function GrainSpaceOverlay({
           <div className="gs-stage">
             <button
               type="button"
-              className={`gs-chat-toggle${chatOpen ? " gs-chat-toggle--on" : ""}`}
+              className={`gs-chat-toggle${variant === "next" ? " gs-chat-toggle--next-hidden" : ""}${chatOpen ? " gs-chat-toggle--on" : ""}`}
               title={t("grainSpaceOverlay.chat")}
               aria-label={t("grainSpaceOverlay.chat")}
               aria-pressed={chatOpen}
@@ -643,6 +675,7 @@ export function GrainSpaceOverlay({
               />
             ) : selected ? (
               <EditorPane
+                variant={variant}
                 note={selected}
                 docKey={editSession}
                 readonly={selectedReadonly}

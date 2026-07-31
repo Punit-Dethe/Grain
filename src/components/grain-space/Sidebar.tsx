@@ -4,6 +4,7 @@ import {
   CalendarDays,
   ChevronRight,
   FolderPlus,
+  FileText,
   Hash,
   Search,
   Settings,
@@ -33,6 +34,14 @@ const dayFormat = new Intl.DateTimeFormat(undefined, {
 
 /** How many loose notes / folder members to show before "See all". */
 const PREVIEW = 8;
+
+const NEXT_NOTES_COPY = {
+  title: "Notes",
+  subtitle: "Local knowledge space",
+  recent: "Recent",
+  collections: "Collections",
+  allNotes: "All notes",
+} as const;
 
 /** Compact relative age for row trailers. */
 function age(ms: number): string {
@@ -176,6 +185,7 @@ function RemindersDock({
 }
 
 type Props = {
+  variant?: "default" | "next";
   cards: NoteCard[];
   /** Every Grain subfolder, including empty ones (grain_space_list_all_folders). */
   folders: readonly string[];
@@ -186,6 +196,7 @@ type Props = {
   query: string;
   onQueryChange: (q: string) => void;
   onOpenCalendar: () => void;
+  onOpenAll: () => void;
   onOpenSettings: () => void;
   onSelectCard: (card: NoteCard) => void;
   onSelectResult: (note: Note) => void;
@@ -196,6 +207,7 @@ type Props = {
 };
 
 export function Sidebar({
+  variant = "default",
   cards,
   folders,
   reminders,
@@ -205,6 +217,7 @@ export function Sidebar({
   query,
   onQueryChange,
   onOpenCalendar,
+  onOpenAll,
   onOpenSettings,
   onSelectCard,
   onSelectResult,
@@ -421,6 +434,182 @@ export function Sidebar({
     setNewFolder(null);
     if (name) onCreateFolder(name);
   };
+
+  if (variant === "next") {
+    const recent = cards.slice(0, 3);
+    return (
+      <aside className="gs-side gs-next-side">
+        <div className="gs-next-pane-head">
+          <div>
+            <strong>{NEXT_NOTES_COPY.title}</strong>
+            <span>{NEXT_NOTES_COPY.subtitle}</span>
+          </div>
+          <button
+            type="button"
+            className="gs-iconbtn"
+            title={t("grainSpaceOverlay.createNote")}
+            aria-label={t("grainSpaceOverlay.createNote")}
+            onClick={onCreate}
+          >
+            <SquarePen width={15} height={15} />
+          </button>
+        </div>
+        <div className="gs-side-head">
+          <div className="gs-search">
+            <Search width={13} height={13} />
+            <input
+              value={query}
+              onChange={(event) => onQueryChange(event.target.value)}
+              placeholder={t("grainSpaceOverlay.searchPlaceholder")}
+              spellCheck={false}
+            />
+            {query && (
+              <button
+                type="button"
+                className="gs-search-clear"
+                title="Clear search"
+                aria-label="Clear search"
+                onClick={() => onQueryChange("")}
+              >
+                <X width={11} height={11} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <nav className="gs-nav" aria-label="Note views and collections">
+          <div className="gs-next-primary-nav">
+            <button
+              type="button"
+              className={`gs-next-nav-row${calendarOpen ? " is-active" : ""}`}
+              onClick={onOpenCalendar}
+            >
+              <CalendarDays width={15} height={15} />
+              <strong>{t("grainSpaceOverlay.calendar")}</strong>
+            </button>
+            <button
+              type="button"
+              className={`gs-next-nav-row${!calendarOpen && !searching ? " is-active" : ""}`}
+              onClick={() => {
+                onQueryChange("");
+                onOpenAll();
+              }}
+            >
+              <FileText width={15} height={15} />
+              <strong>{t("grainSpaceOverlay.notes")}</strong>
+            </button>
+          </div>
+
+          {searching ? (
+            <>
+              <div className="gs-next-group-label">
+                {t("grainSpaceOverlay.results")}
+              </div>
+              {results.length === 0 && (
+                <div className="gs-nav-empty">
+                  {t("grainSpaceOverlay.noMatches")}
+                </div>
+              )}
+              {results.map((note) => (
+                <button
+                  key={note.id}
+                  type="button"
+                  className={`gs-row gs-next-note-row${selectedId === note.id ? " gs-row--on" : ""}`}
+                  onClick={() => onSelectResult(note)}
+                >
+                  <span className="gs-row-title">
+                    {note.title.trim() ||
+                      note.body.split("\n")[0]?.trim() ||
+                      t("grainSpaceOverlay.untitled")}
+                  </span>
+                  <span className="gs-row-age">{age(note.timestamp)}</span>
+                </button>
+              ))}
+            </>
+          ) : (
+            <>
+              <div className="gs-next-group-label">
+                {NEXT_NOTES_COPY.recent}
+              </div>
+              {recent.length === 0 ? (
+                <div className="gs-nav-hint">
+                  {t("grainSpaceOverlay.emptyList")}
+                </div>
+              ) : (
+                recent.map((card) => cardRow(card))
+              )}
+
+              <div className="gs-next-group-row">
+                <span>{NEXT_NOTES_COPY.collections}</span>
+                <button
+                  type="button"
+                  title={t("grainSpaceOverlay.newFolder")}
+                  aria-label={t("grainSpaceOverlay.newFolder")}
+                  onClick={() => setNewFolder("")}
+                >
+                  <FolderPlus width={14} height={14} />
+                </button>
+              </div>
+              {newFolder != null && (
+                <div className="gs-newfolder">
+                  <Hash width={12} height={12} />
+                  <input
+                    autoFocus
+                    value={newFolder}
+                    placeholder={t("grainSpaceOverlay.newFolderPlaceholder")}
+                    spellCheck={false}
+                    onChange={(event) => setNewFolder(event.target.value)}
+                    onBlur={submitNewFolder}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        submitNewFolder();
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        setNewFolder(null);
+                      }
+                    }}
+                  />
+                </div>
+              )}
+              {topFolders.map((node) => renderFolder(node, 0))}
+              {topFolders.length === 0 && newFolder == null && (
+                <div className="gs-nav-hint">
+                  {t("grainSpaceOverlay.noFolders")}
+                </div>
+              )}
+
+              {(pinned.length > 0 ||
+                grainLoose.length > 0 ||
+                obsidianLoose.length > 0) && (
+                <div className="gs-next-group-label">
+                  {NEXT_NOTES_COPY.allNotes}
+                </div>
+              )}
+              {pinned.map((card) => cardRow(card))}
+              <div className="gs-drop-root" {...dropZone(null)}>
+                {looseList("grain-next", grainLoose)}
+                {looseList("obsidian-next", obsidianLoose)}
+              </div>
+            </>
+          )}
+        </nav>
+
+        <RemindersDock reminders={reminders} onSelectCard={onSelectCard} />
+        <div className="gs-side-foot">
+          <button
+            type="button"
+            className="gs-foot-btn"
+            onClick={onOpenSettings}
+            title={t("grainSpaceOverlay.settings")}
+          >
+            <Settings width={13} height={13} />
+            <span>{t("grainSpaceOverlay.settings")}</span>
+          </button>
+        </div>
+      </aside>
+    );
+  }
 
   return (
     <aside className="gs-side">

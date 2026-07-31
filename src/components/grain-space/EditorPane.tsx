@@ -36,6 +36,7 @@ const dateFormat = new Intl.DateTimeFormat(undefined, {
 });
 
 type Props = {
+  variant?: "default" | "next";
   note: Note;
   /** Editor-session key: changes only on a real note switch (NOT when a draft
    * adopts its minted id), so the document/caret survive the first save. */
@@ -54,6 +55,7 @@ type Props = {
 };
 
 export function EditorPane({
+  variant = "default",
   note,
   docKey,
   readonly,
@@ -73,9 +75,14 @@ export function EditorPane({
     status: "none",
     fire_at: null,
   };
+  const wordCount = note.body.trim()
+    ? note.body.trim().split(/\s+/u).length
+    : 0;
 
   return (
-    <section className="gs-sheet">
+    <section
+      className={`gs-sheet${variant === "next" ? " gs-next-sheet" : ""}`}
+    >
       {/* Everything that is prose shares one capped, centered column
           (`--gs-measure`); the action bar below spans the whole sheet. */}
       <div className="gs-column">
@@ -156,6 +163,11 @@ export function EditorPane({
             </>
           )}
         </div>
+        {variant === "next" && (
+          <span className="gs-next-word-count">
+            {wordCount} {wordCount === 1 ? "word" : "words"}
+          </span>
+        )}
         {isObsidian && note.id && (
           <button
             type="button"
