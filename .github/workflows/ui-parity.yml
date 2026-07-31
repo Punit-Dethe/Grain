@@ -1,0 +1,44 @@
+name: UI Parity
+
+# Every setting must stay reachable through the UI 2.0 rewrite. The way a UI
+# rewrite fails is not a crash — it is a setting that quietly stops being
+# reachable and nobody notices for months. See scripts/ui_parity.py and
+# docs/UI 2.0/PLAN.md §12.
+#
+# Deliberately its own workflow rather than a step in `code quality`: that one
+# is red on main (61 pre-existing i18next literal-string errors), so a gate
+# added there would be a gate nobody looks at.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'scripts/ui_parity.py'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/ui_parity.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Every setting reachable or documented
+        run: python scripts/ui_parity.py
+
+      # Report only — some commands are legitimately backend-internal or
+      # extension-only. The point is that it lands in the job summary each run.
+      - name: Command reachability
+        if: always()
+        run: python scripts/ui_parity.py --commands >> "$GITHUB_STEP_SUMMARY"
