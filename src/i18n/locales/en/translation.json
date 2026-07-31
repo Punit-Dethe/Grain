@@ -643,6 +643,8 @@
       "title": "History",
       "openFolder": "Open Recordings Folder",
       "loading": "Loading history...",
+      "loadError": "History could not be loaded.",
+      "retryLoad": "Try again",
       "empty": "No transcriptions yet. Start recording to build your history!",
       "copyToClipboard": "Copy transcription to clipboard",
       "save": "Save transcription",
@@ -971,6 +973,61 @@
     "settings": "Settings",
     "tabBlurb": "A notebook that lives on your disk as plain Markdown — dictate into it, write in it, or point it at an Obsidian vault you already have. Search runs on this machine.",
     "tabZeroCost": "Nothing loads and nothing is written to disk until you turn it on."
+  },
+  "ui2": {
+    "brand": "GRAIN",
+    "workspace": "LOCAL TRANSCRIPTION",
+    "navigation": "Primary navigation",
+    "unavailable": "This area remains in the current interface during migration",
+    "demo": "Preview data",
+    "presentational": "Presentational",
+    "nav": {
+      "overview": "Overview",
+      "notes": "Notes",
+      "history": "History",
+      "settings": "Settings",
+      "extensions": "Extensions",
+      "about": "About"
+    },
+    "theme": {
+      "system": "System theme",
+      "light": "Light theme",
+      "dark": "Dark theme"
+    },
+    "model": {
+      "checking": "Checking model",
+      "ready": "Ready locally",
+      "local": "On-device model"
+    },
+    "overview": {
+      "eyebrow": "Workspace 01",
+      "title": "Overview",
+      "local": "Local transcription is ready",
+      "heroTitle": "Your words, held close.",
+      "heroBody": "Grain turns speech into text on this device. This calm preview is intentionally static while the new workspace is assembled around the proven transcription engine.",
+      "previewLabel": "Presentational transcription details",
+      "previewTime": "00:18 sample",
+      "previewMode": "On-device processing",
+      "utilitiesEyebrow": "At a glance",
+      "utilities": "Local workspace",
+      "postProcessing": "Text refinement",
+      "postProcessingBody": "Optional cleanup after transcription",
+      "notes": "Notes workspace",
+      "notesBody": "Plain-text thinking space on your disk",
+      "archive": "Recording archive",
+      "archiveBody": "Searchable transcripts and source audio",
+      "ready": "Ready",
+      "localOnly": "Local only",
+      "private": "Private",
+      "recentEyebrow": "Sample",
+      "recent": "Recent transcript",
+      "sampleTranscript": "The next version should feel quieter, more deliberate, and still get out of the way the moment someone starts speaking.",
+      "sampleSource": "DESIGN NOTE",
+      "sampleTime": "09:42"
+    },
+    "history": {
+      "eyebrow": "Archive 03"
+    }
   },
   "overlay": {
     "transcribing": "Transcribing...",

@@ -2,7 +2,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { platform } from "@tauri-apps/plugin-os";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import App from "./App";
 import { AgentPanel } from "./components/agent/AgentPanel";
 import { initUiScale } from "./lib/utils/uiScale";
 
@@ -55,9 +54,18 @@ if (winLabel === "agent-panel") {
   // Initialize model store (loads models and sets up event listeners)
   useModelStore.getState().initialize();
 
-  root.render(
-    <React.StrictMode>
-      <App />
-    </React.StrictMode>,
-  );
+  // [GRAIN] UI 2.0 develops in parallel. The build-time constant lets Vite
+  // split and tree-shake the unused main-window tree; old remains the default.
+  const mainTree =
+    import.meta.env.VITE_GRAIN_UI === "next"
+      ? import("./next/NextApp")
+      : import("./App");
+
+  void mainTree.then(({ default: MainApp }) => {
+    root.render(
+      <React.StrictMode>
+        <MainApp />
+      </React.StrictMode>,
+    );
+  });
 }

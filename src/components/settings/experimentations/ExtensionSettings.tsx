@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "../../../contexts/ThemeContext";
+import { serializeExtensionPalette } from "@/lib/extensionTheme";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
  * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
@@ -149,17 +150,6 @@ const PANEL_MAX_HEIGHT = 2400;
  * an author can adopt the app's colours rather than guess at them. Read from the
  * computed root each time a card mounts, so it cannot drift from the tokens the
  * rest of the settings window is drawn with. */
-const HOST_TOKENS = [
-  "paper",
-  "paper-raised",
-  "paper-sunken",
-  "ink",
-  "ink-soft",
-  "ink-faint",
-  "accent",
-  "line",
-] as const;
-
 const hostPalette = (): string => {
   const root = getComputedStyle(document.documentElement);
   // Only tokens that actually RESOLVED — the same filter extension-surface.ts
@@ -169,10 +159,7 @@ const hostPalette = (): string => {
   // fallback, and the card would render with no colour at all. Cards were
   // missing this, so a token rename would have broken them while surfaces
   // degraded gracefully (docs/UI 2.0/PLAN.md §6.1).
-  return HOST_TOKENS.map((t) => [t, root.getPropertyValue(`--color-${t}`).trim()])
-    .filter(([, v]) => v !== "")
-    .map(([t, v]) => `--grain-${t}:${v}`)
-    .join(";");
+  return serializeExtensionPalette((name) => root.getPropertyValue(name));
 };
 
 /**

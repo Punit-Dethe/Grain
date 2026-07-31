@@ -19,6 +19,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { serializeExtensionPalette } from "@/lib/extensionTheme";
 
 type SurfaceInit = {
   extensionId: string;
@@ -159,17 +160,6 @@ function send(obj: unknown) {
 /** Grain's live palette, handed to the surface as `--grain-*` so an author can
  *  adopt the app's colours rather than guess at them. Read from the computed
  *  root each mount, so it cannot drift from the tokens Grain is drawn with. */
-const HOST_TOKENS = [
-  "paper",
-  "paper-raised",
-  "paper-sunken",
-  "ink",
-  "ink-soft",
-  "ink-faint",
-  "accent",
-  "line",
-] as const;
-
 function hostPalette(): string {
   const root = getComputedStyle(document.documentElement);
   // Only tokens that actually RESOLVED. An empty custom property is still a set
@@ -177,10 +167,7 @@ function hostPalette(): string {
   // to the fallback — emitting a blank here would break every card that wrote a
   // sensible default. This page is a standalone entry and may not carry the
   // app's stylesheet, so "resolved to nothing" is a real case, not a paranoid one.
-  return HOST_TOKENS.map((t) => [t, root.getPropertyValue(`--color-${t}`).trim()])
-    .filter(([, v]) => v !== "")
-    .map(([t, v]) => `--grain-${t}:${v}`)
-    .join(";");
+  return serializeExtensionPalette((name) => root.getPropertyValue(name));
 }
 
 /**

@@ -64,6 +64,7 @@ export const HistorySettings: React.FC = () => {
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef<HistoryEntry[]>([]);
@@ -80,6 +81,7 @@ export const HistorySettings: React.FC = () => {
     loadingRef.current = true;
 
     if (isFirstPage) setLoading(true);
+    setLoadError(false);
 
     try {
       const result = await commands.getHistoryEntries(
@@ -92,9 +94,12 @@ export const HistorySettings: React.FC = () => {
           isFirstPage ? newEntries : [...prev, ...newEntries],
         );
         setHasMore(has_more);
+      } else {
+        setLoadError(true);
       }
     } catch (error) {
       console.error("Failed to load history entries:", error);
+      setLoadError(true);
     } finally {
       setLoading(false);
       loadingRef.current = false;
@@ -240,6 +245,15 @@ export const HistorySettings: React.FC = () => {
     content = (
       <div className="px-4 py-3 text-center text-ink-soft">
         {t("settings.history.loading")}
+      </div>
+    );
+  } else if (loadError && entries.length === 0) {
+    content = (
+      <div className="px-4 py-8 flex flex-col items-center gap-3 text-center text-ink-soft">
+        <p>{t("settings.history.loadError")}</p>
+        <Button variant="secondary" size="sm" onClick={() => loadPage()}>
+          {t("settings.history.retryLoad")}
+        </Button>
       </div>
     );
   } else if (entries.length === 0) {

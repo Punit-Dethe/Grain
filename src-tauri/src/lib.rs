@@ -190,13 +190,15 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let mut win_builder =
         tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("/".into()))
             .title("Grain")
-            // [GRAIN] Opens at the Quick Panel console's size (1280×760), which is
-            // what that console is drawn at — but only as an OPENING size. The
+            // [GRAIN] Opens at UI 2.0's canonical 1280×800 size — but only as an
+            // OPENING size. Tauri keeps the existing monitor work-area clamping,
+            // so shorter laptop displays fit above the taskbar. 1440×900 is a
+            // responsive layout target, not an automatic opening size. The
             // window is fluid and resizes to any shape; the minimum is a real floor
             // for the settings and notes layouts, not a scaled-down proportion of
             // the old fixed canvas.
-            .inner_size(1280.0, 760.0)
-            .min_inner_size(920.0, 620.0)
+            .inner_size(1280.0, 800.0)
+            .min_inner_size(1024.0, 680.0)
             .resizable(true)
             // [GRAIN] Custom themed title bar: drop the native OS frame and let
             // the webview own the top strip (drag region + minimize/maximize/
