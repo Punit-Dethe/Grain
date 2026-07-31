@@ -11,6 +11,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// This vocabulary lives beside [`DaemonEvent`] so author tooling and registry
 /// CI do not maintain their own copies of the public event contract.
+// NOTE: hand-maintained, and — unlike `variant_name` below — the compiler will
+// NOT tell you when it is out of date. A variant missing from this list gets
+// `daemon_event_capability(..) == None`, which `events_auth::required_capability`
+// turns into a panic on the first broadcast. Add the name here in the same edit
+// that adds the variant.
 pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "RecordingStarted",
     "RecordingStopped",
@@ -38,6 +43,7 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "HideOverlay",
     "PasteError",
     "OverlayConfig",
+    "ThemeConfig",
     "AsrStreamText",
     "AsrPartial",
     "AsrCommit",
@@ -98,6 +104,22 @@ pub enum OverlayPosition {
     /// (a tall content box reads poorly hugging an edge); also selectable for
     /// the small pill.
     Center,
+}
+
+/// [GRAIN] What to actually paint — the user's `theme` preference already
+/// resolved against the OS. Lives in the SDK because it crosses the wire inside
+/// [`DaemonEvent::ThemeConfig`]; grain-core re-exports it next to the
+/// `ThemeMode` preference that produces it.
+///
+/// Only the resolved answer travels. A surface that received `System` would
+/// have to ask the OS itself, and the pill, the capsule and a sandboxed
+/// extension frame are three different toolkits with three different ways of
+/// getting that wrong.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq, specta::Type)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolvedTheme {
+    Light,
+    Dark,
 }
 
 /// What a recording session is for. Drives the "what you end with wins" logic.
@@ -251,6 +273,13 @@ pub enum DaemonEvent {
         position: OverlayPosition,
     },
 
+    /// [GRAIN] Which colour scheme every surface should paint. Emitted when the
+    /// user changes the preference and when the OS flips under `System`, so the
+    /// pill and extension surfaces restyle without polling.
+    ThemeConfig {
+        theme: ResolvedTheme,
+    },
+
     // -- Native ASR (real-time streaming dictation) --
     /// [GRAIN] transcribe-cpp streaming: the cumulative committed transcript so
     /// far (flicker-free, growing) plus the volatile `tentative` tail the model
@@ -342,6 +371,7 @@ impl DaemonEvent {
             ModelUnloaded => "ModelUnloaded",
             ModelError { .. } => "ModelError",
             ModelDownloadProgress { .. } => "ModelDownloadProgress",
+            ThemeConfig { .. } => "ThemeConfig",
             AudioLevel { .. } => "AudioLevel",
             PromptChanged { .. } => "PromptChanged",
             DictionarySuggestion { .. } => "DictionarySuggestion",
@@ -387,6 +417,9 @@ mod variant_name_tests {
             },
             DaemonEvent::ModelUnloaded,
             DaemonEvent::AudioLevel { levels: vec![] },
+            DaemonEvent::ThemeConfig {
+                theme: ResolvedTheme::Dark,
+            },
         ];
         for ev in cases {
             let tag = match serde_json::to_value(&ev).unwrap() {

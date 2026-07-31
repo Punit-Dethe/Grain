@@ -37,7 +37,8 @@ pub use distribution::{
 pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use error::{HostError, HostErrorCode};
 pub use event::{
-    daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction, SessionMode,
+    daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction, ResolvedTheme,
+    SessionMode,
     DAEMON_EVENT_VARIANTS,
 };
 pub use manifest::{

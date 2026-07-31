@@ -39,7 +39,7 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 | Field | Reason |
 |---|---|
-| `stt_api_keys` | Key material. Written through `stt_upsert_provider`'s `apiKey` argument and never read back into the window — the UI asks `providers_with_keys` instead. See PLAN.md §6.2; the same treatment is owed to `post_process_api_keys`, which the legacy panel still reads. |
+| `stt_api_keys` | Key material, write-only by construction. Written through `stt_upsert_provider`'s `apiKey` argument; `get_app_settings` no longer serializes either key map to the renderer at all (`grain_settings::get_settings_for_renderer`), so the UI asks `providers_with_keys` for the only thing it may know — *which* providers have a key. `post_process_api_keys` gets the same treatment; the legacy panel that read it in plaintext is deleted. PLAN.md §6.2 closed. |
 
 ## Deliberately not surfaced
 

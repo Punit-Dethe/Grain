@@ -48,6 +48,8 @@ mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of up
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
+mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
+mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
 // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
@@ -801,6 +803,10 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_recall_turn,
             grain_space::commands::grain_space_recall_reset,
             grain_locale::resolve_app_locale,
+            grain_onboarding::resolve_onboarding_state,
+            grain_onboarding::onboarding_step_after_permissions,
+            grain_theme::get_theme,
+            grain_theme::set_theme_mode,
             shortcut::change_experimental_enabled_setting,
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_key_setting,
@@ -966,6 +972,7 @@ pub fn run(cli_args: CliArgs) {
             grain_events::ModelExtractionCompleted,
             grain_events::RecordingError,
             grain_events::PasteError,
+            grain_theme::ThemeChanged,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds
@@ -1273,6 +1280,11 @@ pub fn run(cli_args: CliArgs) {
                 log::info!("Theme changed to: {:?}", theme);
                 // Update tray icon to match new theme, maintaining idle state
                 utils::change_tray_icon(&window.app_handle(), utils::TrayIconState::Idle);
+                // [GRAIN] The tray is not the only surface that follows the OS.
+                // Re-resolve and tell the pill, the capsule, extension surfaces
+                // and every webview at once — a no-op in effect unless the user
+                // is on `ThemeMode::System`.
+                grain_theme::refresh_from_os(&window.app_handle());
             }
             // [GRAIN] There is deliberately no `Resized` handler. The main window
             // used to be locked to a 1280:760 aspect ratio here, because its whole

@@ -202,19 +202,24 @@ function alignColorScheme(src: string, dark: boolean): string {
     .replace(/\(\s*prefers-color-scheme\s*:\s*light\s*\)/gi, dark ? off : on);
 }
 
+/** Grain's current scheme, kept fresh so each mount uses the live value.
+ *
+ *  This used to be `localStorage.getItem("grain-theme-settings")` — reaching
+ *  into the *settings window's* storage, which only worked because the two
+ *  share an origin and told us nothing once the preference had to reach the
+ *  native pill too. The backend now owns it (`grain_theme.rs`) and announces
+ *  changes; we cache the answer because `surfaceDocument` builds a string
+ *  synchronously.
+ *
+ *  Deliberately not re-mounting on change: rebuilding the frame would throw
+ *  away the extension's realm and whatever the user was doing in it. A surface
+ *  picks up the new scheme the next time it mounts, which is the same
+ *  read-per-mount behaviour this had before. */
+let dark = false;
+
 /** The document handed to the sandboxed frame: theme, then bridge, then the
  *  extension's own markup with its media queries pointed at Grain's theme. */
 function surfaceDocument(uiSource: string): string {
-  // The same key ThemeContext writes, so a surface follows the settings window
-  // rather than the OS. Read per mount: the window can be slept and woken after
-  // the user has changed it.
-  const dark = (() => {
-    try {
-      return localStorage.getItem("grain-theme-settings") === "dark";
-    } catch {
-      return false;
-    }
-  })();
   const theme = dark ? "dark" : "light";
   return (
     `<style>:root{color-scheme:${theme};${hostPalette()}}html,body{margin:0;padding:0;}</style>` +
@@ -323,6 +328,20 @@ window.addEventListener("message", (e) => {
 });
 
 async function boot() {
+  // Raw invoke/listen on purpose: this file is its own Vite entry, and
+  // importing the generated bindings would retain all ~200 command wrappers on
+  // a page that makes a handful of calls (see eslint.config.js).
+  try {
+    dark =
+      (await invoke<{ resolved: "light" | "dark" }>("get_theme")).resolved ===
+      "dark";
+  } catch {
+    // A surface that cannot ask still renders — light, same as before.
+  }
+  void listen<{ resolved: "light" | "dark" }>("theme-changed", (e) => {
+    dark = e.payload.resolved === "dark";
+  });
+
   const cfg =
     (await invoke<SurfaceInit | null>("extension_surface_init")) ?? null;
   if (!cfg) {

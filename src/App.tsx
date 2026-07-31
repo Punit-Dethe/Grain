@@ -3,10 +3,6 @@ import { toast, Toaster } from "sonner";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
-import {
-  checkAccessibilityPermission,
-  checkMicrophonePermission,
-} from "tauri-plugin-macos-permissions-api";
 import { ModelStateEvent, RecordingErrorEvent } from "./lib/types/events";
 import "./App.css";
 import AccessibilityPermissions from "./components/AccessibilityPermissions";
@@ -17,11 +13,9 @@ import { Sidebar, SidebarSection, SECTIONS_CONFIG } from "./components/Sidebar";
 import { QuickPanel } from "./components/quick-panel/QuickPanel";
 import { useSettings } from "./hooks/useSettings";
 import { useSettingsStore } from "./stores/settingsStore";
-import { commands } from "@/bindings";
+import { commands, type OnboardingStep } from "@/bindings";
 import { getLanguageDirection, initializeRTL } from "@/lib/utils/rtl";
 import { ThemeProvider, useTheme } from "./contexts/ThemeContext";
-
-type OnboardingStep = "accessibility" | "model" | "done";
 
 const renderSettingsContent = (section: SidebarSection) => {
   const ActiveComponent =
@@ -200,76 +194,26 @@ function AppInner() {
     };
   }, [t]);
 
-  const revealMainWindowForPermissions = async () => {
-    try {
-      await commands.showMainWindowCommand();
-    } catch (e) {
-      console.warn("Failed to show main window for permission onboarding:", e);
-    }
-  };
-
+  // [GRAIN] The decision — models present? permissions granted? which screen? —
+  // lives in Rust (`grain_onboarding.rs`), including the per-platform
+  // permission probes and revealing the window when a permission is what is
+  // blocking. This function only records the answer. See that module for why.
   const checkOnboardingStatus = async () => {
     try {
-      // Check if they have any models available
-      const result = await commands.hasAnyModelsAvailable();
-      const hasModels = result.status === "ok" && result.data;
-      const currentPlatform = platform();
-
-      if (hasModels) {
-        // Returning user - check if they need to grant permissions first
-        setIsReturningUser(true);
-
-        if (currentPlatform === "macos") {
-          try {
-            const [hasAccessibility, hasMicrophone] = await Promise.all([
-              checkAccessibilityPermission(),
-              checkMicrophonePermission(),
-            ]);
-            if (!hasAccessibility || !hasMicrophone) {
-              await revealMainWindowForPermissions();
-              setOnboardingStep("accessibility");
-              return;
-            }
-          } catch (e) {
-            console.warn("Failed to check macOS permissions:", e);
-            // If we can't check, proceed to main app and let them fix it there
-          }
-        }
-
-        if (currentPlatform === "windows") {
-          try {
-            const microphoneStatus =
-              await commands.getWindowsMicrophonePermissionStatus();
-            if (
-              microphoneStatus.supported &&
-              microphoneStatus.overall_access === "denied"
-            ) {
-              await revealMainWindowForPermissions();
-              setOnboardingStep("accessibility");
-              return;
-            }
-          } catch (e) {
-            console.warn("Failed to check Windows microphone permissions:", e);
-            // If we can't check, proceed to main app and let them fix it there
-          }
-        }
-
-        setOnboardingStep("done");
-      } else {
-        // New user - start full onboarding
-        setIsReturningUser(false);
-        setOnboardingStep("accessibility");
-      }
+      const result = await commands.resolveOnboardingState();
+      if (result.status !== "ok") throw new Error(result.error);
+      setIsReturningUser(result.data.is_returning_user);
+      setOnboardingStep(result.data.step);
     } catch (error) {
       console.error("Failed to check onboarding status:", error);
       setOnboardingStep("accessibility");
     }
   };
 
-  const handleAccessibilityComplete = () => {
-    // Returning users already have models, skip to main app
-    // New users need to select a model
-    setOnboardingStep(isReturningUser ? "done" : "model");
+  const handleAccessibilityComplete = async () => {
+    setOnboardingStep(
+      await commands.onboardingStepAfterPermissions(isReturningUser),
+    );
   };
 
   const handleModelSelected = () => {

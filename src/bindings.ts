@@ -683,6 +683,35 @@ async grainSpaceRecallReset() : Promise<void> {
 async resolveAppLocale(tag: string | null) : Promise<string | null> {
     return await TAURI_INVOKE("resolve_app_locale", { tag });
 },
+/**
+ * Decide where the app should open. See the module docs for the window reveal.
+ */
+async resolveOnboardingState() : Promise<Result<OnboardingState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resolve_onboarding_state") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Where "permissions granted" leads. A returning user already has a model, so
+ * the picker would be a dead screen; a new user needs it.
+ */
+async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<OnboardingStep> {
+    return await TAURI_INVOKE("onboarding_step_after_permissions", { isReturningUser });
+},
+async getTheme() : Promise<ThemeState> {
+    return await TAURI_INVOKE("get_theme");
+},
+async setThemeMode(mode: ThemeMode) : Promise<Result<ThemeState, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_theme_mode", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeExperimentalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_experimental_enabled_setting", { enabled }) };
@@ -2056,7 +2085,8 @@ modelVerificationStarted: ModelVerificationStarted,
 pasteError: PasteError,
 recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
-streamTextEvent: StreamTextEvent
+streamTextEvent: StreamTextEvent,
+themeChanged: ThemeChanged
 }>({
 historyUpdatePayload: "history-update-payload",
 modelDeleted: "model-deleted",
@@ -2071,7 +2101,8 @@ modelVerificationStarted: "model-verification-started",
 pasteError: "paste-error",
 recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
-streamTextEvent: "stream-text-event"
+streamTextEvent: "stream-text-event",
+themeChanged: "theme-changed"
 })
 
 /** user-defined constants **/
@@ -2150,7 +2181,11 @@ export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
-default_panel?: DefaultPanel; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; 
+default_panel?: DefaultPanel; 
+/**
+ * [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
+ */
+theme?: ThemeMode; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; 
 /**
  * [GRAIN] Native ASR model id (separate registry from `selected_model`).
  * Empty = none selected. Never overload `selected_model`: Batch/Rolling and
@@ -2676,6 +2711,36 @@ folder: string | null;
  * list. (Legacy field name kept for the wire schema.)
  */
 readonly: boolean }
+export type OnboardingState = { step: OnboardingStep; 
+/**
+ * Has models already. Decides where "permissions granted" goes next: a
+ * returning user goes straight to the app, a new user picks a model first.
+ */
+is_returning_user: boolean; 
+/**
+ * True when `step` is `Accessibility` *because a permission is missing*
+ * rather than because this is a first run. Lets the UI say "Grain lost
+ * microphone access" instead of "welcome".
+ */
+blocked_on_permissions: boolean }
+/**
+ * Which screen the app should open on.
+ */
+export type OnboardingStep = 
+/**
+ * Permissions screen — either first-run, or a returning user who has since
+ * had a permission revoked.
+ */
+"accessibility" | 
+/**
+ * Model picker. Only ever reached by a genuinely new user, and only after
+ * permissions are settled.
+ */
+"model" | 
+/**
+ * Nothing in the way; show the app.
+ */
+"done"
 /**
  * Where the single pill anchors on screen (`None` = never show). Lives in the
  * SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
@@ -2744,6 +2809,18 @@ export type ReminderStatus =
  * User dismissed/completed it.
  */
 "dismissed"
+/**
+ * [GRAIN] What to actually paint — the user's `theme` preference already
+ * resolved against the OS. Lives in the SDK because it crosses the wire inside
+ * [`DaemonEvent::ThemeConfig`]; grain-core re-exports it next to the
+ * `ThemeMode` preference that produces it.
+ * 
+ * Only the resolved answer travels. A surface that received `System` would
+ * have to ask the OS itself, and the pill, the capsule and a sandboxed
+ * extension frame are three different toolkits with three different ways of
+ * getting that wrong.
+ */
+export type ResolvedTheme = "light" | "dark"
 /**
  * A banner for an installed extension that has been revoked or deprecated.
  */
@@ -2922,6 +2999,31 @@ export type SurfaceInit = { extensionId: string; token: string;
  * The extension's HTML, rendered into a sandboxed iframe.
  */
 uiSource: string; sleepEvent: string; reviveEvent: string; payloadEvent: string; reloadEvent: string }
+/**
+ * Broadcast when the effective colour scheme changes — either because the user
+ * picked a different mode, or because the OS flipped while on `System`.
+ */
+export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
+/**
+ * [GRAIN] Which colour scheme the user asked for.
+ * 
+ * This is the *preference*, not the answer — `System` still has to be resolved
+ * against what the OS is currently doing. See `grain_theme` for that half.
+ * 
+ * It lives in settings rather than `localStorage` because Grain paints more
+ * surfaces than the settings window: the native pill, the switcher capsule,
+ * the agent panel and every sandboxed extension surface all need the same
+ * answer, and only one of them is a webview that could read the browser store.
+ * `extension-surface.ts` used to reach across and read the settings window's
+ * `localStorage` key directly, which worked only because they happen to share
+ * an origin.
+ */
+export type ThemeMode = "system" | "light" | "dark"
+/**
+ * The preference and its resolution together, so a surface can render
+ * immediately *and* show the right radio button without a second round trip.
+ */
+export type ThemeState = { mode: ThemeMode; resolved: ResolvedTheme }
 export type TodoTag = { text: string; done: boolean }
 /**
  * Compute preference for transcribe-cpp (whisper-family GGUF) model loads.

@@ -334,6 +334,52 @@ impl Default for DefaultPanel {
     }
 }
 
+/// [GRAIN] Which colour scheme the user asked for.
+///
+/// This is the *preference*, not the answer — `System` still has to be resolved
+/// against what the OS is currently doing. See `grain_theme` for that half.
+///
+/// It lives in settings rather than `localStorage` because Grain paints more
+/// surfaces than the settings window: the native pill, the switcher capsule,
+/// the agent panel and every sandboxed extension surface all need the same
+/// answer, and only one of them is a webview that could read the browser store.
+/// `extension-surface.ts` used to reach across and read the settings window's
+/// `localStorage` key directly, which worked only because they happen to share
+/// an origin.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    System,
+    Light,
+    Dark,
+}
+
+impl Default for ThemeMode {
+    fn default() -> Self {
+        ThemeMode::System
+    }
+}
+
+// What to actually paint. Defined in the SDK (it crosses the wire inside
+// DaemonEvent::ThemeConfig); re-exported here so it sits beside the preference
+// that produces it.
+pub use grain_sdk::ResolvedTheme;
+
+impl ThemeMode {
+    /// Resolve against the OS's current scheme. `os_dark` is `None` when the
+    /// platform will not say, in which case `System` means light — the same
+    /// answer the old `localStorage.getItem(...) === "dark"` gave when the key
+    /// was absent, so nobody's app changes appearance on upgrade.
+    pub fn resolve(self, os_dark: Option<bool>) -> ResolvedTheme {
+        match self {
+            ThemeMode::Light => ResolvedTheme::Light,
+            ThemeMode::Dark => ResolvedTheme::Dark,
+            ThemeMode::System if os_dark == Some(true) => ResolvedTheme::Dark,
+            ThemeMode::System => ResolvedTheme::Light,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelUnloadTimeout {
@@ -560,6 +606,9 @@ pub struct AppSettings {
     /// [GRAIN] Which panel is visible when the main window opens.
     #[serde(default)]
     pub default_panel: DefaultPanel,
+    /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
+    #[serde(default)]
+    pub theme: ThemeMode,
     #[serde(default = "default_start_hidden")]
     pub start_hidden: bool,
     #[serde(default = "default_autostart_enabled")]
@@ -1495,6 +1544,7 @@ pub fn get_default_settings() -> AppSettings {
         audio_feedback_volume: default_audio_feedback_volume(),
         sound_theme: default_sound_theme(),
         default_panel: DefaultPanel::default(),
+        theme: ThemeMode::default(),
         start_hidden: default_start_hidden(),
         autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),

@@ -40,6 +40,30 @@ pub fn get_settings(app: &AppHandle) -> AppSettings {
     context(app).settings()
 }
 
+/// The settings as the *renderer* is allowed to see them: identical, minus the
+/// API keys.
+///
+/// `AppSettings` carries `post_process_api_keys` and `stt_api_keys` as
+/// `SecretMap`, whose `Debug` impl redacts — so keys stay out of logs — but
+/// whose `Serialize` impl does not, because the same impl writes the secrets
+/// file. The result was that `get_app_settings` handed every key in plaintext
+/// to a webview, and one legacy panel read them straight back into an `<input
+/// value=…>`. Nothing needs them there: writes go through
+/// `stt_upsert_provider` / `pp_upsert_provider`, and the pool views already
+/// expose only `providers_with_keys` (a list of *which* providers have a key,
+/// never the key).
+///
+/// Redacting on the way out rather than at the field is what keeps persistence
+/// working: `AppSettings` is one struct serving two consumers, and the frontend
+/// never round-trips it back — every write is a dedicated per-field command —
+/// so emptying the maps in this copy cannot erase anything on disk.
+pub fn get_settings_for_renderer(app: &AppHandle) -> AppSettings {
+    let mut settings = get_settings(app);
+    settings.post_process_api_keys.0.clear();
+    settings.stt_api_keys.0.clear();
+    settings
+}
+
 /// Persist a full settings replacement.
 pub fn write_settings(app: &AppHandle, settings: AppSettings) {
     if let Err(e) = context(app).replace_settings(settings) {
