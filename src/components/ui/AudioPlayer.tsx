@@ -16,6 +16,7 @@ interface AudioPlayerProps {
   onLoadRequest?: () => Promise<string | null>;
   className?: string;
   autoPlay?: boolean;
+  variant?: "default" | "prototype";
 }
 
 interface AudioPlayerGroupContextValue {
@@ -55,6 +56,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   onLoadRequest,
   className = "",
   autoPlay = false,
+  variant = "default",
 }) => {
   const group = useContext(AudioPlayerGroupContext);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -275,6 +277,42 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
   };
 
   const progressPercent = getProgressPercent();
+
+  if (variant === "prototype") {
+    return (
+      <div className={`audio-strip ${className}`}>
+        <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
+        <button
+          type="button"
+          onClick={togglePlay}
+          disabled={isLoading}
+          className="play-mini"
+          aria-label={isPlaying ? "Pause" : "Play"}
+        >
+          <svg className="icon sm" aria-hidden="true">
+            <use href={isPlaying ? "#i-pause" : "#i-play"} />
+          </svg>
+        </button>
+        <span className="audio-time">{formatTime(currentTime)}</span>
+        <input
+          className="audio-track-input"
+          type="range"
+          min="0"
+          max={duration || 0}
+          step="0.01"
+          value={currentTime}
+          aria-label="Recording position"
+          onChange={handleSeek}
+          onMouseDown={handleSliderMouseDown}
+          onTouchStart={handleSliderTouchStart}
+          style={{
+            background: `linear-gradient(to right, var(--text-3) 0%, var(--text-3) ${progressPercent}%, rgba(128,128,128,.2) ${progressPercent}%, rgba(128,128,128,.2) 100%)`,
+          }}
+        />
+        <span className="audio-time">{formatTime(duration)}</span>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex items-center gap-3 ${className}`}>

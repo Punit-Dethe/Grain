@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import { Check, Copy, FolderOpen, RotateCcw, Star, Trash2 } from "lucide-react";
@@ -59,7 +65,32 @@ const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
   </Button>
 );
 
-export const HistorySettings: React.FC = () => {
+interface HistorySettingsProps {
+  variant?: "settings" | "next";
+}
+
+type HistoryViewMode = "original" | "processed";
+type HistoryFilter = "all" | "today" | "flow" | "standard";
+
+const PROTOTYPE_HISTORY_COPY = {
+  eyebrow: "Local archive",
+  title: "History",
+  subtitle:
+    "Review the text first, compare processing, and return to the recording only when needed.",
+  original: "Original",
+  processed: "AI processed",
+  copied: "Copied",
+} as const;
+
+const PrototypeIcon: React.FC<{ name: string }> = ({ name }) => (
+  <svg className="icon sm" aria-hidden="true">
+    <use href={`#i-${name}`} />
+  </svg>
+);
+
+export const HistorySettings: React.FC<HistorySettingsProps> = ({
+  variant = "settings",
+}) => {
   const { t } = useTranslation();
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
@@ -69,6 +100,9 @@ export const HistorySettings: React.FC = () => {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const entriesRef = useRef<HistoryEntry[]>([]);
   const loadingRef = useRef(false);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<HistoryFilter>("all");
+  const [viewMode, setViewMode] = useState<HistoryViewMode>("original");
 
   // Keep ref in sync for use in IntersectionObserver callback
   useEffect(() => {
@@ -239,6 +273,136 @@ export const HistorySettings: React.FC = () => {
     }
   };
 
+  const visibleEntries = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    return entries.filter((entry) => {
+      const searchableText =
+        `${entry.title} ${entry.transcription_text} ${entry.post_processed_text ?? ""}`.toLocaleLowerCase();
+      if (normalizedQuery && !searchableText.includes(normalizedQuery)) {
+        return false;
+      }
+      if (filter !== "today") return true;
+
+      const timestamp =
+        entry.timestamp > 10_000_000_000
+          ? entry.timestamp
+          : entry.timestamp * 1000;
+      return timestamp >= startOfToday.getTime();
+    });
+  }, [entries, filter, query]);
+
+  if (variant === "next") {
+    let nextContent: React.ReactNode;
+    if (loading) {
+      nextContent = (
+        <div className="history-state" role="status">
+          {t("settings.history.loading")}
+        </div>
+      );
+    } else if (loadError && entries.length === 0) {
+      nextContent = (
+        <div className="history-state history-state-error">
+          <p>{t("settings.history.loadError")}</p>
+          <button className="button" type="button" onClick={() => loadPage()}>
+            {t("settings.history.retryLoad")}
+          </button>
+        </div>
+      );
+    } else if (visibleEntries.length === 0) {
+      nextContent = (
+        <div className="history-state">{t("settings.history.empty")}</div>
+      );
+    } else {
+      nextContent = (
+        <AudioPlayerGroup>
+          {visibleEntries.map((entry) => (
+            <HistoryEntryComponent
+              key={entry.id}
+              entry={entry}
+              variant="next"
+              viewMode={viewMode}
+              onToggleSaved={() => toggleSaved(entry.id)}
+              copyText={copyToClipboard}
+              getAudioUrl={getAudioUrl}
+              deleteAudio={deleteAudioEntry}
+              retryTranscription={retryHistoryEntry}
+            />
+          ))}
+        </AudioPlayerGroup>
+      );
+    }
+
+    return (
+      <section className="page active" data-page-panel="history">
+        <div className="page-wrap history-page-wrap">
+          <div className="page-header">
+            <div>
+              <div className="eyebrow">{PROTOTYPE_HISTORY_COPY.eyebrow}</div>
+              <h1>{PROTOTYPE_HISTORY_COPY.title}</h1>
+              <p className="page-subtitle">{PROTOTYPE_HISTORY_COPY.subtitle}</p>
+            </div>
+            <div className="header-actions">
+              <button
+                className="button"
+                type="button"
+                onClick={openRecordingsFolder}
+              >
+                <PrototypeIcon name="folder" />
+                {t("settings.history.openFolder")}
+              </button>
+            </div>
+          </div>
+          <div className="history-toolbar">
+            <label className="history-search">
+              <PrototypeIcon name="search" />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search transcription history"
+              />
+            </label>
+            {(["all", "today", "flow", "standard"] as const).map((item) => (
+              <button
+                className={`filter-pill${filter === item ? " active" : ""}`}
+                type="button"
+                key={item}
+                onClick={() => setFilter(item)}
+              >
+                {item[0].toUpperCase() + item.slice(1)}
+              </button>
+            ))}
+            <span className="toolbar-spacer" />
+            <div
+              aria-label="History transcription view"
+              className="view-switch"
+              data-transcript-switch="history"
+            >
+              <button
+                className={viewMode === "original" ? "active" : ""}
+                type="button"
+                onClick={() => setViewMode("original")}
+              >
+                {PROTOTYPE_HISTORY_COPY.original}
+              </button>
+              <button
+                className={viewMode === "processed" ? "active" : ""}
+                type="button"
+                onClick={() => setViewMode("processed")}
+              >
+                {PROTOTYPE_HISTORY_COPY.processed}
+              </button>
+            </div>
+          </div>
+          <div className="transcript-feed history-feed">{nextContent}</div>
+          <div ref={sentinelRef} className="history-sentinel" />
+        </div>
+      </section>
+    );
+  }
+
   let content: React.ReactNode;
 
   if (loading) {
@@ -271,6 +435,8 @@ export const HistorySettings: React.FC = () => {
               <HistoryEntryComponent
                 key={entry.id}
                 entry={entry}
+                variant="settings"
+                viewMode="original"
                 onToggleSaved={() => toggleSaved(entry.id)}
                 copyText={copyToClipboard}
                 getAudioUrl={getAudioUrl}
@@ -310,6 +476,8 @@ export const HistorySettings: React.FC = () => {
 
 interface HistoryEntryProps {
   entry: HistoryEntry;
+  variant: "settings" | "next";
+  viewMode: HistoryViewMode;
   onToggleSaved: () => void;
   copyText: (text: string) => void;
   getAudioUrl: (fileName: string) => Promise<string | null>;
@@ -319,6 +487,8 @@ interface HistoryEntryProps {
 
 const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   entry,
+  variant,
+  viewMode,
   onToggleSaved,
   copyText,
   getAudioUrl,
@@ -334,9 +504,12 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
   // clears the processed text (backend), so this collapses back to TRS.
   const hasProcessed = (entry.post_processed_text?.trim().length ?? 0) > 0;
   const [mode, setMode] = useState<"pro" | "trs">(hasProcessed ? "pro" : "trs");
-  const showProcessed = mode === "pro" && hasProcessed;
+  const showProcessed =
+    variant === "next"
+      ? viewMode === "processed" && hasProcessed
+      : mode === "pro" && hasProcessed;
   const displayText = showProcessed
-    ? entry.post_processed_text ?? ""
+    ? (entry.post_processed_text ?? "")
     : entry.transcription_text;
   const hasText = displayText.trim().length > 0;
 
@@ -379,6 +552,79 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
 
   const formattedDate = formatDateTime(String(entry.timestamp), i18n.language);
 
+  if (variant === "next") {
+    return (
+      <article className="transcript-card">
+        <div className="transcript-head">
+          <div>
+            <time>{formattedDate}</time>
+            <span className="capture-mode">
+              {entry.title.trim() || "Standard"}
+            </span>
+          </div>
+          <div className="transcript-actions">
+            <button
+              type="button"
+              onClick={handleCopyText}
+              disabled={!hasText || retrying}
+              title={
+                showCopied
+                  ? PROTOTYPE_HISTORY_COPY.copied
+                  : t("settings.history.copyToClipboard")
+              }
+            >
+              <PrototypeIcon name="copy" />
+            </button>
+            <button
+              type="button"
+              className={entry.saved ? "active" : ""}
+              onClick={onToggleSaved}
+              disabled={retrying}
+              title={
+                entry.saved
+                  ? t("settings.history.unsave")
+                  : t("settings.history.save")
+              }
+            >
+              <PrototypeIcon name="star" />
+            </button>
+            <button
+              type="button"
+              className={retrying ? "is-retrying" : ""}
+              onClick={handleRetranscribe}
+              disabled={retrying}
+              title={t("settings.history.retranscribe")}
+            >
+              <PrototypeIcon name="refresh" />
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteEntry}
+              disabled={retrying}
+              title={t("settings.history.delete")}
+            >
+              <PrototypeIcon name="trash" />
+            </button>
+          </div>
+        </div>
+        <p
+          className={`transcript-body${retrying ? " is-retrying" : ""}${hasText ? "" : " is-empty"}`}
+        >
+          {retrying
+            ? t("settings.history.transcribing")
+            : hasText
+              ? displayText
+              : t("settings.history.transcriptionFailed")}
+        </p>
+        <AudioPlayer
+          variant="prototype"
+          onLoadRequest={handleLoadAudio}
+          className="w-full"
+        />
+      </article>
+    );
+  }
+
   return (
     <div className="px-4 py-2 pb-5 flex flex-col gap-3">
       <div className="flex justify-between items-center">
@@ -392,9 +638,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
                 onClick={() => setMode("trs")}
                 title={t("settings.history.transcriptionTooltip")}
                 className={`px-2 py-0.5 transition-colors ${
-                  mode === "trs"
-                    ? "bg-ink/15 text-ink"
-                    : "text-ink-soft"
+                  mode === "trs" ? "bg-ink/15 text-ink" : "text-ink-soft"
                 }`}
               >
                 {t("settings.history.showTranscription")}
@@ -404,9 +648,7 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
                 onClick={() => setMode("pro")}
                 title={t("settings.history.processedTooltip")}
                 className={`px-2 py-0.5 border-l border-line transition-colors ${
-                  mode === "pro"
-                    ? "bg-ink/15 text-ink"
-                    : "text-ink-soft"
+                  mode === "pro" ? "bg-ink/15 text-ink" : "text-ink-soft"
                 }`}
               >
                 {t("settings.history.showProcessed")}
@@ -414,55 +656,55 @@ const HistoryEntryComponent: React.FC<HistoryEntryProps> = ({
             </div>
           )}
           <div className="flex items-center">
-          <IconButton
-            onClick={handleCopyText}
-            disabled={!hasText || retrying}
-            title={t("settings.history.copyToClipboard")}
-          >
-            {showCopied ? (
-              <Check width={16} height={16} />
-            ) : (
-              <Copy width={16} height={16} />
-            )}
-          </IconButton>
-          <IconButton
-            onClick={onToggleSaved}
-            disabled={retrying}
-            active={entry.saved}
-            title={
-              entry.saved
-                ? t("settings.history.unsave")
-                : t("settings.history.save")
-            }
-          >
-            <Star
-              width={16}
-              height={16}
-              fill={entry.saved ? "currentColor" : "none"}
-            />
-          </IconButton>
-          <IconButton
-            onClick={handleRetranscribe}
-            disabled={retrying}
-            title={t("settings.history.retranscribe")}
-          >
-            <RotateCcw
-              width={16}
-              height={16}
-              style={
-                retrying
-                  ? { animation: "spin 1s linear infinite reverse" }
-                  : undefined
+            <IconButton
+              onClick={handleCopyText}
+              disabled={!hasText || retrying}
+              title={t("settings.history.copyToClipboard")}
+            >
+              {showCopied ? (
+                <Check width={16} height={16} />
+              ) : (
+                <Copy width={16} height={16} />
+              )}
+            </IconButton>
+            <IconButton
+              onClick={onToggleSaved}
+              disabled={retrying}
+              active={entry.saved}
+              title={
+                entry.saved
+                  ? t("settings.history.unsave")
+                  : t("settings.history.save")
               }
-            />
-          </IconButton>
-          <IconButton
-            onClick={handleDeleteEntry}
-            disabled={retrying}
-            title={t("settings.history.delete")}
-          >
-            <Trash2 width={16} height={16} />
-          </IconButton>
+            >
+              <Star
+                width={16}
+                height={16}
+                fill={entry.saved ? "currentColor" : "none"}
+              />
+            </IconButton>
+            <IconButton
+              onClick={handleRetranscribe}
+              disabled={retrying}
+              title={t("settings.history.retranscribe")}
+            >
+              <RotateCcw
+                width={16}
+                height={16}
+                style={
+                  retrying
+                    ? { animation: "spin 1s linear infinite reverse" }
+                    : undefined
+                }
+              />
+            </IconButton>
+            <IconButton
+              onClick={handleDeleteEntry}
+              disabled={retrying}
+              title={t("settings.history.delete")}
+            >
+              <Trash2 width={16} height={16} />
+            </IconButton>
           </div>
         </div>
       </div>

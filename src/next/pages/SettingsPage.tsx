@@ -69,57 +69,78 @@ export function SettingsPage({ section }: SettingsPageProps) {
   );
 
   return (
-    <div className="next-settings" aria-busy={isLoading || undefined}>
-      <aside className="next-settings-index">
-        <header>
-          <p>{t("ui2.settings.indexEyebrow")}</p>
-          <h1>{t("ui2.settings.title")}</h1>
-        </header>
-        <nav aria-label={t("ui2.settings.navigation")}>
-          {availableSections.map(({ id, icon: Icon }, index) => (
-            <a
-              key={id}
-              href={hashForRoute({ page: "settings", section: id })}
-              className="next-settings-link"
-              aria-current={id === activeSection ? "page" : undefined}
+    <section
+      className="page settings-workspace-page active"
+      data-page-panel="settings"
+      aria-busy={isLoading || undefined}
+    >
+      <div className="page-wrap settings-page-wrap">
+        <div className="settings-shell">
+          <aside className="settings-sidebar-pane">
+            <div className="settings-pane-header">
+              <div>
+                <strong>{t("ui2.settings.title")}</strong>
+              </div>
+            </div>
+            <nav
+              className="settings-nav"
+              aria-label={t("ui2.settings.navigation")}
             >
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <Icon aria-hidden="true" size={15} strokeWidth={1.7} />
-              <strong>{t(`ui2.settings.sections.${id}.label`)}</strong>
-              <i aria-hidden="true" />
-            </a>
-          ))}
-        </nav>
-      </aside>
+              {availableSections.map(({ id }) => (
+                <button
+                  key={id}
+                  type="button"
+                  className={id === activeSection ? "active" : ""}
+                  aria-current={id === activeSection ? "page" : undefined}
+                  onClick={() => {
+                    window.location.hash = hashForRoute({
+                      page: "settings",
+                      section: id,
+                    }).slice(1);
+                  }}
+                >
+                  {t(`ui2.settings.sections.${id}.label`)}
+                </button>
+              ))}
+            </nav>
+          </aside>
 
-      <section
-        className="next-settings-canvas"
-        aria-labelledby="next-settings-section-title"
-      >
-        <header className="next-settings-head">
-          <div>
-            <p>{t("ui2.settings.eyebrow")}</p>
-            <h2 id="next-settings-section-title">
-              {t(`ui2.settings.sections.${activeSection}.label`)}
-            </h2>
-            <span>
-              {t(`ui2.settings.sections.${activeSection}.description`)}
-            </span>
-          </div>
-          <small>{t("ui2.settings.localState")}</small>
-        </header>
+          <section
+            className="settings-canvas"
+            aria-labelledby="next-settings-title"
+          >
+            <div className="settings-scroll">
+              <div className="settings-content">
+                <header className="settings-main-heading">
+                  <h1 id="next-settings-title">{t("ui2.settings.title")}</h1>
+                  <div className="settings-current-copy">
+                    <strong>
+                      {t(`ui2.settings.sections.${activeSection}.label`)}
+                    </strong>
+                    <span>
+                      {t(`ui2.settings.sections.${activeSection}.description`)}
+                    </span>
+                  </div>
+                </header>
 
-        {isLoading ? (
-          <div className="next-settings-loading" role="status">
-            <i aria-hidden="true" />
-            {t("ui2.settings.loading")}
-          </div>
-        ) : (
-          <div key={activeSection} className="next-settings-content">
-            <ActiveSection />
-          </div>
-        )}
-      </section>
-    </div>
+                {isLoading ? (
+                  <div className="next-settings-loading" role="status">
+                    <i aria-hidden="true" />
+                    {t("ui2.settings.loading")}
+                  </div>
+                ) : (
+                  <div
+                    key={activeSection}
+                    className="settings-pane next-settings-content"
+                  >
+                    <ActiveSection />
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
   );
 }
