@@ -330,11 +330,13 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
               grouped
               descriptionMode="tooltip"
             />
-            <ShortcutInput
-              shortcutId="grain_space_open"
-              grouped
-              descriptionMode="tooltip"
-            />
+            {/* [GRAIN] No `grain_space_open` row: the notes workspace became a
+                tab, so grain-core MIGRATES that binding away (settings.rs
+                removes it). The id was still hard-coded here, and
+                ShortcutInput renders a visible "not found" row for a missing
+                binding — so every user with Grain Space on saw a dead shortcut.
+                The lasting fix is UI 2.0 rendering the binding list from the
+                backend map instead of hard-coded ids (docs/UI 2.0/PLAN.md §6.8). */}
             <ShortcutInput
               shortcutId="grain_space_recall"
               grouped
