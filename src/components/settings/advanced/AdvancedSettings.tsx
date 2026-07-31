@@ -23,7 +23,9 @@ import { LazyStreamClose } from "../LazyStreamClose";
 import { AppearanceToggle } from "../AppearanceToggle";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
-export const AdvancedSettings: React.FC = () => {
+export const AdvancedSettings: React.FC<{
+  variant?: "default" | "next";
+}> = ({ variant = "default" }) => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const experimentalEnabled = getSetting("experimental_enabled") || false;
@@ -49,16 +51,20 @@ export const AdvancedSettings: React.FC = () => {
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
-        <CustomWords descriptionMode="tooltip" grouped />
-        <ToggleSwitch
-          label="Auto-add to dictionary"
-          description="After pasting, briefly watch for you re-spelling a word (e.g. a name Grain got wrong). If you make the same correction across a couple of pastes, the pill offers to add that spelling — click it to accept. Only proper nouns and identifiers are learned; off = zero overhead."
-          descriptionMode="tooltip"
-          grouped
-          checked={autoDictionary}
-          isUpdating={isUpdating("auto_dictionary_enabled")}
-          onChange={(v) => updateSetting("auto_dictionary_enabled", v)}
-        />
+        {variant === "default" && (
+          <>
+            <CustomWords descriptionMode="tooltip" grouped />
+            <ToggleSwitch
+              label="Auto-add to dictionary"
+              description="After pasting, briefly watch for you re-spelling a word (e.g. a name Grain got wrong). If you make the same correction across a couple of pastes, the pill offers to add that spelling — click it to accept. Only proper nouns and identifiers are learned; off = zero overhead."
+              descriptionMode="tooltip"
+              grouped
+              checked={autoDictionary}
+              isUpdating={isUpdating("auto_dictionary_enabled")}
+              onChange={(v) => updateSetting("auto_dictionary_enabled", v)}
+            />
+          </>
+        )}
         <ToggleSwitch
           label='"Scrap that" voice reset'
           description='Say "scrap that" mid-dictation to discard everything before it and start the transcript fresh from that point. Works in every mode; in live-streaming the expanded pill collapses back to the compact capsule until you speak again. Off = zero overhead.'

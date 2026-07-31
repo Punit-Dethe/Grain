@@ -468,6 +468,9 @@ pub struct ExtensionCard {
     /// Sent as string — u64 doesn't survive JS numbers.
     pub toggle_seq: String,
     pub repository: Option<String>,
+    /// Manifest-declared capabilities. The installed UI needs these even for
+    /// local/imported packs which have no signed-store catalogue entry.
+    pub capabilities: Vec<String>,
     /// The pack declares settings or shortcuts, so it has a section of its own
     /// worth opening. Free to compute — Overview already reads every manifest.
     pub has_detail: bool,
@@ -494,33 +497,36 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.
     for rec in reg.records() {
-        let (name, description, repository, has_detail, tier) = match load_pack(&app, &rec.id) {
-            Ok(p) => {
-                let has_detail = !p.manifest.contributes.settings.is_empty()
-                    || !p.manifest.contributes.shortcuts.is_empty();
-                let tier = match p.manifest.tier {
-                    grain_sdk::Tier::Pack => "pack",
-                    grain_sdk::Tier::Scripted => "scripted",
-                    grain_sdk::Tier::Native => "native",
-                };
-                (
-                    p.manifest.name,
-                    p.manifest.description,
-                    p.manifest.repository,
-                    has_detail,
-                    tier,
-                )
-            }
-            // SPEC §6 last row: a broken/missing pack file renders an error
-            // card; it never takes the page down.
-            Err(e) => (
-                rec.id.clone(),
-                format!("Unreadable pack: {e}"),
-                None,
-                false,
-                "pack",
-            ),
-        };
+        let (name, description, repository, capabilities, has_detail, tier) =
+            match load_pack(&app, &rec.id) {
+                Ok(p) => {
+                    let has_detail = !p.manifest.contributes.settings.is_empty()
+                        || !p.manifest.contributes.shortcuts.is_empty();
+                    let tier = match p.manifest.tier {
+                        grain_sdk::Tier::Pack => "pack",
+                        grain_sdk::Tier::Scripted => "scripted",
+                        grain_sdk::Tier::Native => "native",
+                    };
+                    (
+                        p.manifest.name,
+                        p.manifest.description,
+                        p.manifest.repository,
+                        p.manifest.permissions,
+                        has_detail,
+                        tier,
+                    )
+                }
+                // SPEC §6 last row: a broken/missing pack file renders an error
+                // card; it never takes the page down.
+                Err(e) => (
+                    rec.id.clone(),
+                    format!("Unreadable pack: {e}"),
+                    None,
+                    Vec::new(),
+                    false,
+                    "pack",
+                ),
+            };
         cards.push(ExtensionCard {
             id: rec.id.clone(),
             name,
@@ -551,6 +557,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             enabled: rec.enabled,
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
+            capabilities,
             has_detail,
         });
     }

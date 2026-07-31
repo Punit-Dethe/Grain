@@ -133,7 +133,11 @@ export function SettingsPage({ section }: SettingsPageProps) {
                     key={activeSection}
                     className="settings-pane next-settings-content"
                   >
-                    <ActiveSection />
+                    {activeSection === "advanced" ? (
+                      <AdvancedSettings variant="next" />
+                    ) : (
+                      <ActiveSection />
+                    )}
                   </div>
                 )}
               </div>

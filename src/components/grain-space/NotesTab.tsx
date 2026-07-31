@@ -32,13 +32,15 @@ const TITLE = "Notes";
  */
 export function NotesTab({
   variant = "default",
+  initialSettingsOpen = false,
 }: {
   variant?: "default" | "next";
+  initialSettingsOpen?: boolean;
 }) {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = (getSetting("grain_space_enabled") as boolean) ?? false;
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
 
   if (!enabled) {
     return (

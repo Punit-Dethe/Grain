@@ -1,3 +1,4 @@
+/* eslint-disable i18next/no-literal-string -- Established extension safety copy remains frozen while shared runtime behavior is extracted. */
 import React, { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
@@ -20,88 +21,28 @@ import {
 } from "./ExtensionSettings";
 import { ExtensionDetail, Cover, type DetailMeta } from "./ExtensionDetail";
 import { useSettings } from "../../../hooks/useSettings";
+import {
+  capabilityLabel,
+  parseNeedsPermissions,
+  parseSlotConflict,
+  slotLabel,
+  sortExtensionCards,
+  type SlotConflict,
+} from "@/next/extensions/extensionRuntime";
 
 /** Plain-language capability wording for the permission sheet (SPEC §1.3).
  * One map, phrased as what the extension can DO to the user — never the raw
  * capability name, which means nothing to the person approving it. */
-const CAPABILITY_LABELS: Record<string, string> = {
-  "events:sessions": "See when recording starts and stops",
-  "events:transcripts": "Read what you dictate",
-  "events:audio-levels": "See live microphone levels",
-  "transform:transcript": "Rewrite your text before it is pasted",
-  "session:start": "Start a recording session itself",
-  storage: "Store its own data on this device",
-  settings: "Save its own settings",
-  // "and images" is not padding: llm can carry a picture now, and someone
-  // approving this should not have to infer that from another row.
-  llm: "Send text and images to your configured AI provider",
-  embed: "Turn text into embeddings",
-  // The widest grant there is: say so, rather than "access notes".
-  notes: "Read and change all your Grain Space notes",
-  "capture:selection": "Read your currently selected text",
-  "capture:app": "See which app you're currently using",
-  "capture:screen-text": "Read all the text on the window you're using",
-  // Say "screenshot". Anything softer ("capture screen content") lets someone
-  // approve a photograph of their screen without realising that is what it is.
-  "capture:screen-image": "Take a screenshot of the window you're using",
-  "open:url": "Open web links in your browser",
-  "open:app": "Launch apps you choose",
-};
-
-const capabilityLabel = (cap: string) =>
-  cap.startsWith("net:")
-    ? `Send data to ${cap.slice("net:".length)}`
-    : (CAPABILITY_LABELS[cap] ?? cap);
-
 /** The backend holds a scripted extension at first enable and answers with a
  * structured `{"needsPermissions":[…]}` error (grain_commands.rs). Anything
  * else is a real failure and surfaces as one. */
-function parseNeedsPermissions(e: unknown): string[] | null {
-  try {
-    const parsed = JSON.parse(String(e)) as { needsPermissions?: unknown };
-    return Array.isArray(parsed?.needsPermissions)
-      ? (parsed.needsPermissions as string[])
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Plain-language name for each exclusive position (SPEC §3.2). The user is
  * agreeing to hand over a *place in Grain*, so the prompt has to say which. */
-const SLOT_LABELS: Record<string, string> = {
-  "overlay.recording": "the recording overlay",
-  "overlay.pointer": "the pointer overlay",
-  "pill.theme": "the pill's look",
-  "agent.reply-surface": "the Agent's reply panel",
-  "output.destination": "where your text is sent",
-};
-
-const slotLabel = (slot: string) =>
-  SLOT_LABELS[slot] ??
-  (slot.startsWith("overrides:")
-    ? `the “${slot.slice("overrides:".length)}” setting`
-    : slot);
-
 /** Reserved occupant id for Grain's own built-in behaviour (grain-core). */
 const CORE_DEFAULT = "grain.core";
 
-interface SlotConflict {
-  slot: string;
-  currentOccupant: string;
-}
-
 /** The registry refuses a contested slot with `{"slotConflict":{…}}` rather
  * than letting the newcomer win by load order (SPEC §3.2). */
-function parseSlotConflict(e: unknown): SlotConflict | null {
-  try {
-    const parsed = JSON.parse(String(e)) as { slotConflict?: SlotConflict };
-    return parsed?.slotConflict?.slot ? parsed.slotConflict : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Mirror of the Rust `ExtensionCard` (grain_commands.rs). Local type until the
  * next dev run regenerates bindings.ts — never hand-edit bindings. */
 interface ExtensionCard {
@@ -121,22 +62,8 @@ interface ExtensionCard {
   has_detail: boolean;
 }
 
-const NEVER_TOGGLED = "18446744073709551615";
-
 /** Toggle-order sort (SPEC §4.4): enabled first, each group by the order the
  * user enabled them in; never-toggled sorts last, stable by name. */
-function sortCards(cards: ExtensionCard[]): ExtensionCard[] {
-  const seq = (c: ExtensionCard) =>
-    c.toggle_seq === NEVER_TOGGLED
-      ? Number.MAX_SAFE_INTEGER
-      : Number(c.toggle_seq);
-  return [...cards].sort((a, b) => {
-    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-    const d = seq(a) - seq(b);
-    return d !== 0 ? d : a.name.localeCompare(b.name);
-  });
-}
-
 /** Compact count: 1234 → "1.2k". */
 const fmtStars = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
@@ -260,7 +187,7 @@ export const OverviewSection: React.FC<{
           () => [] as SettingsSection[],
         ),
       ]);
-      setCards(sortCards(next));
+      setCards(sortExtensionCards(next));
       setSections(secs);
       setError(null);
       await refreshSettings();
@@ -506,8 +433,8 @@ export const OverviewSection: React.FC<{
           </h3>
         </div>
         <p className="text-xs text-ink-faint">
-          Only one extension can control{" "}
-          {slotLabel(contested.conflict.slot)}. It is currently{" "}
+          Only one extension can control {slotLabel(contested.conflict.slot)}.
+          It is currently{" "}
           <span className="text-ink">
             {occupantName(contested.conflict.currentOccupant)}
           </span>
@@ -674,12 +601,12 @@ export const OverviewSection: React.FC<{
                     )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0 self-center pe-4">
-                  {card.trust === "dev" && (
-                    <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                      dev
-                    </span>
-                  )}
-                  {/* NOTE: no tier/version chip. "SCRIPTED · V1.0.0" is
+                    {card.trust === "dev" && (
+                      <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                        dev
+                      </span>
+                    )}
+                    {/* NOTE: no tier/version chip. "SCRIPTED · V1.0.0" is
                       packaging trivia on a list whose job is "what do I have,
                       and is it on" — it lives on the detail page, where the
                       question is actually about the extension.
@@ -694,55 +621,55 @@ export const OverviewSection: React.FC<{
                       Its repository is NOT here: it is one line down on that
                       page, and a link out of the app is a strange thing to
                       offer from a list whose job is "what do I have". */}
-                  <button
-                    type="button"
-                    onClick={() => setDetail(card.id)}
-                    className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
-                    aria-label={`About ${card.name}`}
-                    title="About this extension"
-                  >
-                    <Sliders width={13} height={13} />
-                  </button>
-                  {/* Uninstall — everything except load-unpacked dev projects,
+                    <button
+                      type="button"
+                      onClick={() => setDetail(card.id)}
+                      className="text-ink-faint hover:text-ink transition-colors cursor-pointer"
+                      aria-label={`About ${card.name}`}
+                      title="About this extension"
+                    >
+                      <Sliders width={13} height={13} />
+                    </button>
+                    {/* Uninstall — everything except load-unpacked dev projects,
                       which unload from the Developer panel instead. A builtin
                       like Grain Space uninstalls too: its implementation is
                       compiled in, but the INSTALL is a real registry record, so
                       removing it switches the feature off and takes the row out
                       of the list. Its notes are not in the extension's storage,
                       so they survive; the store puts it back. */}
-                  {card.trust !== "dev" && (
-                    <button
-                      type="button"
-                      disabled={busy === card.id}
-                      onClick={() => void uninstall(card)}
-                      className="text-ink-faint hover:text-red-600 transition-colors cursor-pointer disabled:opacity-50"
-                      aria-label={`Uninstall ${card.name}`}
-                      title="Uninstall"
-                    >
-                      <Trash2 width={13} height={13} />
-                    </button>
-                  )}
-                  {/* Inline enable toggle. A scripted extension's first enable is
+                    {card.trust !== "dev" && (
+                      <button
+                        type="button"
+                        disabled={busy === card.id}
+                        onClick={() => void uninstall(card)}
+                        className="text-ink-faint hover:text-red-600 transition-colors cursor-pointer disabled:opacity-50"
+                        aria-label={`Uninstall ${card.name}`}
+                        title="Uninstall"
+                      >
+                        <Trash2 width={13} height={13} />
+                      </button>
+                    )}
+                    {/* Inline enable toggle. A scripted extension's first enable is
                 held by the backend until the permission sheet below is
                 approved (SPEC §6). */}
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={card.enabled}
-                    disabled={busy === card.id}
-                    onClick={() => void toggle(card)}
-                    className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
-                      card.enabled
-                        ? "bg-accent"
-                        : "bg-paper-sunken border border-line"
-                    } ${busy === card.id ? "opacity-50" : ""}`}
-                  >
-                    <span
-                      className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
-                        card.enabled ? "left-[18px]" : "left-0.5"
-                      }`}
-                    />
-                  </button>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={card.enabled}
+                      disabled={busy === card.id}
+                      onClick={() => void toggle(card)}
+                      className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${
+                        card.enabled
+                          ? "bg-accent"
+                          : "bg-paper-sunken border border-line"
+                      } ${busy === card.id ? "opacity-50" : ""}`}
+                    >
+                      <span
+                        className={`absolute top-0.5 w-4 h-4 rounded-full bg-paper-raised shadow transition-all ${
+                          card.enabled ? "left-[18px]" : "left-0.5"
+                        }`}
+                      />
+                    </button>
                   </div>
                 </div>
               ))}
@@ -808,24 +735,26 @@ type StoreView = {
 /** [GRAIN] The trust rung, as shown ON the cover image (see the card below).
  * There is no "Core": the backend reports a first-party pack as `verified`,
  * because that is exactly what it promises the person installing it. */
-const TRUST_BADGE: Record<string, { label: string; cls: string; title: string }> =
-  {
-    verified: {
-      label: "Verified",
-      cls: "text-emerald-700 dark:text-emerald-400",
-      title: "Built from pinned source by our CI and signed before publishing.",
-    },
-    experimental: {
-      label: "Experimental",
-      cls: "text-amber-600",
-      title: "Reviewed, but young or narrowly tested.",
-    },
-    dev: {
-      label: "Community",
-      cls: "text-ink-faint",
-      title: "Submitted by its author and reviewed.",
-    },
-  };
+const TRUST_BADGE: Record<
+  string,
+  { label: string; cls: string; title: string }
+> = {
+  verified: {
+    label: "Verified",
+    cls: "text-emerald-700 dark:text-emerald-400",
+    title: "Built from pinned source by our CI and signed before publishing.",
+  },
+  experimental: {
+    label: "Experimental",
+    cls: "text-amber-600",
+    title: "Reviewed, but young or narrowly tested.",
+  },
+  dev: {
+    label: "Community",
+    cls: "text-ink-faint",
+    title: "Submitted by its author and reviewed.",
+  },
+};
 
 /** The filter row. Short on purpose: these answer "what KIND of thing is this",
  * which is the only question a filter can usefully ask before you have opened
@@ -1001,34 +930,34 @@ const StoreSlideOver: React.FC<{
       {!openEntry && (
         <div className="px-6 pt-5 pb-4 border-b border-line">
           <div className="max-w-[1600px] mx-auto space-y-4">
-          <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none text-ink">
-            Extension store
-          </h1>
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search extensions"
-              className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
-            />
-            {/* A dropdown, not a row of chips: with six of them the chips were a
+            <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none text-ink">
+              Extension store
+            </h1>
+            <div className="flex items-center gap-3">
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search extensions"
+                className="flex-1 min-w-0 px-3.5 py-2 rounded-xl bg-paper-raised border border-line text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:border-ink-faint"
+              />
+              {/* A dropdown, not a row of chips: with six of them the chips were a
                 second full-width line above the grid, and this is a filter you
                 set once and forget. Counts stay, so an empty option reads as
                 empty before you pick it. */}
-            <select
-              aria-label="Filter by category"
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="shrink-0 px-3 py-2 rounded-xl bg-paper-raised border border-line text-sm text-ink cursor-pointer focus:outline-none focus:border-ink-faint"
-            >
-              {CATEGORY_FILTERS.map((f) => (
-                <option key={f.key} value={f.key}>
-                  {f.label} ({countFor(f.key)})
-                </option>
-              ))}
-            </select>
-          </div>
+              <select
+                aria-label="Filter by category"
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="shrink-0 px-3 py-2 rounded-xl bg-paper-raised border border-line text-sm text-ink cursor-pointer focus:outline-none focus:border-ink-faint"
+              >
+                {CATEGORY_FILTERS.map((f) => (
+                  <option key={f.key} value={f.key}>
+                    {f.label} ({countFor(f.key)})
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       )}
@@ -1064,154 +993,164 @@ const StoreSlideOver: React.FC<{
             />
           </div>
         ) : (
-        <>
-        {loading && (
-          <div className="flex flex-col items-center justify-center gap-2 py-16 text-ink-faint">
-            <Package width={24} height={24} />
-            <span className="text-xs">Loading the catalogue…</span>
-          </div>
-        )}
-        {error && (
-          <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
-            {error}
-          </div>
-        )}
-        {!loading && !error && entries.length === 0 && (
-          <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center text-ink-faint">
-            <Package width={24} height={24} />
-            <span className="text-sm text-ink">No extensions yet</span>
-            <p className="text-xs leading-relaxed max-w-sm">
-              The catalogue is empty right now. You can also import a{" "}
-              <span className="font-mono">.grainpack</span> you trust from the
-              Extensions header.
-            </p>
-          </div>
-        )}
-        {/* The full window buys another column before the cards get wide enough
+          <>
+            {loading && (
+              <div className="flex flex-col items-center justify-center gap-2 py-16 text-ink-faint">
+                <Package width={24} height={24} />
+                <span className="text-xs">Loading the catalogue…</span>
+              </div>
+            )}
+            {error && (
+              <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-600">
+                {error}
+              </div>
+            )}
+            {!loading && !error && entries.length === 0 && (
+              <div className="flex flex-col items-center justify-center gap-2 py-16 px-8 text-center text-ink-faint">
+                <Package width={24} height={24} />
+                <span className="text-sm text-ink">No extensions yet</span>
+                <p className="text-xs leading-relaxed max-w-sm">
+                  The catalogue is empty right now. You can also import a{" "}
+                  <span className="font-mono">.grainpack</span> you trust from
+                  the Extensions header.
+                </p>
+              </div>
+            )}
+            {/* The full window buys another column before the cards get wide enough
             to look stretched; the max-width stops the grid running away on a
             very wide display. */}
-        <div className="grid gap-x-6 gap-y-8 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 max-w-[1600px] mx-auto">
-          {entries.map((e) => {
-            const badge = TRUST_BADGE[e.trust] ?? TRUST_BADGE.dev;
-            const revoked = e.revocation === "revoked";
-            const deprecated = e.revocation === "deprecated";
-            const have = installed[e.id];
-            const isInstalled = have != null;
-            const upToDate = have === e.version;
-            const busyThis = installing === e.id;
-            const label = busyThis
-              ? "Installing…"
-              : isInstalled && upToDate
-                ? "Installed"
-                : isInstalled
-                  ? "Update"
-                  : "Install";
-            const disabled =
-              busyThis || revoked || (isInstalled && upToDate) || !view?.can_install;
-            return (
-              // No card. The picture is the object; a border and a raised panel
-              // around it only drew a box around a box, and six of them made a
-              // grid of containers rather than a grid of extensions. Title and
-              // copy sit on the page itself.
-              <div key={`${e.id}@${e.version}`} className="group flex flex-col">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setOpened(e.id)}
-                    className="block w-full text-left cursor-pointer rounded-2xl overflow-hidden transition-opacity group-hover:opacity-95"
-                    aria-label={`Open ${e.name}`}
+            <div className="grid gap-x-6 gap-y-8 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 max-w-[1600px] mx-auto">
+              {entries.map((e) => {
+                const badge = TRUST_BADGE[e.trust] ?? TRUST_BADGE.dev;
+                const revoked = e.revocation === "revoked";
+                const deprecated = e.revocation === "deprecated";
+                const have = installed[e.id];
+                const isInstalled = have != null;
+                const upToDate = have === e.version;
+                const busyThis = installing === e.id;
+                const label = busyThis
+                  ? "Installing…"
+                  : isInstalled && upToDate
+                    ? "Installed"
+                    : isInstalled
+                      ? "Update"
+                      : "Install";
+                const disabled =
+                  busyThis ||
+                  revoked ||
+                  (isInstalled && upToDate) ||
+                  !view?.can_install;
+                return (
+                  // No card. The picture is the object; a border and a raised panel
+                  // around it only drew a box around a box, and six of them made a
+                  // grid of containers rather than a grid of extensions. Title and
+                  // copy sit on the page itself.
+                  <div
+                    key={`${e.id}@${e.version}`}
+                    className="group flex flex-col"
                   >
-                    {e.media.length > 0 ? (
-                      <Cover
-                        media={e.media[0]}
-                        name={e.name}
-                        rounded="rounded-none"
-                      />
-                    ) : (
-                      <div className="w-full aspect-[16/9] bg-paper-sunken flex items-center justify-center">
-                        <Package width={22} height={22} className="text-ink-faint/50" />
-                      </div>
-                    )}
-                  </button>
-                  {/* The action goes ON the image, top-right: it is the one
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setOpened(e.id)}
+                        className="block w-full text-left cursor-pointer rounded-2xl overflow-hidden transition-opacity group-hover:opacity-95"
+                        aria-label={`Open ${e.name}`}
+                      >
+                        {e.media.length > 0 ? (
+                          <Cover
+                            media={e.media[0]}
+                            name={e.name}
+                            rounded="rounded-none"
+                          />
+                        ) : (
+                          <div className="w-full aspect-[16/9] bg-paper-sunken flex items-center justify-center">
+                            <Package
+                              width={22}
+                              height={22}
+                              className="text-ink-faint/50"
+                            />
+                          </div>
+                        )}
+                      </button>
+                      {/* The action goes ON the image, top-right: it is the one
                       thing you came to the card to do, and up here it needs no
                       row of its own under the words. */}
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => void install(e)}
-                    className={`absolute top-2.5 right-2.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm backdrop-blur-md transition-colors disabled:cursor-not-allowed ${
-                      isInstalled && upToDate
-                        ? "bg-black/45 text-white/80"
-                        : "bg-paper-raised/85 text-ink hover:bg-paper-raised cursor-pointer"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                </div>
+                      <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => void install(e)}
+                        className={`absolute top-2.5 right-2.5 px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm backdrop-blur-md transition-colors disabled:cursor-not-allowed ${
+                          isInstalled && upToDate
+                            ? "bg-black/45 text-white/80"
+                            : "bg-paper-raised/85 text-ink hover:bg-paper-raised cursor-pointer"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    </div>
 
-                <div className="pt-3 px-0.5 flex flex-col gap-1">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => setOpened(e.id)}
-                      className="text-[0.95rem] font-semibold text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
-                    >
-                      {e.name}
-                    </button>
-                    {/* Trust, after a hairline rule — present and readable, not
+                    <div className="pt-3 px-0.5 flex flex-col gap-1">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <button
+                          type="button"
+                          onClick={() => setOpened(e.id)}
+                          className="text-[0.95rem] font-semibold text-ink truncate hover:text-accent transition-colors cursor-pointer text-left"
+                        >
+                          {e.name}
+                        </button>
+                        {/* Trust, after a hairline rule — present and readable, not
                         a coloured pill shouting over the name. */}
-                    <span className="h-3.5 w-px bg-line shrink-0" />
-                    <span
-                      className={`inline-flex items-center gap-1 text-[11px] shrink-0 ${badge.cls}`}
-                      title={badge.title}
-                    >
-                      {e.trust === "verified" && (
-                        <ShieldCheck width={11} height={11} />
+                        <span className="h-3.5 w-px bg-line shrink-0" />
+                        <span
+                          className={`inline-flex items-center gap-1 text-[11px] shrink-0 ${badge.cls}`}
+                          title={badge.title}
+                        >
+                          {e.trust === "verified" && (
+                            <ShieldCheck width={11} height={11} />
+                          )}
+                          {badge.label}
+                        </span>
+                        {e.installs > 0 && (
+                          <span className="inline-flex items-center gap-0.5 text-[11px] text-ink-faint shrink-0">
+                            <Download width={10} height={10} />
+                            {fmtStars(e.installs)}
+                          </span>
+                        )}
+                      </div>
+
+                      {e.description && (
+                        <p className="text-[13px] text-ink-soft leading-relaxed line-clamp-2">
+                          {e.description}
+                        </p>
                       )}
-                      {badge.label}
-                    </span>
-                    {e.installs > 0 && (
-                      <span className="inline-flex items-center gap-0.5 text-[11px] text-ink-faint shrink-0">
-                        <Download width={10} height={10} />
-                        {fmtStars(e.installs)}
-                      </span>
-                    )}
-                  </div>
 
-                  {e.description && (
-                    <p className="text-[13px] text-ink-soft leading-relaxed line-clamp-2">
-                      {e.description}
-                    </p>
-                  )}
-
-                  {/* Flagged combinations (§3.3): what the reviewer was warned
+                      {/* Flagged combinations (§3.3): what the reviewer was warned
                       of. These STAY — unlike a review date, a flag is a reason
                       not to install. */}
-                  {e.flags.map((f) => (
-                    <div
-                      key={f}
-                      className="text-[11px] text-amber-600 flex items-center gap-1"
-                    >
-                      <ShieldCheck width={10} height={10} /> {f}
+                      {e.flags.map((f) => (
+                        <div
+                          key={f}
+                          className="text-[11px] text-amber-600 flex items-center gap-1"
+                        >
+                          <ShieldCheck width={10} height={10} /> {f}
+                        </div>
+                      ))}
+                      {revoked && (
+                        <div className="text-[11px] text-red-600">
+                          Revoked — install disabled.
+                        </div>
+                      )}
+                      {deprecated && (
+                        <div className="text-[11px] text-ink-faint">
+                          Deprecated — no longer maintained.
+                        </div>
+                      )}
                     </div>
-                  ))}
-                  {revoked && (
-                    <div className="text-[11px] text-red-600">
-                      Revoked — install disabled.
-                    </div>
-                  )}
-                  {deprecated && (
-                    <div className="text-[11px] text-ink-faint">
-                      Deprecated — no longer maintained.
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        </>
+                  </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </div>,

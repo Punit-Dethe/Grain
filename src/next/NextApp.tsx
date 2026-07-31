@@ -15,9 +15,15 @@ import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
-import { routeFromHash, type AppRoute } from "./navigation";
+import {
+  routeFromHash,
+  routeUsesCompactGlobalRail,
+  type AppRoute,
+} from "./navigation";
 import { SettingsPage } from "./pages/SettingsPage";
 import { NotesPage } from "./pages/NotesPage";
+import { ToolsPage } from "./pages/ToolsPage";
+import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import {
   NextHistoryCard,
   type NextHistoryViewMode,
@@ -96,6 +102,7 @@ type IconName =
   | "clock"
   | "sliders"
   | "box"
+  | "zap"
   | "command"
   | "sun"
   | "moon"
@@ -139,6 +146,9 @@ function IconSprite() {
       <symbol id="i-box" viewBox="0 0 24 24">
         <path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z" />
         <path d="m4.5 7.8 7.5 4.3 7.5-4.3M12 12v9" />
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24">
+        <path d="m13 2-9 12h8l-1 8 9-12h-8z" />
       </symbol>
       <symbol id="i-clock" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="9" />
@@ -263,7 +273,13 @@ function WindowChrome({ route }: { route: AppRoute }) {
             ? "Notes"
             : route.page === "history"
               ? "History"
-              : "Overview"}
+              : route.page === "tools"
+                ? "Tools"
+                : route.page === "extensions"
+                  ? "Extensions"
+                  : route.page === "extension-settings"
+                    ? "Extension settings"
+                    : "Overview"}
       </div>
       <div
         className="window-actions"
@@ -327,6 +343,12 @@ const NAV_GROUPS = [
       { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
       { page: "notes", label: "Notes", icon: "note", href: "#/notes" },
       { page: "history", label: "History", icon: "clock", href: "#/history" },
+      {
+        page: "tools",
+        label: "Tools",
+        icon: "zap",
+        href: "#/tools/dictionary",
+      },
     ],
   },
   {
@@ -338,7 +360,12 @@ const NAV_GROUPS = [
         icon: "sliders",
         href: "#/settings/general",
       },
-      { page: "extensions", label: "Extensions", icon: "box" },
+      {
+        page: "extensions",
+        label: "Extensions",
+        icon: "box",
+        href: "#/extensions/installed",
+      },
     ],
   },
 ] as const;
@@ -362,7 +389,10 @@ function Sidebar({ route }: { route: AppRoute }) {
           <div className="nav-label">{group.label}</div>
           <div className="nav-list">
             {group.items.map((item) => {
-              const active = item.page === route.page;
+              const active =
+                item.page === route.page ||
+                (item.page === "extensions" &&
+                  route.page === "extension-settings");
               const href = "href" in item ? item.href : undefined;
               return (
                 <button
@@ -952,7 +982,10 @@ function NextShell() {
 
   return (
     <div
-      className={`app next-root${route.page === "settings" || route.page === "notes" ? " notes-mode" : ""}`}
+      className={`app next-root${routeUsesCompactGlobalRail(route) ? " notes-mode" : ""}`}
+      data-global-rail={
+        routeUsesCompactGlobalRail(route) ? "compact" : "expanded"
+      }
       data-theme={isDark ? "dark" : "light"}
     >
       <IconSprite />
@@ -965,6 +998,12 @@ function NextShell() {
           <NotesPage />
         ) : route.page === "settings" ? (
           <SettingsPage section={route.section} />
+        ) : route.page === "tools" ? (
+          <ToolsPage section={route.section} />
+        ) : route.page === "extensions" ? (
+          <ExtensionsPage view={route.view} />
+        ) : route.page === "extension-settings" ? (
+          <ExtensionSettingsPage extensionId={route.extensionId} />
         ) : (
           <OverviewPage history={history} />
         )}

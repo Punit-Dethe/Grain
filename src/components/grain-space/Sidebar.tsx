@@ -1,10 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   CalendarDays,
   ChevronRight,
   FolderPlus,
-  FileText,
   Hash,
   Search,
   Settings,
@@ -12,6 +11,11 @@ import {
   X,
 } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
+import {
+  clampRecentNotesVisibleCount,
+  RECENT_NOTES_PAGE_SIZE,
+  revealMoreRecentNotes,
+} from "./recentNotesPagination";
 
 /**
  * [GRAIN] The Notes rail (NOTES-TAB-PLAN.md Phase B).
@@ -40,7 +44,7 @@ const NEXT_NOTES_COPY = {
   subtitle: "Local knowledge space",
   recent: "Recent",
   collections: "Collections",
-  allNotes: "All notes",
+  viewMore: "View more",
 } as const;
 
 /** Compact relative age for row trailers. */
@@ -217,7 +221,6 @@ export function Sidebar({
   query,
   onQueryChange,
   onOpenCalendar,
-  onOpenAll,
   onOpenSettings,
   onSelectCard,
   onSelectResult,
@@ -237,6 +240,9 @@ export function Sidebar({
   /** The new-folder field, when open. Inline rather than a dialog: naming a
    *  folder is one word, and a modal for one word is a ceremony. */
   const [newFolder, setNewFolder] = useState<string | null>(null);
+  const [recentVisibleCount, setRecentVisibleCount] = useState(
+    RECENT_NOTES_PAGE_SIZE,
+  );
 
   // Drag state. The note id rides in a ref as well as the dataTransfer, because
   // `dragover` is not allowed to read the payload — and the drop target has to
@@ -272,6 +278,20 @@ export function Sidebar({
     () => topFolders.reduce((n, f) => n + subtreeCount(f), 0),
     [topFolders],
   );
+  const recentCards = useMemo(
+    () => [...cards].sort((a, b) => b.timestamp - a.timestamp),
+    [cards],
+  );
+  const visibleRecentCount = clampRecentNotesVisibleCount(
+    recentVisibleCount,
+    recentCards.length,
+  );
+
+  useEffect(() => {
+    if (recentVisibleCount !== visibleRecentCount) {
+      setRecentVisibleCount(visibleRecentCount || RECENT_NOTES_PAGE_SIZE);
+    }
+  }, [recentVisibleCount, visibleRecentCount]);
 
   /** Card of the note being dragged, so a no-op move can be declined. */
   const dragFolderOf = (id: string): string | null =>
@@ -436,7 +456,7 @@ export function Sidebar({
   };
 
   if (variant === "next") {
-    const recent = cards.slice(0, 3);
+    const recent = recentCards.slice(0, visibleRecentCount);
     return (
       <aside className="gs-side gs-next-side">
         <div className="gs-next-pane-head">
@@ -444,15 +464,6 @@ export function Sidebar({
             <strong>{NEXT_NOTES_COPY.title}</strong>
             <span>{NEXT_NOTES_COPY.subtitle}</span>
           </div>
-          <button
-            type="button"
-            className="gs-iconbtn"
-            title={t("grainSpaceOverlay.createNote")}
-            aria-label={t("grainSpaceOverlay.createNote")}
-            onClick={onCreate}
-          >
-            <SquarePen width={15} height={15} />
-          </button>
         </div>
         <div className="gs-side-head">
           <div className="gs-search">
@@ -489,14 +500,11 @@ export function Sidebar({
             </button>
             <button
               type="button"
-              className={`gs-next-nav-row${!calendarOpen && !searching ? " is-active" : ""}`}
-              onClick={() => {
-                onQueryChange("");
-                onOpenAll();
-              }}
+              className="gs-next-nav-row"
+              onClick={onCreate}
             >
-              <FileText width={15} height={15} />
-              <strong>{t("grainSpaceOverlay.notes")}</strong>
+              <SquarePen width={15} height={15} />
+              <strong>{t("grainSpaceOverlay.createNote")}</strong>
             </button>
           </div>
 
@@ -528,18 +536,7 @@ export function Sidebar({
             </>
           ) : (
             <>
-              <div className="gs-next-group-label">
-                {NEXT_NOTES_COPY.recent}
-              </div>
-              {recent.length === 0 ? (
-                <div className="gs-nav-hint">
-                  {t("grainSpaceOverlay.emptyList")}
-                </div>
-              ) : (
-                recent.map((card) => cardRow(card))
-              )}
-
-              <div className="gs-next-group-row">
+              <div className="gs-next-group-row" {...dropZone(null)}>
                 <span>{NEXT_NOTES_COPY.collections}</span>
                 <button
                   type="button"
@@ -579,18 +576,29 @@ export function Sidebar({
                 </div>
               )}
 
-              {(pinned.length > 0 ||
-                grainLoose.length > 0 ||
-                obsidianLoose.length > 0) && (
-                <div className="gs-next-group-label">
-                  {NEXT_NOTES_COPY.allNotes}
-                </div>
-              )}
-              {pinned.map((card) => cardRow(card))}
-              <div className="gs-drop-root" {...dropZone(null)}>
-                {looseList("grain-next", grainLoose)}
-                {looseList("obsidian-next", obsidianLoose)}
+              <div className="gs-next-group-label">
+                {NEXT_NOTES_COPY.recent}
               </div>
+              {recent.length === 0 ? (
+                <div className="gs-nav-hint">
+                  {t("grainSpaceOverlay.emptyList")}
+                </div>
+              ) : (
+                recent.map((card) => cardRow(card))
+              )}
+              {visibleRecentCount < recentCards.length && (
+                <button
+                  type="button"
+                  className="gs-seeall"
+                  onClick={() =>
+                    setRecentVisibleCount((current) =>
+                      revealMoreRecentNotes(current, recentCards.length),
+                    )
+                  }
+                >
+                  {NEXT_NOTES_COPY.viewMore}
+                </button>
+              )}
             </>
           )}
         </nav>

@@ -1,0 +1,388 @@
+/* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bot, BookOpen, Code2, Sparkles } from "lucide-react";
+import {
+  commands,
+  type ExtensionCard,
+  type StoreEntry,
+  type StoreView,
+} from "@/bindings";
+import { CustomWords } from "@/components/settings/CustomWords";
+import { AgentSection } from "@/components/settings/experimentations/AgentSection";
+import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
+import {
+  FeaturePanel,
+  useFeatureEnabled,
+} from "@/components/settings/experimentations/FeaturePanel";
+import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
+import { SnippetsSection } from "@/components/settings/experimentations/SnippetsSection";
+import { SettingsGroup } from "@/components/ui/SettingsGroup";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { useSettings } from "@/hooks/useSettings";
+import { hashForRoute, type ToolSectionId } from "../navigation";
+import {
+  matchToolRecommendations,
+  unwrapResult,
+  type ToolSection,
+} from "../extensions/extensionRuntime";
+
+const TOOL_COPY: Record<
+  ToolSectionId,
+  { title: string; description: string; icon: typeof BookOpen }
+> = {
+  dictionary: {
+    title: "Dictionary",
+    description:
+      "Teach Grain names, product terms, acronyms, and specialist vocabulary ordinary speech models may miss.",
+    icon: BookOpen,
+  },
+  snippets: {
+    title: "Snippets",
+    description:
+      "Create reusable text, links, signatures, and phrases that Grain can expand from your voice.",
+    icon: Code2,
+  },
+  context: {
+    title: "Context",
+    description:
+      "Control what Grain can use from the focused application to improve terminology, casing, and insertion.",
+    icon: Sparkles,
+  },
+  agent: {
+    title: "Agent",
+    description:
+      "Configure Grain's local writing assistant and the actions available from selected text.",
+    icon: Bot,
+  },
+};
+
+function useToolCatalogue() {
+  const [entries, setEntries] = useState<StoreEntry[]>([]);
+  const [view, setView] = useState<StoreView | null>(null);
+  const [cards, setCards] = useState<ExtensionCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const [nextView, overview] = await Promise.all([
+      commands.storeBrowse().then(unwrapResult),
+      commands.extensionsOverview().then(unwrapResult),
+    ]);
+    setView(nextView);
+    setEntries(nextView.entries);
+    setCards(overview);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void refresh()
+      .catch((reason) => alive && setError(String(reason)))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+      setEntries([]);
+      setView(null);
+      setCards([]);
+      void commands.storeClose();
+    };
+  }, [refresh]);
+
+  const install = useCallback(
+    async (entry: StoreEntry) => {
+      setInstalling(entry.id);
+      setError(null);
+      try {
+        unwrapResult(await commands.storeInstall(entry.id, entry.version));
+        await refresh();
+      } catch (reason) {
+        setError(String(reason));
+      } finally {
+        setInstalling(null);
+      }
+    },
+    [refresh],
+  );
+
+  return { entries, cards, view, loading, error, installing, install };
+}
+
+function ToolRecommendations({ tool }: { tool: ToolSection }) {
+  const catalogue = useToolCatalogue();
+  const recommendations = useMemo(
+    () => matchToolRecommendations(catalogue.entries, tool),
+    [catalogue.entries, tool],
+  );
+  const installed = useMemo(
+    () => new Map(catalogue.cards.map((card) => [card.id, card.version])),
+    [catalogue.cards],
+  );
+  const title = TOOL_COPY[tool].title;
+
+  return (
+    <section
+      className="extension-recommendations"
+      data-recommendations={tool}
+      aria-busy={catalogue.loading || undefined}
+    >
+      <div className="recommendation-heading">
+        <div>
+          <h2>Enhance {title}</h2>
+          <p>
+            Focused extensions that add capability without changing where this
+            tool lives.
+          </p>
+        </div>
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => {
+            window.location.hash = `${hashForRoute({ page: "extensions", view: "store" })}?q=${encodeURIComponent(title)}`;
+          }}
+        >
+          Browse all
+        </button>
+      </div>
+
+      {catalogue.error && (
+        <div className="tool-inline-error">{catalogue.error}</div>
+      )}
+      {catalogue.view && catalogue.view.status !== "fresh" && (
+        <div className="tool-muted-state">
+          {catalogue.view.status === "needs-newer-client"
+            ? "These recommendations require a newer version of Grain."
+            : "Offline — recommendations use the last verified catalogue and installs are paused."}
+        </div>
+      )}
+      {catalogue.loading ? (
+        <div className="tool-muted-state" role="status">
+          Loading recommendations…
+        </div>
+      ) : recommendations.length === 0 ? (
+        <div className="tool-muted-state">
+          No matching store extensions are available.
+        </div>
+      ) : (
+        <div className="recommendation-grid">
+          {recommendations.map((entry) => {
+            const currentVersion = installed.get(entry.id);
+            const current = currentVersion === entry.version;
+            const busy = catalogue.installing === entry.id;
+            return (
+              <article
+                className="recommendation-card"
+                key={`${entry.id}@${entry.version}`}
+              >
+                <div className="recommendation-top">
+                  <span className="recommendation-mark" aria-hidden="true">
+                    {entry.name
+                      .split(/\s+/)
+                      .slice(0, 2)
+                      .map((word) => word[0])
+                      .join("")
+                      .toUpperCase()}
+                  </span>
+                  <strong>{entry.name}</strong>
+                </div>
+                <p>{entry.description}</p>
+                <div className="recommendation-footer">
+                  <span>
+                    {entry.trust === "verified" ? "Verified" : entry.author}
+                  </span>
+                  <button
+                    className="button"
+                    type="button"
+                    disabled={
+                      current ||
+                      busy ||
+                      entry.revocation === "revoked" ||
+                      !catalogue.view?.can_install
+                    }
+                    onClick={() => void catalogue.install(entry)}
+                  >
+                    {busy
+                      ? "Installing…"
+                      : current
+                        ? "Installed"
+                        : currentVersion
+                          ? "Update"
+                          : "Install"}
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DictionaryTool() {
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const enabled = getSetting("auto_dictionary_enabled") ?? false;
+  return (
+    <>
+      <section className="tool-section">
+        <div className="tool-section-head">
+          <div>
+            <h2>Personal dictionary</h2>
+            <p>Terms stay local and are used across every capture mode.</p>
+          </div>
+        </div>
+        <div className="tool-component-host">
+          <SettingsGroup>
+            <CustomWords descriptionMode="inline" grouped />
+            <ToggleSwitch
+              label="Auto-add to dictionary"
+              description="Watch for repeated spelling corrections after paste and offer to remember proper nouns and identifiers. Off keeps the watcher at zero overhead."
+              descriptionMode="tooltip"
+              grouped
+              checked={enabled}
+              isUpdating={isUpdating("auto_dictionary_enabled")}
+              onChange={(value) =>
+                updateSetting("auto_dictionary_enabled", value)
+              }
+            />
+          </SettingsGroup>
+        </div>
+      </section>
+      <ToolRecommendations tool="dictionary" />
+    </>
+  );
+}
+
+function SnippetsTool() {
+  const enabled = useFeatureEnabled("snippets_enabled");
+  return (
+    <>
+      <div className="tool-component-host space-y-6">
+        <FeaturePanel
+          settingKey="snippets_enabled"
+          title="Snippets"
+          info="Speak a trigger phrase and Grain expands it into saved text locally before paste."
+        />
+        {enabled && <SnippetsSection untitled />}
+        <ExtensionAnchor anchor="snippets.after" />
+      </div>
+      <ToolRecommendations tool="snippets" />
+    </>
+  );
+}
+
+function ContextTool() {
+  return (
+    <>
+      <div className="tool-component-host space-y-6">
+        <FeaturePanel
+          settingKey="context_awareness_enabled"
+          title="Context awareness"
+          info="Use local application context to make terminology and insertion fit naturally."
+        >
+          <ContextAwareSection />
+        </FeaturePanel>
+        <ExtensionAnchor anchor="context.after" />
+      </div>
+      <ToolRecommendations tool="context" />
+    </>
+  );
+}
+
+function AgentTool() {
+  return (
+    <>
+      <div className="tool-component-host space-y-6">
+        <FeaturePanel
+          settingKey="agent_enabled"
+          title="Agent"
+          info="Summon a voice-first assistant over the current selection without leaving the active app."
+        >
+          <AgentSection />
+        </FeaturePanel>
+        <ExtensionAnchor anchor="agent.after" />
+      </div>
+      <ToolRecommendations tool="agent" />
+    </>
+  );
+}
+
+export function ToolsPage({ section }: { section: ToolSectionId }) {
+  const copy = TOOL_COPY[section];
+  return (
+    <section
+      className="page active tools-workspace-page"
+      data-page-panel="tools"
+    >
+      <div className="page-wrap tools-page-wrap">
+        <div className="tools-shell">
+          <aside className="tools-sidebar-pane">
+            <div className="tools-pane-header">
+              <div>
+                <strong>Tools</strong>
+                <span>Capture utilities</span>
+              </div>
+            </div>
+            <nav className="tools-nav" aria-label="Grain tools">
+              {(Object.keys(TOOL_COPY) as ToolSectionId[]).map((id) => {
+                const ItemIcon = TOOL_COPY[id].icon;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    className={id === section ? "active" : ""}
+                    aria-current={id === section ? "page" : undefined}
+                    onClick={() => {
+                      window.location.hash = hashForRoute({
+                        page: "tools",
+                        section: id,
+                      }).slice(1);
+                    }}
+                  >
+                    <ItemIcon size={16} aria-hidden="true" />
+                    <span>{TOOL_COPY[id].title}</span>
+                  </button>
+                );
+              })}
+            </nav>
+            <div className="tools-sidebar-spacer" />
+            <section className="tools-browse">
+              <strong>More capabilities</strong>
+              <span>Browse extensions designed for Grain tools.</span>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => {
+                  window.location.hash = hashForRoute({
+                    page: "extensions",
+                    view: "store",
+                  }).slice(1);
+                }}
+              >
+                Browse extensions →
+              </button>
+            </section>
+          </aside>
+          <section className="tools-canvas" aria-labelledby="next-tool-title">
+            <div className="tools-scroll">
+              <div className="tools-content">
+                <header className="tool-main-heading">
+                  <h1 id="next-tool-title">{copy.title}</h1>
+                  <p>{copy.description}</p>
+                </header>
+                {section === "dictionary" ? (
+                  <DictionaryTool />
+                ) : section === "snippets" ? (
+                  <SnippetsTool />
+                ) : section === "context" ? (
+                  <ContextTool />
+                ) : (
+                  <AgentTool />
+                )}
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </section>
+  );
+}
