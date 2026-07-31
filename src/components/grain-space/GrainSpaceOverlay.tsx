@@ -8,6 +8,7 @@ import { Sidebar } from "./Sidebar";
 import { EditorPane } from "./EditorPane";
 import { CalendarView } from "./CalendarView";
 import { ChatRail } from "./ChatRail";
+import { createBlankDraft, resolveNotesLanding } from "./notesLanding";
 import "./grain-space.css";
 
 /** Backend events (see src-tauri/src/grain_space). */
@@ -109,18 +110,6 @@ export function GrainSpaceOverlay({
   /** Bumped on every editor switch — keys the CodeMirror document so a draft
    * adopting its backend-minted id mid-typing never resets the caret. */
   const [editSession, setEditSession] = useState(0);
-
-  /** A fresh, not-yet-persisted note (backend mints the real id on first save). */
-  const blankDraft = (): Note => ({
-    id: "",
-    title: "",
-    tldr: "",
-    body: "",
-    timestamp: Date.now(),
-    todo_tags: [],
-    reminder_state: { status: "none", fire_at: null },
-    is_pinned: false,
-  });
 
   /** Persist the selected note. Drafts are created first so ids stay backend-minted. */
   const saveSelected = useCallback(async () => {
@@ -262,7 +251,7 @@ export function GrainSpaceOverlay({
 
   const newNote = useCallback(async () => {
     await flushSave();
-    adopt(blankDraft(), false);
+    adopt(createBlankDraft(), false);
   }, [adopt, flushSave]);
 
   /** Re-read the folder tree. Cheap (a bounded directory walk), and separate from
@@ -389,25 +378,41 @@ export function GrainSpaceOverlay({
       }
       const focus = await commands.grainSpaceTakeFocusNote();
       const list = await commands.grainSpaceListCards();
-      if (list.status !== "ok") {
+      const firstCardId = list.status === "ok" ? list.data[0]?.id : undefined;
+      const focusIsListed =
+        list.status === "ok" &&
+        focus != null &&
+        list.data.some((card) => card.id === focus);
+      if (list.status === "ok") {
+        setCards(list.data);
+      } else {
         console.error("Grain Space: list failed:", list.error);
+      }
+      const landing = resolveNotesLanding(
+        variant,
+        focus,
+        firstCardId,
+        list.status === "ok",
+        focusIsListed,
+      );
+      if (landing.kind === "draft") {
+        // UI 2.0 always arrives ready to write; an untouched draft stays local.
+        adopt(createBlankDraft(), false);
         return;
       }
-      setCards(list.data);
-      const target = focus
-        ? (list.data.find((c) => c.id === focus) ?? list.data[0])
-        : list.data[0];
-      if (!target) {
-        // No notes at all ⇒ open straight into a new blank note.
-        adopt(blankDraft(), false);
-        return;
+      if (landing.kind === "none") return;
+
+      const note = await commands.grainSpaceGetNote(landing.id);
+      if (note.status === "ok") {
+        adopt(note.data, false);
+      } else {
+        console.error("Grain Space: initial note open failed:", note.error);
+        if (variant === "next") adopt(createBlankDraft(), false);
       }
-      const note = await commands.grainSpaceGetNote(target.id);
-      if (note.status === "ok") adopt(note.data, false);
     } finally {
       setLoading(false);
     }
-  }, [adopt, refreshFolders]);
+  }, [adopt, refreshFolders, variant]);
 
   // Mount: settings + focus-note handoff + first listing + event wiring.
   useEffect(() => {
@@ -516,7 +521,7 @@ export function GrainSpaceOverlay({
         return;
       }
     }
-    adopt(null, false);
+    adopt(variant === "next" ? createBlankDraft() : null, false);
     void refresh();
   };
 
