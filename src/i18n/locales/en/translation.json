@@ -1027,6 +1027,36 @@
     },
     "history": {
       "eyebrow": "Archive 03"
+    },
+    "settings": {
+      "title": "Settings",
+      "indexEyebrow": "Preferences",
+      "navigation": "Settings sections",
+      "eyebrow": "Configuration",
+      "localState": "Stored locally",
+      "loading": "Loading settings",
+      "sections": {
+        "general": {
+          "label": "General",
+          "description": "Capture shortcuts, active-model behavior, microphones, and audio feedback."
+        },
+        "advanced": {
+          "label": "Advanced",
+          "description": "Application behavior, text output, dictionary tools, history, and experimental controls."
+        },
+        "speech-to-text": {
+          "label": "Speech to Text",
+          "description": "Local and native models, rolling preview, unload behavior, and cloud transcription providers."
+        },
+        "post-processing": {
+          "label": "Post-processing",
+          "description": "Provider rotation and the prompts used to refine completed transcriptions."
+        },
+        "debug": {
+          "label": "Debug",
+          "description": "Diagnostics, update checks, timing thresholds, microphone behavior, and live logs."
+        }
+      }
     }
   },
   "overlay": {

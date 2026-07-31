@@ -26,8 +26,14 @@ export interface SttPoolStore {
   // Actions
   reload: () => Promise<void>;
   setSmartRotation: (enabled: boolean) => Promise<void>;
-  upsertProvider: (provider: SttProvider, apiKey: string | null) => Promise<void>;
-  setProviderEnabled: (provider: SttProvider, enabled: boolean) => Promise<void>;
+  upsertProvider: (
+    provider: SttProvider,
+    apiKey: string | null,
+  ) => Promise<void>;
+  setProviderEnabled: (
+    provider: SttProvider,
+    enabled: boolean,
+  ) => Promise<void>;
   removeProvider: (id: string) => Promise<void>;
 }
 
@@ -95,5 +101,30 @@ export const useSttPoolStore = create<SttPoolStore>()((set, get) => ({
   },
 }));
 
-/** Call once at app startup (e.g. in App.tsx or the settings root). */
-export const initSttPool = () => useSttPoolStore.getState().reload();
+let initialization: Promise<void> | null = null;
+
+/** Lazily load on first use. Concurrent StrictMode mounts share one request;
+ * failed attempts clear the guard so entering the subsection again can retry. */
+export const initSttPool = (): Promise<void> => {
+  const store = useSttPoolStore.getState();
+  if (store.view) return Promise.resolve();
+  if (initialization) return initialization;
+
+  useSttPoolStore.setState({ loading: true, error: null });
+  initialization = store.reload().then(
+    () => {
+      const { view, error } = useSttPoolStore.getState();
+      initialization = null;
+      if (!view) throw new Error(error ?? "Failed to load STT provider pool");
+    },
+    (error) => {
+      initialization = null;
+      useSttPoolStore.setState({
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    },
+  );
+  return initialization;
+};

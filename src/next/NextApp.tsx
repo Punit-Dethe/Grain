@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   Archive,
   Blocks,
@@ -18,11 +24,34 @@ import { useTranslation } from "react-i18next";
 import { Toaster } from "sonner";
 import TitleBar from "@/components/titlebar";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
+import Onboarding, { AccessibilityOnboarding } from "@/components/onboarding";
+import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
+import { useSettings } from "@/hooks/useSettings";
 import { useModelStore } from "@/stores/modelStore";
+import { routeFromHash, type AppRoute } from "./navigation";
+import { SettingsPage } from "./pages/SettingsPage";
 import "./next.css";
 
-type Route = "overview" | "history";
+let onboardingResolution: ReturnType<
+  typeof commands.resolveOnboardingState
+> | null = null;
+
+function resolveOnboardingState() {
+  if (onboardingResolution) return onboardingResolution;
+
+  onboardingResolution = commands.resolveOnboardingState().then(
+    (result) => {
+      onboardingResolution = null;
+      return result;
+    },
+    (error) => {
+      onboardingResolution = null;
+      throw error;
+    },
+  );
+  return onboardingResolution;
+}
 
 const GRAIN_LINES = Array.from({ length: 36 }, (_, index) => ({
   height: `${0.7 + (index % 9) * 0.72}rem`,
@@ -30,17 +59,17 @@ const GRAIN_LINES = Array.from({ length: 36 }, (_, index) => ({
   offset: `${(index % 4) * 0.38}rem`,
 }));
 
-const routeFromHash = (): Route =>
-  window.location.hash === "#/history" ? "history" : "overview";
-
-function useHashRoute(): Route {
-  const [route, setRoute] = useState<Route>(routeFromHash);
+function useHashRoute(): AppRoute {
+  const [route, setRoute] = useState<AppRoute>(() =>
+    routeFromHash(window.location.hash),
+  );
 
   useEffect(() => {
-    const onHashChange = () => setRoute(routeFromHash());
+    const onHashChange = () => setRoute(routeFromHash(window.location.hash));
     window.addEventListener("hashchange", onHashChange);
-    if (!window.location.hash)
+    if (!window.location.hash) {
       window.history.replaceState(null, "", "#/overview");
+    }
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
@@ -51,7 +80,7 @@ const navItems = [
   { id: "overview", icon: Home, enabled: true },
   { id: "notes", icon: NotebookPen, enabled: false },
   { id: "history", icon: History, enabled: true },
-  { id: "settings", icon: Settings, enabled: false },
+  { id: "settings", icon: Settings, enabled: true },
   { id: "extensions", icon: Blocks, enabled: false },
   { id: "about", icon: CircleHelp, enabled: false },
 ] as const;
@@ -66,7 +95,7 @@ function GrainMark() {
   );
 }
 
-function Sidebar({ route }: { route: Route }) {
+function Sidebar({ route }: { route: AppRoute }) {
   const { t } = useTranslation();
   const { mode, isDark, setMode } = useTheme();
   const currentModel = useModelStore((state) => state.currentModel);
@@ -96,13 +125,13 @@ function Sidebar({ route }: { route: Route }) {
 
       <nav className="next-nav" aria-label={t("ui2.navigation")}>
         {navItems.map(({ id, icon: Icon, enabled }) => {
-          const active = id === route;
+          const active = id === route.page;
           const label = t(`ui2.nav.${id}`);
 
           return enabled ? (
             <a
               key={id}
-              href={`#/${id}`}
+              href={id === "settings" ? "#/settings/general" : `#/${id}`}
               className="next-nav-item"
               aria-current={active ? "page" : undefined}
             >
@@ -281,6 +310,13 @@ function NextShell() {
   const route = useHashRoute();
   const { isDark } = useTheme();
   const { t } = useTranslation();
+  const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
+    null,
+  );
+  const [isReturningUser, setIsReturningUser] = useState(false);
+  const { settings, updateSetting, refreshAudioDevices, refreshOutputDevices } =
+    useSettings();
+  const hasInitializedRuntime = useRef(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? "dark" : "light";
@@ -289,6 +325,90 @@ function NextShell() {
     };
   }, [isDark]);
 
+  useEffect(() => {
+    let active = true;
+
+    void resolveOnboardingState()
+      .then((result) => {
+        if (!active) return;
+        if (result.status === "error") throw new Error(result.error);
+        setIsReturningUser(result.data.is_returning_user);
+        setOnboardingStep(result.data.step);
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error("Failed to resolve onboarding state:", error);
+        setOnboardingStep("accessibility");
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      onboardingStep !== "done" ||
+      !settings ||
+      hasInitializedRuntime.current
+    ) {
+      return;
+    }
+    hasInitializedRuntime.current = true;
+
+    void Promise.all([
+      commands.initializeEnigo(),
+      commands.initializeShortcuts(),
+      refreshAudioDevices(),
+      refreshOutputDevices(),
+    ]).catch((error) => {
+      console.warn("Failed to initialize UI 2.0 runtime:", error);
+    });
+  }, [onboardingStep, refreshAudioDevices, refreshOutputDevices, settings]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isDebugShortcut =
+        event.shiftKey &&
+        event.key.toLowerCase() === "d" &&
+        (event.ctrlKey || event.metaKey);
+
+      if (isDebugShortcut) {
+        event.preventDefault();
+        void updateSetting("debug_mode", !(settings?.debug_mode ?? false));
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [settings?.debug_mode, updateSetting]);
+
+  const handleAccessibilityComplete = async () => {
+    setOnboardingStep(
+      await commands.onboardingStepAfterPermissions(isReturningUser),
+    );
+  };
+
+  if (onboardingStep === null) return null;
+
+  if (onboardingStep === "accessibility") {
+    return (
+      <>
+        <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+
+  if (onboardingStep === "model") {
+    return (
+      <>
+        <Onboarding onModelSelected={() => setOnboardingStep("done")} />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+
   return (
     <div className="next-root" data-theme={isDark ? "dark" : "light"}>
       <div className="next-titlebar">
@@ -296,12 +416,20 @@ function NextShell() {
         <div className="next-title-copy" aria-hidden="true">
           <span>{t("ui2.brand")}</span>
           <i />
-          <span>{t(`ui2.nav.${route}`)}</span>
+          <span>{t(`ui2.nav.${route.page}`)}</span>
         </div>
       </div>
       <Sidebar route={route} />
-      <main className="next-main">
-        {route === "history" ? <HistoryPage /> : <OverviewPage />}
+      <main
+        className={`next-main ${route.page === "settings" ? "next-main-settings" : ""}`}
+      >
+        {route.page === "history" ? (
+          <HistoryPage />
+        ) : route.page === "settings" ? (
+          <SettingsPage section={route.section} />
+        ) : (
+          <OverviewPage />
+        )}
       </main>
       <Toaster theme={isDark ? "dark" : "light"} />
     </div>

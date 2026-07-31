@@ -2,6 +2,13 @@ import { useEffect } from "react";
 import { useSettingsStore } from "../stores/settingsStore";
 import type { AppSettings as Settings, AudioDevice } from "@/bindings";
 
+let settingsInitialization: Promise<void> | null = null;
+
+function initializeSettingsOnce(initialize: () => Promise<void>) {
+  settingsInitialization ??= initialize();
+  return settingsInitialization;
+}
+
 interface UseSettingsReturn {
   // State
   settings: Settings | null;
@@ -49,7 +56,7 @@ export const useSettings = (): UseSettingsReturn => {
   // Initialize on first mount
   useEffect(() => {
     if (store.isLoading) {
-      store.initialize();
+      void initializeSettingsOnce(store.initialize);
     }
   }, [store.initialize, store.isLoading]);
 

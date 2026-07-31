@@ -42,6 +42,10 @@ BINDINGS = os.path.join(ROOT, "src", "bindings.ts")
 # docs/ is gitignored in this repo — CI would find no exceptions and fail.
 PARITY_DOC = os.path.join(ROOT, "scripts", "ui-parity-exceptions.md")
 CODE_EXT = {".ts", ".tsx"}
+IMPORT_RE = re.compile(
+    r"(?:import|export)\s+(?:[^;]*?\s+from\s+)?[\"']([^\"']+)[\"']",
+    re.S,
+)
 
 
 def read(path: str) -> str:
@@ -121,18 +125,66 @@ def covers(field: str, command: str) -> bool:
     often an extra noun, and requiring the field to be the subset is what makes
     the match specific rather than merely overlapping.
     """
-    return tokens(field) <= tokens(command)
+    # Generated command names commonly omit a redundant trailing ``_id``
+    # (``set_post_process_provider`` owns ``post_process_provider_id``).
+    return (tokens(field) - {"id"}) <= tokens(command)
 
 
-def ui_sources(tree: str) -> str:
-    """Every UI source file, concatenated. bindings.ts itself is excluded — it
-    mentions every field and command, so including it would make the gate pass
-    unconditionally."""
-    blobs = []
-    for dirpath, _, names in os.walk(os.path.join(ROOT, tree)):
-        for name in names:
-            if os.path.splitext(name)[1] in CODE_EXT and name != "bindings.ts":
-                blobs.append(read(os.path.join(dirpath, name)))
+def resolve_local_import(source: str, specifier: str) -> str | None:
+    """Resolve a relative or ``@/`` TypeScript import without executing code."""
+    if specifier.startswith("@/"):
+        candidate = os.path.join(ROOT, "src", specifier[2:])
+    elif specifier.startswith("."):
+        candidate = os.path.normpath(os.path.join(os.path.dirname(source), specifier))
+    else:
+        return None
+
+    candidates = [candidate]
+    if not os.path.splitext(candidate)[1]:
+        candidates += [candidate + ext for ext in CODE_EXT]
+        candidates += [os.path.join(candidate, "index" + ext) for ext in CODE_EXT]
+    for path in candidates:
+        if os.path.isfile(path) and os.path.splitext(path)[1] in CODE_EXT:
+            return os.path.normpath(path)
+    return None
+
+
+def ui_sources(tree: str, include_contract_plumbing: bool = False) -> str:
+    """Reachable UI sources, following direct local imports transitively.
+
+    Generated bindings and the shared settings store are excluded as evidence:
+    both mention most fields whether or not a control is actually rendered.
+    """
+    tree_root = os.path.normpath(os.path.join(ROOT, tree))
+    pending = []
+    for dirpath, _, names in os.walk(tree_root):
+        pending.extend(
+            os.path.join(dirpath, name)
+            for name in names
+            if os.path.splitext(name)[1] in CODE_EXT
+        )
+
+    seen, blobs = set(), []
+    while pending:
+        path = os.path.normpath(pending.pop())
+        if path in seen:
+            continue
+        seen.add(path)
+        source = read(path)
+        relative = os.path.relpath(path, os.path.join(ROOT, "src")).replace("\\", "/")
+        is_generated_bindings = relative == "bindings.ts"
+        is_contract_plumbing = (
+            relative == "hooks/useSettings.ts"
+            or relative == "stores/settingsStore.ts"
+        )
+        if not is_generated_bindings and (
+            include_contract_plumbing or not is_contract_plumbing
+        ):
+            blobs.append(source)
+        for specifier in IMPORT_RE.findall(source):
+            imported = resolve_local_import(path, specifier)
+            if imported and imported not in seen:
+                pending.append(imported)
     return "\n".join(blobs)
 
 
@@ -205,7 +257,7 @@ def gate(tree: str) -> int:
 
 def command_report(tree: str) -> int:
     src = read(BINDINGS)
-    blob = ui_sources(tree)
+    blob = ui_sources(tree, include_contract_plumbing=True)
     unused = [
         camel
         for camel, snake in commands(src)

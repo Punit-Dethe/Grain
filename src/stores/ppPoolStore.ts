@@ -6,7 +6,11 @@
  * rotation changes are reflected everywhere without a second fetch.
  */
 import { create } from "zustand";
-import { commands, type PostProcessProvider, type PpPoolView } from "@/bindings";
+import {
+  commands,
+  type PostProcessProvider,
+  type PpPoolView,
+} from "@/bindings";
 
 export interface PpPoolStore {
   view: PpPoolView | null;
@@ -29,7 +33,10 @@ export interface PpPoolStore {
     apiKey: string | null,
     model: string | null,
   ) => Promise<void>;
-  setProviderEnabled: (provider: PostProcessProvider, enabled: boolean) => Promise<void>;
+  setProviderEnabled: (
+    provider: PostProcessProvider,
+    enabled: boolean,
+  ) => Promise<void>;
   removeProvider: (id: string) => Promise<void>;
   fetchModels: (id: string) => Promise<string[]>;
 }
@@ -114,5 +121,34 @@ export const usePpPoolStore = create<PpPoolStore>()((set, get) => ({
   },
 }));
 
-/** Call once at app startup. */
-export const initPpPool = () => usePpPoolStore.getState().reload();
+let initialization: Promise<void> | null = null;
+
+/** Lazily load on first use. Concurrent StrictMode mounts share one request;
+ * failed attempts clear the guard so entering the subsection again can retry. */
+export const initPpPool = (): Promise<void> => {
+  const store = usePpPoolStore.getState();
+  if (store.view) return Promise.resolve();
+  if (initialization) return initialization;
+
+  usePpPoolStore.setState({ loading: true, error: null });
+  initialization = store.reload().then(
+    () => {
+      const { view, error } = usePpPoolStore.getState();
+      initialization = null;
+      if (!view) {
+        throw new Error(
+          error ?? "Failed to load post-processing provider pool",
+        );
+      }
+    },
+    (error) => {
+      initialization = null;
+      usePpPoolStore.setState({
+        loading: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    },
+  );
+  return initialization;
+};

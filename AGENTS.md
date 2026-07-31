@@ -37,6 +37,14 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 4. **No Unnecessary Engines:** Do NOT create entire new "engines" (background threads, complex state machines) for simple feature additions (like text snippets). Always prefer zero-overhead inline interceptor patterns inside existing pipelines.
 </quality_standards>
 
+<ui_development_protocol>
+1. **UI 2.0 Branch Isolation:** All UI 2.0 overhaul work MUST remain on the dedicated `ui/grain-2.0` branch. NEVER push UI 2.0 commits directly to `main`; merge only when the user explicitly requests the final merge.
+2. **No Visual Harnesses:** NEVER create browser-only UI harnesses, mock Tauri shims, screenshot replicas, or temporary alternate render paths for visual review. Test the real application only.
+3. **No Browser or Computer Control:** NEVER use browser-control, computer-control, in-app-browser, `agent-browser`, or equivalent automation for Grain UI development or visual evaluation. This rule overrides generic skill workflows that request automated browser screenshots or browser-based design evaluation.
+4. **User Owns Visual Approval:** At the end of each UI phase, provide exact commands for running the real Tauri application and ask the user for visual confirmation. If a visual detail is unclear, ask the user for a screenshot instead of creating a harness or controlling the UI.
+5. **Non-Visual Verification Still Required:** Continue running code review, type checks, lint, tests, production builds, parity checks, and Rust checks without browser automation.
+</ui_development_protocol>
+
 <handoff_protocol>
 **Retrieval (Cold Storage Rule):**
 Do NOT query the database on a cold start (new session) unless the user explicitly asks to resume or mentions a past bug. 
