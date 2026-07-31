@@ -46,6 +46,8 @@ mod grain_settings;
 pub(crate) use grain_settings as settings;
 mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
+mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
+mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
 // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
@@ -798,6 +800,7 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_search,
             grain_space::commands::grain_space_recall_turn,
             grain_space::commands::grain_space_recall_reset,
+            grain_locale::resolve_app_locale,
             shortcut::change_experimental_enabled_setting,
             shortcut::change_post_process_base_url_setting,
             shortcut::change_post_process_api_key_setting,
@@ -948,6 +951,21 @@ pub fn run(cli_args: CliArgs) {
             // engine dropped, batch fallback found nothing loaded).
             managers::transcription::StreamPhaseEvent,
             managers::transcription::StreamTextEvent,
+            // [GRAIN] The webview event surface, typed. Registration alone is
+            // what puts these in bindings.ts; the emit sites are untouched (and
+            // most are inside handy/, which must stay byte-identical). See
+            // grain_events for why this bus and DaemonEvent are both correct.
+            grain_events::ModelStateChanged,
+            grain_events::ModelDownloadProgress,
+            grain_events::ModelDownloadComplete,
+            grain_events::ModelDownloadCancelled,
+            grain_events::ModelDeleted,
+            grain_events::ModelVerificationStarted,
+            grain_events::ModelVerificationCompleted,
+            grain_events::ModelExtractionStarted,
+            grain_events::ModelExtractionCompleted,
+            grain_events::RecordingError,
+            grain_events::PasteError,
         ]);
 
     #[cfg(debug_assertions)] // <- Only export on non-release builds

@@ -4,7 +4,7 @@ import { Dropdown } from "../ui/Dropdown";
 import { SettingContainer } from "../ui/SettingContainer";
 import {
   SUPPORTED_LANGUAGES,
-  getSupportedLanguage,
+  isSupportedLanguage,
   setLanguage,
   type SupportedLanguageCode,
 } from "../../i18n";
@@ -23,8 +23,12 @@ export const AppLanguageSelector: React.FC<AppLanguageSelectorProps> =
     // a language i18next has no resources for and paint English.
     const { settings, updateSetting } = useSettings();
 
-    const currentLanguage = (getSupportedLanguage(settings?.app_language) ||
-      i18n.language) as SupportedLanguageCode;
+    // The stored preference is already a resolved code — the user picked it
+    // from this very list — so this is a membership test, not a resolution.
+    // Resolving a raw tag is the backend's job (i18n/index.ts: resolveLocale).
+    const currentLanguage = (isSupportedLanguage(settings?.app_language)
+      ? settings!.app_language!
+      : i18n.language) as SupportedLanguageCode;
 
     const languageOptions = SUPPORTED_LANGUAGES.map((lang) => ({
       value: lang.code,

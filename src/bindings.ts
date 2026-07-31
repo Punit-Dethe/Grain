@@ -676,6 +676,13 @@ async grainSpaceRecallTurn(messages: AgentMessage[]) : Promise<Result<AgentReply
 async grainSpaceRecallReset() : Promise<void> {
     await TAURI_INVOKE("grain_space_recall_reset");
 },
+/**
+ * Resolve a locale tag onto a shipped catalogue. `None` in, or nothing
+ * matching, means the caller should use its fallback language.
+ */
+async resolveAppLocale(tag: string | null) : Promise<string | null> {
+    return await TAURI_INVOKE("resolve_app_locale", { tag });
+},
 async changeExperimentalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_experimental_enabled_setting", { enabled }) };
@@ -2037,10 +2044,32 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 export const events = __makeEvents__<{
 historyUpdatePayload: HistoryUpdatePayload,
+modelDeleted: ModelDeleted,
+modelDownloadCancelled: ModelDownloadCancelled,
+modelDownloadComplete: ModelDownloadComplete,
+modelDownloadProgress: ModelDownloadProgress,
+modelExtractionCompleted: ModelExtractionCompleted,
+modelExtractionStarted: ModelExtractionStarted,
+modelStateChanged: ModelStateChanged,
+modelVerificationCompleted: ModelVerificationCompleted,
+modelVerificationStarted: ModelVerificationStarted,
+pasteError: PasteError,
+recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent
 }>({
 historyUpdatePayload: "history-update-payload",
+modelDeleted: "model-deleted",
+modelDownloadCancelled: "model-download-cancelled",
+modelDownloadComplete: "model-download-complete",
+modelDownloadProgress: "model-download-progress",
+modelExtractionCompleted: "model-extraction-completed",
+modelExtractionStarted: "model-extraction-started",
+modelStateChanged: "model-state-changed",
+modelVerificationCompleted: "model-verification-completed",
+modelVerificationStarted: "model-verification-started",
+pasteError: "paste-error",
+recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event"
 })
@@ -2529,6 +2558,30 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | Partial
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
+/**
+ * The model's files were removed.
+ */
+export type ModelDeleted = string
+/**
+ * The user cancelled an in-flight download.
+ */
+export type ModelDownloadCancelled = string
+/**
+ * The model's bytes are on disk.
+ */
+export type ModelDownloadComplete = string
+/**
+ * Byte progress for a model download. Mirrors `managers::model::DownloadProgress`.
+ */
+export type ModelDownloadProgress = { model_id: string; downloaded: number; total: number; percentage: number }
+/**
+ * Archive extraction finished.
+ */
+export type ModelExtractionCompleted = string
+/**
+ * Archive extraction began (directory-based models).
+ */
+export type ModelExtractionStarted = string
 export type ModelInfo = { id: string; name: string; description: string; filename: string; source: ModelSource; size_mb: number; is_downloaded: boolean; is_downloading: boolean; partial_size: number; is_directory: boolean; engine_type: EngineType; accuracy_score: number; speed_score: number; supports_translation: boolean; is_recommended: boolean; supported_languages: string[]; supports_language_selection: boolean; is_custom: boolean; supports_streaming: boolean; supports_language_detection: boolean }
 export type ModelLoadStatus = { is_loaded: boolean; current_model: string | null }
 /**
@@ -2555,7 +2608,20 @@ sha256: string | null } } |
  * in a shared cache. Nothing to download.
  */
 "Local"
+/**
+ * A model was selected, started loading, finished loading, or failed.
+ * Mirrors `managers::transcription::ModelStateEvent`.
+ */
+export type ModelStateChanged = { event_type: string; model_id: string | null; model_name: string | null; error: string | null }
 export type ModelUnloadTimeout = "never" | "immediately" | "min_2" | "min_5" | "min_10" | "min_15" | "hour_1" | "sec_15"
+/**
+ * Checksum verification passed.
+ */
+export type ModelVerificationCompleted = string
+/**
+ * Checksum verification began.
+ */
+export type ModelVerificationStarted = string
 export type Note = { id: string; 
 /**
  * 3-word AI title, or "" for raw (no-LLM) captures.
@@ -2623,6 +2689,11 @@ export type OverlayPosition = "none" | "top" | "bottom" |
  */
 "center"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+/**
+ * The transcript could not be pasted. Carries no payload — the technical
+ * detail is logged on the Rust side and the window shows a localized message.
+ */
+export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
@@ -2641,6 +2712,11 @@ quota_limit?: number | null; quota_used_today?: number }
  * model map (model names are not secret).
  */
 export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvider[]; selected_provider_id: string; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+/**
+ * A recording could not start or could not finish. Mirrors
+ * `actions::RecordingErrorEvent`.
+ */
+export type RecordingError = { error_type: string; detail: string | null }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type ReminderState = { status: ReminderStatus; 
 /**

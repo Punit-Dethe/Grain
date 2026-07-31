@@ -92,39 +92,36 @@ export const SUPPORTED_LANGUAGES = AVAILABLE
 
 export type SupportedLanguageCode = string;
 
-// Check if a language code is supported
-export const getSupportedLanguage = (
+/**
+ * [GRAIN] Resolve a locale tag (`zh-Hant-HK`, `de-AT`, a raw system locale) onto
+ * a catalogue we ship.
+ *
+ * The RULE lives in Rust — `grain_locale::resolve` — not here. It used to be
+ * implemented twice: once in this file and once in `tray_i18n.rs` for the tray
+ * menu, which is how upstream came to fix only the TypeScript copy (`ea3c20a3`,
+ * #1798). Which catalogue a system tag means is a fact about the machine, not a
+ * decision about a screen, so it belongs on the backend — where a Rust test now
+ * pins it against the tray's own copy so the two cannot disagree.
+ */
+export const resolveLocale = async (
   langCode: string | null | undefined,
-): SupportedLanguageCode | null => {
+): Promise<SupportedLanguageCode | null> => {
   if (!langCode) return null;
-
-  const normalized = langCode.toLowerCase().replace(/_/g, "-");
-  const subtags = normalized.split("-");
-  const language = subtags[0];
-  const isHant = subtags.includes("hant");
-  const isHans = subtags.includes("hans");
-  const isTraditionalRegion = ["tw", "hk", "mo"].some((region) =>
-    subtags.includes(region),
-  );
-
-  // Try exact match first
-  let supported = SUPPORTED_LANGUAGES.find(
-    (lang) => lang.code.toLowerCase() === normalized,
-  );
-  if (!supported) {
-    let fallback = language;
-    if (language === "zh" && (isHant || (!isHans && isTraditionalRegion))) {
-      fallback = "zh-tw";
-    } else if (language === "yue") {
-      // Cantonese uses Traditional Chinese unless explicitly tagged as Hans.
-      fallback = isHans ? "zh" : "zh-tw";
-    }
-    supported = SUPPORTED_LANGUAGES.find(
-      (lang) => lang.code.toLowerCase() === fallback,
-    );
+  try {
+    return await commands.resolveAppLocale(langCode);
+  } catch (e) {
+    console.warn(`Failed to resolve locale "${langCode}":`, e);
+    return null;
   }
-  return supported ? supported.code : null;
 };
+
+/** Is this exact code one we ship? A membership test, NOT the resolution rule —
+ *  callers holding an already-resolved code (a stored preference) need only
+ *  this, and asking the backend for it would be a round-trip for nothing. */
+export const isSupportedLanguage = (
+  langCode: string | null | undefined,
+): boolean =>
+  Boolean(langCode) && SUPPORTED_LANGUAGES.some((l) => l.code === langCode);
 
 // Initialize i18n with English as default
 // Language will be synced from settings after init
@@ -148,14 +145,14 @@ export const syncLanguageFromSettings = async () => {
   try {
     const result = await commands.getAppSettings();
     if (result.status === "ok" && result.data.app_language) {
-      const supported = getSupportedLanguage(result.data.app_language);
+      const supported = await resolveLocale(result.data.app_language);
       if (supported) {
         await setLanguage(supported);
       }
     } else {
       // Fall back to system locale detection if no saved preference
       const systemLocale = await locale();
-      const supported = getSupportedLanguage(systemLocale);
+      const supported = await resolveLocale(systemLocale);
       if (supported) {
         await setLanguage(supported);
       }
