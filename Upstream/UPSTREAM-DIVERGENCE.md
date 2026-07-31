@@ -54,18 +54,25 @@ convention — upstream has no counterpart, so they never conflict),
 `src-tauri/src/{rolling,stt_router,post_process_router,rotation_state,agent,bridge,events_server,context_detect,context_bias,context_screen,grain_space/**,stt_client}.rs`,
 `Upstream/`, `docs/`.
 
-## Frontend
+## Frontend — FROZEN 2026-07-31 (UI 2.0)
 
 | Area | Divergence | Merge guidance |
 |---|---|---|
-| `App.tsx`, `main.tsx`, `App.css` | Grain shell/branding, decoupled-frontend boot | Keep Grain layout; take upstream logic fixes |
-| `components/settings/**` | Grain UI on Handy's component skeleton | Component-by-component judgment: Grain styling, upstream behavior fixes |
-| `components/onboarding/**` | Grain flat layout, standard-models-only filter | Same |
-| `overlay/RecordingOverlay.*` | DELETED (native pill replaced the webview overlay) | Modify/delete conflict each sync → always keep deleted |
-| `stores/settingsStore.ts` | Moderate: Grain settings fields | Merge normally |
+| `src/**` | **Grain-owned. Never merge.** `merge=ours` in `.gitattributes`; guarded by [frontend_freeze.py](frontend_freeze.py) (`merge=ours` only wins *conflicts* — a clean upstream edit or a new upstream file would otherwise land silently) | **Keep ours, always.** On a modify/delete conflict, `git rm`. If an upstream frontend commit carries *backend* knowledge (host capabilities, locale resolution, permissions), port it into Rust by hand and `verdict.py --note` it |
 | `bindings.ts` | GENERATED from Grain's Rust (specta) | Never hand-merge — regenerate |
-| `i18n/locales/*` | "Handy"→"Grain" string rebrand + Grain keys | Take upstream's new keys, keep Grain strings |
-| `tailwind.config.js` | DELETED 2026-07-17, converging with upstream: Grain was already on Tailwind v4 (`@theme` in App.css) and nothing referenced the file | Converged — conflict gone |
+
+The rationale, the measurements behind it, and the work that pays for it (moving
+the last UI-resident policy into Rust) are in
+[`docs/UI 2.0/PLAN.md`](../docs/UI%202.0/PLAN.md). In short: of upstream's last
+22 commits, 17 touched the backend and 4 touched the frontend outside i18n — two
+for features Grain deleted, two carrying backend facts that belong in Rust, where
+we still merge everything. The freeze does not touch the backend relationship in
+any way.
+
+`frontend_allow.json` records the files still shared with upstream (140 at the
+freeze). That number may shrink, never grow; it reaches zero at the UI 2.0
+cutover, when `"strict": true` makes any frontend change in a sync a hard
+failure.
 
 ## Repo meta (all `merge=ours` via .gitattributes)
 

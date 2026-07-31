@@ -24,6 +24,8 @@ guards), and the procedures for the common case (reviewing the
 |---|---|
 | `sync_upstream.py` | Rebuilds the commit ledger (`data.json`/`data.js`) and audits ancestry drift. |
 | `ratchet.py` | Divergence ratchet — enforces per-file line budgets vs the merge base. |
+| `frontend_freeze.py` | Frontend freeze guard — `src/` is Grain-owned; fails if upstream files land there. |
+| `frontend_allow.json` | The still-shared frontend files. May shrink, never grow. |
 | `verdict.py` | Records human verdicts (`Ignored`, cherry-picks, notes) on upstream commits. |
 | `rerere_cache.py` | Versions git's rerere cache through `rr-cache/` so resolutions replay everywhere. |
 | `budget.json` | Ratchet budgets for every Handy-derived file. |

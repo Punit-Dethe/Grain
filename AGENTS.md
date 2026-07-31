@@ -25,8 +25,9 @@ Prefer `code-review-graph` MCP tools over Grep/Glob/Read when exploring, reviewi
 </code_review_graph_protocol>
 
 <boundaries>
-1. **Upstream Compatibility:** Maintain compatibility with the upstream "Handy" project. The Handy-derived tree lives verbatim in `src-tauri/src/handy/` — NEVER add features there (hooks only, marked `[GRAIN]`); Grain code goes in `src-tauri/src/` (`grain_*` modules) or `crates/`. For ANY upstream-sync work (merging Handy commits, resolving conflicts, assessing pending items), follow the runbook in `Upstream/UPSTREAM.md` and the per-file policy in `Upstream/UPSTREAM-DIVERGENCE.md` — do not improvise a process.
-2. **Frontend/Backend Decoupling:** All frontend→backend communication uses Tauri commands. Backend→frontend uses Tauri events. Do not blur this boundary.
+1. **Upstream Compatibility (BACKEND ONLY):** Maintain compatibility with the upstream "Handy" project in the backend. The Handy-derived tree lives verbatim in `src-tauri/src/handy/` — NEVER add features there (hooks only, marked `[GRAIN]`); Grain code goes in `src-tauri/src/` (`grain_*` modules) or `crates/`. For ANY upstream-sync work (merging Handy commits, resolving conflicts, assessing pending items), follow the runbook in `Upstream/UPSTREAM.md` and the per-file policy in `Upstream/UPSTREAM-DIVERGENCE.md` — do not improvise a process.
+2. **Frontend is Grain-owned (frozen 2026-07-31):** `src/` is NOT shared with upstream any more. Never merge upstream frontend changes, never "restore" upstream's version of a UI file. If an upstream frontend commit carries backend knowledge (host capabilities, locale resolution, permissions), port it into Rust. See `docs/UI 2.0/PLAN.md`.
+3. **Frontend/Backend Decoupling:** All frontend→backend communication uses Tauri commands. Backend→frontend uses Tauri events. Do not blur this boundary.
 </boundaries>
 
 <quality_standards>

@@ -214,6 +214,12 @@ jobs:
           # The boundary must hold on the merged result, or there is no PR:
           # better no PR than one that quietly erodes the Handy/Grain split.
           python Upstream/ratchet.py
+          # The frontend is frozen (docs/UI 2.0/PLAN.md). While files are still
+          # shared this only warns — an upstream edit to a shared file we never
+          # touched can legitimately land, and blocking BACKEND intake over a
+          # frontend line would be the wrong trade. It becomes a hard failure
+          # when frontend_allow.json flips to "strict": true at cutover.
+          python Upstream/frontend_freeze.py --sync-purity main | tee /tmp/freeze.txt
           git push -f origin "$SYNC_BRANCH"
           git log --oneline main..upstream/main | head -30 > /tmp/commits.txt
           {
@@ -223,8 +229,16 @@ jobs:
             cat /tmp/commits.txt
             echo '```'
             echo
+            if grep -q 'WARN\|FAIL' /tmp/freeze.txt; then
+              echo "**Frontend freeze:** this merge touches \`src/\`, which is frozen."
+              echo
+              echo '```'
+              cat /tmp/freeze.txt
+              echo '```'
+              echo
+            fi
             echo "Before merging:"
-            echo "- [ ] CI green (build, tests, ratchet)"
+            echo "- [ ] CI green (build, tests, ratchet, frontend freeze)"
             echo "- [ ] Anything **not** simply merged? Record it:"
             echo "      \`python Upstream/verdict.py <sha> Ignored \"why\"\`."
             echo "      Merged commits need nothing — ancestry files them itself."

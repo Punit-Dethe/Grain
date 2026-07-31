@@ -7,8 +7,9 @@
 # merge happens instead (safe fallback).
 #
 # Only list files Grain fully owns — where upstream's version is never
-# wanted. Shared code (src/, src-tauri/src/) must NOT be listed: we want
-# upstream fixes there, and real conflicts should surface.
+# wanted. Shared code (src-tauri/src/) must NOT be listed: we want upstream
+# fixes there, and real conflicts should surface. `src/` used to be in that
+# category and no longer is — see the frontend freeze below.
 
 # Grain-owned docs and repo meta
 README.md          merge=ours
@@ -24,6 +25,16 @@ Upstream/**        merge=ours
 
 # Grain-owned CI (upstream workflows do not apply to this repo)
 .github/workflows/** merge=ours
+
+# [GRAIN] Frontend freeze — see docs/UI 2.0/PLAN.md.
+# The UI is being rewritten wholesale, so upstream's React tree is no longer a
+# base we build on. Measured before deciding: of upstream's last 22 commits, 17
+# touched the backend and 4 touched the frontend outside i18n — two of those for
+# features Grain deleted, two carrying *backend* knowledge (host accelerators,
+# locale resolution) that belongs in Rust, where we still merge everything.
+# merge=ours only wins conflicts, so the freeze is enforced by
+# Upstream/frontend_freeze.py, not by this line alone.
+src/** merge=ours
 
 # App identity: com.grain.app, no auto-updater. Review upstream conf
 # changes manually (git log upstream/main -- src-tauri/tauri.conf.json).
