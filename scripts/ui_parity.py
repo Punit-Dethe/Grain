@@ -16,7 +16,7 @@ driven three different ways:
     ``invoke("extension_set_developer_mode")`` rather than the typed binding.
 
 All three count. Anything none of them reach must be listed in
-``docs/UI 2.0/PARITY.md`` with a reason, or CI fails. That file is the record of
+``scripts/ui-parity-exceptions.md`` with a reason, or CI fails. That file is the record of
 what was dropped ON PURPOSE — the whole point is that dropping a setting becomes
 a decision someone wrote down, not an accident.
 
@@ -26,8 +26,9 @@ Modes::
     python scripts/ui_parity.py --commands   # report-only: commands no UI calls
     python scripts/ui_parity.py --tree src/next   # gate a specific UI tree
 
-Note: ``docs/`` is gitignored in this repo, so PARITY.md lives on disk only. If
-it is missing the gate still runs; it just has no exceptions to honour.
+The exception list lives beside this script rather than in ``docs/`` — it is
+build-affecting data, and ``docs/`` is gitignored here, so a copy under docs
+would leave CI with no exceptions and a permanently red gate.
 """
 
 import argparse
@@ -37,7 +38,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BINDINGS = os.path.join(ROOT, "src", "bindings.ts")
-PARITY_DOC = os.path.join(ROOT, "docs", "UI 2.0", "PARITY.md")
+# Lives beside the script, NOT in docs/: this file is build-affecting data, and
+# docs/ is gitignored in this repo — CI would find no exceptions and fail.
+PARITY_DOC = os.path.join(ROOT, "scripts", "ui-parity-exceptions.md")
 CODE_EXT = {".ts", ".tsx"}
 
 
@@ -134,7 +137,7 @@ def ui_sources(tree: str) -> str:
 
 
 def exceptions() -> dict:
-    """Deliberately-unreachable fields, from PARITY.md.
+    """Deliberately-unreachable fields, from the exceptions file.
 
     Format: a markdown table row per field, `| `field` | reason |`.
     """
@@ -184,7 +187,7 @@ def gate(tree: str) -> int:
         print(
             "\n".join(
                 f"[parity] FAIL: `{f}` is not reachable from {tree}/. Either surface "
-                f"it, or add a row to docs/UI 2.0/PARITY.md saying why it is "
+                f"it, or add a row to scripts/ui-parity-exceptions.md saying why it is "
                 f"backend-only or deliberately dropped."
                 for f in missing
             ),
@@ -194,7 +197,7 @@ def gate(tree: str) -> int:
 
     stale = [f for f in allowed if f not in unreachable]
     for f in stale:
-        print(f"[parity] note: `{f}` is listed in PARITY.md but IS reachable - drop the row")
+        print(f"[parity] note: `{f}` is listed in ui-parity-exceptions.md but IS reachable - drop the row")
 
     print(f"[parity] OK: every setting reachable or documented")
     return 0

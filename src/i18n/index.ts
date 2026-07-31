@@ -2,6 +2,7 @@ import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import { locale } from "@tauri-apps/plugin-os";
 import { LANGUAGE_METADATA } from "./languages";
+import en from "./locales/en/translation.json";
 import { commands } from "@/bindings";
 import {
   getLanguageDirection,
@@ -9,23 +10,63 @@ import {
   updateDocumentLanguage,
 } from "@/lib/utils/rtl";
 
-// Auto-discover translation files using Vite's glob import
+// [GRAIN] Locales load ONE AT A TIME.
+//
+// This glob is deliberately NOT `{ eager: true }`. Eager gave every window all
+// 24 catalogues — ~751 KB of JSON parsed at startup to render in one language —
+// and because main.tsx imports this module before it branches on the window
+// label, the Agent panel paid for it too, despite being the one surface built
+// to stay small (it skips UI scaling and the model store for exactly that
+// reason). Lazy, the glob still enumerates which locales exist without reading
+// any of them, so the language list below costs nothing.
+// English is excluded from the glob and imported statically below: it is the
+// fallback, so it must be in the main chunk either way, and listing it here too
+// would leave rollup warning that one module is both statically and dynamically
+// imported.
 const localeModules = import.meta.glob<{ default: Record<string, unknown> }>(
-  "./locales/*/translation.json",
-  { eager: true },
+  ["./locales/*/translation.json", "!./locales/en/translation.json"],
 );
 
-// Build resources from discovered locale files
-const resources: Record<string, { translation: Record<string, unknown> }> = {};
-for (const [path, module] of Object.entries(localeModules)) {
-  const langCode = path.match(/\.\/locales\/(.+)\/translation\.json/)?.[1];
-  if (langCode) {
-    resources[langCode] = { translation: module.default };
+const codeOf = (path: string) =>
+  path.match(/\.\/locales\/(.+)\/translation\.json/)?.[1];
+
+const AVAILABLE: string[] = [
+  "en",
+  ...Object.keys(localeModules)
+    .map(codeOf)
+    .filter((c): c is string => Boolean(c)),
+];
+
+const loaderFor = (code: string) =>
+  Object.entries(localeModules).find(([p]) => codeOf(p) === code)?.[1];
+
+/** Fetch a catalogue and hand it to i18next, once. English is already bundled,
+ *  and i18next keeps what it has been given, so repeat calls are free. */
+export const loadLocale = async (code: string): Promise<boolean> => {
+  if (code === "en" || i18n.hasResourceBundle(code, "translation")) return true;
+  const load = loaderFor(code);
+  if (!load) return false;
+  try {
+    const mod = await load();
+    i18n.addResourceBundle(code, "translation", mod.default, true, true);
+    return true;
+  } catch (e) {
+    // A missing catalogue is not fatal: fallbackLng renders English.
+    console.warn(`Failed to load locale "${code}":`, e);
+    return false;
   }
-}
+};
+
+/** Load then switch — the only correct order. Switching first would paint one
+ *  frame of English before the catalogue arrives. */
+export const setLanguage = async (code: string): Promise<void> => {
+  if (code === i18n.language) return;
+  await loadLocale(code);
+  await i18n.changeLanguage(code);
+};
 
 // Build supported languages list from discovered locales + metadata
-export const SUPPORTED_LANGUAGES = Object.keys(resources)
+export const SUPPORTED_LANGUAGES = AVAILABLE
   .map((code) => {
     const meta = LANGUAGE_METADATA[code];
     if (!meta) {
@@ -88,7 +129,10 @@ export const getSupportedLanguage = (
 // Initialize i18n with English as default
 // Language will be synced from settings after init
 i18n.use(initReactI18next).init({
-  resources,
+  // English only at boot — it is both the initial language and the fallback,
+  // so it is the one catalogue that must be present synchronously for the
+  // first paint. Everything else arrives through `loadLocale`.
+  resources: { en: { translation: en } },
   lng: "en",
   fallbackLng: "en",
   interpolation: {
@@ -105,15 +149,15 @@ export const syncLanguageFromSettings = async () => {
     const result = await commands.getAppSettings();
     if (result.status === "ok" && result.data.app_language) {
       const supported = getSupportedLanguage(result.data.app_language);
-      if (supported && supported !== i18n.language) {
-        await i18n.changeLanguage(supported);
+      if (supported) {
+        await setLanguage(supported);
       }
     } else {
       // Fall back to system locale detection if no saved preference
       const systemLocale = await locale();
       const supported = getSupportedLanguage(systemLocale);
-      if (supported && supported !== i18n.language) {
-        await i18n.changeLanguage(supported);
+      if (supported) {
+        await setLanguage(supported);
       }
     }
   } catch (e) {

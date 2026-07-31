@@ -43,9 +43,13 @@ if (winLabel === "agent-panel") {
   // lib.rs). Unlike the Agent branch it is NOT transparent, so the page keeps
   // its background to fill client area outside the rounded React card.
   //
-  // Scale the whole UI to the screen so it looks the same apparent size on
-  // any display (and never gigantic on a small/low-res one). Run before render
-  // so the first paint is already scaled.
+  // Pin the rem baseline to a FIXED 16px — deliberately NOT driven by the
+  // screen. (This comment used to claim the opposite, that the UI scales to the
+  // display; it has said so since before the scaled canvas was removed, and
+  // uiScale.ts explains at length why viewport-driven rem is exactly what that
+  // removal was undoing. Left uncorrected it would have talked the UI 2.0
+  // rewrite into putting the behaviour back.) Run before render so the first
+  // paint is already correct.
   initUiScale();
 
   // Initialize model store (loads models and sets up event listeners)

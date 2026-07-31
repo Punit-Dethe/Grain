@@ -125,7 +125,7 @@ const PANEL_BRIDGE = `<script>(function(){
     var ro=new ResizeObserver(postHeight);
     ro.observe(document.documentElement);
     if(document.body) ro.observe(document.body);
-  }catch(e){ setInterval(postHeight, 500); }
+  }catch(e){ var t=setInterval(postHeight,500); addEventListener("pagehide",function(){clearInterval(t);}); }
   window.grain={
     log:{info:function(m){return call("log.info",{msg:String(m)});},warn:function(m){return call("log.warn",{msg:String(m)});}},
     storage:{get:function(k){return call("storage.get",{key:k});},set:function(k,v){return call("storage.set",{key:k,value:v});},"delete":function(k){return call("storage.delete",{key:k});}},
@@ -162,9 +162,17 @@ const HOST_TOKENS = [
 
 const hostPalette = (): string => {
   const root = getComputedStyle(document.documentElement);
-  return HOST_TOKENS.map(
-    (t) => `--grain-${t}:${root.getPropertyValue(`--color-${t}`).trim()}`,
-  ).join(";");
+  // Only tokens that actually RESOLVED — the same filter extension-surface.ts
+  // carries, and for the same reason: an empty custom property is still a SET
+  // one, so emitting `--grain-paper:` would make an author's
+  // `var(--grain-paper, #ece5da)` resolve to nothing instead of to their
+  // fallback, and the card would render with no colour at all. Cards were
+  // missing this, so a token rename would have broken them while surfaces
+  // degraded gracefully (docs/UI 2.0/PLAN.md §6.1).
+  return HOST_TOKENS.map((t) => [t, root.getPropertyValue(`--color-${t}`).trim()])
+    .filter(([, v]) => v !== "")
+    .map(([t, v]) => `--grain-${t}:${v}`)
+    .join(";");
 };
 
 /**

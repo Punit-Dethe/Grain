@@ -5,6 +5,7 @@ import { SettingContainer } from "../ui/SettingContainer";
 import {
   SUPPORTED_LANGUAGES,
   getSupportedLanguage,
+  setLanguage,
   type SupportedLanguageCode,
 } from "../../i18n";
 import { useSettings } from "@/hooks/useSettings";
@@ -17,6 +18,9 @@ interface AppLanguageSelectorProps {
 export const AppLanguageSelector: React.FC<AppLanguageSelectorProps> =
   React.memo(({ descriptionMode = "tooltip", grouped = false }) => {
     const { t, i18n } = useTranslation();
+    // [GRAIN] Catalogues load on demand, so switching goes through setLanguage
+    // (fetch, then switch). Calling i18n.changeLanguage directly would switch to
+    // a language i18next has no resources for and paint English.
     const { settings, updateSetting } = useSettings();
 
     const currentLanguage = (getSupportedLanguage(settings?.app_language) ||
@@ -28,7 +32,7 @@ export const AppLanguageSelector: React.FC<AppLanguageSelectorProps> =
     }));
 
     const handleLanguageChange = (langCode: string) => {
-      i18n.changeLanguage(langCode);
+      void setLanguage(langCode);
       updateSetting("app_language", langCode);
     };
 
