@@ -164,7 +164,7 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
         </div>
       ) : (
         <div
-          className={`recommendation-grid${recommendations.length === 1 ? " recommendation-grid--single" : ""}`}
+          className="recommendation-grid"
           data-recommendation-count={recommendations.length}
         >
           {recommendations.map((entry) => {

@@ -93,16 +93,6 @@ function adaptSettingRow(row: ExtensionSettingRow): SettingRow {
   };
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase();
-}
-
 function MediaArtwork({
   media,
   name,
@@ -132,9 +122,6 @@ function MediaArtwork({
   return (
     <div className={className}>
       {url && <img src={url} alt={`${name} preview`} />}
-      <span className="extension-artwork-mark" aria-hidden="true">
-        {initials(name)}
-      </span>
     </div>
   );
 }
@@ -950,24 +937,16 @@ function StoreGrid({
                   className="store-artwork"
                 />
                 <div className="store-extension-body">
-                  <div className="store-extension-copy">
+                  {/* Name and action share the top line; the description runs
+                      the full width beneath. Nothing else — a version string
+                      is not what anyone is deciding on here. */}
+                  <div className="store-extension-head">
                     <strong>
                       <span className="store-extension-name">{entry.name}</span>
                       {entry.trust === "verified" && (
                         <span className="verified-word">Verified</span>
                       )}
                     </strong>
-                  </div>
-                  <p className="store-extension-blurb">{entry.description}</p>
-                  <div className="store-extension-footer">
-                    {/* The install count is the one fact a store card owes a
-                        browsing user, and it fills the space the button used
-                        to sit beside empty. */}
-                    <span className="store-extension-meta">
-                      {typeof entry.installs === "number" && entry.installs > 0
-                        ? `${entry.installs.toLocaleString()} installs`
-                        : `v${entry.version}`}
-                    </span>
                     <button
                       className="button store-install"
                       type="button"
@@ -991,6 +970,7 @@ function StoreGrid({
                             : "Install"}
                     </button>
                   </div>
+                  <p className="store-extension-blurb">{entry.description}</p>
                 </div>
               </article>
             );

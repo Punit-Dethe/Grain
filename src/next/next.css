@@ -773,11 +773,16 @@ h3 {
   font-size: 11.5px;
 }
 
+/* The knob is positioned, not translated. A transform distance has to agree
+   with the track width, the padding and the box-sizing all at once, and the
+   moment any of those is overridden the knob rides out past the track. Pinning
+   both rest and travel to the track's own edges cannot drift. */
 .next-root .toggle {
   width: 34px;
   height: 20px;
   flex: 0 0 auto;
-  padding: 2px;
+  position: relative;
+  padding: 0;
   border-radius: 999px;
   background: #34383d;
   cursor: pointer;
@@ -788,16 +793,20 @@ h3 {
   display: block;
   width: 16px;
   height: 16px;
+  position: absolute;
+  top: 50%;
+  left: 2px;
   border-radius: 50%;
   background: #9a9ea0;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transform: translateY(-50%);
   transition:
-    transform 0.25s var(--ease-out),
+    left 0.25s var(--ease-out),
     background 0.2s;
 }
 
 .next-root .toggle.on span {
-  transform: translateX(14px);
+  left: calc(100% - 18px);
   background: var(--accent-ink);
 }
 
@@ -1732,12 +1741,13 @@ html[data-theme="light"] .capture-mode-option.selected {
   display: none;
 }
 
-/* grain_base.html `.settings-workspace-page .settings-group`: one top
-   highlight, no surrounding ring. The extra inset ring we had drew a visible
-   box edge the reference does not have. */
+/* Settings and Studio wells need a real edge. A translucent fill alone reads
+   as part of the page — the group's own dividers were the only thing saying
+   "these rows belong together", which is not enough to see where one card
+   stops and the next begins. */
 .next-settings-content .surface-well {
   overflow: visible;
-  border: 0;
+  border: 1px solid var(--hairline);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.027);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.018);
@@ -2121,9 +2131,9 @@ html[data-theme="light"] .settings-nav button.active {
   box-shadow: none;
 }
 
-/* Light: the reference makes this a glass panel, not a bordered box. */
+/* Light: a glass panel, but still an edged one — see the dark rule. */
 html[data-theme="light"] .next-settings-content .surface-well {
-  border: 0;
+  border: 1px solid var(--hairline);
   background: var(--glass-fill);
   box-shadow:
     inset 0 1px var(--glass-highlight),
@@ -3221,32 +3231,11 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
 
 .recommendation-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  /* auto-FILL, not auto-fit: a lone card occupies one track instead of
+     stretching across every empty one, so one, two or three recommendations
+     are all the same size. */
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 9px;
-}
-
-.recommendation-grid--single {
-  display: block;
-}
-
-.recommendation-grid--single .recommendation-card {
-  min-height: 58px;
-  padding: 9px 10px;
-  grid-template-columns: minmax(145px, auto) minmax(0, 1fr) auto;
-  grid-template-rows: none;
-  align-items: center;
-  gap: 12px;
-}
-
-.recommendation-grid--single .recommendation-card p {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.recommendation-grid--single .recommendation-footer {
-  justify-content: flex-end;
-  gap: 10px;
 }
 
 .recommendation-card {
@@ -3534,18 +3523,6 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
   object-fit: cover;
 }
 
-.extension-artwork-mark {
-  position: absolute;
-  left: 14px;
-  bottom: 12px;
-  z-index: 3;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 13px;
-  font-weight: 720;
-  letter-spacing: 0.08em;
-  text-shadow: 0 2px 18px rgba(0, 0, 0, 0.42);
-}
-
 .installed-extension-copy {
   min-width: 0;
   display: grid;
@@ -3703,24 +3680,31 @@ html[data-theme="light"] .installed-extension-actions {
    metadata, so every row is full and the cards are the same height whatever
    the name length. */
 .store-extension-body {
-  min-height: 128px;
-  padding: 13px 14px 12px;
+  padding: 12px 14px 14px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 7px;
+  gap: 8px;
 }
 
-.store-extension-copy {
+/* Name and action on one line: the title is the subject, the button answers
+   it, and putting them on the same baseline removes the empty quadrant the
+   old split-column layout left behind. */
+.store-extension-head {
   min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
-.store-extension-copy strong {
+.store-extension-head strong {
+  min-width: 0;
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 13.5px;
-  font-weight: 620;
-  line-height: 1.3;
+  font-size: 15px;
+  font-weight: 630;
+  line-height: 1.25;
+  letter-spacing: -0.012em;
 }
 
 /* One line, always. A wrapping title used to shove the whole card around. */
@@ -3744,31 +3728,14 @@ html[data-theme="light"] .installed-extension-actions {
   line-height: 1.52;
 }
 
-.store-extension-footer {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-top: 2px;
-  padding-top: 10px;
-  box-shadow: inset 0 1px var(--hairline-soft);
-}
-
-.store-extension-meta {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-4);
-  font-size: 10.5px;
-  letter-spacing: 0.01em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
+/* Smaller than a page action — it sits beside a 15px title, not alone. */
 .store-install {
-  min-width: 78px;
+  min-width: 0;
+  height: 27px;
   flex: 0 0 auto;
+  padding: 0 12px;
   justify-content: center;
+  font-size: 11px;
 }
 
 .extension-state,
