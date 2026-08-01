@@ -430,29 +430,9 @@ pub fn init_shortcuts(app: &AppHandle) -> Result<(), String> {
 
     // Register all bindings except dynamic ones
     for (id, default_binding) in default_bindings {
-        if id == "cancel" || id == "agent_followup" {
-            continue;
-        }
-        // Skip post-processing shortcut when the feature is disabled
-        // [GRAIN] `transcribe_send_to_ai` joins it: the AI key is a real global
-        // shortcut now (it has to exist at idle to be able to *start* a
-        // capture), so like the other AI entry point it must not hold a hotkey
-        // when there is no post-processing behind it.
-        if (id == "transcribe_with_post_process" || id == "transcribe_send_to_ai")
-            && !user_settings.post_process_enabled
-        {
-            continue;
-        }
-        // [GRAIN] Only the capture modes the user keeps live hold a hotkey.
-        if !grain_core::capture::capture_binding_is_active(&user_settings, &id) {
-            continue;
-        }
-        // [GRAIN] Grain Space shortcuts exist only while the feature is on —
-        // OFF must be truly zero-overhead (no global hooks for the feature).
-        if id == "summon_agent" && !user_settings.agent_enabled {
-            continue; // [GRAIN] Agent built-in extension disabled (SPEC 10.1)
-        }
-        if id.starts_with("grain_space_") && !user_settings.grain_space_enabled {
+        // [GRAIN] Shared gate with the Tauri implementation and the impl-switch
+        // path — see `grain_core::capture::shortcut_holds_hotkey`.
+        if !grain_core::capture::shortcut_holds_hotkey(&user_settings, &id) {
             continue;
         }
 

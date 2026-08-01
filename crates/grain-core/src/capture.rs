@@ -44,6 +44,44 @@ pub fn capture_binding_is_active(settings: &AppSettings, id: &str) -> bool {
     }
 }
 
+/// Whether a shortcut id should hold a global hotkey at registration time,
+/// given the current settings.
+///
+/// This is the **single source of truth** for shortcut gating, called from every
+/// registration path (both keyboard-implementation inits AND the impl-switch
+/// re-register). It used to be inline in all three; the impl-switch copy drifted
+/// and left disabled features holding global hotkeys after a Tauri↔HandyKeys
+/// switch. One function means they cannot disagree again.
+///
+/// `cancel` and `agent_followup` are registered dynamically (on record start /
+/// while the Agent is open), never at init, so they are never held here.
+pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
+    if id == "cancel" || id == "agent_followup" {
+        return false;
+    }
+    // The two AI entry points must not hold a hotkey with no post-processing
+    // behind them — the same rule for the explicit key and the send-to-AI key.
+    if (id == "transcribe_with_post_process" || id == "transcribe_send_to_ai")
+        && !settings.post_process_enabled
+    {
+        return false;
+    }
+    // Only the capture modes the user keeps live hold a key (narrows capture ids
+    // only; every other id passes straight through).
+    if !capture_binding_is_active(settings, id) {
+        return false;
+    }
+    // Feature-gated shortcuts vanish when their feature is off — OFF must be
+    // truly zero-overhead (no global hooks for a disabled feature).
+    if id == "summon_agent" && !settings.agent_enabled {
+        return false;
+    }
+    if id.starts_with("grain_space_") && !settings.grain_space_enabled {
+        return false;
+    }
+    true
+}
+
 /// Which mode the AI shortcut starts when pressed from idle.
 ///
 /// Under `Single` this is necessarily the primary mode — offering a choice
@@ -189,5 +227,46 @@ mod tests {
         assert!(!should_route_to_ai(&s, "transcribe_realtime"));
         assert!(should_route_to_ai(&s, "transcribe_send_to_ai"));
         assert!(should_route_to_ai(&s, "transcribe_with_post_process"));
+    }
+
+    #[test]
+    fn gate_hides_disabled_features_and_inactive_capture_modes() {
+        // Single mode, every feature off: the exact state the impl-switch path
+        // used to ignore, leaving these keys registered anyway.
+        let mut s = settings_with(CaptureModeSet::Single, "transcribe");
+        s.post_process_enabled = false;
+        s.agent_enabled = false;
+        s.grain_space_enabled = false;
+
+        // The one live capture mode holds a key; the other two do not.
+        assert!(shortcut_holds_hotkey(&s, "transcribe"));
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_realtime"));
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_native_asr"));
+        // AI entry points need post-processing behind them.
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_send_to_ai"));
+        assert!(!shortcut_holds_hotkey(&s, "transcribe_with_post_process"));
+        // Feature-gated keys vanish with their feature.
+        assert!(!shortcut_holds_hotkey(&s, "summon_agent"));
+        assert!(!shortcut_holds_hotkey(&s, "grain_space_capture"));
+        // Dynamic keys are never held at registration time.
+        assert!(!shortcut_holds_hotkey(&s, "cancel"));
+        assert!(!shortcut_holds_hotkey(&s, "agent_followup"));
+        // An unrelated shortcut is untouched.
+        assert!(shortcut_holds_hotkey(&s, "prompt_next"));
+    }
+
+    #[test]
+    fn gate_registers_everything_its_features_are_on() {
+        let mut s = settings_with(CaptureModeSet::All, "transcribe");
+        s.post_process_enabled = true;
+        s.agent_enabled = true;
+        s.grain_space_enabled = true;
+
+        for id in CAPTURE_MODE_IDS {
+            assert!(shortcut_holds_hotkey(&s, id));
+        }
+        assert!(shortcut_holds_hotkey(&s, "transcribe_send_to_ai"));
+        assert!(shortcut_holds_hotkey(&s, "summon_agent"));
+        assert!(shortcut_holds_hotkey(&s, "grain_space_capture"));
     }
 }

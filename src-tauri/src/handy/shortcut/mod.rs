@@ -400,13 +400,12 @@ fn register_all_shortcuts_for_implementation(
     let mut current_settings = settings::get_settings(app);
 
     for (id, default_binding) in &default_bindings {
-        // Skip dynamically registered shortcuts
-        if id == "cancel" || id == "agent_followup" {
-            continue;
-        }
-
-        // Skip post-processing shortcut when the feature is disabled
-        if id == "transcribe_with_post_process" && !current_settings.post_process_enabled {
+        // [GRAIN] Apply the SAME registration gate as the two init paths. This
+        // path (re-register on a keyboard-implementation switch) previously
+        // skipped only the post-processing key, so switching Tauri↔HandyKeys
+        // silently gave disabled features (Agent, Grain Space) global hotkeys
+        // and re-armed every capture mode. One shared predicate closes that gap.
+        if !grain_core::capture::shortcut_holds_hotkey(&current_settings, id) {
             continue;
         }
 
