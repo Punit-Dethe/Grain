@@ -73,7 +73,7 @@ export function NotesTab({
   if (settingsOpen) {
     return (
       <div
-        className={`w-full h-full overflow-y-auto${variant === "next" ? " gs-next-settings" : ""}`}
+        className={`w-full h-full overflow-y-auto${variant === "next" ? " gs-next-settings next-settings-content" : ""}`}
       >
         <div className="max-w-4xl w-full mx-auto px-12 py-9 space-y-6">
           <button

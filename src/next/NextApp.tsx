@@ -274,7 +274,7 @@ function WindowChrome({ route }: { route: AppRoute }) {
             : route.page === "history"
               ? "History"
               : route.page === "tools"
-                ? "Tools"
+                ? "Studio"
                 : route.page === "extensions"
                   ? "Extensions"
                   : route.page === "extension-settings"
@@ -345,7 +345,7 @@ const NAV_GROUPS = [
       { page: "history", label: "History", icon: "clock", href: "#/history" },
       {
         page: "tools",
-        label: "Tools",
+        label: "Studio",
         icon: "zap",
         href: "#/tools/dictionary",
       },

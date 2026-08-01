@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Code2,
   Eye,
+  PackageOpen,
   ShieldCheck,
   Trash2,
   Upload,
@@ -672,10 +673,12 @@ function InstalledList({
   controller,
   query,
   onPreview,
+  onBrowseStore,
 }: {
   controller: InstalledController;
   query: string;
   onPreview: (selection: DrawerSelection) => void;
+  onBrowseStore: () => void;
 }) {
   const entries = filterExtensions(controller.cards, query);
   if (controller.loading)
@@ -684,12 +687,23 @@ function InstalledList({
         Loading installed extensions…
       </div>
     );
-  if (!entries.length)
+  if (!entries.length && query)
     return (
       <div className="extension-state">
-        {query
-          ? "No installed extensions match your search."
-          : "No extensions are installed."}
+        No installed extensions match your search.
+      </div>
+    );
+  if (!entries.length)
+    return (
+      <div className="extension-state extension-empty-state">
+        <span className="extension-empty-symbol" aria-hidden="true">
+          <PackageOpen size={22} />
+        </span>
+        <strong>No extensions installed yet</strong>
+        <p>Browse focused additions and install only what you need.</p>
+        <button className="button" type="button" onClick={onBrowseStore}>
+          Browse Store
+        </button>
       </div>
     );
 
@@ -1159,6 +1173,12 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
             controller={controller}
             query={query}
             onPreview={setDrawer}
+            onBrowseStore={() => {
+              window.location.hash = hashForRoute({
+                page: "extensions",
+                view: "store",
+              }).slice(1);
+            }}
           />
         ) : (
           <StoreGrid

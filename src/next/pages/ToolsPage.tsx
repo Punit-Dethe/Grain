@@ -1,6 +1,6 @@
 /* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, BookOpen, Code2, Sparkles } from "lucide-react";
+import { Bot, BookOpen, ChevronRight, Code2, Sparkles } from "lucide-react";
 import {
   commands,
   type ExtensionCard,
@@ -163,7 +163,10 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
           No matching store extensions are available.
         </div>
       ) : (
-        <div className="recommendation-grid">
+        <div
+          className={`recommendation-grid${recommendations.length === 1 ? " recommendation-grid--single" : ""}`}
+          data-recommendation-count={recommendations.length}
+        >
           {recommendations.map((entry) => {
             const currentVersion = installed.get(entry.id);
             const current = currentVersion === entry.version;
@@ -232,7 +235,7 @@ function DictionaryTool() {
         </div>
         <div className="tool-component-host">
           <SettingsGroup>
-            <CustomWords descriptionMode="inline" grouped />
+            <CustomWords descriptionMode="tooltip" grouped />
             <ToggleSwitch
               label="Auto-add to dictionary"
               description="Watch for repeated spelling corrections after paste and offer to remember proper nouns and identifiers. Off keeps the watcher at zero overhead."
@@ -256,15 +259,23 @@ function SnippetsTool() {
   const enabled = useFeatureEnabled("snippets_enabled");
   return (
     <>
-      <div className="tool-component-host space-y-6">
-        <FeaturePanel
-          settingKey="snippets_enabled"
-          title="Snippets"
-          info="Speak a trigger phrase and Grain expands it into saved text locally before paste."
-        />
-        {enabled && <SnippetsSection untitled />}
-        <ExtensionAnchor anchor="snippets.after" />
-      </div>
+      <section className="tool-section">
+        <div className="tool-section-head">
+          <div>
+            <h2>Snippet library</h2>
+            <p>Create and manage phrases Grain can expand from your voice.</p>
+          </div>
+        </div>
+        <div className="tool-component-host space-y-6">
+          <FeaturePanel
+            settingKey="snippets_enabled"
+            title="Snippets"
+            info="Speak a trigger phrase and Grain expands it into saved text locally before paste."
+          />
+          {enabled && <SnippetsSection untitled />}
+        </div>
+      </section>
+      <ExtensionAnchor anchor="snippets.after" />
       <ToolRecommendations tool="snippets" />
     </>
   );
@@ -273,16 +284,26 @@ function SnippetsTool() {
 function ContextTool() {
   return (
     <>
-      <div className="tool-component-host space-y-6">
-        <FeaturePanel
-          settingKey="context_awareness_enabled"
-          title="Context awareness"
-          info="Use local application context to make terminology and insertion fit naturally."
-        >
-          <ContextAwareSection />
-        </FeaturePanel>
-        <ExtensionAnchor anchor="context.after" />
-      </div>
+      <section className="tool-section">
+        <div className="tool-section-head">
+          <div>
+            <h2>Context awareness</h2>
+            <p>
+              Context is processed locally and only during an eligible capture.
+            </p>
+          </div>
+        </div>
+        <div className="tool-component-host space-y-6">
+          <FeaturePanel
+            settingKey="context_awareness_enabled"
+            title="Context awareness"
+            info="Use local application context to make terminology and insertion fit naturally."
+          >
+            <ContextAwareSection />
+          </FeaturePanel>
+        </div>
+      </section>
+      <ExtensionAnchor anchor="context.after" />
       <ToolRecommendations tool="context" />
     </>
   );
@@ -291,16 +312,24 @@ function ContextTool() {
 function AgentTool() {
   return (
     <>
-      <div className="tool-component-host space-y-6">
-        <FeaturePanel
-          settingKey="agent_enabled"
-          title="Agent"
-          info="Summon a voice-first assistant over the current selection without leaving the active app."
-        >
-          <AgentSection />
-        </FeaturePanel>
-        <ExtensionAnchor anchor="agent.after" />
-      </div>
+      <section className="tool-section">
+        <div className="tool-section-head">
+          <div>
+            <h2>Agent behaviour</h2>
+            <p>Choose how Agent opens, responds, and uses the current app.</p>
+          </div>
+        </div>
+        <div className="tool-component-host space-y-6">
+          <FeaturePanel
+            settingKey="agent_enabled"
+            title="Agent"
+            info="Summon a voice-first assistant over the current selection without leaving the active app."
+          >
+            <AgentSection />
+          </FeaturePanel>
+        </div>
+      </section>
+      <ExtensionAnchor anchor="agent.after" />
       <ToolRecommendations tool="agent" />
     </>
   );
@@ -318,11 +347,11 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
           <aside className="tools-sidebar-pane">
             <div className="tools-pane-header">
               <div>
-                <strong>Tools</strong>
-                <span>Capture utilities</span>
+                <strong>Studio</strong>
+                <span>Make Grain work your way</span>
               </div>
             </div>
-            <nav className="tools-nav" aria-label="Grain tools">
+            <nav className="tools-nav" aria-label="Grain Studio">
               {(Object.keys(TOOL_COPY) as ToolSectionId[]).map((id) => {
                 const ItemIcon = TOOL_COPY[id].icon;
                 return (
@@ -345,26 +374,26 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
               })}
             </nav>
             <div className="tools-sidebar-spacer" />
-            <section className="tools-browse">
-              <strong>More capabilities</strong>
-              <span>Browse extensions designed for Grain tools.</span>
-              <button
-                className="text-button"
-                type="button"
-                onClick={() => {
-                  window.location.hash = hashForRoute({
-                    page: "extensions",
-                    view: "store",
-                  }).slice(1);
-                }}
-              >
-                Browse extensions →
-              </button>
-            </section>
+            <button
+              className="tools-browse"
+              type="button"
+              onClick={() => {
+                window.location.hash = hashForRoute({
+                  page: "extensions",
+                  view: "store",
+                }).slice(1);
+              }}
+            >
+              <span className="tools-browse-copy">
+                <strong>Browse extensions</strong>
+                <span>Add capabilities to Studio</span>
+              </span>
+              <ChevronRight size={14} aria-hidden="true" />
+            </button>
           </aside>
           <section className="tools-canvas" aria-labelledby="next-tool-title">
             <div className="tools-scroll">
-              <div className="tools-content">
+              <div className="tools-content next-settings-content">
                 <header className="tool-main-heading">
                   <h1 id="next-tool-title">{copy.title}</h1>
                   <p>{copy.description}</p>

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import {
   CalendarDays,
   ChevronRight,
+  Folder,
   FolderPlus,
   Hash,
   Search,
@@ -310,7 +311,7 @@ export function Sidebar({
 
   /** Drop-zone handlers for a folder path (`null` = the Grain root). */
   const dropZone = (folder: string | null) => {
-    const key = folder ?? " root";
+    const key = folder ?? "__grain_root__";
     return {
       onDragOver: (e: React.DragEvent) => {
         const id = draggingRef.current;
@@ -382,6 +383,32 @@ export function Sidebar({
       a.name.localeCompare(b.name),
     );
     const count = subtreeCount(node);
+    if (variant === "next") {
+      return (
+        <div key={node.path} className="gs-next-folder-node">
+          <button
+            type="button"
+            className="gs-row gs-row--folder gs-next-folder-row"
+            style={{ paddingLeft: 9 + depth * 15 }}
+            onClick={() => toggleFolder(node.path)}
+            {...dropZone(node.path)}
+          >
+            <Folder className="gs-row-folder-icon" width={14} height={14} />
+            <span className="gs-row-title">{node.name}</span>
+            {count > 0 && <span className="gs-row-count">{count}</span>}
+            <span className={`gs-row-chev${open ? " gs-row-chev--open" : ""}`}>
+              <ChevronRight width={13} height={13} />
+            </span>
+          </button>
+          {open && (
+            <div className="gs-next-folder-children">
+              {subs.map((child) => renderFolder(child, depth + 1))}
+              {node.notes.map((c) => cardRow(c, depth + 1))}
+            </div>
+          )}
+        </div>
+      );
+    }
     return (
       <div key={node.path}>
         <button
@@ -536,69 +563,73 @@ export function Sidebar({
             </>
           ) : (
             <>
-              <div className="gs-next-group-row" {...dropZone(null)}>
-                <span>{NEXT_NOTES_COPY.collections}</span>
-                <button
-                  type="button"
-                  title={t("grainSpaceOverlay.newFolder")}
-                  aria-label={t("grainSpaceOverlay.newFolder")}
-                  onClick={() => setNewFolder("")}
-                >
-                  <FolderPlus width={14} height={14} />
-                </button>
+              <div className="gs-next-group gs-next-collections-group">
+                <div className="gs-next-group-row" {...dropZone(null)}>
+                  <span>{NEXT_NOTES_COPY.collections}</span>
+                  <button
+                    type="button"
+                    title={t("grainSpaceOverlay.newFolder")}
+                    aria-label={t("grainSpaceOverlay.newFolder")}
+                    onClick={() => setNewFolder("")}
+                  >
+                    <FolderPlus width={14} height={14} />
+                  </button>
+                </div>
+                {newFolder != null && (
+                  <div className="gs-newfolder">
+                    <Folder width={13} height={13} />
+                    <input
+                      autoFocus
+                      value={newFolder}
+                      placeholder={t("grainSpaceOverlay.newFolderPlaceholder")}
+                      spellCheck={false}
+                      onChange={(event) => setNewFolder(event.target.value)}
+                      onBlur={submitNewFolder}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          submitNewFolder();
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          setNewFolder(null);
+                        }
+                      }}
+                    />
+                  </div>
+                )}
+                {topFolders.map((node) => renderFolder(node, 0))}
+                {topFolders.length === 0 && newFolder == null && (
+                  <div className="gs-nav-hint">
+                    {t("grainSpaceOverlay.noFolders")}
+                  </div>
+                )}
               </div>
-              {newFolder != null && (
-                <div className="gs-newfolder">
-                  <Hash width={12} height={12} />
-                  <input
-                    autoFocus
-                    value={newFolder}
-                    placeholder={t("grainSpaceOverlay.newFolderPlaceholder")}
-                    spellCheck={false}
-                    onChange={(event) => setNewFolder(event.target.value)}
-                    onBlur={submitNewFolder}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        submitNewFolder();
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        setNewFolder(null);
-                      }
-                    }}
-                  />
-                </div>
-              )}
-              {topFolders.map((node) => renderFolder(node, 0))}
-              {topFolders.length === 0 && newFolder == null && (
-                <div className="gs-nav-hint">
-                  {t("grainSpaceOverlay.noFolders")}
-                </div>
-              )}
 
-              <div className="gs-next-group-label">
-                {NEXT_NOTES_COPY.recent}
-              </div>
-              {recent.length === 0 ? (
-                <div className="gs-nav-hint">
-                  {t("grainSpaceOverlay.emptyList")}
+              <div className="gs-next-group gs-next-recent-group">
+                <div className="gs-next-group-label">
+                  {NEXT_NOTES_COPY.recent}
                 </div>
-              ) : (
-                recent.map((card) => cardRow(card))
-              )}
-              {visibleRecentCount < recentCards.length && (
-                <button
-                  type="button"
-                  className="gs-seeall"
-                  onClick={() =>
-                    setRecentVisibleCount((current) =>
-                      revealMoreRecentNotes(current, recentCards.length),
-                    )
-                  }
-                >
-                  {NEXT_NOTES_COPY.viewMore}
-                </button>
-              )}
+                {recent.length === 0 ? (
+                  <div className="gs-nav-hint">
+                    {t("grainSpaceOverlay.emptyList")}
+                  </div>
+                ) : (
+                  recent.map((card) => cardRow(card))
+                )}
+                {visibleRecentCount < recentCards.length && (
+                  <button
+                    type="button"
+                    className="gs-seeall"
+                    onClick={() =>
+                      setRecentVisibleCount((current) =>
+                        revealMoreRecentNotes(current, recentCards.length),
+                      )
+                    }
+                  >
+                    {NEXT_NOTES_COPY.viewMore}
+                  </button>
+                )}
+              </div>
             </>
           )}
         </nav>
