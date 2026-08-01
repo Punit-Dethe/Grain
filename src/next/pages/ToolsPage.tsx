@@ -222,7 +222,9 @@ function DictionaryTool() {
           </SettingsGroup>
         </div>
       </section>
-      <ToolRecommendations tool="dictionary" />
+      {/* No "Enhance Dictionary" row: no host surface maps to the dictionary, so
+          nothing can ever be recommended here — an always-empty section reads as
+          broken. The other three tools do have surfaces and keep theirs. */}
     </>
   );
 }

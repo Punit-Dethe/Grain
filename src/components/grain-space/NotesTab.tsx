@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { ChevronLeft } from "lucide-react";
 import { useSettings } from "../../hooks/useSettings";
@@ -41,6 +41,13 @@ export function NotesTab({
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = (getSetting("grain_space_enabled") as boolean) ?? false;
   const [settingsOpen, setSettingsOpen] = useState(initialSettingsOpen);
+
+  // Open settings when the request arrives AFTER mount too — e.g. an extension
+  // whose "Open settings" routes here (#/notes?settings=1) while Notes is
+  // already the open tab, which does not remount this component.
+  useEffect(() => {
+    if (initialSettingsOpen) setSettingsOpen(true);
+  }, [initialSettingsOpen]);
 
   if (!enabled) {
     return (

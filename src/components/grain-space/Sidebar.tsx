@@ -41,8 +41,6 @@ const dayFormat = new Intl.DateTimeFormat(undefined, {
 const PREVIEW = 8;
 
 const NEXT_NOTES_COPY = {
-  title: "Notes",
-  subtitle: "Local knowledge space",
   recent: "Recent",
   collections: "Collections",
   viewMore: "View more",
@@ -486,12 +484,6 @@ export function Sidebar({
     const recent = recentCards.slice(0, visibleRecentCount);
     return (
       <aside className="gs-side gs-next-side">
-        <div className="gs-next-pane-head">
-          <div>
-            <strong>{NEXT_NOTES_COPY.title}</strong>
-            <span>{NEXT_NOTES_COPY.subtitle}</span>
-          </div>
-        </div>
         <div className="gs-side-head">
           <div className="gs-search">
             <Search width={13} height={13} />
@@ -517,14 +509,6 @@ export function Sidebar({
 
         <nav className="gs-nav" aria-label="Note views and collections">
           <div className="gs-next-primary-nav">
-            <button
-              type="button"
-              className={`gs-next-nav-row${calendarOpen ? " is-active" : ""}`}
-              onClick={onOpenCalendar}
-            >
-              <CalendarDays width={15} height={15} />
-              <strong>{t("grainSpaceOverlay.calendar")}</strong>
-            </button>
             <button
               type="button"
               className="gs-next-nav-row"
@@ -635,7 +619,7 @@ export function Sidebar({
         </nav>
 
         <RemindersDock reminders={reminders} onSelectCard={onSelectCard} />
-        <div className="gs-side-foot">
+        <div className="gs-side-foot gs-next-side-foot">
           <button
             type="button"
             className="gs-foot-btn"
@@ -644,6 +628,17 @@ export function Sidebar({
           >
             <Settings width={13} height={13} />
             <span>{t("grainSpaceOverlay.settings")}</span>
+          </button>
+          {/* Calendar is an icon at the right edge now — no room for a full row,
+              and the settings foot had space to spare. */}
+          <button
+            type="button"
+            className={`gs-foot-cal${calendarOpen ? " gs-foot-cal--on" : ""}`}
+            onClick={onOpenCalendar}
+            title={t("grainSpaceOverlay.calendar")}
+            aria-label={t("grainSpaceOverlay.calendar")}
+          >
+            <CalendarDays width={15} height={15} />
           </button>
         </div>
       </aside>
