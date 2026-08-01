@@ -7,7 +7,9 @@ import type {
   AgentPanelPosition,
   AppSettings as Settings,
   AudioDevice,
+  CaptureModeSet,
   GrainSpaceBackend,
+  ModelUnloadTimeout,
   Snippet,
   TranscribeAcceleratorSetting,
 } from "@/bindings";
@@ -121,6 +123,30 @@ const settingUpdaters: {
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
+  // [GRAIN] Snippets and Agent are built-in extensions: their enabled bit lives
+  // in settings, but the ONLY backend path that persists it (and bumps toggle
+  // order, and for the Agent registers/unregisters the summon shortcut) is
+  // `extension_set_enabled`. There is no dedicated change_* command for them, so
+  // without these two entries the master toggle updated the UI and silently
+  // never reached the backend — it reverted on the next refetch or restart.
+  snippets_enabled: (value) =>
+    commands.extensionSetEnabled("grain.snippets", value as boolean),
+  agent_enabled: (value) =>
+    commands.extensionSetEnabled("grain.agent", value as boolean),
+  // [GRAIN] Capture-mode policy. The schema + read-side logic shipped without
+  // persistence commands, so every one of these was a silent optimistic-only
+  // no-op that reverted on the next refetch. Mode-set/primary reconcile the live
+  // shortcuts backend-side; the rest are runtime-only flags.
+  capture_mode_set: (value) =>
+    commands.changeCaptureModeSetSetting(value as CaptureModeSet),
+  capture_primary_mode: (value) =>
+    commands.changeCapturePrimaryModeSetting(value as string),
+  capture_ai_start_mode: (value) =>
+    commands.changeCaptureAiStartModeSetting(value as string),
+  capture_end_with_ai: (value) =>
+    commands.changeCaptureEndWithAiSetting(value as boolean),
+  capture_always_ai: (value) =>
+    commands.changeCaptureAlwaysAiSetting(value as boolean),
   context_awareness_enabled: (value) =>
     commands.changeContextAwarenessEnabledSetting(value as boolean),
   context_nearby_terms: (value) =>
@@ -157,6 +183,8 @@ const settingUpdaters: {
   auto_submit_key: (value) =>
     commands.changeAutoSubmitKeySetting(value as string),
   history_limit: (value) => commands.updateHistoryLimit(value as number),
+  model_unload_timeout: (value) =>
+    commands.setModelUnloadTimeout(value as ModelUnloadTimeout),
   post_process_enabled: (value) =>
     commands.changePostProcessEnabledSetting(value as boolean),
   post_process_selected_prompt_id: (value) =>
@@ -344,7 +372,12 @@ export const useSettingsStore = create<SettingsStore>()(
         if (updater) {
           await updater(value);
         } else if (key !== "bindings" && key !== "selected_model") {
-          console.warn(`No handler for setting: ${String(key)}`);
+          // A key with no backend writer would live only in this store and
+          // vanish on the next refetch or restart — the exact bug that hid here
+          // before (agent/snippets/capture had no updater). Throw so the catch
+          // below rolls the optimistic change back and the failure is visible,
+          // rather than quietly pretending the setting was saved.
+          throw new Error(`No persistence handler for setting "${String(key)}"`);
         }
       } catch (error) {
         console.error(`Failed to update setting ${String(key)}:`, error);

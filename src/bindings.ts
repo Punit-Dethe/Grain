@@ -809,6 +809,67 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] How many capture shortcuts are registered (Single vs All). The schema
+ * and read-side policy shipped without a way to persist a change from the UI;
+ * this is that writer. Reconciles the live hotkeys so the choice takes effect
+ * without a restart.
+ */
+async changeCaptureModeSetSetting(set: CaptureModeSet) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_capture_mode_set_setting", { set }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] The one capture mode that owns the shortcut under `Single`. Changing
+ * it moves the live hotkey from the old primary to the new one.
+ */
+async changeCapturePrimaryModeSetting(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_capture_primary_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Which mode the AI shortcut starts from idle (only meaningful under
+ * `All`). Runtime-only — no capture key is registered or dropped by this.
+ */
+async changeCaptureAiStartModeSetting(mode: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_capture_ai_start_mode_setting", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Whether the AI shortcut, pressed during a capture, ends it and routes
+ * the transcript to AI.
+ */
+async changeCaptureEndWithAiSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_capture_end_with_ai_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Send every capture to AI, whichever shortcut started it.
+ */
+async changeCaptureAlwaysAiSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_capture_always_ai_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle context awareness (post-processing SOFT context).
  */
 async changeContextAwarenessEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {

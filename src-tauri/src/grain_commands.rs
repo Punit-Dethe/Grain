@@ -48,6 +48,85 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
     Ok(())
 }
 
+/// [GRAIN] Re-register the capture bindings so the live global hotkeys match the
+/// current capture-mode policy. Under `Single` only the primary mode holds a key;
+/// under `All` every capture mode does. Unregistering before a possible
+/// re-register keeps an already-live key from firing twice. Runs off the command
+/// thread (never inside a ShortcutAction), so synchronous (un)register is safe.
+fn reconcile_capture_shortcuts(app: &AppHandle) {
+    let settings = settings::get_settings(app);
+    for id in settings::CAPTURE_MODE_IDS {
+        let Some(binding) = settings.bindings.get(id).cloned() else {
+            continue;
+        };
+        let _ = unregister_shortcut(app, binding.clone());
+        if grain_core::capture::capture_binding_is_active(&settings, id) {
+            let _ = register_shortcut(app, binding);
+        }
+    }
+}
+
+/// [GRAIN] How many capture shortcuts are registered (Single vs All). The schema
+/// and read-side policy shipped without a way to persist a change from the UI;
+/// this is that writer. Reconciles the live hotkeys so the choice takes effect
+/// without a restart.
+#[tauri::command]
+#[specta::specta]
+pub fn change_capture_mode_set_setting(
+    app: AppHandle,
+    set: settings::CaptureModeSet,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.capture_mode_set = set;
+    settings::write_settings(&app, settings);
+    reconcile_capture_shortcuts(&app);
+    Ok(())
+}
+
+/// [GRAIN] The one capture mode that owns the shortcut under `Single`. Changing
+/// it moves the live hotkey from the old primary to the new one.
+#[tauri::command]
+#[specta::specta]
+pub fn change_capture_primary_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.capture_primary_mode = mode;
+    settings::write_settings(&app, settings);
+    reconcile_capture_shortcuts(&app);
+    Ok(())
+}
+
+/// [GRAIN] Which mode the AI shortcut starts from idle (only meaningful under
+/// `All`). Runtime-only — no capture key is registered or dropped by this.
+#[tauri::command]
+#[specta::specta]
+pub fn change_capture_ai_start_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.capture_ai_start_mode = mode;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Whether the AI shortcut, pressed during a capture, ends it and routes
+/// the transcript to AI.
+#[tauri::command]
+#[specta::specta]
+pub fn change_capture_end_with_ai_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.capture_end_with_ai = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Send every capture to AI, whichever shortcut started it.
+#[tauri::command]
+#[specta::specta]
+pub fn change_capture_always_ai_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.capture_always_ai = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Toggle context awareness (post-processing SOFT context).
 #[tauri::command]
 #[specta::specta]
