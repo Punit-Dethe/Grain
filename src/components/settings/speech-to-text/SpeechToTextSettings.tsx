@@ -6,8 +6,7 @@ import type { SttProvider } from "@/bindings";
 import { useSttPool } from "./useSttPool";
 import { SttProviderRow } from "./SttProviderRow";
 import { SttProviderForm } from "./SttProviderForm";
-import { LocalModelSection } from "./LocalModelSection";
-import { AsrModelSection } from "./AsrModelSection";
+import { ModelPicker } from "./ModelPicker";
 import { ProviderPool } from "../ProviderPool";
 import { RollingLivePreview } from "../RollingLivePreview";
 import { ModelUnloadTimeoutSetting } from "../ModelUnloadTimeout";
@@ -86,14 +85,11 @@ export const SpeechToTextSettings: React.FC = () => {
         </p>
       </div>
 
-      {/* 1) Local model — collapsible picker; grays out while cloud rotation is on. */}
-      <LocalModelSection disabled={smartRotation} />
+      {/* 1) Both model roles in one picker: two slots that say what each is
+          for and whether it is filled, over one tabbed library. */}
+      <ModelPicker disabled={smartRotation} />
 
-      {/* 1b) Streaming / Native-ASR model — identical collapsible picker against
-          the separate ASR registry. Self-hides unless Experimental is enabled. */}
-      <AsrModelSection />
-
-      {/* 2) Engine — local-model behaviour: live preview, unload. The rolling
+      {/* 2) On-device model behaviour: Flow preview, unload. The rolling
           window length is fixed by the model-agnostic engine defaults and is
           intentionally not user-configurable. */}
       <SettingsGroup title={t("settings.speechToText.groups.engine")}>

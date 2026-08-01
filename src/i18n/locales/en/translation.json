@@ -517,6 +517,21 @@
         "nameRequired": "Name is required.",
         "baseUrlRequired": "Base URL is required.",
         "multiKeyTip": "Tip: add the same Base URL twice with different names and keys to rotate across multiple keys for one provider."
+      },
+      "picker": {
+        "title": "Models",
+        "empty": "No model selected",
+        "choose": "Choose a model",
+        "change": "Change",
+        "unavailable": "Handled in the cloud",
+        "standard": {
+          "label": "Standard",
+          "purpose": "Used by Standard and Flow captures"
+        },
+        "streaming": {
+          "label": "Streaming",
+          "purpose": "Used by Live streaming dictation"
+        }
       }
     },
     "postProcessing": {
