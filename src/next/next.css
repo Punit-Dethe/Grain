@@ -1,24 +1,28 @@
 @import "tailwindcss";
 
+/* [GRAIN] Palette of record: docs/UI 2.0/grain_base.html. The values below are
+   that file's tokens verbatim. Do not "tidy" them toward a neutral grey — the
+   base is deliberately cool and slightly green-tinted, and the ambient lilac
+   and sage washes in `.app` are part of it. */
 @theme {
-  --color-paper: #111214;
-  --color-paper-raised: #1a1b1e;
-  --color-paper-sunken: #151618;
-  --color-ink: #f4f4f5;
-  --color-ink-soft: #a2a3a7;
-  --color-ink-faint: #77787d;
-  --color-accent: #8ea8fd;
-  --color-line: rgba(255, 255, 255, 0.085);
-  --color-text: #f4f4f5;
-  --color-background: #111214;
-  --color-background-ui: #8ea8fd;
-  --color-logo-primary: #8ea8fd;
-  --color-mid-gray: #77787d;
-  --color-status-ready: #8ea8fd;
-  --color-status-load: #b2c2ff;
-  --color-status-warn: #e4b988;
-  --color-status-error: #c94945;
-  --color-status-info: #9db4fe;
+  --color-paper: #0e1013;
+  --color-paper-raised: #181c21;
+  --color-paper-sunken: #13161a;
+  --color-ink: #f3f4f2;
+  --color-ink-soft: #7d8385;
+  --color-ink-faint: #5c6265;
+  --color-accent: #8faaff;
+  --color-line: rgba(255, 255, 255, 0.065);
+  --color-text: #f3f4f2;
+  --color-background: #0e1013;
+  --color-background-ui: #8faaff;
+  --color-logo-primary: #8faaff;
+  --color-mid-gray: #5c6265;
+  --color-status-ready: #a8c9a8;
+  --color-status-load: #aaa0e8;
+  --color-status-warn: #efad90;
+  --color-status-error: #ff938a;
+  --color-status-info: #8bbdcb;
   --font-sans:
     "Inter Variable", Inter, "Segoe UI Variable Text", "Segoe UI",
     ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -27,72 +31,99 @@
 
 :root {
   color-scheme: dark;
-  --bg-0: #090a0b;
-  --bg-1: #111214;
-  --bg-2: #151618;
-  --bg-3: #1a1b1e;
-  --bg-4: #222326;
-  --text-1: #f4f4f5;
-  --text-2: #d0d0d2;
-  --text-3: #a2a3a7;
-  --text-4: #77787d;
-  --hairline: rgba(255, 255, 255, 0.085);
-  --hairline-soft: rgba(255, 255, 255, 0.052);
-  --accent: #8ea8fd;
-  --accent-strong: #8ea8fd;
-  --accent-hover: #8ea8fd;
-  --accent-soft: rgba(142, 168, 253, 0.13);
-  --accent-soft-hover: rgba(142, 168, 253, 0.19);
-  --accent-focus: rgba(142, 168, 253, 0.28);
-  --accent-glow: rgba(142, 168, 253, 0.22);
-  --accent-ink: #101319;
-  --sky: #9db4fe;
-  --lilac: #b2c2ff;
-  --radius-xs: 5px;
-  --radius-sm: 7px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --bg-0: #090a0c;
+  --bg-1: #0e1013;
+  --bg-2: #13161a;
+  --bg-3: #181c21;
+  --bg-4: #20252b;
+  --text-1: #f3f4f2;
+  --text-2: #b4b8b8;
+  --text-3: #7d8385;
+  --text-4: #5c6265;
+  --hairline: rgba(255, 255, 255, 0.065);
+  --hairline-soft: rgba(255, 255, 255, 0.035);
+  --accent: #8faaff;
+  --accent-strong: #a8bcff;
+  --accent-hover: #a8bcff;
+  --accent-soft: rgba(143, 170, 255, 0.13);
+  --accent-soft-hover: rgba(143, 170, 255, 0.19);
+  --accent-focus: rgba(143, 170, 255, 0.28);
+  --accent-glow: rgba(143, 170, 255, 0.22);
+  --accent-ink: #091126;
+  --peach: #efad90;
+  --lilac: #aaa0e8;
+  --sage: #a8c9a8;
+  --sky: #8bbdcb;
+  --danger: #ff938a;
+  --radius-xs: 6px;
+  --radius-sm: 9px;
+  --radius-md: 13px;
+  --radius-lg: 18px;
   --hero-radius: 18px;
-  --sidebar: 240px;
+  --sidebar: 242px;
   --titlebar: 48px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-soft: cubic-bezier(0.2, 0.75, 0.25, 1);
+  --shadow-float:
+    0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
+  --glass-fill: rgba(20, 24, 29, 0.62);
+  --glass-highlight: rgba(255, 255, 255, 0.06);
 }
 
+/* The extension seam (PLAN.md §2.1): these eight names are the public
+   contract, so they are re-pointed at the surfaces above rather than
+   carrying a second, drifting palette of their own. */
 .next-root[data-theme="dark"] {
-  --color-paper: #111214;
-  --color-paper-raised: #1a1b1e;
-  --color-paper-sunken: #151618;
-  --color-ink: #f4f4f5;
-  --color-ink-soft: #a2a3a7;
-  --color-ink-faint: #77787d;
-  --color-accent: #8ea8fd;
-  --color-line: rgba(255, 255, 255, 0.085);
+  --color-paper: #0e1013;
+  --color-paper-raised: #181c21;
+  --color-paper-sunken: #13161a;
+  --color-ink: #f3f4f2;
+  --color-ink-soft: #7d8385;
+  --color-ink-faint: #5c6265;
+  --color-accent: #8faaff;
+  --color-line: rgba(255, 255, 255, 0.065);
 }
 
 .next-root[data-theme="light"] {
-  --color-paper: #fafafa;
-  --color-paper-raised: #f4f4f5;
-  --color-paper-sunken: #ececee;
-  --color-ink: #202124;
-  --color-ink-soft: #6f7178;
-  --color-ink-faint: #9899a0;
-  --color-accent: #8ea8fd;
-  --color-line: #dedee1;
+  --color-paper: #f5f6f8;
+  --color-paper-raised: #e6e9ee;
+  --color-paper-sunken: #eef0f3;
+  --color-ink: #17191d;
+  --color-ink-soft: #737a84;
+  --color-ink-faint: #9aa0a9;
+  --color-accent: #637bd1;
+  --color-line: rgba(24, 29, 37, 0.1);
 }
 
 html[data-theme="light"] {
   color-scheme: light;
-  --bg-0: #ededee;
-  --bg-1: #fafafa;
-  --bg-2: #f4f4f5;
-  --bg-3: #ececee;
-  --bg-4: #e2e2e4;
-  --text-1: #202124;
-  --text-2: #4f5056;
-  --text-3: #6f7178;
-  --text-4: #9899a0;
-  --hairline: #dedee1;
-  --hairline-soft: #e8e8ea;
+  --bg-0: #ffffff;
+  --bg-1: #f5f6f8;
+  --bg-2: #eef0f3;
+  --bg-3: #e6e9ee;
+  --bg-4: #dce0e6;
+  --text-1: #17191d;
+  --text-2: #4f555e;
+  --text-3: #737a84;
+  --text-4: #9aa0a9;
+  --hairline: rgba(24, 29, 37, 0.1);
+  --hairline-soft: rgba(24, 29, 37, 0.065);
+  --accent: #637bd1;
+  --accent-strong: #536bc2;
+  --accent-hover: #536bc2;
+  --accent-soft: rgba(99, 123, 209, 0.12);
+  --accent-soft-hover: rgba(99, 123, 209, 0.18);
+  --accent-focus: rgba(99, 123, 209, 0.28);
+  --accent-glow: rgba(99, 123, 209, 0.2);
+  --accent-ink: #ffffff;
+  --peach: #d99678;
+  --lilac: #8b7fd1;
+  --sage: #7fb493;
+  --sky: #70b3c2;
+  --glass-fill: rgba(255, 255, 255, 0.68);
+  --glass-highlight: rgba(255, 255, 255, 0.92);
+  --shadow-float:
+    0 26px 80px rgba(37, 45, 58, 0.16), 0 2px 10px rgba(37, 45, 58, 0.08);
 }
 
 html,
@@ -105,7 +136,7 @@ body,
 }
 
 body {
-  background: #070809;
+  background: #050607;
   color: var(--text-1);
   font-family:
     "Inter Variable",
@@ -130,7 +161,7 @@ body {
 }
 
 html[data-theme="light"] body {
-  background: #e6e6e8;
+  background: #e9ecf1;
 }
 
 .next-root,
@@ -208,16 +239,32 @@ html[data-theme="light"] body {
   background:
     radial-gradient(
       900px 520px at 28% -20%,
-      rgba(142, 168, 253, 0.045),
+      rgba(171, 160, 232, 0.055),
       transparent 66%
     ),
     radial-gradient(
       880px 600px at 100% 110%,
-      rgba(121, 199, 189, 0.035),
+      rgba(168, 201, 168, 0.045),
       transparent 65%
     ),
     var(--bg-1);
   transition: grid-template-columns 0.32s var(--ease-out);
+}
+
+/* The light shell carries the same two washes, re-tinted (grain_base.html). */
+html[data-theme="light"] .app {
+  background:
+    radial-gradient(
+      900px 520px at 25% -24%,
+      rgba(139, 127, 209, 0.08),
+      transparent 68%
+    ),
+    radial-gradient(
+      760px 540px at 100% 110%,
+      rgba(127, 180, 147, 0.065),
+      transparent 66%
+    ),
+    var(--bg-1);
 }
 
 .app::after {
@@ -1598,19 +1645,20 @@ h3 {
   display: none;
 }
 
+/* grain_base.html `.settings-workspace-page .settings-group`: one top
+   highlight, no surrounding ring. The extra inset ring we had drew a visible
+   box edge the reference does not have. */
 .next-settings-content .surface-well {
   overflow: visible;
   border: 0;
-  border-radius: 11px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.027);
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.018),
-    inset 0 1px rgba(255, 255, 255, 0.022);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.018);
 }
 
 .next-settings-content .setting-row {
-  min-height: 68px;
-  padding: 12px 16px;
+  min-height: 62px;
+  padding: 11px 14px;
   gap: 24px;
   position: relative;
   border-radius: 0;
@@ -1986,10 +2034,13 @@ html[data-theme="light"] .settings-nav button.active {
   box-shadow: none;
 }
 
+/* Light: the reference makes this a glass panel, not a bordered box. */
 html[data-theme="light"] .next-settings-content .surface-well {
-  border: 1px solid #dfdfe2;
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow: 0 1px 2px rgba(30, 31, 35, 0.025);
+  border: 0;
+  background: var(--glass-fill);
+  box-shadow:
+    inset 0 1px var(--glass-highlight),
+    0 1px 2px rgba(35, 42, 54, 0.025);
 }
 
 html[data-theme="light"]
