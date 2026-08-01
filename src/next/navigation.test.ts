@@ -20,8 +20,10 @@ describe("UI 2.0 hash navigation", () => {
   });
 
   it.each([
-    "general",
-    "advanced",
+    "capture",
+    "audio",
+    "output",
+    "application",
     "speech-to-text",
     "post-processing",
     "debug",
@@ -80,8 +82,21 @@ describe("UI 2.0 hash navigation", () => {
 
   it("keeps query and anchor targets out of route parsing", () => {
     expect(
-      routeFromHash("#/settings/advanced?focus=history#retention"),
-    ).toEqual({ page: "settings", section: "advanced" });
+      routeFromHash("#/settings/application?focus=history#retention"),
+    ).toEqual({ page: "settings", section: "application" });
+  });
+
+  it("still answers the pre-split settings routes", () => {
+    // A bookmark, a deep link in a doc, or a stale window all still land
+    // somewhere sensible rather than on the fallback.
+    expect(routeFromHash("#/settings/general")).toEqual({
+      page: "settings",
+      section: "capture",
+    });
+    expect(routeFromHash("#/settings/advanced")).toEqual({
+      page: "settings",
+      section: "application",
+    });
   });
 
   it.each([

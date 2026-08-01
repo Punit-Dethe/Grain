@@ -1058,13 +1058,21 @@
       "localState": "Stored locally",
       "loading": "Loading settings",
       "sections": {
-        "general": {
-          "label": "General",
-          "description": "Capture shortcuts, active-model behavior, microphones, and audio feedback."
+        "capture": {
+          "label": "Capture",
+          "description": "How a recording starts, is held, and ends — including what the AI key does."
         },
-        "advanced": {
-          "label": "Advanced",
-          "description": "Application behavior, text output, dictionary tools, history, and experimental controls."
+        "audio": {
+          "label": "Audio",
+          "description": "The microphone Grain listens to, and the sounds it plays back to you."
+        },
+        "output": {
+          "label": "Output",
+          "description": "How a finished transcript reaches the app in front of you."
+        },
+        "application": {
+          "label": "Application",
+          "description": "Appearance, startup, the tray, what Grain keeps on disk, and experiments."
         },
         "speech-to-text": {
           "label": "Speech to Text",
@@ -1082,6 +1090,30 @@
           "label": "About",
           "description": "Application language, version, on-disk locations and the projects Grain is built on."
         }
+      },
+      "groups": {
+        "recording": "Holding a recording",
+        "recordingInfo": "Whether a capture is held down or toggled, how it is cancelled, and the key that summons Agent over your selection.",
+        "input": "Microphone",
+        "inputInfo": "The device Grain records from, and the conditioning applied to it before transcription.",
+        "feedback": "Sound feedback",
+        "feedbackInfo": "The chimes Grain plays when a capture starts and finishes, and where they are played.",
+        "insertion": "Text insertion",
+        "insertionInfo": "How the finished transcript reaches the app you are in — pasted, typed, or placed on the clipboard.",
+        "corrections": "Spoken corrections",
+        "correctionsInfo": "Phrases you can say mid-dictation to change what Grain has already heard.",
+        "appearance": "Appearance",
+        "appearanceInfo": "The colour scheme, the panel Grain opens on, and whether the recording overlay is shown.",
+        "system": "Startup and tray",
+        "systemInfo": "Whether Grain launches with your computer, how it starts, and whether it appears in the system tray.",
+        "storage": "History and storage",
+        "storageInfo": "How much transcription history Grain keeps, and how long recordings are held on disk.",
+        "experimental": "Experiments",
+        "experimentalInfo": "Unfinished features and low-level overrides. They can change or be removed without notice."
+      },
+      "scrapThat": {
+        "title": "\"Scrap that\" voice reset",
+        "description": "Say \"scrap that\" mid-dictation to discard everything before it and start the transcript fresh from that point. Works in every mode; in live streaming the expanded pill collapses back to the compact capsule until you speak again. Off costs nothing."
       }
     },
     "appearance": {

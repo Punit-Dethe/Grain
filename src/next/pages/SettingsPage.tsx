@@ -1,11 +1,13 @@
 import { useEffect, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
 import { AboutSettings } from "@/components/settings/about/AboutSettings";
-import { AdvancedSettings } from "@/components/settings/advanced/AdvancedSettings";
 import { DebugSettings } from "@/components/settings/debug/DebugSettings";
-import { GeneralSettings } from "@/components/settings/general/GeneralSettings";
 import { PostProcessingSettings } from "@/components/settings/post-processing/PostProcessingSettings";
 import { SpeechToTextSettings } from "@/components/settings/speech-to-text/SpeechToTextSettings";
+import { ApplicationPane } from "../settings/panes/ApplicationPane";
+import { AudioPane } from "../settings/panes/AudioPane";
+import { CapturePane } from "../settings/panes/CapturePane";
+import { OutputPane } from "../settings/panes/OutputPane";
 import { useSettings } from "@/hooks/useSettings";
 import { initPpPool } from "@/stores/ppPoolStore";
 import { initSttPool } from "@/stores/sttPoolStore";
@@ -16,8 +18,10 @@ import {
 } from "../settings/sections";
 
 const sectionComponents: Record<SettingsSectionId, ComponentType> = {
-  general: GeneralSettings,
-  advanced: AdvancedSettings,
+  capture: CapturePane,
+  audio: AudioPane,
+  output: OutputPane,
+  application: ApplicationPane,
   "speech-to-text": SpeechToTextSettings,
   "post-processing": PostProcessingSettings,
   debug: DebugSettings,
@@ -32,7 +36,7 @@ export function SettingsPage({ section }: SettingsPageProps) {
   const { t } = useTranslation();
   const { settings, isLoading } = useSettings();
   const enabled = isSettingsSectionEnabled(section, settings);
-  const activeSection = isLoading ? section : enabled ? section : "general";
+  const activeSection = isLoading ? section : enabled ? section : "capture";
   const ActiveSection = sectionComponents[activeSection];
 
   useEffect(() => {
@@ -40,7 +44,7 @@ export function SettingsPage({ section }: SettingsPageProps) {
       window.history.replaceState(
         null,
         "",
-        hashForRoute({ page: "settings", section: "general" }),
+        hashForRoute({ page: "settings", section: "capture" }),
       );
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     }
@@ -135,11 +139,7 @@ export function SettingsPage({ section }: SettingsPageProps) {
                     key={activeSection}
                     className="settings-pane next-settings-content"
                   >
-                    {activeSection === "general" ? (
-                      <GeneralSettings variant="next" />
-                    ) : activeSection === "advanced" ? (
-                      <AdvancedSettings variant="next" />
-                    ) : activeSection === "about" ? (
+                    {activeSection === "about" ? (
                       <AboutSettings variant="next" />
                     ) : (
                       <ActiveSection />

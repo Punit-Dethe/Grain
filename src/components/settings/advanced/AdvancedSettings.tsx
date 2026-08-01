@@ -21,12 +21,9 @@ import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationS
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
 import { AppearanceToggle } from "../AppearanceToggle";
-import { AppearanceMode } from "../AppearanceMode";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
-export const AdvancedSettings: React.FC<{
-  variant?: "default" | "next";
-}> = ({ variant = "default" }) => {
+export const AdvancedSettings: React.FC = () => {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const experimentalEnabled = getSetting("experimental_enabled") || false;
@@ -36,9 +33,6 @@ export const AdvancedSettings: React.FC<{
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.advanced.groups.app")}>
-        {/* [GRAIN] UI 2.0 owns its own appearance row: three modes, including
-            `system`, which the legacy two-state toggle below cannot express. */}
-        {variant === "next" && <AppearanceMode />}
         <DefaultPanel grouped={true} />
         <ShowOverlay descriptionMode="tooltip" grouped={true} />
         <StartHidden descriptionMode="tooltip" grouped={true} />
@@ -55,20 +49,16 @@ export const AdvancedSettings: React.FC<{
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.advanced.groups.transcription")}>
-        {variant === "default" && (
-          <>
-            <CustomWords descriptionMode="tooltip" grouped />
-            <ToggleSwitch
-              label="Auto-add to dictionary"
-              description="After pasting, briefly watch for you re-spelling a word (e.g. a name Grain got wrong). If you make the same correction across a couple of pastes, the pill offers to add that spelling — click it to accept. Only proper nouns and identifiers are learned; off = zero overhead."
-              descriptionMode="tooltip"
-              grouped
-              checked={autoDictionary}
-              isUpdating={isUpdating("auto_dictionary_enabled")}
-              onChange={(v) => updateSetting("auto_dictionary_enabled", v)}
-            />
-          </>
-        )}
+        <CustomWords descriptionMode="tooltip" grouped />
+        <ToggleSwitch
+          label="Auto-add to dictionary"
+          description="After pasting, briefly watch for you re-spelling a word (e.g. a name Grain got wrong). If you make the same correction across a couple of pastes, the pill offers to add that spelling — click it to accept. Only proper nouns and identifiers are learned; off = zero overhead."
+          descriptionMode="tooltip"
+          grouped
+          checked={autoDictionary}
+          isUpdating={isUpdating("auto_dictionary_enabled")}
+          onChange={(v) => updateSetting("auto_dictionary_enabled", v)}
+        />
         <ToggleSwitch
           label='"Scrap that" voice reset'
           description='Say "scrap that" mid-dictation to discard everything before it and start the transcript fresh from that point. Works in every mode; in live-streaming the expanded pill collapses back to the compact capsule until you speak again. Off = zero overhead.'
@@ -98,7 +88,7 @@ export const AdvancedSettings: React.FC<{
           />
           <AccelerationSelector descriptionMode="tooltip" grouped={true} />
           <LazyStreamClose descriptionMode="tooltip" grouped={true} />
-          {variant === "default" && <AppearanceToggle />}
+          <AppearanceToggle />
         </SettingsGroup>
       )}
     </div>

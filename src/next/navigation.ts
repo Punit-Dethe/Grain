@@ -1,6 +1,12 @@
 export const SETTINGS_SECTION_IDS = [
-  "general",
-  "advanced",
+  // Four subjects where there were two drawers. "General" and "Advanced" named
+  // no subject at all, so neither told you which to open: capture keys sat with
+  // microphones and AI switches, while appearance sat with paste behaviour and
+  // history retention under a heading that implied difficulty.
+  "capture",
+  "audio",
+  "output",
+  "application",
   "speech-to-text",
   "post-processing",
   "debug",
@@ -53,6 +59,13 @@ export function routeFromHash(hash: string): AppRoute {
   if (path === "/notes") return { page: "notes" };
   // Legacy destination from the brief period About was its own tab.
   if (path === "/about") return { page: "settings", section: "about" };
+  // Legacy destinations from before settings were split by subject.
+  if (path === "/settings/general") {
+    return { page: "settings", section: "capture" };
+  }
+  if (path === "/settings/advanced") {
+    return { page: "settings", section: "application" };
+  }
   if (path === "/tools") return { page: "tools", section: "dictionary" };
   if (path === "/extensions") {
     return { page: "extensions", view: "installed" };

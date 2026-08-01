@@ -22,6 +22,7 @@ import { SettingContainer } from "../../ui/SettingContainer";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 import { Dropdown } from "../../ui/Dropdown";
 import { ShortcutInput } from "../ShortcutInput";
+import { PostProcessingToggle } from "../PostProcessingToggle";
 
 /** Mirrors `CAPTURE_MODE_IDS` in grain-core. Order = least to most machinery. */
 const CAPTURE_MODE_IDS = [
@@ -136,9 +137,14 @@ export const CaptureModes: React.FC = () => {
       </SettingsGroup>
 
       {/* AI is deliberately its own group: it is a property of what happens
-       *after* speech, not a fourth way to start speaking. */}
-      {postProcessEnabled && (
-        <SettingsGroup title={t("ui2.capture.ai.group")}>
+          *after* speech, not a fourth way to start speaking. Its master switch
+          leads the group rather than owning a section elsewhere, so the rows it
+          governs sit directly under the thing that turns them on — and turning
+          it off leaves one row rather than an empty heading. */}
+      <SettingsGroup title={t("ui2.capture.ai.group")}>
+        <PostProcessingToggle descriptionMode="tooltip" grouped />
+
+        {postProcessEnabled && (
           <ToggleSwitch
             label={t("ui2.capture.ai.always.title")}
             description={t("ui2.capture.ai.always.description")}
@@ -148,53 +154,57 @@ export const CaptureModes: React.FC = () => {
             isUpdating={isUpdating("capture_always_ai")}
             onChange={(value) => updateSetting("capture_always_ai", value)}
           />
+        )}
 
-          {/* With every capture already going to AI there is nothing for the AI
-              key to add mid-capture, so we do not offer a switch that changes
-              nothing. */}
-          {!alwaysAi && (
-            <>
-              <ShortcutInput shortcutId="transcribe_send_to_ai" grouped />
-              {/* Push-to-talk ends a capture by releasing the key, so there is
-                  no moment at which a second key could end it with AI. */}
-              {!pushToTalk && (
-                <ToggleSwitch
-                  label={t("ui2.capture.ai.end.title")}
-                  description={t("ui2.capture.ai.end.description")}
-                  descriptionMode="tooltip"
-                  grouped
-                  checked={endWithAi}
-                  isUpdating={isUpdating("capture_end_with_ai")}
-                  onChange={(value) =>
-                    updateSetting("capture_end_with_ai", value)
-                  }
-                />
-              )}
-              {/* Only meaningful with all three modes live: under "one" the AI
-                  key necessarily starts the one mode that has a shortcut. */}
-              {!isSingle && (
-                <SettingContainer
-                  title={t("ui2.capture.ai.startMode.title")}
-                  description={t("ui2.capture.ai.startMode.description")}
-                  descriptionMode="tooltip"
-                  grouped
-                >
-                  <Dropdown
-                    options={modes.map((mode) => ({
-                      value: mode.id,
-                      label: mode.name,
-                    }))}
-                    selectedValue={aiStartMode}
-                    onSelect={(value) =>
-                      updateSetting("capture_ai_start_mode", value)
-                    }
-                  />
-                </SettingContainer>
-              )}
-            </>
-          )}
-        </SettingsGroup>
-      )}
+        {/* With every capture already going to AI there is nothing for the AI
+            key to add mid-capture, so we do not offer a switch that changes
+            nothing. */}
+        {postProcessEnabled && !alwaysAi && (
+          <ShortcutInput shortcutId="transcribe_send_to_ai" grouped />
+        )}
+
+        {/* Push-to-talk ends a capture by releasing the key, so there is no
+            moment at which a second key could end it with AI. */}
+        {postProcessEnabled && !alwaysAi && !pushToTalk && (
+          <ToggleSwitch
+            label={t("ui2.capture.ai.end.title")}
+            description={t("ui2.capture.ai.end.description")}
+            descriptionMode="tooltip"
+            grouped
+            checked={endWithAi}
+            isUpdating={isUpdating("capture_end_with_ai")}
+            onChange={(value) => updateSetting("capture_end_with_ai", value)}
+          />
+        )}
+
+        {/* Only meaningful with all three modes live: under "one" the AI key
+            necessarily starts the one mode that has a shortcut. */}
+        {postProcessEnabled && !alwaysAi && !isSingle && (
+          <SettingContainer
+            title={t("ui2.capture.ai.startMode.title")}
+            description={t("ui2.capture.ai.startMode.description")}
+            descriptionMode="tooltip"
+            grouped
+          >
+            <Dropdown
+              options={modes.map((mode) => ({
+                value: mode.id,
+                label: mode.name,
+              }))}
+              selectedValue={aiStartMode}
+              onSelect={(value) => updateSetting("capture_ai_start_mode", value)}
+            />
+          </SettingContainer>
+        )}
+
+        {/* Prompt cycling only exists once there are prompts to cycle. */}
+        {postProcessEnabled && (
+          <>
+            <ShortcutInput shortcutId="prompt_prev" grouped />
+            <ShortcutInput shortcutId="prompt_next" grouped />
+          </>
+        )}
+      </SettingsGroup>
     </>
   );
 };

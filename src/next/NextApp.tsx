@@ -358,7 +358,7 @@ const NAV_GROUPS = [
         page: "settings",
         label: "Settings",
         icon: "sliders",
-        href: "#/settings/general",
+        href: "#/settings/capture",
       },
       {
         page: "extensions",

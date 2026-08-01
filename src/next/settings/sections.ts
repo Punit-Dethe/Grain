@@ -2,9 +2,11 @@ import {
   AudioLines,
   Bug,
   Info,
-  SlidersHorizontal,
+  Keyboard,
+  Mic,
+  MonitorCog,
   Sparkles,
-  Wrench,
+  TextCursorInput,
   type LucideIcon,
 } from "lucide-react";
 import type { AppSettings } from "@/bindings";
@@ -17,8 +19,10 @@ export interface SettingsSection {
 }
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
-  { id: "general", icon: SlidersHorizontal, enabled: () => true },
-  { id: "advanced", icon: Wrench, enabled: () => true },
+  { id: "capture", icon: Keyboard, enabled: () => true },
+  { id: "audio", icon: Mic, enabled: () => true },
+  { id: "output", icon: TextCursorInput, enabled: () => true },
+  { id: "application", icon: MonitorCog, enabled: () => true },
   { id: "speech-to-text", icon: AudioLines, enabled: () => true },
   {
     id: "post-processing",
