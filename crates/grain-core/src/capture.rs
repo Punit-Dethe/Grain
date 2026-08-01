@@ -62,6 +62,20 @@ pub fn ai_start_mode(settings: &AppSettings) -> &str {
     }
 }
 
+/// The capture action a trigger key actually runs.
+///
+/// Every key is its own action except the AI key, which has no capture engine
+/// of its own — it borrows whichever mode the user nominated. The session is
+/// still *staged* under the trigger key, so push-to-talk release matching and
+/// the tap-to-stop path keep working against the key the user is holding.
+pub fn action_id_for<'a>(settings: &'a AppSettings, binding_id: &'a str) -> &'a str {
+    if binding_id == "transcribe_send_to_ai" {
+        ai_start_mode(settings)
+    } else {
+        binding_id
+    }
+}
+
 /// Should the finished transcript go to AI, for a capture started by `id`?
 ///
 /// `capture_always_ai` makes every capture an AI capture, which collapses the
@@ -143,6 +157,15 @@ mod tests {
         let mut s = settings_with(CaptureModeSet::All, "transcribe");
         s.capture_ai_start_mode = "transcribe_realtime".to_string();
         assert_eq!(ai_start_mode(&s), "transcribe_realtime");
+    }
+
+    #[test]
+    fn the_ai_key_borrows_a_capture_engine_but_others_run_their_own() {
+        let mut s = settings_with(CaptureModeSet::All, "transcribe");
+        s.capture_ai_start_mode = "transcribe_realtime".to_string();
+        assert_eq!(action_id_for(&s, "transcribe_send_to_ai"), "transcribe_realtime");
+        assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
+        assert_eq!(action_id_for(&s, "summon_agent"), "summon_agent");
     }
 
     #[test]

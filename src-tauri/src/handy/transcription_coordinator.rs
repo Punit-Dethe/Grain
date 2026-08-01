@@ -1,5 +1,6 @@
 use crate::actions::ACTION_MAP;
 use crate::managers::audio::AudioRecordingManager;
+use crate::settings::get_settings; // [GRAIN] capture-mode policy lookups
 use log::{debug, error, warn};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
@@ -185,11 +186,7 @@ impl TranscriptionCoordinator {
                             } else if is_pressed {
                                 match &stage {
                                     Stage::Idle => {
-                                        // [GRAIN] The AI key starts a capture
-                                        // too, in whichever mode is nominated
-                                        // for it — it used to do nothing here,
-                                        // which is why AI always cost a second
-                                        // keypress.
+                                        // [GRAIN] the AI key starts one too
                                         start(&app, &mut stage, &binding_id, &hotkey_string);
                                     }
                                     Stage::Recording(id) => {
@@ -197,19 +194,11 @@ impl TranscriptionCoordinator {
                                         if &binding_id == id {
                                             stop(&app, &mut stage, &start_id, &hotkey_string);
                                         } else if binding_id == "transcribe_send_to_ai"
-                                            // [GRAIN] "End with AI" is a toggle
-                                            // now, not a shortcut of its own.
-                                            && grain_core::capture::ends_with_ai(
-                                                &crate::settings::get_settings(&app),
-                                            )
+                                            // [GRAIN] "Finish with AI" toggle
+                                            && grain_core::capture::ends_with_ai(&get_settings(&app))
                                         {
-                                            stop_with_intent(
-                                                &app,
-                                                &mut stage,
-                                                &start_id,
-                                                &hotkey_string,
-                                                true,
-                                            );
+                                            let h = &hotkey_string;
+                                            stop_with_intent(&app, &mut stage, &start_id, h, true);
                                         } else {
                                             debug!(
                                                 "Ignoring press for '{binding_id}': pipeline busy"
@@ -290,27 +279,9 @@ impl TranscriptionCoordinator {
     }
 }
 
-/// [GRAIN] The capture action a trigger key actually runs.
-///
-/// Every key is its own action except the AI key, which has no capture engine
-/// of its own — it borrows whichever mode the user nominated. The session is
-/// still *staged* under the trigger key, so push-to-talk release matching and
-/// the tap-to-stop path keep working against the key the user is holding.
-fn action_id_for(app: &AppHandle, binding_id: &str) -> String {
-    if binding_id == "transcribe_send_to_ai" {
-        grain_core::capture::ai_start_mode(&crate::settings::get_settings(app)).to_string()
-    } else {
-        binding_id.to_string()
-    }
-}
-
-/// [GRAIN] Does a capture triggered by `binding_id` end up at AI?
-fn routes_to_ai(app: &AppHandle, binding_id: &str) -> bool {
-    grain_core::capture::should_route_to_ai(&crate::settings::get_settings(app), binding_id)
-}
-
 fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
-    let action_id = action_id_for(app, binding_id);
+    // [GRAIN] see grain_core::capture::action_id_for
+    let action_id = grain_core::capture::action_id_for(&get_settings(app), binding_id).to_string();
     let Some(action) = ACTION_MAP.get(action_id.as_str()) else {
         warn!("No action in ACTION_MAP for '{action_id}'");
         return;
@@ -327,10 +298,9 @@ fn start(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &s
 }
 
 fn stop(app: &AppHandle, stage: &mut Stage, binding_id: &str, hotkey_string: &str) {
-    // [GRAIN] An ordinary end still has an AI question to answer: the key that
-    // started this may have been the AI key, or "always send to AI" may be on.
-    let send_to_ai = routes_to_ai(app, binding_id);
-    stop_with_intent(app, stage, binding_id, hotkey_string, send_to_ai);
+    // [GRAIN] see grain_core::capture::should_route_to_ai
+    let ai = grain_core::capture::should_route_to_ai(&get_settings(app), binding_id);
+    stop_with_intent(app, stage, binding_id, hotkey_string, ai);
 }
 
 fn stop_with_intent(
@@ -340,7 +310,8 @@ fn stop_with_intent(
     hotkey_string: &str,
     send_to_ai: bool,
 ) {
-    let action_id = action_id_for(app, start_id);
+    // [GRAIN] see grain_core::capture::action_id_for
+    let action_id = grain_core::capture::action_id_for(&get_settings(app), start_id).to_string();
     let Some(action) = ACTION_MAP.get(action_id.as_str()) else {
         warn!("No action in ACTION_MAP for '{action_id}'");
         return;
