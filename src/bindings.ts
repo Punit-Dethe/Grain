@@ -2555,7 +2555,15 @@ capabilities: string[];
  * The pack declares settings or shortcuts, so it has a section of its own
  * worth opening. Free to compute — Overview already reads every manifest.
  */
-has_detail: boolean }
+has_detail: boolean; 
+/**
+ * [GRAIN] Host surfaces this extension takes over, e.g.
+ * `agent.reply-surface`. An "in-place" extension has no settings page of
+ * its own — it changes a control that already exists somewhere in the app
+ * — so this is what lets the UI open the place it actually affects
+ * instead of dead-ending on a preview.
+ */
+slots: string[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host

@@ -20,6 +20,7 @@ import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
+import { StoreCard } from "../extensions/StoreCard";
 import {
   matchToolRecommendations,
   unwrapResult,
@@ -167,54 +168,21 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
           className="recommendation-grid"
           data-recommendation-count={recommendations.length}
         >
-          {recommendations.map((entry) => {
-            const currentVersion = installed.get(entry.id);
-            const current = currentVersion === entry.version;
-            const busy = catalogue.installing === entry.id;
-            return (
-              <article
-                className="recommendation-card"
-                key={`${entry.id}@${entry.version}`}
-              >
-                <div className="recommendation-top">
-                  <span className="recommendation-mark" aria-hidden="true">
-                    {entry.name
-                      .split(/\s+/)
-                      .slice(0, 2)
-                      .map((word) => word[0])
-                      .join("")
-                      .toUpperCase()}
-                  </span>
-                  <strong>{entry.name}</strong>
-                </div>
-                <p>{entry.description}</p>
-                <div className="recommendation-footer">
-                  <span>
-                    {entry.trust === "verified" ? "Verified" : entry.author}
-                  </span>
-                  <button
-                    className="button"
-                    type="button"
-                    disabled={
-                      current ||
-                      busy ||
-                      entry.revocation === "revoked" ||
-                      !catalogue.view?.can_install
-                    }
-                    onClick={() => void catalogue.install(entry)}
-                  >
-                    {busy
-                      ? "Installing…"
-                      : current
-                        ? "Installed"
-                        : currentVersion
-                          ? "Update"
-                          : "Install"}
-                  </button>
-                </div>
-              </article>
-            );
-          })}
+          {recommendations.map((entry) => (
+            <StoreCard
+              key={`${entry.id}@${entry.version}`}
+              entry={entry}
+              installedVersion={installed.get(entry.id)}
+              busy={catalogue.installing === entry.id}
+              canInstall={Boolean(catalogue.view?.can_install)}
+              onInstall={(target) => void catalogue.install(target)}
+              onPreview={() => {
+                // Studio has no drawer of its own; the store page is where an
+                // extension is read about in full.
+                window.location.hash = "/extensions/store";
+              }}
+            />
+          ))}
         </div>
       )}
     </section>

@@ -29,6 +29,7 @@ import {
   type StoreMedia,
   type StoreView,
 } from "@/bindings";
+import { MediaArtwork, StoreCard } from "../extensions/StoreCard";
 import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
 import { DeveloperSection } from "@/components/settings/experimentations/DeveloperSection";
@@ -91,39 +92,6 @@ function adaptSettingRow(row: ExtensionSettingRow): SettingRow {
       : "unsupported",
     fields: row.fields.map(adaptSettingField),
   };
-}
-
-function MediaArtwork({
-  media,
-  name,
-  className,
-}: {
-  media?: StoreMedia;
-  name: string;
-  className: string;
-}) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let alive = true;
-    setUrl(null);
-    if (media) {
-      void commands
-        .storeMedia(media.sha256, media.kind)
-        .then(unwrapResult)
-        .then((value) => alive && setUrl(value))
-        .catch(() => alive && setUrl(null));
-    }
-    return () => {
-      alive = false;
-      setUrl(null);
-    };
-  }, [media?.kind, media?.sha256]);
-
-  return (
-    <div className={className}>
-      {url && <img src={url} alt={`${name} preview`} />}
-    </div>
-  );
 }
 
 interface InstalledController {
@@ -461,175 +429,193 @@ function ExtensionDrawer({
     ? extensionDestination(card, controller.sections)
     : null;
 
-  const loadReadme = useCallback(
-    async (open: boolean) => {
-      if (!open || readme != null || !entry?.readme || readmeLoading) return;
-      setReadmeLoading(true);
-      try {
-        setReadme(unwrapResult(await commands.storeReadme(entry.readme)));
-      } catch {
-        setReadme("");
-      } finally {
-        setReadmeLoading(false);
-      }
-    },
-    [entry?.readme, readme, readmeLoading],
-  );
+  // Fetch as soon as there is a README to fetch. It is still lazy in the sense
+  // that matters — nothing is fetched until a drawer actually opens, and the
+  // text is dropped again when it closes.
+  const readmeHash = entry?.readme;
+  useEffect(() => {
+    if (!readmeHash) return;
+    let live = true;
+    setReadmeLoading(true);
+    commands
+      .storeReadme(readmeHash)
+      .then((result) => {
+        if (live) setReadme(unwrapResult(result));
+      })
+      .catch(() => {
+        if (live) setReadme("");
+      })
+      .finally(() => {
+        if (live) setReadmeLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [readmeHash]);
 
   return (
-    <aside
-      className="extension-panel extension-preview-panel open"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="extension-drawer-title"
-    >
-      <div className="extension-panel-head">
-        <div>
-          <div className="eyebrow">Extension preview</div>
-          <h2 id="extension-drawer-title">{name}</h2>
+    <>
+      {/* Clicking away is how everyone closes a drawer. Escape and the X were
+          the only exits, which left the panel feeling stuck. */}
+      <div
+        className="extension-drawer-scrim"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <aside
+        className="extension-panel extension-preview-panel open"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="extension-drawer-title"
+      >
+        <div className="extension-panel-head">
+          <div>
+            <div className="eyebrow">Extension preview</div>
+            <h2 id="extension-drawer-title">{name}</h2>
+          </div>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label="Close preview"
+            onClick={onClose}
+          >
+            <X size={17} />
+          </button>
         </div>
-        <button
-          className="icon-button"
-          type="button"
-          aria-label="Close preview"
-          onClick={onClose}
-        >
-          <X size={17} />
-        </button>
-      </div>
 
-      <div className="extension-drawer-scroll">
-        <div className="drawer-media-wrap">
-          <MediaArtwork
-            media={media[mediaIndex]}
-            name={name}
-            className="extension-panel-hero refined-panel-hero preview-media"
-          />
-          {media.length > 1 && (
+        <div className="extension-drawer-scroll">
+          <div className="drawer-media-wrap">
+            <MediaArtwork
+              media={media[mediaIndex]}
+              name={name}
+              className="extension-panel-hero refined-panel-hero preview-media"
+            />
+            {media.length > 1 && (
+              <>
+                <button
+                  className="media-arrow media-arrow-left"
+                  type="button"
+                  aria-label="Previous preview"
+                  onClick={() =>
+                    setMediaIndex((index) =>
+                      nextMediaIndex(index, media.length, -1),
+                    )
+                  }
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <button
+                  className="media-arrow media-arrow-right"
+                  type="button"
+                  aria-label="Next preview"
+                  onClick={() =>
+                    setMediaIndex((index) =>
+                      nextMediaIndex(index, media.length, 1),
+                    )
+                  }
+                >
+                  <ChevronRight size={18} />
+                </button>
+                <span className="media-count">
+                  {mediaIndex + 1} / {media.length}
+                </span>
+              </>
+            )}
+          </div>
+
+          <div className="extension-panel-meta">
+            <span>
+              {entry?.author ||
+                (card?.trust === "dev" ? "Local developer" : "Local pack")}
+            </span>
+            <span>Version {card?.version ?? entry?.version}</span>
+            <span>{entry?.trust ?? card?.trust}</span>
+          </div>
+          <p>{description}</p>
+
+          {/* The README is the page. It used to sit behind a <details> that only
+            started fetching on toggle, so reading it took a collapse and a
+            re-open before anything loaded. It now loads with the drawer. */}
+          {(entry?.readme || readme || readmeLoading) && (
             <>
-              <button
-                className="media-arrow media-arrow-left"
-                type="button"
-                aria-label="Previous preview"
-                onClick={() =>
-                  setMediaIndex((index) =>
-                    nextMediaIndex(index, media.length, -1),
-                  )
-                }
-              >
-                <ChevronLeft size={18} />
-              </button>
-              <button
-                className="media-arrow media-arrow-right"
-                type="button"
-                aria-label="Next preview"
-                onClick={() =>
-                  setMediaIndex((index) =>
-                    nextMediaIndex(index, media.length, 1),
-                  )
-                }
-              >
-                <ChevronRight size={18} />
-              </button>
-              <span className="media-count">
-                {mediaIndex + 1} / {media.length}
-              </span>
+              <div className="panel-section-label">README</div>
+              <div className="extension-readme">
+                {readmeLoading ? (
+                  <div className="drawer-muted">Loading README…</div>
+                ) : readme ? (
+                  <Markdown markdown={readme} softBreaks />
+                ) : (
+                  <div className="drawer-muted">
+                    The README could not be loaded.
+                  </div>
+                )}
+              </div>
             </>
           )}
-        </div>
 
-        <div className="extension-panel-meta">
-          <span>
-            {entry?.author ||
-              (card?.trust === "dev" ? "Local developer" : "Local pack")}
-          </span>
-          <span>Version {card?.version ?? entry?.version}</span>
-          <span>{entry?.trust ?? card?.trust}</span>
-        </div>
-        <p>{description}</p>
-
-        <details
-          className="extension-readme"
-          onToggle={(event) => void loadReadme(event.currentTarget.open)}
-        >
-          <summary>README</summary>
-          <div>
-            {readmeLoading ? (
-              <div className="drawer-muted">Loading README…</div>
-            ) : readme ? (
-              <Markdown markdown={readme} softBreaks />
-            ) : entry?.readme ? (
-              <div className="drawer-muted">Open to load the README.</div>
+          <div className="panel-section-label">Permissions</div>
+          <div className="permission-list">
+            {capabilities.length ? (
+              capabilities.map((capability) => (
+                <div className="permission-row" key={capability}>
+                  <ShieldCheck size={15} />
+                  <span>{capabilityLabel(capability)}</span>
+                  <strong>Required</strong>
+                </div>
+              ))
             ) : (
               <div className="drawer-muted">
-                No README is included with this pack.
+                This pack declares no runtime permissions.
               </div>
             )}
           </div>
-        </details>
+        </div>
 
-        <div className="panel-section-label">Permissions</div>
-        <div className="permission-list">
-          {capabilities.length ? (
-            capabilities.map((capability) => (
-              <div className="permission-row" key={capability}>
-                <ShieldCheck size={15} />
-                <span>{capabilityLabel(capability)}</span>
-                <strong>Required</strong>
-              </div>
-            ))
-          ) : (
-            <div className="drawer-muted">
-              This pack declares no runtime permissions.
-            </div>
+        <div className="extension-drawer-actions">
+          {entry && selection.source === "store" && (
+            <button
+              className="button primary"
+              type="button"
+              disabled={
+                current ||
+                installing === entry.id ||
+                entry.revocation === "revoked" ||
+                !canInstall
+              }
+              onClick={() => void onInstall(entry)}
+            >
+              {installing === entry.id
+                ? "Installing…"
+                : current
+                  ? "Installed"
+                  : installedVersion
+                    ? "Update"
+                    : "Install"}
+            </button>
+          )}
+          {card && destination && destination.kind !== "preview" && (
+            <button
+              className="button primary"
+              type="button"
+              onClick={() => routeToDestination(destination)}
+            >
+              Open settings
+            </button>
+          )}
+          {card?.trust !== "dev" && card && (
+            <button
+              className="button danger"
+              type="button"
+              disabled={controller.busy === card.id}
+              onClick={() => void controller.uninstall(card)}
+            >
+              <Trash2 size={14} />
+              Uninstall
+            </button>
           )}
         </div>
-      </div>
-
-      <div className="extension-drawer-actions">
-        {entry && selection.source === "store" && (
-          <button
-            className="button primary"
-            type="button"
-            disabled={
-              current ||
-              installing === entry.id ||
-              entry.revocation === "revoked" ||
-              !canInstall
-            }
-            onClick={() => void onInstall(entry)}
-          >
-            {installing === entry.id
-              ? "Installing…"
-              : current
-                ? "Installed"
-                : installedVersion
-                  ? "Update"
-                  : "Install"}
-          </button>
-        )}
-        {card && destination && destination.kind !== "preview" && (
-          <button
-            className="button primary"
-            type="button"
-            onClick={() => routeToDestination(destination)}
-          >
-            Open settings
-          </button>
-        )}
-        {card?.trust !== "dev" && card && (
-          <button
-            className="button danger"
-            type="button"
-            disabled={controller.busy === card.id}
-            onClick={() => void controller.uninstall(card)}
-          >
-            <Trash2 size={14} />
-            Uninstall
-          </button>
-        )}
-      </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -751,7 +737,6 @@ function InstalledList({
             <div className="installed-extension-copy">
               <div className="installed-extension-heading">
                 <strong>{card.name}</strong>
-                {card.trust === "verified" && <span>Verified</span>}
                 {card.trust === "dev" && <span>Dev</span>}
               </div>
               <p>{card.description}</p>
@@ -911,70 +896,19 @@ function StoreGrid({
         </div>
       ) : (
         <div className="polished-store-grid">
-          {entries.map((entry) => {
-            const installedVersion = installed.get(entry.id);
-            const current = installedVersion === entry.version;
-            const busy = installing === entry.id;
-            return (
-              <article
-                className="extension-card polished-store-card"
-                key={`${entry.id}@${entry.version}`}
-                tabIndex={0}
-                role="button"
-                aria-label={`Preview ${entry.name}`}
-                onClick={() => onPreview({ source: "store", entry })}
-                onKeyDown={(event) => {
-                  if (event.target !== event.currentTarget) return;
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    onPreview({ source: "store", entry });
-                  }
-                }}
-              >
-                <MediaArtwork
-                  media={entry.media[0]}
-                  name={entry.name}
-                  className="store-artwork"
-                />
-                <div className="store-extension-body">
-                  {/* Name and action share the top line; the description runs
-                      the full width beneath. Nothing else — a version string
-                      is not what anyone is deciding on here. */}
-                  <div className="store-extension-head">
-                    <strong>
-                      <span className="store-extension-name">{entry.name}</span>
-                      {entry.trust === "verified" && (
-                        <span className="verified-word">Verified</span>
-                      )}
-                    </strong>
-                    <button
-                      className="button store-install"
-                      type="button"
-                      disabled={
-                        current ||
-                        busy ||
-                        entry.revocation === "revoked" ||
-                        !view?.can_install
-                      }
-                      onClick={(event: MouseEvent) => {
-                        event.stopPropagation();
-                        void install(entry);
-                      }}
-                    >
-                      {busy
-                        ? "Installing…"
-                        : current
-                          ? "Installed"
-                          : installedVersion
-                            ? "Update"
-                            : "Install"}
-                    </button>
-                  </div>
-                  <p className="store-extension-blurb">{entry.description}</p>
-                </div>
-              </article>
-            );
-          })}
+          {entries.map((entry) => (
+            <StoreCard
+              key={`${entry.id}@${entry.version}`}
+              entry={entry}
+              installedVersion={installed.get(entry.id)}
+              busy={installing === entry.id}
+              canInstall={Boolean(view?.can_install)}
+              onInstall={(target) => void install(target)}
+              onPreview={(target) =>
+                onPreview({ source: "store", entry: target })
+              }
+            />
+          ))}
         </div>
       )}
     </>

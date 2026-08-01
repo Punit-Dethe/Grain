@@ -474,6 +474,12 @@ pub struct ExtensionCard {
     /// The pack declares settings or shortcuts, so it has a section of its own
     /// worth opening. Free to compute — Overview already reads every manifest.
     pub has_detail: bool,
+    /// [GRAIN] Host surfaces this extension takes over, e.g.
+    /// `agent.reply-surface`. An "in-place" extension has no settings page of
+    /// its own — it changes a control that already exists somewhere in the app
+    /// — so this is what lets the UI open the place it actually affects
+    /// instead of dead-ending on a preview.
+    pub slots: Vec<String>,
 }
 
 /// The Overview tab's data: every extension, enabled and disabled alike.
@@ -559,6 +565,12 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             repository,
             capabilities,
             has_detail,
+            slots: rec
+                .slots
+                .iter()
+                .chain(rec.variant_slots.iter())
+                .cloned()
+                .collect(),
         });
     }
     Ok(cards)

@@ -29,6 +29,7 @@ const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
   repository: null,
   capabilities: [],
   has_detail: false,
+  slots: [],
   ...overrides,
 });
 
@@ -159,5 +160,31 @@ describe("extension collection helpers", () => {
         '{"slotConflict":{"slot":"pill.theme","currentOccupant":"old"}}',
       ),
     ).toEqual({ slot: "pill.theme", currentOccupant: "old" });
+  });
+});
+
+describe("in-place extension routing", () => {
+  it("sends a surface-taking extension to the control it changes", () => {
+    // grain.agent-center-layout has no settings of its own — it swaps the
+    // Agent's reply surface — so a preview would leave the user hunting for
+    // the Look picker it actually affects.
+    expect(
+      extensionDestination(
+        card({
+          id: "grain.agent-center-layout",
+          slots: ["agent.reply-surface"],
+        }),
+        [],
+      ),
+    ).toEqual({ kind: "tools", section: "agent" });
+  });
+
+  it("still prefers an extension's own page when it has one", () => {
+    expect(
+      extensionDestination(
+        card({ id: "with.page", has_detail: true, slots: [] }),
+        [],
+      ),
+    ).toEqual({ kind: "extension-settings", extensionId: "with.page" });
   });
 });

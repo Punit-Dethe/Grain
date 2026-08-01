@@ -107,10 +107,33 @@ export function sortExtensionCards<
   });
 }
 
+/**
+ * Host surfaces an extension can take over, mapped to the place in the app
+ * where that surface is actually configured.
+ *
+ * These are Grain's three extension shapes:
+ *  - **full-page** — it has settings of its own, so it gets a page
+ *    (`extension-settings`);
+ *  - **in-place** — it has no page; it changes a control that already exists,
+ *    like the Agent's Look picker. This map is what routes those;
+ *  - **anchored** — it contributes rows into an existing section, routed by
+ *    the anchors below.
+ * Without this map an in-place extension dead-ended on a preview, leaving the
+ * user to hunt for the control it changed.
+ */
+const SLOT_DESTINATIONS: Record<string, ExtensionDestination> = {
+  "agent.reply-surface": { kind: "tools", section: "agent" },
+};
+
 export function extensionDestination(
-  card: Pick<ExtensionCard, "id" | "has_detail">,
+  card: Pick<ExtensionCard, "id" | "has_detail"> & { slots?: string[] },
   sections: ExtensionSettingsSection[],
 ): ExtensionDestination {
+  for (const slot of card.slots ?? []) {
+    const destination = SLOT_DESTINATIONS[slot];
+    if (destination) return destination;
+  }
+
   const section = sections.find((candidate) => candidate.id === card.id);
   const anchors = new Set(
     (section?.rows ?? []).map((row) => row.anchor).filter(Boolean),
