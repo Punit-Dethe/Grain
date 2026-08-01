@@ -3413,13 +3413,16 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
   gap: 10px;
 }
 
+/* The 190px thumbnail dominated a row whose content is two lines of text, so
+   the card read as mostly picture and empty space. A tighter plate leaves the
+   name and description as the subject. */
 .installed-extension-card {
-  min-height: 132px;
+  min-height: 104px;
   padding: 10px;
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr) auto;
+  grid-template-columns: 148px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 18px;
+  gap: 16px;
   border-radius: 13px;
   background: rgba(255, 255, 255, 0.026);
   box-shadow: none;
@@ -3516,8 +3519,8 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
 }
 
 .extension-artwork {
-  height: 112px;
-  border-radius: 10px;
+  height: 84px;
+  border-radius: 9px;
 }
 
 .extension-artwork img,
@@ -3545,19 +3548,56 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
 
 .installed-extension-copy {
   min-width: 0;
+  display: grid;
+  gap: 5px;
+  align-content: center;
 }
 
 .installed-extension-heading {
-  margin-bottom: 7px;
+  min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
 }
 
 .installed-extension-heading strong {
+  min-width: 0;
+  overflow: hidden;
   font-size: 14.5px;
   font-weight: 620;
   letter-spacing: -0.012em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* State belongs on the card, not only in the toggle: "Voice Actions, off"
+   should be readable without decoding a switch. */
+.installed-extension-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-4);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.installed-extension-state::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+
+.installed-extension-card:not(.extension-disabled) .installed-extension-state {
+  color: var(--sage);
+}
+
+.installed-extension-card:not(.extension-disabled)
+  .installed-extension-state::before {
+  background: var(--sage);
+  box-shadow: 0 0 8px rgba(168, 201, 168, 0.45);
 }
 
 .installed-extension-heading span,
@@ -3571,15 +3611,32 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
 }
 
 .installed-extension-copy p {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   max-width: 670px;
   margin: 0;
+  overflow: hidden;
   color: var(--text-3);
   font-size: 12px;
   line-height: 1.55;
 }
 
+/* The actions were adrift at the far right edge with a gulf of empty card
+   between them and the text they act on. Group them, sit them on a surface of
+   their own, and the row reads as one control cluster. */
 .installed-extension-actions {
-  padding-right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.028);
+}
+
+html[data-theme="light"] .installed-extension-actions {
+  background: rgba(24, 29, 37, 0.045);
 }
 
 .polished-store-intro {
@@ -3638,37 +3695,80 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
   min-height: 144px;
 }
 
+/* Store card body — a stack, not a two-column split.
+   The old layout put the copy in a left column and the Install button in a
+   right one aligned to the bottom, which left dead space diagonally opposite
+   each: nothing beside the button, nothing under the title. Title and blurb
+   now use the full width, and the action sits on its own footer rule with the
+   metadata, so every row is full and the cards are the same height whatever
+   the name length. */
 .store-extension-body {
-  min-height: 132px;
-  padding: 14px;
+  min-height: 128px;
+  padding: 13px 14px 12px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: end;
-  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 7px;
 }
 
 .store-extension-copy {
   min-width: 0;
-  align-self: start;
 }
 
 .store-extension-copy strong {
-  display: block;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   font-size: 13.5px;
   font-weight: 620;
   line-height: 1.3;
 }
 
-.store-extension-copy p {
-  margin: 7px 0 0;
+/* One line, always. A wrapping title used to shove the whole card around. */
+.store-extension-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Exactly two lines, so a long blurb cannot set the card's height. */
+.store-extension-blurb {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  margin: 0;
+  overflow: hidden;
   color: var(--text-3);
   font-size: 11.5px;
   line-height: 1.52;
 }
 
+.store-extension-footer {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 2px;
+  padding-top: 10px;
+  box-shadow: inset 0 1px var(--hairline-soft);
+}
+
+.store-extension-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .store-install {
-  min-width: 70px;
-  align-self: end;
+  min-width: 78px;
+  flex: 0 0 auto;
+  justify-content: center;
 }
 
 .extension-state,

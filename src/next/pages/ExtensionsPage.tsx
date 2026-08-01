@@ -768,6 +768,11 @@ function InstalledList({
                 {card.trust === "dev" && <span>Dev</span>}
               </div>
               <p>{card.description}</p>
+              {/* Whether an extension is actually doing anything is the first
+                  thing this list is asked; a switch alone makes you decode it. */}
+              <span className="installed-extension-state">
+                {card.enabled ? "Enabled" : "Disabled"}
+              </span>
             </div>
             <div className="installed-extension-actions">
               <button
@@ -947,35 +952,45 @@ function StoreGrid({
                 <div className="store-extension-body">
                   <div className="store-extension-copy">
                     <strong>
-                      {entry.name}
+                      <span className="store-extension-name">{entry.name}</span>
                       {entry.trust === "verified" && (
                         <span className="verified-word">Verified</span>
                       )}
                     </strong>
-                    <p>{entry.description}</p>
                   </div>
-                  <button
-                    className="button store-install"
-                    type="button"
-                    disabled={
-                      current ||
-                      busy ||
-                      entry.revocation === "revoked" ||
-                      !view?.can_install
-                    }
-                    onClick={(event: MouseEvent) => {
-                      event.stopPropagation();
-                      void install(entry);
-                    }}
-                  >
-                    {busy
-                      ? "Installing…"
-                      : current
-                        ? "Installed"
-                        : installedVersion
-                          ? "Update"
-                          : "Install"}
-                  </button>
+                  <p className="store-extension-blurb">{entry.description}</p>
+                  <div className="store-extension-footer">
+                    {/* The install count is the one fact a store card owes a
+                        browsing user, and it fills the space the button used
+                        to sit beside empty. */}
+                    <span className="store-extension-meta">
+                      {typeof entry.installs === "number" && entry.installs > 0
+                        ? `${entry.installs.toLocaleString()} installs`
+                        : `v${entry.version}`}
+                    </span>
+                    <button
+                      className="button store-install"
+                      type="button"
+                      disabled={
+                        current ||
+                        busy ||
+                        entry.revocation === "revoked" ||
+                        !view?.can_install
+                      }
+                      onClick={(event: MouseEvent) => {
+                        event.stopPropagation();
+                        void install(entry);
+                      }}
+                    >
+                      {busy
+                        ? "Installing…"
+                        : current
+                          ? "Installed"
+                          : installedVersion
+                            ? "Update"
+                            : "Install"}
+                    </button>
+                  </div>
                 </div>
               </article>
             );
