@@ -24,7 +24,10 @@ import {
   NextHistoryCard,
   type NextHistoryViewMode,
 } from "@/next/history/NextHistoryCard";
-import type { NextHistoryController } from "@/next/history/useNextHistoryController";
+import {
+  hasProcessedText,
+  type NextHistoryController,
+} from "@/next/history/useNextHistoryController";
 
 const IconButton: React.FC<{
   onClick: () => void;
@@ -76,7 +79,20 @@ interface HistorySettingsProps {
 }
 
 type HistoryViewMode = NextHistoryViewMode;
-type HistoryFilter = "all" | "today" | "flow" | "standard";
+/**
+ * [GRAIN] The archive stores no capture mode, so the old Flow/Standard pills
+ * could only ever have been guessed from the title. What every entry does
+ * carry is whether AI post-processing produced text for it — the same axis the
+ * Original / AI processed view switch already reads. Filtering on that is real.
+ */
+type HistoryFilter = "all" | "today" | "processed" | "unprocessed";
+
+const HISTORY_FILTERS: readonly HistoryFilter[] = [
+  "all",
+  "today",
+  "processed",
+  "unprocessed",
+] as const;
 
 const PROTOTYPE_HISTORY_COPY = {
   eyebrow: "Local archive",
@@ -302,6 +318,8 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
       if (normalizedQuery && !searchableText.includes(normalizedQuery)) {
         return false;
       }
+      if (filter === "processed") return hasProcessedText(entry);
+      if (filter === "unprocessed") return !hasProcessedText(entry);
       if (filter !== "today") return true;
 
       const timestamp =
@@ -311,6 +329,18 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
       return timestamp >= startOfToday.getTime();
     });
   }, [activeEntries, filter, query]);
+
+  // The AI processed view has nothing to show once nothing on screen has
+  // processed text — offering it would be a control that silently does
+  // nothing. Fall back to the original text rather than leaving the switch
+  // stuck on a dead setting.
+  const canShowProcessed = useMemo(
+    () => visibleEntries.some(hasProcessedText),
+    [visibleEntries],
+  );
+  const effectiveViewMode: HistoryViewMode = canShowProcessed
+    ? viewMode
+    : "original";
 
   if (variant === "next") {
     let nextContent: React.ReactNode;
@@ -345,7 +375,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
               <NextHistoryCard
                 key={entry.id}
                 entry={entry}
-                viewMode={viewMode}
+                viewMode={effectiveViewMode}
                 controller={controller}
               />
             ) : (
@@ -353,7 +383,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
                 key={entry.id}
                 entry={entry}
                 variant="next"
-                viewMode={viewMode}
+                viewMode={effectiveViewMode}
                 onToggleSaved={() => toggleSaved(entry.id)}
                 copyText={copyToClipboard}
                 getAudioUrl={getAudioUrl}
@@ -395,14 +425,15 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
                 placeholder="Search transcription history"
               />
             </label>
-            {(["all", "today", "flow", "standard"] as const).map((item) => (
+            {HISTORY_FILTERS.map((item) => (
               <button
                 className={`filter-pill${filter === item ? " active" : ""}`}
                 type="button"
                 key={item}
+                aria-pressed={filter === item}
                 onClick={() => setFilter(item)}
               >
-                {item[0].toUpperCase() + item.slice(1)}
+                {t(`ui2.history.filters.${item}`)}
               </button>
             ))}
             <span className="toolbar-spacer" />
@@ -412,15 +443,21 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
               data-transcript-switch="history"
             >
               <button
-                className={viewMode === "original" ? "active" : ""}
+                className={effectiveViewMode === "original" ? "active" : ""}
                 type="button"
                 onClick={() => setViewMode("original")}
               >
                 {PROTOTYPE_HISTORY_COPY.original}
               </button>
               <button
-                className={viewMode === "processed" ? "active" : ""}
+                className={effectiveViewMode === "processed" ? "active" : ""}
                 type="button"
+                disabled={!canShowProcessed}
+                title={
+                  canShowProcessed
+                    ? undefined
+                    : t("ui2.history.noProcessedInView")
+                }
                 onClick={() => setViewMode("processed")}
               >
                 {PROTOTYPE_HISTORY_COPY.processed}

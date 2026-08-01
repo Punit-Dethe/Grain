@@ -18,7 +18,7 @@
 | Notes      | Ask Grain and source navigation                         | Complete          | Working             | Existing ChatRail retained with UI 2.0 styling.           |
 | Notes      | Feature-off on-ramp and Notes settings                  | Complete          | Working             | Preserves zero-cost-off behavior and settings/MCP bridge. |
 | History    | Archive, actions, audio, pagination                     | Complete          | Working             | Uses the shared live History controller.                  |
-| History    | Flow / Standard filter pills                            | Complete          | Cosmetic only       | History entries do not expose capture-mode metadata yet.  |
+| History    | All / Today / AI processed / Unprocessed filters        | Complete          | Working             | Filters on produced processed text, the one axis stored.  |
 | Settings   | Surfaced preference sections                            | In progress       | Working             | Existing surfaced settings use the prototype style.       |
 | Settings   | Appearance (system / light / dark)                      | Complete          | Working             | Three-mode row; the legacy two-state toggle is next-only. |
 | About      | Own tab: language, version, locations, acknowledgments  | Complete          | Working             | Re-skins the real About surface; parity gap closed.       |

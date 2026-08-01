@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "@/bindings";
-import { reduceNextHistoryEntries } from "./useNextHistoryController";
+import {
+  hasProcessedText,
+  reduceNextHistoryEntries,
+} from "./useNextHistoryController";
 
 const entry = (id: number, saved = false): HistoryEntry => ({
   id,
@@ -48,5 +51,29 @@ describe("UI 2.0 history reducer", () => {
     expect(
       reduceNextHistoryEntries(current, { action: "toggled", id: 1 }),
     ).toBe(current);
+  });
+});
+
+describe("UI 2.0 history processed-text test", () => {
+  it("counts an entry as processed only when processing produced text", () => {
+    expect(hasProcessedText(entry(1))).toBe(false);
+    expect(
+      hasProcessedText({ ...entry(1), post_processed_text: "Cleaned up" }),
+    ).toBe(true);
+  });
+
+  it("does not trust post_process_requested or whitespace-only output", () => {
+    // A requested run that failed or returned nothing leaves the flag set with
+    // nothing to show — the History filter must not call that processed.
+    expect(
+      hasProcessedText({ ...entry(1), post_process_requested: true }),
+    ).toBe(false);
+    expect(
+      hasProcessedText({
+        ...entry(1),
+        post_process_requested: true,
+        post_processed_text: "   \n ",
+      }),
+    ).toBe(false);
   });
 });

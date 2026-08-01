@@ -4,7 +4,10 @@ import { toast } from "sonner";
 import type { HistoryEntry } from "@/bindings";
 import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { formatDateTime } from "@/utils/dateFormat";
-import type { NextHistoryController } from "./useNextHistoryController";
+import {
+  hasProcessedText,
+  type NextHistoryController,
+} from "./useNextHistoryController";
 
 export type NextHistoryViewMode = "original" | "processed";
 
@@ -29,7 +32,7 @@ export function NextHistoryCard({
   const [copied, setCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const copiedTimer = useRef<number | undefined>(undefined);
-  const hasProcessed = (entry.post_processed_text?.trim().length ?? 0) > 0;
+  const hasProcessed = hasProcessedText(entry);
   const displayText =
     viewMode === "processed" && hasProcessed
       ? (entry.post_processed_text ?? "")
@@ -85,8 +88,16 @@ export function NextHistoryCard({
       <div className="transcript-head">
         <div>
           <time>{formatDateTime(String(entry.timestamp), i18n.language)}</time>
+          {/* The archive stores no capture mode, so an entry without a title
+              used to be labelled a flat "Standard" — a claim nothing backs.
+              Fall back to what is actually known about it instead. */}
           <span className="capture-mode">
-            {entry.title.trim() || "Standard"}
+            {entry.title.trim() ||
+              t(
+                hasProcessed
+                  ? "ui2.history.filters.processed"
+                  : "ui2.history.filters.unprocessed",
+              )}
           </span>
         </div>
         <div className="transcript-actions">

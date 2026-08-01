@@ -1026,7 +1026,14 @@
       "sampleTime": "09:42"
     },
     "history": {
-      "eyebrow": "Archive 03"
+      "eyebrow": "Archive 03",
+      "filters": {
+        "all": "All",
+        "today": "Today",
+        "processed": "AI processed",
+        "unprocessed": "Unprocessed"
+      },
+      "noProcessedInView": "Nothing in view was AI processed"
     },
     "settings": {
       "title": "Settings",

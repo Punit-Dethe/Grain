@@ -12,6 +12,19 @@ import { useOsType } from "@/hooks/useOsType";
 const INITIAL_PAGE_SIZE = 3;
 const HISTORY_PAGE_SIZE = 30;
 
+/**
+ * [GRAIN] Whether post-processing actually produced text for this entry.
+ *
+ * `post_process_requested` is not the test: it records that processing was
+ * asked for, and a run that failed, was cancelled, or returned nothing leaves
+ * it `true` with no text to show. The only honest signal is the text itself.
+ * This is the one real axis the archive carries — capture mode is not stored,
+ * which is why History filters on this instead.
+ */
+export function hasProcessedText(entry: HistoryEntry): boolean {
+  return (entry.post_processed_text?.trim().length ?? 0) > 0;
+}
+
 export function reduceNextHistoryEntries(
   entries: HistoryEntry[],
   payload: HistoryUpdatePayload,
