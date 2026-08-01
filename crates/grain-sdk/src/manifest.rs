@@ -342,6 +342,19 @@ pub const ANCHORS: &[&str] = &[
     "models.after",
 ];
 
+/// The surface a prompt payload extends: Grain's post-processing prompt list.
+///
+/// Payload packs are the one shape that declares nothing structural — no slot
+/// to claim, no settings row to anchor — so without a name for what they feed
+/// they resolve nowhere, and a prompt pack ends up placed by guesswork.
+pub const SURFACE_PROMPTS: &str = "dictation.prompts";
+
+fn push_surface(out: &mut Vec<String>, value: &str) {
+    if !value.is_empty() && !out.iter().any(|existing| existing == value) {
+        out.push(value.to_string());
+    }
+}
+
 /// Exclusive positions (SPEC §3). Core defaults are occupants too, so a claim
 /// on any of these can displace a shipped feature — never silently.
 pub const KNOWN_SLOTS: &[&str] = &[
@@ -476,6 +489,35 @@ pub struct PackPayloads {
     pub pill_theme: Option<serde_json::Value>,
 }
 
+impl ExtensionManifest {
+    /// The host surfaces this extension extends, in declaration order.
+    ///
+    /// This is the single answer to "where in Grain does this belong?", and it
+    /// is derived only from what the manifest *declares* — the slots it claims
+    /// or offers itself for ([`KNOWN_SLOTS`]) and the anchors its settings rows
+    /// attach to ([`ANCHORS`]).
+    ///
+    /// It exists because that question was previously answered two different
+    /// ways. Routing an installed card read anchors, while the store recommended
+    /// extensions by scoring keywords against their name and description — so a
+    /// prompt pack was recommended under Agent (its description says "prompt")
+    /// and App Modes was recommended nowhere (it never says "context"), even
+    /// though its manifest anchors it to `context.after` in as many words.
+    /// Prose is not a placement contract; these declarations are.
+    pub fn extends(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for slot in self.slots.iter().chain(self.variant_slots.iter()) {
+            push_surface(&mut out, slot);
+        }
+        for decl in &self.contributes.settings {
+            if let Some(anchor) = &decl.anchor {
+                push_surface(&mut out, anchor);
+            }
+        }
+        out
+    }
+}
+
 /// The `.grainpack` file: manifest + payloads in one JSON document.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GrainPack {
@@ -485,6 +527,19 @@ pub struct GrainPack {
 }
 
 impl GrainPack {
+    /// [`ExtensionManifest::extends`] plus the surfaces this pack's payloads
+    /// feed — a tier-A pack contributes by shipping data, not by declaring.
+    pub fn extends(&self) -> Vec<String> {
+        let mut out = self.manifest.extends();
+        if !self.payloads.prompts.is_empty() {
+            push_surface(&mut out, SURFACE_PROMPTS);
+        }
+        if self.payloads.pill_theme.is_some() {
+            push_surface(&mut out, "pill.theme");
+        }
+        out
+    }
+
     /// Structural validation (Phase 2: tier-A packs and tier-B scripted;
     /// `native` still rejected — it arrives with the tier-C supervisor).
     pub fn validate(&self) -> Result<(), String> {
@@ -756,6 +811,56 @@ mod tests {
         serde_json::from_str::<GrainPack>(json)
             .map_err(|e| e.to_string())
             .and_then(|p| p.validate())
+    }
+
+    fn extends_of(json: &str) -> Vec<String> {
+        serde_json::from_str::<GrainPack>(json).unwrap().extends()
+    }
+
+    #[test]
+    fn extends_reads_slots_anchors_and_payloads() {
+        // A slot claimed, a slot offered, a settings anchor and a payload are
+        // four different ways of saying "I change this part of Grain"; all four
+        // have to answer in the same vocabulary or the placement is a guess.
+        assert_eq!(
+            extends_of(
+                r#"{"manifest":{"id":"com.x.a","name":"A","version":"1.0","tier":"pack",
+                    "variant_slots":["agent.reply-surface"]}}"#
+            ),
+            vec!["agent.reply-surface"]
+        );
+        assert_eq!(
+            extends_of(
+                r#"{"manifest":{"id":"com.x.b","name":"B","version":"1.0","tier":"scripted",
+                    "entry_source":"//","contributes":{"settings":[
+                      {"key":"k","label":"L","kind":"bool","anchor":"context.after"}]}}}"#
+            ),
+            vec!["context.after"]
+        );
+        assert_eq!(
+            extends_of(
+                r#"{"manifest":{"id":"com.x.c","name":"C","version":"1.0","tier":"pack"},
+                    "payloads":{"prompts":[{"id":"g","name":"G","prompt":"p"}]}}"#
+            ),
+            vec![SURFACE_PROMPTS]
+        );
+    }
+
+    #[test]
+    fn extends_is_deduplicated_and_empty_for_a_standalone_pack() {
+        assert_eq!(
+            extends_of(
+                r#"{"manifest":{"id":"com.x.d","name":"D","version":"1.0","tier":"scripted",
+                    "entry_source":"//","slots":["pill.theme"],"variant_slots":["pill.theme"]}}"#
+            ),
+            vec!["pill.theme"]
+        );
+        // Nothing declared = no host surface, which is what earns a page of its
+        // own rather than a slot beside someone else's control.
+        assert!(extends_of(
+            r#"{"manifest":{"id":"com.x.e","name":"E","version":"1.0","tier":"pack"}}"#
+        )
+        .is_empty());
     }
 
     #[test]

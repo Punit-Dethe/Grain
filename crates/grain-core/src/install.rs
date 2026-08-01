@@ -233,6 +233,7 @@ mod tests {
             readme: String::new(),
             media: Vec::new(),
             categories: Vec::new(),
+            extends: Vec::new(),
         }
     }
 

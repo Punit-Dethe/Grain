@@ -635,13 +635,17 @@ fn roots(
 
 /// Read the manifest out of a `.grainpack` (JSON embeds it; ZIP carries a
 /// `manifest.json` entry).
-fn manifest_of(bytes: &[u8]) -> Result<grain_sdk::ExtensionManifest> {
+/// The manifest and the host surfaces the artifact extends. Both come out of
+/// the same parse: the surfaces are derived from declarations inside the pack,
+/// and the index is the only place a browsing client can read them from.
+fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String>)> {
     use grain_core::pack::{detect_shape, PackShape};
     match detect_shape(bytes) {
         PackShape::Json => {
             let pack: grain_sdk::GrainPack =
                 serde_json::from_slice(bytes).context("parse JSON grainpack")?;
-            Ok(pack.manifest)
+            let extends = pack.extends();
+            Ok((pack.manifest, extends))
         }
         PackShape::Zip => {
             let tmp = std::env::temp_dir().join(format!("grain-pub-{}", std::process::id()));
@@ -653,7 +657,8 @@ fn manifest_of(bytes: &[u8]) -> Result<grain_sdk::ExtensionManifest> {
             let manifest: grain_sdk::ExtensionManifest =
                 serde_json::from_slice(&m).context("parse manifest.json")?;
             let _ = fs::remove_dir_all(&tmp);
-            Ok(manifest)
+            let extends = manifest.extends();
+            Ok((manifest, extends))
         }
         PackShape::Unknown => anyhow::bail!("not a recognised .grainpack (first byte is not {{ or PK)"),
     }
@@ -733,7 +738,7 @@ fn publish(
     media_src: Option<PathBuf>,
 ) -> Result<()> {
     let bytes = fs::read(&pack).with_context(|| format!("read {}", pack.display()))?;
-    let manifest = manifest_of(&bytes)?;
+    let (manifest, extends) = manifest_of(&bytes)?;
     let sha256 = grain_core::trust::sha256_hex(&bytes);
 
     let trust = match trust.as_str() {
@@ -766,12 +771,19 @@ fn publish(
     // Pipeline-maintained fields (stars, installs) and detail media survive a
     // re-publish of the same (id, version) — republishing the artifact must not
     // reset its popularity or wipe its README/screenshots.
-    let (installs, stars, mut readme, mut media) = index
+    let prior = index
         .entries
         .iter()
-        .find(|e| e.id == manifest.id && e.version == manifest.version)
+        .find(|e| e.id == manifest.id && e.version == manifest.version);
+    let (installs, stars, mut readme, mut media) = prior
         .map(|e| (e.installs, e.stars, e.readme.clone(), e.media.clone()))
         .unwrap_or_default();
+    // Re-publishing the identical artifact is not a new review, so the review
+    // date survives it. It moves only when the bytes do.
+    let reviewed_at = prior
+        .filter(|e| e.sha256 == sha256)
+        .map(|e| e.reviewed_at.clone())
+        .unwrap_or_else(|| today.format("%Y-%m-%d").to_string());
     // A project folder supplies the listing (README + screenshots) by convention,
     // and its submission.toml supplies the categories the store filters on — the
     // author declares them once, in the file CI already validates.
@@ -822,7 +834,7 @@ fn publish(
         repo,
         source_commit: commit,
         author,
-        reviewed_at: today.format("%Y-%m-%d").to_string(),
+        reviewed_at,
         reviewed_commit: String::new(),
         updated_at: today.format("%Y-%m-%d").to_string(),
         stars,
@@ -830,6 +842,7 @@ fn publish(
         readme,
         media,
         categories,
+        extends,
     };
 
     // Upsert by (id, version).

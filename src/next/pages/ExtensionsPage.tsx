@@ -385,6 +385,7 @@ function ExtensionDrawer({
   const [mediaIndex, setMediaIndex] = useState(0);
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
+  const [readmeOpen, setReadmeOpen] = useState(false);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -398,6 +399,7 @@ function ExtensionDrawer({
     let alive = true;
     setMediaIndex(0);
     setReadme(null);
+    setReadmeOpen(false);
     if (selection.source === "installed") {
       setCatalogueEntry(null);
       void commands
@@ -533,26 +535,6 @@ function ExtensionDrawer({
           </div>
           <p>{description}</p>
 
-          {/* The README is the page. It used to sit behind a <details> that only
-            started fetching on toggle, so reading it took a collapse and a
-            re-open before anything loaded. It now loads with the drawer. */}
-          {(entry?.readme || readme || readmeLoading) && (
-            <>
-              <div className="panel-section-label">README</div>
-              <div className="extension-readme">
-                {readmeLoading ? (
-                  <div className="drawer-muted">Loading README…</div>
-                ) : readme ? (
-                  <Markdown markdown={readme} softBreaks />
-                ) : (
-                  <div className="drawer-muted">
-                    The README could not be loaded.
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-
           <div className="panel-section-label">Permissions</div>
           <div className="permission-list">
             {capabilities.length ? (
@@ -569,6 +551,37 @@ function ExtensionDrawer({
               </div>
             )}
           </div>
+
+          {/* Fetched with the drawer, revealed on demand. The fetch and the
+              disclosure used to be the same gesture, which cost two clicks to
+              read anything; separating them costs one, on already-loaded text. */}
+          {(entry?.readme || readme || readmeLoading) && (
+            <>
+              <div className="panel-section-label">About this extension</div>
+              <button
+                className="readme-disclosure"
+                type="button"
+                aria-expanded={readmeOpen}
+                onClick={() => setReadmeOpen((open) => !open)}
+              >
+                <span>{readmeLoading ? "Loading README…" : "Read the full README"}</span>
+                <ChevronRight size={15} aria-hidden="true" />
+              </button>
+              {readmeOpen && (
+                <div className="extension-readme">
+                  {readme ? (
+                    <Markdown markdown={readme} softBreaks />
+                  ) : (
+                    <div className="drawer-muted">
+                      {readmeLoading
+                        ? "Loading README…"
+                        : "The README could not be loaded."}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div className="extension-drawer-actions">

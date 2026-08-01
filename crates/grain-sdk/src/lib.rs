@@ -44,7 +44,7 @@ pub use event::{
 pub use manifest::{
     CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl,
     PackPayloads, PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces,
-    Tier, WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS,
+    Tier, WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS, SURFACE_PROMPTS,
 };
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
 pub use protocol::{

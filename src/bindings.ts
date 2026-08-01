@@ -2954,6 +2954,12 @@ media: StoreMedia[];
  */
 categories: string[]; 
 /**
+ * Which parts of Grain this extension changes (slots claimed, settings
+ * anchors, payload surfaces). Read straight from the signed index, so the
+ * store can place a card without downloading its artifact.
+ */
+extends: string[]; 
+/**
  * Revocation state for this exact version, if any: "revoked" | "deprecated".
  */
 revocation: string | null; 

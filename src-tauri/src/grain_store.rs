@@ -64,6 +64,10 @@ pub struct StoreEntry {
     pub media: Vec<StoreMedia>,
     /// What kind of thing this is, for the store's filter row.
     pub categories: Vec<String>,
+    /// Which parts of Grain this extension changes (slots claimed, settings
+    /// anchors, payload surfaces). Read straight from the signed index, so the
+    /// store can place a card without downloading its artifact.
+    pub extends: Vec<String>,
     /// Revocation state for this exact version, if any: "revoked" | "deprecated".
     pub revocation: Option<String>,
     /// Flagged capability combinations (DISTRIBUTION-PLAN §3.3), plain-language,
@@ -248,6 +252,7 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
                 })
                 .collect(),
             categories: e.categories.clone(),
+            extends: e.extends.clone(),
             revocation: revocations.state_for(&e.id, &e.version).map(|s| {
                 match s {
                     RevocationState::Revoked => "revoked",

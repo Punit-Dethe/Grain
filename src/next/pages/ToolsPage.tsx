@@ -110,13 +110,18 @@ function useToolCatalogue() {
 
 function ToolRecommendations({ tool }: { tool: ToolSection }) {
   const catalogue = useToolCatalogue();
-  const recommendations = useMemo(
-    () => matchToolRecommendations(catalogue.entries, tool),
-    [catalogue.entries, tool],
-  );
   const installed = useMemo(
     () => new Map(catalogue.cards.map((card) => [card.id, card.version])),
     [catalogue.cards],
+  );
+  const recommendations = useMemo(
+    () =>
+      matchToolRecommendations(
+        catalogue.entries,
+        tool,
+        new Set(installed.keys()),
+      ),
+    [catalogue.entries, installed, tool],
   );
   const title = TOOL_COPY[tool].title;
 
@@ -172,7 +177,6 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
             <StoreCard
               key={`${entry.id}@${entry.version}`}
               entry={entry}
-              installedVersion={installed.get(entry.id)}
               busy={catalogue.installing === entry.id}
               canInstall={Boolean(catalogue.view?.can_install)}
               onInstall={(target) => void catalogue.install(target)}

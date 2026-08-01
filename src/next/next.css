@@ -1637,11 +1637,12 @@ h3 {
   background: var(--accent);
 }
 
-/* Clicking away closes the drawer. Sits under the panel, over everything else. */
+/* Clicking away closes the drawer. It must sit UNDER the panel and over
+   everything else — above the panel it dims and swallows the drawer itself. */
 .extension-drawer-scrim {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: 68;
   background: rgba(4, 5, 7, 0.42);
   backdrop-filter: blur(1.5px);
   -webkit-backdrop-filter: blur(1.5px);
@@ -1652,161 +1653,6 @@ h3 {
   from {
     opacity: 0;
   }
-}
-
-/* README prose. It renders inside the drawer's dark panel, so it cannot
-   inherit the page's markdown colours, and it has to survive real documents —
-   tables, code blocks and long URLs included — inside a narrow column. */
-.extension-readme {
-  margin-top: 8px;
-  color: var(--text-2);
-  font-size: 12.5px;
-  line-height: 1.62;
-}
-
-.extension-readme > :first-child {
-  margin-top: 0;
-}
-
-.extension-readme h1,
-.extension-readme h2,
-.extension-readme h3 {
-  margin: 20px 0 8px;
-  color: var(--text-1);
-  font-weight: 620;
-  line-height: 1.3;
-}
-
-.extension-readme h1 {
-  font-size: 16px;
-}
-
-.extension-readme h2 {
-  font-size: 14px;
-}
-
-.extension-readme h3 {
-  font-size: 12.75px;
-}
-
-.extension-readme p,
-.extension-readme ul,
-.extension-readme ol {
-  margin: 0 0 10px;
-}
-
-.extension-readme ul,
-.extension-readme ol {
-  padding-left: 20px;
-}
-
-.extension-readme li {
-  margin: 3px 0;
-}
-
-.extension-readme a {
-  color: var(--accent);
-  overflow-wrap: anywhere;
-}
-
-.extension-readme code {
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-
-.extension-readme pre {
-  margin: 0 0 12px;
-  padding: 11px 12px;
-  overflow-x: auto;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.28);
-}
-
-.extension-readme pre code {
-  padding: 0;
-  background: none;
-}
-
-/* A table wider than the drawer scrolls inside its own box rather than
-   stretching the panel or spilling under the next section. */
-.extension-readme table {
-  width: 100%;
-  display: block;
-  margin: 0 0 12px;
-  overflow-x: auto;
-  border-collapse: collapse;
-  font-size: 11.5px;
-}
-
-.extension-readme th,
-.extension-readme td {
-  padding: 6px 10px;
-  border: 1px solid var(--hairline);
-  text-align: left;
-  vertical-align: top;
-}
-
-.extension-readme th {
-  color: var(--text-1);
-  background: rgba(255, 255, 255, 0.04);
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.extension-readme blockquote {
-  margin: 0 0 12px;
-  padding-left: 12px;
-  border-left: 2px solid var(--hairline);
-  color: var(--text-3);
-}
-
-.extension-readme img {
-  max-width: 100%;
-  border-radius: 8px;
-}
-
-.extension-readme hr {
-  margin: 16px 0;
-  border: 0;
-  border-top: 1px solid var(--hairline);
-}
-
-/* The extension preview is a media surface — screenshots and cover art are
-   authored against dark chrome, and floating a light panel over them washed
-   both out. It keeps the dark palette in either theme, re-declaring the tokens
-   locally so every descendant (text, hairlines, buttons) follows. */
-html[data-theme="light"] .extension-preview-panel {
-  color-scheme: dark;
-  --bg-0: #090a0c;
-  --bg-1: #0e1013;
-  --bg-2: #13161a;
-  --bg-3: #181c21;
-  --bg-4: #20252b;
-  --text-1: #f3f4f2;
-  --text-2: #b4b8b8;
-  --text-3: #7d8385;
-  --text-4: #5c6265;
-  --hairline: rgba(255, 255, 255, 0.065);
-  --hairline-soft: rgba(255, 255, 255, 0.035);
-  --accent: #8faaff;
-  --accent-strong: #a8bcff;
-  --accent-ink: #091126;
-  --accent-soft: rgba(143, 170, 255, 0.13);
-  --accent-focus: rgba(143, 170, 255, 0.28);
-  --color-paper: #0e1013;
-  --color-paper-raised: #181c21;
-  --color-paper-sunken: #13161a;
-  --color-ink: #f3f4f2;
-  --color-ink-soft: #7d8385;
-  --color-ink-faint: #5c6265;
-  --color-line: rgba(255, 255, 255, 0.065);
-  --color-text: #f3f4f2;
-  color: var(--text-1);
-  background: var(--bg-2);
 }
 
 html[data-theme="light"] .model-slot {
@@ -4261,43 +4107,43 @@ html[data-theme="light"] .installed-extension-actions {
   line-height: 1.65;
 }
 
-.extension-readme {
-  margin: 18px 0;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.03);
-  overflow: hidden;
-}
-
-.extension-readme summary {
-  min-height: 42px;
+/* The README is long-form and optional; permissions are short and are what the
+   install decision actually turns on. So permissions render open and the README
+   sits behind a disclosure — already fetched, so opening it costs nothing. */
+.readme-disclosure {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 4px;
   padding: 0 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  list-style: none;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: none;
   color: var(--text-2);
   cursor: pointer;
   font-size: 11.5px;
   font-weight: 580;
+  transition: background 0.15s ease;
 }
 
-.extension-readme summary::-webkit-details-marker {
-  display: none;
+.readme-disclosure:hover {
+  background: var(--hairline-soft);
 }
-.extension-readme summary::after {
-  content: "+";
+
+.readme-disclosure svg {
   color: var(--text-4);
-  font-size: 15px;
-}
-.extension-readme[open] summary::after {
-  content: "−";
+  transition: transform 0.18s var(--ease-soft);
 }
 
-.extension-readme > div {
-  padding: 0 12px 13px;
-  color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.65;
+.readme-disclosure[aria-expanded="true"] svg {
+  transform: rotate(90deg);
+}
+
+.extension-readme {
+  padding: 12px 2px 4px;
 }
 
 .panel-section-label {

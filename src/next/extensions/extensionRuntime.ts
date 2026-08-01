@@ -108,65 +108,78 @@ export function sortExtensionCards<
 }
 
 /**
- * Host surfaces an extension can take over, mapped to the place in the app
- * where that surface is actually configured.
+ * Where each host surface is configured.
  *
- * These are Grain's three extension shapes:
- *  - **full-page** — it has settings of its own, so it gets a page
- *    (`extension-settings`);
- *  - **in-place** — it has no page; it changes a control that already exists,
- *    like the Agent's Look picker. This map is what routes those;
- *  - **anchored** — it contributes rows into an existing section, routed by
- *    the anchors below.
- * Without this map an in-place extension dead-ended on a preview, leaving the
- * user to hunt for the control it changed.
+ * A surface id is what an extension *declares* it extends — a slot it claims
+ * ([`KNOWN_SLOTS`]), an anchor its settings rows attach to ([`ANCHORS`]), or the
+ * surface its payload feeds. This one table turns that declaration into a place
+ * in the app, and it answers both halves of the same question:
+ *
+ *  - an **installed** card opens the surface it changes, and
+ *  - a **store** card is recommended beside that surface.
+ *
+ * Those used to be two mechanisms. Routing read anchors; recommendations scored
+ * keywords against the extension's prose — which put a prompt pack under Agent
+ * because its description says "prompt", and put App Modes nowhere because it
+ * never says "context", though its manifest anchors it to `context.after`. A
+ * new extension is placed correctly by declaring a surface, and by nothing else.
+ *
+ * Grain's three extension shapes fall out of this: **in-place** extensions take
+ * a slot, **anchored** ones contribute rows at an anchor, and **full-page** ones
+ * declare neither and get a page of their own.
  */
-const SLOT_DESTINATIONS: Record<string, ExtensionDestination> = {
+const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
   "agent.reply-surface": { kind: "tools", section: "agent" },
+  "agent.after": { kind: "tools", section: "agent" },
+  "snippets.after": { kind: "tools", section: "snippets" },
+  "context.after": { kind: "tools", section: "context" },
+  "dictation.pipeline.after": { kind: "settings", section: "post-processing" },
+  "dictation.prompts": { kind: "settings", section: "post-processing" },
+  "models.after": { kind: "settings", section: "speech-to-text" },
+  "grainspace.after": { kind: "notes-settings" },
 };
+
+const ANCHOR_SURFACES = new Set(
+  Object.keys(SURFACE_DESTINATIONS).filter((surface) => surface.endsWith(".after")),
+);
+
+/** Every surface an installed extension extends: slots it claims, plus the
+ *  anchors its contributed settings rows attach to. */
+function installedSurfaces(
+  card: Pick<ExtensionCard, "id"> & { slots?: string[] },
+  sections: ExtensionSettingsSection[],
+): string[] {
+  const section = sections.find((candidate) => candidate.id === card.id);
+  const anchors = (section?.rows ?? [])
+    .map((row) => row.anchor)
+    .filter((anchor): anchor is string => Boolean(anchor));
+  return [...(card.slots ?? []), ...anchors];
+}
+
+export function destinationForSurfaces(
+  surfaces: readonly string[],
+): ExtensionDestination | null {
+  for (const surface of surfaces) {
+    const destination = SURFACE_DESTINATIONS[surface];
+    if (destination) return destination;
+  }
+  return null;
+}
 
 export function extensionDestination(
   card: Pick<ExtensionCard, "id" | "has_detail"> & { slots?: string[] },
   sections: ExtensionSettingsSection[],
 ): ExtensionDestination {
-  for (const slot of card.slots ?? []) {
-    const destination = SLOT_DESTINATIONS[slot];
-    if (destination) return destination;
-  }
-
-  const section = sections.find((candidate) => candidate.id === card.id);
-  const anchors = new Set(
-    (section?.rows ?? []).map((row) => row.anchor).filter(Boolean),
+  const destination = destinationForSurfaces(
+    installedSurfaces(card, sections),
   );
+  if (destination) return destination;
 
-  if (anchors.has("snippets.after")) {
-    return { kind: "tools", section: "snippets" };
-  }
-  if (anchors.has("context.after")) {
-    return { kind: "tools", section: "context" };
-  }
-  if (anchors.has("agent.after")) {
-    return { kind: "tools", section: "agent" };
-  }
-  if (anchors.has("dictation.pipeline.after")) {
-    return { kind: "settings", section: "post-processing" };
-  }
-  if (anchors.has("models.after")) {
-    return { kind: "settings", section: "speech-to-text" };
-  }
-  if (anchors.has("grainspace.after")) return { kind: "notes-settings" };
-
+  // Rows that anchor nowhere are the extension's own settings, so it gets a
+  // page rather than being folded into a host section.
+  const section = sections.find((candidate) => candidate.id === card.id);
   const hasOwnRows = (section?.rows ?? []).some(
-    (row) =>
-      !row.anchor ||
-      ![
-        "snippets.after",
-        "context.after",
-        "agent.after",
-        "dictation.pipeline.after",
-        "models.after",
-        "grainspace.after",
-      ].includes(row.anchor),
+    (row) => !row.anchor || !ANCHOR_SURFACES.has(row.anchor),
   );
   if (card.has_detail || hasOwnRows) {
     return { kind: "extension-settings", extensionId: card.id };
@@ -174,45 +187,30 @@ export function extensionDestination(
   return { kind: "preview" };
 }
 
-const TOOL_TERMS: Record<ToolSection, readonly string[]> = {
-  dictionary: ["dictionary", "vocabulary", "terminology", "word", "spelling"],
-  snippets: ["snippet", "template", "variable", "expansion", "insert"],
-  context: ["context", "application", "nearby", "cursor", "selection"],
-  agent: ["agent", "prompt", "assistant", "rewrite", "action"],
-};
-
-export function recommendationScore(
-  entry: StoreEntry,
-  tool: ToolSection,
-): number {
-  const terms = TOOL_TERMS[tool];
-  const categories = entry.categories.map((category) => category.toLowerCase());
-  const text = `${entry.name} ${entry.id} ${entry.description}`.toLowerCase();
-  let score = categories.includes(tool) ? 12 : 0;
-  if (categories.includes("tools")) score += 3;
-  for (const term of terms) {
-    if (categories.includes(term)) score += 8;
-    if (text.includes(term)) score += 2;
-  }
-  return score;
-}
-
+/**
+ * Store entries to recommend beside a Studio tool.
+ *
+ * An entry qualifies when a surface it declares resolves to this tool — never
+ * because its text happens to contain a matching word. Already-installed ids
+ * drop out: a recommendation to install what you have installed is noise.
+ */
 export function matchToolRecommendations(
   entries: StoreEntry[],
   tool: ToolSection,
+  installedIds: ReadonlySet<string> = new Set(),
   limit = 3,
 ): StoreEntry[] {
   return entries
-    .map((entry) => ({ entry, score: recommendationScore(entry, tool) }))
-    .filter(({ score }) => score > 0)
+    .filter((entry) => {
+      if (installedIds.has(entry.id)) return false;
+      const destination = destinationForSurfaces(entry.extends);
+      return destination?.kind === "tools" && destination.section === tool;
+    })
     .sort(
       (left, right) =>
-        right.score - left.score ||
-        right.entry.installs - left.entry.installs ||
-        left.entry.name.localeCompare(right.entry.name),
+        right.installs - left.installs || left.name.localeCompare(right.name),
     )
-    .slice(0, limit)
-    .map(({ entry }) => entry);
+    .slice(0, limit);
 }
 
 export function filterExtensions<

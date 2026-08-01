@@ -140,6 +140,17 @@ pub struct IndexEntry {
     /// without fetching anything per card.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub categories: Vec<String>,
+    /// Host surfaces this extension extends, from
+    /// [`GrainPack::extends`](crate::GrainPack::extends) at publish time.
+    ///
+    /// Carried in the signed index because the store has to place a card it has
+    /// never downloaded: the manifest that declares this lives inside the
+    /// artifact, and browsing must not fetch artifacts. Categories answer "what
+    /// kind of thing is this" for the filter row; this answers "which part of
+    /// Grain does it change", which is a different question and the one that
+    /// decides where it is recommended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extends: Vec<String>,
 }
 
 /// The category vocabulary a submission may declare. Deliberately short: these

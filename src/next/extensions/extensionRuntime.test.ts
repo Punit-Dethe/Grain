@@ -12,7 +12,6 @@ import {
   nextMediaIndex,
   parseNeedsPermissions,
   parseSlotConflict,
-  recommendationScore,
 } from "./extensionRuntime";
 
 const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
@@ -72,6 +71,7 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   readme: "",
   media: [],
   categories: [],
+  extends: [],
   revocation: null,
   flags: [],
   ...overrides,
@@ -105,31 +105,60 @@ describe("extension destination routing", () => {
 });
 
 describe("tool recommendations", () => {
-  it("ranks exact categories above conservative copy matches", () => {
-    const exact = entry({
-      id: "exact",
-      name: "Vocabulary Kit",
-      categories: ["dictionary"],
+  it("recommends by the surface an extension declares, not by its wording", () => {
+    // App Modes anchors itself to `context.after` and never uses the word
+    // "context"; Starter Prompts feeds the prompt list and says "prompts" in
+    // every sentence. Keyword scoring got both of these backwards.
+    const appModes = entry({
+      id: "grain.app-modes",
+      name: "App Modes",
+      description: "Format what you dictate differently in each app.",
+      extends: ["context.after"],
     });
-    const copy = entry({
-      id: "copy",
-      name: "Spelling Helper",
-      description: "Improves dictionary spelling",
+    const starterPrompts = entry({
+      id: "grain.starter-prompts",
+      name: "Starter Prompts",
+      description: "General, Coding and Email prompts for post-processing.",
+      extends: ["dictation.prompts"],
     });
-    expect(recommendationScore(exact, "dictionary")).toBeGreaterThan(
-      recommendationScore(copy, "dictionary"),
-    );
-    expect(matchToolRecommendations([copy, exact], "dictionary")).toEqual([
-      exact,
-      copy,
-    ]);
+    expect(
+      matchToolRecommendations([starterPrompts, appModes], "context"),
+    ).toEqual([appModes]);
+    expect(
+      matchToolRecommendations([starterPrompts, appModes], "agent"),
+    ).toEqual([]);
   });
 
-  it("does not recommend unrelated catalogue entries", () => {
+  it("recommends an in-place extension beside the surface it replaces", () => {
+    const centre = entry({
+      id: "grain.agent-center-layout",
+      extends: ["agent.reply-surface"],
+    });
+    expect(matchToolRecommendations([centre], "agent")).toEqual([centre]);
+  });
+
+  it("does not recommend what is already installed", () => {
+    const voiceActions = entry({
+      id: "grain.voice-actions",
+      extends: ["snippets.after"],
+    });
+    expect(matchToolRecommendations([voiceActions], "snippets")).toEqual([
+      voiceActions,
+    ]);
     expect(
       matchToolRecommendations(
-        [entry({ name: "Recording Theme", description: "A new pill color" })],
+        [voiceActions],
         "snippets",
+        new Set(["grain.voice-actions"]),
+      ),
+    ).toEqual([]);
+  });
+
+  it("declares nothing for a tool no surface maps to", () => {
+    expect(
+      matchToolRecommendations(
+        [entry({ extends: ["snippets.after"] })],
+        "dictionary",
       ),
     ).toEqual([]);
   });
