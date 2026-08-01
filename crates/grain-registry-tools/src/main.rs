@@ -122,6 +122,23 @@ enum Cmd {
         #[arg(long)]
         v1: PathBuf,
     },
+    /// Withdraw an extension from the catalogue and re-sign it: drop its
+    /// entries, then delete the pack, README and media blobs nothing else
+    /// references. Hand-editing `index.json` would invalidate its signature and
+    /// take the whole store down with it, so retiring goes through here.
+    Retire {
+        /// Publishing secret key (`publishing.key`).
+        #[arg(long)]
+        key: PathBuf,
+        /// Extension id to withdraw, e.g. `grain.note-ui`.
+        #[arg(long = "id", value_name = "ID")]
+        ids: Vec<String>,
+        /// Days until the index `expires` (default 30).
+        #[arg(long, default_value_t = 30)]
+        expires_days: i64,
+        #[arg(long)]
+        v1: PathBuf,
+    },
     /// Verify a `v1/` tree exactly as the app would: roots against the PINNED
     /// root keys, then index + revocations against the publishing key. Proves
     /// the producer and the client agree.
@@ -326,6 +343,12 @@ fn main() -> Result<()> {
             expires_days,
             v1,
         } => set_installs(key, sets, expires_days, v1),
+        Cmd::Retire {
+            key,
+            ids,
+            expires_days,
+            v1,
+        } => retire(key, ids, expires_days, v1),
         Cmd::Verify { v1 } => verify(v1),
         Cmd::CheckSubmission { dir } => check_submission(dir),
         Cmd::SiteGen { v1, out } => site_gen(v1, out),
@@ -875,6 +898,87 @@ fn set_installs(key: PathBuf, sets: Vec<String>, expires_days: i64, v1: PathBuf)
     fs::write(&index_path, &doc)?;
     fs::write(v1.join("index.json.minisig"), sig)?;
     println!("index re-signed (version {})", index.version);
+    Ok(())
+}
+
+/// Withdraw extensions from the catalogue, then garbage-collect the blobs they
+/// were the last referent of.
+///
+/// The sweep is reference-counted against the *remaining* entries rather than
+/// keyed off the retired one: two entries can legitimately share a media blob,
+/// and deleting by the retired entry's hash list alone would pull a file still
+/// under a surviving card.
+fn retire(key: PathBuf, ids: Vec<String>, expires_days: i64, v1: PathBuf) -> Result<()> {
+    let index_path = v1.join("index.json");
+    let mut index: grain_sdk::Index =
+        serde_json::from_slice(&fs::read(&index_path).context("read index.json")?)
+            .context("parse index.json")?;
+
+    let before = index.entries.len();
+    let mut dropped: Vec<grain_sdk::IndexEntry> = Vec::new();
+    index.entries.retain(|e| {
+        if ids.iter().any(|id| id == &e.id) {
+            dropped.push(e.clone());
+            false
+        } else {
+            true
+        }
+    });
+    if dropped.is_empty() {
+        anyhow::bail!("none of {ids:?} are in the index");
+    }
+    for e in &dropped {
+        println!("  retired {} {} ({})", e.id, e.version, e.name);
+    }
+
+    // Everything still referenced by a surviving entry.
+    let mut live: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for e in &index.entries {
+        live.insert(e.sha256.clone());
+        if !e.readme.is_empty() {
+            live.insert(e.readme.clone());
+        }
+        for m in &e.media {
+            live.insert(m.sha256.clone());
+        }
+    }
+
+    for e in &dropped {
+        if !live.contains(&e.sha256) {
+            remove_if_present(&v1.join("blob").join(format!("{}.grainpack", e.sha256)))?;
+        }
+        if !e.readme.is_empty() && !live.contains(&e.readme) {
+            remove_if_present(&v1.join("media").join(format!("{}.md", e.readme)))?;
+        }
+        for m in &e.media {
+            if !live.contains(&m.sha256) {
+                remove_if_present(&v1.join("media").join(format!("{}.{}", m.sha256, m.kind)))?;
+            }
+        }
+    }
+
+    index.version += 1;
+    index.expires = (chrono::Utc::now() + chrono::Duration::days(expires_days))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    let doc = format!("{}\n", serde_json::to_string_pretty(&index)?).into_bytes();
+    let sig = sign_bytes(&key, &doc)?;
+    fs::write(&index_path, &doc)?;
+    fs::write(v1.join("index.json.minisig"), sig)?;
+    println!(
+        "index re-signed (version {}, {} -> {} entries)",
+        index.version,
+        before,
+        index.entries.len()
+    );
+    Ok(())
+}
+
+fn remove_if_present(path: &std::path::Path) -> Result<()> {
+    if path.exists() {
+        fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
+        println!("  deleted {}", path.display());
+    }
     Ok(())
 }
 
