@@ -20,11 +20,21 @@ pub fn init_shortcuts(app: &AppHandle) {
 
     // Register all default shortcuts, applying user customizations
     for (id, default_binding) in default_bindings {
-        if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
+        if id == "cancel" || id == "agent_followup" {
             continue; // Skip dynamic shortcuts, they will be registered dynamically
         }
         // Skip post-processing shortcut when the feature is disabled
-        if id == "transcribe_with_post_process" && !user_settings.post_process_enabled {
+        // [GRAIN] `transcribe_send_to_ai` joins it: the AI key is a real global
+        // shortcut now (it has to exist at idle to be able to *start* a
+        // capture), so like the other AI entry point it must not hold a hotkey
+        // when there is no post-processing behind it.
+        if (id == "transcribe_with_post_process" || id == "transcribe_send_to_ai")
+            && !user_settings.post_process_enabled
+        {
+            continue;
+        }
+        // [GRAIN] Only the capture modes the user keeps live hold a hotkey.
+        if !grain_core::capture::capture_binding_is_active(&user_settings, &id) {
             continue;
         }
         // [GRAIN] Grain Space shortcuts exist only while the feature is on —
@@ -182,38 +192,6 @@ pub fn register_cancel_shortcut(app: &AppHandle) {
             }
         });
     }
-}
-
-/// Register the send_to_ai shortcut (called when recording starts)
-pub fn register_send_to_ai_shortcut(app: &AppHandle) {
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Some(binding) = get_settings(&app_clone)
-            .bindings
-            .get("transcribe_send_to_ai")
-            .cloned()
-        {
-            if let Err(e) = register_shortcut(&app_clone, binding) {
-                error!("Failed to register send_to_ai shortcut: {}", e);
-            }
-        }
-    });
-}
-
-/// Unregister the send_to_ai shortcut (called when recording stops)
-pub fn unregister_send_to_ai_shortcut(app: &AppHandle) {
-    let app_clone = app.clone();
-    tauri::async_runtime::spawn(async move {
-        if let Some(binding) = get_settings(&app_clone)
-            .bindings
-            .get("transcribe_send_to_ai")
-            .cloned()
-        {
-            if let Err(e) = unregister_shortcut(&app_clone, binding) {
-                error!("Failed to unregister send_to_ai shortcut: {}", e);
-            }
-        }
-    });
 }
 
 /// Unregister the cancel shortcut (called when recording stops)

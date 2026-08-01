@@ -115,9 +115,10 @@ pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
 /// `ShortcutAction`.
 pub(crate) fn register_session_shortcuts(app: &AppHandle) {
     crate::master_key::register_chords(app);
-    if !get_settings(app).push_to_talk {
-        shortcut::register_send_to_ai_shortcut(app);
-    }
+    // [GRAIN] send-to-AI is no longer taken here. It is registered globally at
+    // init, because it now also *starts* a capture from idle — a key that only
+    // exists once you are already recording cannot do that. Re-registering it
+    // per session would just collide with the global one.
     // [GRAIN] Read the focused field's distinctive terms for this recording,
     // off-thread, so they can bias the recognizer. Deliberately here and not at
     // transcription time: this overlaps the user speaking, which is dead time
@@ -128,7 +129,6 @@ pub(crate) fn register_session_shortcuts(app: &AppHandle) {
 
 /// Release what [`register_session_shortcuts`] took.
 pub(crate) fn unregister_session_shortcuts(app: &AppHandle) {
-    shortcut::unregister_send_to_ai_shortcut(app);
     crate::master_key::unregister_chords(app);
 }
 

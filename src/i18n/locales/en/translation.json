@@ -1077,6 +1077,30 @@
         "light": "Light",
         "dark": "Dark"
       }
+    },
+    "capture": {
+      "group": "Capture",
+      "set": {
+        "title": "Capture modes",
+        "description": "Grain has three ways to capture. Keeping one means one shortcut to remember; the other modes stay available, they just stop holding a hotkey. Switch to all three whenever you want them back.",
+        "single": "One mode",
+        "all": "All three"
+      },
+      "ai": {
+        "group": "AI",
+        "always": {
+          "title": "Send every capture to AI",
+          "description": "Every capture is post-processed, whichever key started it. With this on there is exactly one shortcut to remember for the whole product."
+        },
+        "end": {
+          "title": "Finish with AI",
+          "description": "Press the AI shortcut during a capture to end it and send the transcript to AI. Off means the AI shortcut only ever starts a capture."
+        },
+        "startMode": {
+          "title": "AI shortcut starts",
+          "description": "Which capture mode the AI shortcut uses when you press it to begin. With one mode live it necessarily uses that one."
+        }
+      }
     }
   },
   "overlay": {

@@ -1259,8 +1259,11 @@ fn register_followup_shortcut(app: &AppHandle) {
     if let Some(state) = app.try_state::<AgentState>() {
         if let Ok(mut suppressed) = state.suppressed_bindings.lock() {
             for (id, b) in settings.bindings.iter() {
-                // Dynamic bindings are never globally registered — nothing to suppress.
-                if id == AGENT_FOLLOWUP_BINDING || id == "cancel" || id == "transcribe_send_to_ai" {
+                // Dynamic bindings are never globally registered — nothing to
+                // suppress. [GRAIN] `transcribe_send_to_ai` left this list when
+                // it became a first-class shortcut; it is globally registered
+                // now, so a conflict with it is real and must be suppressed.
+                if id == AGENT_FOLLOWUP_BINDING || id == "cancel" {
                     continue;
                 }
                 if b.current_binding.trim().eq_ignore_ascii_case(&accel)

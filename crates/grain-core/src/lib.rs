@@ -15,6 +15,7 @@ pub mod extensions;
 // The event/action wire types moved to grain-sdk (the dependency leaf);
 // this alias keeps every `grain_core::event::X` path compiling unchanged.
 pub use grain_sdk as event;
+pub mod capture;
 pub mod settings;
 // [GRAIN] Phase 5A: pinned-key verification of the signed extension catalogue.
 pub mod trust;

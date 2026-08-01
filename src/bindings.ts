@@ -2185,7 +2185,34 @@ default_panel?: DefaultPanel;
 /**
  * [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
  */
-theme?: ThemeMode; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; 
+theme?: ThemeMode; 
+/**
+ * [GRAIN] How many capture shortcuts are registered. See `CaptureModeSet`.
+ */
+capture_mode_set?: CaptureModeSet; 
+/**
+ * [GRAIN] The capture mode that owns the one shortcut under
+ * `CaptureModeSet::Single`. One of `CAPTURE_MODE_IDS`.
+ */
+capture_primary_mode?: string; 
+/**
+ * [GRAIN] Which mode the AI shortcut starts when pressed from idle. Under
+ * `Single` this follows `capture_primary_mode`; it is only independently
+ * meaningful when all three modes are live.
+ */
+capture_ai_start_mode?: string; 
+/**
+ * [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
+ * routes the transcript to AI. On by default — this is what replaces the
+ * separate "Send to AI (End)" row that only ever appeared with
+ * push-to-talk off.
+ */
+capture_end_with_ai?: boolean; 
+/**
+ * [GRAIN] Send every capture to AI, whichever shortcut started it. With
+ * this on there is exactly one key to remember for the whole product.
+ */
+capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean; update_checks_enabled?: boolean; selected_model?: string; 
 /**
  * [GRAIN] Native ASR model id (separate registry from `selected_model`).
  * Empty = none selected. Never overload `selected_model`: Batch/Rolling and
@@ -2420,6 +2447,28 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
+/**
+ * [GRAIN] How many capture modes are live at once.
+ * 
+ * Grain ships three ways to capture — Standard, Flow and Live — and used to
+ * register a global shortcut for each, plus a fourth to send a transcript to
+ * AI. Four keys to remember before you have said a word is the single biggest
+ * source of friction in the product, and most people only ever use one mode.
+ * 
+ * `Single` keeps exactly one capture shortcut registered. The other modes are
+ * not disabled or removed — they are one dropdown away, and their bindings
+ * stay in settings untouched — they simply stop occupying a global hotkey the
+ * user has to hold in their head.
+ */
+export type CaptureModeSet = 
+/**
+ * One capture shortcut, chosen by `capture_primary_mode`.
+ */
+"single" | 
+/**
+ * All three capture shortcuts registered, as Grain has always done.
+ */
+"all"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"

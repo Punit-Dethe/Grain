@@ -13,8 +13,11 @@ import { MuteWhileRecording } from "../MuteWhileRecording";
 import { VoiceProcessing } from "../VoiceProcessing";
 import { PostProcessingToggle } from "../PostProcessingToggle";
 import { ModelSettingsCard } from "./ModelSettingsCard";
+import { CaptureModes } from "../capture/CaptureModes";
 
-export const GeneralSettings: React.FC = () => {
+export const GeneralSettings: React.FC<{
+  variant?: "default" | "next";
+}> = ({ variant = "default" }) => {
   const { t } = useTranslation();
   const { audioFeedbackEnabled, getSetting } = useSettings();
   const pushToTalk = getSetting("push_to_talk");
@@ -27,21 +30,39 @@ export const GeneralSettings: React.FC = () => {
         <h1 className="text-xl font-semibold mb-1">
           {t("settings.general.title")}
         </h1>
-        <p className="text-sm text-ink-soft">{t("settings.general.description")}</p>
+        <p className="text-sm text-ink-soft">
+          {t("settings.general.description")}
+        </p>
       </div>
 
-      {/* Capture modes — one rebindable shortcut per recording mode. Grouping
-          the three "start a recording" keys together makes them legible as a
-          set, instead of a wall of look-alike rows. */}
-      <SettingsGroup title={t("settings.general.groups.captureModes")}>
-        <ShortcutInput shortcutId="transcribe" grouped={true} />
-        <ShortcutInput shortcutId="transcribe_realtime" grouped={true} />
-        {/* [GRAIN] Native ASR — streaming dictation in the Studio Window overlay. */}
-        <ShortcutInput shortcutId="transcribe_native_asr" grouped={true} />
-        <ShortcutInput shortcutId="transcribe_with_post_process" grouped={true} />
-        {/* [GRAIN] Summon the voice-first AI agent on the current selection. */}
-        <ShortcutInput shortcutId="summon_agent" grouped={true} />
-      </SettingsGroup>
+      {/* [GRAIN] UI 2.0 replaces the flat wall of capture keys with a choice:
+          one mode or all three, plus AI as toggles rather than more shortcuts.
+          See CaptureModes. The old tree keeps the flat list unchanged. */}
+      {variant === "next" ? (
+        <>
+          <CaptureModes />
+          <SettingsGroup title={t("settings.general.groups.captureModes")}>
+            {/* [GRAIN] Summon the voice-first AI agent on the current selection. */}
+            <ShortcutInput shortcutId="summon_agent" grouped={true} />
+          </SettingsGroup>
+        </>
+      ) : (
+        /* Capture modes — one rebindable shortcut per recording mode. Grouping
+           the three "start a recording" keys together makes them legible as a
+           set, instead of a wall of look-alike rows. */
+        <SettingsGroup title={t("settings.general.groups.captureModes")}>
+          <ShortcutInput shortcutId="transcribe" grouped={true} />
+          <ShortcutInput shortcutId="transcribe_realtime" grouped={true} />
+          {/* [GRAIN] Native ASR — streaming dictation in the Studio Window overlay. */}
+          <ShortcutInput shortcutId="transcribe_native_asr" grouped={true} />
+          <ShortcutInput
+            shortcutId="transcribe_with_post_process"
+            grouped={true}
+          />
+          {/* [GRAIN] Summon the voice-first AI agent on the current selection. */}
+          <ShortcutInput shortcutId="summon_agent" grouped={true} />
+        </SettingsGroup>
+      )}
 
       {/* Recording behaviour — how a capture is held and cancelled. */}
       <SettingsGroup title={t("settings.general.groups.behaviour")}>
@@ -51,9 +72,12 @@ export const GeneralSettings: React.FC = () => {
         {!isLinux && !pushToTalk && (
           <ShortcutInput shortcutId="cancel" grouped={true} />
         )}
-        {/* NEW: end a dictation/real-time session by sending the transcript to AI.
-            Shown whenever push-to-talk is off, on every platform. */}
-        {!pushToTalk && (
+        {/* End a dictation/real-time session by sending the transcript to AI.
+            Shown whenever push-to-talk is off, on every platform.
+            [GRAIN] UI 2.0 owns this row in CaptureModes' AI group, where it
+            sits with the toggles that govern it — showing it twice would be
+            two controls for one key. */}
+        {!pushToTalk && variant === "default" && (
           <ShortcutInput shortcutId="transcribe_send_to_ai" grouped={true} />
         )}
       </SettingsGroup>

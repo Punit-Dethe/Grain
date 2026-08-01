@@ -74,22 +74,6 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
     }
 }
 
-pub fn register_send_to_ai_shortcut(app: &AppHandle) {
-    let settings = settings::get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::register_send_to_ai_shortcut(app),
-        KeyboardImplementation::HandyKeys => handy_keys::register_send_to_ai_shortcut(app),
-    }
-}
-
-pub fn unregister_send_to_ai_shortcut(app: &AppHandle) {
-    let settings = settings::get_settings(app);
-    match settings.keyboard_implementation {
-        KeyboardImplementation::Tauri => tauri_impl::unregister_send_to_ai_shortcut(app),
-        KeyboardImplementation::HandyKeys => handy_keys::unregister_send_to_ai_shortcut(app),
-    }
-}
-
 /// Register a shortcut using the appropriate implementation
 pub fn register_shortcut(app: &AppHandle, binding: ShortcutBinding) -> Result<(), String> {
     let settings = get_settings(app);
@@ -164,7 +148,7 @@ pub fn change_binding(
     // It's managed dynamically, so we don't register/unregister here
     // ("agent_followup" is registered transiently by agent.rs while an Agent
     // surface is open — it must never be registered globally from here).
-    if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
+    if id == "cancel" || id == "agent_followup" {
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());
@@ -388,7 +372,7 @@ fn unregister_all_shortcuts(app: &AppHandle, implementation: KeyboardImplementat
     for (id, binding) in bindings {
         // Skip cancel shortcut as it's dynamically registered
         // Skip dynamically registered shortcuts
-        if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
+        if id == "cancel" || id == "agent_followup" {
             continue;
         }
 
@@ -417,7 +401,7 @@ fn register_all_shortcuts_for_implementation(
 
     for (id, default_binding) in &default_bindings {
         // Skip dynamically registered shortcuts
-        if id == "cancel" || id == "transcribe_send_to_ai" || id == "agent_followup" {
+        if id == "cancel" || id == "agent_followup" {
             continue;
         }
 

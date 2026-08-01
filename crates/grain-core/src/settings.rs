@@ -360,6 +360,48 @@ impl Default for ThemeMode {
     }
 }
 
+/// [GRAIN] How many capture modes are live at once.
+///
+/// Grain ships three ways to capture — Standard, Flow and Live — and used to
+/// register a global shortcut for each, plus a fourth to send a transcript to
+/// AI. Four keys to remember before you have said a word is the single biggest
+/// source of friction in the product, and most people only ever use one mode.
+///
+/// `Single` keeps exactly one capture shortcut registered. The other modes are
+/// not disabled or removed — they are one dropdown away, and their bindings
+/// stay in settings untouched — they simply stop occupying a global hotkey the
+/// user has to hold in their head.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureModeSet {
+    /// One capture shortcut, chosen by `capture_primary_mode`.
+    Single,
+    /// All three capture shortcuts registered, as Grain has always done.
+    All,
+}
+
+impl Default for CaptureModeSet {
+    fn default() -> Self {
+        CaptureModeSet::Single
+    }
+}
+
+/// The three binding ids that start a capture. Order is the order they are
+/// offered in the UI: least to most machinery.
+pub const CAPTURE_MODE_IDS: [&str; 3] = [
+    "transcribe",
+    "transcribe_realtime",
+    "transcribe_native_asr",
+];
+
+pub fn default_capture_mode() -> String {
+    "transcribe".to_string()
+}
+
+fn default_capture_end_with_ai() -> bool {
+    true
+}
+
 // What to actually paint. Defined in the SDK (it crosses the wire inside
 // DaemonEvent::ThemeConfig); re-exported here so it sits beside the preference
 // that produces it.
@@ -609,6 +651,28 @@ pub struct AppSettings {
     /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
     #[serde(default)]
     pub theme: ThemeMode,
+    /// [GRAIN] How many capture shortcuts are registered. See `CaptureModeSet`.
+    #[serde(default)]
+    pub capture_mode_set: CaptureModeSet,
+    /// [GRAIN] The capture mode that owns the one shortcut under
+    /// `CaptureModeSet::Single`. One of `CAPTURE_MODE_IDS`.
+    #[serde(default = "default_capture_mode")]
+    pub capture_primary_mode: String,
+    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. Under
+    /// `Single` this follows `capture_primary_mode`; it is only independently
+    /// meaningful when all three modes are live.
+    #[serde(default = "default_capture_mode")]
+    pub capture_ai_start_mode: String,
+    /// [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
+    /// routes the transcript to AI. On by default — this is what replaces the
+    /// separate "Send to AI (End)" row that only ever appeared with
+    /// push-to-talk off.
+    #[serde(default = "default_capture_end_with_ai")]
+    pub capture_end_with_ai: bool,
+    /// [GRAIN] Send every capture to AI, whichever shortcut started it. With
+    /// this on there is exactly one key to remember for the whole product.
+    #[serde(default)]
+    pub capture_always_ai: bool,
     #[serde(default = "default_start_hidden")]
     pub start_hidden: bool,
     #[serde(default = "default_autostart_enabled")]
@@ -1545,6 +1609,11 @@ pub fn get_default_settings() -> AppSettings {
         sound_theme: default_sound_theme(),
         default_panel: DefaultPanel::default(),
         theme: ThemeMode::default(),
+        capture_mode_set: CaptureModeSet::default(),
+        capture_primary_mode: default_capture_mode(),
+        capture_ai_start_mode: default_capture_mode(),
+        capture_end_with_ai: default_capture_end_with_ai(),
+        capture_always_ai: false,
         start_hidden: default_start_hidden(),
         autostart_enabled: default_autostart_enabled(),
         update_checks_enabled: default_update_checks_enabled(),

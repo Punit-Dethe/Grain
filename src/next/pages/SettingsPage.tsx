@@ -135,7 +135,9 @@ export function SettingsPage({ section }: SettingsPageProps) {
                     key={activeSection}
                     className="settings-pane next-settings-content"
                   >
-                    {activeSection === "advanced" ? (
+                    {activeSection === "general" ? (
+                      <GeneralSettings variant="next" />
+                    ) : activeSection === "advanced" ? (
                       <AdvancedSettings variant="next" />
                     ) : activeSection === "about" ? (
                       <AboutSettings variant="next" />
