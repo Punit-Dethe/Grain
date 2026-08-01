@@ -1429,6 +1429,11 @@ h3 {
   grid-template-columns: 248px minmax(0, 1fr);
 }
 
+/* About has no section rail of its own — it is one surface, not a set. */
+.settings-shell-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .settings-sidebar-pane {
   min-width: 0;
   padding: 0 11px 18px;

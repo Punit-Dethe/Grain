@@ -25,6 +25,7 @@ export type AppRoute =
   | { page: "overview" }
   | { page: "notes" }
   | { page: "history" }
+  | { page: "about" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
   | { page: "extensions"; view: ExtensionViewId }
@@ -48,6 +49,7 @@ export function routeFromHash(hash: string): AppRoute {
 
   if (path === "/history") return { page: "history" };
   if (path === "/notes") return { page: "notes" };
+  if (path === "/about") return { page: "about" };
   if (path === "/tools") return { page: "tools", section: "dictionary" };
   if (path === "/extensions") {
     return { page: "extensions", view: "installed" };

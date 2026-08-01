@@ -20,7 +20,8 @@
 | History    | Archive, actions, audio, pagination                     | Complete          | Working             | Uses the shared live History controller.                  |
 | History    | Flow / Standard filter pills                            | Complete          | Cosmetic only       | History entries do not expose capture-mode metadata yet.  |
 | Settings   | Surfaced preference sections                            | In progress       | Working             | Existing surfaced settings use the prototype style.       |
-| Settings   | `app_language`                                          | Not placed        | Parity gap          | Requires later placement in UI 2.0.                       |
+| Settings   | Appearance (system / light / dark)                      | Complete          | Working             | Three-mode row; the legacy two-state toggle is next-only. |
+| About      | Own tab: language, version, locations, acknowledgments  | Complete          | Working             | Re-skins the real About surface; parity gap closed.       |
 | Tools      | Dictionary and automatic dictionary                     | Complete          | Working             | Real validation, persistence, and update states retained. |
 | Tools      | Snippets, Context, and Agent                            | Complete          | Working             | Real feature switches, editors, controls, and anchors.    |
 | Tools      | Contextual extension recommendations                    | Complete          | Working             | Uses the live bounded store catalogue and install flow.   |

@@ -1057,6 +1057,19 @@
           "description": "Diagnostics, update checks, timing thresholds, microphone behavior, and live logs."
         }
       }
+    },
+    "about": {
+      "label": "Grain and this installation",
+      "description": "Application language, version, on-disk locations and the projects Grain is built on."
+    },
+    "appearance": {
+      "title": "Appearance",
+      "description": "Follow the operating system, or hold Grain to a fixed light or dark scheme. Every Grain surface — window, pill and extension cards — uses this one setting.",
+      "modes": {
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark"
+      }
     }
   },
   "overlay": {

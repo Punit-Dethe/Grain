@@ -12,6 +12,13 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash("#/notes")).toEqual(route);
   });
 
+  it("round-trips About as a tab of its own", () => {
+    const route = { page: "about" } as const;
+    expect(hashForRoute(route)).toBe("#/about");
+    expect(routeFromHash("#/about")).toEqual(route);
+    expect(routeFromHash("#/about/")).toEqual(route);
+  });
+
   it.each([
     "general",
     "advanced",
@@ -101,5 +108,6 @@ describe("UI 2.0 hash navigation", () => {
       routeUsesCompactGlobalRail({ page: "extensions", view: "installed" }),
     ).toBe(false);
     expect(routeUsesCompactGlobalRail({ page: "overview" })).toBe(false);
+    expect(routeUsesCompactGlobalRail({ page: "about" })).toBe(false);
   });
 });

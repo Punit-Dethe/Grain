@@ -21,6 +21,7 @@ import { KeyboardImplementationSelector } from "../debug/KeyboardImplementationS
 import { AccelerationSelector } from "../AccelerationSelector";
 import { LazyStreamClose } from "../LazyStreamClose";
 import { AppearanceToggle } from "../AppearanceToggle";
+import { AppearanceMode } from "../AppearanceMode";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
 export const AdvancedSettings: React.FC<{
@@ -35,6 +36,9 @@ export const AdvancedSettings: React.FC<{
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.advanced.groups.app")}>
+        {/* [GRAIN] UI 2.0 owns its own appearance row: three modes, including
+            `system`, which the legacy two-state toggle below cannot express. */}
+        {variant === "next" && <AppearanceMode />}
         <DefaultPanel grouped={true} />
         <ShowOverlay descriptionMode="tooltip" grouped={true} />
         <StartHidden descriptionMode="tooltip" grouped={true} />
@@ -94,7 +98,7 @@ export const AdvancedSettings: React.FC<{
           />
           <AccelerationSelector descriptionMode="tooltip" grouped={true} />
           <LazyStreamClose descriptionMode="tooltip" grouped={true} />
-          <AppearanceToggle />
+          {variant === "default" && <AppearanceToggle />}
         </SettingsGroup>
       )}
     </div>

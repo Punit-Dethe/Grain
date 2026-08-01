@@ -9,7 +9,9 @@ import { AppDataDirectory } from "../AppDataDirectory";
 import { AppLanguageSelector } from "../AppLanguageSelector";
 import { LogDirectory } from "../debug";
 
-export const AboutSettings: React.FC = () => {
+export const AboutSettings: React.FC<{
+  variant?: "default" | "next";
+}> = ({ variant = "default" }) => {
   const { t } = useTranslation();
   const [version, setVersion] = useState("");
 
@@ -31,6 +33,11 @@ export const AboutSettings: React.FC = () => {
     // Temporarily disabled
   };
 
+  // [GRAIN] The donate button does nothing and has done nothing for a while.
+  // UI 2.0 renders what exists and leaves no dead affordances, so the row is
+  // dropped there rather than shipped as a button that swallows the click.
+  const showDonate = variant === "default";
+
   return (
     <div className="max-w-4xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.about.title")}>
@@ -44,15 +51,17 @@ export const AboutSettings: React.FC = () => {
           <span className="text-sm font-mono">v{version}</span>
         </SettingContainer>
 
-        <SettingContainer
-          title={t("settings.about.supportDevelopment.title")}
-          description={t("settings.about.supportDevelopment.description")}
-          grouped={true}
-        >
-          <Button variant="primary" size="md" onClick={handleDonateClick}>
-            {t("settings.about.supportDevelopment.button")}
-          </Button>
-        </SettingContainer>
+        {showDonate && (
+          <SettingContainer
+            title={t("settings.about.supportDevelopment.title")}
+            description={t("settings.about.supportDevelopment.description")}
+            grouped={true}
+          >
+            <Button variant="primary" size="md" onClick={handleDonateClick}>
+              {t("settings.about.supportDevelopment.button")}
+            </Button>
+          </SettingContainer>
+        )}
 
         <SettingContainer
           title={t("settings.about.sourceCode.title")}
