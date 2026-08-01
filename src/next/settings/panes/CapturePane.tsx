@@ -34,9 +34,9 @@ export function CapturePane() {
         {/* Push-to-talk cancels by releasing the key, so a cancel shortcut would
             be a key that can never fire. Linux keeps it hidden regardless:
             dynamic re-registration there is unstable. */}
-        {!isLinux && !pushToTalk && <ShortcutInput shortcutId="cancel" grouped />}
-        {/* Agent is a capture too — it starts a recording, over the selection. */}
-        <ShortcutInput shortcutId="summon_agent" grouped />
+        {!isLinux && !pushToTalk && (
+          <ShortcutInput shortcutId="cancel" grouped />
+        )}
       </SettingsGroup>
 
       {/* Language and translation for the loaded model. Self-hides when the

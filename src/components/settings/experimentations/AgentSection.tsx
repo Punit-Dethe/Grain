@@ -66,13 +66,18 @@ export const AgentSection: React.FC = () => {
 
   return (
     <>
-      {/* 1. Where the reply appears. "Look" rather than "Position": one of the
-          two options is a differently shaped surface, not the same card moved,
-          so this is a choice about appearance. The setting KEY stays
+      {/* 1. The key that summons it. It used to live with the capture keys,
+          which is where you would look for it only if you already knew Agent
+          existed — it is the first thing you want after switching Agent on. */}
+      <ShortcutInput shortcutId="summon_agent" grouped descriptionMode="tooltip" />
+
+      {/* 2. Where the reply appears. "Personalize" rather than "Position": one
+          of the two options is a differently shaped surface, not the same card
+          moved, so this is a choice about appearance. The setting KEY stays
           `agent_panel_position` — renaming it would migrate everyone's stored
           value to say the same thing. */}
       <SettingContainer
-        title="Look"
+        title="Personalize"
         description="'Side card' is the original bottom-right reply card. 'Center panel' is the sleeker center-top surface that grows with your conversation up to a maximum height, then scrolls. The center panel is still in development."
         descriptionMode="tooltip"
         grouped
@@ -87,7 +92,7 @@ export const AgentSection: React.FC = () => {
         />
       </SettingContainer>
 
-      {/* 2. …or no reply surface at all. */}
+      {/* 3. …or no reply surface at all. */}
       <ToggleSwitch
         label="Quick Agent"
         description="Skip the reply card entirely: the reply is auto-pasted straight at your cursor (replacing any still-selected text), then the pill briefly offers 'ask follow-up' in case you need to keep going. Same summon shortcut."
@@ -98,7 +103,7 @@ export const AgentSection: React.FC = () => {
         onChange={(v) => updateSetting("agent_quick_enabled", v)}
       />
 
-      {/* 3. How replies come back to you. */}
+      {/* 4. How replies come back to you. */}
       <SettingContainer
         title="Auto-copy replies"
         description="Copy the Agent's replies to your clipboard as they arrive: only the first reply of a session, every reply (including retries and follow-ups), or never."
@@ -113,7 +118,7 @@ export const AgentSection: React.FC = () => {
         />
       </SettingContainer>
 
-      {/* 4. How you talk to it. */}
+      {/* 5. How you talk to it. */}
       <ToggleSwitch
         label="Type to expand"
         description="The summon card records by default. Start typing while it's listening to jump straight to the typing card; turn this off to keep it voice-first (press Tab or click to type)."
@@ -132,7 +137,7 @@ export const AgentSection: React.FC = () => {
         descriptionMode="tooltip"
       />
 
-      {/* 5. What it is allowed to read. */}
+      {/* 6. What it is allowed to read. */}
       <SettingContainer
         title="Context"
         description="What the Agent reads at summon, from least to most. 'Unique terms' passes only high-signal names and identifiers, never raw text. 'Full field text' sends the field you're in (capped). 'Whole window text' also sends what surrounds it — the email thread you're replying to, the page you're on — read from the window's accessibility tree, never a screenshot, and only the window you're in. Selected text always stays the subject; context is reference only. Password fields are never read."

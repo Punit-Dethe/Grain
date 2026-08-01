@@ -1093,7 +1093,7 @@
       },
       "groups": {
         "recording": "Holding a recording",
-        "recordingInfo": "Whether a capture is held down or toggled, how it is cancelled, and the key that summons Agent over your selection.",
+        "recordingInfo": "Whether a capture is held down or toggled, and how one is cancelled part-way through.",
         "input": "Microphone",
         "inputInfo": "The device Grain records from, and the conditioning applied to it before transcription.",
         "feedback": "Sound feedback",

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Code2,
@@ -535,23 +536,6 @@ function ExtensionDrawer({
           </div>
           <p>{description}</p>
 
-          <div className="panel-section-label">Permissions</div>
-          <div className="permission-list">
-            {capabilities.length ? (
-              capabilities.map((capability) => (
-                <div className="permission-row" key={capability}>
-                  <ShieldCheck size={15} />
-                  <span>{capabilityLabel(capability)}</span>
-                  <strong>Required</strong>
-                </div>
-              ))
-            ) : (
-              <div className="drawer-muted">
-                This pack declares no runtime permissions.
-              </div>
-            )}
-          </div>
-
           {/* Fetched with the drawer, revealed on demand. The fetch and the
               disclosure used to be the same gesture, which cost two clicks to
               read anything; separating them costs one, on already-loaded text. */}
@@ -564,8 +548,15 @@ function ExtensionDrawer({
                 aria-expanded={readmeOpen}
                 onClick={() => setReadmeOpen((open) => !open)}
               >
-                <span>{readmeLoading ? "Loading README…" : "Read the full README"}</span>
-                <ChevronRight size={15} aria-hidden="true" />
+                <BookOpen size={15} aria-hidden="true" />
+                <span>
+                  {readmeLoading ? "Loading README…" : "Read the full README"}
+                </span>
+                <ChevronRight
+                  className="readme-chevron"
+                  size={15}
+                  aria-hidden="true"
+                />
               </button>
               {readmeOpen && (
                 <div className="extension-readme">
@@ -582,6 +573,23 @@ function ExtensionDrawer({
               )}
             </>
           )}
+
+          <div className="panel-section-label">Permissions</div>
+          <div className="permission-list">
+            {capabilities.length ? (
+              capabilities.map((capability) => (
+                <div className="permission-row" key={capability}>
+                  <ShieldCheck size={15} />
+                  <span>{capabilityLabel(capability)}</span>
+                  <strong>Required</strong>
+                </div>
+              ))
+            ) : (
+              <div className="drawer-muted">
+                This pack declares no runtime permissions.
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="extension-drawer-actions">
@@ -772,6 +780,26 @@ function InstalledList({
               >
                 <Eye size={16} />
               </button>
+              {/* Removing an extension was reachable only by opening its
+                  preview and scrolling to the footer, so the list you manage
+                  extensions from was the one place you could not remove one.
+                  A dev override is unloaded from the developer tools that
+                  loaded it, not uninstalled. */}
+              {card.trust !== "dev" && (
+                <button
+                  className="icon-button extension-uninstall-button"
+                  type="button"
+                  title={`Uninstall ${card.name}`}
+                  aria-label={`Uninstall ${card.name}`}
+                  disabled={controller.busy === card.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void controller.uninstall(card);
+                  }}
+                >
+                  <Trash2 size={15} />
+                </button>
+              )}
               <button
                 className={`toggle${card.enabled ? " on" : ""}`}
                 type="button"
