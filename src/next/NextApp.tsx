@@ -20,7 +20,6 @@ import {
   routeUsesCompactGlobalRail,
   type AppRoute,
 } from "./navigation";
-import { AboutPage } from "./pages/AboutPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { NotesPage } from "./pages/NotesPage";
 import { ToolsPage } from "./pages/ToolsPage";
@@ -118,8 +117,7 @@ type IconName =
   | "pause"
   | "star"
   | "refresh"
-  | "trash"
-  | "info";
+  | "trash";
 
 function Icon({ name, small = false }: { name: IconName; small?: boolean }) {
   return (
@@ -206,10 +204,6 @@ function IconSprite() {
       <symbol id="i-moon" viewBox="0 0 24 24">
         <path d="M20 15.2A8.4 8.4 0 0 1 8.8 4 8.4 8.4 0 1 0 20 15.2Z" />
       </symbol>
-      <symbol id="i-info" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 11v5.5M12 7.75v.5" />
-      </symbol>
     </svg>
   );
 }
@@ -285,9 +279,7 @@ function WindowChrome({ route }: { route: AppRoute }) {
                   ? "Extensions"
                   : route.page === "extension-settings"
                     ? "Extension settings"
-                    : route.page === "about"
-                      ? "About"
-                      : "Overview"}
+                    : "Overview"}
       </div>
       <div
         className="window-actions"
@@ -373,12 +365,6 @@ const NAV_GROUPS = [
         label: "Extensions",
         icon: "box",
         href: "#/extensions/installed",
-      },
-      {
-        page: "about",
-        label: "About",
-        icon: "info",
-        href: "#/about",
       },
     ],
   },
@@ -1008,8 +994,6 @@ function NextShell() {
           <ExtensionsPage view={route.view} />
         ) : route.page === "extension-settings" ? (
           <ExtensionSettingsPage extensionId={route.extensionId} />
-        ) : route.page === "about" ? (
-          <AboutPage />
         ) : (
           <OverviewPage history={history} />
         )}

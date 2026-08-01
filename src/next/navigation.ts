@@ -4,6 +4,9 @@ export const SETTINGS_SECTION_IDS = [
   "speech-to-text",
   "post-processing",
   "debug",
+  // About sits last: it is the reference shelf of the settings pane, not a
+  // workspace of its own.
+  "about",
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
@@ -25,7 +28,6 @@ export type AppRoute =
   | { page: "overview" }
   | { page: "notes" }
   | { page: "history" }
-  | { page: "about" }
   | { page: "settings"; section: SettingsSectionId }
   | { page: "tools"; section: ToolSectionId }
   | { page: "extensions"; view: ExtensionViewId }
@@ -49,7 +51,8 @@ export function routeFromHash(hash: string): AppRoute {
 
   if (path === "/history") return { page: "history" };
   if (path === "/notes") return { page: "notes" };
-  if (path === "/about") return { page: "about" };
+  // Legacy destination from the brief period About was its own tab.
+  if (path === "/about") return { page: "settings", section: "about" };
   if (path === "/tools") return { page: "tools", section: "dictionary" };
   if (path === "/extensions") {
     return { page: "extensions", view: "installed" };

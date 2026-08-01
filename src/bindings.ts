@@ -2501,7 +2501,7 @@ toggle_seq: string; repository: string | null;
  * Manifest-declared capabilities. The installed UI needs these even for
  * local/imported packs which have no signed-store catalogue entry.
  */
-capabilities: string[];
+capabilities: string[]; 
 /**
  * The pack declares settings or shortcuts, so it has a section of its own
  * worth opening. Free to compute — Overview already reads every manifest.

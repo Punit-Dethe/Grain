@@ -1,6 +1,7 @@
 import {
   AudioLines,
   Bug,
+  Info,
   SlidersHorizontal,
   Sparkles,
   Wrench,
@@ -29,6 +30,7 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     icon: Bug,
     enabled: (settings) => settings?.debug_mode === true,
   },
+  { id: "about", icon: Info, enabled: () => true },
 ] as const;
 
 export function isSettingsSectionEnabled(

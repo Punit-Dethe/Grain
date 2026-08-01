@@ -12,11 +12,11 @@ describe("UI 2.0 hash navigation", () => {
     expect(routeFromHash("#/notes")).toEqual(route);
   });
 
-  it("round-trips About as a tab of its own", () => {
-    const route = { page: "about" } as const;
-    expect(hashForRoute(route)).toBe("#/about");
-    expect(routeFromHash("#/about")).toEqual(route);
-    expect(routeFromHash("#/about/")).toEqual(route);
+  it("sends the retired About tab to its settings section", () => {
+    const section = { page: "settings", section: "about" } as const;
+    expect(routeFromHash("#/about")).toEqual(section);
+    expect(routeFromHash("#/about/")).toEqual(section);
+    expect(hashForRoute(section)).toBe("#/settings/about");
   });
 
   it.each([
@@ -25,6 +25,7 @@ describe("UI 2.0 hash navigation", () => {
     "speech-to-text",
     "post-processing",
     "debug",
+    "about",
   ] as const)("round-trips the %s settings section", (section) => {
     const route = { page: "settings", section } as const;
     expect(routeFromHash(hashForRoute(route))).toEqual(route);
@@ -108,6 +109,5 @@ describe("UI 2.0 hash navigation", () => {
       routeUsesCompactGlobalRail({ page: "extensions", view: "installed" }),
     ).toBe(false);
     expect(routeUsesCompactGlobalRail({ page: "overview" })).toBe(false);
-    expect(routeUsesCompactGlobalRail({ page: "about" })).toBe(false);
   });
 });

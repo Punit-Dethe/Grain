@@ -1,5 +1,6 @@
 import { useEffect, type ComponentType } from "react";
 import { useTranslation } from "react-i18next";
+import { AboutSettings } from "@/components/settings/about/AboutSettings";
 import { AdvancedSettings } from "@/components/settings/advanced/AdvancedSettings";
 import { DebugSettings } from "@/components/settings/debug/DebugSettings";
 import { GeneralSettings } from "@/components/settings/general/GeneralSettings";
@@ -20,6 +21,7 @@ const sectionComponents: Record<SettingsSectionId, ComponentType> = {
   "speech-to-text": SpeechToTextSettings,
   "post-processing": PostProcessingSettings,
   debug: DebugSettings,
+  about: AboutSettings,
 };
 
 interface SettingsPageProps {
@@ -135,6 +137,8 @@ export function SettingsPage({ section }: SettingsPageProps) {
                   >
                     {activeSection === "advanced" ? (
                       <AdvancedSettings variant="next" />
+                    ) : activeSection === "about" ? (
+                      <AboutSettings variant="next" />
                     ) : (
                       <ActiveSection />
                     )}
