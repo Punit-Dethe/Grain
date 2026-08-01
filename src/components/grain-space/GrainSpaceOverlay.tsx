@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
-import { MessageSquare, Settings } from "lucide-react";
+import { MessageSquare, Settings, Sparkles } from "lucide-react";
 import { commands, type Note, type NoteCard } from "@/bindings";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Sidebar } from "./Sidebar";
@@ -94,9 +94,15 @@ export function GrainSpaceOverlay({
    * the correct results for "wifi password". */
   const searchGen = useRef(0);
   const mountedRef = useRef(false);
+  const nextChatButtonRef = useRef<HTMLButtonElement>(null);
   queryRef.current = query;
   selectedRef.current = selected;
   readonlyRef.current = selectedReadonly;
+
+  const closeNextChat = useCallback(() => {
+    setChatOpen(false);
+    nextChatButtonRef.current?.focus();
+  }, []);
 
   /** Card lookup for collection chips + readonly checks on search hits. */
   const cardById = useMemo(() => {
@@ -619,34 +625,6 @@ export function GrainSpaceOverlay({
         />
 
         <div className="gs-main">
-          {variant === "next" && (
-            <div className="gs-next-editor-toolbar">
-              <span className="gs-next-breadcrumb">
-                {calendarOpen
-                  ? t("grainSpaceOverlay.calendar")
-                  : selectedFolder || t("grainSpaceOverlay.notes")}
-              </span>
-              <span className="gs-next-toolbar-spacer" />
-              <button
-                type="button"
-                className={`gs-next-ai-toggle${chatOpen ? " is-open" : ""}`}
-                aria-pressed={chatOpen}
-                onClick={() => setChatOpen((value) => !value)}
-              >
-                <span>AI</span>
-                {t("grainSpaceOverlay.chat")}
-              </button>
-              <button
-                type="button"
-                className="gs-iconbtn"
-                title={t("grainSpaceOverlay.settings")}
-                aria-label={t("grainSpaceOverlay.settings")}
-                onClick={onOpenSettings}
-              >
-                <Settings width={15} height={15} />
-              </button>
-            </div>
-          )}
           {/* [GRAIN] Nothing above the note. The strip that used to sit here held
               search, the search-mode switch and the window controls; search moved
               into the rail (where its results render), the mode switch is gone
@@ -657,16 +635,43 @@ export function GrainSpaceOverlay({
               in a bar of its own — a full-width strip to carry one button is a lot
               of vertical space for one button. */}
           <div className="gs-stage">
-            <button
-              type="button"
-              className={`gs-chat-toggle${variant === "next" ? " gs-chat-toggle--next-hidden" : ""}${chatOpen ? " gs-chat-toggle--on" : ""}`}
-              title={t("grainSpaceOverlay.chat")}
-              aria-label={t("grainSpaceOverlay.chat")}
-              aria-pressed={chatOpen}
-              onClick={() => setChatOpen((v) => !v)}
-            >
-              <MessageSquare width={15} height={15} />
-            </button>
+            {variant === "next" ? (
+              <div
+                className={`gs-next-editor-controls${chatOpen ? " is-chat-open" : ""}`}
+              >
+                <button
+                  ref={nextChatButtonRef}
+                  type="button"
+                  className={`gs-next-chat-control${chatOpen ? " is-open" : ""}`}
+                  aria-label={t("grainSpaceOverlay.chat")}
+                  aria-pressed={chatOpen}
+                  onClick={() => setChatOpen((value) => !value)}
+                >
+                  <Sparkles width={14} height={14} />
+                  <span>{t("grainSpaceOverlay.chat")}</span>
+                </button>
+                <button
+                  type="button"
+                  className="gs-next-editor-settings"
+                  title={t("grainSpaceOverlay.settings")}
+                  aria-label={t("grainSpaceOverlay.settings")}
+                  onClick={onOpenSettings}
+                >
+                  <Settings width={15} height={15} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className={`gs-chat-toggle${chatOpen ? " gs-chat-toggle--on" : ""}`}
+                title={t("grainSpaceOverlay.chat")}
+                aria-label={t("grainSpaceOverlay.chat")}
+                aria-pressed={chatOpen}
+                onClick={() => setChatOpen((v) => !v)}
+              >
+                <MessageSquare width={15} height={15} />
+              </button>
+            )}
             {loading ? (
               <section className="gs-sheet">
                 <div className="gs-sheet-empty">
@@ -704,6 +709,7 @@ export function GrainSpaceOverlay({
             <ChatRail
               open={chatOpen}
               onOpenNote={(id) => void openNoteById(id)}
+              onClose={variant === "next" ? closeNextChat : undefined}
             />
           </div>
         </div>

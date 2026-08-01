@@ -1093,7 +1093,7 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     >
       <div className="page-wrap extensions-page-wrap">
         <div className="page-header">
-          <div>
+          <div className="extensions-page-heading">
             <div className="eyebrow">Capability management</div>
             <h1>Extensions</h1>
             <p className="page-subtitle">

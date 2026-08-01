@@ -752,25 +752,21 @@ function OverviewPage({ history }: { history: NextHistoryController }) {
             type="standard"
             title="Standard capture"
             body="Complete local transcription"
-            shortcut="Ctrl Space"
           />
           <ActionCard
             type="flow"
             title="Flow capture"
             body="Rolling speech for longer thoughts"
-            shortcut="Right Alt"
           />
           <ActionCard
             type="note"
             title="Quick note"
             body="Capture directly into your notes"
-            shortcut="Alt N"
           />
           <ActionCard
             type="agent"
             title="Quick Agent"
             body="Transform the current selection"
-            shortcut="Alt Q"
           />
         </div>
 
@@ -836,12 +832,10 @@ function ActionCard({
   type,
   title,
   body,
-  shortcut,
 }: {
   type: "standard" | "flow" | "note" | "agent";
   title: string;
   body: string;
-  shortcut: string;
 }) {
   return (
     <button
@@ -875,10 +869,6 @@ function ActionCard({
       <div className="action-copy">
         <strong>{title}</strong>
         <small>{body}</small>
-      </div>
-      <div className="action-meta-row">
-        <kbd>{shortcut}</kbd>
-        <span className="action-arrow-clean">↗</span>
       </div>
     </button>
   );

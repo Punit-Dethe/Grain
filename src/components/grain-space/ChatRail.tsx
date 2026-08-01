@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ArrowUp, MessageSquare, Plus, Sparkles } from "lucide-react";
+import { ArrowUp, MessageSquare, Plus, Sparkles, X } from "lucide-react";
 import { commands, type AgentMessage, type AgentSource } from "@/bindings";
 
 type Role = "user" | "assistant";
@@ -36,9 +36,11 @@ const rid = () => `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export function ChatRail({
   open,
   onOpenNote,
+  onClose,
 }: {
   open: boolean;
   onOpenNote: (noteId: string) => void;
+  onClose?: () => void;
 }) {
   const { t } = useTranslation();
 
@@ -53,6 +55,7 @@ export function ChatRail({
 
   const messagesRef = useRef<ChatMessage[]>([]);
   const busyRef = useRef(false);
+  const clipRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   messagesRef.current = messages;
@@ -64,16 +67,26 @@ export function ChatRail({
 
   // Focus the field when the rail slides open.
   useEffect(() => {
-    if (open && tab === "chat") {
-      window.setTimeout(() => inputRef.current?.focus(), 260);
-    }
+    if (!open || tab !== "chat") return;
+    const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 260);
+    return () => window.clearTimeout(focusTimer);
   }, [open, tab]);
+
+  useEffect(() => {
+    const clip = clipRef.current;
+    if (!clip || !onClose) return;
+    clip.toggleAttribute("inert", !open);
+    return () => clip.removeAttribute("inert");
+  }, [onClose, open]);
 
   /** Run one Recall turn for `text`, appending the answer (or an error). */
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || busyRef.current) return;
+      busyRef.current = true;
+      setBusy(true);
+      setError(null);
 
       // A fresh conversation starts with a clean M-id registry (mirrors the
       // reset the voice pill does on each summon).
@@ -87,8 +100,6 @@ export function ChatRail({
       ];
       setMessages(next);
       setInput("");
-      setBusy(true);
-      setError(null);
 
       const payload: AgentMessage[] = next.map((m) => ({
         role: m.role,
@@ -113,8 +124,11 @@ export function ChatRail({
           setError(res.error || t("grainSpaceOverlay.chatError"));
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : t("grainSpaceOverlay.chatError"));
+        setError(
+          e instanceof Error ? e.message : t("grainSpaceOverlay.chatError"),
+        );
       } finally {
+        busyRef.current = false;
         setBusy(false);
         inputRef.current?.focus();
       }
@@ -215,10 +229,28 @@ export function ChatRail({
 
   return (
     <div
+      ref={clipRef}
       className={`gs-chat-clip${open ? " gs-chat-clip--open" : ""}`}
       aria-hidden={!open}
     >
       <div className="gs-chat">
+        {onClose && (
+          <div className="gs-chat-head">
+            <div className="gs-chat-head-copy">
+              <strong>{t("grainSpaceOverlay.chat")}</strong>
+              <span>{t("grainSpaceOverlay.chatWelcome")}</span>
+            </div>
+            <button
+              type="button"
+              className="gs-chat-close"
+              title={t("common.close")}
+              aria-label={t("common.close")}
+              onClick={onClose}
+            >
+              <X width={15} height={15} />
+            </button>
+          </div>
+        )}
         <div className="gs-chat-tabs">
           <button
             type="button"
@@ -242,6 +274,7 @@ export function ChatRail({
               type="button"
               className="gs-chat-new"
               title={t("grainSpaceOverlay.chatNewChat")}
+              aria-label={t("grainSpaceOverlay.chatNewChat")}
               onClick={newChat}
             >
               <Plus width={15} height={15} />
@@ -350,6 +383,7 @@ export function ChatRail({
                 className="gs-chat-send"
                 disabled={busy || !input.trim()}
                 title={t("grainSpaceOverlay.chatPlaceholder")}
+                aria-label={t("grainSpaceOverlay.chatPlaceholder")}
                 onClick={() => void send(input)}
               >
                 <ArrowUp width={13} height={13} />
