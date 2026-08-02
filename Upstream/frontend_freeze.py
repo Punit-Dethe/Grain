@@ -93,6 +93,69 @@ def census() -> int:
     return 0
 
 
+def adopted_from_upstream() -> list:
+    """Files under `src/app/` byte-identical to upstream's counterpart.
+
+    The census above matches on PATH, which is exactly what Grain's `src/app/`
+    move made it blind to: git's directory-rename detection routes upstream's
+    frontend work into `src/app/...`, a path upstream does not have, so nothing
+    is "shared" and the census stays at zero while upstream code walks in. That
+    happened on the 2026-08-02 sync; only the type-checker noticed.
+
+    Content is the signal instead. Most hits are legitimate -- components Grain
+    inherited and has not rewritten yet -- so this is a RATCHET, not a rule: the
+    set may shrink freely, and any NEW member means a file just became
+    upstream's again.
+    """
+    # Read the files on DISK, not HEAD blobs: the check has to be usable while
+    # a merge is still uncommitted, which is the moment an adoption can be
+    # undone cheaply. In CI the working tree is the commit, so this covers both.
+    ours = git("ls-tree", "-r", "--name-only", "HEAD", "--", "src/app").splitlines()
+    hits = []
+    for path in ours:
+        counterpart = "src/" + path[len("src/app/") :]
+        theirs = subprocess.run(
+            ["git", "cat-file", "-p", f"upstream/main:{counterpart}"],
+            capture_output=True,
+        )
+        if theirs.returncode != 0:
+            continue
+        try:
+            with open(path, "rb") as handle:
+                mine = handle.read()
+        except OSError:
+            continue
+        # splitlines() compares content independently of line endings, which a
+        # checkout can rewrite without anyone authoring anything.
+        if mine.splitlines() == theirs.stdout.splitlines():
+            hits.append(path)
+    return sorted(hits)
+
+
+def adoption_ratchet() -> int:
+    allow = load_allow()
+    baseline = set(allow.get("adopted", []))
+    current = set(adopted_from_upstream())
+
+    added = sorted(current - baseline)
+    if added:
+        for path in added:
+            print(
+                f"[freeze] FAIL: {path} is now byte-identical to upstream's copy "
+                f"- a sync adopted upstream's frontend into src/app/. Revert it, "
+                f"or run frontend_freeze.py --update if the match is deliberate.",
+                file=sys.stderr,
+            )
+        return 1
+    for path in sorted(baseline - current):
+        print(f"[freeze] diverged from upstream: {path} - run --update to lock it in")
+    print(
+        f"[freeze] OK: {len(current)} src/app file(s) still match upstream "
+        f"(ratchet: no growth)"
+    )
+    return 0
+
+
 def sync_purity(base: str) -> int:
     """A sync merge must not change the frontend."""
     changed = [
@@ -145,6 +208,7 @@ def main() -> int:
                     "note": "Files still shared with upstream under src/. May shrink, never grow. See docs/UI 2.0/PLAN.md.",
                     "strict": existing.get("strict", False),
                     "shared": current,
+                    "adopted": adopted_from_upstream(),
                 },
                 f,
                 indent=2,
@@ -161,7 +225,10 @@ def main() -> int:
     if "--report" in sys.argv:
         return report()
 
-    return census()
+    rc = census()
+    # Path-based and content-based checks answer different questions; the second
+    # is the only one that can see upstream code arriving at a Grain-only path.
+    return max(rc, adoption_ratchet())
 
 
 if __name__ == "__main__":

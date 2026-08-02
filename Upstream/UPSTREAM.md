@@ -16,6 +16,12 @@ done, the commit list in the body, and the divergence ratchet already run.
 Review it, merge it. Done — merged commits file themselves as `Merged` on the
 dashboard, because being in our ancestry *is* the record.
 
+Working locally? One command answers everything:
+
+```bash
+python Upstream/preflight.py     # fetches, then: behind-count, conflicts, all gates
+```
+
 Only a *conflicted* merge needs a human driver — and
 [merge-report.md](merge-report.md) will have told you the exact conflicting
 files up to 2 hours in advance, with
@@ -186,17 +192,47 @@ measures HEAD, not the working tree).
 ### B. The trial merge reports conflicts (rare case)
 
 ```bash
-git fetch upstream --tags
+python Upstream/preflight.py            # fetches; says how far behind + what conflicts
 python Upstream/rerere_cache.py restore
-git checkout -b sync/vX.Y.Z
-git merge vX.Y.Z            # or upstream/main; oldest release first
-# resolve per UPSTREAM-DIVERGENCE.md — rerere replays known resolutions
-python Upstream/rerere_cache.py save   # share NEW resolutions; commit them
-python Upstream/ratchet.py             # strays + drift
-bun install && cargo check             # regenerate lockfiles
-# verify (below), merge into main, push
+git checkout -b sync/upstream-YYYY-MM-DD
+python Upstream/merge_upstream.py       # merges; auto-resolves the frozen frontend
+# resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md
+git commit --no-edit
+python Upstream/merge_upstream.py --finish   # re-baselines budgets + runs every gate
+python Upstream/rerere_cache.py save    # share NEW resolutions; commit them
+bun install && cargo check              # regenerate lockfiles
 python Upstream/verdict.py --pending    # anything left unassessed? record it
 ```
+
+**Never run a bare `git merge upstream/main`.** The remote-tracking ref is a
+local cache; merging against a stale one is how the first 2026-08-02 sync
+"completed" while 16 commits it could not see stayed behind. Every tool here
+now fetches first — `git merge` does not.
+
+Three things `merge_upstream.py` does that hand-merging misses:
+
+- **Frozen-frontend conflicts resolve themselves.** Upstream keeps developing
+  its `src/`; we deleted it. Six of the eleven conflicts in the 08-02 sync were
+  that, and the answer never varies.
+- **Silent frontend adoption is reverted.** This is the one to understand.
+  Git's directory-rename detection saw `src/` → `src/app/` and *helpfully*
+  routes upstream's frontend work into Grain's tree — new files land under
+  `src/app/`, and edits to files that moved are applied with **no conflict at
+  all**. `frontend_freeze.py` cannot see either: it matches paths shared with
+  upstream's `src/`, and `src/app/...` is not one. On 08-02 only the
+  type-checker caught it.
+- **Strays are surfaced.** New upstream modules land at the `src-tauri/src/`
+  root and must be `git mv`'d into `handy/` with a `#[path]` declaration.
+
+### B1. Before you commit anything in the Handy tree
+
+```bash
+python Upstream/ratchet.py --worktree
+```
+
+The budget is measured against `HEAD`, so the plain ratchet can only fail
+*after* you commit — which then needs a second commit or an amend to fix.
+`--worktree` measures the files on disk and answers before you commit.
 
 If upstream changed code Grain relocated (settings → `crates/grain-core`,
 post-processing → `grain_post_process.rs`, LLM client → `grain_llm_client.rs`,
@@ -316,3 +352,4 @@ same commit.
 | 2026-07-31 | frontend frozen | `src/` left the shared-code category ahead of the UI 2.0 rewrite: `src/** merge=ours` + `frontend_freeze.py` (census + sync purity), because `merge=ours` only wins conflicts — a clean upstream edit to an untouched file, or a new upstream file, would otherwise land silently. Measured first: 22 upstream commits, 17 backend, 7 frontend, **4 frontend outside i18n** (`86616891` updater overlay and `cdf5028b` Sidebar restructure are both moot for Grain; `46d6a2ae` Vulkan gating and `ea3c20a3` `zh-Hant` resolution are backend facts written in TSX). Baseline: 140 files still shared, target 0 at cutover. Backend intake unchanged. |
 | 2026-07-28 | tracker rebuilt | Three faults, one cause — the tracker's data was *committed*. (1) The site never refreshed from CI: the sync job pushed with `GITHUB_TOKEN`, and GitHub does not fire `on: push` workflows for those pushes, so the separate `deploy-pages.yml` never ran. (2) Verdicts hand-typed into the generated `data.json` left `data.js` holding an older answer; the page silently preferred whichever it could read (two rows were drifted when this was found). (3) `checked_at` changed every run, so a `chore: sync upstream commits` commit landed on `main` every 2 hours carrying no information — ~60 of them. Fix: derived files (`data.json`, `data.js`, `status.json`, `merge-report.md`) are gitignored build products, rebuilt each run as a pure function of upstream's commits + our ancestry + the new hand-owned `verdicts.json`, and deployed to Pages *by the same job*. `verdict.py` replaces hand-editing; ancestry alone files a merged commit as `Merged`. Also: dropped the dashboard's PAT-in-`localStorage` trigger button for a link to the workflow, added a "Built <ago>" stamp linking to the run, and CI now `rerere_cache.py save`s the resolutions it learns instead of discarding them. Verified: regenerated ledger matches the last committed one on all 83 rows bar 4 stale hand-typed dates and one PR number (`#1261` → `#1310`, the PR that actually landed it). |
 | 2026-08-02 | `ea3c20a3` (22 commits) | Backlog to **zero**. Eight conflicts; the rest merged clean. Grain and upstream had independently written the same #1639 symlink-pruning in `build.rs`, so ours was dropped for upstream's — **62 → 12 lines** of divergence. Kept #1731's Vulkan host gating in `get_available_accelerators`, dropping only the ORT branch (no engine behind it since the ONNX removal). `tray_i18n.rs` **converged to 0**: it was byte-identical already, and merging finally recorded the ancestry, so the recurring delete/modify conflict is gone. Upstream's new `managers/model/download.rs` landed at the src root (new dir ⇒ no directory-rename detection) and was `git mv`'d into `handy/`. Frontend arrivals (Sidebar, UpdateChecker, i18n, en+da) landed at `src/`, which we vacated in the `src/app` move, so they appeared as deletable additions instead of silently overwriting ours. 387 Rust tests pass. |
+| 2026-08-02 | `76736d5a` (16 commits) | **The 08-02 sync above was wrong.** It reported "0 behind" against an `upstream/main` last fetched on 07-28, so these 16 commits — already upstream at the time — were invisible to the merge, the ratchet and the audit. The CI dashboard fetches every run and correctly showed 16 pending / 11 trial conflicts; the disagreement looked like a broken dashboard. Fix: `upstream_ref.py` fetches before anything measures, from `ratchet.py`, `audit_divergence.py` and `sync_upstream.py`. 11 conflicts: 6 frozen-frontend (auto), 5 real. Took `secure_input` (verbatim), `paste_tx`, `autostart` (SMAppService) — all three `git mv`'d out of the src root. Kept BOTH suspend/resume APIs (upstream's `_all_shortcuts` for `handy_keys.rs`, Grain's per-binding for the UI); kept Grain's single tray icon while adopting the warning badge; dropped `should_use_streaming_overlay` (no `OverlayStyle` in Grain). `handy-keys` 0.3.2→0.3.3 applied by hand — it sat outside the conflict and would have been lost. **Caught two silent adoptions**: directory-rename detection routed 5 new upstream frontend files into `src/app/` and applied upstream's slider-reset edits to 3 moved files plus 2 translation files with no conflict at all. The freeze census cannot see these (it matches upstream's `src/` paths, not `src/app/`); only the type-checker did. `merge_upstream.py` now reverts that class automatically. 398 Rust + 258 crate + 69 frontend tests pass. |

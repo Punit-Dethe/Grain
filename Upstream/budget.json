@@ -4,7 +4,7 @@
   "src-tauri/build.rs": 12,
   "src-tauri/capabilities/default.json": 14,
   "src-tauri/capabilities/desktop.json": 2,
-  "src-tauri/src/handy/actions.rs": 546,
+  "src-tauri/src/handy/actions.rs": 544,
   "src-tauri/src/handy/audio_toolkit/audio/mod.rs": 2,
   "src-tauri/src/handy/audio_toolkit/audio/recorder.rs": 197,
   "src-tauri/src/handy/audio_toolkit/audio/resampler.rs": 179,
@@ -20,12 +20,12 @@
   "src-tauri/src/handy/managers/transcription.rs": 730,
   "src-tauri/src/handy/shortcut/handler.rs": 16,
   "src-tauri/src/handy/shortcut/handy_keys.rs": 14,
-  "src-tauri/src/handy/shortcut/mod.rs": 218,
+  "src-tauri/src/handy/shortcut/mod.rs": 228,
   "src-tauri/src/handy/shortcut/tauri_impl.rs": 9,
   "src-tauri/src/handy/transcription_coordinator.rs": 65,
   "src-tauri/src/handy/tray.rs": 82,
   "src-tauri/src/handy/utils.rs": 14,
-  "src-tauri/src/lib.rs": 723,
+  "src-tauri/src/lib.rs": 733,
   "src-tauri/src/main.rs": 7,
   "src-tauri/tauri.conf.json": 17
 }
