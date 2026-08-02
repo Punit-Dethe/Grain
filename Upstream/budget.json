@@ -26,7 +26,7 @@
   "src-tauri/src/handy/tray.rs": 82,
   "src-tauri/src/handy/tray_i18n.rs": 60,
   "src-tauri/src/handy/utils.rs": 14,
-  "src-tauri/src/lib.rs": 718,
+  "src-tauri/src/lib.rs": 720,
   "src-tauri/src/main.rs": 7,
   "src-tauri/tauri.conf.json": 17
 }
