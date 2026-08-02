@@ -793,9 +793,29 @@ h3 {
    with the track width, the padding and the box-sizing all at once, and the
    moment any of those is overridden the knob rides out past the track. Pinning
    both rest and travel to the track's own edges cannot drift. */
+/* Switch geometry is DERIVED, never hand-computed.
+ *
+ * The knob used to sit at `left: calc(100% - 18px)` when on — a number that had
+ * to stay in agreement with the track width, the knob width and the inset, all
+ * written separately. Any drift between them, or a rendered track width that is
+ * not exactly the declared one, and the knob leaves the track.
+ *
+ * Now one set of variables defines the track, the knob size falls out of the
+ * track height, and the travel falls out of both, so the knob cannot overshoot
+ * however the numbers change. `box-sizing` is pinned because the whole thing
+ * rests on the declared width being the rendered width. Movement is a transform
+ * rather than `left` — it animates on the compositor and, unlike `left`, is
+ * measured from the knob's own resting position rather than the container's. */
 .grain-root .toggle {
-  width: 34px;
-  height: 20px;
+  --sw-track-w: 34px;
+  --sw-track-h: 20px;
+  --sw-inset: 2px;
+  --sw-knob: calc(var(--sw-track-h) - var(--sw-inset) * 2);
+  --sw-travel: calc(var(--sw-track-w) - var(--sw-knob) - var(--sw-inset) * 2);
+
+  box-sizing: border-box;
+  width: var(--sw-track-w);
+  height: var(--sw-track-h);
   flex: 0 0 auto;
   position: relative;
   padding: 0;
@@ -806,23 +826,24 @@ h3 {
 }
 
 .grain-root .toggle span {
+  box-sizing: border-box;
   display: block;
-  width: 16px;
-  height: 16px;
+  width: var(--sw-knob);
+  height: var(--sw-knob);
   position: absolute;
-  top: 50%;
-  left: 2px;
+  top: var(--sw-inset);
+  left: var(--sw-inset);
   border-radius: 50%;
   background: #9a9ea0;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  transform: translateY(-50%);
+  transform: translateX(0);
   transition:
-    left 0.25s var(--ease-out),
+    transform 0.25s var(--ease-out),
     background 0.2s;
 }
 
 .grain-root .toggle.on span {
-  left: calc(100% - 18px);
+  transform: translateX(var(--sw-travel));
   background: var(--accent-ink);
 }
 
