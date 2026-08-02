@@ -114,6 +114,7 @@ const SEAM_SEARCH_WORDS: usize = 3;
 
 use crate::cursor::CutKind;
 use crate::merge::seam_overlap_len;
+use crate::rules;
 use crate::seam;
 
 /// Builds the session transcript from time-tagged chunk results.
@@ -192,7 +193,10 @@ impl TimelineAssembler {
             Some(w) if !w.is_empty() => w,
             _ => {
                 if !text.trim().is_empty() {
-                    self.text = merge_transcript(&self.text, text);
+                    // Repair before merging: a glued `one.Two` is a single token
+                    // to the overlap matcher, so splitting it first is what lets
+                    // dedup see the boundary word at all.
+                    self.text = merge_transcript(&self.text, &rules::apply(text));
                 }
                 self.prev_seam = Some(boundary);
                 return &self.text;
@@ -333,6 +337,10 @@ impl TimelineAssembler {
                 }
                 addition.push_str(token);
             }
+            // Rule pass over the new text only. Everything already committed went
+            // through this same pass when it was an addition, so a whole-text
+            // sweep every chunk would be quadratic for no gain.
+            rules::apply_in_place(&mut addition);
             self.text = if self.text.is_empty() {
                 addition
             } else if seam::is_punct_only(&addition) {
