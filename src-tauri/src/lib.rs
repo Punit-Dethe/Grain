@@ -49,6 +49,7 @@ mod grain_events; // [GRAIN] typed payloads for the webview event surface (see t
 mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
 mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
+mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
 // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
@@ -807,6 +808,8 @@ pub fn run(cli_args: CliArgs) {
 
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
+            grain_update::check_for_update,
+            grain_update::install_update,
             shortcut::change_binding,
             shortcut::reset_binding,
             shortcut::change_ptt_setting,
@@ -1022,6 +1025,7 @@ pub fn run(cli_args: CliArgs) {
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
+            grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
             // The live-preview events MUST be registered even though Grain's
             // webview doesn't render them (the native pill does, via the WS

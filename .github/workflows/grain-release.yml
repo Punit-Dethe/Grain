@@ -48,6 +48,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Fails the release before anything is built if the manifests disagree or
+      # the updater feed could not be verified -- both are invisible locally and
+      # unrecoverable once shipped.
+      - name: Verify the release can be updated from
+        shell: bash
+        run: python scripts/check_release_ready.py
+
       - name: Get version from tauri.conf.json
         id: version
         shell: bash

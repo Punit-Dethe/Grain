@@ -10,6 +10,8 @@ import { RecordingRetentionPeriodSelector } from "@/components/settings/Recordin
 import { ShowOverlay } from "@/components/settings/ShowOverlay";
 import { ShowTrayIcon } from "@/components/settings/ShowTrayIcon";
 import { StartHidden } from "@/components/settings/StartHidden";
+import { UpdateChecksToggle } from "@/components/settings/UpdateChecksToggle";
+import { UpdatesSection } from "@/components/settings/UpdatesSection";
 import { KeyboardImplementationSelector } from "@/components/settings/debug/KeyboardImplementationSelector";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
@@ -45,6 +47,13 @@ export function ApplicationPane() {
         <AutostartToggle descriptionMode="tooltip" grouped />
         <StartHidden descriptionMode="tooltip" grouped />
         <ShowTrayIcon descriptionMode="tooltip" grouped />
+      </SettingsGroup>
+
+      {/* [GRAIN] Updates were only ever reachable from Debug, which is not where
+          anyone looks for them. */}
+      <SettingsGroup title="Updates">
+        <UpdatesSection />
+        <UpdateChecksToggle descriptionMode="tooltip" grouped={true} />
       </SettingsGroup>
 
       <SettingsGroup

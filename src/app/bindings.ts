@@ -5,6 +5,22 @@
 
 
 export const commands = {
+async checkForUpdate(force: boolean) : Promise<Result<UpdateInfo | null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("check_for_update", { force }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async installUpdate() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("install_update") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeBinding(id: string, binding: string) : Promise<Result<BindingResponse, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_binding", { id, binding }) };
@@ -2136,7 +2152,8 @@ pasteError: PasteError,
 recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
-themeChanged: ThemeChanged
+themeChanged: ThemeChanged,
+updateDownloadProgress: UpdateDownloadProgress
 }>({
 historyUpdatePayload: "history-update-payload",
 modelDeleted: "model-deleted",
@@ -2152,7 +2169,8 @@ pasteError: "paste-error",
 recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
-themeChanged: "theme-changed"
+themeChanged: "theme-changed",
+updateDownloadProgress: "update-download-progress"
 })
 
 /** user-defined constants **/
@@ -3107,6 +3125,8 @@ export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
  * an origin.
  */
 export type ThemeMode = "system" | "light" | "dark"
+export type UpdateDownloadProgress = { downloaded: number; total: number; percentage: number }
+export type UpdateInfo = { version: string; current_version: string; notes: string | null; date: string | null }
 /**
  * The preference and its resolution together, so a surface can render
  * immediately *and* show the right radio button without a second round trip.

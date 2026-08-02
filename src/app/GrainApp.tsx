@@ -30,6 +30,7 @@ import {
   type HistoryController,
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
+import { UpdateNotice } from "@/components/UpdateNotice";
 import "./app.css";
 
 let onboardingResolution: ReturnType<
@@ -414,6 +415,7 @@ function Sidebar({ route }: { route: AppRoute }) {
         </nav>
       ))}
       <div className="sidebar-spacer" />
+      <UpdateNotice />
       <div className="model-status">
         <div className="status-row">
           <strong>{loading ? "Checking model" : modelName}</strong>
