@@ -828,13 +828,13 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
     settings.post_process_enabled = enabled;
     settings::write_settings(&app, settings.clone());
 
-    // Register or unregister the AI shortcut.
-    //
-    // [GRAIN] This followed `transcribe_with_post_process`, which no longer holds
-    // a chord — so turning post-processing on left the AI key unregistered until
-    // the next restart, even though `shortcut_holds_hotkey` gates it on exactly
-    // this setting. Track the key the gate actually governs.
-    if let Some(binding) = settings.bindings.get("transcribe_send_to_ai").cloned() {
+    // Register or unregister the post-processing shortcut
+    if let Some(binding) = settings
+        .bindings
+        // [GRAIN] retired binding -> the one key the AI gate governs
+        .get("transcribe_send_to_ai")
+        .cloned()
+    {
         if enabled {
             let _ = register_shortcut(&app, binding);
         } else {
