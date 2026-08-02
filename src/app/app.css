@@ -2456,12 +2456,13 @@ html[data-theme="light"]
   padding: 0 0 18px;
 }
 
-/* Rail rhythm: a consistent ~14px break between major sections (Create note →
- * Collections, and Collections → Recent), a tight 5px from a section label to
- * its first row, and rows themselves flush at 34px. 8px here + the 6px top pad
- * on the group label below = the 14px section gap. */
+/* Rail rhythm — proximity principle: a section label belongs to the rows under
+ * it, so the label→first-row gap must read as clearly tighter than the gap
+ * between sections. 3px intra vs 18px inter is a 6× ratio, in line with Notion
+ * and Linear's sidebars. Both numbers are the WHOLE gap: the group labels below
+ * carry no top padding, so nothing adds to these. Rows stay flush at 34px. */
 .grain-root .gs-next-primary-nav {
-  margin-bottom: 8px;
+  margin-bottom: 18px;
 }
 
 .grain-root .gs-next-nav-row {
@@ -2491,8 +2492,7 @@ html[data-theme="light"]
 
 .grain-root .gs-next-group-label,
 .grain-root .gs-next-group-row {
-  min-height: 28px;
-  padding: 6px 9px 5px;
+  padding: 0 9px 3px;
   color: var(--text-4);
   font-size: 11.5px;
   font-weight: 560;
@@ -2500,7 +2500,17 @@ html[data-theme="light"]
   text-transform: none;
 }
 
+/* Text-only label (Recent, Results): no min-height. A min-height taller than
+ * the line box parks dead slack under the text, which reads as extra gap that
+ * no padding value can explain — the reason the old rail looked loose. */
+.grain-root .gs-next-group-label {
+  min-height: 0;
+}
+
+/* Label + action button (Collections): 22px button + 3px pad = 25px, so the
+ * button governs the height and the gap below still measures 3px. */
 .grain-root .gs-next-group-row {
+  min-height: 25px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2570,7 +2580,7 @@ html[data-theme="light"]
 }
 
 .grain-root .gs-next-collections-group {
-  padding-bottom: 8px;
+  padding-bottom: 18px;
 }
 
 .grain-root .gs-next-recent-group {
