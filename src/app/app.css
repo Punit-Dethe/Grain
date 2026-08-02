@@ -1115,6 +1115,217 @@ h3 {
   line-height: 1.45;
 }
 
+/* ---------------------------------------------------------------------------
+ * Overview cards
+ *
+ * Four cards on one grid, but only two of them are clickable. The shared shell
+ * keeps them visually a set; `--static` withdraws every affordance from the two
+ * that are a surface to read or type into, not a target to hit.
+ * ------------------------------------------------------------------------- */
+
+.overview-grid {
+  align-items: stretch;
+}
+
+.overview-card {
+  min-height: 150px;
+  grid-template-rows: auto 1fr auto;
+  gap: 12px;
+}
+
+/* Reference and input cards: no lift, no pointer, no hover tint. Nothing here
+ * should suggest the card itself does something when clicked. */
+.overview-card--static {
+  cursor: default;
+}
+
+.overview-card--static:hover {
+  background: #18191b;
+  transform: none;
+  box-shadow: none;
+}
+
+html[data-theme="light"] .overview-card--static:hover {
+  border-color: #e0e0e3;
+  background: #fff;
+}
+
+.overview-card-chev {
+  position: absolute;
+  top: 18px;
+  right: 16px;
+  color: var(--text-4);
+  transition:
+    transform 0.18s var(--ease-out),
+    color 0.18s ease;
+}
+
+.overview-card:hover .overview-card-chev {
+  color: var(--text-2);
+  transform: translateX(2px);
+}
+
+/* Bottom-anchored secondary link inside an otherwise non-clickable card. */
+.overview-card-link {
+  justify-self: start;
+  padding: 0;
+  color: var(--text-4);
+  font-size: 10.5px;
+  font-weight: 560;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.overview-card-link:hover {
+  color: var(--text-2);
+}
+
+.overview-card-cta {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--accent, #6ea8fe);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* -- Shortcuts card -- */
+
+.overview-shortcut-list {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.overview-shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.overview-shortcut-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-shortcut-off {
+  flex: none;
+  color: var(--text-4);
+  font-size: 10.5px;
+  font-style: italic;
+}
+
+/* A keycap, not a button: raised surface and mono type so it reads as the key
+ * you press, with no hover or press state because it is never clickable. */
+.overview-keycap {
+  flex: none;
+  max-width: 60%;
+  padding: 2px 7px;
+  overflow: hidden;
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+  border-radius: 5px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.06);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+html[data-theme="light"] .overview-keycap {
+  border-color: #d7d7da;
+  background: #fafafb;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* -- Agent card -- */
+
+.overview-agent-press {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-4);
+  font-size: 11px;
+}
+
+/* -- Dictionary card -- */
+
+.overview-add-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.overview-add-input {
+  flex: 1;
+  min-width: 0;
+  height: 27px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 11.5px;
+  outline: none;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.overview-add-input::placeholder {
+  color: var(--text-4);
+}
+
+.overview-add-input:focus {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.overview-add-btn {
+  flex: none;
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.overview-add-btn:hover:not(:disabled) {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.overview-add-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+html[data-theme="light"] .overview-add-input,
+html[data-theme="light"] .overview-add-btn {
+  border-color: #e0e0e3;
+  background: #fafafb;
+}
+
 .section-head-actions {
   display: flex;
   align-items: center;

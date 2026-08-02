@@ -24,14 +24,12 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { NotesPage } from "./pages/NotesPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
-import {
-  HistoryCard,
-  type HistoryViewMode,
-} from "./history/HistoryCard";
+import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
   useHistoryController,
   type HistoryController,
 } from "./history/useHistoryController";
+import { OverviewCards } from "./overview/OverviewCards";
 import "./app.css";
 
 let onboardingResolution: ReturnType<
@@ -51,9 +49,9 @@ const PROTOTYPE_COPY = {
     "Grain captures the words, preserves the intent, and places the result exactly where your work continues.",
   startFlow: "Start Flow",
   openNotes: "Open notes",
-  quickActions: "Quick actions",
-  quickActionsBody: "Your most-used Grain workflows.",
-  editActions: "Edit actions",
+  quickActions: "Start here",
+  quickActionsBody:
+    "Your keys, your words, and what Grain can be taught to do.",
   recent: "Recent transcriptions",
   recentBody: "Text first. Audio remains available when you need to verify it.",
   viewAll: "View all",
@@ -743,32 +741,8 @@ function OverviewPage({ history }: { history: HistoryController }) {
             <h2>{PROTOTYPE_COPY.quickActions}</h2>
             <p>{PROTOTYPE_COPY.quickActionsBody}</p>
           </div>
-          <button className="text-button" type="button" disabled>
-            {PROTOTYPE_COPY.editActions}
-          </button>
         </div>
-        <div className="quick-grid refined-quick-grid action-grid-clean">
-          <ActionCard
-            type="standard"
-            title="Standard capture"
-            body="Complete local transcription"
-          />
-          <ActionCard
-            type="flow"
-            title="Flow capture"
-            body="Rolling speech for longer thoughts"
-          />
-          <ActionCard
-            type="note"
-            title="Quick note"
-            body="Capture directly into your notes"
-          />
-          <ActionCard
-            type="agent"
-            title="Quick Agent"
-            body="Transform the current selection"
-          />
-        </div>
+        <OverviewCards />
 
         <div className="section-head transcript-section-head">
           <div>
@@ -825,52 +799,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function ActionCard({
-  type,
-  title,
-  body,
-}: {
-  type: "standard" | "flow" | "note" | "agent";
-  title: string;
-  body: string;
-}) {
-  return (
-    <button
-      className="quick-card refined-quick action-card-clean"
-      type="button"
-      disabled
-    >
-      <span className={`action-icon action-icon-${type}`} aria-hidden="true">
-        {type === "standard" ? (
-          <svg viewBox="0 0 24 24" className="action-svg">
-            <path d="M12 4.25a3.25 3.25 0 0 1 3.25 3.25v5a3.25 3.25 0 1 1-6.5 0v-5A3.25 3.25 0 0 1 12 4.25Z" />
-            <path d="M6.5 11.75v.5a5.5 5.5 0 0 0 11 0v-.5M12 17.75v2.5M9 20.25h6" />
-          </svg>
-        ) : type === "flow" ? (
-          <svg viewBox="0 0 24 24" className="action-svg">
-            <path d="M4.5 12c1.1 0 1.8-3.5 2.9-3.5s1.8 7 2.9 7 1.8-11 2.9-11 1.8 15 2.9 15 1.8-7.5 2.9-7.5" />
-          </svg>
-        ) : type === "note" ? (
-          <svg viewBox="0 0 24 24" className="action-svg">
-            <path d="M7 4.75h7.5l3 3V19.25H7zM14.5 4.75v3h3M9.5 11h5M9.5 14.25H14" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" className="action-svg">
-            <rect x="5.25" y="6" width="13.5" height="10.5" rx="4.25" />
-            <circle cx="10" cy="11.25" r="1" />
-            <circle cx="14" cy="11.25" r="1" />
-            <path d="M10 14.1c.58.5 1.27.75 2 .75s1.42-.25 2-.75M12 6V3.9M8.75 18.2 7.5 20.1M15.25 18.2l1.25 1.9" />
-          </svg>
-        )}
-      </span>
-      <div className="action-copy">
-        <strong>{title}</strong>
-        <small>{body}</small>
-      </div>
-    </button>
   );
 }
 
