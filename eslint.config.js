@@ -10,14 +10,11 @@ import tsParser from "@typescript-eslint/parser";
 // be effort spent on code with a known expiry. The rule exists to stop the NEW
 // tree from inheriting the habit.
 const LEGACY_RAW_INVOKE = [
-  "src/components/settings/experimentations/OverviewSection.tsx",
-  "src/components/settings/experimentations/ExtensionSettings.tsx",
-  "src/components/settings/experimentations/ExtensionDetail.tsx",
-  "src/components/settings/experimentations/ExperimentationsSettings.tsx",
-  "src/components/settings/experimentations/DeveloperSection.tsx",
-  "src/components/settings/experimentations/AgentSection.tsx",
-  "src/components/settings/grain-space/McpBridge.tsx",
-  "src/components/settings/post-processing/PostProcessingSettings.tsx",
+  "src/app/components/settings/experimentations/ExtensionSettings.tsx",
+  "src/app/components/settings/experimentations/DeveloperSection.tsx",
+  "src/app/components/settings/experimentations/AgentSection.tsx",
+  "src/app/components/settings/grain-space/McpBridge.tsx",
+  "src/app/components/settings/post-processing/PostProcessingSettings.tsx",
 ];
 
 // Files still subscribing to backend events by hand-typed string. Same rule as
@@ -32,15 +29,12 @@ const LEGACY_RAW_INVOKE = [
 // only, no directory globs: a glob would silently re-exempt files added later.
 const LEGACY_RAW_LISTEN = [
   "src/App.tsx",
-  "src/components/grain-space/GrainSpaceOverlay.tsx",
-  "src/components/model-selector/ModelSelector.tsx",
-  "src/components/quick-panel/useSystemStatus.ts",
-  "src/components/settings/HandyKeysShortcutInput.tsx",
-  "src/components/settings/debug/LiveLogViewer.tsx",
-  "src/components/settings/grain-space/GrainSpaceSettings.tsx",
-  "src/components/update-checker/UpdateChecker.tsx",
-  "src/stores/modelStore.ts",
-  "src/stores/settingsStore.ts",
+  "src/app/components/grain-space/GrainSpaceOverlay.tsx",
+  "src/app/components/settings/HandyKeysShortcutInput.tsx",
+  "src/app/components/settings/debug/LiveLogViewer.tsx",
+  "src/app/components/settings/grain-space/GrainSpaceSettings.tsx",
+  "src/app/stores/modelStore.ts",
+  "src/app/stores/settingsStore.ts",
 ];
 
 // Permanent exemptions, not legacy: `extension-host.ts` and
@@ -49,8 +43,8 @@ const LEGACY_RAW_LISTEN = [
 // `events` live in the same module, so importing either retains all ~204 command
 // wrappers; that is a real cost to pay on two pages that make five calls
 // between them. `bindings.ts` is the generated file the rules point everyone at.
-const STANDALONE_ENTRIES = ["src/extension-host.ts", "src/extension-surface.ts"];
-const GENERATED = [...STANDALONE_ENTRIES, "src/bindings.ts"];
+const STANDALONE_ENTRIES = ["src/app/extension-host.ts", "src/app/extension-surface.ts"];
+const GENERATED = [...STANDALONE_ENTRIES, "src/app/bindings.ts"];
 
 const NO_RAW_INVOKE = {
   name: "@tauri-apps/api/core",

@@ -25,7 +25,7 @@ export function hasProcessedText(entry: HistoryEntry): boolean {
   return (entry.post_processed_text?.trim().length ?? 0) > 0;
 }
 
-export function reduceNextHistoryEntries(
+export function reduceHistoryEntries(
   entries: HistoryEntry[],
   payload: HistoryUpdatePayload,
 ): HistoryEntry[] {
@@ -49,7 +49,7 @@ export function reduceNextHistoryEntries(
   }
 }
 
-export interface NextHistoryController {
+export interface HistoryController {
   entries: HistoryEntry[];
   loading: boolean;
   loadingMore: boolean;
@@ -64,7 +64,7 @@ export interface NextHistoryController {
   getAudioUrl: (fileName: string) => Promise<string | null>;
 }
 
-export function useNextHistoryController(): NextHistoryController {
+export function useHistoryController(): HistoryController {
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,7 +129,7 @@ export function useNextHistoryController(): NextHistoryController {
     const unlisten = events.historyUpdatePayload.listen((event) => {
       const payload = event.payload;
       if (payload.action === "added" || payload.action === "updated") {
-        setEntries((current) => reduceNextHistoryEntries(current, payload));
+        setEntries((current) => reduceHistoryEntries(current, payload));
       }
     });
     void reload();

@@ -18,8 +18,8 @@
     /* Path Aliases */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@/bindings": ["./src/bindings.ts"]
+      "@/*": ["./src/app/*"],
+      "@/bindings": ["./src/app/bindings.ts"]
     },
 
     /* Linting */

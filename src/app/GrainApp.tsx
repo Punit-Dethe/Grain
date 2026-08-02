@@ -25,14 +25,14 @@ import { NotesPage } from "./pages/NotesPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import {
-  NextHistoryCard,
-  type NextHistoryViewMode,
-} from "./history/NextHistoryCard";
+  HistoryCard,
+  type HistoryViewMode,
+} from "./history/HistoryCard";
 import {
-  useNextHistoryController,
-  type NextHistoryController,
-} from "./history/useNextHistoryController";
-import "./next.css";
+  useHistoryController,
+  type HistoryController,
+} from "./history/useHistoryController";
+import "./app.css";
 
 let onboardingResolution: ReturnType<
   typeof commands.resolveOnboardingState
@@ -695,8 +695,8 @@ function ViewSwitch({
   );
 }
 
-function OverviewPage({ history }: { history: NextHistoryController }) {
-  const [mode, setMode] = useState<NextHistoryViewMode>("original");
+function OverviewPage({ history }: { history: HistoryController }) {
+  const [mode, setMode] = useState<HistoryViewMode>("original");
 
   return (
     <section className="page active" data-page-panel="overview">
@@ -813,7 +813,7 @@ function OverviewPage({ history }: { history: NextHistoryController }) {
           ) : (
             <AudioPlayerGroup>
               {history.entries.slice(0, 3).map((entry) => (
-                <NextHistoryCard
+                <HistoryCard
                   key={entry.id}
                   entry={entry}
                   viewMode={mode}
@@ -876,7 +876,7 @@ function ActionCard({
 
 function NextShell() {
   const route = useHashRoute();
-  const history = useNextHistoryController();
+  const history = useHistoryController();
   const { isDark } = useTheme();
   const [onboardingStep, setOnboardingStep] = useState<OnboardingStep | null>(
     null,
@@ -972,7 +972,7 @@ function NextShell() {
 
   return (
     <div
-      className={`app next-root${routeUsesCompactGlobalRail(route) ? " notes-mode" : ""}`}
+      className={`app grain-root${routeUsesCompactGlobalRail(route) ? " notes-mode" : ""}`}
       data-global-rail={
         routeUsesCompactGlobalRail(route) ? "compact" : "expanded"
       }
@@ -1003,7 +1003,7 @@ function NextShell() {
   );
 }
 
-export default function NextApp() {
+export default function GrainApp() {
   return (
     <ThemeProvider>
       <NextShell />

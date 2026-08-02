@@ -6,10 +6,10 @@ import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { formatDateTime } from "@/utils/dateFormat";
 import {
   hasProcessedText,
-  type NextHistoryController,
-} from "./useNextHistoryController";
+  type HistoryController,
+} from "./useHistoryController";
 
-export type NextHistoryViewMode = "original" | "processed";
+export type HistoryViewMode = "original" | "processed";
 
 function PrototypeIcon({ name }: { name: string }) {
   return (
@@ -19,14 +19,14 @@ function PrototypeIcon({ name }: { name: string }) {
   );
 }
 
-export function NextHistoryCard({
+export function HistoryCard({
   entry,
   viewMode,
   controller,
 }: {
   entry: HistoryEntry;
-  viewMode: NextHistoryViewMode;
-  controller: NextHistoryController;
+  viewMode: HistoryViewMode;
+  controller: HistoryController;
 }) {
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);

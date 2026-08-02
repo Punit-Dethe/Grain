@@ -73,7 +73,7 @@
 /* The extension seam (PLAN.md §2.1): these eight names are the public
    contract, so they are re-pointed at the surfaces above rather than
    carrying a second, drifting palette of their own. */
-.next-root[data-theme="dark"] {
+.grain-root[data-theme="dark"] {
   --color-paper: #0e1013;
   --color-paper-raised: #181c21;
   --color-paper-sunken: #13161a;
@@ -84,7 +84,7 @@
   --color-line: rgba(255, 255, 255, 0.065);
 }
 
-.next-root[data-theme="light"] {
+.grain-root[data-theme="light"] {
   --color-paper: #f5f6f8;
   --color-paper-raised: #e6e9ee;
   --color-paper-sunken: #eef0f3;
@@ -95,7 +95,7 @@
   --color-line: rgba(24, 29, 37, 0.1);
 }
 
-/* The eight `--color-*` names are also declared here, not only on `.next-root`.
+/* The eight `--color-*` names are also declared here, not only on `.grain-root`.
    Anything that renders outside that div — a portal, a dialog, a popover — kept
    the dark values while sitting on a light surface, which is how the model
    library's text ended up white on white. Scoping them to the document root
@@ -180,38 +180,38 @@ html[data-theme="light"] body {
   background: #e9ecf1;
 }
 
-.next-root,
-.next-root * {
+.grain-root,
+.grain-root * {
   box-sizing: border-box;
 }
 
-.next-root button,
-.next-root input,
-.next-root textarea,
-.next-root select {
+.grain-root button,
+.grain-root input,
+.grain-root textarea,
+.grain-root select {
   color: inherit;
   font: inherit;
 }
 
-.next-root button {
+.grain-root button {
   border: 0;
 }
 
-.next-root button:disabled {
+.grain-root button:disabled {
   opacity: 1;
   cursor: default;
 }
 
-.next-root svg {
+.grain-root svg {
   display: block;
 }
 
-.next-root ::selection {
+.grain-root ::selection {
   color: var(--accent-ink);
   background: var(--accent);
 }
 
-.next-root :where(button, input, textarea, select):focus-visible {
+.grain-root :where(button, input, textarea, select):focus-visible {
   outline: 0;
   box-shadow:
     0 0 0 3px var(--accent-focus),
@@ -712,7 +712,7 @@ h3 {
 
 /* Shared compact controls from the UI 2.0 prototype. Keep these scoped to the
    new shell so legacy settings and Grain Space retain their own contracts. */
-.next-root .segmented {
+.grain-root .segmented {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -722,7 +722,7 @@ h3 {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.next-root .segmented button {
+.grain-root .segmented button {
   height: 30px;
   padding: 0 12px;
   border-radius: 7px;
@@ -735,17 +735,17 @@ h3 {
     background 0.15s;
 }
 
-.next-root .segmented button:hover {
+.grain-root .segmented button:hover {
   color: var(--text-1);
 }
 
-.next-root .segmented button.active {
+.grain-root .segmented button.active {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.08);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14);
 }
 
-.next-root .search-field {
+.grain-root .search-field {
   min-width: 0;
   height: 36px;
   display: flex;
@@ -758,7 +758,7 @@ h3 {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.016);
 }
 
-.next-root .search-field input {
+.grain-root .search-field input {
   min-width: 0;
   flex: 1;
   border: 0;
@@ -768,11 +768,11 @@ h3 {
   font-size: 12px;
 }
 
-.next-root .search-field input::placeholder {
+.grain-root .search-field input::placeholder {
   color: var(--text-4);
 }
 
-.next-root .select {
+.grain-root .select {
   min-width: 170px;
   height: 32px;
   padding: 0 30px 0 10px;
@@ -793,7 +793,7 @@ h3 {
    with the track width, the padding and the box-sizing all at once, and the
    moment any of those is overridden the knob rides out past the track. Pinning
    both rest and travel to the track's own edges cannot drift. */
-.next-root .toggle {
+.grain-root .toggle {
   width: 34px;
   height: 20px;
   flex: 0 0 auto;
@@ -805,7 +805,7 @@ h3 {
   transition: background 0.2s;
 }
 
-.next-root .toggle span {
+.grain-root .toggle span {
   display: block;
   width: 16px;
   height: 16px;
@@ -821,7 +821,7 @@ h3 {
     background 0.2s;
 }
 
-.next-root .toggle.on span {
+.grain-root .toggle.on span {
   left: calc(100% - 18px);
   background: var(--accent-ink);
 }
@@ -2187,30 +2187,30 @@ html[data-theme="light"] .button:hover {
   background: #e7e7e9;
 }
 
-html[data-theme="light"] .next-root .segmented,
-html[data-theme="light"] .next-root .search-field,
-html[data-theme="light"] .next-root .select {
+html[data-theme="light"] .grain-root .segmented,
+html[data-theme="light"] .grain-root .search-field,
+html[data-theme="light"] .grain-root .select {
   color: var(--text-2);
   background-color: rgba(28, 34, 43, 0.05);
   box-shadow: inset 0 0 0 1px rgba(28, 34, 43, 0.025);
 }
 
-html[data-theme="light"] .next-root .segmented button.active {
+html[data-theme="light"] .grain-root .segmented button.active {
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 3px 10px rgba(35, 42, 54, 0.07);
 }
 
-html[data-theme="light"] .next-root .toggle {
+html[data-theme="light"] .grain-root .toggle {
   background: #ccd1d8;
 }
 
-html[data-theme="light"] .next-root .toggle span,
-html[data-theme="light"] .next-root .toggle.on span {
+html[data-theme="light"] .grain-root .toggle span,
+html[data-theme="light"] .grain-root .toggle.on span {
   background: #fff;
   box-shadow: 0 1px 4px rgba(35, 42, 54, 0.24);
 }
 
-html[data-theme="light"] .next-root .toggle.on {
+html[data-theme="light"] .grain-root .toggle.on {
   background: var(--accent) !important;
 }
 
@@ -2373,7 +2373,7 @@ html[data-theme="light"]
   max-width: 900px;
 }
 
-.next-root .gs-next .gs-frame {
+.grain-root .gs-next .gs-frame {
   --paper: transparent;
   --side: rgba(8, 10, 13, 0.48);
   --side-2: rgba(8, 10, 13, 0.58);
@@ -2412,7 +2412,7 @@ html[data-theme="light"]
   background: transparent;
 }
 
-.next-root .gs-next .gs-side {
+.grain-root .gs-next .gs-side {
   width: 252px;
   padding: 0 9px 14px;
   background: rgba(8, 10, 13, 0.48);
@@ -2420,7 +2420,7 @@ html[data-theme="light"]
   -webkit-backdrop-filter: blur(16px) saturate(110%);
 }
 
-.next-root .gs-next .gs-side::after {
+.grain-root .gs-next .gs-side::after {
   content: "";
   position: absolute;
   inset: 0 0 0 auto;
@@ -2431,11 +2431,11 @@ html[data-theme="light"]
 /* [GRAIN] The "Notes / Local knowledge space" pane header is gone — the tab
  * already names this surface, so it was a title over a title. Search now sits at
  * the top of the rail and takes back the top padding the header used to give. */
-.next-root .gs-next .gs-side-head {
+.grain-root .gs-next .gs-side-head {
   padding: 14px 4px 12px;
 }
 
-.next-root .gs-next .gs-search {
+.grain-root .gs-next .gs-search {
   height: 34px;
   padding: 0 9px;
   border: 0;
@@ -2443,16 +2443,16 @@ html[data-theme="light"]
   background: rgba(255, 255, 255, 0.035);
 }
 
-.next-root .gs-next .gs-search:focus-within {
+.grain-root .gs-next .gs-search:focus-within {
   background: rgba(255, 255, 255, 0.055);
 }
 
-.next-root .gs-next .gs-search input {
+.grain-root .gs-next .gs-search input {
   font-size: 13px;
   color: var(--text-1);
 }
 
-.next-root .gs-next .gs-nav {
+.grain-root .gs-next .gs-nav {
   padding: 0 0 18px;
 }
 
@@ -2460,11 +2460,11 @@ html[data-theme="light"]
  * Collections, and Collections → Recent), a tight 5px from a section label to
  * its first row, and rows themselves flush at 34px. 8px here + the 6px top pad
  * on the group label below = the 14px section gap. */
-.next-root .gs-next-primary-nav {
+.grain-root .gs-next-primary-nav {
   margin-bottom: 8px;
 }
 
-.next-root .gs-next-nav-row {
+.grain-root .gs-next-nav-row {
   width: 100%;
   min-height: 34px;
   padding: 0 9px;
@@ -2478,19 +2478,19 @@ html[data-theme="light"]
   text-align: left;
 }
 
-.next-root .gs-next-nav-row strong {
+.grain-root .gs-next-nav-row strong {
   font-size: 13px;
   font-weight: 580;
 }
 
-.next-root .gs-next-nav-row:hover,
-.next-root .gs-next-nav-row.is-active {
+.grain-root .gs-next-nav-row:hover,
+.grain-root .gs-next-nav-row.is-active {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.05);
 }
 
-.next-root .gs-next-group-label,
-.next-root .gs-next-group-row {
+.grain-root .gs-next-group-label,
+.grain-root .gs-next-group-row {
   min-height: 28px;
   padding: 6px 9px 5px;
   color: var(--text-4);
@@ -2500,13 +2500,13 @@ html[data-theme="light"]
   text-transform: none;
 }
 
-.next-root .gs-next-group-row {
+.grain-root .gs-next-group-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.next-root .gs-next-group-row button {
+.grain-root .gs-next-group-row button {
   width: 22px;
   height: 22px;
   display: grid;
@@ -2517,24 +2517,24 @@ html[data-theme="light"]
   cursor: pointer;
 }
 
-.next-root .gs-next-group-row button:hover {
+.grain-root .gs-next-group-row button:hover {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.05);
 }
 
-.next-root .gs-next .gs-row {
+.grain-root .gs-next .gs-row {
   min-height: 34px;
   padding: 0 9px;
   border-radius: 7px;
   color: var(--text-2);
 }
 
-.next-root .gs-next .gs-row:hover {
+.grain-root .gs-next .gs-row:hover {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.04);
 }
 
-.next-root .gs-next .gs-row--on {
+.grain-root .gs-next .gs-row--on {
   color: var(--text-1);
   background: linear-gradient(
     180deg,
@@ -2544,69 +2544,69 @@ html[data-theme="light"]
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.04);
 }
 
-.next-root .gs-next .gs-row-title {
+.grain-root .gs-next .gs-row-title {
   font-size: 13px;
   font-weight: 580;
 }
 
-.next-root .gs-next .gs-row-age {
+.grain-root .gs-next .gs-row-age {
   position: static;
   margin-left: auto;
   font-size: 9px;
 }
 
-.next-root .gs-next .gs-row--folder {
+.grain-root .gs-next .gs-row--folder {
   padding-left: 9px;
   padding-right: 9px;
 }
 
-.next-root .gs-next .gs-row--folder .gs-row-age {
+.grain-root .gs-next .gs-row--folder .gs-row-age {
   position: static;
 }
 
-.next-root .gs-next-group {
+.grain-root .gs-next-group {
   position: relative;
   margin-inline: 1px;
 }
 
-.next-root .gs-next-collections-group {
+.grain-root .gs-next-collections-group {
   padding-bottom: 8px;
 }
 
-.next-root .gs-next-recent-group {
+.grain-root .gs-next-recent-group {
   padding-bottom: 4px;
 }
 
-.next-root .gs-next-folder-row {
+.grain-root .gs-next-folder-row {
   gap: 8px;
 }
 
-.next-root .gs-next-folder-row .gs-row-folder-icon {
+.grain-root .gs-next-folder-row .gs-row-folder-icon {
   flex: none;
   color: var(--text-4);
 }
 
-.next-root .gs-next-folder-row:hover .gs-row-folder-icon,
-.next-root .gs-next-folder-row.gs-row--on .gs-row-folder-icon {
+.grain-root .gs-next-folder-row:hover .gs-row-folder-icon,
+.grain-root .gs-next-folder-row.gs-row--on .gs-row-folder-icon {
   color: var(--text-2);
 }
 
-.next-root .gs-next-folder-row .gs-row-count {
+.grain-root .gs-next-folder-row .gs-row-count {
   margin-left: auto;
   color: var(--text-4);
   font-size: 9px;
 }
 
-.next-root .gs-next-folder-row .gs-row-chev {
+.grain-root .gs-next-folder-row .gs-row-chev {
   margin-left: 1px;
   color: var(--text-4);
 }
 
-.next-root .gs-next-folder-children {
+.grain-root .gs-next-folder-children {
   position: relative;
 }
 
-.next-root .gs-next-folder-children::before {
+.grain-root .gs-next-folder-children::before {
   content: "";
   position: absolute;
   top: 2px;
@@ -2617,19 +2617,19 @@ html[data-theme="light"]
   pointer-events: none;
 }
 
-.next-root .gs-next .gs-seeall {
+.grain-root .gs-next .gs-seeall {
   min-height: 30px;
   padding: 5px 9px 5px 33px;
   color: var(--text-4);
   font-size: 10.5px;
 }
 
-.next-root .gs-next .gs-side-foot {
+.grain-root .gs-next .gs-side-foot {
   padding: 8px 0 0;
   border-color: var(--hairline-soft);
 }
 
-.next-root .gs-next .gs-foot-btn {
+.grain-root .gs-next .gs-foot-btn {
   justify-content: flex-start;
   padding: 8px 9px;
   border-radius: 7px;
@@ -2639,12 +2639,12 @@ html[data-theme="light"]
 /* Settings fills the row; the Calendar rides the right edge as an icon only.
  * Not the tidiest home for Calendar, but the foot had the room and a full nav
  * row for it did not earn its height — a deliberate cleanup step. */
-.next-root .gs-next .gs-next-side-foot {
+.grain-root .gs-next .gs-next-side-foot {
   align-items: center;
   gap: 6px;
 }
 
-.next-root .gs-next .gs-foot-cal {
+.grain-root .gs-next .gs-foot-cal {
   flex: none;
   margin-left: auto;
   width: 34px;
@@ -2661,21 +2661,21 @@ html[data-theme="light"]
     color 120ms ease;
 }
 
-.next-root .gs-next .gs-foot-cal:hover {
+.grain-root .gs-next .gs-foot-cal:hover {
   color: var(--ink-2);
   background: var(--hover);
 }
 
-.next-root .gs-next .gs-foot-cal--on {
+.grain-root .gs-next .gs-foot-cal--on {
   color: var(--ink);
   background: var(--hover);
 }
 
-.next-root .gs-next .gs-main {
+.grain-root .gs-next .gs-main {
   background: transparent;
 }
 
-.next-root .gs-next-editor-controls {
+.grain-root .gs-next-editor-controls {
   position: absolute;
   top: 16px;
   right: 18px;
@@ -2686,12 +2686,12 @@ html[data-theme="light"]
   transition: right 240ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.next-root .gs-next-editor-controls.is-chat-open {
+.grain-root .gs-next-editor-controls.is-chat-open {
   right: 360px;
 }
 
-.next-root .gs-next-chat-control,
-.next-root .gs-next-editor-settings {
+.grain-root .gs-next-chat-control,
+.grain-root .gs-next-editor-settings {
   min-height: 32px;
   display: inline-flex;
   align-items: center;
@@ -2712,24 +2712,24 @@ html[data-theme="light"]
     box-shadow 140ms ease;
 }
 
-.next-root .gs-next-chat-control {
+.grain-root .gs-next-chat-control {
   padding: 0 11px;
   font-size: 11.5px;
   font-weight: 620;
 }
 
-.next-root .gs-next-chat-control svg {
+.grain-root .gs-next-chat-control svg {
   color: var(--accent);
 }
 
-.next-root .gs-next-editor-settings {
+.grain-root .gs-next-editor-settings {
   width: 32px;
   padding: 0;
 }
 
-.next-root .gs-next-chat-control:hover,
-.next-root .gs-next-chat-control.is-open,
-.next-root .gs-next-editor-settings:hover {
+.grain-root .gs-next-chat-control:hover,
+.grain-root .gs-next-chat-control.is-open,
+.grain-root .gs-next-editor-settings:hover {
   color: var(--text-1);
   background: rgba(30, 34, 43, 0.78);
   box-shadow:
@@ -2737,18 +2737,18 @@ html[data-theme="light"]
     0 10px 28px rgba(0, 0, 0, 0.2);
 }
 
-.next-root .gs-next .gs-column {
+.grain-root .gs-next .gs-column {
   max-width: calc(760px + 104px);
   padding: 0 26px;
 }
 
-.next-root .gs-next .gs-meta {
+.grain-root .gs-next .gs-meta {
   padding: 56px 26px 0;
   color: var(--text-4);
   font-size: 11px;
 }
 
-.next-root .gs-next .gs-title {
+.grain-root .gs-next .gs-title {
   padding: 12px 26px 18px;
   color: var(--text-1);
   font-size: 32px;
@@ -2756,19 +2756,19 @@ html[data-theme="light"]
   font-weight: 630;
 }
 
-.next-root .gs-next .gs-edit,
-.next-root .gs-next .gs-ed-loading {
+.grain-root .gs-next .gs-edit,
+.grain-root .gs-next .gs-ed-loading {
   padding-inline: 26px;
 }
 
-.next-root .gs-next .gs-edit .cm-content,
-.next-root .gs-next .gs-bodytext {
+.grain-root .gs-next .gs-edit .cm-content,
+.grain-root .gs-next .gs-bodytext {
   color: var(--text-2);
   font-size: 14px;
   line-height: 1.75;
 }
 
-.next-root .gs-next .gs-actions {
+.grain-root .gs-next .gs-actions {
   min-height: 46px;
   padding: 8px 18px;
   gap: 2px;
@@ -2777,24 +2777,24 @@ html[data-theme="light"]
   border-color: var(--hairline-soft);
 }
 
-.next-root .gs-next .gs-fmt-btn,
-.next-root .gs-next .gs-iconbtn {
+.grain-root .gs-next .gs-fmt-btn,
+.grain-root .gs-next .gs-iconbtn {
   border-radius: 7px;
 }
 
-.next-root .gs-next-word-count {
+.grain-root .gs-next-word-count {
   margin-left: 10px;
   color: var(--text-4);
   font-size: 9.5px;
   white-space: nowrap;
 }
 
-.next-root .gs-next .gs-chat-clip--open {
+.grain-root .gs-next .gs-chat-clip--open {
   width: 342px;
   margin-left: 0;
 }
 
-.next-root .gs-next .gs-chat {
+.grain-root .gs-next .gs-chat {
   width: 342px;
   border: 0;
   border-left: 1px solid var(--hairline-soft);
@@ -2805,7 +2805,7 @@ html[data-theme="light"]
   backdrop-filter: blur(28px) saturate(1.18);
 }
 
-.next-root .gs-next .gs-chat-head {
+.grain-root .gs-next .gs-chat-head {
   min-height: 64px;
   padding: 14px 14px 12px 16px;
   display: flex;
@@ -2814,19 +2814,19 @@ html[data-theme="light"]
   border-bottom: 1px solid var(--hairline-soft);
 }
 
-.next-root .gs-next .gs-chat-head-copy {
+.grain-root .gs-next .gs-chat-head-copy {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.next-root .gs-next .gs-chat-head-copy strong {
+.grain-root .gs-next .gs-chat-head-copy strong {
   color: var(--text-1);
   font-size: 13px;
   font-weight: 650;
 }
 
-.next-root .gs-next .gs-chat-head-copy span {
+.grain-root .gs-next .gs-chat-head-copy span {
   overflow: hidden;
   color: var(--text-4);
   font-size: 10.5px;
@@ -2834,7 +2834,7 @@ html[data-theme="light"]
   white-space: nowrap;
 }
 
-.next-root .gs-next .gs-chat-close {
+.grain-root .gs-next .gs-chat-close {
   flex: none;
   width: 28px;
   height: 28px;
@@ -2847,105 +2847,105 @@ html[data-theme="light"]
   cursor: pointer;
 }
 
-.next-root .gs-next .gs-chat-close:hover {
+.grain-root .gs-next .gs-chat-close:hover {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.045);
 }
 
-.next-root .gs-next .gs-chat-tabs {
+.grain-root .gs-next .gs-chat-tabs {
   min-height: 44px;
   gap: 4px;
   padding: 8px 12px;
   border-color: var(--hairline-soft);
 }
 
-.next-root .gs-next .gs-chat-tab {
+.grain-root .gs-next .gs-chat-tab {
   gap: 6px;
   padding: 6px 8px;
   border-radius: 7px;
   font-size: 11.5px;
 }
 
-.next-root .gs-next .gs-chat-tab:hover,
-.next-root .gs-next .gs-chat-tab--on {
+.grain-root .gs-next .gs-chat-tab:hover,
+.grain-root .gs-next .gs-chat-tab--on {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.next-root .gs-next .gs-chat-body {
+.grain-root .gs-next .gs-chat-body {
   gap: 10px;
   padding: 24px 18px;
 }
 
-.next-root .gs-next .gs-chat-welcome {
+.grain-root .gs-next .gs-chat-welcome {
   margin-bottom: 8px;
   font-size: 14px;
 }
 
-.next-root .gs-next .gs-chat-card {
+.grain-root .gs-next .gs-chat-card {
   padding: 13px 14px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.026);
   box-shadow: inset 0 1px rgba(255, 255, 255, 0.018);
 }
 
-.next-root .gs-next .gs-chat-scroll {
+.grain-root .gs-next .gs-chat-scroll {
   gap: 16px;
   padding: 18px 16px 10px;
 }
 
-.next-root .gs-next .gs-chat-bubble--user {
+.grain-root .gs-next .gs-chat-bubble--user {
   align-self: flex-end;
   max-width: 88%;
   border-color: transparent;
   background: rgba(142, 168, 253, 0.1);
 }
 
-.next-root .gs-next .gs-chat-source {
+.grain-root .gs-next .gs-chat-source {
   background: rgba(255, 255, 255, 0.035);
 }
 
-.next-root .gs-next .gs-chat-confirm {
+.grain-root .gs-next .gs-chat-confirm {
   border-color: rgba(255, 255, 255, 0.06);
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.026);
 }
 
-.next-root .gs-next .gs-chat-error {
+.grain-root .gs-next .gs-chat-error {
   padding: 9px 10px;
   border-radius: 8px;
   background: rgba(229, 72, 77, 0.08);
 }
 
-.next-root .gs-next .gs-chat-foot {
+.grain-root .gs-next .gs-chat-foot {
   padding: 12px 14px 14px;
   border-top: 1px solid var(--hairline-soft);
 }
 
-.next-root .gs-next .gs-chat-input {
+.grain-root .gs-next .gs-chat-input {
   border: 1px solid transparent;
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.045);
 }
 
-.next-root .gs-next .gs-chat-input:focus-within {
+.grain-root .gs-next .gs-chat-input:focus-within {
   border-color: rgba(142, 168, 253, 0.28);
   box-shadow: 0 0 0 3px rgba(142, 168, 253, 0.08);
 }
 
-.next-root .gs-next .gs-chat-send {
+.grain-root .gs-next .gs-chat-send {
   background: var(--accent);
   color: var(--accent-ink);
   box-shadow: none;
 }
 
-.next-root .gs-next .gs-cal-view {
+.grain-root .gs-next .gs-cal-view {
   border: 0;
   border-radius: 0;
   background: var(--bg-1);
   box-shadow: none;
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-frame {
+html[data-theme="light"] .grain-root .gs-next .gs-frame {
   --paper: transparent;
   --side: rgba(241, 241, 242, 0.72);
   --side-2: rgba(241, 241, 242, 0.82);
@@ -2958,21 +2958,21 @@ html[data-theme="light"] .next-root .gs-next .gs-frame {
   --scroll-thumb-hover: rgba(32, 33, 36, 0.24);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-side {
+html[data-theme="light"] .grain-root .gs-next .gs-side {
   background: rgba(241, 241, 242, 0.72);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-side::after,
-html[data-theme="light"] .next-root .gs-next .gs-actions {
+html[data-theme="light"] .grain-root .gs-next .gs-side::after,
+html[data-theme="light"] .grain-root .gs-next .gs-actions {
   border-color: #dedee1;
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-actions {
+html[data-theme="light"] .grain-root .gs-next .gs-actions {
   background: rgba(250, 250, 250, 0.72);
 }
 
-html[data-theme="light"] .next-root .gs-next-chat-control,
-html[data-theme="light"] .next-root .gs-next-editor-settings {
+html[data-theme="light"] .grain-root .gs-next-chat-control,
+html[data-theme="light"] .grain-root .gs-next-editor-settings {
   color: #5f6672;
   background: rgba(255, 255, 255, 0.72);
   box-shadow:
@@ -2980,48 +2980,48 @@ html[data-theme="light"] .next-root .gs-next-editor-settings {
     0 8px 24px rgba(32, 33, 36, 0.08);
 }
 
-html[data-theme="light"] .next-root .gs-next-chat-control:hover,
-html[data-theme="light"] .next-root .gs-next-chat-control.is-open,
-html[data-theme="light"] .next-root .gs-next-editor-settings:hover {
+html[data-theme="light"] .grain-root .gs-next-chat-control:hover,
+html[data-theme="light"] .grain-root .gs-next-chat-control.is-open,
+html[data-theme="light"] .grain-root .gs-next-editor-settings:hover {
   color: #202124;
   background: rgba(255, 255, 255, 0.92);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-row:hover,
-html[data-theme="light"] .next-root .gs-next-nav-row:hover,
-html[data-theme="light"] .next-root .gs-next-nav-row.is-active {
+html[data-theme="light"] .grain-root .gs-next .gs-row:hover,
+html[data-theme="light"] .grain-root .gs-next-nav-row:hover,
+html[data-theme="light"] .grain-root .gs-next-nav-row.is-active {
   background: rgba(28, 34, 43, 0.05);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-row--on {
+html[data-theme="light"] .grain-root .gs-next .gs-row--on {
   background: rgba(255, 255, 255, 0.78);
   box-shadow: none;
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-chat {
+html[data-theme="light"] .grain-root .gs-next .gs-chat {
   background: rgba(244, 244, 245, 0.88);
   border-color: #dedee1;
   box-shadow: -24px 0 60px rgba(32, 33, 36, 0.08);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-chat-tab:hover,
-html[data-theme="light"] .next-root .gs-next .gs-chat-tab--on,
-html[data-theme="light"] .next-root .gs-next .gs-chat-close:hover {
+html[data-theme="light"] .grain-root .gs-next .gs-chat-tab:hover,
+html[data-theme="light"] .grain-root .gs-next .gs-chat-tab--on,
+html[data-theme="light"] .grain-root .gs-next .gs-chat-close:hover {
   background: rgba(32, 33, 36, 0.055);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-chat-card,
-html[data-theme="light"] .next-root .gs-next .gs-chat-source,
-html[data-theme="light"] .next-root .gs-next .gs-chat-confirm {
+html[data-theme="light"] .grain-root .gs-next .gs-chat-card,
+html[data-theme="light"] .grain-root .gs-next .gs-chat-source,
+html[data-theme="light"] .grain-root .gs-next .gs-chat-confirm {
   background: rgba(255, 255, 255, 0.56);
 }
 
-html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
+html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   background: rgba(74, 104, 194, 0.09);
 }
 
 @media (max-width: 1100px) {
-  .next-root .gs-next .gs-chat-clip--open {
+  .grain-root .gs-next .gs-chat-clip--open {
     position: absolute;
     inset: 0 0 0 auto;
     z-index: 12;
@@ -3030,11 +3030,11 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
 }
 
 @media (max-width: 760px) {
-  .next-root .gs-next .gs-side {
+  .grain-root .gs-next .gs-side {
     width: 218px;
   }
 
-  .next-root .gs-next .gs-column {
+  .grain-root .gs-next .gs-column {
     padding-inline: 10px;
   }
 }
@@ -3170,9 +3170,9 @@ html[data-theme="light"] .next-root .gs-next .gs-chat-bubble--user {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .next-root *,
-  .next-root *::before,
-  .next-root *::after {
+  .grain-root *,
+  .grain-root *::before,
+  .grain-root *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;

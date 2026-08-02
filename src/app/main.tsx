@@ -57,7 +57,7 @@ if (winLabel === "agent-panel") {
   // [GRAIN] UI 2.0 is the only tree. The pre-2.0 tree and its `VITE_GRAIN_UI`
   // switch are gone — a fallback nobody can reach is just a second UI to keep
   // compiling. Still a dynamic import so the shell stays out of the entry chunk.
-  void import("./next/NextApp").then(({ default: MainApp }) => {
+  void import("./GrainApp").then(({ default: MainApp }) => {
     root.render(
       <React.StrictMode>
         <MainApp />

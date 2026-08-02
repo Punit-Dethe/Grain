@@ -4,7 +4,7 @@
 The way a UI rewrite fails is not a crash. It is a setting that quietly stops
 being reachable, and nobody notices for months. This turns that into a red CI
 run: for every top-level field of ``AppSettings`` (as generated into
-``src/bindings.ts``), assert the active UI tree can still reach it.
+``src/app/bindings.ts``), assert the active UI tree can still reach it.
 
 Reachability is deliberately generous, because a field can legitimately be
 driven three different ways:
@@ -37,7 +37,7 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BINDINGS = os.path.join(ROOT, "src", "bindings.ts")
+BINDINGS = os.path.join(ROOT, "src", "app", "bindings.ts")
 # Lives beside the script, NOT in docs/: this file is build-affecting data, and
 # docs/ is gitignored in this repo — CI would find no exceptions and fail.
 PARITY_DOC = os.path.join(ROOT, "scripts", "ui-parity-exceptions.md")
@@ -276,7 +276,7 @@ def command_report(tree: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tree", default="src", help="UI tree to check (default: src)")
+    ap.add_argument("--tree", default="src/app", help="UI tree to check (default: src/app)")
     ap.add_argument("--commands", action="store_true", help="command reachability report")
     args = ap.parse_args()
     return command_report(args.tree) if args.commands else gate(args.tree)

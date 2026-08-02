@@ -21,13 +21,13 @@ import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
 import {
-  NextHistoryCard,
-  type NextHistoryViewMode,
-} from "@/next/history/NextHistoryCard";
+  HistoryCard,
+  type HistoryViewMode,
+} from "@/history/HistoryCard";
 import {
   hasProcessedText,
-  type NextHistoryController,
-} from "@/next/history/useNextHistoryController";
+  type HistoryController,
+} from "@/history/useHistoryController";
 
 const IconButton: React.FC<{
   onClick: () => void;
@@ -75,10 +75,9 @@ const OpenRecordingsButton: React.FC<OpenRecordingsButtonProps> = ({
 
 interface HistorySettingsProps {
   variant?: "settings" | "next";
-  controller?: NextHistoryController;
+  controller?: HistoryController;
 }
 
-type HistoryViewMode = NextHistoryViewMode;
 /**
  * [GRAIN] The archive stores no capture mode, so the old Flow/Standard pills
  * could only ever have been guessed from the title. What every entry does
@@ -372,7 +371,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
         <AudioPlayerGroup>
           {visibleEntries.map((entry) =>
             controller ? (
-              <NextHistoryCard
+              <HistoryCard
                 key={entry.id}
                 entry={entry}
                 viewMode={effectiveViewMode}

@@ -5,10 +5,10 @@ import {
   serializeExtensionPalette,
 } from "@/lib/extensionTheme";
 
-const stylesheet = readFileSync(new URL("./next.css", import.meta.url), "utf8");
+const stylesheet = readFileSync(new URL("./app.css", import.meta.url), "utf8");
 
 function themeValues(theme: "light" | "dark"): Record<string, string> {
-  const selector = `.next-root[data-theme="${theme}"]`;
+  const selector = `.grain-root[data-theme="${theme}"]`;
   const start = stylesheet.indexOf(selector);
   expect(start).toBeGreaterThanOrEqual(0);
   const blockStart = stylesheet.indexOf("{", start);

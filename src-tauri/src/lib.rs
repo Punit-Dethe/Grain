@@ -986,7 +986,7 @@ pub fn run(cli_args: CliArgs) {
     specta_builder
         .export(
             Typescript::default().bigint(BigIntExportBehavior::Number),
-            "../src/bindings.ts",
+            "../src/app/bindings.ts",
         )
         .expect("Failed to export typescript bindings");
 
