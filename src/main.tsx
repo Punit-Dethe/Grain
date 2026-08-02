@@ -54,16 +54,10 @@ if (winLabel === "agent-panel") {
   // Initialize model store (loads models and sets up event listeners)
   useModelStore.getState().initialize();
 
-  // [GRAIN] UI 2.0 is now the default tree. The old tree is kept as an opt-in
-  // fallback (`VITE_GRAIN_UI=legacy`) rather than deleted yet; flattening
-  // src/next → src and removing the old tree is a later, separate cleanup. The
-  // build-time constant still lets Vite split and tree-shake the unused tree.
-  const mainTree =
-    import.meta.env.VITE_GRAIN_UI === "legacy"
-      ? import("./App")
-      : import("./next/NextApp");
-
-  void mainTree.then(({ default: MainApp }) => {
+  // [GRAIN] UI 2.0 is the only tree. The pre-2.0 tree and its `VITE_GRAIN_UI`
+  // switch are gone — a fallback nobody can reach is just a second UI to keep
+  // compiling. Still a dynamic import so the shell stays out of the entry chunk.
+  void import("./next/NextApp").then(({ default: MainApp }) => {
     root.render(
       <React.StrictMode>
         <MainApp />
