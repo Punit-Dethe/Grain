@@ -234,10 +234,6 @@
             "name": "Cancel",
             "description": "Stop and discard the current recording."
           },
-          "transcribe_with_post_process": {
-            "name": "Voice → AI",
-            "description": "Record, transcribe, then clean it up with AI in one shot."
-          },
           "prompt_prev": {
             "name": "Previous Prompt",
             "description": "Switch the active AI prompt to the previous one."
@@ -251,8 +247,8 @@
             "description": "Open the AI agent on your selected text — dictate or type an instruction."
           },
           "transcribe_send_to_ai": {
-            "name": "Send to AI (End)",
-            "description": "End an in-progress dictation or real-time session and send the transcript to AI."
+            "name": "AI Dictation",
+            "description": "One key for AI: press it to start an AI dictation, or press it during any dictation to end that one and send it to AI."
           }
         },
         "errors": {

@@ -59,8 +59,10 @@ pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
     if id == "cancel" || id == "agent_followup" {
         return false;
     }
-    // The two AI entry points must not hold a hotkey with no post-processing
-    // behind them — the same rule for the explicit key and the send-to-AI key.
+    // The AI key must not hold a hotkey with no post-processing behind it.
+    // `transcribe_with_post_process` no longer ships a binding (it survives only
+    // as a CLI/SIGUSR1 action id), but a settings file written before it retired
+    // can still name it, so the gate keeps covering it.
     if (id == "transcribe_with_post_process" || id == "transcribe_send_to_ai")
         && !settings.post_process_enabled
     {

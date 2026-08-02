@@ -1327,10 +1327,52 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
         // The notes workspace is the Notes tab of the main window, not a second
         // window to toggle (NOTES-TAB-PLAN.md).
         "grain_space_open",
+        // Upstream's AI key. `transcribe_send_to_ai` starts an AI dictation AND
+        // ends a running one; this could only do the first, so it held a global
+        // chord for a subset of another key's behaviour. The ACTION id lives on
+        // for the CLI and SIGUSR1 -- it is only the binding that retires here.
+        "transcribe_with_post_process",
     ] {
         if settings.bindings.remove(id).is_some() {
             changed = true;
         }
+    }
+
+    // [GRAIN] Re-point bindings to the current default scheme.
+    //
+    // A settings file outlives the defaults it was written against, so shipping
+    // a better chord reaches nobody who already ran Grain once. This walks every
+    // binding and applies the new default ONLY where the user never chose for
+    // themselves -- `current_binding` still equal to the `default_binding` that
+    // was stored with it. A customised key is left exactly as the user set it;
+    // its `default_binding` is still refreshed so the Reset button offers the
+    // new chord rather than the retired one.
+    // Chords the user picked by hand. A re-point must never land on one of
+    // these: two actions on one chord means the second registration is refused
+    // and that key silently stops working. The user's own choice outranks a new
+    // default, so on a clash the re-point is skipped and only `default_binding`
+    // moves. (Two re-points cannot clash with each other -- the defaults are
+    // unique, enforced by `no_two_defaults_claim_the_same_chord`.)
+    let user_chosen: std::collections::HashSet<String> = settings
+        .bindings
+        .values()
+        .filter(|b| b.current_binding != b.default_binding && !b.current_binding.is_empty())
+        .map(|b| b.current_binding.clone())
+        .collect();
+
+    for (id, stored) in settings.bindings.iter_mut() {
+        let Some(fresh) = defaults.bindings.get(id) else {
+            continue;
+        };
+        if stored.default_binding == fresh.default_binding {
+            continue;
+        }
+        let untouched = stored.current_binding == stored.default_binding;
+        stored.default_binding = fresh.default_binding.clone();
+        if untouched && !user_chosen.contains(&fresh.current_binding) {
+            stored.current_binding = fresh.current_binding.clone();
+        }
+        changed = true;
     }
 
     // [GRAIN] Seed the default custom words for existing installs. The
@@ -1347,14 +1389,25 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
 }
 
 pub fn get_default_settings() -> AppSettings {
-    #[cfg(target_os = "windows")]
-    let default_shortcut = "ctrl+space";
+    // [GRAIN] Default chord scheme. Three rules, so the whole set is one idea:
+    //
+    //   Space  = speak            Enter = speak to AI       letter = a surface
+    //
+    // Alt (Option) is the Grain modifier: bare Alt+key is the least-contended
+    // global space on every platform. Modifiers then stack by how often a mode
+    // is used -- Flow, the everyday one, gets the bare chord; Standard, the
+    // rarest, carries the extra Ctrl.
+    //
+    // What we deliberately do NOT bind, because a global hotkey outranks the
+    // focused app and would break these everywhere:
+    //   Ctrl+Space         IDE autocomplete; macOS "previous input source"
+    //   Shift+Enter        newline in Slack, Discord, Teams, Gmail, Excel
+    //   Ctrl+Shift+Arrow   extend-selection-by-word in every text field
+    //   Alt+Arrow          Back/Forward in browsers and file managers
     #[cfg(target_os = "macos")]
-    let default_shortcut = "option+space";
-    #[cfg(target_os = "linux")]
-    let default_shortcut = "ctrl+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_shortcut = "alt+space";
+    let default_shortcut = "ctrl+option+space";
+    #[cfg(not(target_os = "macos"))]
+    let default_shortcut = "ctrl+alt+space";
 
     let mut bindings = HashMap::new();
     bindings.insert(
@@ -1367,26 +1420,12 @@ pub fn get_default_settings() -> AppSettings {
             current_binding: default_shortcut.to_string(),
         },
     );
-    #[cfg(target_os = "windows")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(target_os = "macos")]
-    let default_post_process_shortcut = "option+shift+space";
-    #[cfg(target_os = "linux")]
-    let default_post_process_shortcut = "ctrl+shift+space";
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let default_post_process_shortcut = "alt+shift+space";
-
-    bindings.insert(
-        "transcribe_with_post_process".to_string(),
-        ShortcutBinding {
-            id: "transcribe_with_post_process".to_string(),
-            name: "Transcribe with Post-Processing".to_string(),
-            description: "Converts your speech into text and applies AI post-processing."
-                .to_string(),
-            default_binding: default_post_process_shortcut.to_string(),
-            current_binding: default_post_process_shortcut.to_string(),
-        },
-    );
+    // [GRAIN] `transcribe_with_post_process` holds NO chord any more. It was
+    // upstream's AI key and could only START a capture; `transcribe_send_to_ai`
+    // does that AND ends a running one, so the old key was a strict subset
+    // occupying a second global chord for a fraction of one key's behaviour.
+    // The ACTION id survives for the CLI and SIGUSR1 entry points -- only the
+    // binding is gone (see `migrate_settings`).
     bindings.insert(
         "cancel".to_string(),
         ShortcutBinding {
@@ -1400,9 +1439,9 @@ pub fn get_default_settings() -> AppSettings {
 
     // [GRAIN] dedicated real-time (rolling-window) transcribe shortcut.
     #[cfg(target_os = "macos")]
-    let default_realtime_shortcut = "option+ctrl+space";
+    let default_realtime_shortcut = "option+space";
     #[cfg(not(target_os = "macos"))]
-    let default_realtime_shortcut = "ctrl+alt+space";
+    let default_realtime_shortcut = "alt+space";
     bindings.insert(
         "transcribe_realtime".to_string(),
         ShortcutBinding {
@@ -1424,8 +1463,8 @@ pub fn get_default_settings() -> AppSettings {
             id: "prompt_next".to_string(),
             name: "Next Prompt".to_string(),
             description: "Switch to the next post-processing prompt.".to_string(),
-            default_binding: "ctrl+alt+right".to_string(),
-            current_binding: "ctrl+alt+right".to_string(),
+            default_binding: "alt+]".to_string(),
+            current_binding: "alt+]".to_string(),
         },
     );
     bindings.insert(
@@ -1434,8 +1473,8 @@ pub fn get_default_settings() -> AppSettings {
             id: "prompt_prev".to_string(),
             name: "Previous Prompt".to_string(),
             description: "Switch to the previous post-processing prompt.".to_string(),
-            default_binding: "ctrl+alt+left".to_string(),
-            current_binding: "ctrl+alt+left".to_string(),
+            default_binding: "alt+[".to_string(),
+            current_binding: "alt+[".to_string(),
         },
     );
 
@@ -1445,9 +1484,9 @@ pub fn get_default_settings() -> AppSettings {
     // otherwise. Default mirrors the "+shift" relationship between
     // transcribe_realtime and transcribe_with_post_process.
     #[cfg(target_os = "macos")]
-    let default_native_asr_shortcut = "option+ctrl+shift+space";
+    let default_native_asr_shortcut = "option+shift+space";
     #[cfg(not(target_os = "macos"))]
-    let default_native_asr_shortcut = "ctrl+alt+shift+space";
+    let default_native_asr_shortcut = "alt+shift+space";
     bindings.insert(
         "transcribe_native_asr".to_string(),
         ShortcutBinding {
@@ -1463,9 +1502,9 @@ pub fn get_default_settings() -> AppSettings {
     // window. Tap shortcut (fires on press). Captures the current selection, then
     // dictate/type an instruction; uses the configured post-process provider.
     #[cfg(target_os = "macos")]
-    let default_agent_shortcut = "option+shift+a";
+    let default_agent_shortcut = "option+a";
     #[cfg(not(target_os = "macos"))]
-    let default_agent_shortcut = "ctrl+shift+a";
+    let default_agent_shortcut = "alt+a";
     bindings.insert(
         "summon_agent".to_string(),
         ShortcutBinding {
@@ -1483,9 +1522,9 @@ pub fn get_default_settings() -> AppSettings {
     // GLOBAL shortcut while an Agent surface (reply card / pill offer) is live —
     // and in that window it OVERRIDES any other Grain binding using the same keys.
     #[cfg(target_os = "macos")]
-    let default_agent_followup_shortcut = "option+shift+f";
+    let default_agent_followup_shortcut = "option+f";
     #[cfg(not(target_os = "macos"))]
-    let default_agent_followup_shortcut = "ctrl+alt+f";
+    let default_agent_followup_shortcut = "alt+f";
     bindings.insert(
         "agent_followup".to_string(),
         ShortcutBinding {
@@ -1500,15 +1539,15 @@ pub fn get_default_settings() -> AppSettings {
     );
 
     #[cfg(target_os = "macos")]
-    let default_send_to_ai_shortcut = "option+shift+enter";
+    let default_send_to_ai_shortcut = "option+enter";
     #[cfg(not(target_os = "macos"))]
-    let default_send_to_ai_shortcut = "ctrl+shift+enter";
+    let default_send_to_ai_shortcut = "alt+enter";
     bindings.insert(
         "transcribe_send_to_ai".to_string(),
         ShortcutBinding {
             id: "transcribe_send_to_ai".to_string(),
-            name: "Send to AI (End)".to_string(),
-            description: "End an in-progress dictation or real-time session and send the transcript to AI. Only used when push-to-talk is off."
+            name: "AI Dictation".to_string(),
+            description: "One key for AI: press it to start an AI dictation, or press it during any dictation to end that one and send it to AI."
                 .to_string(),
             default_binding: default_send_to_ai_shortcut.to_string(),
             current_binding: default_send_to_ai_shortcut.to_string(),
@@ -1696,5 +1735,119 @@ impl AppSettings {
         self.post_process_providers
             .iter_mut()
             .find(|provider| provider.id == provider_id)
+    }
+}
+
+#[cfg(test)]
+mod binding_migration_tests {
+    use super::*;
+
+    /// Rewind one binding to the scheme a pre-migration settings file carried,
+    /// so the test exercises the same shape a real upgrade sees.
+    fn stored_as(settings: &mut AppSettings, id: &str, old_default: &str, current: &str) {
+        let b = settings.bindings.get_mut(id).expect("binding exists");
+        b.default_binding = old_default.to_string();
+        b.current_binding = current.to_string();
+    }
+
+    #[test]
+    fn untouched_bindings_move_to_the_new_default() {
+        let mut settings = get_default_settings();
+        let fresh = get_default_settings();
+        // Never customised: current still equals the old default.
+        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "ctrl+alt+space");
+
+        ensure_post_process_defaults(&mut settings);
+
+        let moved = &settings.bindings["transcribe_realtime"];
+        assert_eq!(moved.current_binding, fresh.bindings["transcribe_realtime"].current_binding);
+        assert_eq!(moved.default_binding, fresh.bindings["transcribe_realtime"].default_binding);
+    }
+
+    #[test]
+    fn a_customised_binding_keeps_the_users_key() {
+        let mut settings = get_default_settings();
+        let fresh = get_default_settings();
+        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "f9");
+
+        ensure_post_process_defaults(&mut settings);
+
+        let kept = &settings.bindings["transcribe_realtime"];
+        assert_eq!(kept.current_binding, "f9", "the user's key must survive");
+        // Reset should still offer the CURRENT default, not the retired one.
+        assert_eq!(kept.default_binding, fresh.bindings["transcribe_realtime"].default_binding);
+    }
+
+    #[test]
+    fn a_repoint_never_steals_a_chord_the_user_chose() {
+        let mut settings = get_default_settings();
+        let fresh = get_default_settings();
+        let flow_target = fresh.bindings["transcribe_realtime"].current_binding.clone();
+
+        // The user put Standard on exactly the chord Flow is about to adopt.
+        stored_as(&mut settings, "transcribe", "ctrl+space", &flow_target);
+        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "ctrl+alt+space");
+
+        ensure_post_process_defaults(&mut settings);
+
+        assert_eq!(
+            settings.bindings["transcribe"].current_binding, flow_target,
+            "the user's own choice outranks a new default"
+        );
+        assert_ne!(
+            settings.bindings["transcribe_realtime"].current_binding, flow_target,
+            "two actions must never end up on one chord"
+        );
+    }
+
+    #[test]
+    fn the_retired_ai_binding_is_removed() {
+        let mut settings = get_default_settings();
+        settings.bindings.insert(
+            "transcribe_with_post_process".to_string(),
+            ShortcutBinding {
+                id: "transcribe_with_post_process".to_string(),
+                name: "Voice to AI".to_string(),
+                description: String::new(),
+                default_binding: "ctrl+shift+space".to_string(),
+                current_binding: "ctrl+shift+space".to_string(),
+            },
+        );
+
+        ensure_post_process_defaults(&mut settings);
+
+        assert!(!settings.bindings.contains_key("transcribe_with_post_process"));
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let mut settings = get_default_settings();
+        stored_as(&mut settings, "summon_agent", "ctrl+shift+a", "ctrl+shift+a");
+
+        let snapshot = |s: &AppSettings| {
+            let mut rows: Vec<(String, String, String)> = s
+                .bindings
+                .iter()
+                .map(|(id, b)| {
+                    (
+                        id.clone(),
+                        b.current_binding.clone(),
+                        b.default_binding.clone(),
+                    )
+                })
+                .collect();
+            rows.sort();
+            rows
+        };
+
+        ensure_post_process_defaults(&mut settings);
+        let after_first = snapshot(&settings);
+        let changed_again = ensure_post_process_defaults(&mut settings);
+
+        assert_eq!(snapshot(&settings), after_first);
+        assert!(
+            !changed_again,
+            "a settled settings file must not keep rewriting"
+        );
     }
 }

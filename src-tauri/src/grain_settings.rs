@@ -124,4 +124,42 @@ mod tests {
         assert!(!out.contains("secret"));
         assert!(out.contains("[REDACTED]"));
     }
+
+    /// Every default chord must parse, or the shortcut registers as nothing and
+    /// the failure is a line in a log file the user will never read. The default
+    /// scheme is the one set of chords nobody chose, so nobody would think to
+    /// check it — this is the only thing standing between a typo and a key that
+    /// silently does not exist.
+    #[test]
+    fn every_default_binding_parses_as_a_real_chord() {
+        use tauri_plugin_global_shortcut::Shortcut;
+        for (id, binding) in get_default_settings().bindings {
+            if binding.default_binding.is_empty() {
+                continue; // deliberately unbound (e.g. grain_space_quick_add)
+            }
+            assert!(
+                binding.default_binding.parse::<Shortcut>().is_ok(),
+                "default binding for `{id}` does not parse: {:?}",
+                binding.default_binding
+            );
+        }
+    }
+
+    /// Two actions on one chord means the second registration is refused and
+    /// that action has no key at all.
+    #[test]
+    fn no_two_defaults_claim_the_same_chord() {
+        let mut seen: HashMap<String, String> = HashMap::new();
+        for (id, binding) in get_default_settings().bindings {
+            if binding.default_binding.is_empty() {
+                continue;
+            }
+            if let Some(other) = seen.insert(binding.default_binding.clone(), id.clone()) {
+                panic!(
+                    "`{id}` and `{other}` both default to {:?}",
+                    binding.default_binding
+                );
+            }
+        }
+    }
 }
