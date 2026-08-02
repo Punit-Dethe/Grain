@@ -1271,6 +1271,8 @@ html[data-theme="light"] .overview-keycap {
 
 /* -- Agent card -- */
 
+/* The keycap rides the right edge, so it lines up with the caps in the
+ * Shortcuts card two along rather than floating mid-card. */
 .overview-agent-press {
   margin-top: auto;
   padding-top: 10px;
@@ -1279,6 +1281,35 @@ html[data-theme="light"] .overview-keycap {
   gap: 7px;
   color: var(--text-4);
   font-size: 10.5px;
+}
+
+.overview-agent-press .overview-keycap {
+  margin-left: auto;
+}
+
+/* -- Extensions card -- */
+
+.overview-chips {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.overview-chip {
+  padding: 2px 7px;
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.1));
+  border-radius: 5px;
+  color: var(--text-4);
+  font-size: 10px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+html[data-theme="light"] .overview-chip {
+  border-color: #e0e0e3;
+  background: #fafafb;
 }
 
 /* -- Dictionary card --

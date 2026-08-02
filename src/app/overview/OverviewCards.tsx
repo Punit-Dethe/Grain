@@ -4,12 +4,14 @@
  * They replace the inert prototype tiles, and they are deliberately not four of
  * the same thing — each earns its slot a different way:
  *
+ * In render order:
+ *
  * | Card       | Kind          | Affordance                              |
  * |------------|---------------|-----------------------------------------|
- * | Extensions | navigational  | whole card is a button → store          |
- * | Dictionary | interactive   | inline add field, never leaves the page |
  * | Shortcuts  | informational | READ-ONLY reference, not clickable      |
+ * | Dictionary | interactive   | inline add field, never leaves the page |
  * | Agent      | promotional   | surfaces the summon key → Studio        |
+ * | Extensions | navigational  | whole card is a button → store          |
  *
  * The Shortcuts card is a reference, not a control: it is a `<div>`, has no
  * hover lift and no pointer cursor, and carries no link, so nothing about it
@@ -32,7 +34,11 @@ import { hashForRoute } from "../navigation";
 const COPY = {
   extensions: {
     title: "Extensions",
-    body: "Voice actions, app modes, and more.",
+    body: "Teach Grain new tricks.",
+    // Two extensions that actually ship, so the chips are examples rather than
+    // a promise. They double as the card's bottom row, which is what puts it on
+    // the same baseline as the other three.
+    examples: ["Voice Actions", "App Modes"],
   },
   dictionary: {
     title: "Dictionary",
@@ -116,6 +122,13 @@ function ExtensionsCard() {
       <div className="action-copy">
         <strong>{COPY.extensions.title}</strong>
         <small>{COPY.extensions.body}</small>
+        <div className="overview-chips">
+          {COPY.extensions.examples.map((name) => (
+            <span className="overview-chip" key={name}>
+              {name}
+            </span>
+          ))}
+        </div>
       </div>
       <ChevronRight
         className="overview-card-chev"
@@ -286,10 +299,10 @@ function AgentGlyph() {
 export function OverviewCards() {
   return (
     <div className="quick-grid overview-grid">
-      <ExtensionsCard />
-      <DictionaryCard />
       <ShortcutsCard />
+      <DictionaryCard />
       <AgentCard />
+      <ExtensionsCard />
     </div>
   );
 }
