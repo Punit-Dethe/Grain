@@ -62,8 +62,41 @@ pub fn get_current_theme(app: &AppHandle) -> AppTheme {
     }
 }
 
-/// Gets the appropriate icon path for the given theme and state
-pub fn get_icon_path(_theme: AppTheme, _state: TrayIconState) -> &'static str {
+/// Reads the Windows taskbar theme from the registry.
+///
+/// Returns None if the value is missing (older Windows 10 builds default to a
+/// dark taskbar there, but falling back to the window theme is safer than
+/// guessing).
+#[cfg(target_os = "windows")]
+// [GRAIN] Unused: Grain ships one tray icon, so no theme is ever resolved.
+// Kept verbatim so upstream edits merge cleanly.
+#[allow(dead_code)]
+fn windows_taskbar_theme() -> Option<AppTheme> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let personalize = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize")
+        .ok()?;
+    let system_uses_light: u32 = personalize.get_value("SystemUsesLightTheme").ok()?;
+    Some(if system_uses_light == 1 {
+        AppTheme::Light
+    } else {
+        AppTheme::Dark
+    })
+}
+
+/// Gets the appropriate icon path.
+///
+/// [GRAIN] Grain ships ONE branded tray icon rather than upstream's
+/// theme x state matrix (see UPSTREAM-DIVERGENCE.md), so `theme` and the
+/// non-idle states collapse to the same asset. The `warning` badge IS honoured:
+/// "your shortcuts are being swallowed" is exactly the state a tray icon should
+/// be able to show, and upstream ships the artwork.
+pub fn get_icon_path(_theme: AppTheme, state: TrayIconState, warning: bool) -> &'static str {
+    if warning && state == TrayIconState::Idle {
+        return "resources/tray_idle_warning.png";
+    }
     "resources/handy.png"
 }
 
@@ -74,7 +107,8 @@ pub fn change_tray_icon(app: &AppHandle, icon: TrayIconState) {
     // Store current state
     app.state::<CurrentTrayIconState>().set(icon);
 
-    let icon_path = get_icon_path(theme, icon);
+    let warning = crate::secure_input::tray_warning_active(app);
+    let icon_path = get_icon_path(theme, icon, warning);
 
     let icon_started = std::time::Instant::now();
     // [GRAIN] non-panicking icon load: a missing/corrupt resource logs an
@@ -123,6 +157,20 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
 
     let locale = locale.unwrap_or(&settings.app_language);
     let strings = get_tray_translations(Some(locale.to_string()));
+
+    // Secure Input warning entry (macOS): clicking opens the settings window
+    // where the full warning banner explains the situation. Locales that
+    // haven't translated the key yet get the English string rather than a
+    // blank menu item (build.rs emits "" for missing keys).
+    let secure_input_warning = crate::secure_input::tray_warning_active(app).then(|| {
+        let label = if strings.secure_input_warning.is_empty() {
+            get_tray_translations(Some("en".to_string())).secure_input_warning
+        } else {
+            strings.secure_input_warning.clone()
+        };
+        MenuItem::with_id(app, "secure_input_warning", &label, true, None::<&str>)
+            .expect("failed to create secure input warning item")
+    });
 
     // Platform-specific accelerators
     #[cfg(target_os = "macos")]
@@ -238,10 +286,19 @@ pub fn update_tray_menu(app: &AppHandle, locale: Option<&str>) {
         .expect("failed to create menu"),
     };
 
+    // Both layouts start with [version, separator, ...]; slot the warning in
+    // right below the version line so it's the first actionable thing seen.
+    let mut tooltip = version_label;
+    if let Some(warning_item) = secure_input_warning {
+        let _ = menu.insert(&warning_item, 2);
+        let _ = menu.insert(&separator(), 3);
+        tooltip = format!("{} — {}", tooltip, warning_item.text().unwrap_or_default());
+    }
+
     let tray = app.state::<TrayIcon>();
     let _ = tray.set_menu(Some(menu));
     let _ = tray.set_icon_as_template(true);
-    let _ = tray.set_tooltip(Some(version_label));
+    let _ = tray.set_tooltip(Some(tooltip));
 }
 
 fn last_transcript_text(entry: &HistoryEntry) -> &str {

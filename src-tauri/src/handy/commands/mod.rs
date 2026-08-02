@@ -183,8 +183,9 @@ pub fn initialize_shortcuts(app: AppHandle) -> Result<(), String> {
     // Initialize shortcuts
     crate::shortcut::init_shortcuts(&app);
 
-    // Mark as initialized
+    // Mark as initialized before reconciling the macOS Secure Input fallback.
     app.manage(ShortcutsInitialized);
+    crate::secure_input::reconcile_fallback(&app);
 
     // [GRAIN] Extension shortcuts reconcile once during registry startup, which
     // precedes HandyKeysState. Retry at the exact point core shortcuts become

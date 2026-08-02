@@ -21,6 +21,8 @@ mod apple_intelligence;
 mod audio_feedback;
 #[path = "handy/audio_toolkit/mod.rs"]
 pub mod audio_toolkit;
+#[path = "handy/autostart.rs"]
+mod autostart;
 mod bridge; // [GRAIN] Tauri-shell → headless DaemonEvent bus
 #[path = "handy/catalog/mod.rs"]
 mod catalog;
@@ -76,6 +78,8 @@ pub(crate) use grain_overlay as overlay;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
+#[path = "handy/paste_tx/mod.rs"]
+mod paste_tx;
 #[path = "handy/portable.rs"]
 pub mod portable;
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
@@ -83,6 +87,8 @@ mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rot
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
+#[path = "handy/secure_input.rs"]
+mod secure_input;
 #[path = "handy/shortcut/mod.rs"]
 mod shortcut;
 mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
@@ -109,10 +115,6 @@ use managers::audio::AudioRecordingManager;
 use managers::history::HistoryManager;
 use managers::model::ModelManager;
 use managers::transcription::TranscriptionManager;
-#[cfg(unix)]
-use signal_hook::consts::{SIGUSR1, SIGUSR2};
-#[cfg(unix)]
-use signal_hook::iterator::Signals;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::Arc;
 use tauri::image::Image;
@@ -123,7 +125,7 @@ pub use transcription_coordinator::TranscriptionCoordinator;
 
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Listener, Manager};
-use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_log::{Builder as LogBuilder, RotationStrategy, Target, TargetKind};
 
 use crate::settings::get_settings;
@@ -415,11 +417,11 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // after permissions are confirmed (on macOS) or after onboarding completes.
     // This matches the pattern used for Enigo initialization.
 
+    // Set up signal handlers for toggling transcription. On Linux, SIGUSR1 is
+    // deliberately not handled — it belongs to WebKitGTK's garbage collector
+    // (#1660) — see signal_handle.rs.
     #[cfg(unix)]
-    let signals = Signals::new(&[SIGUSR1, SIGUSR2]).unwrap();
-    // Set up signal handlers for toggling transcription
-    #[cfg(unix)]
-    signal_handle::setup_signal_handler(app_handle.clone(), signals);
+    signal_handle::setup_signal_handler(app_handle.clone());
 
     // Apply macOS Accessory policy if starting hidden and tray is available.
     // If the tray icon is disabled, keep the dock icon so the user can reopen.
@@ -434,7 +436,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let initial_theme = tray::get_current_theme(app_handle);
 
     // Choose the appropriate initial icon based on theme
-    let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle);
+    let initial_icon_path = tray::get_icon_path(initial_theme, tray::TrayIconState::Idle, false);
 
     let mut tray_builder = TrayIconBuilder::new()
         .icon(
@@ -481,6 +483,10 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     let tray = tray_builder
         .on_menu_event(|app, event| match event.id.as_ref() {
             "settings" => {
+                show_main_window(app);
+            }
+            "secure_input_warning" => {
+                // Full explanation lives in the settings-window banner
                 show_main_window(app);
             }
             "copy_last_transcript" => {
@@ -547,17 +553,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
         tray::update_tray_menu(&app_handle_for_listener, None);
     });
 
-    // Get the autostart manager and configure based on user setting
-    let autostart_manager = app_handle.autolaunch();
-    let settings = settings::get_settings(&app_handle);
-
-    if settings.autostart_enabled {
-        // Enable autostart if user has opted in
-        let _ = autostart_manager.enable();
-    } else {
-        // Disable autostart if user has opted out
-        let _ = autostart_manager.disable();
-    }
+    // Apply the autostart preference (SMAppService login item on macOS 13+,
+    // tauri-plugin-autostart elsewhere)
+    autostart::apply_autostart(app_handle, settings.autostart_enabled);
 
     // [GRAIN] The Handy webview recording overlay is retired — the winit
     // grain-pill is now the SINGLE overlay surface for both batch and rolling
@@ -827,6 +825,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_extra_recording_buffer_setting,
             shortcut::change_paste_delay_ms_setting,
             shortcut::change_paste_delay_after_ms_setting,
+            shortcut::change_reliable_paste_setting,
             shortcut::change_paste_method_setting,
             shortcut::get_available_typing_tools,
             shortcut::change_typing_tool_setting,
@@ -908,6 +907,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,
+            shortcut::suspend_all_bindings,
+            shortcut::resume_all_bindings,
             shortcut::change_mute_while_recording_setting,
             grain_commands::change_audio_conditioning_setting,
             shortcut::change_append_trailing_space_setting,
@@ -953,6 +954,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::get_available_accelerators,
             shortcut::handy_keys::start_handy_keys_recording,
             shortcut::handy_keys::stop_handy_keys_recording,
+            secure_input::get_secure_input_status,
+            secure_input::run_keyboard_diagnostic,
             show_main_window_command,
             agent::agent_get_context,
             agent::agent_take_instruction,
@@ -1293,6 +1296,12 @@ pub fn run(cli_args: CliArgs) {
             // Advanced page asks for it — that page already shows a loading
             // state, so the one-time cost is paid only when actually needed
             // ("if it's not in use, destroy it").
+
+            // [GRAIN] Secure Input monitor (macOS): detects stuck secure input
+            // that silently blocks keyed shortcuts. Upstream also pre-warms
+            // accelerators and an overlay cache here; Grain does neither -- see
+            // the note above, and grain_overlay owns the overlay path.
+            secure_input::init(&app_handle);
 
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {

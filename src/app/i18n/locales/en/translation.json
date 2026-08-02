@@ -37,6 +37,7 @@
   },
   "tray": {
     "settings": "Settings...",
+    "secureInputWarning": "⚠ Shortcuts blocked by Secure Input",
     "copyLastTranscript": "Copy Last Transcript",
     "unloadModel": "Unload Model",
     "model": "Model",

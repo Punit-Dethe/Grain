@@ -63,6 +63,24 @@ def is_frozen_frontend(path: str) -> bool:
     return path.startswith(FROZEN_PREFIX) and not path.startswith(FROZEN_EXEMPT)
 
 
+def frontend_adopted_from_upstream() -> list[str]:
+    """Frontend paths this merge changed that upstream, not Grain, authored.
+
+    A path counts when the merge touched it AND the corresponding upstream path
+    exists — `src/app/components/X.tsx` against upstream's
+    `src/components/X.tsx`. That mapping is exactly what rename detection used
+    to place the change, so it is also what identifies it.
+    """
+    changed = git("diff", "--name-only", "HEAD", "--", "src/").stdout.splitlines()
+    adopted = []
+    for path in (p.strip() for p in changed if p.strip()):
+        upstream_path = path.replace(FROZEN_EXEMPT, FROZEN_PREFIX, 1) if path.startswith(FROZEN_EXEMPT) else path
+        probe = git("cat-file", "-e", f"upstream/main:{upstream_path}")
+        if probe.returncode == 0:
+            adopted.append(path)
+    return adopted
+
+
 def working_tree_dirty() -> bool:
     return bool(git("status", "--porcelain").stdout.strip())
 
@@ -105,6 +123,25 @@ def start(dry_run: bool) -> int:
     if frozen:
         print(f"[merge] auto-resolved {len(frozen)} frozen-frontend conflict(s) by discarding upstream's copy:")
         for path in frozen:
+            print(f"          {path}")
+
+    # Conflicts are only half of it. Git's directory-rename detection saw
+    # src/ -> src/app/ and helpfully routes upstream's frontend work INTO Grain's
+    # tree: new files land at src/app/..., and edits to files that moved are
+    # applied silently with no conflict at all. Neither shows up as a conflict,
+    # and the freeze census cannot see them either — it matches on paths shared
+    # with upstream's src/, and src/app/... is not one. So they arrive unnoticed.
+    # This is what put upstream's slider-reset props and two translation files
+    # into src/app/ on the 08-02 sync; the build caught it, but only by luck.
+    adopted = frontend_adopted_from_upstream()
+    for path in adopted:
+        if os.path.exists(os.path.join(ROOT, path)):
+            git("checkout", "HEAD", "--", path)   # our version wins
+        else:
+            git("rm", "--force", "--quiet", path)
+    if adopted:
+        print(f"[merge] reverted {len(adopted)} upstream frontend change(s) routed into src/app/:")
+        for path in adopted:
             print(f"          {path}")
 
     if real:

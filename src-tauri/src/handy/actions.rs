@@ -63,6 +63,23 @@ pub(crate) fn strip_invisible_chars(s: &str) -> String { // [GRAIN] pub(crate)
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
 }
 
+/// Strip a leading `<think>...</think>` block. Some endpoints can't disable
+/// reasoning, and some local servers put the reasoning text into `content`
+/// instead of a separate field — without this the user would get the model's
+/// chain of thought pasted along with the cleaned transcription.
+// [GRAIN] Reachable only from tests here: Grain's post-processing lives in
+// grain_post_process, which does its own think-block handling. Kept in place
+// so upstream edits to it merge cleanly.
+#[allow(dead_code)]
+fn strip_think_block(s: &str) -> &str {
+    if let Some(rest) = s.trim_start().strip_prefix("<think>") {
+        if let Some(end) = rest.find("</think>") {
+            return rest[end + "</think>".len()..].trim_start();
+        }
+    }
+    s
+}
+
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
 pub(crate) fn build_system_prompt(prompt_template: &str) -> String { // [GRAIN] pub(crate)
@@ -100,6 +117,9 @@ where
     }
 }
 
+// [GRAIN] Upstream's `should_use_streaming_overlay` is not ported: it switches
+// on `OverlayStyle`, which Grain does not have. The webview overlay it drove
+// was replaced by the native pill, so nothing here could call it.
 // [GRAIN] Upstream's `post_process_transcription` lived here. Grain's
 // replacement — multi-provider, context-aware, rotation-capable — is
 // `grain_post_process::post_process_transcription`, and the LLM call it drives
@@ -704,7 +724,7 @@ pub static ACTION_MAP: Lazy<HashMap<String, Arc<dyn ShortcutAction>>> = Lazy::ne
 
 #[cfg(test)]
 mod tests {
-    use super::{complete_unless_cancelled, is_blank_transcription};
+    use super::{complete_unless_cancelled, is_blank_transcription, strip_think_block};
     use std::future;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
@@ -750,5 +770,31 @@ mod tests {
 
         cancel_thread.join().unwrap();
         assert_eq!(result, None);
+    }
+
+    #[test]
+    fn leading_think_block_is_stripped() {
+        assert_eq!(
+            strip_think_block("<think>pondering...</think>Cleaned text."),
+            "Cleaned text."
+        );
+        assert_eq!(
+            strip_think_block("  \n<think>multi\nline</think>\n  Cleaned text."),
+            "Cleaned text."
+        );
+    }
+
+    #[test]
+    fn content_without_think_block_is_unchanged() {
+        assert_eq!(strip_think_block("Cleaned text."), "Cleaned text.");
+        assert_eq!(
+            strip_think_block("Mentions <think> mid-sentence."),
+            "Mentions <think> mid-sentence."
+        );
+        // Unclosed block: leave untouched rather than guess
+        assert_eq!(
+            strip_think_block("<think>never closed"),
+            "<think>never closed"
+        );
     }
 }
