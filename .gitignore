@@ -105,3 +105,5 @@ docs/
 # sibling subdirectory (owner decision, 2026-07-24) — one directory tree for
 # cross-referencing, its own git for clean separation. Never tracked here.
 grain-extensions/
+# Python bytecode (scripts/)
+__pycache__/
