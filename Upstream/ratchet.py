@@ -41,6 +41,9 @@ import os
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from upstream_ref import ensure_fresh  # noqa: E402
+
 SCOPE = "src-tauri/"
 # Regenerated artifacts under merge=ours — churn there says nothing about the
 # code boundary this ratchet guards.
@@ -68,13 +71,18 @@ def git(*args: str) -> str:
     ).stdout
 
 
-def measure() -> dict:
+def measure(worktree: bool = False) -> dict:
     """Divergence per file, measured blob-to-blob against the merge base.
 
     Deliberately NOT a `git diff base HEAD` over the tree: once phase 7 moved the
     Handy files into `src/handy/`, rename detection pairs each move as R100 and
     reports zero changed lines, which would silently retire every moved file from
     the ratchet. Comparing the two blobs by explicit path is immune to that.
+
+    With ``worktree=True`` the comparison is against the files on disk rather
+    than ``HEAD``, so the check can run BEFORE committing. Default stays ``HEAD``
+    because that is what CI must judge, and because ``--update`` has to record
+    committed numbers.
     """
     base = git("merge-base", "HEAD", "upstream/main").strip()
     base_files = set(
@@ -85,17 +93,26 @@ def measure() -> dict:
         for f in git("ls-tree", "-r", "--name-only", "HEAD", "--", SCOPE).splitlines()
         if f not in EXCLUDE
     ]
+    if worktree:
+        # Include files added but not yet committed, and drop ones deleted on
+        # disk, so the answer matches what a commit right now would produce.
+        tracked = set(our_files)
+        for path in git("ls-files", "--others", "--exclude-standard", "--", SCOPE).splitlines():
+            if path and path not in EXCLUDE:
+                tracked.add(path)
+        our_files = [f for f in sorted(tracked) if os.path.exists(f)]
 
     current: dict[str, int] = {}
     for path in our_files:
         upstream_path = to_upstream_path(path)
         if upstream_path not in base_files:
             continue  # Grain-only file — outside the ratchet by design
+        ours_rev = path if worktree else f"HEAD:{path}"
         out = git(
             "diff",
             "--numstat",
             f"{base}:{upstream_path}",
-            f"HEAD:{path}",
+            ours_rev,
         ).strip()
         if not out:
             continue  # byte-identical to upstream
@@ -147,7 +164,18 @@ def strays() -> list:
 
 
 def main() -> int:
-    current = measure()
+    # The budget is measured against the merge base with `upstream/main`. A
+    # stale ref moves that base and silently changes every number.
+    if ensure_fresh(quiet=True) is None:
+        return 1
+    worktree = "--worktree" in sys.argv
+    if worktree and "--update" in sys.argv:
+        print("[ratchet] --worktree and --update are mutually exclusive: the "
+              "budget must record committed numbers.")
+        return 2
+    current = measure(worktree=worktree)
+    if worktree:
+        print("[ratchet] measuring the WORKING TREE (pre-commit check)")
 
     if "--update" in sys.argv:
         with open(BUDGET_PATH, "w", newline="\n") as f:

@@ -32,6 +32,9 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from upstream_ref import ensure_fresh  # noqa: E402
+
 HANDY_DIR = "src-tauri/src/handy/"
 HANDY_PREFIX = "src-tauri/src/"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -90,6 +93,10 @@ def converged_claims():
 
 
 def main():
+    # Blob-for-blob against `upstream/main` — a stale ref audits the wrong
+    # upstream and can report convergence that no longer holds.
+    if ensure_fresh(quiet=True) is None:
+        return 1
     if not git("rev-parse", "--verify", "--quiet", "upstream/main").strip():
         print("upstream/main not found — run: git fetch upstream", file=sys.stderr)
         return 2

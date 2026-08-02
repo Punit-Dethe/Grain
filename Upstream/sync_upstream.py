@@ -33,6 +33,9 @@ import sys
 from datetime import datetime, timezone
 import re
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from upstream_ref import ensure_fresh  # noqa: E402
+
 REPO = "cjpais/handy"
 # Where tracking begins. Commits older than this predate the tracker and are
 # out of scope — without a floor the walk would reach back through all of
@@ -339,6 +342,11 @@ def write_outputs(data, status):
 
 def refresh():
     """Rebuild every derived output. Returns the ledger."""
+    # `ancestry_shas()` and the behind-count both read `upstream/main`. Fetching
+    # first is the difference between the ledger describing upstream and the
+    # ledger describing whatever upstream looked like the last time anyone
+    # fetched — see upstream_ref.py for the sync this silently broke.
+    ensure_fresh()
     verdicts = load_verdicts()
     ancestry = ancestry_shas()
 
