@@ -962,17 +962,6 @@ async changeAgentPanelPositionSetting(position: AgentPanelPosition) : Promise<Re
 }
 },
 /**
- * [GRAIN] Toggle auto-add-to-dictionary. Off = zero overhead (no watcher spawns).
- */
-async changeAutoDictionaryEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_auto_dictionary_enabled_setting", { enabled }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * [GRAIN] Toggle the "scrap that" voice reset. Off = zero overhead (the snippet
  * matcher is never invoked for it and the live preview takes its normal path).
  */
@@ -2396,20 +2385,6 @@ context_nearby_terms?: boolean;
  */
 context_caret_text?: boolean; 
 /**
- * [GRAIN] Auto-add to dictionary: when on, Grain briefly watches the field it
- * just pasted into (~10s) and, if you re-spell one of the pasted words the
- * same way across a couple of pastes, offers to add that spelling to your
- * dictionary (confirm by clicking the pill). OFF by default and **truly
- * zero-overhead when off** — no watcher is ever spawned. Only proper-noun /
- * identifier-shaped corrections are considered; common words are ignored.
- */
-auto_dictionary_enabled?: boolean; 
-/**
- * [GRAIN] Persisted learning counters for auto-add-to-dictionary (see
- * [`DictCandidate`]). Not user-facing; managed by the watcher.
- */
-dictionary_candidates?: DictCandidate[]; 
-/**
  * [GRAIN] Which Agent replies are auto-copied to the clipboard (off / first
  * reply only / every reply). Default `first` — the original behavior.
  */
@@ -2558,22 +2533,6 @@ name: string;
  */
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
-/**
- * [GRAIN] A learned-word candidate for auto-add-to-dictionary. When the user
- * repeatedly re-spells the same pasted word, `count` climbs; at the threshold it
- * is suggested (pill), and on accept it moves into `custom_words`. Persisted so
- * the count survives across sessions (the user rarely corrects the same term
- * twice in one sitting).
- */
-export type DictCandidate = { 
-/**
- * The corrected spelling as the user typed it (display + what gets added).
- */
-word: string; 
-/**
- * How many distinct paste-sessions this correction has been observed in.
- */
-count: number }
 export type EmbedModelStatus = "ready" | "downloading" | "absent"
 export type EngineType = 
 /**

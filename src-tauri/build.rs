@@ -275,9 +275,9 @@ fn generate_tray_translations() {
     use std::path::Path;
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let locales_dir = Path::new("../src/i18n/locales");
+    let locales_dir = Path::new("../src/app/i18n/locales");
 
-    println!("cargo:rerun-if-changed=../src/i18n/locales");
+    println!("cargo:rerun-if-changed=../src/app/i18n/locales");
 
     // Collect all locale translations
     let mut translations: BTreeMap<String, serde_json::Value> = BTreeMap::new();

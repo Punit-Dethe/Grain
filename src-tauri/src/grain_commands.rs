@@ -1,7 +1,7 @@
 //! [GRAIN] Grain-only Tauri settings commands, out of the Handy-derived
 //! `shortcut/mod.rs` (Handy Isolation phase 6). Upstream owns the shortcut
 //! registration/dispatch machinery in that module; these are the setting
-//! mutators for Grain's own features — context awareness, auto-dictionary,
+//! mutators for Grain's own features — context awareness,
 //! "scrap that", snippets, voice actions, app modes, the Agent, Grain Space,
 //! rolling preview, audio conditioning.
 //!
@@ -136,16 +136,6 @@ pub fn change_context_awareness_enabled_setting(
 ) -> Result<(), String> {
     let mut settings = settings::get_settings(&app);
     settings.context_awareness_enabled = enabled;
-    settings::write_settings(&app, settings);
-    Ok(())
-}
-
-/// [GRAIN] Toggle auto-add-to-dictionary. Off = zero overhead (no watcher spawns).
-#[tauri::command]
-#[specta::specta]
-pub fn change_auto_dictionary_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.auto_dictionary_enabled = enabled;
     settings::write_settings(&app, settings);
     Ok(())
 }

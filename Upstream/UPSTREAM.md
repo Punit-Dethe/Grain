@@ -292,7 +292,7 @@ If you must cherry-pick (a single urgent fix), close it out afterwards.
 - **Rolling transcription**: `rolling.rs` + RCSR seam revision — no upstream
   counterpart; be careful when upstream touches chunking in
   `handy/managers/transcription.rs`.
-- **Grain-only subsystems**: Grain Space, context awareness, auto-dictionary,
+- **Grain-only subsystems**: Grain Space, context awareness,
   snippets/"scrap that", prompt record, agent, master-key chords.
 - **CI**: Grain ships its own workflows; upstream workflow changes are
   ignored via `merge=ours`.

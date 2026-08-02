@@ -33,7 +33,6 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 | `extensions_imported_v1` | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |
 | `post_process_quota_reset_date` | Local date the post-process daily quotas last rolled over; the router resets lazily at routing time. |
 | `stt_quota_reset_date` | Same, for the STT pool. |
-| `dictionary_candidates` | Auto-dictionary's pending learned respellings — the feature's own working state, surfaced (when it is surfaced) as suggestions, not as a settings field. |
 
 ## Write-only by design
 

@@ -31,8 +31,6 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "ModelDownloadProgress",
     "AudioLevel",
     "PromptChanged",
-    "DictionarySuggestion",
-    "DictionarySuggestionClear",
     "AgentFollowupOffer",
     "AgentFollowupClear",
     "AgentInputShow",
@@ -213,16 +211,6 @@ pub enum DaemonEvent {
     PromptChanged {
         name: String,
     },
-    /// [GRAIN] Auto-dictionary: offer to learn a corrected word. The pill shows a
-    /// clickable `Add "word"?` prompt; a click sends a reverse WS action back to
-    /// the core (see `events_server`).
-    DictionarySuggestion {
-        word: String,
-    },
-    /// [GRAIN] Dismiss any active dictionary suggestion (accepted, timed out, or
-    /// superseded).
-    DictionarySuggestionClear,
-
     /// [GRAIN] Quick Agent: a reply was just auto-pasted at the cursor. The pill
     /// briefly reveals with an "ASK FOLLOW-UP · <shortcut>" affordance; clicking
     /// it (or pressing the shortcut) reopens the Agent expanded with the
@@ -374,8 +362,6 @@ impl DaemonEvent {
             ThemeConfig { .. } => "ThemeConfig",
             AudioLevel { .. } => "AudioLevel",
             PromptChanged { .. } => "PromptChanged",
-            DictionarySuggestion { .. } => "DictionarySuggestion",
-            DictionarySuggestionClear => "DictionarySuggestionClear",
             AgentFollowupOffer { .. } => "AgentFollowupOffer",
             AgentFollowupClear => "AgentFollowupClear",
             AgentInputShow { .. } => "AgentInputShow",
@@ -456,10 +442,6 @@ mod variant_name_tests {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum PillAction {
-    /// User clicked the pill's dictionary suggestion — learn `word`.
-    DictionaryAccept { word: String },
-    /// User dismissed the suggestion without accepting.
-    DictionaryDismiss,
     /// [GRAIN] User clicked the compact pill mid-recording to enter Prompt Record
     /// mode. The core marks the current audio position as the content→instruction
     /// split point and echoes back `PromptRecordingChanged { active: true }`.

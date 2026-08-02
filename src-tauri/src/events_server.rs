@@ -644,12 +644,6 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
 /// Tauri-managed state via `app` to mark the audio split point.
 fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core::PillAction) {
     match action {
-        grain_core::PillAction::DictionaryAccept { word } => {
-            crate::dictionary::accept_word(ctx, &word);
-        }
-        grain_core::PillAction::DictionaryDismiss => {
-            ctx.emit(grain_core::DaemonEvent::DictionarySuggestionClear);
-        }
         // [GRAIN] Prompt Record: snapshot the content→instruction split at the
         // click. Arm succeeds only while recording and only once (one-way); we
         // echo `PromptRecordingChanged { active: true }` so the pill turns blue

@@ -1092,9 +1092,9 @@ pub fn read_window_text() -> Option<String> {
     }
 }
 
-/// Read the currently focused editable field's full text via UI Automation, for
-/// the auto-dictionary watcher. `None` on unsupported platforms, password fields,
-/// or any failure. Silent — no UI.
+/// Read the currently focused editable field's full text via UI Automation.
+/// Used by the Agent (field context at summon) and by context bias. `None` on
+/// unsupported platforms, password fields, or any failure. Silent — no UI.
 pub fn read_focused_text() -> Option<String> {
     #[cfg(windows)]
     {
@@ -1904,8 +1904,8 @@ mod uia {
         }
     }
 
-    /// The focused field's raw text (auto-dictionary watcher). Own COM scope so it
-    /// is safe to call standalone from the watcher thread. Password fields skipped.
+    /// The focused field's raw text. Own COM scope so it is safe to call
+    /// standalone from any thread. Password fields skipped.
     pub(in crate::context_detect) fn read_focused_value() -> Option<String> {
         unsafe {
             let _com = ComGuard::init();

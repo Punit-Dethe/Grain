@@ -194,8 +194,6 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
 }
 
 function DictionaryTool() {
-  const { getSetting, updateSetting, isUpdating } = useSettings();
-  const enabled = getSetting("auto_dictionary_enabled") ?? false;
   return (
     <>
       <section className="tool-section">
@@ -208,17 +206,6 @@ function DictionaryTool() {
         <div className="tool-component-host">
           <SettingsGroup>
             <CustomWords descriptionMode="tooltip" grouped />
-            <ToggleSwitch
-              label="Auto-add to dictionary"
-              description="Watch for repeated spelling corrections after paste and offer to remember proper nouns and identifiers. Off keeps the watcher at zero overhead."
-              descriptionMode="tooltip"
-              grouped
-              checked={enabled}
-              isUpdating={isUpdating("auto_dictionary_enabled")}
-              onChange={(value) =>
-                updateSetting("auto_dictionary_enabled", value)
-              }
-            />
           </SettingsGroup>
         </div>
       </section>

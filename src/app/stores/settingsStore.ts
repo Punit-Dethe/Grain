@@ -153,8 +153,6 @@ const settingUpdaters: {
     commands.changeContextNearbyTermsSetting(value as boolean),
   context_caret_text: (value) =>
     commands.changeContextCaretTextSetting(value as boolean),
-  auto_dictionary_enabled: (value) =>
-    commands.changeAutoDictionaryEnabledSetting(value as boolean),
   scrap_that_enabled: (value) =>
     commands.changeScrapThatEnabledSetting(value as boolean),
   agent_autocopy: (value) =>
