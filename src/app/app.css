@@ -1121,6 +1121,11 @@ h3 {
  * Four cards on one grid, but only two of them are clickable. The shared shell
  * keeps them visually a set; `--static` withdraws every affordance from the two
  * that are a surface to read or type into, not a target to hit.
+ *
+ * Alignment: the copy block is a flex column and each card's bottom element
+ * (add field, shortcut list, press hint) is pushed down with `margin-top:auto`,
+ * so those rows line up across all four cards no matter how long the prose
+ * above them runs. Grid stretch then makes every card exactly the same height.
  * ------------------------------------------------------------------------- */
 
 .overview-grid {
@@ -1128,9 +1133,41 @@ h3 {
 }
 
 .overview-card {
-  min-height: 150px;
-  grid-template-rows: auto 1fr auto;
-  gap: 12px;
+  min-height: 0;
+  padding: 15px;
+  grid-template-rows: auto 1fr;
+  gap: 10px;
+}
+
+.overview-card .action-icon {
+  width: 26px;
+  height: 26px;
+}
+
+.overview-card .action-svg {
+  width: 22px;
+  height: 22px;
+}
+
+.overview-card .action-copy {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-card .action-copy strong {
+  margin-bottom: 3px;
+  font-size: 13px;
+}
+
+/* One line of prose per card, clipped rather than wrapped — a card that grows a
+ * second line would break the shared bottom alignment. */
+.overview-card .action-copy small {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Reference and input cards: no lift, no pointer, no hover tint. Nothing here
@@ -1152,8 +1189,8 @@ html[data-theme="light"] .overview-card--static:hover {
 
 .overview-card-chev {
   position: absolute;
-  top: 18px;
-  right: 16px;
+  top: 15px;
+  right: 14px;
   color: var(--text-4);
   transition:
     transform 0.18s var(--ease-out),
@@ -1165,26 +1202,8 @@ html[data-theme="light"] .overview-card--static:hover {
   transform: translateX(2px);
 }
 
-/* Bottom-anchored secondary link inside an otherwise non-clickable card. */
-.overview-card-link {
-  justify-self: start;
-  padding: 0;
-  color: var(--text-4);
-  font-size: 10.5px;
-  font-weight: 560;
-  background: none;
-  border: 0;
-  cursor: pointer;
-  transition: color 0.15s ease;
-}
-
-.overview-card-link:hover {
-  color: var(--text-2);
-}
-
 .overview-card-cta {
-  display: inline-block;
-  margin-top: 8px;
+  margin-top: auto;
   color: var(--accent, #6ea8fe);
   font-size: 11px;
   font-weight: 600;
@@ -1193,10 +1212,11 @@ html[data-theme="light"] .overview-card--static:hover {
 /* -- Shortcuts card -- */
 
 .overview-shortcut-list {
-  margin-top: 9px;
+  margin-top: auto;
+  padding-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
 .overview-shortcut-row {
@@ -1211,7 +1231,7 @@ html[data-theme="light"] .overview-card--static:hover {
   min-width: 0;
   overflow: hidden;
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1219,7 +1239,7 @@ html[data-theme="light"] .overview-card--static:hover {
 .overview-shortcut-off {
   flex: none;
   color: var(--text-4);
-  font-size: 10.5px;
+  font-size: 10px;
   font-style: italic;
 }
 
@@ -1227,8 +1247,8 @@ html[data-theme="light"] .overview-card--static:hover {
  * you press, with no hover or press state because it is never clickable. */
 .overview-keycap {
   flex: none;
-  max-width: 60%;
-  padding: 2px 7px;
+  max-width: 62%;
+  padding: 2px 6px;
   overflow: hidden;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
   border-radius: 5px;
@@ -1236,7 +1256,7 @@ html[data-theme="light"] .overview-card--static:hover {
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.06);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10.5px;
+  font-size: 10px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
@@ -1252,58 +1272,67 @@ html[data-theme="light"] .overview-keycap {
 /* -- Agent card -- */
 
 .overview-agent-press {
-  margin-top: 9px;
+  margin-top: auto;
+  padding-top: 10px;
   display: flex;
   align-items: center;
   gap: 7px;
   color: var(--text-4);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
-/* -- Dictionary card -- */
+/* -- Dictionary card --
+ *
+ * One control, not two: the field and its add button share a single bordered
+ * pill and the button is INSET, so it can never read as crowding the card edge.
+ */
 
 .overview-add-row {
-  margin-top: 10px;
+  margin-top: auto;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  height: 28px;
+  padding-right: 3px;
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.04);
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+
+.overview-add-row:focus-within {
+  border-color: var(--accent, #6ea8fe);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .overview-add-input {
   flex: 1;
   min-width: 0;
-  height: 27px;
-  padding: 0 8px;
-  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
-  border-radius: 6px;
+  height: 100%;
+  padding: 0 0 0 9px;
+  border: 0;
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.04);
-  font-size: 11.5px;
+  background: none;
+  font-size: 11px;
   outline: none;
-  transition:
-    border-color 0.15s ease,
-    background 0.15s ease;
 }
 
 .overview-add-input::placeholder {
   color: var(--text-4);
 }
 
-.overview-add-input:focus {
-  border-color: var(--accent, #6ea8fe);
-  background: rgba(255, 255, 255, 0.06);
-}
-
 .overview-add-btn {
   flex: none;
-  width: 27px;
-  height: 27px;
+  width: 22px;
+  height: 22px;
   display: grid;
   place-items: center;
-  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
-  border-radius: 6px;
+  border: 0;
+  border-radius: 5px;
   color: var(--text-2);
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.07);
   cursor: pointer;
   transition:
     background 0.15s ease,
@@ -1312,18 +1341,21 @@ html[data-theme="light"] .overview-keycap {
 
 .overview-add-btn:hover:not(:disabled) {
   color: var(--text-1);
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.13);
 }
 
 .overview-add-btn:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: default;
 }
 
-html[data-theme="light"] .overview-add-input,
-html[data-theme="light"] .overview-add-btn {
+html[data-theme="light"] .overview-add-row {
   border-color: #e0e0e3;
   background: #fafafb;
+}
+
+html[data-theme="light"] .overview-add-btn {
+  background: #ebebee;
 }
 
 .section-head-actions {

@@ -12,8 +12,8 @@
  * | Agent      | promotional   | surfaces the summon key → Studio        |
  *
  * The Shortcuts card is a reference, not a control: it is a `<div>`, has no
- * hover lift and no pointer cursor, so nothing about it invites a click that
- * would do nothing. Rebinding lives in Settings, which the card links to.
+ * hover lift and no pointer cursor, and carries no link, so nothing about it
+ * invites a click. Rebinding lives in Settings.
  *
  * Every card tells the truth about state. A shortcut that is not currently
  * registered (AI keys with post-processing off, the summon key with Agent off)
@@ -32,28 +32,23 @@ import { hashForRoute } from "../navigation";
 const COPY = {
   extensions: {
     title: "Extensions",
-    body: "Voice actions, app modes, and more — add capabilities without leaving Grain.",
+    body: "Voice actions, app modes, and more.",
   },
   dictionary: {
     title: "Dictionary",
-    body: "Teach Grain a name or term it keeps getting wrong.",
+    body: "Teach Grain a word it mishears.",
     placeholder: "Add a word",
     add: "Add word",
-    manage: (count: number) =>
-      count === 1 ? "1 word saved" : `${count} words saved`,
   },
   shortcuts: {
     title: "Shortcuts",
-    aiRow: "Send to AI",
-    aiOff: "AI processing off",
-    manage: "Change in Settings",
+    aiOff: "AI off",
     none: "Not set",
   },
   agent: {
     title: "Agent",
-    body: "Select text in any app, press the key, and Agent rewrites, replies, or explains it in place.",
-    bodyOff:
-      "Rewrite, reply, and explain from any app — using the text you already have selected.",
+    body: "Rewrite anything you have selected.",
+    bodyOff: "Rewrite anything you have selected.",
     enable: "Turn on in Studio",
     press: "Press",
   },
@@ -116,7 +111,7 @@ function ExtensionsCard() {
       onClick={() => go(hashForRoute({ page: "extensions", view: "store" }))}
     >
       <span className="action-icon" aria-hidden="true">
-        <Blocks width={30} height={30} strokeWidth={1.6} />
+        <Blocks width={22} height={22} strokeWidth={1.7} />
       </span>
       <div className="action-copy">
         <strong>{COPY.extensions.title}</strong>
@@ -155,7 +150,7 @@ function DictionaryCard() {
   return (
     <div className="quick-card overview-card overview-card--static">
       <span className="action-icon" aria-hidden="true">
-        <BookOpen width={30} height={30} strokeWidth={1.6} />
+        <BookOpen width={22} height={22} strokeWidth={1.7} />
       </span>
       <div className="action-copy">
         <strong>{COPY.dictionary.title}</strong>
@@ -189,15 +184,6 @@ function DictionaryCard() {
           </button>
         </div>
       </div>
-      <button
-        className="overview-card-link"
-        type="button"
-        onClick={() =>
-          go(hashForRoute({ page: "tools", section: "dictionary" }))
-        }
-      >
-        {COPY.dictionary.manage(words.length)}
-      </button>
     </div>
   );
 }
@@ -221,39 +207,30 @@ function ShortcutsCard() {
   // behaviour behind them to trigger. Reflect that instead of showing the key.
   const aiActive = (getSetting("post_process_enabled") ?? false) && Boolean(ai);
 
-  const captureLabel = t(
-    `settings.general.shortcut.bindings.${captureId}.name`,
-    capture?.name ?? captureId,
-  );
+  // Both labels come from the binding itself, so renaming an action in one
+  // place renames it here too — the card can never caption a key wrongly.
+  const label = (id: string, fallback?: string) =>
+    t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
 
   return (
     <div className="quick-card overview-card overview-card--static">
       <span className="action-icon" aria-hidden="true">
-        <Keyboard width={30} height={30} strokeWidth={1.6} />
+        <Keyboard width={22} height={22} strokeWidth={1.7} />
       </span>
       <div className="action-copy">
         <strong>{COPY.shortcuts.title}</strong>
         <div className="overview-shortcut-list">
           <ShortcutRow
-            label={captureLabel}
+            label={label(captureId, capture?.name)}
             combination={capture?.current_binding || null}
           />
           <ShortcutRow
-            label={COPY.shortcuts.aiRow}
+            label={label(AI_BINDING_ID, ai?.name)}
             combination={aiActive ? ai?.current_binding || null : null}
             offLabel={aiActive ? undefined : COPY.shortcuts.aiOff}
           />
         </div>
       </div>
-      <button
-        className="overview-card-link"
-        type="button"
-        onClick={() =>
-          go(hashForRoute({ page: "settings", section: "capture" }))
-        }
-      >
-        {COPY.shortcuts.manage}
-      </button>
     </div>
   );
 }
