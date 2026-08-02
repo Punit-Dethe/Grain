@@ -20,7 +20,7 @@
   "src-tauri/src/handy/managers/transcription.rs": 730,
   "src-tauri/src/handy/shortcut/handler.rs": 16,
   "src-tauri/src/handy/shortcut/handy_keys.rs": 14,
-  "src-tauri/src/handy/shortcut/mod.rs": 215,
+  "src-tauri/src/handy/shortcut/mod.rs": 218,
   "src-tauri/src/handy/shortcut/tauri_impl.rs": 9,
   "src-tauri/src/handy/transcription_coordinator.rs": 65,
   "src-tauri/src/handy/tray.rs": 82,
