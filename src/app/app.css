@@ -339,6 +339,10 @@ html[data-theme="light"] .app {
   align-items: baseline;
   gap: 7px;
   letter-spacing: 0.075em;
+  /* A barely-there vertical rule to the right of the wordmark. Placeholder
+     treatment — the brand area is not designed yet. */
+  padding-right: 11px;
+  border-right: 1px solid var(--hairline);
 }
 
 .grain-wordmark strong {
@@ -1893,6 +1897,8 @@ html[data-theme="light"] .overview-add-btn {
 
 .app.notes-mode .grain-wordmark {
   gap: 0;
+  padding-right: 0;
+  border-right: none;
 }
 
 .app.notes-mode .grain-wordmark strong {
@@ -3535,6 +3541,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
   .grain-wordmark {
     gap: 0;
+    padding-right: 0;
+    border-right: none;
   }
 
   .grain-wordmark strong {
