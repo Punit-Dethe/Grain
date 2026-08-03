@@ -1406,13 +1406,24 @@ html[data-theme="light"] .overview-card--static:hover {
   font-style: italic;
 }
 
+/* A chord shown as one small cap per key. The group wraps to a second line
+ * within the card instead of a single wide cap truncating and spilling toward
+ * the card edge. Right-aligned so the caps sit under the row's trailing edge. */
+.overview-keys {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 72%;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
 /* A keycap, not a button: raised surface and mono type so it reads as the key
  * you press, with no hover or press state because it is never clickable. */
-.overview-keycap {
+.overview-key {
   flex: none;
-  max-width: 62%;
   padding: 2px 6px;
-  overflow: hidden;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
   border-radius: 5px;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
@@ -1422,11 +1433,10 @@ html[data-theme="light"] .overview-card--static:hover {
   font-size: 10px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-html[data-theme="light"] .overview-keycap {
+html[data-theme="light"] .overview-key {
   border-color: #d7d7da;
   background: #fafafb;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
@@ -1434,7 +1444,7 @@ html[data-theme="light"] .overview-keycap {
 
 /* -- Agent card -- */
 
-/* The keycap rides the right edge, so it lines up with the caps in the
+/* The caps ride the right edge, so they line up with the caps in the
  * Shortcuts card two along rather than floating mid-card. */
 .overview-agent-press {
   margin-top: auto;
@@ -1446,7 +1456,7 @@ html[data-theme="light"] .overview-keycap {
   font-size: 10.5px;
 }
 
-.overview-agent-press .overview-keycap {
+.overview-agent-press .overview-keys {
   margin-left: auto;
 }
 

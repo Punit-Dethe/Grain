@@ -46,8 +46,6 @@ const PROTOTYPE_COPY = {
   heroTopline: "On-device · Parakeet TDT 0.6B",
   heroKicker: "Grain is listening when you are",
   heroTitle: "Speak before the thought disappears.",
-  heroBody:
-    "Grain captures the words, preserves the intent, and places the result exactly where your work continues.",
   startFlow: "Start Flow",
   openNotes: "Open notes",
   quickActions: "Start here",
@@ -735,7 +733,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
             <div className="hero-copy">
               <div className="hero-kicker">{PROTOTYPE_COPY.heroKicker}</div>
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
-              <p>{PROTOTYPE_COPY.heroBody}</p>
             </div>
             <div className="hero-actions">
               <button className="button primary" type="button" disabled>

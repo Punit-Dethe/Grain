@@ -173,7 +173,7 @@ const capitalizeKey = (key: string): string => {
  * Handles _left/_right suffixes and capitalizes names.
  * e.g. "shift_left" -> "Left Shift", "option" -> "Option", "space" -> "Space"
  */
-const formatKeyPart = (part: string): string => {
+export const formatKeyPart = (part: string): string => {
   const trimmed = part.trim();
   if (!trimmed) return "";
 
