@@ -17,11 +17,14 @@ name: Upstream Sync
 #   1. trial-merges upstream/main and writes merge-report.md + status.json, so
 #      the next sync's conflict surface is always known in advance;
 #   2. rebuilds the ledger and audits ancestry drift;
-#   3. if upstream has new commits AND the merge is clean, opens (or updates)
-#      an automatic sync PR — reviewing that PR is the entire sync workflow for
-#      the common case. Conflicted merges are never auto-opened; the report
-#      lists the files and the runbook takes over;
-#   4. publishes the dashboard to GitHub Pages.
+#   3. publishes the dashboard to GitHub Pages.
+#
+# This workflow is READ-ONLY with respect to the repository: it never commits,
+# pushes a branch, or opens a PR. It only SURFACES upstream state as data (the
+# dashboard, status.json, merge-report.md, and the run summary). Absorbing
+# upstream is a deliberate, human-driven step — follow Upstream/UPSTREAM.md
+# (preflight + merge_upstream). `contents: read` enforces this at the permission
+# level, so no future edit can reintroduce an auto-commit by accident.
 
 on:
   schedule:
@@ -35,9 +38,11 @@ on:
       - '.github/workflows/upstream-sync.yml'
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
+# Read-only on repo contents by design: this workflow surfaces upstream state,
+# it never writes to the repo. `pages`/`id-token` are only for the dashboard
+# deploy (an artifact upload, not a commit).
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
   pages: write
   id-token: write
 
@@ -46,9 +51,6 @@ concurrency:
   # queue rather than race.
   group: github-pages
   cancel-in-progress: false
-
-env:
-  SYNC_BRANCH: sync/auto-upstream
 
 jobs:
   sync:
@@ -194,63 +196,11 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Open or update the automatic sync PR
-        if: >-
-          steps.trial.outputs.clean == 'true' &&
-          steps.trial.outputs.behind != '0' &&
-          steps.ledger.outputs.drift == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          git checkout -B "$SYNC_BRANCH" HEAD
-          git merge --no-ff upstream/main \
-            -m "merge: upstream/main $(git rev-parse --short upstream/main) (auto-sync)"
-          # Any conflict rerere replayed during that merge is knowledge this
-          # repo should keep; without saving it, the next clone re-resolves it.
-          python Upstream/rerere_cache.py save
-          git add Upstream/rr-cache
-          git diff --cached --quiet || git commit -m "chore(upstream): share new rerere resolutions"
-          # The boundary must hold on the merged result, or there is no PR:
-          # better no PR than one that quietly erodes the Handy/Grain split.
-          python Upstream/ratchet.py
-          # The frontend is frozen (docs/UI 2.0/PLAN.md). While files are still
-          # shared this only warns — an upstream edit to a shared file we never
-          # touched can legitimately land, and blocking BACKEND intake over a
-          # frontend line would be the wrong trade. It becomes a hard failure
-          # when frontend_allow.json flips to "strict": true at cutover.
-          python Upstream/frontend_freeze.py --sync-purity main | tee /tmp/freeze.txt
-          git push -f origin "$SYNC_BRANCH"
-          git log --oneline main..upstream/main | head -30 > /tmp/commits.txt
-          {
-            echo "Automatic upstream sync — merged cleanly, divergence ratchet passed."
-            echo
-            echo '```'
-            cat /tmp/commits.txt
-            echo '```'
-            echo
-            if grep -q 'WARN\|FAIL' /tmp/freeze.txt; then
-              echo "**Frontend freeze:** this merge touches \`src/\`, which is frozen."
-              echo
-              echo '```'
-              cat /tmp/freeze.txt
-              echo '```'
-              echo
-            fi
-            echo "Before merging:"
-            echo "- [ ] CI green (build, tests, ratchet, frontend freeze)"
-            echo "- [ ] Anything **not** simply merged? Record it:"
-            echo "      \`python Upstream/verdict.py <sha> Ignored \"why\"\`."
-            echo "      Merged commits need nothing — ancestry files them itself."
-            echo "- [ ] New settings/bindings? Regenerate \`src/bindings.ts\` on a dev run"
-            echo
-            echo "Merge with a merge commit — **never squash** (squashing discards the"
-            echo "ancestry and the next sync re-fights these commits)."
-          } > /tmp/body.md
-          if gh pr view "$SYNC_BRANCH" --json state -q .state 2>/dev/null | grep -q OPEN; then
-            gh pr edit "$SYNC_BRANCH" --body-file /tmp/body.md
-          else
-            gh pr create --head "$SYNC_BRANCH" \
-              --title "sync: merge upstream/main (auto)" --body-file /tmp/body.md
-          fi
-          git checkout main
+      # NOTE: this workflow used to open/update an automatic `sync/auto-upstream`
+      # PR here — merging upstream, committing shared rerere resolutions, and
+      # force-pushing a branch. That auto-commit was removed deliberately: intake
+      # is human-driven so any change is easy to attribute and revert. The trial
+      # report, ledger, ancestry audit and dashboard above still surface exactly
+      # when and what to merge; do it locally with Upstream/preflight.py +
+      # Upstream/merge_upstream.py. Do NOT reintroduce a commit/push/PR step —
+      # `contents: read` (above) would fail it anyway.

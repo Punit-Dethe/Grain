@@ -9,24 +9,30 @@ Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 
 ## The short version
 
-**The common case is reviewing a PR, not running a procedure.** Every 2 hours
-CI trial-merges `upstream/main`. If Handy moved and the merge is clean, CI
-opens (or refreshes) the **`sync/auto-upstream` PR** with the merge already
-done, the commit list in the body, and the divergence ratchet already run.
-Review it, merge it. Done — merged commits file themselves as `Merged` on the
-dashboard, because being in our ancestry *is* the record.
+**CI surfaces upstream state; a human does the merge.** Every 2 hours CI
+trial-merges `upstream/main` and publishes the result — behind-count, the exact
+conflict surface, ancestry drift — to the dashboard and the run summary. It does
+**not** commit, push a branch, or open a PR (deliberately removed 2026-08-04, so
+every change to the repo is human-authored and easy to attribute/revert). When
+the dashboard says Handy moved, you run the merge locally with the tools below.
+Merged commits then file themselves as `Merged` on the dashboard, because being
+in our ancestry *is* the record.
 
-Working locally? One command answers everything:
+One command answers everything:
 
 ```bash
 python Upstream/preflight.py     # fetches, then: behind-count, conflicts, all gates
 ```
 
-Only a *conflicted* merge needs a human driver — and
 [merge-report.md](merge-report.md) will have told you the exact conflicting
 files up to 2 hours in advance, with
 [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) saying which side wins in
 each one.
+
+> **No auto-commit.** This intake never writes to the repository — no bot
+> commit, no `sync/auto-upstream` branch, no auto-PR. CI is read-only
+> (`contents: read`) and only publishes data. Every merge is done by hand from
+> the runbook below, so nothing lands that a person did not author.
 
 ## The architecture (four layers)
 
@@ -119,11 +125,12 @@ tooling.
    does not run `on: push` workflows for pushes made with `GITHUB_TOKEN`, so
    the site only refreshed when a human happened to push. Deploying inline
    removes the chain rather than patching it.
-5. **Auto-PR**: clean merge + new commits + no ancestry drift → the
-   `sync/auto-upstream` branch is (re)built, the ratchet must pass on the
-   merged result, and a PR is opened/updated with the commit list and a review
-   checklist. Conflicted merges, ratchet failures and drift all suppress the
-   PR rather than producing a misleading one.
+5. ~~**Auto-PR**~~ **(removed 2026-08-04)**: CI no longer builds a
+   `sync/auto-upstream` branch, commits shared rerere resolutions, force-pushes,
+   or opens a PR. Intake is human-driven so every repo change is attributable
+   and revertible. Steps 1–4 still tell you exactly when and what to merge; you
+   run it locally (Runbook A/B). The workflow holds `contents: read`, so it
+   *cannot* commit or push even if a step were re-added.
 
 [`divergence-ratchet.yml`](../.github/workflows/divergence-ratchet.yml) on
 every push/PR touching `src-tauri/`: the boundary cannot silently erode.
@@ -177,17 +184,27 @@ measures HEAD, not the working tree).
 
 ## Runbook
 
-### A. The auto-PR is open (common case)
+### A. The dashboard says Handy moved and the merge is clean (common case)
 
-1. Read the PR body's commit list. Anything Grain does **not** actually take
-   needs saying so — `python Upstream/verdict.py <sha> Ignored "why"` (the
-   divergence map says where Grain replaced that surface). Everything merged
-   needs nothing: ancestry files it.
-2. CI must be green (build, tests, ratchet). If the ratchet flags a stray
-   file, `git mv` it into `handy/` on the branch.
-3. Merge the PR with a **merge commit — never squash** (squashing discards
-   the recorded ancestry, so the board would forget these commits were merged
-   *and* the next sync re-fights them).
+CI does not open a PR — it tells you it's safe and you run the merge. This is
+Runbook B without a conflict to resolve:
+
+```bash
+python Upstream/preflight.py            # confirms behind-count + clean
+python Upstream/rerere_cache.py restore
+git checkout -b sync/upstream-YYYY-MM-DD
+python Upstream/merge_upstream.py       # clean ⇒ nothing to resolve
+git commit --no-edit
+python Upstream/merge_upstream.py --finish   # re-baselines budgets + all gates
+python Upstream/rerere_cache.py save    # commit any NEW resolutions
+python Upstream/verdict.py --pending    # record anything Grain doesn't take
+```
+
+Then fast-forward `main` to the branch and push. Merge with a **merge commit —
+never squash** (squashing discards the recorded ancestry, so the board would
+forget these commits were merged *and* the next sync re-fights them). Anything
+Grain does **not** actually take gets `python Upstream/verdict.py <sha> Ignored
+"why"`; everything merged needs nothing — ancestry files it.
 
 ### B. The trial merge reports conflicts (rare case)
 
