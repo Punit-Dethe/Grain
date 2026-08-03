@@ -228,7 +228,7 @@
             "description": "Stream words as you speak, using the rolling window."
           },
           "transcribe_native_asr": {
-            "name": "Live",
+            "name": "Streaming",
             "description": "Native real-time dictation with live streaming text in the Studio Window."
           },
           "cancel": {

@@ -39,7 +39,6 @@ let onboardingResolution: ReturnType<
 > | null = null;
 
 const PROTOTYPE_COPY = {
-  desktop: "/ DESKTOP",
   quickPanel: "Quick panel",
   quickPanelShortcut: "Ctrl K",
   original: "Original",
@@ -261,12 +260,6 @@ function WindowChrome({ route }: { route: AppRoute }) {
       onMouseDown={startDrag}
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
-      <div className="brand-slot">
-        <div className="grain-wordmark">
-          <strong>GRAIN</strong>
-          <span>{PROTOTYPE_COPY.desktop}</span>
-        </div>
-      </div>
       <div className="workspace-title">
         {route.page === "settings"
           ? "Settings"
@@ -385,6 +378,18 @@ function Sidebar({ route }: { route: AppRoute }) {
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
+      {/* The sidebar now runs the full height of the window, so the wordmark
+          lives at its head rather than in the titlebar. This strip stays a
+          drag region so the top-left corner still moves the window. */}
+      <div
+        className="sidebar-brand"
+        data-tauri-drag-region
+        style={{ WebkitAppRegion: "drag" } as CSSProperties}
+      >
+        <div className="grain-wordmark">
+          <strong>GRAIN</strong>
+        </div>
+      </div>
       {NAV_GROUPS.map((group) => (
         <nav className="nav-section" key={group.label}>
           <div className="nav-label">{group.label}</div>

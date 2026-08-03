@@ -294,11 +294,14 @@ html[data-theme="light"] .app {
   mix-blend-mode: soft-light;
 }
 
+/* The sidebar spans both rows (see `.sidebar`), so the titlebar covers only the
+   main column — the brand that used to sit in its first cell now heads the
+   sidebar. */
 .titlebar {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   grid-row: 1;
   display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   position: relative;
   z-index: 35;
@@ -313,17 +316,22 @@ html[data-theme="light"] .app {
   position: absolute;
   right: 0;
   bottom: 0;
-  left: var(--sidebar);
+  left: 0;
   height: 1px;
   background: var(--hairline-soft);
 }
 
-.brand-slot {
-  height: 100%;
+/* Wordmark strip at the head of the full-height sidebar. Matches the titlebar's
+   height so the brand and the window controls share one baseline. */
+.sidebar-brand {
+  height: var(--titlebar);
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding-inline: 18px;
+  padding-inline: 7px;
+  margin-bottom: 4px;
   color: var(--text-1);
+  -webkit-app-region: drag;
 }
 
 .grain-wordmark {
@@ -336,12 +344,6 @@ html[data-theme="light"] .app {
 .grain-wordmark strong {
   font-size: 12px;
   font-weight: 760;
-}
-
-.grain-wordmark span {
-  color: var(--text-4);
-  font-size: 10px;
-  font-weight: 620;
 }
 
 .workspace-title {
@@ -415,11 +417,11 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 
 .sidebar {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 1 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 13px 11px 14px;
+  padding: 0 11px 14px;
   position: relative;
   z-index: 25;
   background: rgba(9, 10, 13, 0.7);
@@ -1884,9 +1886,9 @@ html[data-theme="light"] .overview-add-btn {
   --sidebar: 68px;
 }
 
-.app.notes-mode .brand-slot {
+.app.notes-mode .sidebar-brand {
   justify-content: center;
-  padding: 0;
+  padding-inline: 0;
 }
 
 .app.notes-mode .grain-wordmark {
@@ -3526,9 +3528,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     --sidebar: 68px;
   }
 
-  .brand-slot {
+  .sidebar-brand {
     justify-content: center;
-    padding: 0;
+    padding-inline: 0;
   }
 
   .grain-wordmark {
