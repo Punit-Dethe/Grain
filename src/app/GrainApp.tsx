@@ -44,6 +44,7 @@ const PROTOTYPE_COPY = {
   original: "Original",
   processed: "AI processed",
   heroTopline: "On-device · Parakeet TDT 0.6B",
+  beta: "Beta",
   heroKicker: "Grain is listening when you are",
   heroTitle: "Speak before the thought disappears.",
   startFlow: "Start Flow",
@@ -387,6 +388,7 @@ function Sidebar({ route }: { route: AppRoute }) {
         <div className="grain-wordmark">
           <strong>GRAIN</strong>
         </div>
+        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
       </div>
       {NAV_GROUPS.map((group) => (
         <nav className="nav-section" key={group.label}>

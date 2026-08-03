@@ -55,7 +55,6 @@ const COPY = {
     body: "Rewrite anything you have selected.",
     bodyOff: "Rewrite anything you have selected.",
     enable: "Turn on in Studio",
-    press: "Press",
   },
 };
 
@@ -279,7 +278,6 @@ function AgentCard() {
         <small>{enabled ? COPY.agent.body : COPY.agent.bodyOff}</small>
         {combination ? (
           <div className="overview-agent-press">
-            <span>{COPY.agent.press}</span>
             <Keycap combination={combination} />
           </div>
         ) : (

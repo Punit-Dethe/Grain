@@ -350,6 +350,16 @@ html[data-theme="light"] .app {
   font-weight: 760;
 }
 
+/* Sits to the right of the wordmark's divider. Dim, so it reads as a status
+   tag rather than part of the brand. */
+.grain-beta {
+  margin-left: 10px;
+  color: var(--text-4);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
 .workspace-title {
   justify-self: start;
   padding-left: 20px;
@@ -1457,7 +1467,9 @@ html[data-theme="light"] .overview-key {
 }
 
 .overview-agent-press .overview-keys {
-  margin-left: auto;
+  margin-left: 0;
+  max-width: 100%;
+  justify-content: flex-start;
 }
 
 /* -- Extensions card -- */
@@ -1909,6 +1921,10 @@ html[data-theme="light"] .overview-add-btn {
   gap: 0;
   padding-right: 0;
   border-right: none;
+}
+
+.app.notes-mode .grain-beta {
+  display: none;
 }
 
 .app.notes-mode .grain-wordmark strong {
@@ -3566,6 +3582,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   }
 
   .grain-wordmark span,
+  .grain-beta,
   .sidebar .nav-label,
   .sidebar .nav-item > span,
   .sidebar .model-status,
