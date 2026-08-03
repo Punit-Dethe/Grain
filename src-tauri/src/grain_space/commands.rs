@@ -200,6 +200,20 @@ pub async fn grain_space_move_note(
 }
 
 
+/// Delete a Grain collection (subfolder). Its notes are moved back to the Grain
+/// root — they reappear as loose notes — and the empty folder is removed. Never
+/// deletes a note.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_space_delete_folder(app: AppHandle, folder: String) -> Result<(), String> {
+    let be = gate(&app)?;
+    let result = blocking(move || backend::delete_folder(&be, &folder)).await;
+    if result.is_ok() {
+        emit_notes_changed(&app);
+    }
+    result
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn grain_space_set_pinned(

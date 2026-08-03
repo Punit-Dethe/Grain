@@ -9,6 +9,7 @@ import {
   Search,
   Settings,
   SquarePen,
+  Trash2,
   X,
 } from "lucide-react";
 import type { Note, NoteCard } from "@/bindings";
@@ -207,6 +208,8 @@ type Props = {
   onCreateFolder: (name: string) => void;
   /** File a note into a folder — `null` moves it back out to the Grain root. */
   onMoveNote: (id: string, folder: string | null) => void;
+  /** Delete a collection. Its notes are moved back to the root, not destroyed. */
+  onDeleteFolder: (folder: string) => void;
 };
 
 export function Sidebar({
@@ -226,9 +229,18 @@ export function Sidebar({
   onCreate,
   onCreateFolder,
   onMoveNote,
+  onDeleteFolder,
 }: Props) {
   const { t } = useTranslation();
   const searching = query.trim().length > 0;
+
+  // Right-click menu for a collection row, anchored at the cursor.
+  const [folderMenu, setFolderMenu] = useState<{
+    path: string;
+    name: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Section collapse + per-folder expand + "see all" are rail-local UI.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -277,10 +289,38 @@ export function Sidebar({
     () => topFolders.reduce((n, f) => n + subtreeCount(f), 0),
     [topFolders],
   );
+  // Recent shows only LOOSE notes. Once a note is filed into a collection it
+  // lives there, and showing it in Recent too would defeat the point of filing.
   const recentCards = useMemo(
-    () => [...cards].sort((a, b) => b.timestamp - a.timestamp),
+    () =>
+      [...cards]
+        .filter((c) => !c.folder)
+        .sort((a, b) => b.timestamp - a.timestamp),
     [cards],
   );
+
+  const openFolderMenu = (node: FolderNode) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFolderMenu({ path: node.path, name: node.name, x: e.clientX, y: e.clientY });
+  };
+
+  // Any click, scroll, or Escape dismisses the collection menu.
+  useEffect(() => {
+    if (!folderMenu) return;
+    const close = () => setFolderMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFolderMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [folderMenu]);
   const visibleRecentCount = clampRecentNotesVisibleCount(
     recentVisibleCount,
     recentCards.length,
@@ -389,6 +429,7 @@ export function Sidebar({
             className="gs-row gs-row--folder gs-next-folder-row"
             style={{ paddingLeft: 9 + depth * 15 }}
             onClick={() => toggleFolder(node.path)}
+            onContextMenu={openFolderMenu(node)}
             {...dropZone(node.path)}
           >
             <Folder className="gs-row-folder-icon" width={14} height={14} />
@@ -414,6 +455,7 @@ export function Sidebar({
           className="gs-row gs-row--folder"
           style={{ paddingLeft: 8 + depth * 16 }}
           onClick={() => toggleFolder(node.path)}
+          onContextMenu={openFolderMenu(node)}
           {...dropZone(node.path)}
         >
           <span className={`gs-row-chev${open ? " gs-row-chev--open" : ""}`}>
@@ -479,6 +521,31 @@ export function Sidebar({
     setNewFolder(null);
     if (name) onCreateFolder(name);
   };
+
+  // Rendered in both rail variants. `position: fixed` at the cursor; the window
+  // listeners above dismiss it. Notes are moved to the root, never deleted, so
+  // this needs no confirm dialog.
+  const folderMenuEl = folderMenu ? (
+    <div
+      className="gs-context-menu"
+      style={{ top: folderMenu.y, left: folderMenu.x }}
+      role="menu"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        role="menuitem"
+        className="gs-context-item gs-context-item--danger"
+        onClick={() => {
+          onDeleteFolder(folderMenu.path);
+          setFolderMenu(null);
+        }}
+      >
+        <Trash2 width={13} height={13} />
+        <span>{t("grainSpaceOverlay.deleteCollection")}</span>
+      </button>
+    </div>
+  ) : null;
 
   if (variant === "next") {
     const recent = recentCards.slice(0, visibleRecentCount);
@@ -589,7 +656,13 @@ export function Sidebar({
                 )}
               </div>
 
-              <div className="gs-next-group gs-next-recent-group">
+              {/* Also the drop zone that takes a note back OUT of a folder:
+                  Recent is "notes in no folder", so dropping one here is the
+                  move it looks like. */}
+              <div
+                className="gs-next-group gs-next-recent-group"
+                {...dropZone(null)}
+              >
                 <div className="gs-next-group-label">
                   {NEXT_NOTES_COPY.recent}
                 </div>
@@ -641,6 +714,7 @@ export function Sidebar({
             <CalendarDays width={15} height={15} />
           </button>
         </div>
+        {folderMenuEl}
       </aside>
     );
   }
@@ -812,6 +886,7 @@ export function Sidebar({
           <span>{t("grainSpaceOverlay.settings")}</span>
         </button>
       </div>
+      {folderMenuEl}
     </aside>
   );
 }

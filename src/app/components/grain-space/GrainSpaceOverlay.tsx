@@ -301,6 +301,23 @@ export function GrainSpaceOverlay({
     [flushSave, refreshFolders],
   );
 
+  const deleteFolder = useCallback(
+    async (folder: string) => {
+      // The delete renames note files back to the root; flush an open, edited
+      // note first so its in-flight save does not race the move.
+      await flushSave();
+      const result = await commands.grainSpaceDeleteFolder(folder);
+      if (result.status !== "ok") {
+        console.error("Grain Space: delete folder failed:", result.error);
+        return;
+      }
+      // notes-changed re-lists the cards (the notes are now loose); the tree
+      // needs its own refresh because the folder itself is gone from disk.
+      await refreshFolders();
+    },
+    [flushSave, refreshFolders],
+  );
+
   /**
    * Accept a search response, unless a newer search has started since it was
    * issued. Results are scoped to the Grain folder, matching the browse list:
@@ -622,6 +639,7 @@ export function GrainSpaceOverlay({
           onCreate={() => void newNote()}
           onCreateFolder={(name) => void createFolder(name)}
           onMoveNote={(id, folder) => void moveNote(id, folder)}
+          onDeleteFolder={(folder) => void deleteFolder(folder)}
         />
 
         <div className="gs-main">

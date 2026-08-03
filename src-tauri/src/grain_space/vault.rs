@@ -1721,6 +1721,92 @@ pub fn move_note_to_folder(v: &Vault, id: &str, folder: Option<&str>) -> Result<
     read_note_at(v, &new_rel)
 }
 
+/// Collect every `.md` file under `dir` (recursively), as absolute paths.
+/// Dotfolders are skipped for the same reason [`walk_folders`] skips them.
+fn collect_md_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_dir() {
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+            collect_md_files(&entry.path(), out);
+        } else {
+            let path = entry.path();
+            if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+            {
+                out.push(path);
+            }
+        }
+    }
+}
+
+/// Delete a Grain collection (subfolder). Its notes are moved back to the Grain
+/// root FIRST — they become loose notes again and are never destroyed — and only
+/// then is the now-empty directory tree removed. Idempotent: a folder that is
+/// already gone is a success. Refuses the Grain root itself; segment sanitizing
+/// keeps the path inside the Grain folder, so traversal cannot escape it.
+pub fn delete_folder(v: &Vault, folder: &str) -> Result<()> {
+    ensure_vault(v)?;
+    let _guard = VAULT_LOCK.lock().unwrap();
+
+    let mut segs: Vec<String> = Vec::new();
+    for raw in folder.split(['/', '\\']) {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let seg = sanitize_folder_segment(raw);
+        if !seg.is_empty() {
+            segs.push(seg);
+        }
+    }
+    if segs.is_empty() {
+        // Empty/whitespace path would resolve to the Grain root — never delete it.
+        return Err(anyhow!("No collection was named to delete."));
+    }
+    let root = v.grain_dir();
+    let mut dir = root.clone();
+    for seg in &segs {
+        dir = dir.join(seg);
+    }
+    if !dir.exists() {
+        return Ok(()); // a folder with no notes yet exists only in the tree UI
+    }
+
+    // Move every note out to the Grain root before removing the folder, so
+    // deleting a collection can never delete a note. Foreign (Obsidian-authored)
+    // notes ride along too; reconcile re-adopts their identity below.
+    let mut files = Vec::new();
+    collect_md_files(&dir, &mut files);
+    for src in &files {
+        let stem = src
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "Untitled".to_string());
+        let target = unique_path(&root, &stem, Some(src.as_path()));
+        if &target != src {
+            fs::rename(src, &target).with_context(|| format!("move {}", src.display()))?;
+        }
+    }
+
+    fs::remove_dir_all(&dir).with_context(|| format!("remove {}", dir.display()))?;
+
+    // Re-sync the index: moved grain notes keep their id (the upsert re-paths the
+    // row), and rows for anything that vanished from disk are dropped.
+    let conn = open_index(v)?;
+    reconcile_locked(v, &conn)?;
+    Ok(())
+}
+
 pub fn set_pinned(v: &Vault, id: &str, pinned: bool) -> Result<Note> {
     mutate_grain_note(v, id, |n| n.is_pinned = pinned)
 }

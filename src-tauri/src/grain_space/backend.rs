@@ -156,6 +156,12 @@ pub fn move_note_to_folder(b: &Backend, id: &str, folder: Option<&str>) -> Resul
     vault::move_note_to_folder(b, id, folder)
 }
 
+/// Delete a Grain subfolder ("collection"), moving its notes back to the Grain
+/// root first so none are lost.
+pub fn delete_folder(b: &Backend, folder: &str) -> Result<()> {
+    vault::delete_folder(b, folder)
+}
+
 pub fn set_pinned(b: &Backend, id: &str, pinned: bool) -> Result<Note> {
     vault::set_pinned(b, id, pinned)
 }
