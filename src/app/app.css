@@ -1704,6 +1704,30 @@ html[data-theme="light"] .overview-add-btn {
   color: var(--text-4);
 }
 
+.transcript-body.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.transcript-readmore {
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.transcript-readmore:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
 .audio-strip {
   height: 27px;
   display: grid;

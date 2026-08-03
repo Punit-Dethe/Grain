@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import type { HistoryEntry } from "@/bindings";
@@ -31,6 +37,9 @@ export function HistoryCard({
   const { t, i18n } = useTranslation();
   const [copied, setCopied] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [canExpand, setCanExpand] = useState(false);
+  const bodyRef = useRef<HTMLParagraphElement>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
   const hasProcessed = hasProcessedText(entry);
   const displayText =
@@ -45,6 +54,17 @@ export function HistoryCard({
     },
     [],
   );
+
+  // A long transcript would crowd the feed and bury the entries below it, so
+  // the body is clamped to a few lines. Measure it while clamped to learn
+  // whether anything is actually hidden — the "Read more" control only earns
+  // its place when there is more to reveal. Re-runs when the shown text
+  // changes (e.g. toggling Original / AI processed).
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || expanded) return;
+    setCanExpand(el.scrollHeight - el.clientHeight > 1);
+  }, [displayText, expanded, retrying]);
 
   const copy = async () => {
     if (!hasText) return;
@@ -142,7 +162,8 @@ export function HistoryCard({
         </div>
       </div>
       <p
-        className={`transcript-body${retrying ? " is-retrying" : ""}${hasText ? "" : " is-empty"}`}
+        ref={bodyRef}
+        className={`transcript-body${retrying ? " is-retrying" : ""}${hasText ? "" : " is-empty"}${!expanded ? " clamped" : ""}`}
       >
         {retrying
           ? t("settings.history.transcribing")
@@ -150,6 +171,17 @@ export function HistoryCard({
             ? displayText
             : t("settings.history.transcriptionFailed")}
       </p>
+      {!retrying && hasText && (canExpand || expanded) && (
+        <button
+          type="button"
+          className="transcript-readmore"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded
+            ? t("settings.history.readLess")
+            : t("settings.history.readMore")}
+        </button>
+      )}
       <AudioPlayer
         variant="prototype"
         onLoadRequest={loadAudio}

@@ -306,7 +306,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     }
   };
 
-  const visibleEntries = useMemo(() => {
+  const baseEntries = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase();
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
@@ -329,17 +329,17 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     });
   }, [activeEntries, filter, query]);
 
-  // The AI processed view has nothing to show once nothing on screen has
-  // processed text — offering it would be a control that silently does
-  // nothing. Fall back to the original text rather than leaving the switch
-  // stuck on a dead setting.
-  const canShowProcessed = useMemo(
-    () => visibleEntries.some(hasProcessedText),
-    [visibleEntries],
+  // The AI processed view shows ONLY entries the AI actually rewrote. Mixing in
+  // raw transcripts as a silent fallback made it impossible to tell which text
+  // was processed and which was not, so they are hidden here entirely. When
+  // that leaves nothing, the feed says so rather than dropping back to Original.
+  const visibleEntries = useMemo(
+    () =>
+      viewMode === "processed"
+        ? baseEntries.filter(hasProcessedText)
+        : baseEntries,
+    [baseEntries, viewMode],
   );
-  const effectiveViewMode: HistoryViewMode = canShowProcessed
-    ? viewMode
-    : "original";
 
   if (variant === "next") {
     let nextContent: React.ReactNode;
@@ -364,7 +364,11 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
       );
     } else if (visibleEntries.length === 0) {
       nextContent = (
-        <div className="history-state">{t("settings.history.empty")}</div>
+        <div className="history-state">
+          {viewMode === "processed"
+            ? t("ui2.history.noProcessedInView")
+            : t("settings.history.empty")}
+        </div>
       );
     } else {
       nextContent = (
@@ -374,7 +378,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
               <HistoryCard
                 key={entry.id}
                 entry={entry}
-                viewMode={effectiveViewMode}
+                viewMode={viewMode}
                 controller={controller}
               />
             ) : (
@@ -382,7 +386,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
                 key={entry.id}
                 entry={entry}
                 variant="next"
-                viewMode={effectiveViewMode}
+                viewMode={viewMode}
                 onToggleSaved={() => toggleSaved(entry.id)}
                 copyText={copyToClipboard}
                 getAudioUrl={getAudioUrl}
@@ -442,21 +446,15 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
               data-transcript-switch="history"
             >
               <button
-                className={effectiveViewMode === "original" ? "active" : ""}
+                className={viewMode === "original" ? "active" : ""}
                 type="button"
                 onClick={() => setViewMode("original")}
               >
                 {PROTOTYPE_HISTORY_COPY.original}
               </button>
               <button
-                className={effectiveViewMode === "processed" ? "active" : ""}
+                className={viewMode === "processed" ? "active" : ""}
                 type="button"
-                disabled={!canShowProcessed}
-                title={
-                  canShowProcessed
-                    ? undefined
-                    : t("ui2.history.noProcessedInView")
-                }
                 onClick={() => setViewMode("processed")}
               >
                 {PROTOTYPE_HISTORY_COPY.processed}

@@ -26,6 +26,7 @@ import { ToolsPage } from "./pages/ToolsPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
+  hasProcessedText,
   useHistoryController,
   type HistoryController,
 } from "./history/useHistoryController";
@@ -59,6 +60,7 @@ const PROTOTYPE_COPY = {
   recentLoading: "Loading recent transcriptions…",
   recentError: "Recent transcriptions could not be loaded.",
   recentEmpty: "No transcriptions yet.",
+  recentNoProcessed: "No AI-processed transcriptions yet.",
   retry: "Retry",
 } as const;
 
@@ -698,6 +700,15 @@ function ViewSwitch({
 function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
 
+  // AI processed view lists only entries the AI actually rewrote — raw
+  // transcripts are hidden so the two are never confused. Original view shows
+  // everything. Either way the recent strip is capped at three.
+  const recentEntries = (
+    mode === "processed"
+      ? history.entries.filter(hasProcessedText)
+      : history.entries
+  ).slice(0, 3);
+
   return (
     <section className="page active" data-page-panel="overview">
       <div className="page-wrap wide">
@@ -786,9 +797,13 @@ function OverviewPage({ history }: { history: HistoryController }) {
             </div>
           ) : history.entries.length === 0 ? (
             <div className="history-state">{PROTOTYPE_COPY.recentEmpty}</div>
+          ) : recentEntries.length === 0 ? (
+            <div className="history-state">
+              {PROTOTYPE_COPY.recentNoProcessed}
+            </div>
           ) : (
             <AudioPlayerGroup>
-              {history.entries.slice(0, 3).map((entry) => (
+              {recentEntries.map((entry) => (
                 <HistoryCard
                   key={entry.id}
                   entry={entry}

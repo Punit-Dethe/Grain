@@ -669,6 +669,8 @@
       "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
       "showProcessed": "PRO",
       "showTranscription": "TRS",
+      "readMore": "Read more",
+      "readLess": "Show less",
       "processedTooltip": "Show the AI-processed text",
       "transcriptionTooltip": "Show the raw transcription"
     },
