@@ -6,9 +6,8 @@ app — this folder is maintainer infrastructure only.
 
 **Start with [UPSTREAM.md](UPSTREAM.md).** It is the runbook: how updates
 flow in, the four-layer architecture (isolation, merge machinery, automation,
-guards), and the procedures for the common case (CI surfaces that Handy moved;
-you run the clean merge by hand) and the rare one (driving a conflicted merge).
-CI is read-only — it never commits, pushes, or opens a PR.
+guards), and the procedures for the common case (reviewing the
+`sync/auto-upstream` PR) and the rare one (driving a conflicted merge).
 
 ## Documentation
 
