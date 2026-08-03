@@ -321,15 +321,15 @@ html[data-theme="light"] .app {
   background: var(--hairline-soft);
 }
 
-/* Wordmark strip at the head of the full-height sidebar. Matches the titlebar's
-   height so the brand and the window controls share one baseline. */
+/* Wordmark centred at the head of the full-height sidebar, with a little breathing
+   room above it. This is the app's one piece of branding, so it is allowed to be
+   bigger than everything under it. */
 .sidebar-brand {
-  height: var(--titlebar);
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  padding-inline: 7px;
-  margin-bottom: 4px;
+  justify-content: center;
+  padding: 26px 7px 14px;
+  margin-bottom: 6px;
   color: var(--text-1);
   -webkit-app-region: drag;
 }
@@ -342,8 +342,22 @@ html[data-theme="light"] .app {
 }
 
 .grain-wordmark strong {
-  font-size: 12px;
-  font-weight: 760;
+  font-size: 22px;
+  font-weight: 600;
+  /* Wide tracking reads as a wordmark rather than a heading. The left pad
+     balances the trailing letter-spacing so it sits optically centred. */
+  letter-spacing: 0.34em;
+  padding-left: 0.34em;
+  font-feature-settings: "ss01" 1, "cv05" 1;
+  background: linear-gradient(
+    108deg,
+    var(--text-1) 0%,
+    var(--text-1) 42%,
+    var(--accent) 128%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .workspace-title {
@@ -1897,12 +1911,18 @@ html[data-theme="light"] .overview-add-btn {
 
 .app.notes-mode .grain-wordmark strong {
   font-size: 0;
+  padding-left: 0;
 }
 
+/* Collapsed rail: a single solid "G" — the gradient text-clip would render an
+   empty glyph, so fill it flat. */
 .app.notes-mode .grain-wordmark strong::after {
   content: "G";
-  font-size: 13px;
+  font-size: 16px;
   letter-spacing: 0.03em;
+  background: none;
+  color: var(--text-1);
+  -webkit-text-fill-color: var(--text-1);
 }
 
 .app.notes-mode .grain-wordmark span,
@@ -3539,12 +3559,16 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
   .grain-wordmark strong {
     font-size: 0;
+    padding-left: 0;
   }
 
   .grain-wordmark strong::after {
     content: "G";
-    font-size: 13px;
+    font-size: 16px;
     letter-spacing: 0.03em;
+    background: none;
+    color: var(--text-1);
+    -webkit-text-fill-color: var(--text-1);
   }
 
   .grain-wordmark span,

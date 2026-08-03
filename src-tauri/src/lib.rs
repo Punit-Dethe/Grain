@@ -207,6 +207,14 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
             // close), styled in Grain's paper/ink/dither language. macOS keeps
             // its overlay traffic-light buttons instead of a custom frame.
             .maximizable(true)
+            // [GRAIN] Turn OFF the webview's OS-level drag-and-drop handler.
+            // With it on (Tauri's default), WebView2 intercepts every drag over
+            // the window to offer native file-drop, and those events never reach
+            // the DOM — so HTML5 drag-and-drop silently dies. That is what stopped
+            // notes being dragged into folders in the Notes rail. Grain listens to
+            // no `tauri://drag-drop` event, so nothing is lost by disabling it and
+            // in-app dragging works again.
+            .disable_drag_drop_handler()
             .decorations(cfg!(target_os = "macos"));
 
     // [GRAIN] Windows/Linux: OPAQUE frameless window. We tried a transparent
