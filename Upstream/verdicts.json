@@ -46,7 +46,7 @@
     "notes": "Added `nl` translation."
   },
   "4223e7ac6741298654d98003db38e4164ee98294": {
-    "notes": "Deferred: 256-line reqwest source-chain diagnostics tailored to upstream's single-provider client. Grain's grain_llm_client has independent multi-provider error handling; non-correctness, not ported."
+    "notes": "ADOPTED (re-evaluated 2026-08-08): the reqwest source-chain diagnostics are useful — grain_llm_client swallowed transport causes at post_chat/.send() and fetch_models, the same gap. Ported the helper into a shared crate::net_diag module (payload-safe: sanitized URLs, decode errors keep only classification) and applied it to BOTH cloud clients — grain_llm_client AND the Grain-only stt_client (5 send sites), which the merge could never reach."
   },
   "4357c728d9670381b1acabb6a92d937ceb629ad3": {
     "status": "Ignored",

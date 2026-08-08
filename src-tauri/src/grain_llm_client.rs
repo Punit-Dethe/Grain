@@ -678,6 +678,8 @@ async fn send_request_with_tools(
     })
 }
 
+use crate::net_diag::report_reqwest_error;
+
 /// POST a built request to `{base}/chat/completions`, apply shared 429 /
 /// rate-limit-header / error handling, and decode the JSON body. The two
 /// `send_request*` wrappers project the parsed response into their result type.
@@ -694,7 +696,7 @@ async fn post_chat(
         .json(request_body)
         .send()
         .await
-        .map_err(|e| LlmError::Other(format!("HTTP request failed: {}", e)))?;
+        .map_err(|e| LlmError::Other(report_reqwest_error("HTTP request failed", &e)))?;
 
     // Capture rate-limit signal from headers BEFORE consuming the body.
     let status = response.status();
@@ -711,7 +713,7 @@ async fn post_chat(
     let body = response
         .text()
         .await
-        .map_err(|e| LlmError::Other(format!("read body: {e}")))?;
+        .map_err(|e| LlmError::Other(report_reqwest_error("Failed to read API response body", &e)))?;
     if !status.is_success() {
         return Err(LlmError::Other(format!(
             "API request failed with status {}: {}",
@@ -745,7 +747,7 @@ pub async fn fetch_models(
         .timeout(LLM_REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch models: {}", e))?;
+        .map_err(|e| report_reqwest_error("Failed to fetch models", &e))?;
 
     let status = response.status();
     if !status.is_success() {

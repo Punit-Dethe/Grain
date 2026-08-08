@@ -7,6 +7,7 @@
 use std::io::Cursor;
 use std::time::Duration;
 
+use crate::net_diag::report_reqwest_error;
 use grain_core::{SttProvider, SttProviderKind};
 use serde_json::Value;
 
@@ -163,7 +164,7 @@ async fn openai(
     let resp = req
         .send()
         .await
-        .map_err(|e| SttError::Other(format!("request: {e}")))?;
+        .map_err(|e| SttError::Other(report_reqwest_error("STT request", &e)))?;
     let (body, rr, rt) = read_signal(resp).await?;
     // OpenAI returns {"text": "..."}.
     Ok(SttResult {
@@ -196,7 +197,7 @@ async fn deepgram(
         .body(wav)
         .send()
         .await
-        .map_err(|e| SttError::Other(format!("request: {e}")))?;
+        .map_err(|e| SttError::Other(report_reqwest_error("STT request", &e)))?;
     let (body, rr, rt) = read_signal(resp).await?;
     let text = body
         .pointer("/results/channels/0/alternatives/0/transcript")
@@ -227,7 +228,7 @@ async fn assemblyai(
             .body(wav)
             .send()
             .await
-            .map_err(|e| SttError::Other(format!("upload: {e}")))?,
+            .map_err(|e| SttError::Other(report_reqwest_error("STT upload", &e)))?,
     )
     .await?;
     let upload_url = upload
@@ -243,7 +244,7 @@ async fn assemblyai(
             .json(&serde_json::json!({ "audio_url": upload_url }))
             .send()
             .await
-            .map_err(|e| SttError::Other(format!("create: {e}")))?,
+            .map_err(|e| SttError::Other(report_reqwest_error("STT create transcript", &e)))?,
     )
     .await?;
     let id = created
@@ -261,7 +262,7 @@ async fn assemblyai(
                 .header("Authorization", api_key)
                 .send()
                 .await
-                .map_err(|e| SttError::Other(format!("poll: {e}")))?,
+                .map_err(|e| SttError::Other(report_reqwest_error("STT poll", &e)))?,
         )
         .await?;
         match body.get("status").and_then(Value::as_str) {

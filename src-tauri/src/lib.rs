@@ -84,6 +84,7 @@ mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (ups
 mod paste_tx;
 #[path = "handy/portable.rs"]
 pub mod portable;
+mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
