@@ -101,6 +101,8 @@ pub struct AudioRecorder {
     // (VAD compaction and stop-time padding/AGC only ever append or rescale — they
     // never reorder the prefix). Reset to 0 on each `Start`.
     recorded_len: Arc<AtomicUsize>,
+    /// Which input channel to use. None = average all (original behavior).
+    selected_channel: Option<usize>,
     /// Preferred stream config cached per device name. The two HAL property
     /// queries in `get_preferred_config` cost ~40-85ms per open (worse on
     /// USB/Bluetooth), which lands on the keypress->capture path in on-demand
@@ -122,6 +124,7 @@ impl AudioRecorder {
             sample_cb: None,
             conditioning: Arc::new(AtomicBool::new(false)),
             recorded_len: Arc::new(AtomicUsize::new(0)),
+            selected_channel: None,
             config_cache: Arc::new(Mutex::new(None)),
         })
     }
@@ -195,6 +198,15 @@ impl AudioRecorder {
         self
     }
 
+    pub fn with_selected_channel(mut self, channel: Option<u16>) -> Self {
+        self.set_selected_channel(channel);
+        self
+    }
+
+    pub fn set_selected_channel(&mut self, channel: Option<u16>) {
+        self.selected_channel = channel.map(usize::from);
+    }
+
     pub fn open(&mut self, device: Option<Device>) -> Result<(), Box<dyn std::error::Error>> {
         if self.worker_handle.is_some() {
             if !self.is_capture_worker_dead() {
@@ -228,6 +240,7 @@ impl AudioRecorder {
         let sample_cb = self.sample_cb.clone(); // [GRAIN]
         let conditioning = self.conditioning.clone(); // [GRAIN] live atomic
         let recorded_len = self.recorded_len.clone(); // [GRAIN] Prompt Record split mark
+        let selected_channel = self.selected_channel;
         let config_cache = Arc::clone(&self.config_cache);
 
         let worker = std::thread::spawn(move || {
@@ -261,6 +274,20 @@ impl AudioRecorder {
                     config.sample_format()
                 );
 
+                if let Some(channel) = selected_channel {
+                    if channel < channels {
+                        log::info!("Using selected input channel: {}", channel + 1);
+                    } else {
+                        log::warn!(
+                            "Selected input channel {} is out of range for a {}-channel device; averaging all channels instead",
+                            channel + 1,
+                            channels
+                        );
+                    }
+                } else {
+                    log::info!("Averaging all {} input channels", channels);
+                }
+
                 let build_started = Instant::now();
                 let stream = match config.sample_format() {
                     cpal::SampleFormat::U8 => AudioRecorder::build_stream::<u8>(
@@ -268,6 +295,7 @@ impl AudioRecorder {
                         &config,
                         sample_tx,
                         channels,
+                        selected_channel,
                         stop_flag_for_stream,
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
@@ -276,6 +304,7 @@ impl AudioRecorder {
                         &config,
                         sample_tx,
                         channels,
+                        selected_channel,
                         stop_flag_for_stream,
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
@@ -284,6 +313,7 @@ impl AudioRecorder {
                         &config,
                         sample_tx,
                         channels,
+                        selected_channel,
                         stop_flag_for_stream,
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
@@ -292,6 +322,7 @@ impl AudioRecorder {
                         &config,
                         sample_tx,
                         channels,
+                        selected_channel,
                         stop_flag_for_stream,
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
@@ -300,6 +331,7 @@ impl AudioRecorder {
                         &config,
                         sample_tx,
                         channels,
+                        selected_channel,
                         stop_flag_for_stream,
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
@@ -433,6 +465,7 @@ impl AudioRecorder {
         config: &cpal::SupportedStreamConfig,
         sample_tx: mpsc::Sender<AudioChunk>,
         channels: usize,
+        selected_channel: Option<usize>,
         stop_flag: Arc<AtomicBool>,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
     where
@@ -441,6 +474,13 @@ impl AudioRecorder {
     {
         let mut output_buffer = Vec::new();
         let mut eos_sent = false;
+        // Resolve the effective channel to use. If the selected channel is
+        // out of range for this device, fall back to averaging all channels.
+        let use_channel: Option<usize> = match selected_channel {
+            Some(ch) if ch < channels => Some(ch),
+            Some(_) => None, // out of range, fall back to average
+            None => None,    // user chose "average all"
+        };
 
         let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
             if stop_flag.load(Ordering::Relaxed) {
@@ -460,13 +500,20 @@ impl AudioRecorder {
                 let frame_count = data.len() / channels;
                 output_buffer.reserve(frame_count);
 
-                for frame in data.chunks_exact(channels) {
-                    let mono_sample = frame
-                        .iter()
-                        .map(|&sample| sample.to_sample::<f32>())
-                        .sum::<f32>()
-                        / channels as f32;
-                    output_buffer.push(mono_sample);
+                if let Some(ch) = use_channel {
+                    for frame in data.chunks_exact(channels) {
+                        let mono_sample = frame[ch].to_sample::<f32>();
+                        output_buffer.push(mono_sample);
+                    }
+                } else {
+                    for frame in data.chunks_exact(channels) {
+                        let mono_sample = frame
+                            .iter()
+                            .map(|&sample| sample.to_sample::<f32>())
+                            .sum::<f32>()
+                            / channels as f32;
+                        output_buffer.push(mono_sample);
+                    }
                 }
             }
 
@@ -493,6 +540,12 @@ impl AudioRecorder {
             |err| log::error!("Stream error: {}", err),
             None,
         )
+    }
+
+    pub fn preferred_input_channel_count(
+        device: &cpal::Device,
+    ) -> Result<u16, Box<dyn std::error::Error>> {
+        Ok(Self::get_preferred_config(device)?.channels())
     }
 
     fn get_preferred_config(
@@ -872,43 +925,51 @@ fn run_consumer(
             );
         }
 
-        // ---------- spectrum processing ---------------------------------- //
-        if let Some(buckets) = visualizer.feed(&raw) {
-            if let Some(cb) = &level_cb {
-                cb(buckets);
+        // ---------- recording-time processing ---------------------------- //
+        // In always-on mode the capture stream stays open continuously for
+        // zero-latency start, so while idle (not recording) there is nothing to
+        // do with a chunk: handle_frame returns early when not recording, which
+        // means the resampled output would be discarded, and the level meter has
+        // no idle consumer. Skip both the level-meter FFT and the resampler while
+        // idle to avoid doing unnecessary work whose output is thrown away. Both
+        // are reset on Cmd::Start (visualizer.reset() / frame_resampler.reset()),
+        // so they resume cleanly the moment recording begins.
+        if recording {
+            if let Some(buckets) = visualizer.feed(&raw) {
+                if let Some(cb) = &level_cb {
+                    cb(buckets);
+                }
             }
-        }
 
-        // ---------- existing pipeline ------------------------------------ //
-        frame_resampler.push(&raw, &mut |frame: &[f32]| {
-            // [GRAIN] high-pass the 16 kHz frame (de-rumble) before it reaches
-            // VAD, the batch buffer, and the rolling engine. Stateful across
-            // frames; only while recording so the idle mic stays free.
-            let f: &[f32] = if recording && conditioning.load(Ordering::Relaxed) {
-                scratch.clear();
-                scratch.extend_from_slice(frame);
-                highpass.process_in_place(&mut scratch);
-                &scratch
-            } else {
-                frame
-            };
-            let speech = handle_frame(
-                f,
-                recording,
-                vad_policy,
-                &vad,
-                &audio_cb,
-                &mut processed_samples,
-            );
-            // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
-            // engine with its voice-activity decision (rolling keeps EVERY frame
-            // for a continuous timeline; `speech` only drives its silence gate).
-            if recording {
+            // ---------- existing pipeline ------------------------------------ //
+            frame_resampler.push(&raw, &mut |frame: &[f32]| {
+                // [GRAIN] high-pass the 16 kHz frame (de-rumble) before it reaches
+                // VAD, the batch buffer, and the rolling engine. Stateful across
+                // frames; the enclosing `if recording` keeps the idle mic free.
+                let f: &[f32] = if conditioning.load(Ordering::Relaxed) {
+                    scratch.clear();
+                    scratch.extend_from_slice(frame);
+                    highpass.process_in_place(&mut scratch);
+                    &scratch
+                } else {
+                    frame
+                };
+                let speech = handle_frame(
+                    f,
+                    recording,
+                    vad_policy,
+                    &vad,
+                    &audio_cb,
+                    &mut processed_samples,
+                );
+                // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
+                // engine with its voice-activity decision (rolling keeps EVERY frame
+                // for a continuous timeline; `speech` only drives its silence gate).
                 if let Some(cb) = &sample_cb {
                     cb(f, speech);
                 }
-            }
-        });
+            });
+        }
 
         if recording {
             // [GRAIN] Publish the live buffer length so Prompt Record can mark

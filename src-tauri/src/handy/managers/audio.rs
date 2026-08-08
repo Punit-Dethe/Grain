@@ -12,7 +12,7 @@ use crate::settings::{get_settings, AppSettings};
 use crate::utils;
 use log::{debug, error, info, trace, warn};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::Manager;
@@ -262,6 +262,7 @@ struct MuteState {
 fn create_audio_recorder(
     vad_path: &Path,
     app_handle: &tauri::AppHandle,
+    selected_channel: Option<u16>,
     stream_router: Arc<StreamRouter>,
 ) -> Result<AudioRecorder, anyhow::Error> {
     // A single Silero engine covers both the offline and streaming policies (never
@@ -293,6 +294,7 @@ fn create_audio_recorder(
             VAD_STREAMING_HANGOVER_FRAMES,
         )
         .with_conditioning(conditioning) // [GRAIN]
+        .with_selected_channel(selected_channel)
         .with_level_callback({
             let app_handle = app_handle.clone();
             move |levels| {
@@ -329,6 +331,8 @@ fn create_audio_recorder(
 
 #[derive(Clone)]
 pub struct AudioRecordingManager {
+    /// Never assign through this directly — route every write through
+    /// `set_state()`, which keeps `recording_active` in sync.
     state: Arc<Mutex<RecordingState>>,
     mode: Arc<Mutex<MicrophoneMode>>,
     app_handle: tauri::AppHandle,
@@ -346,6 +350,12 @@ pub struct AudioRecordingManager {
     /// Snapshotted from the recorder's live length so it indexes the buffer
     /// `stop_recording` returns. Reset at the start of every recording.
     prompt_mark: Arc<Mutex<Option<usize>>>,
+    /// Lock-free mirror of "is the state in {Recording, Stopping}",
+    /// maintained by `set_state()`. The hot-path `is_recording()` reads THIS
+    /// instead of the std `state` mutex, so a UI poll can no longer deadlock
+    /// the main/webview thread when a worker holds `state` across a slow
+    /// CoreAudio open/close.
+    recording_active: Arc<AtomicBool>,
     /// Resolution of a *named* microphone (selected or clamshell) to its cpal
     /// device, cached so on-demand recording starts skip the full device
     /// enumeration (~40-110ms). Keyed by the resolved name, so a settings
@@ -382,6 +392,7 @@ impl AudioRecordingManager {
             cancel_generation: Arc::new(AtomicU64::new(0)),
             stream_router,
             prompt_mark: Arc::new(Mutex::new(None)), // [GRAIN]
+            recording_active: Arc::new(AtomicBool::new(false)),
             cached_device: Arc::new(Mutex::new(None)),
         };
 
@@ -536,9 +547,11 @@ impl AudioRecordingManager {
                     tauri::path::BaseDirectory::Resource,
                 )
                 .map_err(|e| anyhow::anyhow!("Failed to resolve VAD path: {}", e))?;
+            let settings = get_settings(&self.app_handle);
             *recorder_opt = Some(create_audio_recorder(
                 &vad_path,
                 &self.app_handle,
+                settings.selected_channel,
                 Arc::clone(&self.stream_router),
             )?);
         }
@@ -705,6 +718,21 @@ impl AudioRecordingManager {
 
     /* ---------- recording --------------------------------------------------- */
 
+    /// The one place `state` is written. Derives `recording_active` (the
+    /// lock-free mirror read by `is_recording()`) from the new value itself,
+    /// so the two can never drift: a new `RecordingState` variant only needs
+    /// its active-set membership decided here, once.
+    fn set_state(&self, guard: &mut RecordingState, new_state: RecordingState) {
+        *guard = new_state;
+        self.recording_active.store(
+            matches!(
+                *guard,
+                RecordingState::Recording { .. } | RecordingState::Stopping
+            ),
+            Ordering::SeqCst,
+        );
+    }
+
     pub fn try_start_recording(
         &self,
         binding_id: &str,
@@ -732,9 +760,12 @@ impl AudioRecordingManager {
                     *self.is_recording.lock().unwrap() = true;
                     // [GRAIN] Fresh Prompt Record baseline: no split marked yet.
                     *self.prompt_mark.lock().unwrap() = None;
-                    *state = RecordingState::Recording {
-                        binding_id: binding_id.to_string(),
-                    };
+                    self.set_state(
+                        &mut state,
+                        RecordingState::Recording {
+                            binding_id: binding_id.to_string(),
+                        },
+                    );
                     debug!("Recording started for binding {binding_id}");
                     return Ok(());
                 }
@@ -786,16 +817,49 @@ impl AudioRecordingManager {
     }
 
     pub fn update_selected_device(&self) -> Result<(), anyhow::Error> {
-        // Device settings changed; drop the cached resolution so the next
-        // open re-enumerates. (The name-keyed cache would miss anyway; this
-        // just avoids holding a stale cpal::Device alive.)
+        // Device settings changed; re-enumerate the device and restart capture.
         self.invalidate_device_cache();
-        // If currently open, restart the microphone stream to use the new device
-        if *self.is_open.lock().unwrap() {
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
             self.close_generation.fetch_add(1, Ordering::SeqCst);
             self.stop_microphone_stream();
             self.start_microphone_stream()?;
         }
+        Ok(())
+    }
+
+    pub fn update_selected_channel(
+        &self,
+        selected_channel: Option<u16>,
+    ) -> Result<(), anyhow::Error> {
+        // Serialize against recording start/stop. Restarting an active capture
+        // would discard its samples and leave the manager's recording state out
+        // of sync with the new recorder.
+        let state = self.state.lock().unwrap();
+        if !matches!(*state, RecordingState::Idle) {
+            return Err(anyhow::anyhow!(
+                "Cannot change the input channel while recording"
+            ));
+        }
+
+        let previous_channel = get_settings(&self.app_handle).selected_channel;
+        let was_open = *self.is_open.lock().unwrap();
+        if was_open {
+            self.close_generation.fetch_add(1, Ordering::SeqCst);
+            self.stop_microphone_stream();
+        }
+        if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
+            recorder.set_selected_channel(selected_channel);
+        }
+        if was_open {
+            if let Err(error) = self.start_microphone_stream() {
+                if let Some(recorder) = self.recorder.lock().unwrap().as_mut() {
+                    recorder.set_selected_channel(previous_channel);
+                }
+                return Err(error);
+            }
+        }
+        drop(state);
         Ok(())
     }
 
@@ -814,7 +878,7 @@ impl AudioRecordingManager {
             RecordingState::Recording {
                 binding_id: ref active,
             } if active == binding_id => {
-                *state = RecordingState::Stopping;
+                self.set_state(&mut state, RecordingState::Stopping);
                 drop(state);
 
                 // Optionally keep recording for a bit longer to capture trailing audio.
@@ -853,7 +917,7 @@ impl AudioRecordingManager {
                 };
 
                 *self.is_recording.lock().unwrap() = false;
-                *self.state.lock().unwrap() = RecordingState::Idle;
+                self.set_state(&mut self.state.lock().unwrap(), RecordingState::Idle);
 
                 // In on-demand mode, close the mic (lazily if the setting is enabled)
                 if matches!(*self.mode.lock().unwrap(), MicrophoneMode::OnDemand) {
@@ -884,10 +948,12 @@ impl AudioRecordingManager {
         }
     }
     pub fn is_recording(&self) -> bool {
-        matches!(
-            *self.state.lock().unwrap(),
-            RecordingState::Recording { .. } | RecordingState::Stopping
-        )
+        // Lock-free: mirrors the `state` {Recording, Stopping} membership via
+        // an atomic maintained by `set_state()`. Polled from the webview/main
+        // thread, so it MUST NOT take the `state` mutex (a worker can hold it
+        // across a slow CoreAudio open/close → main-thread deadlock / UI
+        // freeze).
+        self.recording_active.load(Ordering::SeqCst)
     }
 
     /// Cancel any ongoing recording without returning audio samples
@@ -897,7 +963,7 @@ impl AudioRecordingManager {
 
         match *state {
             RecordingState::Recording { .. } => {
-                *state = RecordingState::Idle;
+                self.set_state(&mut state, RecordingState::Idle);
                 drop(state);
 
                 // [GRAIN] Discard any Prompt Record mark along with the audio.

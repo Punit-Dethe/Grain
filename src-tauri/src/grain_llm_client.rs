@@ -215,6 +215,11 @@ pub struct ReasoningConfig {
 struct ChatCompletionRequest {
     model: String,
     messages: Vec<ChatMessage>,
+    /// Always false — Grain parses a full (non-streamed) JSON response on every
+    /// path. Sent explicitly so a provider that would otherwise default to
+    /// streaming cannot return an event-stream that breaks the JSON parse
+    /// (upstream "request stream: false, for post processing").
+    stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +377,7 @@ pub async fn send_chat_completion_with_schema(
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format,
         reasoning_effort,
         reasoning,
@@ -409,6 +415,7 @@ pub async fn send_chat(
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format: None,
         reasoning_effort,
         reasoning,
@@ -471,6 +478,7 @@ pub async fn send_chat_with_image(
     let request = |messages| ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format: None,
         reasoning_effort: reasoning_effort.clone(),
         reasoning: reasoning.clone(),
@@ -557,6 +565,7 @@ pub async fn send_chat_with_tools(
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format: None,
         reasoning_effort,
         reasoning,
