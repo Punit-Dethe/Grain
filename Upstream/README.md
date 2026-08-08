@@ -24,6 +24,8 @@ guards), and the procedures for the common case (reviewing the
 |---|---|
 | `sync_upstream.py` | Rebuilds the commit ledger (`data.json`/`data.js`) and audits ancestry drift. |
 | `ratchet.py` | Divergence ratchet — enforces per-file line budgets vs the merge base. |
+| `port_audit.py` | Port audit — flags upstream commits that touched an inert/relocated/parallel file (per `relocations.json`), so a fix that merged into the wrong (upstream-shaped) file can't silently miss the Grain code that replaces it. The one check a diff structurally cannot be. |
+| `relocations.json` | Machine-readable map of upstream files → the Grain files that must carry their fixes. The audit's input; keep in step with `UPSTREAM-DIVERGENCE.md`. |
 | `frontend_freeze.py` | Frontend freeze guard — `src/` is Grain-owned; fails if upstream files land there. |
 | `frontend_allow.json` | The still-shared frontend files. May shrink, never grow. |
 | `verdict.py` | Records human verdicts (`Ignored`, cherry-picks, notes) on upstream commits. |

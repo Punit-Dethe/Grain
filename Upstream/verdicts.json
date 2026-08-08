@@ -1,7 +1,13 @@
 {
+  "07637ea932bcc9d9813f2f6caa7c766b89a513f6": {
+    "notes": "logging-only change to transcription.rs; no behavioral effect on Grain's path."
+  },
   "09a6a71015db794b47dd4916333be1a8b3ad2dac": {
     "status": "Merged",
     "notes": "Cherry-picked (2c17bfbd); conflicts resolved per divergence map: kept Grain keys (multiLanguage, flat overlay, whisper ack, snippets), took selectModel/languageCount/VAD translations, dropped unreferenced model-list keys. Cherry-pick — needs close-out with the batch."
+  },
+  "09aaf4d303334ea80b616c46e860f6bf51b4c0ba": {
+    "notes": "moonshine stream.text().full fix merged clean into Grain's transcription.rs (~line 935). Verified in v0.9.5 sync."
   },
   "0a59e1f3001c64dc4afc955f376508b1a11061c0": {
     "notes": "Clean cherry-pick"
@@ -26,11 +32,17 @@
   "1fd3f912e2ea950d1694c68199b6e215926b1c81": {
     "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."
   },
+  "2203a826c62a83022fc40d0ea6314d218c73f9c0": {
+    "notes": "ASCII/Soundex custom-word guard (is_supported_fuzzy_key) present in Grain's handy/audio_toolkit/text.rs; rolling has no separate Soundex matcher (its 'fuzzy' is seam dedup), so the shared finalization carries the fix."
+  },
   "2211da652ea408191c6ab74e850d1155360d7304": {
     "notes": "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."
   },
   "2dd35bbb5a85a0fa46f539a0c2a06d1a246c88fa": {
     "notes": "Safely merged into `tray.rs`"
+  },
+  "31d8fc2442c2412d6e9de6e018cf70edfbc37ca5": {
+    "notes": "transcribe.cpp introduction — Grain's entire transcription is unified on transcribe-cpp (managers/transcription.rs); absorbed as architecture, not a discrete port."
   },
   "38825767cf933f59b90209c3f3c5f1e3bbe98766": {
     "notes": "Adapted to Grain flat onboarding layout; store/ModelCard infra already present"
@@ -61,6 +73,9 @@
   "468129fdf1f7b1b8275f4b40c572f28b91d7f701": {
     "status": "Merged",
     "notes": "Superseded by and absorbed into handy-keys 0.3.2."
+  },
+  "46d6a2aec85560b1a5f627a17423d2f0dbf94960": {
+    "notes": "Vulkan host-gating kept in Grain's get_available_accelerators (verified v0.9.5 sync); dropped only the ORT branch (no ONNX engine behind it)."
   },
   "485f4ade00169fd8a620c17d1478ad198252e953": {
     "notes": "Added CLT fallback logic in `build.rs`."
@@ -121,6 +136,9 @@
   "a6df742880ada3c006ad376c1a89d8565b003e69": {
     "notes": "Recover poisoned mutexes inside Drop impls using `match` + logged warnings."
   },
+  "a70ac84fd66819d171a0bce156e4f729aa46527a": {
+    "notes": "reliable_paste setting present in grain-core AppSettings; paste-reliability handled in Grain's paste path."
+  },
   "a92a4d5e497bc1d7bc8d228c77636c4e600453a9": {
     "notes": "Fixed Tauri memory leak from overlay."
   },
@@ -129,6 +147,9 @@
   },
   "b00ae666c57e972b2d3494fc76d8166ffa59032e": {
     "notes": "hf-hub fork pin bumped 63b6034->9918f11"
+  },
+  "b428ae4c9c8aecba00d0e44e14d6466d9687795f": {
+    "notes": "transcription.rs part = improved GPU-fallback warning (Linux/non-Linux split); merged clean into Grain's transcription.rs. Verified in v0.9.5 sync."
   },
   "b4453a297f60d2688f9663908c0e92071b0f7641": {
     "notes": "Adopted set_state()/recording_active lock-free mirror; kept Grain's prompt_mark reset alongside it."
@@ -176,6 +197,9 @@
     "status": "Ignored",
     "notes": "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead."
   },
+  "cf49ab3543a3e4d1fdcc318014393975b4a3306a": {
+    "notes": "overlay.rs inert; run-on-main-thread targets the webview overlay's GTK/NSScreen access. Grain's native grain-pill runs its own winit event loop (main-thread-correct by construction). n/a."
+  },
   "cfab1dda9db103e95e9fe2f4d76d2168caf0a59d": {
     "notes": "Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul)."
   },
@@ -207,6 +231,9 @@
   },
   "dd6cc676112b9c8123ebd34c6765444b7a855cfb": {
     "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite)."
+  },
+  "e1152d86935562264d7c5637d77ce2e29aeef57e": {
+    "notes": "overlay.rs inert; grain-pill does its own Windows multi-monitor positioning (MonitorFromPoint/GetMonitorInfoW on the cursor's monitor work area). n/a."
   },
   "e2c72a25ff48f280729e9e9bac289802c2c01cfd": {
     "notes": "Throttled `emit_levels` to 30 FPS in `overlay.rs`."

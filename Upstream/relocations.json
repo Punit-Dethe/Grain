@@ -1,0 +1,37 @@
+{
+  "_README": "Machine-readable map of upstream files whose fixes CANNOT be trusted to reach Grain by merge alone, because the real Grain code lives elsewhere. Used by port_audit.py. When an upstream commit touches a `source` key, a human must confirm the change reached every `grain` path (or record why it does not apply). `kind`: 'inert' = the upstream file is byte-identical but UNCOMPILED, its replacement is a separate Grain file; 'relocated' = specific logic was moved out of an otherwise-merged file; 'parallel' = the upstream file is merged in handy/, but a Grain-only twin shares the same bug class and upstream's fix can never reach it. Keep this in step with Upstream/UPSTREAM-DIVERGENCE.md.",
+  "src-tauri/src/llm_client.rs": {
+    "kind": "inert",
+    "grain": [
+      "src-tauri/src/grain_llm_client.rs",
+      "src-tauri/src/net_diag.rs",
+      "src-tauri/src/stt_client.rs"
+    ],
+    "why": "Inert (no `mod llm_client;`). Grain's multi-provider LLM client is grain_llm_client.rs; shared reqwest diagnostics live in net_diag.rs; the SAME HTTP bug-class also lives in the parallel cloud STT client stt_client.rs. (#1823, #2211 both landed here and needed hand-porting.)"
+  },
+  "src-tauri/src/settings.rs": {
+    "kind": "inert",
+    "grain": ["crates/grain-core/src/settings.rs"],
+    "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
+  },
+  "src-tauri/src/overlay.rs": {
+    "kind": "inert",
+    "grain": ["crates/grain-pill/src/lib.rs", "src-tauri/src/grain_overlay.rs"],
+    "why": "Inert (no `mod overlay;`). The native grain-pill replaces the webview overlay; mic-level fan-out is grain_overlay.rs. Overlay UX/perf fixes (e.g. #1445 stop animating while hidden) may have a pill analog to verify."
+  },
+  "src-tauri/src/actions.rs": {
+    "kind": "relocated",
+    "grain": ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs"],
+    "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs)."
+  },
+  "src-tauri/src/audio_toolkit/text.rs": {
+    "kind": "relocated",
+    "grain": ["src-tauri/src/audio_toolkit/grain_text.rs"],
+    "why": "finalize_transcript relocated to grain_text.rs; final-text / word-boundary fixes may belong there rather than the merged handy text.rs."
+  },
+  "src-tauri/src/managers/transcription.rs": {
+    "kind": "parallel",
+    "grain": ["src-tauri/src/rolling.rs", "crates/rolling-window/src"],
+    "why": "Merged in handy/, but real-time chunking/streaming has a Grain-only parallel in the rolling engine (rolling.rs + rolling-window crate) that upstream's batch/streaming fixes cannot reach. Check whether the fixed bug-class exists there too."
+  }
+}

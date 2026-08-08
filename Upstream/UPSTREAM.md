@@ -175,6 +175,21 @@ upstream file sitting outside `handy/`. Budgets tighten via
 `python Upstream/ratchet.py --update` — run it *after* committing (it
 measures HEAD, not the working tree).
 
+[port_audit.py](port_audit.py) + [relocations.json](relocations.json): the
+ratchet and a diff both prove the *shared* `handy/` surface is on par with
+Handy — but they are blind to the fixes that merge into an **inert** file
+(`llm_client.rs`, `settings.rs`, `overlay.rs` — byte-identical to upstream but
+uncompiled), into a file whose logic Grain **relocated** (`actions.rs` →
+`grain_post_process.rs`), or that share a bug class with a Grain-only
+**parallel** implementation (`stt_client`, the rolling engine). In all three
+the upstream-shaped file matches perfectly while the code Grain actually runs
+lacks the fix, and no diff spans the gap. The port audit reads the relocation
+map and fails when a merged upstream commit touched a mapped file without a
+[verdicts.json](verdicts.json) note recording where the fix landed (or why it
+does not apply) — turning "did we forget to port it?" from unbounded worry into
+a bounded, gated list. Wired into `preflight.py`; clear each finding with
+`python Upstream/verdict.py <sha> --note "..."`.
+
 ## Runbook
 
 ### A. The auto-PR is open (common case)
