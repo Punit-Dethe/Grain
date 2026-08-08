@@ -19,6 +19,9 @@
   "12f02e2a9645295c95a156b83bbb2f054df2aea4": {
     "notes": "Backend plumbing merged; selected_channel setting ported into crates/grain-core AppSettings (upstream settings.rs inert). Upstream ChannelSelector.tsx dropped (frontend frozen); set_selected_channel command kept + registered for Grain's own UI."
   },
+  "148e5492f43dd0b4a80680ee92bebe6459a4ef3a": {
+    "notes": "PORTED: reasoning-rejection retry added to grain_llm_client post_chat (upstream #1809). On a 400/422 to a request carrying reasoning-disable fields, retry once without them and remember the endpoint (url|model) process-wide so later calls skip them. Grain gates reasoning by provider, so this only affects a 'custom' endpoint pointed at a strict API; +2 unit tests."
+  },
   "158168983cfcf01c4555e012a62a7b1ccad77bd4": {
     "notes": "Added Windows prerequisites, MAX_PATH fixes, and code-signing bypass instructions to BUILD.md."
   },
