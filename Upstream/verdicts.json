@@ -10,6 +10,9 @@
     "status": "Ignored",
     "notes": "n/a - Grain kept its own bindings.ts typings, no optional bindings"
   },
+  "12f02e2a9645295c95a156b83bbb2f054df2aea4": {
+    "notes": "Backend plumbing merged; selected_channel setting ported into crates/grain-core AppSettings (upstream settings.rs inert). Upstream ChannelSelector.tsx dropped (frontend frozen); set_selected_channel command kept + registered for Grain's own UI."
+  },
   "158168983cfcf01c4555e012a62a7b1ccad77bd4": {
     "notes": "Added Windows prerequisites, MAX_PATH fixes, and code-signing bypass instructions to BUILD.md."
   },
@@ -22,6 +25,9 @@
   },
   "1fd3f912e2ea950d1694c68199b6e215926b1c81": {
     "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."
+  },
+  "2211da652ea408191c6ab74e850d1155360d7304": {
+    "notes": "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."
   },
   "2dd35bbb5a85a0fa46f539a0c2a06d1a246c88fa": {
     "notes": "Safely merged into `tray.rs`"
@@ -38,6 +44,9 @@
   },
   "3f49cf100b33f7a164662cf3f1b953207ab37c7b": {
     "notes": "Added `nl` translation."
+  },
+  "4223e7ac6741298654d98003db38e4164ee98294": {
+    "notes": "Deferred: 256-line reqwest source-chain diagnostics tailored to upstream's single-provider client. Grain's grain_llm_client has independent multi-provider error handling; non-correctness, not ported."
   },
   "4357c728d9670381b1acabb6a92d937ceb629ad3": {
     "status": "Ignored",
@@ -58,6 +67,9 @@
   },
   "497653014c3293be09adc082305c14e6abdfa3f0": {
     "notes": "Clean cherry-pick"
+  },
+  "4b3a969daeafb8c6403228149fdb20eec7edf3a9": {
+    "notes": "Frontend-only (streaming/translation model filter buttons); frontend frozen, Grain owns its ModelsSettings. No backend content."
   },
   "4be7911d4de7935eeb2a6b817dc4b506ed7ca911": {
     "notes": "AudioPlayerGroup wrapper; kept Grain list markup and copyText prop"
@@ -94,6 +106,9 @@
     "status": "Ignored",
     "notes": "Irrelevant (Grain is an independent fork)."
   },
+  "96afb0cf335d0c6b5d6d92c9af9e14f4c3f4ef0b": {
+    "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
+  },
   "99ac7ebb23473d8ce5b63e6578f37e239b89e738": {
     "notes": "Fixed encoding and translated English strings in `ja`."
   },
@@ -114,6 +129,9 @@
   },
   "b00ae666c57e972b2d3494fc76d8166ffa59032e": {
     "notes": "hf-hub fork pin bumped 63b6034->9918f11"
+  },
+  "b4453a297f60d2688f9663908c0e92071b0f7641": {
+    "notes": "Adopted set_state()/recording_active lock-free mirror; kept Grain's prompt_mark reset alongside it."
   },
   "b9925d01972a933544d0344a2e62360580368f18": {
     "status": "Ignored",
@@ -175,8 +193,14 @@
     "status": "Ignored",
     "notes": "Ignored. Grain has a highly custom, split-theme architecture via ThemeContext.tsx (allowing dark Quick Panel with light Settings). Upstream's implementation is a global document.documentElement override, which is incompatible with Grain's per-panel toggles."
   },
+  "d961593721b6643d8fe94b6ae28f5dc3fa63edd8": {
+    "notes": "js-yaml 4.1.1->4.3.1 is a dev-only transitive dep (@eslint/eslintrc); bun.lock is merge=ours and Grain regenerates independently. No runtime exposure; not force-bumped."
+  },
   "dad37baa0315c63c3a3d91af1fdcd6ad6e401f4f": {
     "notes": "Corrected descriptions to \"Russian speech-to-text\"."
+  },
+  "db003f38b1aef4eb967ac3419bebc851d680f71c": {
+    "notes": "Adopted upstream idle-skip (if recording gating) around the resampler while keeping Grain's conditioning + rolling sample_cb closure; dropped now-redundant inner recording guards."
   },
   "dc01346d1cf2ca44b2c726b7140c93dbf929c086": {
     "notes": "Ported language selector improvements."
