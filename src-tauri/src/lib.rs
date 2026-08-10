@@ -961,6 +961,9 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_export_pack,
             grain_commands::extension_uninstall,
             shortcut::change_lazy_stream_close_setting,
+            // [GRAIN] change_vad_enabled_setting intentionally not registered;
+            // upstream #1738 filler-word toggle is.
+            shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
             shortcut::change_keyboard_implementation_setting,

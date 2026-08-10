@@ -780,6 +780,8 @@ pub struct AppSettings {
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
     pub external_script_path: Option<String>,
+    #[serde(default = "default_filler_word_removal_enabled")]
+    pub filler_word_removal_enabled: bool,
     #[serde(default)]
     pub custom_filler_words: Option<Vec<String>>,
     #[serde(default, alias = "whisper_accelerator")]
@@ -1234,6 +1236,9 @@ fn default_transcribe_gpu_device() -> i32 {
 fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
 }
+fn default_filler_word_removal_enabled() -> bool {
+    true
+}
 
 /// Ensure every default post-process provider exists in `settings` and that key
 /// maps stay in sync (migration). Returns true if anything changed.
@@ -1687,6 +1692,7 @@ pub fn get_default_settings() -> AppSettings {
         reliable_paste: false,
         typing_tool: default_typing_tool(),
         external_script_path: None,
+        filler_word_removal_enabled: default_filler_word_removal_enabled(),
         custom_filler_words: None,
         transcribe_accelerator: TranscribeAcceleratorSetting::default(),
         transcribe_gpu_device: default_transcribe_gpu_device(),

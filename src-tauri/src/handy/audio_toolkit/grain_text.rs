@@ -4,7 +4,9 @@
 //! composition — "scrap that" reset, then custom words, then filler filtering,
 //! then snippet expansion — lives here so the upstream file stays clean.
 
-use super::text::{apply_custom_words, filter_transcription_output};
+use super::text::{
+    apply_custom_words, normalize_transcription_output, remove_filler_words, OutputLanguageEvidence,
+};
 
 /// Apply the full final-text stage to a completed transcript: custom-word
 /// correction followed by filler-word / stutter filtering.
@@ -18,9 +20,13 @@ use super::text::{apply_custom_words, filter_transcription_output};
 /// * `text` - the completed transcript.
 /// * `custom_words` - the user's dictionary (may be empty).
 /// * `word_correction_threshold` - fuzzy-match acceptance threshold.
-/// * `app_language` - language code selecting the default filler-word set.
+/// * `output_language` - the transcription output/intent language code (NOT the
+///   UI language). A concrete code is treated as `UserSelected` evidence for
+///   #1738 filler removal; `"auto"`/empty is `Unknown` (universal-tier only).
 /// * `custom_filler_words` - optional filler-word override (see
-///   [`filter_transcription_output`]).
+///   [`remove_filler_words`]).
+/// * `filler_word_removal_enabled` - master toggle for built-in/custom filler
+///   removal (upstream #1738; defaults on).
 /// * `skip_custom_words` - when `true`, skip the fuzzy custom-word correction.
 ///   The local Whisper batch path sets this because it already biases the model
 ///   via `initial_prompt`; paths with no such biasing (rolling, cloud, Agent)
@@ -33,12 +39,14 @@ use super::text::{apply_custom_words, filter_transcription_output};
 ///
 /// # Returns
 /// The finalized transcript.
+#[allow(clippy::too_many_arguments)]
 pub fn finalize_transcript(
     text: &str,
     custom_words: &[String],
     word_correction_threshold: f64,
-    app_language: &str,
+    output_language: &str,
     custom_filler_words: &Option<Vec<String>>,
+    filler_word_removal_enabled: bool,
     skip_custom_words: bool,
     snippets: &[crate::settings::Snippet],
     scrap_that: bool,
@@ -57,7 +65,22 @@ pub fn finalize_transcript(
     } else {
         apply_custom_words(text, custom_words, word_correction_threshold)
     };
-    let filtered = filter_transcription_output(&corrected, app_language, custom_filler_words);
+    // [GRAIN] #1738: filler removal is language-evidence-gated. These paths
+    // (rolling, cloud, Agent) carry the transcription language intent, not audio
+    // LID, so a concrete selection is UserSelected evidence and "auto"/empty is
+    // Unknown (universal-tier fillers only — never a gated real word).
+    let evidence = if output_language.is_empty() || output_language == "auto" {
+        OutputLanguageEvidence::Unknown
+    } else {
+        OutputLanguageEvidence::UserSelected(output_language.to_string())
+    };
+    let without_fillers = remove_filler_words(
+        &corrected,
+        &evidence,
+        custom_filler_words,
+        filler_word_removal_enabled,
+    );
+    let filtered = normalize_transcription_output(&without_fillers);
     crate::audio_toolkit::apply_snippets(&filtered, snippets)
 }
 
@@ -75,6 +98,7 @@ mod tests {
             0.5,
             "en",
             &None,
+            true,
             false,
             &[],
             false,
@@ -95,6 +119,7 @@ mod tests {
             "en",
             &None,
             true,
+            true,
             &[],
             false,
         );
@@ -109,7 +134,7 @@ mod tests {
     #[test]
     fn test_finalize_empty_custom_words_is_just_filter() {
         let result =
-            finalize_transcript("um hello world", &[], 0.5, "en", &None, false, &[], false);
+            finalize_transcript("um hello world", &[], 0.5, "en", &None, true, false, &[], false);
         assert_eq!(result, "hello world");
     }
 }
@@ -125,6 +150,8 @@ pub fn finalize_batch_text(
     raw: String,
     settings: &crate::settings::AppSettings,
     custom_words_already_prompted: bool,
+    output_language: &OutputLanguageEvidence,
+    supported_languages: &[String],
 ) -> String {
     let raw = if settings.scrap_that_enabled {
         super::strip_scrapped(&raw)
@@ -136,6 +163,8 @@ pub fn finalize_batch_text(
         raw,
         settings,
         custom_words_already_prompted,
+        output_language,
+        supported_languages,
     );
 
     // [GRAIN] Snippets built-in extension gate (SPEC 10.1).

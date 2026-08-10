@@ -163,8 +163,11 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
                                 &res.text,
                                 &settings.custom_words,
                                 settings.word_correction_threshold,
-                                &settings.app_language,
+                                // [GRAIN] #1738: filler removal keys on the transcription
+                                // output language (intent), not the UI language.
+                                &settings.selected_language,
                                 &settings.custom_filler_words,
+                                settings.filler_word_removal_enabled,
                                 false,
                                 // [GRAIN] Snippets built-in extension gate (SPEC 10.1): disabled ->
                             // empty slice, the zero-cost no-op path.
