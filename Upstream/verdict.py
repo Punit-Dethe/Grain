@@ -13,8 +13,8 @@ work applied by cherry-pick, or a note explaining a resolution.
 
 It exists because verdicts used to be hand-typed into data.json, a 27 KB
 generated file — so an edit and the next regeneration fought over the same
-file, and data.js kept a third, older answer. verdicts.json is the only
-tracker file a human owns; everything else is derived from it.
+file. verdicts.json is the only tracker file a human owns; everything else is
+derived from it.
 """
 
 import json
@@ -136,7 +136,7 @@ def main(argv):
     print(f"{row['sha'][:8]}  {row['commit']}")
     print(f"  -> {entry if entry else 'no override (derived from ancestry)'}")
 
-    # Rebuild so data.json / data.js / status.json can never lag the verdict.
+    # Rebuild so the ledger (data.json) can never lag the verdict.
     print()
     sync.refresh()
     return 0
