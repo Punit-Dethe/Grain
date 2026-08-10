@@ -92,6 +92,9 @@
   "4be7911d4de7935eeb2a6b817dc4b506ed7ca911": {
     "notes": "AudioPlayerGroup wrapper; kept Grain list markup and copyText prop"
   },
+  "4cd49950762b57e7e634f30d9a0cd6b0715fc4ed": {
+    "notes": "#1738 ported: settings.rs(inert)->filler_word_removal_enabled added to grain-core AppSettings+Default; text.rs(relocated) new remove_filler_words/normalize/OutputLanguageEvidence API adopted in grain_text.rs; transcription.rs(parallel) batch resolves output-language evidence in the with_engine_session decode, rolling/cloud key filler removal on selected_language via finalize_transcript."
+  },
   "5464bfaa0826ec367a052514d87575f92e0113fc": {
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
   },
@@ -132,6 +135,9 @@
   },
   "9b0d8a1120810dac1b139f480d37ba5f704e4856": {
     "notes": "Skipped (Grain manages custom catalog)."
+  },
+  "9bcb6d9d46c88517d2b5519d3a4f900ee3968c99": {
+    "notes": "n/a: #1700 fixes the upstream WEBVIEW overlay on Wayland (Tauri 2.11.5). Grain's overlay is the native grain-pill (not a webview) and overlay.rs is inert, so there is no pill analog to port."
   },
   "a201be9161cd3e62934dec98531204beb1a2a062": {
     "notes": "Bumped in `Cargo.toml`."
