@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use grain_core::DaemonEvent;
 use rolling_window::{
@@ -30,7 +30,7 @@ use rolling_window::{
 use tauri::AppHandle;
 use transcribe_cpp::Transcript;
 
-use crate::grain_audio_journal::PcmJournal;
+use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
 
@@ -168,6 +168,7 @@ pub struct RollingTranscriber {
 #[derive(Clone)]
 pub(crate) struct RollingSessionOutput {
     pub(crate) text: String,
+    pub(crate) error: Option<String>,
     journal: Arc<PcmJournal>,
 }
 
@@ -275,9 +276,10 @@ impl RollingTranscriber {
     /// "Immediately" unload once, now that no more chunks will decode.
     pub fn finish_session(&self) -> Option<RollingSessionOutput> {
         let session = self.active.lock().unwrap().take()?;
-        let text = session.finish();
+        let worker_output = session.finish();
         let output = RollingSessionOutput {
-            text,
+            text: worker_output.text,
+            error: worker_output.error,
             journal: session.journal.clone(),
         };
         self.tm.maybe_unload_immediately("rolling session");
@@ -338,7 +340,7 @@ struct RollingSession {
     cursor: Arc<Mutex<SessionCursor>>,
     journal: Arc<PcmJournal>,
     tx: SyncSender<Job>,
-    worker: Mutex<Option<JoinHandle<String>>>,
+    worker: Mutex<Option<JoinHandle<WorkerOutput>>>,
     cancelled: Arc<AtomicBool>,
     journal_failed: Arc<AtomicBool>,
     frames_fed: AtomicUsize,
@@ -352,6 +354,7 @@ enum Job {
 
 #[derive(Clone, Copy)]
 struct ChunkJob {
+    sequence: u64,
     start_frame: u64,
     end_frame: u64,
     start_sec: f64,
@@ -360,9 +363,10 @@ struct ChunkJob {
     boundary: rolling_window::CutKind,
 }
 
-impl From<&AudioChunk> for ChunkJob {
-    fn from(chunk: &AudioChunk) -> Self {
+impl ChunkJob {
+    fn from_chunk(sequence: u64, chunk: &AudioChunk) -> Self {
         Self {
+            sequence,
             start_frame: chunk.start_frame as u64,
             end_frame: chunk.end_frame as u64,
             start_sec: chunk.start_sec,
@@ -371,11 +375,49 @@ impl From<&AudioChunk> for ChunkJob {
             boundary: chunk.boundary,
         }
     }
-}
 
-impl ChunkJob {
     fn fresh_duration_sec(self) -> f64 {
         (self.end_sec - self.fresh_start_sec).max(0.0)
+    }
+}
+
+struct DecodedChunk {
+    text: String,
+    words: Vec<WordTiming>,
+}
+
+enum ChunkStatus {
+    Succeeded(DecodedChunk),
+    Failed(String),
+}
+
+struct ChunkRecord {
+    descriptor: ChunkJob,
+    status: ChunkStatus,
+    decode_duration: Duration,
+}
+
+struct WorkerOutput {
+    text: String,
+    error: Option<String>,
+    recovered_chunks: usize,
+}
+
+impl WorkerOutput {
+    fn success(text: String, recovered_chunks: usize) -> Self {
+        Self {
+            text,
+            error: None,
+            recovered_chunks,
+        }
+    }
+
+    fn failure(error: impl Into<String>) -> Self {
+        Self {
+            text: String::new(),
+            error: Some(error.into()),
+            recovered_chunks: 0,
+        }
     }
 }
 
@@ -388,8 +430,107 @@ const PREVIEW_MAX_TAIL_SEC: f64 = 20.0;
 /// Don't bother decoding a tail shorter than this (nothing useful to preview).
 const PREVIEW_MIN_TAIL_SEC: f64 = 0.8;
 /// Fixed descriptor capacity. Audio itself is already durable in the journal;
-/// overflow fails rolling closed and uses the journal-backed batch fallback.
+/// overflow fails rolling closed and surfaces an explicit session error.
 const MAX_PENDING_CHUNKS: usize = 8;
+
+enum ChunkDecodeError {
+    Journal(String),
+    Transcription(String),
+}
+
+fn decode_descriptor(
+    transcriber: &RollingTranscriber,
+    reader: &mut PcmJournalReader,
+    audio: &mut Vec<f32>,
+    chunk: ChunkJob,
+) -> Result<DecodedChunk, ChunkDecodeError> {
+    reader
+        .read_f32_range(chunk.start_frame, chunk.end_frame, audio)
+        .map_err(|error| ChunkDecodeError::Journal(error.to_string()))?;
+    if transcriber.conditioning.load(Ordering::Relaxed) {
+        crate::audio_toolkit::audio::normalize_gain(audio);
+    }
+    let transcript = transcriber
+        .tm
+        .transcribe_rolling_chunk(audio)
+        .map_err(|error| ChunkDecodeError::Transcription(error.to_string()))?;
+    let text = transcript.text.trim().to_string();
+    let mut words = map_word_timings(&transcript);
+    if words.is_empty() {
+        words = synthesize_word_timings(&text, chunk.end_sec - chunk.start_sec);
+    }
+    Ok(DecodedChunk { text, words })
+}
+
+fn add_decoded_chunk(
+    assembler: &mut rolling_window::TimelineAssembler,
+    descriptor: ChunkJob,
+    decoded: &DecodedChunk,
+) {
+    assembler.add_chunk(
+        descriptor.start_sec,
+        descriptor.fresh_start_sec,
+        &decoded.text,
+        (!decoded.words.is_empty()).then_some(decoded.words.as_slice()),
+        descriptor.boundary,
+    );
+}
+
+fn recover_failed_chunks<F>(
+    records: &mut [ChunkRecord],
+    mut decode: F,
+) -> Result<usize, Vec<String>>
+where
+    F: FnMut(ChunkJob) -> Result<DecodedChunk, String>,
+{
+    let mut recovered = 0usize;
+    let mut failures = Vec::new();
+    for record in records {
+        let initial_error = match &record.status {
+            ChunkStatus::Failed(error) => error.clone(),
+            ChunkStatus::Succeeded(_) => continue,
+        };
+        let started = Instant::now();
+        match decode(record.descriptor) {
+            Ok(decoded) => {
+                record.decode_duration += started.elapsed();
+                record.status = ChunkStatus::Succeeded(decoded);
+                recovered += 1;
+            }
+            Err(error) => {
+                record.decode_duration += started.elapsed();
+                failures.push(format!(
+                    "chunk {} [{:.1}..{:.1}]s: initial decode: {}; recovery: {}",
+                    record.descriptor.sequence,
+                    record.descriptor.fresh_start_sec,
+                    record.descriptor.end_sec,
+                    initial_error,
+                    error
+                ));
+                record.status = ChunkStatus::Failed(error);
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(recovered)
+    } else {
+        Err(failures)
+    }
+}
+
+fn assemble_records(records: &[ChunkRecord], overlap: f64) -> Result<String, String> {
+    let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(overlap);
+    for record in records {
+        let ChunkStatus::Succeeded(decoded) = &record.status else {
+            return Err(format!(
+                "chunk {} remained unresolved",
+                record.descriptor.sequence
+            ));
+        };
+        add_decoded_chunk(&mut assembler, record.descriptor, decoded);
+    }
+    Ok(assembler.text().to_string())
+}
 
 impl RollingSession {
     fn start(
@@ -418,13 +559,15 @@ impl RollingSession {
             // overlap dedup is positional; the fuzzy seam is the safety net for
             // timing jitter / re-worded overlaps.
             let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(overlap);
+            let mut records = Vec::<ChunkRecord>::new();
+            let mut has_failure_barrier = false;
             // LocalAgreement-2 state for the live preview: the previous tail
             // hypothesis, so only text two consecutive decodes agree on is shown.
             let mut prev_tail_hyp: Vec<String> = Vec::new();
             let mut audio = Vec::<f32>::new();
             loop {
                 if worker_cancelled.load(Ordering::Acquire) {
-                    break;
+                    return WorkerOutput::failure("rolling session cancelled");
                 }
                 // Preview ON polls so it can decode the tail between chunks;
                 // preview OFF blocks forever (zero overhead — no wakeups).
@@ -442,16 +585,20 @@ impl RollingSession {
                             );
                             continue;
                         }
-                        Err(RecvTimeoutError::Disconnected) => break,
+                        Err(RecvTimeoutError::Disconnected) => {
+                            return WorkerOutput::failure("rolling worker channel disconnected");
+                        }
                     }
                 } else {
                     match rx.recv() {
                         Ok(j) => j,
-                        Err(_) => break,
+                        Err(_) => {
+                            return WorkerOutput::failure("rolling worker channel disconnected");
+                        }
                     }
                 };
                 if worker_cancelled.load(Ordering::Acquire) {
-                    break;
+                    return WorkerOutput::failure("rolling session cancelled");
                 }
                 match job {
                     Job::Chunk(chunk) => {
@@ -462,74 +609,117 @@ impl RollingSession {
                         if chunk.fresh_duration_sec() <= 0.0 {
                             continue;
                         }
-                        if let Err(error) = journal_reader.read_f32_range(
-                            chunk.start_frame,
-                            chunk.end_frame,
-                            &mut audio,
-                        ) {
-                            log::error!("[GRAIN] rolling journal read failed: {error}");
-                            worker_journal_failed.store(true, Ordering::Release);
-                            break;
-                        }
                         // [GRAIN] boost-only AGC lifts quiet/laptop-mic speech to a
                         // good level for the model. Per-chunk is safe here — chunks
                         // are transcribed independently. The high-pass already ran
                         // on the shared frame.
-                        if transcriber.conditioning.load(Ordering::Relaxed) {
-                            crate::audio_toolkit::audio::normalize_gain(&mut audio);
-                        }
-                        let chunk_dur = chunk.end_sec - chunk.start_sec;
                         // The shared manager waits out an in-flight model load
                         // internally, so a chunk arriving mid-load is transcribed
                         // once weights are ready — never dropped.
-                        match transcriber.tm.transcribe_rolling_chunk(&audio) {
-                            Ok(transcript) => {
+                        let started = Instant::now();
+                        match decode_descriptor(
+                            &transcriber,
+                            &mut journal_reader,
+                            &mut audio,
+                            chunk,
+                        ) {
+                            Ok(decoded) => {
                                 if worker_cancelled.load(Ordering::Acquire) {
-                                    break;
-                                }
-                                let text = transcript.text.trim().to_string();
-                                // Prefer the model's real word timings; synthesize
-                                // evenly-spaced ones only if it returned none.
-                                let mut words = map_word_timings(&transcript);
-                                if words.is_empty() {
-                                    words = synthesize_word_timings(&text, chunk_dur);
+                                    return WorkerOutput::failure("rolling session cancelled");
                                 }
                                 log::info!(
-                                    "[GRAIN] chunk [{:.1}..{:.1}]s ({} words) -> {:?}",
+                                    "[GRAIN] chunk {} [{:.1}..{:.1}]s ({} words) -> {:?}",
+                                    chunk.sequence,
                                     chunk.fresh_start_sec,
                                     chunk.end_sec,
-                                    words.len(),
-                                    text
+                                    decoded.words.len(),
+                                    decoded.text
                                 );
-                                assembler.add_chunk(
-                                    chunk.start_sec,
-                                    chunk.fresh_start_sec,
-                                    &text,
-                                    if words.is_empty() {
-                                        None
-                                    } else {
-                                        Some(words.as_slice())
-                                    },
-                                    // Keep the acoustic cut reason attached to
-                                    // the chunk without inferring formatting.
-                                    chunk.boundary,
-                                );
-                                // Preview: the committed text just grew; show it
-                                // solid and clear the tentative tail (its audio is
-                                // now committed). Restart LocalAgreement for the
-                                // fresh unsent region.
-                                if let Some(sink) = &preview {
-                                    sink.emit(assembler.text(), "");
-                                    prev_tail_hyp.clear();
+                                if !has_failure_barrier {
+                                    add_decoded_chunk(&mut assembler, chunk, &decoded);
+                                    if let Some(sink) = &preview {
+                                        sink.emit(assembler.text(), "");
+                                        prev_tail_hyp.clear();
+                                    }
                                 }
+                                records.push(ChunkRecord {
+                                    descriptor: chunk,
+                                    status: ChunkStatus::Succeeded(decoded),
+                                    decode_duration: started.elapsed(),
+                                });
                             }
-                            Err(e) => log::warn!("[GRAIN] rolling chunk transcribe failed: {e}"),
+                            Err(ChunkDecodeError::Transcription(error)) => {
+                                log::warn!(
+                                    "[GRAIN] rolling chunk {} transcribe failed; deferring one journal retry: {}",
+                                    chunk.sequence,
+                                    error
+                                );
+                                has_failure_barrier = true;
+                                records.push(ChunkRecord {
+                                    descriptor: chunk,
+                                    status: ChunkStatus::Failed(error),
+                                    decode_duration: started.elapsed(),
+                                });
+                            }
+                            Err(ChunkDecodeError::Journal(error)) => {
+                                log::error!("[GRAIN] rolling journal read failed: {error}");
+                                worker_journal_failed.store(true, Ordering::Release);
+                                return WorkerOutput::failure(format!(
+                                    "Rolling transcription could not read audio chunk {}: {}",
+                                    chunk.sequence, error
+                                ));
+                            }
                         }
                     }
-                    Job::Finish => break,
+                    Job::Finish => {
+                        let recovered = if has_failure_barrier {
+                            match recover_failed_chunks(&mut records, |chunk| {
+                                match decode_descriptor(
+                                    &transcriber,
+                                    &mut journal_reader,
+                                    &mut audio,
+                                    chunk,
+                                ) {
+                                    Ok(decoded) => Ok(decoded),
+                                    Err(ChunkDecodeError::Transcription(error)) => Err(error),
+                                    Err(ChunkDecodeError::Journal(error)) => {
+                                        worker_journal_failed.store(true, Ordering::Release);
+                                        Err(format!("journal read failed: {error}"))
+                                    }
+                                }
+                            }) {
+                                Ok(count) => count,
+                                Err(failures) => {
+                                    return WorkerOutput::failure(format!(
+                                        "Rolling transcription could not recover {} audio range(s): {}",
+                                        failures.len(),
+                                        failures.join("; ")
+                                    ));
+                                }
+                            }
+                        } else {
+                            0
+                        };
+                        let text = if recovered > 0 {
+                            match assemble_records(&records, overlap) {
+                                Ok(text) => text,
+                                Err(error) => return WorkerOutput::failure(error),
+                            }
+                        } else {
+                            assembler.text().to_string()
+                        };
+                        let decode_time: Duration =
+                            records.iter().map(|record| record.decode_duration).sum();
+                        log::info!(
+                            "[GRAIN] rolling ledger finalized {} chunks in {:.2}s ({} recovered)",
+                            records.len(),
+                            decode_time.as_secs_f64(),
+                            recovered
+                        );
+                        return WorkerOutput::success(text, recovered);
+                    }
                 }
             }
-            assembler.text().to_string()
         });
         Ok(Self {
             session_id,
@@ -626,12 +816,15 @@ impl RollingSession {
                 self.request_cancel();
                 return;
             }
-            self.chunks_emitted.fetch_add(1, Ordering::Relaxed);
-            match self.tx.try_send(Job::Chunk(ChunkJob::from(&chunk))) {
+            let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
+            match self
+                .tx
+                .try_send(Job::Chunk(ChunkJob::from_chunk(sequence, &chunk)))
+            {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => {
                     log::error!(
-                        "[GRAIN] rolling descriptor queue reached its {}-chunk bound; using journal fallback",
+                        "[GRAIN] rolling descriptor queue reached its {}-chunk bound; failing session explicitly",
                         MAX_PENDING_CHUNKS
                     );
                     self.journal_failed.store(true, Ordering::Release);
@@ -646,36 +839,41 @@ impl RollingSession {
         }
     }
 
-    fn finish(&self) -> String {
+    fn finish(&self) -> WorkerOutput {
         if self.journal_failed.load(Ordering::Acquire) {
             self.request_cancel();
             self.join_cancelled();
-            return String::new();
+            return WorkerOutput::failure(
+                "Rolling transcription stopped because its bounded audio pipeline failed",
+            );
         }
         if let Some(tail) = self.cursor.lock().unwrap().stop() {
             if let Err(error) = self.journal.flush() {
                 log::error!("[GRAIN] rolling journal final flush failed: {error}");
                 self.request_cancel();
                 self.join_cancelled();
-                return String::new();
+                return WorkerOutput::failure(format!(
+                    "Rolling transcription could not flush its audio journal: {error}"
+                ));
             }
-            self.chunks_emitted.fetch_add(1, Ordering::Relaxed);
-            let _ = self.tx.send(Job::Chunk(ChunkJob::from(&tail)));
+            let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
+            let _ = self
+                .tx
+                .send(Job::Chunk(ChunkJob::from_chunk(sequence, &tail)));
         }
         let _ = self.tx.send(Job::Finish);
-        let text = self.join_worker();
-        if self.journal_failed.load(Ordering::Acquire) {
-            return String::new();
-        }
+        let output = self.join_worker();
         let frames = self.frames_fed.load(Ordering::Relaxed);
         log::info!(
-            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, final={:?}",
+            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, {} recovered, final={:?}, error={:?}",
             frames,
             frames as f64 / 16_000.0,
             self.chunks_emitted.load(Ordering::Relaxed),
-            text.trim()
+            output.recovered_chunks,
+            output.text.trim(),
+            output.error
         );
-        text
+        output
     }
 
     fn request_cancel(&self) {
@@ -694,16 +892,16 @@ impl RollingSession {
         );
     }
 
-    fn join_worker(&self) -> String {
+    fn join_worker(&self) -> WorkerOutput {
         match self.worker.lock().unwrap().take() {
             Some(worker) => match worker.join() {
-                Ok(text) => text,
+                Ok(output) => output,
                 Err(_) => {
                     log::error!("[GRAIN] rolling worker panicked");
-                    String::new()
+                    WorkerOutput::failure("Rolling transcription worker panicked")
                 }
             },
-            None => String::new(),
+            None => WorkerOutput::failure("Rolling transcription worker was unavailable"),
         }
     }
 }
@@ -711,6 +909,39 @@ impl RollingSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn job(sequence: u64, start_sec: f64, end_sec: f64) -> ChunkJob {
+        ChunkJob {
+            sequence,
+            start_frame: (start_sec * 16_000.0) as u64,
+            end_frame: (end_sec * 16_000.0) as u64,
+            start_sec,
+            fresh_start_sec: start_sec,
+            end_sec,
+            boundary: rolling_window::CutKind::HardCut,
+        }
+    }
+
+    fn succeeded(sequence: u64, text: &str) -> ChunkRecord {
+        let descriptor = job(sequence, (sequence - 1) as f64, sequence as f64);
+        ChunkRecord {
+            descriptor,
+            status: ChunkStatus::Succeeded(DecodedChunk {
+                text: text.to_string(),
+                words: Vec::new(),
+            }),
+            decode_duration: Duration::ZERO,
+        }
+    }
+
+    fn failed(sequence: u64, error: &str) -> ChunkRecord {
+        let descriptor = job(sequence, (sequence - 1) as f64, sequence as f64);
+        ChunkRecord {
+            descriptor,
+            status: ChunkStatus::Failed(error.to_string()),
+            decode_duration: Duration::ZERO,
+        }
+    }
 
     #[test]
     fn synthesize_word_timings_spans_chunk_duration() {
@@ -740,7 +971,7 @@ mod tests {
             let _ = rx.recv();
             assert!(worker_cancelled.load(Ordering::Acquire));
             exited.store(true, Ordering::Release);
-            String::new()
+            WorkerOutput::failure("cancelled")
         });
         let session = RollingSession {
             session_id: 42,
@@ -769,7 +1000,7 @@ mod tests {
         let journal = Arc::new(PcmJournal::create().unwrap());
         let cancelled = Arc::new(AtomicBool::new(false));
         let (tx, _rx) = mpsc::sync_channel::<Job>(1);
-        let worker = std::thread::spawn(String::new);
+        let worker = std::thread::spawn(|| WorkerOutput::success(String::new(), 0));
         let session = RollingSession {
             session_id: 43,
             cursor,
@@ -790,5 +1021,68 @@ mod tests {
         assert!(cancelled.load(Ordering::Acquire));
         assert_eq!(journal.frame_count(), (50 * 16_000) as u64);
         let _ = session.join_worker();
+    }
+
+    #[test]
+    fn successful_ledger_performs_no_recovery_decode() {
+        let mut records = vec![succeeded(1, "alpha"), succeeded(2, "beta")];
+        let mut calls = 0usize;
+
+        let recovered = recover_failed_chunks(&mut records, |_| {
+            calls += 1;
+            Err("must not run".to_string())
+        })
+        .unwrap();
+
+        assert_eq!(recovered, 0);
+        assert_eq!(calls, 0);
+        assert_eq!(assemble_records(&records, 2.0).unwrap(), "alpha beta");
+    }
+
+    #[test]
+    fn failed_middle_range_is_retried_once_and_reassembled_in_order() {
+        let mut records = vec![
+            succeeded(1, "alpha"),
+            failed(2, "temporary model error"),
+            succeeded(3, "gamma"),
+        ];
+        let mut retried = Vec::new();
+
+        let recovered = recover_failed_chunks(&mut records, |descriptor| {
+            retried.push((
+                descriptor.sequence,
+                descriptor.start_frame,
+                descriptor.end_frame,
+            ));
+            Ok(DecodedChunk {
+                text: "beta".to_string(),
+                words: Vec::new(),
+            })
+        })
+        .unwrap();
+
+        assert_eq!(recovered, 1);
+        assert_eq!(retried, vec![(2, 16_000, 32_000)]);
+        assert_eq!(assemble_records(&records, 2.0).unwrap(), "alpha beta gamma");
+    }
+
+    #[test]
+    fn unrecovered_final_range_returns_explicit_failure() {
+        let mut records = vec![succeeded(1, "alpha"), failed(2, "first failure")];
+        let mut attempts = 0usize;
+
+        let failures = recover_failed_chunks(&mut records, |descriptor| {
+            attempts += 1;
+            assert_eq!(descriptor.sequence, 2);
+            Err("retry failure".to_string())
+        })
+        .unwrap_err();
+
+        assert_eq!(attempts, 1);
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].contains("chunk 2"));
+        assert!(failures[0].contains("first failure"));
+        assert!(failures[0].contains("retry failure"));
+        assert!(assemble_records(&records, 2.0).is_err());
     }
 }
