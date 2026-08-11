@@ -379,8 +379,16 @@ impl ShortcutAction for RealtimeTranscribeAction {
         let rt = Arc::clone(&app.state::<Arc<crate::rolling::RollingTranscriber>>());
         let rm = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
 
-        // Load the rolling model in the background — ready before the first chunk;
-        // a failed/slow load is covered by the batch fallback on stop.
+        // Session id up front so the (optional) live-preview worker can
+        // tag its AsrStreamText events with the same id the RecordingStarted
+        // event below carries. Preview is opt-in; when off the worker takes the
+        // zero-overhead path and no preview events fire.
+        let preview = get_settings(app).rolling_live_preview;
+        let sid = next_session_id();
+        rt.start_session(app.clone(), sid, preview);
+        // Register the new session generation before the asynchronous model
+        // load begins. A cancelled predecessor can finish cleanup concurrently,
+        // but can no longer unload the model underneath this recording.
         {
             let app = app.clone();
             let rt = rt.clone();
@@ -390,13 +398,6 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 }
             });
         }
-        // Session id up front so the (optional) live-preview worker can
-        // tag its AsrStreamText events with the same id the RecordingStarted
-        // event below carries. Preview is opt-in; when off the worker takes the
-        // zero-overhead path and no preview events fire.
-        let preview = get_settings(app).rolling_live_preview;
-        let sid = next_session_id();
-        rt.start_session(app.clone(), sid, preview);
         {
             let rm = Arc::clone(&rm);
             std::thread::spawn(move || {

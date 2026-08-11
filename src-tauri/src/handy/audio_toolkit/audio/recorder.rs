@@ -620,7 +620,17 @@ pub fn is_no_input_device_error(error_message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_microphone_access_denied, is_no_input_device_error, AudioRecorder};
+    use super::{
+        is_microphone_access_denied, is_no_input_device_error, run_consumer, AudioChunk,
+        AudioRecorder, Cmd, VadPolicy,
+    };
+    use std::{
+        sync::{
+            atomic::{AtomicBool, AtomicUsize},
+            mpsc, Arc, Mutex,
+        },
+        time::{Duration, Instant},
+    };
 
     #[test]
     fn unopened_recorder_is_not_reported_dead() {
@@ -667,6 +677,57 @@ mod tests {
     fn does_not_match_other_errors_for_no_device() {
         assert!(!is_no_input_device_error("permission denied"));
         assert!(!is_no_input_device_error("device not found"));
+    }
+
+    #[test]
+    fn stop_drain_streams_every_finalized_sample_to_rolling() {
+        let (sample_tx, sample_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let streamed = Arc::new(Mutex::new(Vec::<f32>::new()));
+        let streamed_cb = streamed.clone();
+        let worker = std::thread::spawn(move || {
+            run_consumer(
+                16_000,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+                None,
+                Some(Arc::new(move |frame: &[f32], _speech| {
+                    streamed_cb.lock().unwrap().extend_from_slice(frame);
+                })),
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicBool::new(false)),
+                Instant::now(),
+            );
+        });
+
+        cmd_tx
+            .send(Cmd::Start(VadPolicy::Disabled, Instant::now()))
+            .unwrap();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
+
+        // Commands are handled before the first in-flight buffer. The second
+        // buffer is drained from the channel, and the non-frame-aligned total
+        // forces `FrameResampler::finish` to emit a final partial frame.
+        sample_tx
+            .send(AudioChunk::Samples(vec![0.25; 600]))
+            .unwrap();
+        sample_tx
+            .send(AudioChunk::Samples(vec![-0.125; 137]))
+            .unwrap();
+        sample_tx.send(AudioChunk::EndOfStream).unwrap();
+
+        let batch = reply_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        drop(sample_tx);
+        drop(cmd_tx);
+        worker.join().unwrap();
+
+        let rolling = streamed.lock().unwrap().clone();
+        assert!(!batch.is_empty());
+        assert_eq!(rolling, batch);
     }
 }
 
@@ -812,8 +873,9 @@ fn run_consumer(
 
                     // The chunk in hand arrived before the stop; it belongs to
                     // the recording, so feed it ahead of the drain below.
-                    // [GRAIN] Like the drain path: batch buffer only, no
-                    // rolling callback — the session is over.
+                    // [GRAIN] Stop does not end rolling delivery. The pending
+                    // device buffer still belongs to this recording and must
+                    // reach the rolling cursor before its later stop-flush.
                     if let Some(AudioChunk::Samples(raw)) = pending.take() {
                         frame_resampler.push(&raw, &mut |frame: &[f32]| {
                             let f: &[f32] = if conditioning.load(Ordering::Relaxed) {
@@ -824,7 +886,7 @@ fn run_consumer(
                             } else {
                                 frame
                             };
-                            let _ = handle_frame(
+                            let speech = handle_frame(
                                 f,
                                 true,
                                 vad_policy,
@@ -832,6 +894,9 @@ fn run_consumer(
                                 &audio_cb,
                                 &mut processed_samples,
                             );
+                            if let Some(cb) = &sample_cb {
+                                cb(f, speech);
+                            }
                         });
                     }
 
@@ -851,7 +916,7 @@ fn run_consumer(
                                     } else {
                                         frame
                                     };
-                                    let _ = handle_frame(
+                                    let speech = handle_frame(
                                         f,
                                         true,
                                         vad_policy,
@@ -859,6 +924,12 @@ fn run_consumer(
                                         &audio_cb,
                                         &mut processed_samples,
                                     );
+                                    // [GRAIN] Keep rolling aligned with the same
+                                    // finalized resampled stream during the
+                                    // device-channel drain.
+                                    if let Some(cb) = &sample_cb {
+                                        cb(f, speech);
+                                    }
                                 });
                             }
                             Ok(AudioChunk::EndOfStream) => break,
@@ -879,7 +950,7 @@ fn run_consumer(
                         } else {
                             frame
                         };
-                        let _ = handle_frame(
+                        let speech = handle_frame(
                             f,
                             true,
                             vad_policy,
@@ -887,6 +958,12 @@ fn run_consumer(
                             &audio_cb,
                             &mut processed_samples,
                         );
+                        // [GRAIN] The resampler can retain a partial final frame;
+                        // deliver it before `stop_recording` replies and the
+                        // caller flushes the rolling cursor.
+                        if let Some(cb) = &sample_cb {
+                            cb(f, speech);
+                        }
                     });
 
                     // [GRAIN] boost-only noise-gated AGC over the whole capture —

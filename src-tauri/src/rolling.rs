@@ -17,7 +17,7 @@
 //! transcript in the shortcut action, and triggers a single idle-unload at
 //! session end.
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -152,6 +152,9 @@ pub struct RollingTranscriber {
     tm: Arc<TranscriptionManager>,
     /// The current live recording's rolling session, if any.
     active: Mutex<Option<Arc<RollingSession>>>,
+    /// Monotonic session identity used to prevent a cancelled session's delayed
+    /// cleanup from unloading the model underneath a newer recording.
+    active_generation: AtomicU64,
     /// [GRAIN] Mirror of `settings.audio_conditioning`, refreshed on each
     /// `ensure_loaded`. When set, each rolling chunk gets boost-only AGC before
     /// transcription — the high-pass already ran upstream on the shared frame.
@@ -166,6 +169,7 @@ impl RollingTranscriber {
         Self {
             tm,
             active: Mutex::new(None),
+            active_generation: AtomicU64::new(0),
             conditioning: AtomicBool::new(false),
             scrap_that: AtomicBool::new(false),
         }
@@ -202,8 +206,16 @@ impl RollingTranscriber {
             session_id,
             scrap_that: self.scrap_that.load(Ordering::Relaxed),
         });
-        let session = Arc::new(RollingSession::start(self.clone(), sink));
-        *self.active.lock().unwrap() = Some(session);
+        let session = Arc::new(RollingSession::start(self.clone(), sink, session_id));
+        let previous = {
+            let mut active = self.active.lock().unwrap();
+            self.active_generation.store(session_id, Ordering::Release);
+            active.replace(session)
+        };
+        if let Some(previous) = previous {
+            log::warn!("[GRAIN] replacing an unfinished rolling session");
+            self.retire_cancelled_session(previous, false);
+        }
         log::info!(
             "[GRAIN] rolling session started (shared engine, preview={})",
             preview
@@ -230,11 +242,44 @@ impl RollingTranscriber {
     }
 
     /// Abort the live session without producing a transcript (cancel).
-    pub fn cancel_session(&self) {
-        if self.active.lock().unwrap().take().is_some() {
-            self.tm
-                .maybe_unload_immediately("cancelled rolling session");
+    pub fn cancel_session(self: &Arc<Self>) {
+        if let Some(session) = self.active.lock().unwrap().take() {
+            self.retire_cancelled_session(session, true);
         }
+    }
+
+    /// Cancel immediately from the caller's perspective, then join the single
+    /// in-flight decoder on a short-lived cleanup thread. The decoder backend
+    /// has no preemption API, so an already-running call must return naturally;
+    /// queued chunks are skipped as soon as it does.
+    fn retire_cancelled_session(
+        self: &Arc<Self>,
+        session: Arc<RollingSession>,
+        unload_when_current: bool,
+    ) {
+        let session_id = session.session_id;
+        session.request_cancel();
+        let transcriber = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("grain-rolling-cancel".into())
+            .spawn(move || {
+                session.join_cancelled();
+                if !unload_when_current {
+                    return;
+                }
+                let Some(transcriber) = transcriber.upgrade() else {
+                    return;
+                };
+                let still_current = transcriber.active_generation.load(Ordering::Acquire)
+                    == session_id
+                    && transcriber.active.lock().unwrap().is_none();
+                if still_current {
+                    transcriber
+                        .tm
+                        .maybe_unload_immediately("cancelled rolling session");
+                }
+            })
+            .expect("failed to spawn rolling cancellation cleanup");
     }
 }
 
@@ -244,11 +289,13 @@ impl RollingTranscriber {
 /// transcript. No partial text is ever surfaced — only the final string at
 /// [`finish`](RollingSession::finish).
 struct RollingSession {
+    session_id: u64,
     // Shared with the worker so the live preview can peek the unsent tail
     // without stealing it from the feed path.
     cursor: Arc<Mutex<SessionCursor>>,
     tx: Sender<Job>,
     worker: Mutex<Option<JoinHandle<String>>>,
+    cancelled: Arc<AtomicBool>,
     frames_fed: AtomicUsize,
     chunks_emitted: AtomicUsize,
 }
@@ -268,7 +315,11 @@ const PREVIEW_MAX_TAIL_SEC: f64 = 20.0;
 const PREVIEW_MIN_TAIL_SEC: f64 = 0.8;
 
 impl RollingSession {
-    fn start(transcriber: Arc<RollingTranscriber>, preview: Option<PreviewSink>) -> Self {
+    fn start(
+        transcriber: Arc<RollingTranscriber>,
+        preview: Option<PreviewSink>,
+        session_id: u64,
+    ) -> Self {
         // [GRAIN] The rolling-window geometry is fixed by the research-tuned,
         // model-agnostic defaults in `RollingWindowConfig::default()` (see
         // crates/rolling-window/src/cursor.rs). There is deliberately NO user
@@ -277,6 +328,8 @@ impl RollingSession {
         let overlap = cfg.overlap_seconds;
         let cursor = Arc::new(Mutex::new(SessionCursor::new(cfg)));
         let worker_cursor = cursor.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
         let (tx, rx) = mpsc::channel::<Job>();
         let worker = std::thread::spawn(move || {
             // Time-based assembler with the fuzzy seam pass enabled (see
@@ -288,6 +341,9 @@ impl RollingSession {
             // hypothesis, so only text two consecutive decodes agree on is shown.
             let mut prev_tail_hyp: Vec<String> = Vec::new();
             loop {
+                if worker_cancelled.load(Ordering::Acquire) {
+                    break;
+                }
                 // Preview ON polls so it can decode the tail between chunks;
                 // preview OFF blocks forever (zero overhead — no wakeups).
                 let job = if preview.is_some() {
@@ -300,6 +356,7 @@ impl RollingSession {
                                 &assembler,
                                 preview.as_ref().unwrap(),
                                 &mut prev_tail_hyp,
+                                &worker_cancelled,
                             );
                             continue;
                         }
@@ -311,6 +368,9 @@ impl RollingSession {
                         Err(_) => break,
                     }
                 };
+                if worker_cancelled.load(Ordering::Acquire) {
+                    break;
+                }
                 match job {
                     Job::Chunk(chunk) => {
                         // A chunk with no fresh audio past the cursor carries only
@@ -334,6 +394,9 @@ impl RollingSession {
                         // once weights are ready — never dropped.
                         match transcriber.tm.transcribe_rolling_chunk(&audio) {
                             Ok(transcript) => {
+                                if worker_cancelled.load(Ordering::Acquire) {
+                                    break;
+                                }
                                 let text = transcript.text.trim().to_string();
                                 // Prefer the model's real word timings; synthesize
                                 // evenly-spaced ones only if it returned none.
@@ -379,9 +442,11 @@ impl RollingSession {
             assembler.text().to_string()
         });
         Self {
+            session_id,
             cursor,
             tx,
             worker: Mutex::new(Some(worker)),
+            cancelled,
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         }
@@ -399,6 +464,7 @@ impl RollingSession {
         assembler: &rolling_window::TimelineAssembler,
         sink: &PreviewSink,
         prev_tail_hyp: &mut Vec<String>,
+        cancelled: &AtomicBool,
     ) {
         let (tail, _start_sec) = cursor
             .lock()
@@ -415,6 +481,9 @@ impl RollingSession {
             Ok(t) => t.text.split_whitespace().map(String::from).collect(),
             Err(_) => return,
         };
+        if cancelled.load(Ordering::Acquire) {
+            return;
+        }
 
         // LocalAgreement-2: surface only the prefix two consecutive decodes agree
         // on, then remember this hypothesis for the next comparison.
@@ -432,7 +501,7 @@ impl RollingSession {
         let agreed_refs: Vec<&str> = agreed.iter().map(String::as_str).collect();
         let drop = seam_overlap_len(ctail, &agreed_refs).min(agreed_refs.len());
         let tentative = agreed_refs[drop..].join(" ");
-        if !tentative.is_empty() {
+        if !tentative.is_empty() && !cancelled.load(Ordering::Acquire) {
             sink.emit(committed, &tentative);
         }
     }
@@ -461,10 +530,7 @@ impl RollingSession {
             let _ = self.tx.send(Job::Chunk(tail));
         }
         let _ = self.tx.send(Job::Finish);
-        let text = match self.worker.lock().unwrap().take() {
-            Some(worker) => worker.join().unwrap_or_default(),
-            None => String::new(),
-        };
+        let text = self.join_worker();
         let frames = self.frames_fed.load(Ordering::Relaxed);
         log::info!(
             "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, final={:?}",
@@ -474,6 +540,35 @@ impl RollingSession {
             text.trim()
         );
         text
+    }
+
+    fn request_cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        // Wake a preview-off worker blocked on `recv`. Queued chunks do not run:
+        // the cancellation flag is checked before and after every receive.
+        let _ = self.tx.send(Job::Finish);
+    }
+
+    fn join_cancelled(&self) {
+        let _ = self.join_worker();
+        log::info!(
+            "[GRAIN] rolling session {} cancelled after {} frames; worker joined",
+            self.session_id,
+            self.frames_fed.load(Ordering::Relaxed)
+        );
+    }
+
+    fn join_worker(&self) -> String {
+        match self.worker.lock().unwrap().take() {
+            Some(worker) => match worker.join() {
+                Ok(text) => text,
+                Err(_) => {
+                    log::error!("[GRAIN] rolling worker panicked");
+                    String::new()
+                }
+            },
+            None => String::new(),
+        }
     }
 }
 
@@ -493,5 +588,38 @@ mod tests {
     fn synthesize_word_timings_empty_is_empty() {
         assert!(synthesize_word_timings("", 4.0).is_empty());
         assert!(synthesize_word_timings("a b", 0.0).is_empty());
+    }
+
+    #[test]
+    fn cancellation_wakes_and_joins_an_idle_worker() {
+        let cursor = Arc::new(Mutex::new(SessionCursor::new(
+            RollingWindowConfig::default(),
+        )));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        let exited = worker_exited.clone();
+        let (tx, rx) = mpsc::channel::<Job>();
+        let worker = std::thread::spawn(move || {
+            let _ = rx.recv();
+            assert!(worker_cancelled.load(Ordering::Acquire));
+            exited.store(true, Ordering::Release);
+            String::new()
+        });
+        let session = RollingSession {
+            session_id: 42,
+            cursor,
+            tx,
+            worker: Mutex::new(Some(worker)),
+            cancelled,
+            frames_fed: AtomicUsize::new(0),
+            chunks_emitted: AtomicUsize::new(0),
+        };
+
+        session.request_cancel();
+        session.join_cancelled();
+
+        assert!(worker_exited.load(Ordering::Acquire));
+        assert!(session.worker.lock().unwrap().is_none());
     }
 }
