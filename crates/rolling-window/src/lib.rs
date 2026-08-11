@@ -4,9 +4,6 @@
 //! - [`cursor`]    ← `chunked_audio.py`     (absolute-frame session cursor)
 //! - [`assembler`] ← `transcript_merger.py` (timeline-tagged dedup assembler)
 //!
-//! [`rules`] is Grain-only: a registry of deterministic repairs for the
-//! mechanical text defects that only chunked transcription produces.
-//!
 //! This crate has **zero** dependency on Tauri, the daemon, audio backends, or
 //! any ASR engine. It transforms audio frames + model outputs into assembled
 //! text.
@@ -14,10 +11,9 @@
 pub mod assembler;
 pub mod cursor;
 pub mod merge;
-pub mod rules;
-pub mod seam;
+pub mod normalize;
 
 pub use assembler::{merge_transcript, TimelineAssembler, WordTiming};
 pub use cursor::{AudioChunk, CutKind, RollingWindowConfig, SessionCursor};
 pub use merge::seam_overlap_len;
-pub use rules::{Rule, RULES};
+pub use normalize::{canonicalize_text, canonicalize_token, comparison_key};

@@ -41,21 +41,11 @@ impl WordTiming {
 /// Cover ~10s of potential overlap at 3 words/sec.
 const OVERLAP_SEARCH_WORDS: usize = 30;
 
-/// Punctuation stripped from word ends before comparison — matches Python's
-/// `string.punctuation`.
-const PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-
-/// Strip leading/trailing punctuation and lowercase a single word for comparison.
-fn normalize(word: &str) -> String {
-    word.trim_matches(|c| PUNCTUATION.contains(c))
-        .to_lowercase()
-}
-
 /// Append `new_segment` to `existing`, deduplicating overlap words.
 ///
-/// Comparison is case-insensitive and punctuation-stripped so that `Hello,` and
-/// `hello` are treated as the same boundary word. The original casing from
-/// `existing` is preserved.
+/// Inputs are expected to use the rolling-window canonical text contract. The
+/// comparison key is still defensive so differently formatted model output does
+/// not create a duplicate at the boundary.
 pub fn merge_transcript(existing: &str, new_segment: &str) -> String {
     let new_segment = new_segment.trim();
     if new_segment.is_empty() {
@@ -77,8 +67,8 @@ pub fn merge_transcript(existing: &str, new_segment: &str) -> String {
     let tail_start = existing_words.len().saturating_sub(OVERLAP_SEARCH_WORDS);
     let tail_words = &existing_words[tail_start..];
 
-    let tail_norm: Vec<String> = tail_words.iter().map(|w| normalize(w)).collect();
-    let new_norm: Vec<String> = new_words.iter().map(|w| normalize(w)).collect();
+    let tail_norm: Vec<String> = tail_words.iter().map(|w| comparison_key(w)).collect();
+    let new_norm: Vec<String> = new_words.iter().map(|w| comparison_key(w)).collect();
 
     let search_limit = tail_norm.len().min(new_norm.len());
 
@@ -112,10 +102,9 @@ const BOUNDARY_TOLERANCE_SEC: f64 = 0.25;
 /// that the tolerance window let through twice.
 const SEAM_SEARCH_WORDS: usize = 3;
 
-use crate::cursor::CutKind;
 use crate::merge::seam_overlap_len;
-use crate::rules;
-use crate::seam;
+use crate::normalize::{canonicalize_text, canonicalize_token, comparison_key};
+use crate::CutKind;
 
 /// Builds the session transcript from time-tagged chunk results.
 ///
@@ -126,13 +115,6 @@ use crate::seam;
 /// region (with a small tolerance for model timing jitter), so overlap dedup
 /// never depends on the model transcribing the same audio the same way twice.
 ///
-/// On top of dedup, each seam runs right-context revision (see `seam.rs`): the
-/// overlap words this chunk re-heard — and which dedup discards — are the only
-/// witness that heard the boundary WITH right context, so their punctuation
-/// retro-corrects the committed tail (spurious end-of-window periods, missed
-/// commas), modulated by the acoustic [`CutKind`] of the cut that formed the
-/// seam.
-///
 /// Falls back to [`merge_transcript`] for chunks without word timings.
 #[derive(Default)]
 pub struct TimelineAssembler {
@@ -142,10 +124,6 @@ pub struct TimelineAssembler {
     /// that synthesized (approximate) timings and exact text matching miss. `None`
     /// (default) keeps the exact behavior the ported Python tests pin.
     fuzzy_seam_window: Option<f64>,
-    /// The [`CutKind`] that ended the PREVIOUS chunk — i.e. the acoustic truth
-    /// of the seam the NEXT `add_chunk` call will cross. `None` before the
-    /// first chunk.
-    prev_seam: Option<CutKind>,
 }
 
 impl TimelineAssembler {
@@ -168,7 +146,6 @@ impl TimelineAssembler {
 
     pub fn reset(&mut self) {
         self.text.clear();
-        self.prev_seam = None;
     }
 
     /// Merge one chunk's transcription and return the updated transcript.
@@ -180,25 +157,31 @@ impl TimelineAssembler {
     /// * `text` — the chunk's plain transcript (used for the fallback path).
     /// * `words` — word timings relative to the chunk start, when available.
     /// * `boundary` — why this chunk's END was cut ([`AudioChunk::boundary`]);
-    ///   it becomes the acoustic prior for the NEXT seam's revision.
+    ///   retained as metadata for callers and future boundary policies.
     pub fn add_chunk(
         &mut self,
         chunk_start_sec: f64,
         fresh_start_sec: f64,
         text: &str,
         words: Option<&[WordTiming]>,
-        boundary: CutKind,
+        _boundary: CutKind,
     ) -> &str {
-        let words = match words {
-            Some(w) if !w.is_empty() => w,
+        let canonical_words: Vec<WordTiming> = words
+            .unwrap_or_default()
+            .iter()
+            .flat_map(|word| {
+                canonicalize_token(&word.word)
+                    .into_iter()
+                    .map(|surface| WordTiming::new(surface, word.start, word.end))
+            })
+            .collect();
+        let words = match canonical_words.as_slice() {
+            w if !w.is_empty() => w,
             _ => {
-                if !text.trim().is_empty() {
-                    // Repair before merging: a glued `one.Two` is a single token
-                    // to the overlap matcher, so splitting it first is what lets
-                    // dedup see the boundary word at all.
-                    self.text = merge_transcript(&self.text, &rules::apply(text));
+                let text = canonicalize_text(text);
+                if !text.is_empty() {
+                    self.text = merge_transcript(&self.text, &text);
                 }
-                self.prev_seam = Some(boundary);
                 return &self.text;
             }
         };
@@ -218,20 +201,15 @@ impl TimelineAssembler {
         }
 
         let cutoff = fresh_start_sec - BOUNDARY_TOLERANCE_SEC;
-        // Partition into accepted (fresh) words and the overlap RE-HEARING —
-        // this chunk's context-informed second pass over audio the previous
-        // chunk transcribed blind. Dedup discards it; seam revision below
-        // harvests its punctuation first.
+        // Keep the fresh region plus the small timing-jitter allowance. The
+        // larger overlap re-hearing is discarded by the timeline boundary.
         let mut accepted: Vec<&WordTiming> = Vec::new();
-        let mut rehearing: Vec<&str> = Vec::new();
         for w in words {
             if w.word.is_empty() {
                 continue;
             }
             if (chunk_start_sec + w.midpoint()) >= cutoff {
                 accepted.push(w);
-            } else {
-                rehearing.push(w.word.as_str());
             }
         }
 
@@ -256,13 +234,13 @@ impl TimelineAssembler {
             if extends_past {
                 continue;
             }
-            let head_norm: Vec<String> = head.iter().map(|w| normalize(&w.word)).collect();
+            let head_norm: Vec<String> = head.iter().map(|w| comparison_key(&w.word)).collect();
             let tail_norm: Vec<String> = existing_tail[existing_tail.len() - n..]
                 .iter()
-                .map(|w| normalize(w))
+                .map(|w| comparison_key(w))
                 .collect();
             if head_norm == tail_norm {
-                rehearing.extend(accepted.drain(..n).map(|w| w.word.as_str()));
+                accepted.drain(..n);
                 break;
             }
         }
@@ -285,71 +263,25 @@ impl TimelineAssembler {
                         accepted[..seam_n].iter().map(|w| w.word.as_str()).collect();
                     let drop = seam_overlap_len(tail, &head);
                     if drop > 0 {
-                        rehearing.extend(accepted.drain(..drop).map(|w| w.word.as_str()));
+                        accepted.drain(..drop);
                     }
                 }
             }
         }
 
-        // Right-context seam revision: retro-correct the committed tail's
-        // punctuation using the re-hearing as witness and the acoustic cut
-        // kind of the previous chunk's end as prior. Pure string ops over a
-        // handful of words — compute is flat.
-        if let Some(seam_kind) = self.prev_seam {
-            let first_fresh = accepted.first().map(|w| w.word.as_str());
-            seam::revise_seam(&mut self.text, seam_kind, &rehearing, first_fresh);
-        }
-
-        // Seam casing harmony for the first appended word: capitalize after
-        // sentence-final punctuation; down-case a chunk-start sentence-capital
-        // artifact (only when the word sat at the chunk's physical start, where
-        // the model had no left context — deeper words carry deliberate casing).
-        let first_override: Option<String> = accepted.first().and_then(|first| {
-            if seam::ends_terminal(&self.text) {
-                Some(seam::capitalize_first(&first.word))
-            } else if !self.text.is_empty() {
-                let fresh_idx = words
-                    .iter()
-                    .position(|w| std::ptr::eq(w, *first))
-                    .unwrap_or(usize::MAX);
-                if fresh_idx <= 1 && seam::safe_to_lowercase(&first.word) {
-                    Some(seam::lowercase_first(&first.word))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
-
         if !accepted.is_empty() {
-            // Join accepted words, gluing punctuation-only tokens (some models
-            // emit `.` / `,` as standalone words) onto the previous word so the
-            // transcript never reads "word ." with a stray space.
-            let mut addition = String::new();
-            for (i, w) in accepted.iter().enumerate() {
-                let token: &str = match (i, &first_override) {
-                    (0, Some(o)) => o.as_str(),
-                    _ => w.word.as_str(),
-                };
-                if !addition.is_empty() && !seam::is_punct_only(token) {
-                    addition.push(' ');
-                }
-                addition.push_str(token);
-            }
-            // Rule pass over the new text only. Everything already committed went
-            // through this same pass when it was an addition, so a whole-text
-            // sweep every chunk would be quadratic for no gain.
-            rules::apply_in_place(&mut addition);
-            self.text = if self.text.is_empty() {
-                addition
-            } else if seam::is_punct_only(&addition) {
-                format!("{}{}", self.text, addition)
+            let addition = accepted
+                .iter()
+                .map(|word| word.word.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            if self.text.is_empty() {
+                self.text = addition;
             } else {
-                format!("{} {}", self.text, addition)
-            };
+                self.text.push(' ');
+                self.text.push_str(&addition);
+            }
         }
-        self.prev_seam = Some(boundary);
         &self.text
     }
 }
@@ -463,8 +395,8 @@ mod tests {
         out
     }
 
-    /// Existing behavior tests use a HardCut seam (the neutral case for
-    /// punctuation-free fixtures — revision is a no-op when both passes agree).
+    /// Most fixtures use a hard-cut boundary; canonical output does not infer
+    /// formatting from the cut kind.
     const HC: CutKind = CutKind::HardCut;
 
     #[test]
@@ -583,7 +515,7 @@ mod tests {
         let text = a
             .add_chunk(8.0, 10.0, "N three Mover are sophisticated", Some(&c2), HC)
             .to_string();
-        assert_eq!(text, "ship the N3 Mover are sophisticated");
+        assert_eq!(text, "ship the n3 mover are sophisticated");
     }
 
     #[test]
@@ -636,13 +568,11 @@ mod tests {
         assert_eq!(a.text(), "");
     }
 
-    // -- right-context seam revision (integration through add_chunk) -------
+    // -- canonical formatting contract (integration through add_chunk) -----
 
     #[test]
-    fn seam_revision_strips_spurious_hard_cut_period() {
-        // Chunk 1 ended BLIND at a hard cut and stamped "store." — the classic
-        // end-of-window artifact. Chunk 2 re-hears "to the store" with right
-        // context (bare) and continues lowercase → the period must go.
+    fn hard_cut_output_is_canonical_plain_text() {
+        // Formatting from either chunk is removed before assembly.
         let mut a = TimelineAssembler::new();
         a.add_chunk(
             0.0,
@@ -662,11 +592,11 @@ mod tests {
         let text = a
             .add_chunk(8.0, 10.0, "to the store and bought milk", Some(&c2), HC)
             .to_string();
-        assert_eq!(text, "I went to the store and bought milk");
+        assert_eq!(text, "i went to the store and bought milk");
     }
 
     #[test]
-    fn seam_revision_adopts_witness_comma() {
+    fn overlap_witness_punctuation_is_not_preserved() {
         let mut a = TimelineAssembler::new();
         a.add_chunk(
             0.0,
@@ -676,23 +606,21 @@ mod tests {
             CutKind::HardCut,
         );
         let c2 = vec![
-            WordTiming::new("the", 1.4, 1.6),     // abs mid 9.5 → rehearing
-            WordTiming::new("boxes,", 1.6, 1.8),  // abs mid 9.7 → rehearing, has comma
-            WordTiming::new("then", 2.0, 2.2),    // fresh
+            WordTiming::new("the", 1.4, 1.6),    // abs mid 9.5 → rehearing
+            WordTiming::new("boxes,", 1.6, 1.8), // abs mid 9.7 → rehearing, has comma
+            WordTiming::new("then", 2.0, 2.2),   // fresh
             WordTiming::new("we", 2.3, 2.5),
             WordTiming::new("left", 2.6, 2.8),
         ];
         let text = a
             .add_chunk(8.0, 10.0, "the boxes, then we left", Some(&c2), HC)
             .to_string();
-        assert_eq!(text, "we packed the boxes, then we left");
+        assert_eq!(text, "we packed the boxes then we left");
     }
 
     #[test]
-    fn seam_revision_keeps_period_after_real_pause_and_capitalizes() {
-        // Silence seam: a genuine >=0.7s pause ended chunk 1 — the period is
-        // plausible and a bare witness must not erase it. The next word gets a
-        // sentence capital for consistency.
+    fn silence_cut_does_not_infer_formatting() {
+        // Even a real pause does not reintroduce punctuation or capitalization.
         let mut a = TimelineAssembler::new();
         a.add_chunk(
             0.0,
@@ -711,13 +639,12 @@ mod tests {
         let text = a
             .add_chunk(8.0, 10.0, "ship it also we need", Some(&c2), HC)
             .to_string();
-        assert_eq!(text, "we should ship it. Also we need");
+        assert_eq!(text, "we should ship it also we need");
     }
 
     #[test]
-    fn seam_revision_adds_period_when_pause_and_capital_agree() {
-        // Both passes left the seam bare, but the acoustic pause AND the
-        // model's sentence capital on the continuation vote the same way.
+    fn model_capital_after_pause_is_normalized() {
+        // Model casing is normalized independently of the boundary reason.
         let mut a = TimelineAssembler::new();
         a.add_chunk(
             0.0,
@@ -736,11 +663,11 @@ mod tests {
         let text = a
             .add_chunk(8.0, 10.0, "ship it Also we need", Some(&c2), HC)
             .to_string();
-        assert_eq!(text, "we should ship it. Also we need");
+        assert_eq!(text, "we should ship it also we need");
     }
 
     #[test]
-    fn punct_only_tokens_glue_to_previous_word() {
+    fn punctuation_only_tokens_are_dropped() {
         // Some models emit punctuation as standalone word rows — they must not
         // produce "milk ." with a stray space.
         let mut a = TimelineAssembler::new();
@@ -749,7 +676,9 @@ mod tests {
             WordTiming::new("milk", 0.4, 0.6),
             WordTiming::new(".", 0.6, 0.7),
         ];
-        let text = a.add_chunk(0.0, 0.0, "bought milk .", Some(&c1), HC).to_string();
-        assert_eq!(text, "bought milk.");
+        let text = a
+            .add_chunk(0.0, 0.0, "bought milk .", Some(&c1), HC)
+            .to_string();
+        assert_eq!(text, "bought milk");
     }
 }

@@ -1405,13 +1405,10 @@ impl TranscriptionManager {
     /// assembled transcript at session end, so this path deliberately skips
     /// per-chunk post-processing AND the idle/immediate unload (the session is
     /// still live). Word-level timestamps are requested so the timeline
-    /// assembler can dedup overlaps by position; `context_prompt` (the committed
-    /// tail) conditions whisper-family models across the chunk seam.
-    pub fn transcribe_rolling_chunk(
-        &self,
-        audio: &[f32],
-        context_prompt: Option<&str>,
-    ) -> Result<Transcript> {
+    /// assembler can dedup overlaps by position. Rolling deliberately sends no
+    /// previous-transcript prompt, keeping chunk policy model-agnostic and
+    /// preventing one bad hypothesis from biasing later windows.
+    pub fn transcribe_rolling_chunk(&self, audio: &[f32]) -> Result<Transcript> {
         if audio.is_empty() {
             return Ok(Transcript::default());
         }
@@ -1430,33 +1427,9 @@ impl TranscriptionManager {
             let model_supports_translate = caps.supports_translate;
             let model_languages = caps.languages;
 
-            // Whisper-family models accept a decode prompt; feed custom words +
-            // the committed tail so spelling/casing stay consistent across the
-            // seam. Gate on the ARCH, not Feature::InitialPrompt: non-whisper
-            // arches (e.g. Voxtral Small) can advertise the feature yet reject
-            // the whisper-kind extension with INVALID_ARG (upstream #1601/#1603).
-            // Getting this wrong fails BOTH attempts below — the retry only
-            // changes timestamps, so a rejected extension kills every chunk.
+            // Architecture remains relevant only to the timestamp fallback
+            // below. Rolling never supplies a model-family prompt.
             let model_is_whisper = model.arch() == "whisper";
-            let family = if !model_is_whisper {
-                None
-            } else {
-                let mut prompt = settings.custom_words.join(", ");
-                if let Some(ctx) = context_prompt.filter(|c| !c.trim().is_empty()) {
-                    if !prompt.is_empty() {
-                        prompt.push(' ');
-                    }
-                    prompt.push_str(ctx.trim());
-                }
-                if prompt.is_empty() {
-                    None
-                } else {
-                    Some(RunExtension::Whisper(WhisperRunOptions {
-                        initial_prompt: Some(prompt),
-                        ..Default::default()
-                    }))
-                }
-            };
 
             let run_plan = transcribe_cpp_run_plan(
                 settings.translate_to_english,
@@ -1477,7 +1450,7 @@ impl TranscriptionManager {
                 language: run_plan.language,
                 target_language: run_plan.target_language,
                 timestamps: TimestampKind::Word,
-                family,
+                family: None,
                 ..Default::default()
             };
 

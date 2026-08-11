@@ -2,8 +2,7 @@
 //! single-provider path upstream keeps in `actions.rs` (Handy Isolation phase 6).
 //!
 //! Grain's version differs structurally, not cosmetically: it layers context
-//! awareness / spoken Prompt Record instructions / the rolling seam prompt onto
-//! the base prompt, can fan out across providers via
+//! awareness and spoken Prompt Record instructions onto the base prompt, can fan out across providers via
 //! [`crate::post_process_router`], takes the shared `reqwest::Client` from Tauri
 //! state, and reports rate limits as [`CallOutcome`] so the router can fail over.
 //!
@@ -65,9 +64,6 @@ pub(crate) async fn post_process_transcription(
     // clicking the pill). Layered as the ABSOLUTE highest-priority stage in
     // `compose_prompt`, above any hard app mode.
     spoken_prompt: Option<&str>,
-    // [GRAIN] True when the transcript came from the rolling-window assembler —
-    // appends the compact seam-repair layer above.
-    rolling: bool,
 ) -> Option<String> {
     if is_blank_transcription(transcription) {
         debug!("Post-processing skipped because the transcription is empty");
@@ -121,11 +117,8 @@ pub(crate) async fn post_process_transcription(
     } else {
         None
     };
-    let mut prompt =
+    let prompt =
         crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref(), spoken_prompt);
-    if rolling {
-        prompt.push_str(crate::post_process_router::ROLLING_SEAM_PROMPT);
-    }
 
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
@@ -139,10 +132,10 @@ pub(crate) async fn post_process_transcription(
     // [GRAIN] Last line of defence against the model returning the prompt.
     //
     // Everything layered into the system prompt — the app and site, the text
-    // around the cursor, the seam instructions — is reference material, and a
+    // around the cursor, and mode instructions — is reference material, and a
     // model that mistakes it for content emits it into whatever the user is
     // typing into. That happened: an email draft received the surrounding page
-    // text and the seam instructions verbatim.
+    // text and prompt instructions verbatim.
     //
     // Prompt wording makes that rarer; it cannot make it impossible, and the
     // cost of the rare case is corrupted text in a document the user is about

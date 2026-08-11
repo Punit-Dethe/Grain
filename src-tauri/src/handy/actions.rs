@@ -222,9 +222,6 @@ pub(crate) async fn process_transcription_output(
     // instruction is actually applied regardless of which shortcut stopped the
     // session.
     spoken_prompt: Option<String>,
-    // [GRAIN] True when `transcription` came from the rolling-window assembler —
-    // enables the token-efficient seam-repair prompt layer.
-    rolling: bool,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
 
@@ -256,7 +253,6 @@ pub(crate) async fn process_transcription_output(
             &settings,
             &final_text,
             spoken_prompt.as_deref(),
-            rolling,
         )
         .await
         {
@@ -564,7 +560,6 @@ impl ShortcutAction for TranscribeAction {
                                     &transcription,
                                     post_process,
                                     spoken_prompt,
-                                    false,
                                 ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )
