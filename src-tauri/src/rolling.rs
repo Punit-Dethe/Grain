@@ -320,8 +320,8 @@ impl RollingTranscriber {
 /// One live recording's rolling-window transcription. Frames are fed from the
 /// audio thread (cheap); a single worker thread transcribes finalized chunks
 /// serially through the shared manager (never blocking audio) and assembles the
-/// transcript. No partial text is ever surfaced — only the final string at
-/// [`finish`](RollingSession::finish).
+/// transcript. The opt-in preview may surface tentative text; the normal path
+/// returns only the final string from [`finish`](RollingSession::finish).
 struct RollingSession {
     session_id: u64,
     // Shared with the worker so the live preview can peek the unsent tail
@@ -332,10 +332,89 @@ struct RollingSession {
     worker: Mutex<Option<JoinHandle<WorkerOutput>>>,
     cancelled: Arc<AtomicBool>,
     journal_failed: Arc<AtomicBool>,
-    queued_fresh_frames: Arc<AtomicU64>,
-    inflight_fresh_frames: Arc<AtomicU64>,
+    metrics: Arc<RollingMetrics>,
     frames_fed: AtomicUsize,
     chunks_emitted: AtomicUsize,
+}
+
+#[derive(Default)]
+struct RollingMetrics {
+    queued_fresh_frames: AtomicU64,
+    debt_frames: AtomicU64,
+    queued_descriptors: AtomicUsize,
+    peak_cursor_frames: AtomicUsize,
+    peak_worker_frames: AtomicUsize,
+    peak_debt_frames: AtomicU64,
+    peak_queued_descriptors: AtomicUsize,
+}
+
+#[derive(Clone, Copy)]
+struct QueueObservation {
+    debt_frames: u64,
+    queued_descriptors: usize,
+}
+
+impl RollingMetrics {
+    fn observe_cursor_candidate(&self, frames: usize) {
+        self.peak_cursor_frames.fetch_max(frames, Ordering::AcqRel);
+    }
+
+    fn reserve_descriptor(&self, fresh_frames: u64) -> QueueObservation {
+        let queued_descriptors = self
+            .queued_descriptors
+            .fetch_add(1, Ordering::AcqRel)
+            .saturating_add(1);
+        self.queued_fresh_frames
+            .fetch_add(fresh_frames, Ordering::AcqRel);
+        let debt_frames = self
+            .debt_frames
+            .fetch_add(fresh_frames, Ordering::AcqRel)
+            .saturating_add(fresh_frames);
+        QueueObservation {
+            debt_frames,
+            queued_descriptors,
+        }
+    }
+
+    fn observe_published(&self, observation: QueueObservation) {
+        self.peak_debt_frames
+            .fetch_max(observation.debt_frames, Ordering::AcqRel);
+        self.peak_queued_descriptors.fetch_max(
+            observation.queued_descriptors.min(MAX_PENDING_CHUNKS),
+            Ordering::AcqRel,
+        );
+    }
+
+    fn rollback_descriptor(&self, fresh_frames: u64) {
+        self.queued_descriptors.fetch_sub(1, Ordering::AcqRel);
+        self.queued_fresh_frames
+            .fetch_sub(fresh_frames, Ordering::AcqRel);
+        self.debt_frames.fetch_sub(fresh_frames, Ordering::AcqRel);
+    }
+
+    fn dequeue_descriptor(&self, fresh_frames: u64) -> u64 {
+        self.queued_descriptors.fetch_sub(1, Ordering::AcqRel);
+        self.queued_fresh_frames
+            .fetch_sub(fresh_frames, Ordering::AcqRel)
+            .saturating_sub(fresh_frames)
+    }
+
+    fn begin_decode(&self, chunk: ChunkJob) {
+        let worker_frames = chunk
+            .end_frame
+            .saturating_sub(chunk.start_frame)
+            .min(usize::MAX as u64) as usize;
+        self.peak_worker_frames
+            .fetch_max(worker_frames, Ordering::AcqRel);
+    }
+
+    fn end_decode(&self, fresh_frames: u64) {
+        self.debt_frames.fetch_sub(fresh_frames, Ordering::AcqRel);
+    }
+
+    fn current_debt_frames(&self) -> u64 {
+        self.debt_frames.load(Ordering::Acquire)
+    }
 }
 
 enum Job {
@@ -403,14 +482,16 @@ struct WorkerOutput {
     text: String,
     error: Option<String>,
     recovered_chunks: usize,
+    decode_rtf_ewma: Option<f64>,
 }
 
 impl WorkerOutput {
-    fn success(text: String, recovered_chunks: usize) -> Self {
+    fn success(text: String, recovered_chunks: usize, decode_rtf_ewma: Option<f64>) -> Self {
         Self {
             text,
             error: None,
             recovered_chunks,
+            decode_rtf_ewma,
         }
     }
 
@@ -419,6 +500,7 @@ impl WorkerOutput {
             text: String::new(),
             error: Some(error.into()),
             recovered_chunks: 0,
+            decode_rtf_ewma: None,
         }
     }
 }
@@ -564,10 +646,8 @@ impl RollingSession {
         let worker_cancelled = cancelled.clone();
         let journal_failed = Arc::new(AtomicBool::new(false));
         let worker_journal_failed = journal_failed.clone();
-        let queued_fresh_frames = Arc::new(AtomicU64::new(0));
-        let worker_queued_fresh_frames = queued_fresh_frames.clone();
-        let inflight_fresh_frames = Arc::new(AtomicU64::new(0));
-        let worker_inflight_fresh_frames = inflight_fresh_frames.clone();
+        let metrics = Arc::new(RollingMetrics::default());
+        let worker_metrics = metrics.clone();
         let (tx, rx) = mpsc::sync_channel::<Job>(MAX_PENDING_CHUNKS);
         let worker = std::thread::spawn(move || {
             // Time-based assembler with the fuzzy seam pass enabled (see
@@ -587,7 +667,7 @@ impl RollingSession {
                 }
                 // Preview ON polls so it can decode the tail between chunks;
                 // preview OFF blocks forever (zero overhead — no wakeups).
-                let job = if preview.is_some() {
+                let job = if let Some(preview_sink) = preview.as_ref() {
                     match rx.recv_timeout(PREVIEW_INTERVAL) {
                         Ok(j) => j,
                         Err(RecvTimeoutError::Timeout) => {
@@ -595,7 +675,7 @@ impl RollingSession {
                                 &transcriber,
                                 &worker_cursor,
                                 &assembler,
-                                preview.as_ref().unwrap(),
+                                preview_sink,
                                 &mut prev_tail_hyp,
                                 &worker_cancelled,
                             );
@@ -618,9 +698,7 @@ impl RollingSession {
                 }
                 match job {
                     Job::Chunk(chunk) => {
-                        let queued_after = worker_queued_fresh_frames
-                            .fetch_sub(chunk.fresh_frames(), Ordering::AcqRel)
-                            .saturating_sub(chunk.fresh_frames());
+                        let queued_after = worker_metrics.dequeue_descriptor(chunk.fresh_frames());
                         // A chunk with no fresh audio past the cursor carries only
                         // overlap the previous chunk already covered (e.g. the
                         // stop-flush when nothing is unsent). Decoding it wastes
@@ -636,28 +714,34 @@ impl RollingSession {
                         // internally, so a chunk arriving mid-load is transcribed
                         // once weights are ready — never dropped.
                         let started = Instant::now();
-                        worker_inflight_fresh_frames.store(chunk.fresh_frames(), Ordering::Release);
+                        worker_metrics.begin_decode(chunk);
                         let decoded_result =
                             decode_descriptor(&transcriber, &mut journal_reader, &mut audio, chunk);
-                        worker_inflight_fresh_frames.store(0, Ordering::Release);
+                        worker_metrics.end_decode(chunk.fresh_frames());
                         match decoded_result {
                             Ok(decoded) => {
                                 let elapsed = started.elapsed();
                                 let input_sec = chunk.input_duration_sec();
-                                if input_sec > 0.0 {
+                                let sample_rtf = if input_sec > 0.0 {
                                     let rtf = elapsed.as_secs_f64() / input_sec;
                                     decode_rtf_ewma = Some(update_rtf_ewma(decode_rtf_ewma, rtf));
-                                }
+                                    rtf
+                                } else {
+                                    0.0
+                                };
                                 if worker_cancelled.load(Ordering::Acquire) {
                                     return WorkerOutput::failure("rolling session cancelled");
                                 }
                                 log::info!(
-                                    "[GRAIN] chunk {} [{:.1}..{:.1}]s ({} words, rtf_ewma={:.3}, queued={:.1}s) -> {:?}",
+                                    "[GRAIN] chunk {} [{:.1}..{:.1}]s (audio={:.1}s, decode={:.2}s, rtf={:.3}, rtf_ewma={:.3}, {} words, queued={:.1}s) -> {:?}",
                                     chunk.sequence,
                                     chunk.fresh_start_sec,
                                     chunk.end_sec,
-                                    decoded.words.len(),
+                                    input_sec,
+                                    elapsed.as_secs_f64(),
+                                    sample_rtf,
                                     decode_rtf_ewma.unwrap_or(0.0),
+                                    decoded.words.len(),
                                     queued_after as f64 / 16_000.0,
                                     decoded.text
                                 );
@@ -742,7 +826,7 @@ impl RollingSession {
                             decode_time.as_secs_f64(),
                             recovered
                         );
-                        return WorkerOutput::success(text, recovered);
+                        return WorkerOutput::success(text, recovered, decode_rtf_ewma);
                     }
                 }
             }
@@ -755,8 +839,7 @@ impl RollingSession {
             worker: Mutex::new(Some(worker)),
             cancelled,
             journal_failed,
-            queued_fresh_frames,
-            inflight_fresh_frames,
+            metrics,
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         })
@@ -832,6 +915,8 @@ impl RollingSession {
         // noisy rooms); fall back to raw RMS when VAD is disabled.
         let chunk = {
             let mut cursor = self.cursor.lock().unwrap();
+            self.metrics
+                .observe_cursor_candidate(cursor.retained_frames().saturating_add(buf.len()));
             match speech {
                 Some(is_speech) => cursor.push_block_vad(&buf, is_speech),
                 None => cursor.push_block(&buf, block_rms(&buf)),
@@ -846,13 +931,11 @@ impl RollingSession {
             }
             let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
             let job = ChunkJob::from_chunk(sequence, &chunk);
-            self.queued_fresh_frames
-                .fetch_add(job.fresh_frames(), Ordering::AcqRel);
+            let observation = self.metrics.reserve_descriptor(job.fresh_frames());
             match self.tx.try_send(Job::Chunk(job)) {
-                Ok(()) => {}
+                Ok(()) => self.metrics.observe_published(observation),
                 Err(TrySendError::Full(_)) => {
-                    self.queued_fresh_frames
-                        .fetch_sub(job.fresh_frames(), Ordering::AcqRel);
+                    self.metrics.rollback_descriptor(job.fresh_frames());
                     log::error!(
                         "[GRAIN] rolling descriptor queue reached its {}-chunk bound; failing session explicitly",
                         MAX_PENDING_CHUNKS
@@ -861,8 +944,7 @@ impl RollingSession {
                     self.request_cancel();
                 }
                 Err(TrySendError::Disconnected(_)) => {
-                    self.queued_fresh_frames
-                        .fetch_sub(job.fresh_frames(), Ordering::AcqRel);
+                    self.metrics.rollback_descriptor(job.fresh_frames());
                     log::error!("[GRAIN] rolling descriptor worker disconnected");
                     self.journal_failed.store(true, Ordering::Release);
                     self.request_cancel();
@@ -891,22 +973,22 @@ impl RollingSession {
             }
             let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
             let job = ChunkJob::from_chunk(sequence, &tail);
-            let stop_debt_frames = self.queued_fresh_frames.load(Ordering::Acquire)
-                + self.inflight_fresh_frames.load(Ordering::Acquire)
-                + job.fresh_frames();
+            let stop_debt_frames = self
+                .metrics
+                .current_debt_frames()
+                .saturating_add(job.fresh_frames());
             log::info!(
                 "[GRAIN] rolling stop debt: {:.1}s fresh audio",
                 stop_debt_frames as f64 / 16_000.0
             );
-            self.queued_fresh_frames
-                .fetch_add(job.fresh_frames(), Ordering::AcqRel);
-            if self.tx.send(Job::Chunk(job)).is_err() {
-                self.queued_fresh_frames
-                    .fetch_sub(job.fresh_frames(), Ordering::AcqRel);
+            let observation = self.metrics.reserve_descriptor(job.fresh_frames());
+            if self.tx.send(Job::Chunk(job)).is_ok() {
+                self.metrics.observe_published(observation);
+            } else {
+                self.metrics.rollback_descriptor(job.fresh_frames());
             }
         } else {
-            let stop_debt_frames = self.queued_fresh_frames.load(Ordering::Acquire)
-                + self.inflight_fresh_frames.load(Ordering::Acquire);
+            let stop_debt_frames = self.metrics.current_debt_frames();
             log::info!(
                 "[GRAIN] rolling stop debt: {:.1}s fresh audio",
                 stop_debt_frames as f64 / 16_000.0
@@ -916,12 +998,20 @@ impl RollingSession {
         let output = self.join_worker();
         let frames = self.frames_fed.load(Ordering::Relaxed);
         log::info!(
-            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, {} recovered, stop_to_final={:.2}s, final={:?}, error={:?}",
+            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, {} recovered, rtf_ewma={:.3}, stop_to_final={:.2}s, peak_cursor={} frames, peak_worker={} frames, peak_descriptors={}, peak_debt={:.1}s, journal={} bytes, final={:?}, error={:?}",
             frames,
             frames as f64 / 16_000.0,
             self.chunks_emitted.load(Ordering::Relaxed),
             output.recovered_chunks,
+            output.decode_rtf_ewma.unwrap_or(0.0),
             finish_started.elapsed().as_secs_f64(),
+            self.metrics.peak_cursor_frames.load(Ordering::Acquire),
+            self.metrics.peak_worker_frames.load(Ordering::Acquire),
+            self.metrics
+                .peak_queued_descriptors
+                .load(Ordering::Acquire),
+            self.metrics.peak_debt_frames.load(Ordering::Acquire) as f64 / 16_000.0,
+            self.journal.byte_len(),
             output.text.trim(),
             output.error
         );
@@ -1052,8 +1142,7 @@ mod tests {
             worker: Mutex::new(Some(worker)),
             cancelled,
             journal_failed: Arc::new(AtomicBool::new(false)),
-            queued_fresh_frames: Arc::new(AtomicU64::new(0)),
-            inflight_fresh_frames: Arc::new(AtomicU64::new(0)),
+            metrics: Arc::new(RollingMetrics::default()),
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         };
@@ -1073,7 +1162,7 @@ mod tests {
         let journal = Arc::new(PcmJournal::create().unwrap());
         let cancelled = Arc::new(AtomicBool::new(false));
         let (tx, _rx) = mpsc::sync_channel::<Job>(1);
-        let worker = std::thread::spawn(|| WorkerOutput::success(String::new(), 0));
+        let worker = std::thread::spawn(|| WorkerOutput::success(String::new(), 0, None));
         let session = RollingSession {
             session_id: 43,
             cursor,
@@ -1082,8 +1171,7 @@ mod tests {
             worker: Mutex::new(Some(worker)),
             cancelled: cancelled.clone(),
             journal_failed: Arc::new(AtomicBool::new(false)),
-            queued_fresh_frames: Arc::new(AtomicU64::new(0)),
-            inflight_fresh_frames: Arc::new(AtomicU64::new(0)),
+            metrics: Arc::new(RollingMetrics::default()),
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         };
@@ -1096,10 +1184,89 @@ mod tests {
         assert!(cancelled.load(Ordering::Acquire));
         assert_eq!(journal.frame_count(), (50 * 16_000) as u64);
         assert_eq!(
-            session.queued_fresh_frames.load(Ordering::Acquire),
+            session.metrics.queued_fresh_frames.load(Ordering::Acquire),
             (25 * 16_000) as u64
         );
         let _ = session.join_worker();
+    }
+
+    #[test]
+    fn stalled_fake_decoder_keeps_one_inference_and_bounded_descriptors() {
+        let cursor = Arc::new(Mutex::new(SessionCursor::new(
+            RollingWindowConfig::default(),
+        )));
+        let journal = Arc::new(PcmJournal::create().unwrap());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let metrics = Arc::new(RollingMetrics::default());
+        let worker_metrics = metrics.clone();
+        let active_decodes = Arc::new(AtomicUsize::new(0));
+        let peak_decodes = Arc::new(AtomicUsize::new(0));
+        let worker_active = active_decodes.clone();
+        let worker_peak = peak_decodes.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel::<Job>(MAX_PENDING_CHUNKS);
+        let worker = std::thread::spawn(move || {
+            let Job::Chunk(chunk) = rx.recv().expect("first descriptor") else {
+                panic!("expected chunk descriptor");
+            };
+            worker_metrics.dequeue_descriptor(chunk.fresh_frames());
+            worker_metrics.begin_decode(chunk);
+            let active = worker_active.fetch_add(1, Ordering::AcqRel) + 1;
+            worker_peak.fetch_max(active, Ordering::AcqRel);
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            worker_active.fetch_sub(1, Ordering::AcqRel);
+            worker_metrics.end_decode(chunk.fresh_frames());
+            WorkerOutput::success(String::new(), 0, Some(1.0))
+        });
+        let session = RollingSession {
+            session_id: 44,
+            cursor,
+            journal: journal.clone(),
+            tx,
+            worker: Mutex::new(Some(worker)),
+            cancelled: cancelled.clone(),
+            journal_failed: Arc::new(AtomicBool::new(false)),
+            metrics: metrics.clone(),
+            frames_fed: AtomicUsize::new(0),
+            chunks_emitted: AtomicUsize::new(0),
+        };
+        let full_window = vec![0.1f32; 25 * 16_000];
+
+        session.feed(&full_window, Some(true));
+        started_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("fake decode should start");
+        for _ in 0..MAX_PENDING_CHUNKS {
+            session.feed(&full_window, Some(true));
+        }
+
+        assert!(!session.journal_failed.load(Ordering::Acquire));
+        assert_eq!(
+            metrics.peak_queued_descriptors.load(Ordering::Acquire),
+            MAX_PENDING_CHUNKS
+        );
+        assert_eq!(peak_decodes.load(Ordering::Acquire), 1);
+        assert_eq!(
+            metrics.peak_debt_frames.load(Ordering::Acquire),
+            ((MAX_PENDING_CHUNKS + 1) * 25 * 16_000) as u64
+        );
+
+        // One more descriptor cannot fit. Its audio is still durable, and the
+        // session fails closed instead of retaining PCM or starting a decoder.
+        session.feed(&full_window, Some(true));
+        assert!(session.journal_failed.load(Ordering::Acquire));
+        assert!(cancelled.load(Ordering::Acquire));
+        assert_eq!(
+            journal.frame_count(),
+            ((MAX_PENDING_CHUNKS + 2) * 25 * 16_000) as u64
+        );
+        assert!(std::mem::size_of::<ChunkJob>() <= 80);
+
+        release_tx.send(()).unwrap();
+        let _ = session.join_worker();
+        assert_eq!(active_decodes.load(Ordering::Acquire), 0);
     }
 
     #[test]

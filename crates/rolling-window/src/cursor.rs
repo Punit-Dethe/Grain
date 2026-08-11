@@ -220,6 +220,14 @@ impl SessionCursor {
         self.frame_to_sec(self.total_frames())
     }
 
+    /// Frames currently retained by the bounded cursor window.
+    ///
+    /// This is exposed for constant-space runtime telemetry; it is not the
+    /// absolute number of frames seen by the session.
+    pub fn retained_frames(&self) -> usize {
+        self.all_samples.len()
+    }
+
     /// Push one captured block, deciding silence from its RAW rms. Returns a
     /// finalized chunk if an auto-finalize boundary (hard cut or silence-gap
     /// early finalize) is crossed. Use [`push_block_vad`](Self::push_block_vad)
@@ -754,6 +762,28 @@ mod tests {
             s.base_frame > 0,
             "compaction should have advanced base_frame"
         );
+    }
+
+    #[test]
+    fn one_hour_voiced_soak_keeps_cursor_memory_duration_independent() {
+        // Use a low synthetic sample rate so an hour of timeline geometry is
+        // exercised without allocating or processing an hour of real PCM.
+        let mut cfg = RollingWindowConfig::default();
+        cfg.sample_rate = 100;
+        let mut s = SessionCursor::new(cfg);
+        let one_second = block(100, 1000);
+        let bound = s.max_frames + s.overlap_frames + one_second.len();
+        let mut peak = 0usize;
+
+        for _ in 0..3_600 {
+            s.push_block_vad(&one_second, true);
+            peak = peak.max(s.retained_frames());
+            assert!(s.retained_frames() <= bound);
+        }
+
+        assert_eq!(s.total_frames(), 3_600 * 100);
+        assert!(s.base_frame > 0);
+        assert!(peak <= bound);
     }
 
     #[test]

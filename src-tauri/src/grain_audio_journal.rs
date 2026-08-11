@@ -66,6 +66,10 @@ impl PcmJournal {
         self.writer.lock().unwrap().frames
     }
 
+    pub(crate) fn byte_len(&self) -> u64 {
+        self.frame_count().saturating_mul(BYTES_PER_FRAME)
+    }
+
     pub(crate) fn reader(&self) -> std::io::Result<PcmJournalReader> {
         self.flush()?;
         Ok(PcmJournalReader {
@@ -162,5 +166,21 @@ mod tests {
         assert!(path.exists());
         drop(journal);
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn repeated_appends_reuse_scratch_and_report_exact_bytes() {
+        let journal = PcmJournal::create().unwrap();
+        let block = vec![123i16; 960];
+
+        journal.append(&block).unwrap();
+        let capacity = journal.writer.lock().unwrap().encoded.capacity();
+        for _ in 1..1_000 {
+            journal.append(&block).unwrap();
+            assert_eq!(journal.writer.lock().unwrap().encoded.capacity(), capacity);
+        }
+
+        assert_eq!(journal.frame_count(), 960_000);
+        assert_eq!(journal.byte_len(), 1_920_000);
     }
 }
