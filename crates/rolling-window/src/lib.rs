@@ -13,7 +13,7 @@ pub mod cursor;
 pub mod merge;
 pub mod normalize;
 
-pub use assembler::{merge_transcript, TimelineAssembler, WordTiming};
+pub use assembler::{merge_transcript, TimelineAssembler, TimingQuality, WordTiming};
 pub use cursor::{AudioChunk, CutKind, RollingWindowConfig, SessionCursor};
-pub use merge::seam_overlap_len;
+pub use merge::{seam_alignment, seam_overlap_len};
 pub use normalize::{canonicalize_text, canonicalize_token, comparison_key};

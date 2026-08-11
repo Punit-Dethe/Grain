@@ -14,9 +14,10 @@
 //!   cursor is guaranteed to reach the model. There is no rolling buffer to
 //!   mis-juggle, so the tail can never be dropped.
 //!
-//! Chunk boundaries (while recording): ~`max_chunk_seconds` of unsent audio
-//! (hard cut), OR `silence_min_duration` of silence after enough unsent speech
-//! (early finalize). An overlap protects boundary words; the assembler dedups it.
+//! Chunk boundaries (while recording): ~`max_chunk_seconds` containing speech
+//! (hard cut), OR `silence_min_duration` of silence after enough voiced audio
+//! (early finalize). Silence-only spans advance without ASR, and overlap scales
+//! down when boundary confidence is higher.
 //!
 //! **Scope:** this is the pure cursor/chunking logic only. Audio capture (cpal),
 //! WAV encoding, and DSP conditioning live in the integration layer — none of
@@ -39,6 +40,8 @@ pub struct RollingWindowConfig {
     pub early_min_seconds: f64,
     /// Absolute floor of unsent audio for early finalize (seconds).
     pub early_guard_seconds: f64,
+    /// Small non-speech lead-in retained when long silence is advanced.
+    pub speech_pre_roll_seconds: f64,
 }
 
 impl Default for RollingWindowConfig {
@@ -57,6 +60,7 @@ impl Default for RollingWindowConfig {
             silence_min_duration: 0.7,
             early_min_seconds: 12.0,
             early_guard_seconds: 3.0,
+            speech_pre_roll_seconds: 0.3,
         }
     }
 }
@@ -70,8 +74,10 @@ pub enum CutKind {
     /// quiet) ended the chunk at a natural pause.
     Silence,
     /// The window filled while speech was still flowing (including the
-    /// snapped-to-quiet-gap variant — the gap is far shorter than a pause).
+    /// no-gap fallback that may land mid-word).
     HardCut,
+    /// A full window was moved to a short quiet inter-word gap.
+    QuietGap,
     /// Session stop: the user ended the recording. Nothing follows, so no
     /// seam ever forms on this boundary.
     Stop,
@@ -121,6 +127,8 @@ pub struct SessionCursor {
     // Derived frame thresholds.
     max_frames: usize,
     overlap_frames: usize,
+    next_overlap_frames: usize,
+    speech_pre_roll_frames: usize,
     silence_min_frames: usize,
     early_min_frames: usize,
     early_guard_frames: usize,
@@ -137,6 +145,8 @@ pub struct SessionCursor {
     sent_frames: usize,
     /// Frames of contiguous trailing silence (raw RMS based).
     silence_frames: usize,
+    /// Voiced frames in the fresh region since the last dispatched boundary.
+    fresh_voiced_frames: usize,
 }
 
 impl SessionCursor {
@@ -144,6 +154,7 @@ impl SessionCursor {
         let sr = cfg.sample_rate as f64;
         let max_frames = (cfg.max_chunk_seconds * sr) as usize;
         let overlap_frames = (cfg.overlap_seconds * sr) as usize;
+        let speech_pre_roll_frames = (cfg.speech_pre_roll_seconds * sr) as usize;
         let silence_min_frames = (cfg.silence_min_duration * sr) as usize;
         let early_min_frames = (cfg.early_min_seconds * sr) as usize;
         let early_guard_frames = (cfg.early_guard_seconds * sr) as usize;
@@ -151,6 +162,8 @@ impl SessionCursor {
             cfg,
             max_frames,
             overlap_frames,
+            next_overlap_frames: overlap_frames,
+            speech_pre_roll_frames,
             silence_min_frames,
             early_min_frames,
             early_guard_frames,
@@ -158,6 +171,7 @@ impl SessionCursor {
             base_frame: 0,
             sent_frames: 0,
             silence_frames: 0,
+            fresh_voiced_frames: 0,
         }
     }
 
@@ -171,7 +185,7 @@ impl SessionCursor {
     /// overlap context preceding the cursor); everything before that is dead.
     /// Advances `base_frame` so absolute frame math stays correct.
     fn compact(&mut self) {
-        let keep_from = self.sent_frames.saturating_sub(self.overlap_frames);
+        let keep_from = self.sent_frames.saturating_sub(self.next_overlap_frames);
         if keep_from > self.base_frame {
             let drop = keep_from - self.base_frame;
             // `drop` is always <= all_samples.len(): sent_frames <= total_frames
@@ -197,6 +211,8 @@ impl SessionCursor {
         self.base_frame = 0;
         self.sent_frames = 0;
         self.silence_frames = 0;
+        self.fresh_voiced_frames = 0;
+        self.next_overlap_frames = self.overlap_frames;
     }
 
     /// The assembled transcript text region cursor — current end of session, sec.
@@ -232,11 +248,21 @@ impl SessionCursor {
             self.silence_frames += block.len();
         } else {
             self.silence_frames = 0;
+            self.fresh_voiced_frames += block.len();
         }
 
         let unsent = self.total_frames() - self.sent_frames;
-        let hard_cut = unsent >= self.max_frames;
-        let early_cut = unsent >= self.early_min_frames
+        // Advance long silence without scheduling ASR. Keep only a small lead-in
+        // so the first phoneme after the pause still has acoustic context.
+        if self.fresh_voiced_frames == 0
+            && unsent >= self.silence_min_frames + self.speech_pre_roll_frames
+        {
+            self.advance_silence();
+            return None;
+        }
+
+        let hard_cut = self.fresh_voiced_frames > 0 && unsent >= self.max_frames;
+        let early_cut = self.fresh_voiced_frames >= self.early_min_frames
             && self.silence_frames >= self.silence_min_frames
             && unsent >= self.early_guard_frames;
 
@@ -244,12 +270,27 @@ impl SessionCursor {
             // No natural pause in a full window of speech — snap the boundary to
             // the quietest sub-window near the end so the cut lands between words
             // (WhisperX-style min-cut) instead of mid-phoneme.
-            self.emit_chunk_at(self.snap_hard_cut_end(), CutKind::HardCut)
+            let end = self.snap_hard_cut_end();
+            let boundary = if end < self.total_frames() {
+                CutKind::QuietGap
+            } else {
+                CutKind::HardCut
+            };
+            self.emit_chunk_at(end, boundary)
         } else if early_cut {
             self.emit_chunk_at(self.total_frames(), CutKind::Silence)
         } else {
             None
         }
+    }
+
+    fn advance_silence(&mut self) {
+        let end = self.total_frames();
+        self.sent_frames = end.saturating_sub(self.speech_pre_roll_frames);
+        self.silence_frames = self.speech_pre_roll_frames.min(end);
+        self.fresh_voiced_frames = 0;
+        self.next_overlap_frames = 0;
+        self.compact();
     }
 
     /// Choose the hard-cut end frame: the center of the quietest ~240 ms window
@@ -328,7 +369,18 @@ impl SessionCursor {
     /// boundary words; the assembler removes the duplicated region. A manual
     /// emit is a forced mid-speech boundary, so it's tagged [`CutKind::HardCut`].
     pub fn emit_chunk(&mut self) -> Option<AudioChunk> {
+        if self.fresh_voiced_frames == 0 {
+            self.fresh_voiced_frames = self.total_frames().saturating_sub(self.sent_frames);
+        }
         self.emit_chunk_at(self.total_frames(), CutKind::HardCut)
+    }
+
+    fn overlap_after(&self, boundary: CutKind) -> usize {
+        match boundary {
+            CutKind::Silence => self.overlap_frames / 2,
+            CutKind::QuietGap => self.overlap_frames * 3 / 4,
+            CutKind::HardCut | CutKind::Stop => self.overlap_frames,
+        }
     }
 
     /// Emit frames `[cursor - overlap, end)` as a chunk and advance the cursor
@@ -340,7 +392,7 @@ impl SessionCursor {
         if end <= self.sent_frames {
             return None;
         }
-        let start_frame = self.sent_frames.saturating_sub(self.overlap_frames);
+        let start_frame = self.sent_frames.saturating_sub(self.next_overlap_frames);
         let fresh_start_frame = self.sent_frames;
         let samples = self.slice_frames(start_frame, end);
         if samples.is_empty() {
@@ -358,21 +410,30 @@ impl SessionCursor {
         };
         self.sent_frames = end;
         self.silence_frames = 0;
+        self.fresh_voiced_frames = self.total_frames().saturating_sub(end);
+        self.next_overlap_frames = self.overlap_after(boundary);
         // Release frames before the new overlap window — they can't be sliced again.
         self.compact();
         Some(chunk)
     }
 
     /// Flush the trailing audio past the cursor (plus overlap context) as the
-    /// final chunk. Port of `stop`'s flush. Returns `None` only if the range is
-    /// empty (no audio at all).
+    /// final chunk. Port of `stop`'s flush. Returns `None` when there is no
+    /// untranscribed voiced audio, including silence-only and overlap-only tails.
     pub fn stop(&mut self) -> Option<AudioChunk> {
-        let start_frame = self.sent_frames.saturating_sub(self.overlap_frames);
+        if self.fresh_voiced_frames == 0 {
+            self.sent_frames = self.total_frames();
+            self.silence_frames = 0;
+            self.compact();
+            return None;
+        }
+        let start_frame = self.sent_frames.saturating_sub(self.next_overlap_frames);
         let fresh_start_frame = self.sent_frames;
         let end_frame = self.total_frames();
         let samples = self.slice_frames(start_frame, end_frame);
         // Cursor now covers the whole session — nothing left unsent.
         self.sent_frames = self.total_frames();
+        self.fresh_voiced_frames = 0;
         if samples.is_empty() {
             return None;
         }
@@ -398,7 +459,7 @@ impl SessionCursor {
         let cap = (max_sec * self.cfg.sample_rate as f64) as usize;
         let start = self
             .sent_frames
-            .saturating_sub(self.overlap_frames)
+            .saturating_sub(self.next_overlap_frames)
             .max(end.saturating_sub(cap));
         let samples = self.slice_frames(start, end);
         (samples, self.frame_to_sec(start))
@@ -592,6 +653,7 @@ mod tests {
         // 12s already sent, then 3 more seconds captured but never chunked.
         s.all_samples = vec![block(f, 1000); 15].concat();
         s.sent_frames = 12 * f; // 3s unsent tail
+        s.fresh_voiced_frames = 3 * f;
         let chunk = s.stop().expect("tail flushed");
         // Tail = unsent 3s + 2s overlap context = 5s.
         assert_eq!(chunk.frame_count(), (3 + 2) * f);
@@ -599,13 +661,12 @@ mod tests {
     }
 
     #[test]
-    fn stop_with_no_unsent_audio_still_safe() {
+    fn stop_with_no_unsent_audio_skips_overlap_only_decode() {
         let mut s = cur();
         let f = fps(&s);
         s.all_samples = vec![block(f, 1000); 10].concat();
         s.sent_frames = 10 * f; // nothing unsent
-        let chunk = s.stop().expect("overlap window emitted");
-        assert_eq!(chunk.frame_count(), s.overlap_frames);
+        assert!(s.stop().is_none());
     }
 
     /// Feed `secs` seconds of audio one 1s block at a time WITHOUT tripping an
@@ -723,6 +784,68 @@ mod tests {
             (prev_end - 60.0).abs() < 1e-6,
             "session should tile to 60s, got {prev_end}"
         );
+    }
+
+    #[test]
+    fn long_silence_advances_without_emitting_asr_chunks() {
+        let mut s = cur();
+        let f = fps(&s);
+        for _ in 0..120 {
+            assert!(s.push_block_vad(&block(f, 0), false).is_none());
+            assert!(s.all_samples.len() <= s.speech_pre_roll_frames);
+        }
+        assert_eq!(s.total_frames(), 120 * f);
+        assert!(s.stop().is_none());
+    }
+
+    #[test]
+    fn speech_after_long_silence_keeps_only_bounded_preroll() {
+        let mut s = cur();
+        let f = fps(&s);
+        for _ in 0..60 {
+            s.push_block_vad(&block(f, 0), false);
+        }
+        assert!(s.push_block_vad(&block(f, 3000), true).is_none());
+        let tail = s.stop().expect("speech tail");
+        assert!((tail.start_sec - 59.7).abs() < 1e-6);
+        assert_eq!(tail.end_sec, 61.0);
+        assert_eq!(tail.frame_count(), f + s.speech_pre_roll_frames);
+    }
+
+    #[test]
+    fn early_finalize_requires_voiced_not_elapsed_frames() {
+        let mut s = cur();
+        let f = fps(&s);
+        for _ in 0..5 {
+            assert!(s.push_block_vad(&block(f, 3000), true).is_none());
+        }
+        for _ in 0..8 {
+            assert!(s.push_block_vad(&block(f, 0), false).is_none());
+        }
+        assert_eq!(s.fresh_voiced_frames, 5 * f);
+        assert!(s.stop().is_some());
+    }
+
+    #[test]
+    fn overlap_scales_with_boundary_confidence() {
+        let s = cur();
+        assert_eq!(s.overlap_after(CutKind::Silence), s.overlap_frames / 2);
+        assert_eq!(s.overlap_after(CutKind::QuietGap), s.overlap_frames * 3 / 4);
+        assert_eq!(s.overlap_after(CutKind::HardCut), s.overlap_frames);
+    }
+
+    #[test]
+    fn snapped_full_window_is_tagged_as_quiet_gap() {
+        let mut s = cur();
+        let f = fps(&s);
+        let mut audio = vec![3000i16; 25 * f];
+        let center = (23.5 * f as f64) as usize;
+        let half = (0.15 * f as f64) as usize;
+        audio[center - half..center + half].fill(0);
+
+        let chunk = s.push_block_vad(&audio, true).expect("full voiced window");
+        assert_eq!(chunk.boundary, CutKind::QuietGap);
+        assert_eq!(s.next_overlap_frames, s.overlap_frames * 3 / 4);
     }
 
     // -- cached-cursor slicer equivalence ---------------------------------

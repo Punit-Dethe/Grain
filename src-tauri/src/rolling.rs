@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use grain_core::DaemonEvent;
 use rolling_window::{
-    seam_overlap_len, AudioChunk, RollingWindowConfig, SessionCursor, WordTiming,
+    seam_overlap_len, AudioChunk, RollingWindowConfig, SessionCursor, TimingQuality, WordTiming,
 };
 use tauri::AppHandle;
 use transcribe_cpp::Transcript;
@@ -96,25 +96,14 @@ fn map_word_timings(t: &Transcript) -> Vec<WordTiming> {
         .collect()
 }
 
-/// Fallback when a model returns no word rows (rare — most catalog models do
-/// segment-or-finer): synthesize evenly-spaced timings across the chunk's audio
-/// duration so the timeline assembler's positional dedup + fuzzy seam still run
-/// (they were designed for approximate timings). `chunk_dur_sec` is the chunk's
-/// full audio span (overlap context included), matching real word-time origins.
-fn synthesize_word_timings(text: &str, chunk_dur_sec: f64) -> Vec<WordTiming> {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.is_empty() || chunk_dur_sec <= 0.0 {
-        return Vec::new();
+fn timing_quality(transcript: &Transcript, words: &[WordTiming]) -> TimingQuality {
+    if !words.is_empty() {
+        TimingQuality::NativeWord
+    } else if !transcript.segments.is_empty() {
+        TimingQuality::SegmentApproximate
+    } else {
+        TimingQuality::Unavailable
     }
-    let per = chunk_dur_sec / words.len() as f64;
-    words
-        .iter()
-        .enumerate()
-        .map(|(i, w)| {
-            let start = i as f64 * per;
-            WordTiming::new(w.to_string(), start, start + per)
-        })
-        .collect()
 }
 
 /// Convert one captured `f32` frame to the `i16` block the session cursor
@@ -343,6 +332,8 @@ struct RollingSession {
     worker: Mutex<Option<JoinHandle<WorkerOutput>>>,
     cancelled: Arc<AtomicBool>,
     journal_failed: Arc<AtomicBool>,
+    queued_fresh_frames: Arc<AtomicU64>,
+    inflight_fresh_frames: Arc<AtomicU64>,
     frames_fed: AtomicUsize,
     chunks_emitted: AtomicUsize,
 }
@@ -356,6 +347,7 @@ enum Job {
 struct ChunkJob {
     sequence: u64,
     start_frame: u64,
+    fresh_start_frame: u64,
     end_frame: u64,
     start_sec: f64,
     fresh_start_sec: f64,
@@ -368,6 +360,7 @@ impl ChunkJob {
         Self {
             sequence,
             start_frame: chunk.start_frame as u64,
+            fresh_start_frame: chunk.fresh_start_frame as u64,
             end_frame: chunk.end_frame as u64,
             start_sec: chunk.start_sec,
             fresh_start_sec: chunk.fresh_start_sec,
@@ -379,11 +372,20 @@ impl ChunkJob {
     fn fresh_duration_sec(self) -> f64 {
         (self.end_sec - self.fresh_start_sec).max(0.0)
     }
+
+    fn fresh_frames(self) -> u64 {
+        self.end_frame.saturating_sub(self.fresh_start_frame)
+    }
+
+    fn input_duration_sec(self) -> f64 {
+        (self.end_sec - self.start_sec).max(0.0)
+    }
 }
 
 struct DecodedChunk {
     text: String,
     words: Vec<WordTiming>,
+    timing_quality: TimingQuality,
 }
 
 enum ChunkStatus {
@@ -432,6 +434,13 @@ const PREVIEW_MIN_TAIL_SEC: f64 = 0.8;
 /// Fixed descriptor capacity. Audio itself is already durable in the journal;
 /// overflow fails rolling closed and surfaces an explicit session error.
 const MAX_PENDING_CHUNKS: usize = 8;
+const RTF_EWMA_ALPHA: f64 = 0.2;
+
+fn update_rtf_ewma(previous: Option<f64>, sample: f64) -> f64 {
+    previous
+        .map(|value| value * (1.0 - RTF_EWMA_ALPHA) + sample * RTF_EWMA_ALPHA)
+        .unwrap_or(sample)
+}
 
 enum ChunkDecodeError {
     Journal(String),
@@ -455,11 +464,13 @@ fn decode_descriptor(
         .transcribe_rolling_chunk(audio)
         .map_err(|error| ChunkDecodeError::Transcription(error.to_string()))?;
     let text = transcript.text.trim().to_string();
-    let mut words = map_word_timings(&transcript);
-    if words.is_empty() {
-        words = synthesize_word_timings(&text, chunk.end_sec - chunk.start_sec);
-    }
-    Ok(DecodedChunk { text, words })
+    let words = map_word_timings(&transcript);
+    let timing_quality = timing_quality(&transcript, &words);
+    Ok(DecodedChunk {
+        text,
+        words,
+        timing_quality,
+    })
 }
 
 fn add_decoded_chunk(
@@ -467,11 +478,12 @@ fn add_decoded_chunk(
     descriptor: ChunkJob,
     decoded: &DecodedChunk,
 ) {
-    assembler.add_chunk(
+    assembler.add_chunk_with_quality(
         descriptor.start_sec,
         descriptor.fresh_start_sec,
         &decoded.text,
         (!decoded.words.is_empty()).then_some(decoded.words.as_slice()),
+        decoded.timing_quality,
         descriptor.boundary,
     );
 }
@@ -529,7 +541,7 @@ fn assemble_records(records: &[ChunkRecord], overlap: f64) -> Result<String, Str
         };
         add_decoded_chunk(&mut assembler, record.descriptor, decoded);
     }
-    Ok(assembler.text().to_string())
+    Ok(assembler.finish().to_string())
 }
 
 impl RollingSession {
@@ -552,12 +564,15 @@ impl RollingSession {
         let worker_cancelled = cancelled.clone();
         let journal_failed = Arc::new(AtomicBool::new(false));
         let worker_journal_failed = journal_failed.clone();
+        let queued_fresh_frames = Arc::new(AtomicU64::new(0));
+        let worker_queued_fresh_frames = queued_fresh_frames.clone();
+        let inflight_fresh_frames = Arc::new(AtomicU64::new(0));
+        let worker_inflight_fresh_frames = inflight_fresh_frames.clone();
         let (tx, rx) = mpsc::sync_channel::<Job>(MAX_PENDING_CHUNKS);
         let worker = std::thread::spawn(move || {
             // Time-based assembler with the fuzzy seam pass enabled (see
-            // merge.rs). Chunks carry real word timings from transcribe-cpp, so
-            // overlap dedup is positional; the fuzzy seam is the safety net for
-            // timing jitter / re-worded overlaps.
+            // merge.rs). Native word timings use positional overlap dedup;
+            // segment-only and timestamp-free models use bounded lexical escrow.
             let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(overlap);
             let mut records = Vec::<ChunkRecord>::new();
             let mut has_failure_barrier = false;
@@ -565,6 +580,7 @@ impl RollingSession {
             // hypothesis, so only text two consecutive decodes agree on is shown.
             let mut prev_tail_hyp: Vec<String> = Vec::new();
             let mut audio = Vec::<f32>::new();
+            let mut decode_rtf_ewma: Option<f64> = None;
             loop {
                 if worker_cancelled.load(Ordering::Acquire) {
                     return WorkerOutput::failure("rolling session cancelled");
@@ -602,6 +618,9 @@ impl RollingSession {
                 }
                 match job {
                     Job::Chunk(chunk) => {
+                        let queued_after = worker_queued_fresh_frames
+                            .fetch_sub(chunk.fresh_frames(), Ordering::AcqRel)
+                            .saturating_sub(chunk.fresh_frames());
                         // A chunk with no fresh audio past the cursor carries only
                         // overlap the previous chunk already covered (e.g. the
                         // stop-flush when nothing is unsent). Decoding it wastes
@@ -617,22 +636,29 @@ impl RollingSession {
                         // internally, so a chunk arriving mid-load is transcribed
                         // once weights are ready — never dropped.
                         let started = Instant::now();
-                        match decode_descriptor(
-                            &transcriber,
-                            &mut journal_reader,
-                            &mut audio,
-                            chunk,
-                        ) {
+                        worker_inflight_fresh_frames.store(chunk.fresh_frames(), Ordering::Release);
+                        let decoded_result =
+                            decode_descriptor(&transcriber, &mut journal_reader, &mut audio, chunk);
+                        worker_inflight_fresh_frames.store(0, Ordering::Release);
+                        match decoded_result {
                             Ok(decoded) => {
+                                let elapsed = started.elapsed();
+                                let input_sec = chunk.input_duration_sec();
+                                if input_sec > 0.0 {
+                                    let rtf = elapsed.as_secs_f64() / input_sec;
+                                    decode_rtf_ewma = Some(update_rtf_ewma(decode_rtf_ewma, rtf));
+                                }
                                 if worker_cancelled.load(Ordering::Acquire) {
                                     return WorkerOutput::failure("rolling session cancelled");
                                 }
                                 log::info!(
-                                    "[GRAIN] chunk {} [{:.1}..{:.1}]s ({} words) -> {:?}",
+                                    "[GRAIN] chunk {} [{:.1}..{:.1}]s ({} words, rtf_ewma={:.3}, queued={:.1}s) -> {:?}",
                                     chunk.sequence,
                                     chunk.fresh_start_sec,
                                     chunk.end_sec,
                                     decoded.words.len(),
+                                    decode_rtf_ewma.unwrap_or(0.0),
+                                    queued_after as f64 / 16_000.0,
                                     decoded.text
                                 );
                                 if !has_failure_barrier {
@@ -645,7 +671,7 @@ impl RollingSession {
                                 records.push(ChunkRecord {
                                     descriptor: chunk,
                                     status: ChunkStatus::Succeeded(decoded),
-                                    decode_duration: started.elapsed(),
+                                    decode_duration: elapsed,
                                 });
                             }
                             Err(ChunkDecodeError::Transcription(error)) => {
@@ -706,7 +732,7 @@ impl RollingSession {
                                 Err(error) => return WorkerOutput::failure(error),
                             }
                         } else {
-                            assembler.text().to_string()
+                            assembler.finish().to_string()
                         };
                         let decode_time: Duration =
                             records.iter().map(|record| record.decode_duration).sum();
@@ -729,6 +755,8 @@ impl RollingSession {
             worker: Mutex::new(Some(worker)),
             cancelled,
             journal_failed,
+            queued_fresh_frames,
+            inflight_fresh_frames,
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         })
@@ -817,12 +845,14 @@ impl RollingSession {
                 return;
             }
             let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
-            match self
-                .tx
-                .try_send(Job::Chunk(ChunkJob::from_chunk(sequence, &chunk)))
-            {
+            let job = ChunkJob::from_chunk(sequence, &chunk);
+            self.queued_fresh_frames
+                .fetch_add(job.fresh_frames(), Ordering::AcqRel);
+            match self.tx.try_send(Job::Chunk(job)) {
                 Ok(()) => {}
                 Err(TrySendError::Full(_)) => {
+                    self.queued_fresh_frames
+                        .fetch_sub(job.fresh_frames(), Ordering::AcqRel);
                     log::error!(
                         "[GRAIN] rolling descriptor queue reached its {}-chunk bound; failing session explicitly",
                         MAX_PENDING_CHUNKS
@@ -831,6 +861,8 @@ impl RollingSession {
                     self.request_cancel();
                 }
                 Err(TrySendError::Disconnected(_)) => {
+                    self.queued_fresh_frames
+                        .fetch_sub(job.fresh_frames(), Ordering::AcqRel);
                     log::error!("[GRAIN] rolling descriptor worker disconnected");
                     self.journal_failed.store(true, Ordering::Release);
                     self.request_cancel();
@@ -840,6 +872,7 @@ impl RollingSession {
     }
 
     fn finish(&self) -> WorkerOutput {
+        let finish_started = Instant::now();
         if self.journal_failed.load(Ordering::Acquire) {
             self.request_cancel();
             self.join_cancelled();
@@ -857,19 +890,38 @@ impl RollingSession {
                 ));
             }
             let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
-            let _ = self
-                .tx
-                .send(Job::Chunk(ChunkJob::from_chunk(sequence, &tail)));
+            let job = ChunkJob::from_chunk(sequence, &tail);
+            let stop_debt_frames = self.queued_fresh_frames.load(Ordering::Acquire)
+                + self.inflight_fresh_frames.load(Ordering::Acquire)
+                + job.fresh_frames();
+            log::info!(
+                "[GRAIN] rolling stop debt: {:.1}s fresh audio",
+                stop_debt_frames as f64 / 16_000.0
+            );
+            self.queued_fresh_frames
+                .fetch_add(job.fresh_frames(), Ordering::AcqRel);
+            if self.tx.send(Job::Chunk(job)).is_err() {
+                self.queued_fresh_frames
+                    .fetch_sub(job.fresh_frames(), Ordering::AcqRel);
+            }
+        } else {
+            let stop_debt_frames = self.queued_fresh_frames.load(Ordering::Acquire)
+                + self.inflight_fresh_frames.load(Ordering::Acquire);
+            log::info!(
+                "[GRAIN] rolling stop debt: {:.1}s fresh audio",
+                stop_debt_frames as f64 / 16_000.0
+            );
         }
         let _ = self.tx.send(Job::Finish);
         let output = self.join_worker();
         let frames = self.frames_fed.load(Ordering::Relaxed);
         log::info!(
-            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, {} recovered, final={:?}, error={:?}",
+            "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, {} recovered, stop_to_final={:.2}s, final={:?}, error={:?}",
             frames,
             frames as f64 / 16_000.0,
             self.chunks_emitted.load(Ordering::Relaxed),
             output.recovered_chunks,
+            finish_started.elapsed().as_secs_f64(),
             output.text.trim(),
             output.error
         );
@@ -914,6 +966,7 @@ mod tests {
         ChunkJob {
             sequence,
             start_frame: (start_sec * 16_000.0) as u64,
+            fresh_start_frame: (start_sec * 16_000.0) as u64,
             end_frame: (end_sec * 16_000.0) as u64,
             start_sec,
             fresh_start_sec: start_sec,
@@ -929,6 +982,7 @@ mod tests {
             status: ChunkStatus::Succeeded(DecodedChunk {
                 text: text.to_string(),
                 words: Vec::new(),
+                timing_quality: TimingQuality::Unavailable,
             }),
             decode_duration: Duration::ZERO,
         }
@@ -944,17 +998,34 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_word_timings_spans_chunk_duration() {
-        let w = synthesize_word_timings("a b c d", 4.0);
-        assert_eq!(w.len(), 4);
-        assert!((w[0].start - 0.0).abs() < 1e-9);
-        assert!((w[3].end - 4.0).abs() < 1e-9);
+    fn timing_quality_never_treats_segment_rows_as_word_evidence() {
+        let unavailable = Transcript::default();
+        assert_eq!(
+            timing_quality(&unavailable, &[]),
+            TimingQuality::Unavailable
+        );
+
+        let mut segment_only = Transcript::default();
+        segment_only
+            .segments
+            .push(transcribe_cpp::Segment::default());
+        assert_eq!(
+            timing_quality(&segment_only, &[]),
+            TimingQuality::SegmentApproximate
+        );
+
+        assert_eq!(
+            timing_quality(&segment_only, &[WordTiming::new("word", 0.0, 0.2)]),
+            TimingQuality::NativeWord
+        );
     }
 
     #[test]
-    fn synthesize_word_timings_empty_is_empty() {
-        assert!(synthesize_word_timings("", 4.0).is_empty());
-        assert!(synthesize_word_timings("a b", 0.0).is_empty());
+    fn decode_rtf_ewma_is_constant_space_and_recent_weighted() {
+        let first = update_rtf_ewma(None, 0.5);
+        let second = update_rtf_ewma(Some(first), 1.0);
+        assert_eq!(first, 0.5);
+        assert!((second - 0.6).abs() < 1e-9);
     }
 
     #[test]
@@ -981,6 +1052,8 @@ mod tests {
             worker: Mutex::new(Some(worker)),
             cancelled,
             journal_failed: Arc::new(AtomicBool::new(false)),
+            queued_fresh_frames: Arc::new(AtomicU64::new(0)),
+            inflight_fresh_frames: Arc::new(AtomicU64::new(0)),
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         };
@@ -1009,6 +1082,8 @@ mod tests {
             worker: Mutex::new(Some(worker)),
             cancelled: cancelled.clone(),
             journal_failed: Arc::new(AtomicBool::new(false)),
+            queued_fresh_frames: Arc::new(AtomicU64::new(0)),
+            inflight_fresh_frames: Arc::new(AtomicU64::new(0)),
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         };
@@ -1020,6 +1095,10 @@ mod tests {
         assert!(session.journal_failed.load(Ordering::Acquire));
         assert!(cancelled.load(Ordering::Acquire));
         assert_eq!(journal.frame_count(), (50 * 16_000) as u64);
+        assert_eq!(
+            session.queued_fresh_frames.load(Ordering::Acquire),
+            (25 * 16_000) as u64
+        );
         let _ = session.join_worker();
     }
 
@@ -1057,6 +1136,7 @@ mod tests {
             Ok(DecodedChunk {
                 text: "beta".to_string(),
                 words: Vec::new(),
+                timing_quality: TimingQuality::Unavailable,
             })
         })
         .unwrap();
