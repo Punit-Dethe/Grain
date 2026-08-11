@@ -91,11 +91,9 @@ __pycache__/
 
 # Upstream tracker build products. Rebuilt on every sync from upstream's commit
 # list, our git ancestry, and Upstream/verdicts.json — the only file a human
-# owns. Committing them put a bot commit in main every 2 hours and let the
-# ledger and its offline copy drift apart. See Upstream/UPSTREAM.md.
+# owns. Committing them put a bot commit in main every 2 hours. See
+# Upstream/UPSTREAM.md.
 Upstream/data.json
-Upstream/data.js
-Upstream/status.json
 Upstream/merge-report.md
 
 # Local planning documents

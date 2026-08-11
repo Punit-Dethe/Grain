@@ -13,8 +13,8 @@ Handy live in [UPSTREAMABLE.md](UPSTREAMABLE.md).
 CI trial-merges `upstream/main`. If Handy moved and the merge is clean, CI
 opens (or refreshes) the **`sync/auto-upstream` PR** with the merge already
 done, the commit list in the body, and the divergence ratchet already run.
-Review it, merge it. Done — merged commits file themselves as `Merged` on the
-dashboard, because being in our ancestry *is* the record.
+Review it, merge it. Done — merged commits file themselves as `Merged` in the
+ledger, because being in our ancestry *is* the record.
 
 Working locally? One command answers everything:
 
@@ -102,37 +102,34 @@ tooling.
 [`upstream-sync.yml`](../.github/workflows/upstream-sync.yml), every 2 hours
 (and on any push touching `Upstream/`):
 
-1. **Trial merge** → [merge-report.md](merge-report.md): the next sync's
-   conflict surface, always known in advance. Its machine-readable twin
-   `status.json` (behind count, trial result, conflicting files, ancestry
-   drift) is what puts sync health on the dashboard, so "are we keeping up?"
-   never requires reading CI logs.
+1. **Trial merge** → `merge-report.md`, written into the CI **job summary**: the
+   next sync's conflict surface (behind count, trial result, conflicting files),
+   always known in advance without reading CI logs.
 2. **Ledger**: [sync_upstream.py](sync_upstream.py) rebuilds `data.json` — the
-   per-commit board [index.html](index.html) renders. It pages the API back to
-   `TRACKING_FLOOR_TS` (a single page silently dropped commits whenever
+   per-commit status ledger `verdict.py` validates against. It pages the API
+   back to `TRACKING_FLOOR_TS` (a single page silently dropped commits whenever
    upstream landed a burst) and keys on **SHA**, because subjects repeat
    (`update catalog`, `bump tauri global shortcut`).
 3. **Ancestry audit**: flags upstream commits that are already applied here but
-   unrecorded (see D below) — and gates step 5 on it.
-4. **Publish**: the dashboard is uploaded to GitHub Pages *in this same job*.
-   It used to be a second, push-triggered workflow, which never fired: GitHub
-   does not run `on: push` workflows for pushes made with `GITHUB_TOKEN`, so
-   the site only refreshed when a human happened to push. Deploying inline
-   removes the chain rather than patching it.
-5. **Auto-PR**: clean merge + new commits + no ancestry drift → the
+   unrecorded (see D below), into the job summary — and gates step 4 on it.
+4. **Auto-PR**: clean merge + new commits + no ancestry drift → the
    `sync/auto-upstream` branch is (re)built, the ratchet must pass on the
    merged result, and a PR is opened/updated with the commit list and a review
    checklist. Conflicted merges, ratchet failures and drift all suppress the
    PR rather than producing a misleading one.
+
+> A GitHub Pages **dashboard** used to render the ledger + sync health as a
+> webpage. It was retired 2026-08-10: chronically stale (any hiccup in the
+> API-scraping ledger step froze the deploy) and fully redundant with the CI job
+> summary, the auto-sync PR, and `python Upstream/preflight.py`.
 
 [`divergence-ratchet.yml`](../.github/workflows/divergence-ratchet.yml) on
 every push/PR touching `src-tauri/`: the boundary cannot silently erode.
 
 #### The ledger is derived — one file is yours
 
-`data.json`, `data.js`, `status.json` and `merge-report.md` are **gitignored
-build products**. Nothing commits them; every run recomputes them from three
-inputs:
+`data.json` and `merge-report.md` are **gitignored build products**. Nothing
+commits them; every run recomputes them from three inputs:
 
 | Input | Answers |
 | --- | --- |
@@ -142,8 +139,8 @@ inputs:
 
 So the output is a pure function of its inputs: idempotent, and impossible to
 drift. That matters because it used to drift constantly — verdicts were typed
-into the generated `data.json` while `data.js` kept an older answer, and a bot
-commit landed on `main` every 2 hours carrying nothing but a new timestamp.
+into the generated `data.json` by hand, and a bot commit landed on `main` every
+2 hours carrying nothing but a new timestamp.
 
 Record the rare verdict with the tool, never by hand:
 
@@ -155,15 +152,8 @@ python Upstream/verdict.py <sha|#PR> --clear            # back to derived
 ```
 
 It refuses to store a status ancestry already implies, so `verdicts.json` only
-ever holds real decisions. **A merged sync needs no verdict at all.**
-
-**The dashboard is a plain file — open `Upstream/index.html` and it works.**
-Browsers forbid `fetch()` on a `file://` origin, so the page also ships a
-generated `data.js` (ledger + status baked into a `<script>`) and falls back to
-it, labelling itself `offline copy`. Both are written by the same call, so they
-cannot disagree. Regenerate everything with `python Upstream/sync_upstream.py`.
-The header shows when the page was **built**, linking to the run that built it
-— a stale deploy is visible instead of looking like a quiet upstream.
+ever holds real decisions. **A merged sync needs no verdict at all.** Regenerate
+the ledger any time with `python Upstream/sync_upstream.py`.
 
 ### 4. Guards — the boundary is enforced, not hoped for
 
@@ -174,6 +164,21 @@ newly-diverged file, an outright-deleted upstream file, or a **stray**
 upstream file sitting outside `handy/`. Budgets tighten via
 `python Upstream/ratchet.py --update` — run it *after* committing (it
 measures HEAD, not the working tree).
+
+[port_audit.py](port_audit.py) + [relocations.json](relocations.json): the
+ratchet and a diff both prove the *shared* `handy/` surface is on par with
+Handy — but they are blind to the fixes that merge into an **inert** file
+(`llm_client.rs`, `settings.rs`, `overlay.rs` — byte-identical to upstream but
+uncompiled), into a file whose logic Grain **relocated** (`actions.rs` →
+`grain_post_process.rs`), or that share a bug class with a Grain-only
+**parallel** implementation (`stt_client`, the rolling engine). In all three
+the upstream-shaped file matches perfectly while the code Grain actually runs
+lacks the fix, and no diff spans the gap. The port audit reads the relocation
+map and fails when a merged upstream commit touched a mapped file without a
+[verdicts.json](verdicts.json) note recording where the fix landed (or why it
+does not apply) — turning "did we forget to port it?" from unbounded worry into
+a bounded, gated list. Wired into `preflight.py`; clear each finding with
+`python Upstream/verdict.py <sha> --note "..."`.
 
 ## Runbook
 
@@ -353,3 +358,7 @@ same commit.
 | 2026-07-28 | tracker rebuilt | Three faults, one cause — the tracker's data was *committed*. (1) The site never refreshed from CI: the sync job pushed with `GITHUB_TOKEN`, and GitHub does not fire `on: push` workflows for those pushes, so the separate `deploy-pages.yml` never ran. (2) Verdicts hand-typed into the generated `data.json` left `data.js` holding an older answer; the page silently preferred whichever it could read (two rows were drifted when this was found). (3) `checked_at` changed every run, so a `chore: sync upstream commits` commit landed on `main` every 2 hours carrying no information — ~60 of them. Fix: derived files (`data.json`, `data.js`, `status.json`, `merge-report.md`) are gitignored build products, rebuilt each run as a pure function of upstream's commits + our ancestry + the new hand-owned `verdicts.json`, and deployed to Pages *by the same job*. `verdict.py` replaces hand-editing; ancestry alone files a merged commit as `Merged`. Also: dropped the dashboard's PAT-in-`localStorage` trigger button for a link to the workflow, added a "Built <ago>" stamp linking to the run, and CI now `rerere_cache.py save`s the resolutions it learns instead of discarding them. Verified: regenerated ledger matches the last committed one on all 83 rows bar 4 stale hand-typed dates and one PR number (`#1261` → `#1310`, the PR that actually landed it). |
 | 2026-08-02 | `ea3c20a3` (22 commits) | Backlog to **zero**. Eight conflicts; the rest merged clean. Grain and upstream had independently written the same #1639 symlink-pruning in `build.rs`, so ours was dropped for upstream's — **62 → 12 lines** of divergence. Kept #1731's Vulkan host gating in `get_available_accelerators`, dropping only the ORT branch (no engine behind it since the ONNX removal). `tray_i18n.rs` **converged to 0**: it was byte-identical already, and merging finally recorded the ancestry, so the recurring delete/modify conflict is gone. Upstream's new `managers/model/download.rs` landed at the src root (new dir ⇒ no directory-rename detection) and was `git mv`'d into `handy/`. Frontend arrivals (Sidebar, UpdateChecker, i18n, en+da) landed at `src/`, which we vacated in the `src/app` move, so they appeared as deletable additions instead of silently overwriting ours. 387 Rust tests pass. |
 | 2026-08-02 | `76736d5a` (16 commits) | **The 08-02 sync above was wrong.** It reported "0 behind" against an `upstream/main` last fetched on 07-28, so these 16 commits — already upstream at the time — were invisible to the merge, the ratchet and the audit. The CI dashboard fetches every run and correctly showed 16 pending / 11 trial conflicts; the disagreement looked like a broken dashboard. Fix: `upstream_ref.py` fetches before anything measures, from `ratchet.py`, `audit_divergence.py` and `sync_upstream.py`. 11 conflicts: 6 frozen-frontend (auto), 5 real. Took `secure_input` (verbatim), `paste_tx`, `autostart` (SMAppService) — all three `git mv`'d out of the src root. Kept BOTH suspend/resume APIs (upstream's `_all_shortcuts` for `handy_keys.rs`, Grain's per-binding for the UI); kept Grain's single tray icon while adopting the warning badge; dropped `should_use_streaming_overlay` (no `OverlayStyle` in Grain). `handy-keys` 0.3.2→0.3.3 applied by hand — it sat outside the conflict and would have been lost. **Caught two silent adoptions**: directory-rename detection routed 5 new upstream frontend files into `src/app/` and applied upstream's slider-reset edits to 3 moved files plus 2 translation files with no conflict at all. The freeze census cannot see these (it matches upstream's `src/` paths, not `src/app/`); only the type-checker did. `merge_upstream.py` now reverts that class automatically. 398 Rust + 258 crate + 69 frontend tests pass. |
+| 2026-08-08 | `db003f38` (v0.9.5, 19 commits) | Backlog to **zero**. Five real conflicts, the rest frozen-frontend/`merge=ours`. Kept BOTH sides in `recorder.rs`/`audio.rs`: Grain's rolling hooks (`sample_cb`/`conditioning`/`recorded_len`/`prompt_mark`) plus upstream's #1254 `selected_channel` and #1716 lock-free `recording_active` (all state writes now route through `set_state()`). #1873 idle-skip adopted by gating the resampler in `if recording` around Grain's conditioning closure. #1846's `memory.rs` (glibc allocator tuning) `git mv`'d into `handy/` (upstream's sibling `mod overlay;` dropped — Grain aliases `grain_overlay`), and its `trim_freed_memory()` `FinishGuard::drop` hook **ported by hand** (the diverged `actions.rs` didn't auto-merge it). #1254's `selected_channel` setting ported into `crates/grain-core` (inert `settings.rs`); upstream's `ChannelSelector.tsx` dropped, the command kept + registered. #2211's `stream: false` threaded into `grain_llm_client` (landed inert upstream). #1823 (reqwest source-chain diagnostics) initially deferred, then **adopted on re-evaluation**: Grain's `grain_llm_client` swallowed transport causes the same way, so the helper was ported into a shared payload-safe `net_diag.rs` and applied to BOTH cloud clients — including the Grain-only `stt_client` (5 send sites), which the merge can never reach. Only #1865 js-yaml stays deferred (dev-only transitive dep of `@eslint/eslintrc`, `merge=ours` lockfile, zero runtime exposure). Caught the freeze edge case `merge_upstream.py` misses: 3 NEW upstream frontend files (`ErrorBoundary`, `ChannelSelector`, `compat.ts`) that rename-detection routed into `src/app/` as adds — the script's `checkout HEAD` no-ops on a file absent from HEAD, so they were `git rm`'d by hand. `cargo check --lib` clean (only upstream's own `Emitter` warning), `tsc` clean, ratchet + audit + freeze green. |
+| 2026-08-04 | `b1b2d9f9` (2 commits) | Clean, **behind 0**. #1838 microphone-stream recovery (`audio_toolkit/audio/recorder.rs`, `managers/audio.rs`) + #1847 reliable paste (`paste_tx/windows.rs`) — all Handy-tree, mapped into `handy/` with no strays and no frontend adoption. Budgets re-baselined; the bump also folds in Grain's own `lib.rs` growth this session (`disable_drag_drop_handler` on the main window so in-app note drag-and-drop reaches the DOM, and the `grain_space_delete_folder` registration). Exported the five 08-02 real-conflict rerere resolutions that had been recorded locally but never shared, and reconciled `bun.lock` (vitest / vite-plugin-singlefile were declared in `package.json` but unrecorded). 399 Rust lib tests pass; `tsc` clean; ratchet green. |
+| 2026-08-10 | dashboard retired | The GitHub Pages sync dashboard was removed: chronically stale (the API-scraping ledger step gated the deploy, so any hiccup froze the site) and fully redundant with the CI job summary, the auto-sync PR, and `preflight.py`. Deleted `index.html`; stripped the Pages permissions/environment/concurrency + the three deploy steps and the `status.json` block from `upstream-sync.yml`; trimmed `sync_upstream.py` to emit only `data.json` (still verdict.py's input + the drift source), dropping `data.js`/`status.json`. All sync intelligence — trial merge, ledger, ancestry-drift gate, auto-PR, ratchet, port audit, verdicts, rerere — is unchanged. |
+| 2026-08-10 | `b50b52a8` (10 commits) | Backlog to **zero**. Five conflicts: two frozen-frontend (auto), three real. The substantive one is **#1738 filler-word removal** — a real upstream STT-core feature, adopted end to end. Upstream reworked filler removal into a universal tier + language-gated tier keyed on `OutputLanguageEvidence` (user/model/text-detected), split `filter_transcription_output` into `remove_filler_words` + `normalize_transcription_output`, added a `filler_word_removal_enabled` master toggle, and `whatlang`/`isolang` text-LID (`lang_id.rs`). `text.rs` refactor merged clean; the setting was ported into **grain-core** `AppSettings` (inert `settings.rs`), the toggle command + registration kept (`change_vad_enabled_setting` stayed unregistered as before). Grain's diverged `transcribe()` (`with_engine_session`, transcribe-cpp only, `context_bias` initial_prompt) was **kept and extended** to resolve output-language evidence in-closure and thread it + the model language list into `finalize_batch_text`; the relocated `grain_text.rs` (`finalize_transcript`/`finalize_batch_text`) was rewritten onto the new API, and the rolling + cloud callers now key filler removal on the transcription language (`selected_language`), not the UI language — the exact bug #1738 fixes. Native streaming finalize threads upstream's new `FinalizedStreamText` (clean merge; Grain never diverged `StreamCmd`). #1548 compressed API responses (reqwest `gzip`/`brotli`/`deflate`, **kept** Grain's `multipart`). #1866/#1756 Linux paste fixes and #1700 Wayland overlay merged (overlay.rs inert — Grain's pill is native, no port; verdict-noted). **#1659 theme dropped on resolution**: Grain removed the backend theme command long ago (frontend owns theming, pill is native), so `change_theme_setting`/`apply_window_theme` + the startup call are not re-added. `cargo check --lib` clean (only upstream's own `secure_input` `Emitter` warning), `cargo test --lib` **426 passed**, grain-core **73 passed**, `tsc` clean, ratchet + audit + freeze + port-audit green. |

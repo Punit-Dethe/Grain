@@ -2,26 +2,20 @@ name: Upstream Sync
 
 # Grain's upstream (Handy) intake, end to end — see Upstream/UPSTREAM.md.
 #
-# This workflow both BUILDS the tracker and PUBLISHES it, in one job. That is
-# deliberate: it used to commit the generated files and let a second, push-
-# triggered workflow deploy them — but GitHub never fires `on: push` for a push
-# made with GITHUB_TOKEN, so the site only ever refreshed when a human happened
-# to push something under Upstream/. Building and deploying in the same run
-# removes the chain instead of patching it.
-#
-# Nothing is committed. Upstream/data.json, data.js, status.json and
-# merge-report.md are gitignored build products, regenerated from upstream's
-# commit list, our git ancestry, and the human-owned Upstream/verdicts.json.
+# Nothing is committed. Upstream/data.json and merge-report.md are gitignored
+# build products, regenerated from upstream's commit list, our git ancestry, and
+# the human-owned Upstream/verdicts.json. Sync health is surfaced in the CI job
+# summary and the auto-sync PR (the GitHub Pages dashboard was retired
+# 2026-08-10 as redundant with those and with `python Upstream/preflight.py`).
 #
 # Each run:
-#   1. trial-merges upstream/main and writes merge-report.md + status.json, so
-#      the next sync's conflict surface is always known in advance;
+#   1. trial-merges upstream/main and writes merge-report.md into the job
+#      summary, so the next sync's conflict surface is always known in advance;
 #   2. rebuilds the ledger and audits ancestry drift;
 #   3. if upstream has new commits AND the merge is clean, opens (or updates)
 #      an automatic sync PR — reviewing that PR is the entire sync workflow for
 #      the common case. Conflicted merges are never auto-opened; the report
-#      lists the files and the runbook takes over;
-#   4. publishes the dashboard to GitHub Pages.
+#      lists the files and the runbook takes over.
 
 on:
   schedule:
@@ -38,13 +32,11 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  pages: write
-  id-token: write
 
 concurrency:
-  # Pages allows one deployment at a time; a scheduled run and a push run must
-  # queue rather than race.
-  group: github-pages
+  # A scheduled run and a push run must queue rather than race (both touch the
+  # sync branch and the rerere cache).
+  group: upstream-sync
   cancel-in-progress: false
 
 env:
@@ -53,9 +45,6 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -90,7 +79,6 @@ jobs:
         run: |
           BASE=$(git merge-base HEAD upstream/main || true)
           REPORT="Upstream/merge-report.md"
-          STATUS="Upstream/status.json"
           BEHIND=$(git rev-list --count HEAD..upstream/main)
           CONFLICTS=""
           {
@@ -130,29 +118,6 @@ jobs:
           echo "clean=$CLEAN" >> "$GITHUB_OUTPUT"
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
 
-          # Machine-readable twin of the report: the dashboard renders this so
-          # "are we keeping up?" is answerable without reading CI logs.
-          UPSTREAM_HEAD="$(git rev-parse --short upstream/main)" \
-          UPSTREAM_SUBJECT="$(git log -1 --format='%s' upstream/main)" \
-          UPSTREAM_DATE="$(git log -1 --format='%cI' upstream/main)" \
-          LATEST_TAG="$(git describe --tags --abbrev=0 upstream/main 2>/dev/null || echo none)" \
-          MERGE_BASE="$(test -n "$BASE" && git rev-parse --short "$BASE" || echo '')" \
-          BEHIND="$BEHIND" CLEAN="$CLEAN" CONFLICTS="$CONFLICTS" \
-          python - <<'PY' > "$STATUS"
-          import json, os
-          conflicts = [f for f in os.environ["CONFLICTS"].split("\n") if f.strip()]
-          print(json.dumps({
-              "upstream_head": os.environ["UPSTREAM_HEAD"],
-              "upstream_subject": os.environ["UPSTREAM_SUBJECT"],
-              "upstream_date": os.environ["UPSTREAM_DATE"],
-              "latest_tag": os.environ["LATEST_TAG"],
-              "merge_base": os.environ["MERGE_BASE"],
-              "behind": int(os.environ["BEHIND"]),
-              "trial_clean": os.environ["CLEAN"] == "true",
-              "conflicts": conflicts,
-          }, indent=2))
-          PY
-
       # Ledger + ancestry audit. Runs BEFORE the PR step because it detects
       # already-applied commits (cherry-picked work git has no ancestry for) —
       # auto-merging those would replay resolved work and its conflicts.
@@ -177,22 +142,6 @@ jobs:
           else
             echo "drift=false" >> "$GITHUB_OUTPUT"
           fi
-
-      # Publish in this same run, and BEFORE the PR step: the generated files
-      # are never committed, so this is the only thing that puts them in front
-      # of anyone, and a red ratchet must not also cost us the dashboard.
-      # A failed ledger step skips these, leaving the last good site up.
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload upstream tracker
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: Upstream
-
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
 
       - name: Open or update the automatic sync PR
         if: >-

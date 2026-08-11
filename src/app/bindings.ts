@@ -5,6 +5,17 @@
 
 
 export const commands = {
+/**
+ * Is there a newer release?
+ * 
+ * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
+ * because the user just asked, in person. The automatic check on launch passes
+ * `false` and stays silent when the setting is off.
+ * 
+ * Returns `Ok(None)` both when the app is current and when checks are off — to
+ * every caller those are the same answer ("nothing to show"), and reporting a
+ * disabled setting as an error would surface it as a failure in the UI.
+ */
 async checkForUpdate(force: boolean) : Promise<Result<UpdateInfo | null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("check_for_update", { force }) };
@@ -13,6 +24,12 @@ async checkForUpdate(force: boolean) : Promise<Result<UpdateInfo | null, string>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Download and install the pending update, then restart into it.
+ * 
+ * `restart()` does not return, so there is deliberately no success path: either
+ * this call diverges into the new build or it returns an error.
+ */
 async installUpdate() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("install_update") };
@@ -152,6 +169,14 @@ async changePasteDelayMsSetting(ms: number) : Promise<Result<null, string>> {
 async changePasteDelayAfterMsSetting(ms: number) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_paste_delay_after_ms_setting", { ms }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeReliablePasteSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_reliable_paste_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -423,6 +448,19 @@ async grainSpaceListAllFolders() : Promise<Result<string[], string>> {
 async grainSpaceCreateFolder(folder: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("grain_space_create_folder", { folder }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete a Grain collection (subfolder). Its notes are moved back to the Grain
+ * root — they reappear as loose notes — and the empty folder is removed. Never
+ * deletes a note.
+ */
+async grainSpaceDeleteFolder(folder: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_space_delete_folder", { folder }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1009,11 +1047,34 @@ async suspendBinding(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Re-register the binding after the user has finished editing.
+ * Re-register a single binding after the user finished editing it.
  */
 async resumeBinding(id: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("resume_binding", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Temporarily unregister all bindings while the user is recording a
+ * shortcut in the UI. This avoids firing actions while keys are recorded.
+ */
+async suspendAllBindings() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("suspend_all_bindings") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Re-register all bindings after the user has finished recording.
+ */
+async resumeAllBindings() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("resume_all_bindings") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1532,6 +1593,17 @@ async startHandyKeysRecording(bindingId: string) : Promise<Result<null, string>>
 async stopHandyKeysRecording() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("stop_handy_keys_recording") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getSecureInputStatus() : Promise<SecureInputStatus> {
+    return await TAURI_INVOKE("get_secure_input_status");
+},
+async runKeyboardDiagnostic(durationSecs: number | null) : Promise<Result<KeyboardDiagnosticReport, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("run_keyboard_diagnostic", { durationSecs }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2320,7 +2392,13 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
+/**
+ * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
+ * after the target app actually reads the transcript, instead of after a
+ * fixed delay. See `paste_tx`. macOS and Windows only.
+ */
+reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
  * transcribe-cpp compute-device *registry index* for explicit GPU picks
  * (`-1` = auto). NOTE: deliberately NOT aliased to the old
@@ -2690,6 +2768,11 @@ export type ImplementationChangeResult = { success: boolean;
  */
 reset_bindings: string[] }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
+export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
+/**
+ * Counts only — key identity is deliberately never captured.
+ */
+key_down: number; key_up: number; flags_changed: number; mouse: number; duration_ms: number }
 export type KeyboardImplementation = "tauri" | "handy_keys"
 export type LLMPrompt = { id: string; name: string; prompt: string }
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error"
@@ -2930,6 +3013,38 @@ export type RevocationBanner = { id: string; state: string; reason: string }
  * [`crate::context`], never inline in the main settings JSON. `Debug` redacts.
  */
 export type SecretMap = Partial<{ [key in string]: string }>
+export type SecureInputStatus = { 
+/**
+ * Secure input is currently enabled (live check)
+ */
+enabled: boolean; 
+/**
+ * Enabled continuously long enough to be considered stuck (not just a
+ * password field gaining momentary focus)
+ */
+sustained: boolean; culprit_pid: number | null; culprit_name: string | null; 
+/**
+ * Carbon fallback registrations are currently active
+ */
+fallback_active: boolean; 
+/**
+ * Binding ids shadow-registered with identical semantics
+ */
+covered_bindings: string[]; 
+/**
+ * Side-specific binding ids widened to match either side while shadowed
+ */
+degraded_bindings: string[]; 
+/**
+ * Binding ids that cannot fire at all (e.g. fn+key, registration failure)
+ */
+uncovered_bindings: string[]; 
+/**
+ * The user tried to record a shortcut while secure input was active.
+ * Treated as user impact even when every binding is covered, so the
+ * warning banner appears and explains why recording refused.
+ */
+recorder_blocked: boolean }
 export type SelectOptionDto = { value: string; label: string }
 export type ShortcutBinding = { id: string; name: string; description: string; default_binding: string; current_binding: string }
 /**
@@ -3125,8 +3240,6 @@ export type ThemeChanged = { mode: ThemeMode; resolved: ResolvedTheme }
  * an origin.
  */
 export type ThemeMode = "system" | "light" | "dark"
-export type UpdateDownloadProgress = { downloaded: number; total: number; percentage: number }
-export type UpdateInfo = { version: string; current_version: string; notes: string | null; date: string | null }
 /**
  * The preference and its resolution together, so a surface can render
  * immediately *and* show the right radio button without a second round trip.
@@ -3142,6 +3255,34 @@ export type TodoTag = { text: string; done: boolean }
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * Download progress for an update, so a 100 MB installer is not a dead button.
+ */
+export type UpdateDownloadProgress = { downloaded: number; 
+/**
+ * `0` when the server sends no content length.
+ */
+total: number; percentage: number }
+/**
+ * A release newer than the running build.
+ */
+export type UpdateInfo = { 
+/**
+ * Version of the available release, e.g. `0.0.2`.
+ */
+version: string; 
+/**
+ * The version running right now, so the UI can say "0.0.1 → 0.0.2".
+ */
+current_version: string; 
+/**
+ * Release notes, when the release carried a body.
+ */
+notes: string | null; 
+/**
+ * Publication date as the feed reported it.
+ */
+date: string | null }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

@@ -2065,3 +2065,51 @@
   flex: none;
   color: var(--faint);
 }
+
+/* Right-click menu for a collection row. Fixed at the cursor; dismissed by the
+   window listeners in Sidebar. Inherits the notes theme tokens (it renders
+   inside `.gs-frame`). */
+.gs-context-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 172px;
+  padding: 5px;
+  background: var(--editor-sheet);
+  border: 1px solid var(--line);
+  border-radius: var(--gs-r-md);
+  box-shadow:
+    var(--shadow-lg),
+    0 10px 30px rgba(0, 0, 0, 0.16);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gs-context-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 100ms ease;
+}
+
+.gs-context-item:hover {
+  background: var(--hover);
+}
+
+.gs-context-item--danger {
+  color: var(--error);
+}
+
+.gs-context-item--danger:hover {
+  background: var(--danger-soft);
+}

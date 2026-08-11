@@ -294,11 +294,14 @@ html[data-theme="light"] .app {
   mix-blend-mode: soft-light;
 }
 
+/* The sidebar spans both rows (see `.sidebar`), so the titlebar covers only the
+   main column — the brand that used to sit in its first cell now heads the
+   sidebar. */
 .titlebar {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   grid-row: 1;
   display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   position: relative;
   z-index: 35;
@@ -313,17 +316,22 @@ html[data-theme="light"] .app {
   position: absolute;
   right: 0;
   bottom: 0;
-  left: var(--sidebar);
+  left: 0;
   height: 1px;
   background: var(--hairline-soft);
 }
 
-.brand-slot {
-  height: 100%;
+/* Wordmark strip at the head of the full-height sidebar. Matches the titlebar's
+   height so the brand and the window controls share one baseline. */
+.sidebar-brand {
+  height: var(--titlebar);
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding-inline: 18px;
+  padding-inline: 7px;
+  margin-bottom: 4px;
   color: var(--text-1);
+  -webkit-app-region: drag;
 }
 
 .grain-wordmark {
@@ -331,6 +339,10 @@ html[data-theme="light"] .app {
   align-items: baseline;
   gap: 7px;
   letter-spacing: 0.075em;
+  /* A barely-there vertical rule to the right of the wordmark. Placeholder
+     treatment — the brand area is not designed yet. */
+  padding-right: 11px;
+  border-right: 1px solid var(--hairline);
 }
 
 .grain-wordmark strong {
@@ -338,10 +350,14 @@ html[data-theme="light"] .app {
   font-weight: 760;
 }
 
-.grain-wordmark span {
+/* Sits to the right of the wordmark's divider. Dim, so it reads as a status
+   tag rather than part of the brand. */
+.grain-beta {
+  margin-left: 10px;
   color: var(--text-4);
   font-size: 10px;
-  font-weight: 620;
+  font-weight: 600;
+  letter-spacing: 0.05em;
 }
 
 .workspace-title {
@@ -415,11 +431,11 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 
 .sidebar {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 1 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 13px 11px 14px;
+  padding: 0 11px 14px;
   position: relative;
   z-index: 25;
   background: rgba(9, 10, 13, 0.7);
@@ -1400,13 +1416,24 @@ html[data-theme="light"] .overview-card--static:hover {
   font-style: italic;
 }
 
+/* A chord shown as one small cap per key. The group wraps to a second line
+ * within the card instead of a single wide cap truncating and spilling toward
+ * the card edge. Right-aligned so the caps sit under the row's trailing edge. */
+.overview-keys {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 72%;
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
 /* A keycap, not a button: raised surface and mono type so it reads as the key
  * you press, with no hover or press state because it is never clickable. */
-.overview-keycap {
+.overview-key {
   flex: none;
-  max-width: 62%;
   padding: 2px 6px;
-  overflow: hidden;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
   border-radius: 5px;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
@@ -1416,11 +1443,10 @@ html[data-theme="light"] .overview-card--static:hover {
   font-size: 10px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-html[data-theme="light"] .overview-keycap {
+html[data-theme="light"] .overview-key {
   border-color: #d7d7da;
   background: #fafafb;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
@@ -1428,7 +1454,7 @@ html[data-theme="light"] .overview-keycap {
 
 /* -- Agent card -- */
 
-/* The keycap rides the right edge, so it lines up with the caps in the
+/* The caps ride the right edge, so they line up with the caps in the
  * Shortcuts card two along rather than floating mid-card. */
 .overview-agent-press {
   margin-top: auto;
@@ -1440,8 +1466,10 @@ html[data-theme="light"] .overview-keycap {
   font-size: 10.5px;
 }
 
-.overview-agent-press .overview-keycap {
-  margin-left: auto;
+.overview-agent-press .overview-keys {
+  margin-left: 0;
+  max-width: 100%;
+  justify-content: flex-start;
 }
 
 /* -- Extensions card -- */
@@ -1704,6 +1732,30 @@ html[data-theme="light"] .overview-add-btn {
   color: var(--text-4);
 }
 
+.transcript-body.clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.transcript-readmore {
+  margin-top: 6px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.transcript-readmore:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
 .audio-strip {
   height: 27px;
   display: grid;
@@ -1860,13 +1912,19 @@ html[data-theme="light"] .overview-add-btn {
   --sidebar: 68px;
 }
 
-.app.notes-mode .brand-slot {
+.app.notes-mode .sidebar-brand {
   justify-content: center;
-  padding: 0;
+  padding-inline: 0;
 }
 
 .app.notes-mode .grain-wordmark {
   gap: 0;
+  padding-right: 0;
+  border-right: none;
+}
+
+.app.notes-mode .grain-beta {
+  display: none;
 }
 
 .app.notes-mode .grain-wordmark strong {
@@ -3502,13 +3560,15 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     --sidebar: 68px;
   }
 
-  .brand-slot {
+  .sidebar-brand {
     justify-content: center;
-    padding: 0;
+    padding-inline: 0;
   }
 
   .grain-wordmark {
     gap: 0;
+    padding-right: 0;
+    border-right: none;
   }
 
   .grain-wordmark strong {
@@ -3522,6 +3582,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   }
 
   .grain-wordmark span,
+  .grain-beta,
   .sidebar .nav-label,
   .sidebar .nav-item > span,
   .sidebar .model-status,

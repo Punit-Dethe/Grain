@@ -64,7 +64,8 @@ tokio = "1.43.0"
 vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
 enigo = "0.6.1"
 rodio = { git = "https://github.com/cjpais/rodio.git" }
-reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+# [GRAIN] keep `multipart` (cloud STT uploads); add upstream #1548 compression.
+reqwest = { version = "0.12", features = ["json", "stream", "multipart", "gzip", "brotli", "deflate"] }
 futures-util = "0.3"
 tokio-tungstenite = "0.24" # [GRAIN] local WS event transport to the pill
 rustfft = "6.4.0"
@@ -72,6 +73,10 @@ strsim = "0.11.0"
 natural = "0.5.0"
 regex = "1"
 sourcemap = "9.3.2" # [GRAIN] Dev-only worker stack mapping (parsed only on error).
+# Text-based language ID (filler-word removal fallback, upstream #1738); isolang
+# bridges the ISO 639-1 codes in model metadata to whatlang's 639-3 codes.
+whatlang = "0.16"
+isolang = "2"
 chrono = "0.4"
 rusqlite = { version = "0.37", features = ["bundled"] }
 # [GRAIN] Grain Space: vector index for opt-in semantic note search. The
@@ -188,6 +193,7 @@ objc2-service-management = "0.3.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
 gtk = "0.18"
+libc = "0.2"
 transcribe-cpp = { version = "0.1.3", default-features = false, features = [
   "dynamic-backends",
   "vulkan",

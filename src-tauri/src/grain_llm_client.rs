@@ -3,7 +3,39 @@ use log::debug;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+
+/// Endpoints (`url|model`) that rejected the reasoning-disable fields with a
+/// 400/422. Remembered process-wide so later calls to the same endpoint skip
+/// the fields entirely instead of paying a failed request + retry each time
+/// (ported from upstream Handy #1809).
+fn reasoning_rejections() -> &'static Mutex<HashSet<String>> {
+    static REJECTED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    REJECTED.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn reasoning_endpoint_rejected(key: &str) -> bool {
+    reasoning_rejections()
+        .lock()
+        .map(|set| set.contains(key))
+        .unwrap_or(false)
+}
+
+fn remember_reasoning_rejection(key: &str) {
+    if let Ok(mut set) = reasoning_rejections().lock() {
+        set.insert(key.to_string());
+    }
+}
+
+/// Drop the reasoning-disable fields from a serialized request body.
+fn strip_reasoning_fields(payload: &mut Value) {
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove("reasoning_effort");
+        obj.remove("reasoning");
+    }
+}
 
 /// Per-request read timeout. This previously lived on a throwaway per-call
 /// `reqwest::Client`; it is now applied to the request builder so the shared,
@@ -215,6 +247,11 @@ pub struct ReasoningConfig {
 struct ChatCompletionRequest {
     model: String,
     messages: Vec<ChatMessage>,
+    /// Always false — Grain parses a full (non-streamed) JSON response on every
+    /// path. Sent explicitly so a provider that would otherwise default to
+    /// streaming cannot return an event-stream that breaks the JSON parse
+    /// (upstream "request stream: false, for post processing").
+    stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     response_format: Option<ResponseFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,6 +409,7 @@ pub async fn send_chat_completion_with_schema(
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format,
         reasoning_effort,
         reasoning,
@@ -409,6 +447,7 @@ pub async fn send_chat(
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format: None,
         reasoning_effort,
         reasoning,
@@ -471,6 +510,7 @@ pub async fn send_chat_with_image(
     let request = |messages| ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format: None,
         reasoning_effort: reasoning_effort.clone(),
         reasoning: reasoning.clone(),
@@ -557,6 +597,7 @@ pub async fn send_chat_with_tools(
     let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
+        stream: false,
         response_format: None,
         reasoning_effort,
         reasoning,
@@ -669,6 +710,8 @@ async fn send_request_with_tools(
     })
 }
 
+use crate::net_diag::report_reqwest_error;
+
 /// POST a built request to `{base}/chat/completions`, apply shared 429 /
 /// rate-limit-header / error handling, and decode the JSON body. The two
 /// `send_request*` wrappers project the parsed response into their result type.
@@ -678,14 +721,47 @@ async fn post_chat(
     headers: HeaderMap,
     request_body: &ChatCompletionRequest,
 ) -> Result<(ChatCompletionResponse, Option<i64>, Option<i64>), LlmError> {
-    let response = client
+    // [GRAIN] Reasoning-rejection retry (ported from upstream Handy #1809).
+    // Grain gates reasoning-disable fields by provider, so only "custom" and
+    // "openrouter" ever send them — but a "custom" endpoint pointed at a strict
+    // hosted API (e.g. DeepSeek) rejects `reasoning_effort:"none"` with 400/422.
+    // Serialize once so the fields can be stripped for a known-bad endpoint up
+    // front, and for a one-shot retry when a 400/422 comes back.
+    let reject_key = format!("{}|{}", url, request_body.model);
+    let carries_reasoning =
+        request_body.reasoning_effort.is_some() || request_body.reasoning.is_some();
+    let mut payload = serde_json::to_value(request_body)
+        .map_err(|e| LlmError::Other(format!("serialize request: {e}")))?;
+    let mut reasoning_in_payload = carries_reasoning;
+    if carries_reasoning && reasoning_endpoint_rejected(&reject_key) {
+        strip_reasoning_fields(&mut payload);
+        reasoning_in_payload = false;
+    }
+
+    let mut response = client
         .post(url)
-        .headers(headers)
+        .headers(headers.clone())
         .timeout(LLM_REQUEST_TIMEOUT)
-        .json(request_body)
+        .json(&payload)
         .send()
         .await
-        .map_err(|e| LlmError::Other(format!("HTTP request failed: {}", e)))?;
+        .map_err(|e| LlmError::Other(report_reqwest_error("HTTP request failed", &e)))?;
+
+    // A 400/422 answer to a request carrying reasoning-disable fields is almost
+    // always caused by those fields: remember this endpoint so later calls skip
+    // them, and retry this one once without them.
+    if reasoning_in_payload && matches!(response.status().as_u16(), 400 | 422) {
+        remember_reasoning_rejection(&reject_key);
+        strip_reasoning_fields(&mut payload);
+        response = client
+            .post(url)
+            .headers(headers)
+            .timeout(LLM_REQUEST_TIMEOUT)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
+    }
 
     // Capture rate-limit signal from headers BEFORE consuming the body.
     let status = response.status();
@@ -702,7 +778,7 @@ async fn post_chat(
     let body = response
         .text()
         .await
-        .map_err(|e| LlmError::Other(format!("read body: {e}")))?;
+        .map_err(|e| LlmError::Other(report_reqwest_error("Failed to read API response body", &e)))?;
     if !status.is_success() {
         return Err(LlmError::Other(format!(
             "API request failed with status {}: {}",
@@ -736,7 +812,7 @@ pub async fn fetch_models(
         .timeout(LLM_REQUEST_TIMEOUT)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch models: {}", e))?;
+        .map_err(|e| report_reqwest_error("Failed to fetch models", &e))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -777,4 +853,41 @@ pub async fn fetch_models(
     }
 
     Ok(models)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body_with_reasoning() -> Value {
+        serde_json::json!({
+            "model": "m",
+            "messages": [],
+            "stream": false,
+            "reasoning_effort": "none",
+            "reasoning": { "effort": "none", "exclude": true }
+        })
+    }
+
+    #[test]
+    fn strip_reasoning_fields_removes_both_shapes() {
+        let mut body = body_with_reasoning();
+        strip_reasoning_fields(&mut body);
+        let obj = body.as_object().unwrap();
+        assert!(!obj.contains_key("reasoning_effort"));
+        assert!(!obj.contains_key("reasoning"));
+        // Everything else is untouched.
+        assert_eq!(obj["model"], "m");
+        assert_eq!(obj["stream"], false);
+    }
+
+    #[test]
+    fn rejection_memory_is_sticky_per_endpoint() {
+        let key = "https://example.test/v1/chat/completions|deepseek-chat";
+        assert!(!reasoning_endpoint_rejected(key));
+        remember_reasoning_rejection(key);
+        assert!(reasoning_endpoint_rejected(key));
+        // A different endpoint is unaffected.
+        assert!(!reasoning_endpoint_rejected("https://other.test|m"));
+    }
 }

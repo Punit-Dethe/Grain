@@ -78,10 +78,13 @@ pub(crate) use grain_overlay as overlay;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
+#[path = "handy/memory.rs"]
+mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;
 #[path = "handy/portable.rs"]
 pub mod portable;
+mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
@@ -207,6 +210,14 @@ fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
             // close), styled in Grain's paper/ink/dither language. macOS keeps
             // its overlay traffic-light buttons instead of a custom frame.
             .maximizable(true)
+            // [GRAIN] Turn OFF the webview's OS-level drag-and-drop handler.
+            // With it on (Tauri's default), WebView2 intercepts every drag over
+            // the window to offer native file-drop, and those events never reach
+            // the DOM — so HTML5 drag-and-drop silently dies. That is what stopped
+            // notes being dragged into folders in the Notes rail. Grain listens to
+            // no `tauri://drag-drop` event, so nothing is lost by disabling it and
+            // in-app dragging works again.
+            .disable_drag_drop_handler()
             .decorations(cfg!(target_os = "macos"));
 
     // [GRAIN] Windows/Linux: OPAQUE frameless window. We tried a transparent
@@ -797,6 +808,11 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    // Pin glibc's dynamic mmap threshold before the first large allocation,
+    // so per-dictation transient buffers are returned to the OS on free
+    // instead of accumulating in malloc arenas (#1792). No-op off Linux/glibc.
+    memory::init_allocator();
+
     // Detect portable mode before anything else
     portable::init();
 
@@ -851,6 +867,7 @@ pub fn run(cli_args: CliArgs) {
             grain_space::commands::grain_space_move_note,
             grain_space::commands::grain_space_list_all_folders,
             grain_space::commands::grain_space_create_folder,
+            grain_space::commands::grain_space_delete_folder,
             grain_space::commands::grain_space_search_notes,
             grain_space::commands::grain_space_get_note,
             grain_space::commands::grain_space_export_notes,
@@ -944,6 +961,9 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_export_pack,
             grain_commands::extension_uninstall,
             shortcut::change_lazy_stream_close_setting,
+            // [GRAIN] change_vad_enabled_setting intentionally not registered;
+            // upstream #1738 filler-word toggle is.
+            shortcut::change_filler_word_removal_enabled_setting,
             shortcut::change_app_language_setting,
             shortcut::change_update_checks_setting,
             shortcut::change_keyboard_implementation_setting,
@@ -1015,6 +1035,8 @@ pub fn run(cli_args: CliArgs) {
             commands::audio::set_clamshell_microphone,
             commands::audio::get_clamshell_microphone,
             commands::audio::is_recording,
+            commands::audio::get_microphone_channels,
+            commands::audio::set_selected_channel,
             commands::transcription::set_model_unload_timeout,
             commands::transcription::get_model_load_status,
             commands::transcription::unload_model_manually,

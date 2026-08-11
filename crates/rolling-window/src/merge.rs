@@ -13,21 +13,16 @@
 
 use strsim::jaro_winkler;
 
+use crate::normalize::comparison_key;
+
 /// Words at/above this Jaro-Winkler similarity (on normalized text) are treated
 /// as the same word for seam alignment.
 const SIMILARITY_THRESHOLD: f64 = 0.86;
 /// Punctuation stripped from word ends — matches the assembler's normalization.
-const PUNCTUATION: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
-
-fn strip(word: &str) -> String {
-    word.trim_matches(|c| PUNCTUATION.contains(c))
-        .to_lowercase()
-}
-
 /// Canonicalize a token for comparison: strip punctuation, lowercase, and fold
 /// number words to digits so `three` and `3` (or `N three`/`N3`) align.
 pub fn canonical(word: &str) -> String {
-    let s = strip(word);
+    let s = comparison_key(word);
     number_word_to_digits(&s).unwrap_or(s)
 }
 

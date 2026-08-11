@@ -1,0 +1,232 @@
+[package]
+name = "handy"
+version = "0.0.1"
+description = "Grain"
+authors = ["cjpais"]
+edition = "2021"
+license = "MIT"
+default-run = "handy"
+
+[profile.dev]
+incremental = true # Compile your binary in smaller steps.
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "handy_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+# [[bin]]
+# name = "cli"
+# path = "src/audio_toolkit/bin/cli.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json = "1"
+serde = { version = "1", features = ["derive"] }
+
+[dependencies]
+grain-pill = { path = "../crates/grain-pill" } # [GRAIN] overlay/HUD logic
+grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned settings + event bus
+grain-sdk = { path = "../crates/grain-sdk" } # [GRAIN] the wire contract: events, actions, WS auth handshake
+rolling-window = { path = "../crates/rolling-window" } # [GRAIN] pure cursor + assembler
+provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotation: cooldowns + headroom ordering
+once_cell = "1"
+tauri = { version = "2.11.5", features = [
+  "protocol-asset",
+  "macos-private-api",
+  "tray-icon",
+  'image-png',
+  "devtools",
+] }
+tauri-plugin-log = "2.7.1"
+tauri-plugin-opener = "2.5.2"
+tauri-plugin-store = "2.4.1"
+tauri-plugin-os = "2.3.2"
+tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-macos-permissions = "2.3.0"
+tauri-plugin-process = "2.3.1"
+rusqlite_migration = "2.3"
+tauri-plugin-fs = "2.4.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rdev = { git = "https://github.com/rustdesk-org/rdev" }
+cpal = "0.16.0"
+anyhow = "1.0.95"
+rubato = "0.16.2"
+hound = "3.5.1"
+log = "0.4.25"
+env_filter = "0.1.0"
+tokio = "1.43.0"
+vad-rs = { git = "https://github.com/cjpais/vad-rs", default-features = false }
+enigo = "0.6.1"
+rodio = { git = "https://github.com/cjpais/rodio.git" }
+# [GRAIN] keep `multipart` (cloud STT uploads); add upstream #1548 compression.
+reqwest = { version = "0.12", features = ["json", "stream", "multipart", "gzip", "brotli", "deflate"] }
+futures-util = "0.3"
+tokio-tungstenite = "0.24" # [GRAIN] local WS event transport to the pill
+rustfft = "6.4.0"
+strsim = "0.11.0"
+natural = "0.5.0"
+regex = "1"
+sourcemap = "9.3.2" # [GRAIN] Dev-only worker stack mapping (parsed only on error).
+# Text-based language ID (filler-word removal fallback, upstream #1738); isolang
+# bridges the ISO 639-1 codes in model metadata to whatlang's 639-3 codes.
+whatlang = "0.16"
+isolang = "2"
+chrono = "0.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+# [GRAIN] Grain Space: vector index for opt-in semantic note search. The
+# extension is registered once at store init; the vec0 table itself is only
+# created when the user enables semantic search (model is opt-in, not shipped).
+sqlite-vec = "0.1"
+uuid = { version = "1", features = ["v4"] } # [GRAIN] Grain Space note ids
+# [GRAIN] Grain Space semantic search (Phase 4): CPU-only Candle running the
+# opt-in BGE-small embedding model, plus zerocopy to hand &[f32] to sqlite-vec
+# without copies. The model itself is downloaded on consent, never bundled.
+zerocopy = "0.8"
+# [GRAIN] Screen-image capability (extension platform only — core never captures
+# an image). `image` downscales and encodes the grab; `base64` builds the data URI
+# the OpenAI-compatible vision wire format takes. Both are already in the tree as
+# transitive dependencies, so this only promotes them to direct use.
+image = { version = "0.25", default-features = false, features = ["png"] }
+base64 = "0.22"
+# Guaranteed clearing of the captured frame on drop. A plain write loop over a
+# buffer about to be freed is a dead store the optimizer may remove.
+zeroize = "1"
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+tar = "0.4.44"
+flate2 = "1.0"
+sha2 = "0.10"
+# [GRAIN] Line-based 3-way merge for the Obsidian vault write path
+# (OBSIDIAN-PLAN.md): a Grain save merges into a concurrent Obsidian edit
+# instead of clobbering it (diff-match-patch equivalent).
+diffy = "0.4"
+# [GRAIN] transcribe-cpp — the ONLY inference engine (batch + streaming).
+# transcribe-rs (ONNX) was removed entirely: every legacy ONNX family ships as
+# GGUF in the bundled catalog, so keeping the ONNX runtime linked was dead
+# weight. Per-platform backend features in the target tables.
+transcribe-cpp = { version = "0.1.3", default-features = false }
+# [GRAIN] GGUF model downloads for transcribe-cpp (Handy's cancellable fork).
+hf-hub = { git = "https://github.com/cjpais/hf-hub", branch = "cancellable-downloads", features = [
+  "tokio",
+] }
+handy-keys = "0.3.3"
+ferrous-opencc = "0.2.3"
+clap = { version = "4", features = ["derive"] }
+# [GRAIN] `serde_json`: an extension setting's value is polymorphic by kind, so
+# it crosses as `JsonValue` rather than a JSON string the frontend must parse.
+specta = { version = "=2.0.0-rc.22", features = ["serde_json"] }
+specta-typescript = "0.0.9"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }
+tauri-plugin-dialog = "2.6"
+# [GRAIN] Grain Space reminders fire as OS notifications (backend-triggered only).
+tauri-plugin-notification = "2"
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-autostart = "2.5.1"
+tauri-plugin-global-shortcut = "2.3.2"
+tauri-plugin-single-instance = "2.3.2"
+tauri-plugin-updater = "2.10.0"
+
+[target.'cfg(windows)'.dependencies]
+# [GRAIN] Grain Space workspace: suspend the hidden window's WebView2 renderer
+# (TrySuspend + MemoryUsageTargetLevel) so the sleeping overlay holds almost no
+# RAM. Version must track the one wry already pulls in (see Cargo.lock).
+webview2-com = "0.38"
+windows = { version = "0.61.3", features = [
+  "Win32_Media_Audio_Endpoints",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_DataExchange",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Ole",
+  "Win32_System_Memory",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_Graphics_Dwm",
+  # [GRAIN] Window capture for the screen-image capability: PrintWindow into a
+  # DIB section. Only ever the foreground window — never the desktop.
+  "Win32_Graphics_Gdi",
+  # PrintWindow is filed under Storage_Xps in the windows crate.
+  "Win32_Storage_Xps",
+  # [GRAIN] Context awareness: UI Automation for browser URL + silent nearby-term
+  # reading; COM for the automation object.
+  "Win32_UI_Accessibility",
+  "Win32_System_Com",
+] }
+winreg = "0.55"
+
+# [GRAIN] transcribe-cpp backends per Windows arch (mirrors Handy upstream).
+# x86_64 ships the Vulkan GPU backend + the dynamic-backends posture (loadable
+# per-ISA CPU modules); ARM64 stays on the base static CPU-only build.
+[target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
+transcribe-cpp = { version = "0.1.3", default-features = false, features = [
+  "dynamic-backends",
+  "vulkan",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2.1" }
+# [GRAIN] macOS links transcribe-cpp statically via Metal (ships no DLLs).
+transcribe-cpp = { version = "0.1.3", default-features = false, features = ["metal"] }
+# Used by the receipt-sequenced ("reliable") paste path for lazy NSPasteboard
+# promises. Versions track what Tauri already pulls in.
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = "0.3"
+objc2-service-management = "0.3.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
+gtk = "0.18"
+libc = "0.2"
+transcribe-cpp = { version = "0.1.3", default-features = false, features = [
+  "dynamic-backends",
+  "vulkan",
+] }
+
+# TEMPORARY: tao pinned past 0.35.3 for the Wayland client-side-decorations fix
+# (tao #1218, fixes tauri #11856 — dead titlebar buttons after visible(false) →
+# show()). Drop this once a tao release containing it lands in tauri.
+#
+# The rev is a cjpais/tao branch, not upstream: dev past 0.35.3 also carries
+# tao #1231 (removed window subclassing), which left the thread event target's
+# WNDPROC falling through to DefSubclassProc. On a no-longer-subclassed window
+# that returns 0, so WM_QUERYENDSESSION answered FALSE and vetoed Windows
+# shutdown (Handy #1710). `handy` = 07f3742b + a cherry-pick of tao #1274
+# (DefSubclassProc → DefWindowProcW). Repoint at upstream once #1274 merges.
+#
+# tao-macros must be patched to the SAME rev even though nothing here depends on
+# it directly: wry pulls tao-macros 0.1.3 from crates.io, so without this the
+# lockfile carries two tao-macros 0.1.3 entries (registry + git). cargo tolerates
+# that, but Nix's importCargoLock vendors both to the same `tao-macros-0.1.3`
+# dir and fails with a symlink collision. Unifying the source removes the dup.
+[patch.crates-io]
+tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
+tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
+
+[dev-dependencies]
+tempfile = "3"
+# Test-only tokio features for the local socket servers exercising the
+# resumable HTTP downloader; normal builds keep the leaner feature set.
+tokio = { version = "1.43.0", features = ["macros", "net", "io-util", "sync", "time", "rt-multi-thread"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "unwind"

@@ -16,6 +16,10 @@ Grain is a desktop app that turns speech into text wherever your cursor is. Pres
 
 It's built on [Handy](https://github.com/cjpais/handy), the most battle-tested open-source STT engine available. Grain keeps that foundation and adds the modes, AI workflows, and extension platform described below — all opt-in, all off unless you turn them on.
 
+## Upstream tracking
+
+Track Handy upstream changes and Grain's integration status in the [live tracker](https://punit-dethe.github.io/Grain/).
+
 ## Flow: the headline feature
 
 Every local dictation tool forces a trade-off: **batch** transcription (accurate, but you wait until you stop talking) or **live ASR** (instant, but noticeably less accurate). Grain adds a third option.

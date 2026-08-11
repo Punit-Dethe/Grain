@@ -1,7 +1,13 @@
 {
+  "07637ea932bcc9d9813f2f6caa7c766b89a513f6": {
+    "notes": "logging-only change to transcription.rs; no behavioral effect on Grain's path."
+  },
   "09a6a71015db794b47dd4916333be1a8b3ad2dac": {
     "status": "Merged",
     "notes": "Cherry-picked (2c17bfbd); conflicts resolved per divergence map: kept Grain keys (multiLanguage, flat overlay, whisper ack, snippets), took selectModel/languageCount/VAD translations, dropped unreferenced model-list keys. Cherry-pick — needs close-out with the batch."
+  },
+  "09aaf4d303334ea80b616c46e860f6bf51b4c0ba": {
+    "notes": "moonshine stream.text().full fix merged clean into Grain's transcription.rs (~line 935). Verified in v0.9.5 sync."
   },
   "0a59e1f3001c64dc4afc955f376508b1a11061c0": {
     "notes": "Clean cherry-pick"
@@ -9,6 +15,12 @@
   "11c2bb1eb8eab5b0472e03d49a908a60010d8777": {
     "status": "Ignored",
     "notes": "n/a - Grain kept its own bindings.ts typings, no optional bindings"
+  },
+  "12f02e2a9645295c95a156b83bbb2f054df2aea4": {
+    "notes": "Backend plumbing merged; selected_channel setting ported into crates/grain-core AppSettings (upstream settings.rs inert). Upstream ChannelSelector.tsx dropped (frontend frozen); set_selected_channel command kept + registered for Grain's own UI."
+  },
+  "148e5492f43dd0b4a80680ee92bebe6459a4ef3a": {
+    "notes": "PORTED: reasoning-rejection retry added to grain_llm_client post_chat (upstream #1809). On a 400/422 to a request carrying reasoning-disable fields, retry once without them and remember the endpoint (url|model) process-wide so later calls skip them. Grain gates reasoning by provider, so this only affects a 'custom' endpoint pointed at a strict API; +2 unit tests."
   },
   "158168983cfcf01c4555e012a62a7b1ccad77bd4": {
     "notes": "Added Windows prerequisites, MAX_PATH fixes, and code-signing bypass instructions to BUILD.md."
@@ -23,8 +35,17 @@
   "1fd3f912e2ea950d1694c68199b6e215926b1c81": {
     "notes": "Hoisted the sonner Toaster in AppInner so that model download errors are visible during onboarding."
   },
+  "2203a826c62a83022fc40d0ea6314d218c73f9c0": {
+    "notes": "ASCII/Soundex custom-word guard (is_supported_fuzzy_key) present in Grain's handy/audio_toolkit/text.rs; rolling has no separate Soundex matcher (its 'fuzzy' is seam dedup), so the shared finalization carries the fix."
+  },
+  "2211da652ea408191c6ab74e850d1155360d7304": {
+    "notes": "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."
+  },
   "2dd35bbb5a85a0fa46f539a0c2a06d1a246c88fa": {
     "notes": "Safely merged into `tray.rs`"
+  },
+  "31d8fc2442c2412d6e9de6e018cf70edfbc37ca5": {
+    "notes": "transcribe.cpp introduction — Grain's entire transcription is unified on transcribe-cpp (managers/transcription.rs); absorbed as architecture, not a discrete port."
   },
   "38825767cf933f59b90209c3f3c5f1e3bbe98766": {
     "notes": "Adapted to Grain flat onboarding layout; store/ModelCard infra already present"
@@ -38,6 +59,9 @@
   },
   "3f49cf100b33f7a164662cf3f1b953207ab37c7b": {
     "notes": "Added `nl` translation."
+  },
+  "4223e7ac6741298654d98003db38e4164ee98294": {
+    "notes": "ADOPTED (re-evaluated 2026-08-08): the reqwest source-chain diagnostics are useful — grain_llm_client swallowed transport causes at post_chat/.send() and fetch_models, the same gap. Ported the helper into a shared crate::net_diag module (payload-safe: sanitized URLs, decode errors keep only classification) and applied it to BOTH cloud clients — grain_llm_client AND the Grain-only stt_client (5 send sites), which the merge could never reach."
   },
   "4357c728d9670381b1acabb6a92d937ceb629ad3": {
     "status": "Ignored",
@@ -53,14 +77,23 @@
     "status": "Merged",
     "notes": "Superseded by and absorbed into handy-keys 0.3.2."
   },
+  "46d6a2aec85560b1a5f627a17423d2f0dbf94960": {
+    "notes": "Vulkan host-gating kept in Grain's get_available_accelerators (verified v0.9.5 sync); dropped only the ORT branch (no ONNX engine behind it)."
+  },
   "485f4ade00169fd8a620c17d1478ad198252e953": {
     "notes": "Added CLT fallback logic in `build.rs`."
   },
   "497653014c3293be09adc082305c14e6abdfa3f0": {
     "notes": "Clean cherry-pick"
   },
+  "4b3a969daeafb8c6403228149fdb20eec7edf3a9": {
+    "notes": "Frontend-only (streaming/translation model filter buttons); frontend frozen, Grain owns its ModelsSettings. No backend content."
+  },
   "4be7911d4de7935eeb2a6b817dc4b506ed7ca911": {
     "notes": "AudioPlayerGroup wrapper; kept Grain list markup and copyText prop"
+  },
+  "4cd49950762b57e7e634f30d9a0cd6b0715fc4ed": {
+    "notes": "#1738 ported: settings.rs(inert)->filler_word_removal_enabled added to grain-core AppSettings+Default; text.rs(relocated) new remove_filler_words/normalize/OutputLanguageEvidence API adopted in grain_text.rs; transcription.rs(parallel) batch resolves output-language evidence in the with_engine_session decode, rolling/cloud key filler removal on selected_language via finalize_transcript."
   },
   "5464bfaa0826ec367a052514d87575f92e0113fc": {
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
@@ -94,17 +127,26 @@
     "status": "Ignored",
     "notes": "Irrelevant (Grain is an independent fork)."
   },
+  "96afb0cf335d0c6b5d6d92c9af9e14f4c3f4ef0b": {
+    "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
+  },
   "99ac7ebb23473d8ce5b63e6578f37e239b89e738": {
     "notes": "Fixed encoding and translated English strings in `ja`."
   },
   "9b0d8a1120810dac1b139f480d37ba5f704e4856": {
     "notes": "Skipped (Grain manages custom catalog)."
   },
+  "9bcb6d9d46c88517d2b5519d3a4f900ee3968c99": {
+    "notes": "n/a: #1700 fixes the upstream WEBVIEW overlay on Wayland (Tauri 2.11.5). Grain's overlay is the native grain-pill (not a webview) and overlay.rs is inert, so there is no pill analog to port."
+  },
   "a201be9161cd3e62934dec98531204beb1a2a062": {
     "notes": "Bumped in `Cargo.toml`."
   },
   "a6df742880ada3c006ad376c1a89d8565b003e69": {
     "notes": "Recover poisoned mutexes inside Drop impls using `match` + logged warnings."
+  },
+  "a70ac84fd66819d171a0bce156e4f729aa46527a": {
+    "notes": "reliable_paste setting present in grain-core AppSettings; paste-reliability handled in Grain's paste path."
   },
   "a92a4d5e497bc1d7bc8d228c77636c4e600453a9": {
     "notes": "Fixed Tauri memory leak from overlay."
@@ -114,6 +156,12 @@
   },
   "b00ae666c57e972b2d3494fc76d8166ffa59032e": {
     "notes": "hf-hub fork pin bumped 63b6034->9918f11"
+  },
+  "b428ae4c9c8aecba00d0e44e14d6466d9687795f": {
+    "notes": "transcription.rs part = improved GPU-fallback warning (Linux/non-Linux split); merged clean into Grain's transcription.rs. Verified in v0.9.5 sync."
+  },
+  "b4453a297f60d2688f9663908c0e92071b0f7641": {
+    "notes": "Adopted set_state()/recording_active lock-free mirror; kept Grain's prompt_mark reset alongside it."
   },
   "b9925d01972a933544d0344a2e62360580368f18": {
     "status": "Ignored",
@@ -158,6 +206,9 @@
     "status": "Ignored",
     "notes": "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead."
   },
+  "cf49ab3543a3e4d1fdcc318014393975b4a3306a": {
+    "notes": "overlay.rs inert; run-on-main-thread targets the webview overlay's GTK/NSScreen access. Grain's native grain-pill runs its own winit event loop (main-thread-correct by construction). n/a."
+  },
   "cfab1dda9db103e95e9fe2f4d76d2168caf0a59d": {
     "notes": "Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul)."
   },
@@ -175,14 +226,23 @@
     "status": "Ignored",
     "notes": "Ignored. Grain has a highly custom, split-theme architecture via ThemeContext.tsx (allowing dark Quick Panel with light Settings). Upstream's implementation is a global document.documentElement override, which is incompatible with Grain's per-panel toggles."
   },
+  "d961593721b6643d8fe94b6ae28f5dc3fa63edd8": {
+    "notes": "js-yaml 4.1.1->4.3.1 is a dev-only transitive dep (@eslint/eslintrc); bun.lock is merge=ours and Grain regenerates independently. No runtime exposure; not force-bumped."
+  },
   "dad37baa0315c63c3a3d91af1fdcd6ad6e401f4f": {
     "notes": "Corrected descriptions to \"Russian speech-to-text\"."
+  },
+  "db003f38b1aef4eb967ac3419bebc851d680f71c": {
+    "notes": "Adopted upstream idle-skip (if recording gating) around the resampler while keeping Grain's conditioning + rolling sample_cb closure; dropped now-redundant inner recording guards."
   },
   "dc01346d1cf2ca44b2c726b7140c93dbf929c086": {
     "notes": "Ported language selector improvements."
   },
   "dd6cc676112b9c8123ebd34c6765444b7a855cfb": {
     "notes": "FFT scaling already present in `recorder.rs` (likely ported during audio perf rewrite)."
+  },
+  "e1152d86935562264d7c5637d77ce2e29aeef57e": {
+    "notes": "overlay.rs inert; grain-pill does its own Windows multi-monitor positioning (MonitorFromPoint/GetMonitorInfoW on the cursor's monitor work area). n/a."
   },
   "e2c72a25ff48f280729e9e9bac289802c2c01cfd": {
     "notes": "Throttled `emit_levels` to 30 FPS in `overlay.rs`."

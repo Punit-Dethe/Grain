@@ -146,39 +146,6 @@ fn i16_to_f32(samples: &[i16]) -> Vec<f32> {
     samples.iter().map(|&s| s as f32 / 32768.0).collect()
 }
 
-/// The committed-transcript tail used to condition the next chunk's decode,
-/// with a short rollback suffix removed. Returns `None` when there isn't enough
-/// settled text to be worth prompting with. `ROLLBACK_WORDS` mirrors the
-/// boundary-stabilization trick from streaming ASR (qwen-asr): the very last
-/// words are the least settled, so we don't feed them back as context.
-fn committed_context(text: &str) -> Option<String> {
-    const ROLLBACK_WORDS: usize = 5;
-    const MAX_CONTEXT_CHARS: usize = 200;
-
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.len() <= ROLLBACK_WORDS + 2 {
-        return None;
-    }
-    let head = &words[..words.len() - ROLLBACK_WORDS];
-    let joined = head.join(" ");
-    // Keep only the last MAX_CONTEXT_CHARS (whole words) — a decode prompt this
-    // long already covers the seam; more just costs prompt tokens.
-    let tail = if joined.len() > MAX_CONTEXT_CHARS {
-        let cut = joined.len() - MAX_CONTEXT_CHARS;
-        match joined[cut..].find(' ') {
-            Some(sp) => joined[cut + sp + 1..].to_string(),
-            None => joined[cut..].to_string(),
-        }
-    } else {
-        joined
-    };
-    if tail.trim().is_empty() {
-        None
-    } else {
-        Some(tail)
-    }
-}
-
 /// Rolling-window driver, held in Tauri managed state. Stateless between
 /// sessions apart from the shared manager handle.
 pub struct RollingTranscriber {
@@ -362,19 +329,10 @@ impl RollingSession {
                             crate::audio_toolkit::audio::normalize_gain(&mut audio);
                         }
                         let chunk_dur = chunk.end_sec - chunk.start_sec;
-                        // [GRAIN] Condition the decode on the committed tail so
-                        // spelling/casing stay consistent across the seam
-                        // (whisper-family only; ignored elsewhere). Drop the last
-                        // few words — the least-settled boundary — as a rollback
-                        // suffix so a wobbly tail can't bias the next chunk.
-                        let context = committed_context(assembler.text());
                         // The shared manager waits out an in-flight model load
                         // internally, so a chunk arriving mid-load is transcribed
                         // once weights are ready — never dropped.
-                        match transcriber
-                            .tm
-                            .transcribe_rolling_chunk(&audio, context.as_deref())
-                        {
+                        match transcriber.tm.transcribe_rolling_chunk(&audio) {
                             Ok(transcript) => {
                                 let text = transcript.text.trim().to_string();
                                 // Prefer the model's real word timings; synthesize
@@ -399,9 +357,8 @@ impl RollingSession {
                                     } else {
                                         Some(words.as_slice())
                                     },
-                                    // [GRAIN] The cut kind becomes the acoustic
-                                    // prior for the NEXT seam's punctuation
-                                    // revision (see rolling-window/src/seam.rs).
+                                    // Keep the acoustic cut reason attached to
+                                    // the chunk without inferring formatting.
                                     chunk.boundary,
                                 );
                                 // Preview: the committed text just grew; show it
@@ -454,11 +411,7 @@ impl RollingSession {
         if transcriber.conditioning.load(Ordering::Relaxed) {
             crate::audio_toolkit::audio::normalize_gain(&mut audio);
         }
-        let context = committed_context(assembler.text());
-        let hyp: Vec<String> = match transcriber
-            .tm
-            .transcribe_rolling_chunk(&audio, context.as_deref())
-        {
+        let hyp: Vec<String> = match transcriber.tm.transcribe_rolling_chunk(&audio) {
             Ok(t) => t.text.split_whitespace().map(String::from).collect(),
             Err(_) => return,
         };
@@ -527,34 +480,6 @@ impl RollingSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn committed_context_returns_none_for_short_text() {
-        assert_eq!(committed_context(""), None);
-        assert_eq!(committed_context("one two three"), None);
-        // Exactly ROLLBACK_WORDS + 2 = 7 words is still too short.
-        assert_eq!(committed_context("a b c d e f g"), None);
-    }
-
-    #[test]
-    fn committed_context_drops_rollback_suffix() {
-        // 10 words: drop the last 5, keep the first 5.
-        let ctx = committed_context("one two three four five six seven eight nine ten").unwrap();
-        assert_eq!(ctx, "one two three four five");
-    }
-
-    #[test]
-    fn committed_context_caps_length_on_word_boundary() {
-        let long = (0..200)
-            .map(|i| format!("word{i}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        let ctx = committed_context(&long).unwrap();
-        assert!(ctx.len() <= 200, "context {} chars exceeds cap", ctx.len());
-        // Must start at a whole word (no leading partial token).
-        assert!(!ctx.starts_with("ord"));
-        assert!(ctx.starts_with("word"));
-    }
 
     #[test]
     fn synthesize_word_timings_spans_chunk_duration() {

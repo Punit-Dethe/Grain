@@ -27,8 +27,7 @@ import { Blocks, BookOpen, ChevronRight, Keyboard, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
-import { useOsType } from "@/hooks/useOsType";
-import { formatKeyCombination } from "@/lib/utils/keyboard";
+import { formatKeyPart } from "@/lib/utils/keyboard";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
@@ -56,7 +55,6 @@ const COPY = {
     body: "Rewrite anything you have selected.",
     bodyOff: "Rewrite anything you have selected.",
     enable: "Turn on in Studio",
-    press: "Press",
   },
 };
 
@@ -70,12 +68,24 @@ function go(hash: string) {
   window.location.hash = hash.slice(1);
 }
 
-/** A single physical-looking keycap. Presentational only — never interactive. */
+/**
+ * A chord as one keycap per key, wrapping within the card rather than
+ * truncating. A single wide cap of "Left Ctrl + Left Shift + Q" had to be
+ * clipped to fit and spilled toward the card edge; separate caps that wrap read
+ * cleanly at any width. Presentational only — never interactive.
+ */
 function Keycap({ combination }: { combination: string }) {
-  const osType = useOsType();
+  const keys = combination
+    .split("+")
+    .map((part) => formatKeyPart(part))
+    .filter(Boolean);
   return (
-    <span className="overview-keycap">
-      {formatKeyCombination(combination, osType)}
+    <span className="overview-keys">
+      {keys.map((key, index) => (
+        <kbd className="overview-key" key={`${key}-${index}`}>
+          {key}
+        </kbd>
+      ))}
     </span>
   );
 }
@@ -268,7 +278,6 @@ function AgentCard() {
         <small>{enabled ? COPY.agent.body : COPY.agent.bodyOff}</small>
         {combination ? (
           <div className="overview-agent-press">
-            <span>{COPY.agent.press}</span>
             <Keycap combination={combination} />
           </div>
         ) : (

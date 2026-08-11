@@ -39,6 +39,10 @@ impl Drop for FinishGuard {
         if let Some(c) = self.0.try_state::<TranscriptionCoordinator>() {
             c.notify_processing_finished();
         }
+        // The pipeline just freed its large transient buffers (captured PCM,
+        // WAV copy, engine scratch); hand the cached pages back to the OS so
+        // they don't sit in malloc arenas until they get swapped out (#1792).
+        crate::memory::trim_freed_memory();
     }
 }
 
@@ -218,9 +222,6 @@ pub(crate) async fn process_transcription_output(
     // instruction is actually applied regardless of which shortcut stopped the
     // session.
     spoken_prompt: Option<String>,
-    // [GRAIN] True when `transcription` came from the rolling-window assembler —
-    // enables the token-efficient seam-repair prompt layer.
-    rolling: bool,
 ) -> ProcessedTranscription {
     let settings = get_settings(app);
 
@@ -252,7 +253,6 @@ pub(crate) async fn process_transcription_output(
             &settings,
             &final_text,
             spoken_prompt.as_deref(),
-            rolling,
         )
         .await
         {
@@ -560,7 +560,6 @@ impl ShortcutAction for TranscribeAction {
                                     &transcription,
                                     post_process,
                                     spoken_prompt,
-                                    false,
                                 ),
                                 || rm.was_cancelled_since(cancel_generation),
                             )

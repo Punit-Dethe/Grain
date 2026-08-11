@@ -26,6 +26,7 @@ import { ToolsPage } from "./pages/ToolsPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
+  hasProcessedText,
   useHistoryController,
   type HistoryController,
 } from "./history/useHistoryController";
@@ -38,16 +39,14 @@ let onboardingResolution: ReturnType<
 > | null = null;
 
 const PROTOTYPE_COPY = {
-  desktop: "/ DESKTOP",
   quickPanel: "Quick panel",
   quickPanelShortcut: "Ctrl K",
   original: "Original",
   processed: "AI processed",
   heroTopline: "On-device · Parakeet TDT 0.6B",
+  beta: "Beta",
   heroKicker: "Grain is listening when you are",
   heroTitle: "Speak before the thought disappears.",
-  heroBody:
-    "Grain captures the words, preserves the intent, and places the result exactly where your work continues.",
   startFlow: "Start Flow",
   openNotes: "Open notes",
   quickActions: "Start here",
@@ -59,6 +58,7 @@ const PROTOTYPE_COPY = {
   recentLoading: "Loading recent transcriptions…",
   recentError: "Recent transcriptions could not be loaded.",
   recentEmpty: "No transcriptions yet.",
+  recentNoProcessed: "No AI-processed transcriptions yet.",
   retry: "Retry",
 } as const;
 
@@ -259,12 +259,6 @@ function WindowChrome({ route }: { route: AppRoute }) {
       onMouseDown={startDrag}
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
-      <div className="brand-slot">
-        <div className="grain-wordmark">
-          <strong>GRAIN</strong>
-          <span>{PROTOTYPE_COPY.desktop}</span>
-        </div>
-      </div>
       <div className="workspace-title">
         {route.page === "settings"
           ? "Settings"
@@ -383,6 +377,19 @@ function Sidebar({ route }: { route: AppRoute }) {
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
+      {/* The sidebar now runs the full height of the window, so the wordmark
+          lives at its head rather than in the titlebar. This strip stays a
+          drag region so the top-left corner still moves the window. */}
+      <div
+        className="sidebar-brand"
+        data-tauri-drag-region
+        style={{ WebkitAppRegion: "drag" } as CSSProperties}
+      >
+        <div className="grain-wordmark">
+          <strong>GRAIN</strong>
+        </div>
+        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
+      </div>
       {NAV_GROUPS.map((group) => (
         <nav className="nav-section" key={group.label}>
           <div className="nav-label">{group.label}</div>
@@ -698,6 +705,15 @@ function ViewSwitch({
 function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
 
+  // AI processed view lists only entries the AI actually rewrote — raw
+  // transcripts are hidden so the two are never confused. Original view shows
+  // everything. Either way the recent strip is capped at three.
+  const recentEntries = (
+    mode === "processed"
+      ? history.entries.filter(hasProcessedText)
+      : history.entries
+  ).slice(0, 3);
+
   return (
     <section className="page active" data-page-panel="overview">
       <div className="page-wrap wide">
@@ -719,7 +735,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
             <div className="hero-copy">
               <div className="hero-kicker">{PROTOTYPE_COPY.heroKicker}</div>
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
-              <p>{PROTOTYPE_COPY.heroBody}</p>
             </div>
             <div className="hero-actions">
               <button className="button primary" type="button" disabled>
@@ -786,9 +801,13 @@ function OverviewPage({ history }: { history: HistoryController }) {
             </div>
           ) : history.entries.length === 0 ? (
             <div className="history-state">{PROTOTYPE_COPY.recentEmpty}</div>
+          ) : recentEntries.length === 0 ? (
+            <div className="history-state">
+              {PROTOTYPE_COPY.recentNoProcessed}
+            </div>
           ) : (
             <AudioPlayerGroup>
-              {history.entries.slice(0, 3).map((entry) => (
+              {recentEntries.map((entry) => (
                 <HistoryCard
                   key={entry.id}
                   entry={entry}

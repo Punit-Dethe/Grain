@@ -228,7 +228,7 @@
             "description": "Stream words as you speak, using the rolling window."
           },
           "transcribe_native_asr": {
-            "name": "Live",
+            "name": "Streaming",
             "description": "Native real-time dictation with live streaming text in the Studio Window."
           },
           "cancel": {
@@ -669,6 +669,8 @@
       "transcriptionFailed": "Transcription failed. You can re-transcribe using the retry icon.",
       "showProcessed": "PRO",
       "showTranscription": "TRS",
+      "readMore": "Read more",
+      "readLess": "Show less",
       "processedTooltip": "Show the AI-processed text",
       "transcriptionTooltip": "Show the raw transcription"
     },
@@ -919,6 +921,7 @@
     "newFolder": "New folder",
     "newFolderPlaceholder": "Folder name",
     "noFolders": "No folders yet.",
+    "deleteCollection": "Delete collection",
     "fromVault": "From your vault",
     "seeAll": "See all",
     "seeLess": "See less",

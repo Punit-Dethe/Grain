@@ -61,12 +61,9 @@ impl Default for RollingWindowConfig {
     }
 }
 
-/// Why a chunk's END boundary was placed where it is — the acoustic ground
-/// truth of the seam that follows it. The assembler uses this as a prior when
-/// revising seam punctuation (see `seam.rs`): a [`HardCut`](CutKind::HardCut)
-/// landed mid-speech, so a sentence break exactly there is unlikely; a
-/// [`Silence`](CutKind::Silence) cut means a real ≥`silence_min_duration` pause
-/// happened — the strongest full-stop cue there is.
+/// Why a chunk's END boundary was placed where it is. This remains explicit
+/// session metadata for diagnostics and boundary-sensitive policies; transcript
+/// formatting is deliberately not inferred from it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CutKind {
     /// Early finalize: a real trailing-silence run (VAD non-speech or RMS
