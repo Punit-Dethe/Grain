@@ -385,7 +385,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // zero-overhead path and no preview events fire.
         let preview = get_settings(app).rolling_live_preview;
         let sid = next_session_id();
-        rt.start_session(app.clone(), sid, preview);
+        let rolling_started = rt.start_session(app.clone(), sid, preview);
         // Register the new session generation before the asynchronous model
         // load begins. A cancelled predecessor can finish cleanup concurrently,
         // but can no longer unload the model underneath this recording.
@@ -424,11 +424,21 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 play_feedback_sound_blocking(&app2, SoundType::Start);
                 rm_mute.apply_mute();
             });
-            if let Err(e) = rm.try_start_recording(&binding_id, vad_policy) {
+            let start = if rolling_started {
+                rm.try_start_recording_low_ram(&binding_id, vad_policy)
+            } else {
+                rm.try_start_recording(&binding_id, vad_policy)
+            };
+            if let Err(e) = start {
                 recording_error = Some(e);
             }
         } else {
-            match rm.try_start_recording(&binding_id, vad_policy) {
+            let start = if rolling_started {
+                rm.try_start_recording_low_ram(&binding_id, vad_policy)
+            } else {
+                rm.try_start_recording(&binding_id, vad_policy)
+            };
+            match start {
                 Ok(()) => {
                     let app2 = app.clone();
                     let rm = Arc::clone(&rm);
@@ -509,7 +519,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
         tauri::async_runtime::spawn(async move {
             let _guard = FinishGuard(ah.clone());
 
-            // Full audio (for WAV/history + the batch fallback).
+            // Empty on the normal rolling path: its PCM16 journal owns audio.
+            // A Vec is retained only if journal creation failed and recording
+            // deliberately fell back to the legacy capture contract.
             let samples = rm
                 .stop_recording(&binding_id, cancel_generation)
                 .unwrap_or_default();
@@ -519,17 +531,32 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // Drain the rolling worker → final assembled transcript. Always done,
             // even under Prompt Record, so the worker never leaks — its text is
             // just unused in that case (it mixed content + instruction).
-            let rolling_text = rt.finish_session().unwrap_or_default();
+            let rolling = rt.finish_session();
+            let rolling_text = rolling
+                .as_ref()
+                .map(|output| output.text.as_str())
+                .unwrap_or_default();
+            let audio_len = rolling
+                .as_ref()
+                .map(|output| output.frame_count())
+                .unwrap_or(samples.len());
 
             // Prompt Record: the rolling-assembled text covers the WHOLE
             // utterance (content + spoken instruction mixed), so it can't be split.
             // Re-transcribe the two audio slices batch-style instead. This extra
             // pass only happens when the user actually armed Prompt Record.
             let (final_text, spoken_prompt, post_process) = if let Some(m) =
-                prompt_mark.filter(|&m| m > 0 && m < samples.len())
+                prompt_mark.filter(|&m| m > 0 && m < audio_len)
             {
+                let prompt_audio = match rolling.as_ref() {
+                    Some(output) => output.materialize_audio().unwrap_or_else(|error| {
+                        error!("Failed to read rolling Prompt Record audio: {error}");
+                        Vec::new()
+                    }),
+                    None => samples.clone(),
+                };
                 let (content_res, spoken) =
-                    crate::prompt_record::transcribe_split(&ah, samples.clone(), Some(m)).await;
+                    crate::prompt_record::transcribe_split(&ah, prompt_audio, Some(m)).await;
                 // `transcribe_split` routes through the STT dispatcher, which
                 // finalizes internally — don't finalize again. Batch-style
                 // re-transcription has no rolling seams.
@@ -563,11 +590,18 @@ impl ShortcutAction for RealtimeTranscribeAction {
                         },
                         settings.scrap_that_enabled,
                     )
-                } else if !samples.is_empty() {
+                } else if audio_len > 0 {
                     warn!("[GRAIN] rolling produced no text — falling back to batch");
                     // `tm.transcribe` already runs finalize_transcript internally, so
                     // the fallback text is finalized; don't finalize it again.
-                    tm.transcribe(samples.clone()).unwrap_or_default()
+                    let fallback_audio = match rolling.as_ref() {
+                        Some(output) => output.materialize_audio().unwrap_or_else(|error| {
+                            error!("Failed to read rolling fallback audio: {error}");
+                            Vec::new()
+                        }),
+                        None => samples.clone(),
+                    };
+                    tm.transcribe(fallback_audio).unwrap_or_default()
                 } else {
                     String::new()
                 };
@@ -578,14 +612,24 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 process_transcription_output(&ah, &final_text, post_process, spoken_prompt).await;
             let final_text = processed.final_text;
 
-            if !samples.is_empty() {
+            if audio_len > 0 {
                 let file_name = format!("grain-{}.wav", chrono::Utc::now().timestamp());
                 let wav_path = hm.recordings_dir().join(&file_name);
-                let samples_for_wav = samples.clone();
-                let _ = tauri::async_runtime::spawn_blocking(move || {
-                    crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
-                })
-                .await;
+                if let Some(output) = rolling.as_ref() {
+                    let output = output.clone();
+                    let result =
+                        tauri::async_runtime::spawn_blocking(move || output.save_wav(&wav_path))
+                            .await;
+                    if let Ok(Err(error)) = result {
+                        error!("Failed to save rolling journal WAV: {error}");
+                    }
+                } else {
+                    let samples_for_wav = samples.clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        crate::audio_toolkit::save_wav_file(&wav_path, &samples_for_wav)
+                    })
+                    .await;
+                }
                 if let Err(e) = hm.save_entry(
                     file_name,
                     final_text.clone(),

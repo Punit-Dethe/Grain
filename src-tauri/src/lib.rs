@@ -53,6 +53,7 @@ mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permi
 mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
 mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
+mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
 // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
 // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;

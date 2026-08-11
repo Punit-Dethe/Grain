@@ -90,6 +90,9 @@ pub enum CutKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioChunk {
     pub samples: Vec<i16>,
+    pub start_frame: usize,
+    pub fresh_start_frame: usize,
+    pub end_frame: usize,
     pub start_sec: f64,
     pub fresh_start_sec: f64,
     pub end_sec: f64,
@@ -345,6 +348,9 @@ impl SessionCursor {
         }
         let chunk = AudioChunk {
             samples,
+            start_frame,
+            fresh_start_frame,
+            end_frame: end,
             start_sec: self.frame_to_sec(start_frame),
             fresh_start_sec: self.frame_to_sec(fresh_start_frame),
             end_sec: self.frame_to_sec(end),
@@ -372,6 +378,9 @@ impl SessionCursor {
         }
         Some(AudioChunk {
             samples,
+            start_frame,
+            fresh_start_frame,
+            end_frame,
             start_sec: self.frame_to_sec(start_frame),
             fresh_start_sec: self.frame_to_sec(fresh_start_frame),
             end_sec: self.frame_to_sec(end_frame),

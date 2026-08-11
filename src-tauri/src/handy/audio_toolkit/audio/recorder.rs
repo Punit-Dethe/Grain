@@ -23,7 +23,7 @@ enum Cmd {
     /// Begin capturing. Carries the send timestamp so the consumer can log how
     /// long the command sat in the channel (and how much audio was dropped
     /// before it was seen).
-    Start(VadPolicy, Instant),
+    Start(VadPolicy, Instant, bool), // [GRAIN] retain full-session RAM buffer
     Stop(mpsc::Sender<Vec<f32>>),
     Shutdown,
 }
@@ -421,8 +421,19 @@ impl AudioRecorder {
     }
 
     pub fn start(&self, vad_policy: VadPolicy) -> Result<(), Box<dyn std::error::Error>> {
+        self.start_with_retention(vad_policy, true)
+    }
+
+    /// [GRAIN] Rolling journals the continuous session to PCM16, so it can
+    /// disable the duplicate f32 capture buffer. Other recording modes retain
+    /// the upstream behavior through [`start`](Self::start).
+    pub fn start_with_retention(
+        &self,
+        vad_policy: VadPolicy,
+        retain_full_audio: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(tx) = &self.cmd_tx {
-            tx.send(Cmd::Start(vad_policy, Instant::now()))?;
+            tx.send(Cmd::Start(vad_policy, Instant::now(), retain_full_audio))?;
         }
         Ok(())
     }
@@ -679,8 +690,7 @@ mod tests {
         assert!(!is_no_input_device_error("device not found"));
     }
 
-    #[test]
-    fn stop_drain_streams_every_finalized_sample_to_rolling() {
+    fn run_stop_drain(retain_full_audio: bool) -> (Vec<f32>, Vec<f32>) {
         let (sample_tx, sample_rx) = mpsc::channel();
         let (cmd_tx, cmd_rx) = mpsc::channel();
         let streamed = Arc::new(Mutex::new(Vec::<f32>::new()));
@@ -704,7 +714,11 @@ mod tests {
         });
 
         cmd_tx
-            .send(Cmd::Start(VadPolicy::Disabled, Instant::now()))
+            .send(Cmd::Start(
+                VadPolicy::Disabled,
+                Instant::now(),
+                retain_full_audio,
+            ))
             .unwrap();
         let (reply_tx, reply_rx) = mpsc::channel();
         cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
@@ -726,8 +740,21 @@ mod tests {
         worker.join().unwrap();
 
         let rolling = streamed.lock().unwrap().clone();
+        (batch, rolling)
+    }
+
+    #[test]
+    fn stop_drain_streams_every_finalized_sample_to_rolling() {
+        let (batch, rolling) = run_stop_drain(true);
         assert!(!batch.is_empty());
         assert_eq!(rolling, batch);
+    }
+
+    #[test]
+    fn low_ram_capture_keeps_stream_but_not_full_session_buffer() {
+        let (batch, rolling) = run_stop_drain(false);
+        assert!(batch.is_empty());
+        assert!(!rolling.is_empty());
     }
 }
 
@@ -754,6 +781,8 @@ fn run_consumer(
     let mut processed_samples = Vec::<f32>::new();
     let mut recording = false;
     let mut vad_policy = VadPolicy::Offline;
+    let mut retain_full_audio = true; // [GRAIN]
+    let mut captured_frames = 0usize; // [GRAIN] rolling Prompt Record timeline
 
     // [GRAIN] Voice conditioning state. The high-pass runs at 16 kHz (after the
     // FrameResampler), filtering each frame in `scratch` before it reaches VAD,
@@ -801,13 +830,16 @@ fn run_consumer(
         vad: &Option<VadConfig>,
         audio_cb: &Option<AudioFrameCallback>,
         out_buf: &mut Vec<f32>,
+        retain_full_audio: bool,
     ) -> Option<bool> {
         if !recording {
             return None;
         }
 
         let mut emit = |buf: &[f32]| {
-            out_buf.extend_from_slice(buf);
+            if retain_full_audio {
+                out_buf.extend_from_slice(buf);
+            }
             if let Some(cb) = audio_cb {
                 cb(buf);
             }
@@ -842,7 +874,7 @@ fn run_consumer(
         let mut pending = Some(chunk);
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
-                Cmd::Start(policy, sent_at) => {
+                Cmd::Start(policy, sent_at, retain) => {
                     log::debug!(
                         "Cmd::Start processed {:?} after send; capture begins with the in-flight chunk",
                         sent_at.elapsed()
@@ -850,7 +882,9 @@ fn run_consumer(
                     awaiting_first_captured_chunk = Some(Instant::now());
                     stop_flag.store(false, Ordering::Relaxed);
                     vad_policy = policy;
+                    retain_full_audio = retain;
                     processed_samples.clear();
+                    captured_frames = 0;
                     recorded_len.store(0, Ordering::Relaxed); // [GRAIN] fresh mark baseline
                     recording = true;
                     highpass.reset(); // [GRAIN] fresh filter state per session
@@ -893,7 +927,9 @@ fn run_consumer(
                                 &vad,
                                 &audio_cb,
                                 &mut processed_samples,
+                                retain_full_audio,
                             );
+                            captured_frames += f.len();
                             if let Some(cb) = &sample_cb {
                                 cb(f, speech);
                             }
@@ -923,7 +959,9 @@ fn run_consumer(
                                         &vad,
                                         &audio_cb,
                                         &mut processed_samples,
+                                        retain_full_audio,
                                     );
+                                    captured_frames += f.len();
                                     // [GRAIN] Keep rolling aligned with the same
                                     // finalized resampled stream during the
                                     // device-channel drain.
@@ -957,7 +995,9 @@ fn run_consumer(
                             &vad,
                             &audio_cb,
                             &mut processed_samples,
+                            retain_full_audio,
                         );
+                        captured_frames += f.len();
                         // [GRAIN] The resampler can retain a partial final frame;
                         // deliver it before `stop_recording` replies and the
                         // caller flushes the rolling cursor.
@@ -1038,7 +1078,9 @@ fn run_consumer(
                     &vad,
                     &audio_cb,
                     &mut processed_samples,
+                    retain_full_audio,
                 );
+                captured_frames += f.len();
                 // [GRAIN] stream the resampled 16 kHz frame to the rolling-window
                 // engine with its voice-activity decision (rolling keeps EVERY frame
                 // for a continuous timeline; `speech` only drives its silence gate).
@@ -1052,7 +1094,14 @@ fn run_consumer(
             // [GRAIN] Publish the live buffer length so Prompt Record can mark
             // the content→instruction split at click time. Cheap: one relaxed
             // store per captured chunk (not per frame).
-            recorded_len.store(processed_samples.len(), Ordering::Relaxed);
+            recorded_len.store(
+                if retain_full_audio {
+                    processed_samples.len()
+                } else {
+                    captured_frames
+                },
+                Ordering::Relaxed,
+            );
             if let Some(started) = awaiting_first_captured_chunk.take() {
                 log::debug!(
                     "first captured chunk ({:.1}ms of audio) processed {:?} after Cmd::Start",

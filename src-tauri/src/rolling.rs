@@ -18,7 +18,7 @@
 //! session end.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -30,6 +30,7 @@ use rolling_window::{
 use tauri::AppHandle;
 use transcribe_cpp::Transcript;
 
+use crate::grain_audio_journal::PcmJournal;
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
 
@@ -164,6 +165,26 @@ pub struct RollingTranscriber {
     scrap_that: AtomicBool,
 }
 
+#[derive(Clone)]
+pub(crate) struct RollingSessionOutput {
+    pub(crate) text: String,
+    journal: Arc<PcmJournal>,
+}
+
+impl RollingSessionOutput {
+    pub(crate) fn frame_count(&self) -> usize {
+        self.journal.frame_count().min(usize::MAX as u64) as usize
+    }
+
+    pub(crate) fn materialize_audio(&self) -> std::io::Result<Vec<f32>> {
+        self.journal.read_all_f32()
+    }
+
+    pub(crate) fn save_wav(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        self.journal.save_wav(path)
+    }
+}
+
 impl RollingTranscriber {
     pub fn new(tm: Arc<TranscriptionManager>) -> Self {
         Self {
@@ -200,13 +221,30 @@ impl RollingTranscriber {
     /// the session streams a live caption to the pill's Studio Window (opt-in,
     /// extra compute); when `None` the worker takes the exact zero-overhead path
     /// it always did.
-    pub fn start_session(self: &Arc<Self>, app: AppHandle, session_id: u64, preview: bool) {
+    pub fn start_session(self: &Arc<Self>, app: AppHandle, session_id: u64, preview: bool) -> bool {
         let sink = preview.then(|| PreviewSink {
             app,
             session_id,
             scrap_that: self.scrap_that.load(Ordering::Relaxed),
         });
-        let session = Arc::new(RollingSession::start(self.clone(), sink, session_id));
+        let session = match RollingSession::start(self.clone(), sink, session_id) {
+            Ok(session) => Arc::new(session),
+            Err(error) => {
+                log::error!("[GRAIN] rolling session journal creation failed: {error}");
+                let previous = {
+                    let mut active = self.active.lock().unwrap();
+                    self.active_generation.store(session_id, Ordering::Release);
+                    active.take()
+                };
+                if let Some(previous) = previous {
+                    log::warn!(
+                        "[GRAIN] retiring unfinished rolling session after journal creation failure"
+                    );
+                    self.retire_cancelled_session(previous, false);
+                }
+                return false;
+            }
+        };
         let previous = {
             let mut active = self.active.lock().unwrap();
             self.active_generation.store(session_id, Ordering::Release);
@@ -220,6 +258,7 @@ impl RollingTranscriber {
             "[GRAIN] rolling session started (shared engine, preview={})",
             preview
         );
+        true
     }
 
     /// Feed one captured 16 kHz mono frame to the active session (audio thread).
@@ -234,11 +273,15 @@ impl RollingTranscriber {
     /// Stop the live session: flush the tail, drain the worker, return the final
     /// assembled transcript. `None` if no session was active. Honors the
     /// "Immediately" unload once, now that no more chunks will decode.
-    pub fn finish_session(&self) -> Option<String> {
+    pub fn finish_session(&self) -> Option<RollingSessionOutput> {
         let session = self.active.lock().unwrap().take()?;
         let text = session.finish();
+        let output = RollingSessionOutput {
+            text,
+            journal: session.journal.clone(),
+        };
         self.tm.maybe_unload_immediately("rolling session");
-        Some(text)
+        Some(output)
     }
 
     /// Abort the live session without producing a transcript (cancel).
@@ -293,16 +336,47 @@ struct RollingSession {
     // Shared with the worker so the live preview can peek the unsent tail
     // without stealing it from the feed path.
     cursor: Arc<Mutex<SessionCursor>>,
-    tx: Sender<Job>,
+    journal: Arc<PcmJournal>,
+    tx: SyncSender<Job>,
     worker: Mutex<Option<JoinHandle<String>>>,
     cancelled: Arc<AtomicBool>,
+    journal_failed: Arc<AtomicBool>,
     frames_fed: AtomicUsize,
     chunks_emitted: AtomicUsize,
 }
 
 enum Job {
-    Chunk(AudioChunk),
+    Chunk(ChunkJob),
     Finish,
+}
+
+#[derive(Clone, Copy)]
+struct ChunkJob {
+    start_frame: u64,
+    end_frame: u64,
+    start_sec: f64,
+    fresh_start_sec: f64,
+    end_sec: f64,
+    boundary: rolling_window::CutKind,
+}
+
+impl From<&AudioChunk> for ChunkJob {
+    fn from(chunk: &AudioChunk) -> Self {
+        Self {
+            start_frame: chunk.start_frame as u64,
+            end_frame: chunk.end_frame as u64,
+            start_sec: chunk.start_sec,
+            fresh_start_sec: chunk.fresh_start_sec,
+            end_sec: chunk.end_sec,
+            boundary: chunk.boundary,
+        }
+    }
+}
+
+impl ChunkJob {
+    fn fresh_duration_sec(self) -> f64 {
+        (self.end_sec - self.fresh_start_sec).max(0.0)
+    }
 }
 
 /// How often the live preview re-decodes the unsent tail (only when preview is
@@ -313,13 +387,16 @@ const PREVIEW_INTERVAL: Duration = Duration::from_millis(2000);
 const PREVIEW_MAX_TAIL_SEC: f64 = 20.0;
 /// Don't bother decoding a tail shorter than this (nothing useful to preview).
 const PREVIEW_MIN_TAIL_SEC: f64 = 0.8;
+/// Fixed descriptor capacity. Audio itself is already durable in the journal;
+/// overflow fails rolling closed and uses the journal-backed batch fallback.
+const MAX_PENDING_CHUNKS: usize = 8;
 
 impl RollingSession {
     fn start(
         transcriber: Arc<RollingTranscriber>,
         preview: Option<PreviewSink>,
         session_id: u64,
-    ) -> Self {
+    ) -> Result<Self, String> {
         // [GRAIN] The rolling-window geometry is fixed by the research-tuned,
         // model-agnostic defaults in `RollingWindowConfig::default()` (see
         // crates/rolling-window/src/cursor.rs). There is deliberately NO user
@@ -328,9 +405,13 @@ impl RollingSession {
         let overlap = cfg.overlap_seconds;
         let cursor = Arc::new(Mutex::new(SessionCursor::new(cfg)));
         let worker_cursor = cursor.clone();
+        let journal = Arc::new(PcmJournal::create().map_err(|error| error.to_string())?);
+        let mut journal_reader = journal.reader().map_err(|error| error.to_string())?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
-        let (tx, rx) = mpsc::channel::<Job>();
+        let journal_failed = Arc::new(AtomicBool::new(false));
+        let worker_journal_failed = journal_failed.clone();
+        let (tx, rx) = mpsc::sync_channel::<Job>(MAX_PENDING_CHUNKS);
         let worker = std::thread::spawn(move || {
             // Time-based assembler with the fuzzy seam pass enabled (see
             // merge.rs). Chunks carry real word timings from transcribe-cpp, so
@@ -340,6 +421,7 @@ impl RollingSession {
             // LocalAgreement-2 state for the live preview: the previous tail
             // hypothesis, so only text two consecutive decodes agree on is shown.
             let mut prev_tail_hyp: Vec<String> = Vec::new();
+            let mut audio = Vec::<f32>::new();
             loop {
                 if worker_cancelled.load(Ordering::Acquire) {
                     break;
@@ -380,7 +462,15 @@ impl RollingSession {
                         if chunk.fresh_duration_sec() <= 0.0 {
                             continue;
                         }
-                        let mut audio = i16_to_f32(&chunk.samples);
+                        if let Err(error) = journal_reader.read_f32_range(
+                            chunk.start_frame,
+                            chunk.end_frame,
+                            &mut audio,
+                        ) {
+                            log::error!("[GRAIN] rolling journal read failed: {error}");
+                            worker_journal_failed.store(true, Ordering::Release);
+                            break;
+                        }
                         // [GRAIN] boost-only AGC lifts quiet/laptop-mic speech to a
                         // good level for the model. Per-chunk is safe here — chunks
                         // are transcribed independently. The high-pass already ran
@@ -441,15 +531,17 @@ impl RollingSession {
             }
             assembler.text().to_string()
         });
-        Self {
+        Ok(Self {
             session_id,
             cursor,
+            journal,
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled,
+            journal_failed,
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
-        }
+        })
     }
 
     /// [GRAIN] Live-preview tail decode (only runs when preview is ON). Peeks
@@ -508,7 +600,16 @@ impl RollingSession {
 
     fn feed(&self, frame: &[f32], speech: Option<bool>) {
         let buf = f32_to_i16(frame);
+        if let Err(error) = self.journal.append(&buf) {
+            log::error!("[GRAIN] rolling journal write failed: {error}");
+            self.journal_failed.store(true, Ordering::Release);
+            self.request_cancel();
+            return;
+        }
         self.frames_fed.fetch_add(buf.len(), Ordering::Relaxed);
+        if self.journal_failed.load(Ordering::Acquire) {
+            return;
+        }
         // Prefer the VAD decision for silence gating (segments far better in
         // noisy rooms); fall back to raw RMS when VAD is disabled.
         let chunk = {
@@ -519,18 +620,53 @@ impl RollingSession {
             }
         };
         if let Some(chunk) = chunk {
+            if let Err(error) = self.journal.flush() {
+                log::error!("[GRAIN] rolling journal flush failed: {error}");
+                self.journal_failed.store(true, Ordering::Release);
+                self.request_cancel();
+                return;
+            }
             self.chunks_emitted.fetch_add(1, Ordering::Relaxed);
-            let _ = self.tx.send(Job::Chunk(chunk));
+            match self.tx.try_send(Job::Chunk(ChunkJob::from(&chunk))) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    log::error!(
+                        "[GRAIN] rolling descriptor queue reached its {}-chunk bound; using journal fallback",
+                        MAX_PENDING_CHUNKS
+                    );
+                    self.journal_failed.store(true, Ordering::Release);
+                    self.request_cancel();
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    log::error!("[GRAIN] rolling descriptor worker disconnected");
+                    self.journal_failed.store(true, Ordering::Release);
+                    self.request_cancel();
+                }
+            }
         }
     }
 
     fn finish(&self) -> String {
+        if self.journal_failed.load(Ordering::Acquire) {
+            self.request_cancel();
+            self.join_cancelled();
+            return String::new();
+        }
         if let Some(tail) = self.cursor.lock().unwrap().stop() {
+            if let Err(error) = self.journal.flush() {
+                log::error!("[GRAIN] rolling journal final flush failed: {error}");
+                self.request_cancel();
+                self.join_cancelled();
+                return String::new();
+            }
             self.chunks_emitted.fetch_add(1, Ordering::Relaxed);
-            let _ = self.tx.send(Job::Chunk(tail));
+            let _ = self.tx.send(Job::Chunk(ChunkJob::from(&tail)));
         }
         let _ = self.tx.send(Job::Finish);
         let text = self.join_worker();
+        if self.journal_failed.load(Ordering::Acquire) {
+            return String::new();
+        }
         let frames = self.frames_fed.load(Ordering::Relaxed);
         log::info!(
             "[GRAIN] rolling session finished: {} frames ({:.1}s), {} chunks, final={:?}",
@@ -546,7 +682,7 @@ impl RollingSession {
         self.cancelled.store(true, Ordering::Release);
         // Wake a preview-off worker blocked on `recv`. Queued chunks do not run:
         // the cancellation flag is checked before and after every receive.
-        let _ = self.tx.send(Job::Finish);
+        let _ = self.tx.try_send(Job::Finish);
     }
 
     fn join_cancelled(&self) {
@@ -599,7 +735,7 @@ mod tests {
         let worker_cancelled = cancelled.clone();
         let worker_exited = Arc::new(AtomicBool::new(false));
         let exited = worker_exited.clone();
-        let (tx, rx) = mpsc::channel::<Job>();
+        let (tx, rx) = mpsc::sync_channel::<Job>(1);
         let worker = std::thread::spawn(move || {
             let _ = rx.recv();
             assert!(worker_cancelled.load(Ordering::Acquire));
@@ -609,9 +745,11 @@ mod tests {
         let session = RollingSession {
             session_id: 42,
             cursor,
+            journal: Arc::new(PcmJournal::create().unwrap()),
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled,
+            journal_failed: Arc::new(AtomicBool::new(false)),
             frames_fed: AtomicUsize::new(0),
             chunks_emitted: AtomicUsize::new(0),
         };
@@ -621,5 +759,36 @@ mod tests {
 
         assert!(worker_exited.load(Ordering::Acquire));
         assert!(session.worker.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn descriptor_queue_overflow_fails_closed_with_journal_intact() {
+        let cursor = Arc::new(Mutex::new(SessionCursor::new(
+            RollingWindowConfig::default(),
+        )));
+        let journal = Arc::new(PcmJournal::create().unwrap());
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (tx, _rx) = mpsc::sync_channel::<Job>(1);
+        let worker = std::thread::spawn(String::new);
+        let session = RollingSession {
+            session_id: 43,
+            cursor,
+            journal: journal.clone(),
+            tx,
+            worker: Mutex::new(Some(worker)),
+            cancelled: cancelled.clone(),
+            journal_failed: Arc::new(AtomicBool::new(false)),
+            frames_fed: AtomicUsize::new(0),
+            chunks_emitted: AtomicUsize::new(0),
+        };
+        let full_window = vec![0.1f32; 25 * 16_000];
+
+        session.feed(&full_window, Some(true));
+        session.feed(&full_window, Some(true));
+
+        assert!(session.journal_failed.load(Ordering::Acquire));
+        assert!(cancelled.load(Ordering::Acquire));
+        assert_eq!(journal.frame_count(), (50 * 16_000) as u64);
+        let _ = session.join_worker();
     }
 }
