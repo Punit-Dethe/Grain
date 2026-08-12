@@ -1505,6 +1505,14 @@ async changeLazyStreamCloseSetting(enabled: boolean) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+async changeFillerWordRemovalEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_filler_word_removal_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeAppLanguageSetting(language: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_app_language_setting", { language }) };
@@ -2117,6 +2125,22 @@ async getClamshellMicrophone() : Promise<Result<string, string>> {
 async isRecording() : Promise<boolean> {
     return await TAURI_INVOKE("is_recording");
 },
+async getMicrophoneChannels(deviceName: string) : Promise<Result<number, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_microphone_channels", { deviceName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setSelectedChannel(channel: number | null) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_selected_channel", { channel }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async setModelUnloadTimeout(timeout: ModelUnloadTimeout) : Promise<void> {
     await TAURI_INVOKE("set_model_unload_timeout", { timeout });
 },
@@ -2358,7 +2382,12 @@ capture_always_ai?: boolean; start_hidden?: boolean; autostart_enabled?: boolean
  * Empty = none selected. Never overload `selected_model`: Batch/Rolling and
  * Native ASR have different model topologies and lifecycles.
  */
-selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
+selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone?: string | null; 
+/**
+ * Which input channel to use on the selected microphone device.
+ * None means "average all channels" (original behavior).
+ */
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
@@ -2398,7 +2427,7 @@ stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: 
  * after the target app actually reads the transcript, instead of after a
  * fixed delay. See `paste_tx`. macOS and Windows only.
  */
-reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
+reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
  * transcribe-cpp compute-device *registry index* for explicit GPU picks
  * (`-1` = auto). NOTE: deliberately NOT aliased to the old
