@@ -148,13 +148,13 @@
         },
         "streaming": {
           "title": "Streaming",
-          "subtitle": "See words while you speak",
+          "subtitle": "Words appear live",
           "traitOne": "Real-time",
           "traitTwo": "Fast",
-          "label": "Words appear live while you are speaking",
+          "label": "Live text",
           "processing": "",
           "result": "",
-          "footnote": "Use it when seeing the transcript live matters more than maximum accuracy."
+          "footnote": "Use it when immediate feedback matters."
         }
       },
       "models": {
@@ -168,7 +168,7 @@
         },
         "streaming": {
           "title": "Streaming",
-          "description": "See words while you are speaking.",
+          "description": "See words live.",
           "detail": "A streaming model is optimized to return speech as it arrives."
         },
         "toggle": "Toggle {{family}} model",
@@ -225,7 +225,7 @@
           "streaming": {
             "title": "Streaming",
             "speed": "Live text",
-            "hint": "Words appear while you are still speaking."
+            "hint": "Words appear live."
           }
         }
       },
@@ -242,7 +242,7 @@
         "modes": {
           "flow": "Fast everyday dictation",
           "standard": "The cleanest final transcript",
-          "streaming": "Live words while you speak"
+          "streaming": "Live text"
         },
         "errors": {
           "mode": "Grain could not change the default capture mode. Try again."
