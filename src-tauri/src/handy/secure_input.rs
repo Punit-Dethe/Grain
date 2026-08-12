@@ -20,7 +20,11 @@
 
 use serde::Serialize;
 use specta::Type;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
+// [GRAIN] Emitter is only used by the macOS secure-input path below; importing
+// it unconditionally warns as unused on Windows/Linux.
+#[cfg(target_os = "macos")]
+use tauri::Emitter;
 
 #[derive(Debug, Clone, Serialize, Type)]
 pub struct SecureInputStatus {
