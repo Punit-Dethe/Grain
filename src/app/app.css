@@ -4962,8 +4962,10 @@ html[data-theme="light"] .qp-overlay {
 }
 .qp-input:focus,
 .qp-input:focus-visible {
-  outline: none;
-  box-shadow: none;
+  /* The global focus rule (app.css:214) paints an accent glow box-shadow with
+     !important; the search field wants only the caret, so override in kind. */
+  outline: none !important;
+  box-shadow: none !important;
   border: 0;
 }
 .qp-input::placeholder {
