@@ -1,159 +1,417 @@
-import React, { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  Check,
+  ChevronDown,
+  ChevronLeft,
+  HardDriveDownload,
+  Loader2,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
-import type { ModelInfo } from "@/bindings";
-import type { ModelCardStatus } from "./ModelCard";
-import ModelCard from "./ModelCard";
-
-import { useModelStore } from "../../stores/modelStore";
+import { commands, type ModelInfo } from "@/bindings";
+import { useModelStore } from "@/stores/modelStore";
+import "./onboarding.css";
 
 interface OnboardingProps {
+  onBack: () => void;
   onModelSelected: () => void;
 }
 
-const Onboarding: React.FC<OnboardingProps> = ({ onModelSelected }) => {
+type ModelFamily = "standard" | "streaming";
+
+const formatSize = (sizeMb: number) => {
+  if (sizeMb >= 1024) return `${(sizeMb / 1024).toFixed(1)} GB`;
+  return `${Math.round(sizeMb)} MB`;
+};
+
+const Onboarding: React.FC<OnboardingProps> = ({ onBack, onModelSelected }) => {
   const { t } = useTranslation();
   const {
     models,
+    loading,
     downloadModel,
     selectModel,
+    cancelDownload,
     downloadingModels,
     verifyingModels,
     extractingModels,
     downloadProgress,
-    downloadStats,
-    cancelDownload,
   } = useModelStore();
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
-  // [GRAIN] Onboarding picks the STANDARD (batch) model — `selected_model`
-  // must never point at a streaming model (strict per-category separation;
-  // streaming models are chosen later in Settings → Speech to Text).
-  const standardModels = models.filter((m: ModelInfo) => !m.supports_streaming);
+  const [enabledFamilies, setEnabledFamilies] = useState({
+    standard: true,
+    streaming: true,
+  });
+  const [selectedModels, setSelectedModels] = useState<
+    Record<ModelFamily, string>
+  >({ standard: "", streaming: "" });
+  const [openPicker, setOpenPicker] = useState<ModelFamily | null>(null);
+  const [defaultsLoading, setDefaultsLoading] = useState(true);
+  const [defaultsError, setDefaultsError] = useState<string | null>(null);
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [activeDownloadId, setActiveDownloadId] = useState<string | null>(null);
+  const [completedDownloadIds, setCompletedDownloadIds] = useState<string[]>(
+    [],
+  );
+  const cancellationRequestedRef = useRef(false);
 
-  const isDownloading = selectedModelId !== null;
+  const standardModels = useMemo(
+    () => models.filter((model) => !model.supports_streaming),
+    [models],
+  );
+  const streamingModels = useMemo(
+    () => models.filter((model) => model.supports_streaming),
+    [models],
+  );
 
-  // Watch for the selected model to finish downloading + verifying + extracting
-  useEffect(() => {
-    if (!selectedModelId) return;
-
-    const model = models.find((m) => m.id === selectedModelId);
-    const stillDownloading = selectedModelId in downloadingModels;
-    const stillVerifying = selectedModelId in verifyingModels;
-    const stillExtracting = selectedModelId in extractingModels;
-
-    if (
-      model?.is_downloaded &&
-      !stillDownloading &&
-      !stillVerifying &&
-      !stillExtracting
-    ) {
-      // Model is ready — select it and transition
-      selectModel(selectedModelId).then((success) => {
-        if (success) {
-          onModelSelected();
-        } else {
-          toast.error(t("onboarding.errors.selectModel"));
-          setSelectedModelId(null);
-        }
+  const resolveDefaults = useCallback(async () => {
+    setDefaultsLoading(true);
+    setDefaultsError(null);
+    try {
+      const result = await commands.getOnboardingModelDefaults();
+      if (result.status === "error") throw new Error(result.error);
+      setSelectedModels({
+        standard: result.data.standard_model_id,
+        streaming: result.data.asr_model_id,
       });
+    } catch (error) {
+      console.error("Failed to resolve onboarding model defaults:", error);
+      setDefaultsError(t("onboarding.setup.models.errors.defaults"));
+    } finally {
+      setDefaultsLoading(false);
     }
-  }, [
-    selectedModelId,
-    models,
-    downloadingModels,
-    verifyingModels,
-    extractingModels,
-    selectModel,
-    onModelSelected,
-  ]);
+  }, [t]);
 
-  const handleDownloadModel = async (modelId: string) => {
-    setSelectedModelId(modelId);
+  useEffect(() => {
+    void resolveDefaults();
+  }, [resolveDefaults]);
 
-    // Error toast is handled centrally by the model-download-failed event listener
-    // in modelStore — no toast here to avoid duplicates.
-    const success = await downloadModel(modelId);
-    if (!success) {
-      setSelectedModelId(null);
+  const selectedStandard = models.find(
+    (model) => model.id === selectedModels.standard,
+  );
+  const selectedStreaming = models.find(
+    (model) => model.id === selectedModels.streaming,
+  );
+
+  const selectedFamilyModels = [
+    enabledFamilies.standard ? selectedStandard : undefined,
+    enabledFamilies.streaming ? selectedStreaming : undefined,
+  ].filter((model): model is ModelInfo => Boolean(model));
+
+  const selectedCount = selectedFamilyModels.length;
+  const totalSizeMb = selectedFamilyModels.reduce(
+    (total, model) => total + (model.is_downloaded ? 0 : model.size_mb),
+    0,
+  );
+  const canInstall =
+    !loading &&
+    !defaultsLoading &&
+    !defaultsError &&
+    selectedCount > 0 &&
+    !isInstalling;
+
+  const toggleFamily = (family: ModelFamily) => {
+    if (isInstalling) return;
+    setEnabledFamilies((current) => {
+      const next = { ...current, [family]: !current[family] };
+      if (!next.standard && !next.streaming) return current;
+      return next;
+    });
+  };
+
+  const chooseModel = (family: ModelFamily, modelId: string) => {
+    setSelectedModels((current) => ({ ...current, [family]: modelId }));
+    setOpenPicker(null);
+  };
+
+  const finishSelections = async () => {
+    if (enabledFamilies.standard) {
+      const selected = await selectModel(selectedModels.standard);
+      if (!selected) throw new Error(t("onboarding.errors.selectModel"));
+    }
+    if (enabledFamilies.streaming) {
+      const result = await commands.selectAsrModel(selectedModels.streaming);
+      if (result.status === "error") throw new Error(result.error);
     }
   };
 
-  const handleCancelDownload = async (modelId: string) => {
-    const success = await cancelDownload(modelId);
-    if (success) {
-      setSelectedModelId(null);
+  const installSelected = async () => {
+    if (!canInstall) return;
+    setIsInstalling(true);
+    setOpenPicker(null);
+    setCompletedDownloadIds([]);
+    cancellationRequestedRef.current = false;
+
+    try {
+      for (const model of selectedFamilyModels) {
+        if (cancellationRequestedRef.current) return;
+        if (model.is_downloaded) continue;
+        setActiveDownloadId(model.id);
+        const succeeded = await downloadModel(model.id);
+        if (!succeeded) {
+          if (cancellationRequestedRef.current) return;
+          throw new Error(t("onboarding.setup.models.errors.download"));
+        }
+        setCompletedDownloadIds((current) => [...current, model.id]);
+      }
+      if (cancellationRequestedRef.current) return;
+      setActiveDownloadId(null);
+      await finishSelections();
+      onModelSelected();
+    } catch (error) {
+      console.error("Failed to install onboarding models:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t("onboarding.setup.models.errors.download"),
+      );
+    } finally {
+      setActiveDownloadId(null);
+      setIsInstalling(false);
     }
   };
 
-  const getModelStatus = (modelId: string): ModelCardStatus => {
-    if (modelId in extractingModels) return "extracting";
-    if (modelId in verifyingModels) return "verifying";
-    if (modelId in downloadingModels) return "downloading";
-    return "downloadable";
+  const stopInstallation = async () => {
+    cancellationRequestedRef.current = true;
+    if (activeDownloadId) await cancelDownload(activeDownloadId);
   };
 
-  const getModelDownloadProgress = (modelId: string): number | undefined => {
-    return downloadProgress[modelId]?.percentage;
+  const modelStatus = (model: ModelInfo) => {
+    if (model.id in extractingModels)
+      return t("onboarding.setup.models.extracting");
+    if (model.id in verifyingModels)
+      return t("onboarding.setup.models.verifying");
+    if (model.id === activeDownloadId || model.id in downloadingModels)
+      return t("onboarding.setup.models.downloading");
+    if (model.is_downloaded || completedDownloadIds.includes(model.id))
+      return t("onboarding.setup.models.installed");
+    if (isInstalling) return t("onboarding.setup.models.waiting");
+    return t("onboarding.setup.models.ready");
   };
 
-  const getModelDownloadSpeed = (modelId: string): number | undefined => {
-    return downloadStats[modelId]?.speed;
+  const renderFamily = (
+    family: ModelFamily,
+    selectedModel: ModelInfo | undefined,
+    familyModels: ModelInfo[],
+  ) => {
+    const enabled = enabledFamilies[family];
+    return (
+      <div
+        className={`onboarding-model-family${enabled ? " selected" : ""}`}
+        data-family={family}
+      >
+        <div className="onboarding-model-family-main">
+          <button
+            type="button"
+            className="onboarding-model-check"
+            aria-label={t("onboarding.setup.models.toggle", {
+              family: t(`onboarding.setup.models.${family}.title`),
+            })}
+            aria-pressed={enabled}
+            disabled={isInstalling}
+            onClick={() => toggleFamily(family)}
+          >
+            <Check aria-hidden="true" />
+          </button>
+
+          <div className="onboarding-model-family-copy">
+            <strong>
+              {t(`onboarding.setup.models.${family}.title`)}
+              <span>{t("onboarding.recommended")}</span>
+            </strong>
+            <p>{t(`onboarding.setup.models.${family}.description`)}</p>
+            <small>{t(`onboarding.setup.models.${family}.detail`)}</small>
+          </div>
+
+          <div className="onboarding-model-choice">
+            {selectedModel ? (
+              <div>
+                <strong>{selectedModel.name}</strong>
+                <span>
+                  {formatSize(selectedModel.size_mb)} ·{" "}
+                  {modelStatus(selectedModel)}
+                </span>
+              </div>
+            ) : (
+              <span>{t("onboarding.setup.models.resolving")}</span>
+            )}
+            <button
+              type="button"
+              disabled={!enabled || defaultsLoading || isInstalling}
+              aria-expanded={openPicker === family}
+              onClick={() =>
+                setOpenPicker((current) => (current === family ? null : family))
+              }
+            >
+              {t("onboarding.setup.models.change")}
+              <ChevronDown aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        {openPicker === family ? (
+          <div className="onboarding-model-picker" role="radiogroup">
+            {familyModels.map((model) => {
+              const chosen = model.id === selectedModels[family];
+              return (
+                <button
+                  key={model.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={chosen}
+                  className={chosen ? "selected" : undefined}
+                  onClick={() => chooseModel(family, model.id)}
+                >
+                  <span>
+                    <strong>{model.name}</strong>
+                    <small>{model.description}</small>
+                  </span>
+                  <span>
+                    {formatSize(model.size_mb)}
+                    {chosen ? <Check aria-hidden="true" /> : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
   };
 
   return (
-    <div className="h-screen w-screen flex flex-col p-6 gap-4 inset-0 bg-background text-text">
-      <div className="flex flex-col items-center gap-2 shrink-0">
-        <div className="flex items-center justify-center py-4">
-          <h1 className="text-6xl font-black tracking-tight" style={{ color: "#FF5D1E" }}>GRAIN</h1>
+    <div className="onboarding-shell">
+      <header className="onboarding-topbar">
+        <div
+          className="onboarding-brand"
+          aria-label={t("onboarding.setup.brand")}
+        >
+          <strong>{t("onboarding.setup.brand")}</strong>
+          <span>{t("onboarding.setup.label")}</span>
         </div>
-        <p className="text-text/70 max-w-md font-medium mx-auto">
-          {t("onboarding.subtitle")}
-        </p>
-      </div>
 
-      <div className="max-w-[600px] w-full mx-auto text-center flex-1 flex flex-col min-h-0">
-        <div className="flex flex-col gap-4 pb-6">
-          {standardModels
-            .filter((m: ModelInfo) => !m.is_downloaded)
-            .filter((model: ModelInfo) => model.is_recommended)
-            .map((model: ModelInfo) => (
-              <ModelCard
-                key={model.id}
-                model={model}
-                variant="featured"
-                status={getModelStatus(model.id)}
-                disabled={isDownloading}
-                onSelect={handleDownloadModel}
-                onDownload={handleDownloadModel}
-                onCancel={handleCancelDownload}
-                downloadProgress={getModelDownloadProgress(model.id)}
-                downloadSpeed={getModelDownloadSpeed(model.id)}
-              />
-            ))}
+        <ol
+          className="onboarding-stepper"
+          aria-label={t("onboarding.setup.progress")}
+        >
+          {(["microphone", "modes", "models", "try", "shortcuts"] as const).map(
+            (step, index) => (
+              <li
+                key={step}
+                className={
+                  index === 2 ? "active" : index < 2 ? "done" : undefined
+                }
+                aria-current={index === 2 ? "step" : undefined}
+              >
+                <span className="onboarding-stepper-line" aria-hidden="true" />
+                <span>{t(`onboarding.setup.steps.${step}`)}</span>
+              </li>
+            ),
+          )}
+        </ol>
 
-          {standardModels
-            .filter((m: ModelInfo) => !m.is_downloaded)
-            .filter((model: ModelInfo) => !model.is_recommended)
-            .sort(
-              (a: ModelInfo, b: ModelInfo) =>
-                Number(a.size_mb) - Number(b.size_mb),
-            )
-            .map((model: ModelInfo) => (
-              <ModelCard
-                key={model.id}
-                model={model}
-                status={getModelStatus(model.id)}
-                disabled={isDownloading}
-                onSelect={handleDownloadModel}
-                onDownload={handleDownloadModel}
-                onCancel={handleCancelDownload}
-                downloadProgress={getModelDownloadProgress(model.id)}
-                downloadSpeed={getModelDownloadSpeed(model.id)}
-              />
-            ))}
+        <span className="onboarding-local-note">
+          <HardDriveDownload aria-hidden="true" />
+          {t("onboarding.setup.models.local")}
+        </span>
+      </header>
+
+      <main className="onboarding-stage">
+        <section className="onboarding-models-step">
+          <div className="onboarding-heading">
+            <h1>{t("onboarding.setup.models.title")}</h1>
+            <p>{t("onboarding.setup.models.description")}</p>
+          </div>
+
+          {defaultsError ? (
+            <div className="onboarding-model-error" role="alert">
+              <span>{defaultsError}</span>
+              <button type="button" onClick={resolveDefaults}>
+                {t("onboarding.setup.models.retry")}
+              </button>
+            </div>
+          ) : (
+            <div className="onboarding-model-families">
+              {renderFamily("standard", selectedStandard, standardModels)}
+              {renderFamily("streaming", selectedStreaming, streamingModels)}
+            </div>
+          )}
+
+          <div className="onboarding-model-summary">
+            <span>
+              <strong>{selectedCount}</strong>{" "}
+              {t("onboarding.setup.models.selected", { count: selectedCount })}
+            </span>
+            <span>
+              {totalSizeMb > 0
+                ? t("onboarding.setup.models.downloadSize", {
+                    size: formatSize(totalSizeMb),
+                  })
+                : t("onboarding.setup.models.noDownload")}
+            </span>
+          </div>
+
+          {isInstalling ? (
+            <div className="onboarding-download-panel" aria-live="polite">
+              {selectedFamilyModels.map((model) => {
+                const progress =
+                  downloadProgress[model.id]?.percentage ??
+                  (model.is_downloaded ||
+                  completedDownloadIds.includes(model.id)
+                    ? 100
+                    : 0);
+                return (
+                  <div key={model.id} className="onboarding-download-row">
+                    <div>
+                      <strong>{model.name}</strong>
+                      <span>{modelStatus(model)}</span>
+                    </div>
+                    <div
+                      className="onboarding-download-track"
+                      aria-hidden="true"
+                    >
+                      <i style={{ transform: `scaleX(${progress / 100})` }} />
+                    </div>
+                    <span>{Math.round(progress)}%</span>
+                  </div>
+                );
+              })}
+              <button type="button" onClick={stopInstallation}>
+                <X aria-hidden="true" />
+                {t("onboarding.setup.models.cancel")}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      </main>
+
+      <footer className="onboarding-footer">
+        <div className="onboarding-footer-inner">
+          <button
+            type="button"
+            className="onboarding-back"
+            disabled={isInstalling}
+            onClick={onBack}
+          >
+            <ChevronLeft aria-hidden="true" />
+            {t("onboarding.setup.models.back")}
+          </button>
+          <button
+            type="button"
+            className="onboarding-primary"
+            disabled={!canInstall}
+            onClick={installSelected}
+          >
+            {isInstalling ? (
+              <Loader2 className="spin" aria-hidden="true" />
+            ) : null}
+            {isInstalling
+              ? t("onboarding.setup.models.installing")
+              : t("onboarding.setup.models.install")}
+          </button>
         </div>
-      </div>
+      </footer>
     </div>
   );
 };

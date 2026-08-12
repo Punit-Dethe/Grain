@@ -976,7 +976,10 @@ function NextShell() {
   if (onboardingStep === "model") {
     return (
       <>
-        <Onboarding onModelSelected={() => setOnboardingStep("done")} />
+        <Onboarding
+          onBack={() => setOnboardingStep("modes")}
+          onModelSelected={() => setOnboardingStep("done")}
+        />
         <Toaster theme={isDark ? "dark" : "light"} />
       </>
     );

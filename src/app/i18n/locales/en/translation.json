@@ -154,6 +154,43 @@
           "result": "",
           "footnote": "Use it when seeing the transcript live matters more than maximum accuracy."
         }
+      },
+      "models": {
+        "title": "Choose what you want to install",
+        "description": "Flow and Standard share one model. Streaming uses another. Grain has selected a recommended local model for each.",
+        "local": "Runs locally",
+        "standard": {
+          "title": "Flow + Standard",
+          "description": "One model unlocks both modes.",
+          "detail": "Flow returns quickly. Standard spends more time producing a polished result."
+        },
+        "streaming": {
+          "title": "Streaming",
+          "description": "See words while you are speaking.",
+          "detail": "A streaming model is optimized to return speech as it arrives."
+        },
+        "toggle": "Toggle {{family}} model",
+        "resolving": "Choosing recommended model…",
+        "change": "Change",
+        "selected_one": "model selected",
+        "selected_other": "models selected",
+        "downloadSize": "{{size}} download",
+        "noDownload": "Already installed",
+        "ready": "Ready to install",
+        "waiting": "Waiting",
+        "downloading": "Downloading",
+        "verifying": "Verifying",
+        "extracting": "Preparing",
+        "installed": "Installed",
+        "install": "Install selected",
+        "installing": "Installing…",
+        "cancel": "Cancel installation",
+        "back": "Back",
+        "retry": "Try again",
+        "errors": {
+          "defaults": "Grain could not find its recommended models. Refresh the catalog and try again.",
+          "download": "The selected models could not be installed. Please try again."
+        }
       }
     },
     "subtitle": "To get started, choose a transcription model",
