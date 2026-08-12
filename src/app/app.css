@@ -4924,7 +4924,7 @@ html[data-theme="light"] .qp-overlay {
 }
 .qp-panel {
   width: min(560px, calc(100vw - 40px));
-  max-height: 62vh;
+  max-height: 54vh;
   display: flex;
   flex-direction: column;
   background: var(--color-paper-raised);
@@ -4953,7 +4953,18 @@ html[data-theme="light"] .qp-overlay {
   background: transparent;
   color: var(--color-ink);
   font-size: 14px;
+  /* No focus box — just the blinking caret. The WebView draws a UA :focus ring
+     that the global :focus-visible reset misses, so kill every visual here. */
   outline: none;
+  box-shadow: none;
+  caret-color: var(--color-accent);
+  -webkit-tap-highlight-color: transparent;
+}
+.qp-input:focus,
+.qp-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border: 0;
 }
 .qp-input::placeholder {
   color: var(--color-ink-faint);
@@ -4969,6 +4980,26 @@ html[data-theme="light"] .qp-overlay {
 .qp-list {
   overflow-y: auto;
   padding: 6px;
+  /* Custom scrollbar — slim, rounded, and only as loud as it needs to be. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+  overscroll-behavior: contain;
+}
+.qp-list::-webkit-scrollbar {
+  width: 10px;
+}
+.qp-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.qp-list::-webkit-scrollbar-thumb {
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-color: var(--color-ink-faint);
+  opacity: 0.4;
+}
+.qp-list:hover::-webkit-scrollbar-thumb {
+  background-color: var(--color-ink-soft);
 }
 .qp-group {
   font-size: 10px;
@@ -4991,6 +5022,10 @@ html[data-theme="light"] .qp-overlay {
   transition:
     background 0.1s ease,
     color 0.1s ease;
+}
+.qp-item:focus,
+.qp-item:focus-visible {
+  outline: none;
 }
 .qp-item .icon {
   width: 16px;

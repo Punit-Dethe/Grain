@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute } from "../navigation";
-import { scoreText } from "./fuzzy";
+import { scoreItem } from "./fuzzy";
 import { requestSettingFocus } from "./focus";
 import {
   buildQuickItems,
@@ -42,19 +42,11 @@ function rank(items: QuickItem[], query: string): QuickItem[] {
 
   const scored: { item: QuickItem; score: number }[] = [];
   for (const item of items) {
-    let best = scoreText(q, item.title);
-    for (const keyword of item.keywords) {
-      const s = scoreText(q, keyword);
-      // Alias hits count, but a little less than a title hit.
-      if (s !== null) {
-        const weighted = s * 0.75;
-        best = best === null ? weighted : Math.max(best, weighted);
-      }
-    }
-    if (best === null) continue;
+    const base = scoreItem(q, item.title, item.keywords);
+    if (base === null) continue;
     // Nudge pages/sections above individual settings on near-ties.
     const bias = item.kind === "navigate" ? 6 : item.kind === "section" ? 3 : 0;
-    scored.push({ item, score: best + bias });
+    scored.push({ item, score: base + bias });
   }
   scored.sort((a, b) => b.score - a.score);
   return scored.map((entry) => entry.item);
