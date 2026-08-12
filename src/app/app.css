@@ -2500,20 +2500,28 @@ html[data-theme="light"] .capture-mode-option.selected {
   background: var(--accent) !important;
 }
 
+/* [GRAIN] Settings toggle — iOS style (accent track, white thumb), defined
+   explicitly and completely here. It does NOT rely on the component's Tailwind
+   `peer-checked:after:translate-x` (that pseudo-element translate never fired
+   reliably, which is why the thumb sat still). The three numbers are a matched
+   set for the 32×18 track (w-8 h-[18px] on the component): a 14px thumb inset
+   2px travels 14px → even 2px margins, slides cleanly, never overflows. If you
+   ever resize it, change track width, thumb size, and travel together:
+   travel = trackWidth − thumb − 2·inset. */
 .next-settings-content label:has(> input[type="checkbox"]) > div::after {
-  width: 18px !important;
-  height: 18px !important;
+  width: 14px !important;
+  height: 14px !important;
   top: 2px !important;
   left: 2px !important;
   border-radius: 50% !important;
   background: #fff !important;
+  transform: translateX(0) !important;
 }
-
 .next-settings-content
   label:has(> input[type="checkbox"])
   > input:checked
   + div::after {
-  transform: translateX(16px) !important;
+  transform: translateX(14px) !important;
 }
 
 .next-settings-loading {
