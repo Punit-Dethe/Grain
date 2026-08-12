@@ -198,30 +198,28 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
                             ? "10:00"
                             : `00:0${Math.min(8, 3 + Math.floor(streamingWordCount / 3))}`}
                       </strong>
-                      {mode !== "streaming" ? (
-                        <small>
-                          {t(`onboarding.setup.modes.${mode}.recordingLength`)}
-                        </small>
-                      ) : null}
                     </span>
                   </div>
                 </div>
 
                 <div className="onboarding-demo-result" aria-live="polite">
                   <span className="onboarding-demo-label">
-                    {t(`onboarding.setup.modes.${mode}.label`)}
+                    {mode !== "streaming" && phase === "recording"
+                      ? t("onboarding.setup.modes.stageRecording")
+                      : phase === "processing"
+                        ? t("onboarding.setup.modes.stageLoading")
+                        : t(`onboarding.setup.modes.${mode}.label`)}
                   </span>
-                  {phase === "processing" ? (
+                  {mode !== "streaming" && phase === "recording" ? (
+                    <div className="onboarding-demo-stage-time">
+                      {t(`onboarding.setup.modes.${mode}.recordingTime`)}
+                    </div>
+                  ) : phase === "processing" ? (
                     <div className="onboarding-demo-processing">
                       <i aria-hidden="true" />
-                      <span>
-                        <strong>
-                          {t("onboarding.setup.modes.standard.waitTime")}
-                        </strong>
-                        <small>
-                          {t("onboarding.setup.modes.standard.processing")}
-                        </small>
-                      </span>
+                      <strong>
+                        {t("onboarding.setup.modes.standard.loadingTime")}
+                      </strong>
                     </div>
                   ) : (
                     <div className="onboarding-demo-transcript">
@@ -246,7 +244,9 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
                       {t("onboarding.setup.modes.flow.confirmation")}
                     </div>
                   ) : null}
-                  <p>{t(`onboarding.setup.modes.${mode}.footnote`)}</p>
+                  {phase === "result" ? (
+                    <p>{t(`onboarding.setup.modes.${mode}.footnote`)}</p>
+                  ) : null}
                 </div>
               </div>
             </div>
