@@ -10,7 +10,12 @@ import { platform } from "@tauri-apps/plugin-os";
 import { Toaster } from "sonner";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
-import Onboarding, { AccessibilityOnboarding } from "@/components/onboarding";
+import Onboarding, {
+  AccessibilityOnboarding,
+  ModesOnboarding,
+  ShortcutsOnboarding,
+  TryOnboarding,
+} from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
@@ -959,10 +964,46 @@ function NextShell() {
       </>
     );
   }
+  if (onboardingStep === "modes") {
+    return (
+      <>
+        <ModesOnboarding
+          onBack={() => setOnboardingStep("accessibility")}
+          onComplete={() => setOnboardingStep("model")}
+        />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
   if (onboardingStep === "model") {
     return (
       <>
-        <Onboarding onModelSelected={() => setOnboardingStep("done")} />
+        <Onboarding
+          onBack={() => setOnboardingStep("modes")}
+          onModelSelected={() => setOnboardingStep("try")}
+        />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+  if (onboardingStep === "try") {
+    return (
+      <>
+        <TryOnboarding
+          onBack={() => setOnboardingStep("model")}
+          onComplete={() => setOnboardingStep("shortcuts")}
+        />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+  if (onboardingStep === "shortcuts") {
+    return (
+      <>
+        <ShortcutsOnboarding
+          onBack={() => setOnboardingStep("try")}
+          onComplete={() => setOnboardingStep("done")}
+        />
         <Toaster theme={isDark ? "dark" : "light"} />
       </>
     );

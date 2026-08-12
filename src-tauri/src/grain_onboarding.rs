@@ -31,10 +31,19 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
+use crate::audio_toolkit::{list_input_devices, AudioRecorder, VadPolicy};
+use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::ModelManager;
+use crate::managers::transcription::TranscriptionManager;
+
+// [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
+// needs one editorial default per model family, so keep that narrower policy in
+// Grain-owned code instead of adding another feature to the Handy model types.
+const BEST_STANDARD_REPO_ID: &str = "handy-computer/canary-180m-flash-gguf";
+const BEST_ASR_REPO_ID: &str = "handy-computer/parakeet-unified-en-0.6b-gguf";
 
 /// Which screen the app should open on.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -43,9 +52,15 @@ pub enum OnboardingStep {
     /// Permissions screen — either first-run, or a returning user who has since
     /// had a permission revoked.
     Accessibility,
+    /// Short demonstration of Standard, Flow, and Streaming for a new user.
+    Modes,
     /// Model picker. Only ever reached by a genuinely new user, and only after
-    /// permissions are settled.
+    /// the capture-mode tour.
     Model,
+    /// Real capture against the models installed during onboarding.
+    Try,
+    /// Choose the everyday capture mode and configure its real global shortcut.
+    Shortcuts,
     /// Nothing in the way; show the app.
     Done,
 }
@@ -60,6 +75,365 @@ pub struct OnboardingState {
     /// rather than because this is a first run. Lets the UI say "Grain lost
     /// microphone access" instead of "welcome".
     pub blocked_on_permissions: bool,
+}
+
+/// The single editorially "best" model in each onboarding family.
+///
+/// These are full registry IDs (repo + default quant filename), ready to pass
+/// to the existing download/select commands. Keeping the pair behind a command
+/// lets us update the defaults without teaching the frontend catalog internals.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
+pub struct OnboardingModelDefaults {
+    pub standard_model_id: String,
+    pub asr_model_id: String,
+}
+
+/// Live level measurements from the short-lived onboarding microphone probe.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct OnboardingMicrophoneLevel {
+    pub levels: Vec<f32>,
+    pub rms_dbfs: f32,
+    pub peak_dbfs: f32,
+}
+
+const ONBOARDING_METER_BUCKETS: usize = 34;
+const ONBOARDING_METER_FLOOR_DBFS: f32 = -60.0;
+const ONBOARDING_METER_CEILING_DBFS: f32 = -6.0;
+
+fn amplitude_to_dbfs(amplitude: f32) -> f32 {
+    20.0 * amplitude.max(0.0001).log10()
+}
+
+fn microphone_measurement(frame: &[f32]) -> OnboardingMicrophoneLevel {
+    if frame.is_empty() {
+        return OnboardingMicrophoneLevel {
+            levels: vec![0.0; ONBOARDING_METER_BUCKETS],
+            rms_dbfs: -80.0,
+            peak_dbfs: -80.0,
+        };
+    }
+
+    let sum_squares = frame.iter().map(|sample| sample * sample).sum::<f32>();
+    let peak = frame
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0_f32, f32::max);
+    let bucket_size = frame.len().div_ceil(ONBOARDING_METER_BUCKETS);
+    let mut levels = frame
+        .chunks(bucket_size)
+        .map(|bucket| {
+            let bucket_rms = (bucket.iter().map(|sample| sample * sample).sum::<f32>()
+                / bucket.len() as f32)
+                .sqrt();
+            ((amplitude_to_dbfs(bucket_rms) - ONBOARDING_METER_FLOOR_DBFS)
+                / (ONBOARDING_METER_CEILING_DBFS - ONBOARDING_METER_FLOOR_DBFS))
+                .clamp(0.0, 1.0)
+        })
+        .collect::<Vec<_>>();
+    levels.resize(ONBOARDING_METER_BUCKETS, 0.0);
+
+    OnboardingMicrophoneLevel {
+        levels,
+        rms_dbfs: amplitude_to_dbfs((sum_squares / frame.len() as f32).sqrt()).max(-80.0),
+        peak_dbfs: amplitude_to_dbfs(peak).max(-80.0),
+    }
+}
+
+/// Owns the microphone probe only while the onboarding test is running.
+///
+/// The normal audio manager is deliberately not initialized until onboarding
+/// finishes. This lightweight recorder has no VAD/model and retains no audio;
+/// stop, device change, navigation, or unmount closes its CPAL stream outright.
+#[derive(Clone, Default)]
+pub struct OnboardingMicrophoneTest {
+    recorder: Arc<Mutex<Option<AudioRecorder>>>,
+}
+
+const ONBOARDING_TRANSCRIPTION_BINDING: &str = "grain_onboarding_transcription_test";
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingTestMode {
+    Standard,
+    Flow,
+    Streaming,
+}
+
+/// Owns only the lifecycle marker for the real onboarding transcription test.
+/// Audio and inference stay in Grain's existing managers, so this adds no
+/// parallel recorder, model engine, history entry, or paste path.
+#[derive(Clone, Default)]
+pub struct OnboardingTranscriptionTest {
+    active_mode: Arc<Mutex<Option<OnboardingTestMode>>>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn start_onboarding_transcription_test(
+    app: AppHandle,
+    state: State<'_, OnboardingTranscriptionTest>,
+    recording_manager: State<'_, Arc<AudioRecordingManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    model_manager: State<'_, Arc<ModelManager>>,
+    mode: OnboardingTestMode,
+) -> Result<(), String> {
+    let active_mode = Arc::clone(&state.active_mode);
+    let recording_manager = Arc::clone(&recording_manager);
+    let transcription_manager = Arc::clone(&transcription_manager);
+    let model_manager = Arc::clone(&model_manager);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut active = active_mode
+            .lock()
+            .map_err(|_| "Transcription test state is unavailable".to_string())?;
+        if active.is_some() {
+            return Err("A transcription test is already running".to_string());
+        }
+
+        let settings = crate::settings::get_settings(&app);
+        let (model_id, vad_policy) = match mode {
+            OnboardingTestMode::Streaming => (settings.selected_asr_model, VadPolicy::Streaming),
+            OnboardingTestMode::Standard | OnboardingTestMode::Flow => {
+                (settings.selected_model, VadPolicy::Offline)
+            }
+        };
+        let model = model_manager
+            .get_model_info(&model_id)
+            .ok_or_else(|| "The selected test model is no longer in the catalog".to_string())?;
+        if !model.is_downloaded {
+            return Err(format!("{} is not installed", model.name));
+        }
+        if matches!(mode, OnboardingTestMode::Streaming) && !model.supports_streaming {
+            return Err(format!("{} does not support Streaming", model.name));
+        }
+        if !matches!(mode, OnboardingTestMode::Streaming) && model.supports_streaming {
+            return Err(format!("{} is not a Standard/Flow model", model.name));
+        }
+
+        transcription_manager.initiate_model_load_for(model_id);
+        if matches!(mode, OnboardingTestMode::Streaming) {
+            transcription_manager.start_stream();
+        }
+
+        if let Err(error) =
+            recording_manager.try_start_recording(ONBOARDING_TRANSCRIPTION_BINDING, vad_policy)
+        {
+            if matches!(mode, OnboardingTestMode::Streaming) {
+                transcription_manager.cancel_stream();
+            }
+            return Err(format!("Failed to start the transcription test: {error}"));
+        }
+
+        *active = Some(mode);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Transcription test worker failed: {error}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn stop_onboarding_transcription_test(
+    state: State<'_, OnboardingTranscriptionTest>,
+    recording_manager: State<'_, Arc<AudioRecordingManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+) -> Result<String, String> {
+    let mode = state
+        .active_mode
+        .lock()
+        .map_err(|_| "Transcription test state is unavailable".to_string())?
+        .take()
+        .ok_or_else(|| "No transcription test is running".to_string())?;
+    let recording_manager = Arc::clone(&recording_manager);
+    let transcription_manager = Arc::clone(&transcription_manager);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let cancel_generation = recording_manager.cancel_generation();
+        let samples = recording_manager
+            .stop_recording(ONBOARDING_TRANSCRIPTION_BINDING, cancel_generation)
+            .unwrap_or_default();
+        if samples.is_empty() {
+            if matches!(mode, OnboardingTestMode::Streaming) {
+                transcription_manager.cancel_stream();
+            }
+            return Err("No speech was captured. Please try again.".to_string());
+        }
+
+        let text = if matches!(mode, OnboardingTestMode::Streaming) {
+            match transcription_manager.finalize_stream() {
+                Ok(Some(text)) if !text.trim().is_empty() => text,
+                Ok(_) => transcription_manager
+                    .transcribe(samples)
+                    .map_err(|error| error.to_string())?,
+                Err(error) => return Err(format!("Streaming test failed: {error}")),
+            }
+        } else {
+            transcription_manager
+                .transcribe(samples)
+                .map_err(|error| error.to_string())?
+        };
+
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            Err("No words were recognized. Speak a little longer and try again.".to_string())
+        } else {
+            Ok(text)
+        }
+    })
+    .await
+    .map_err(|error| format!("Transcription test worker failed: {error}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_onboarding_transcription_test(
+    state: State<'_, OnboardingTranscriptionTest>,
+    recording_manager: State<'_, Arc<AudioRecordingManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+) -> Result<(), String> {
+    let mode = state
+        .active_mode
+        .lock()
+        .map_err(|_| "Transcription test state is unavailable".to_string())?
+        .take();
+    if mode.is_some() {
+        recording_manager.cancel_recording();
+    }
+    if matches!(mode, Some(OnboardingTestMode::Streaming)) {
+        transcription_manager.cancel_stream();
+    }
+    Ok(())
+}
+
+fn close_microphone_test(recorder: &Mutex<Option<AudioRecorder>>) -> Result<(), String> {
+    let mut slot = recorder
+        .lock()
+        .map_err(|_| "Microphone test state is unavailable".to_string())?;
+    close_microphone_test_slot(&mut slot)
+}
+
+fn close_microphone_test_slot(slot: &mut Option<AudioRecorder>) -> Result<(), String> {
+    if let Some(mut active) = slot.take() {
+        active
+            .close()
+            .map_err(|error| format!("Failed to close microphone test: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Open the selected input just long enough to verify that it carries speech.
+#[tauri::command]
+#[specta::specta]
+pub async fn start_onboarding_microphone_test(
+    app: AppHandle,
+    state: State<'_, OnboardingMicrophoneTest>,
+    device_name: String,
+) -> Result<(), String> {
+    let recorder_state = Arc::clone(&state.recorder);
+    tauri::async_runtime::spawn_blocking(move || {
+        // Hold the slot through open/start. A concurrent stop then waits for the
+        // recorder to become visible and closes it, instead of observing an
+        // empty slot while this command later installs a leaked live stream.
+        let mut slot = recorder_state
+            .lock()
+            .map_err(|_| "Microphone test state is unavailable".to_string())?;
+        close_microphone_test_slot(&mut slot)?;
+
+        let device = if device_name.eq_ignore_ascii_case("default") {
+            None
+        } else {
+            Some(
+                list_input_devices()
+                    .map_err(|error| format!("Failed to list microphones: {error}"))?
+                    .into_iter()
+                    .find(|candidate| candidate.name == device_name)
+                    .map(|candidate| candidate.device)
+                    .ok_or_else(|| format!("Microphone '{device_name}' is no longer available"))?,
+            )
+        };
+
+        let selected_channel = crate::settings::get_settings(&app).selected_channel;
+        let event_app = app.clone();
+        let mut recorder = AudioRecorder::new()
+            .map_err(|error| format!("Failed to create microphone test: {error}"))?
+            .with_selected_channel(selected_channel)
+            .with_sample_callback(move |frame, _speech| {
+                use tauri_specta::Event as _;
+                if let Err(error) = microphone_measurement(frame).emit(&event_app) {
+                    log::warn!("failed to emit onboarding microphone level: {error}");
+                }
+            });
+
+        recorder
+            .open(device)
+            .map_err(|error| format!("Failed to open microphone: {error}"))?;
+        if let Err(error) = recorder.start_with_retention(VadPolicy::Disabled, false) {
+            let _ = recorder.close();
+            return Err(format!("Failed to start microphone test: {error}"));
+        }
+
+        *slot = Some(recorder);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Microphone test worker failed: {error}"))?
+}
+
+/// Stop the onboarding probe and release the device immediately.
+#[tauri::command]
+#[specta::specta]
+pub async fn stop_onboarding_microphone_test(
+    state: State<'_, OnboardingMicrophoneTest>,
+) -> Result<(), String> {
+    let recorder_state = Arc::clone(&state.recorder);
+    tauri::async_runtime::spawn_blocking(move || close_microphone_test(&recorder_state))
+        .await
+        .map_err(|error| format!("Microphone test worker failed: {error}"))?
+}
+
+fn belongs_to_repo(model_id: &str, repo_id: &str) -> bool {
+    model_id
+        .strip_prefix(repo_id)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// Resolve the Grain-owned editorial defaults against the live catalog.
+#[tauri::command]
+#[specta::specta]
+pub fn get_onboarding_model_defaults(
+    model_manager: State<'_, Arc<ModelManager>>,
+) -> Result<OnboardingModelDefaults, String> {
+    let models = model_manager.get_available_models();
+
+    let standard_model_id = models
+        .iter()
+        .find(|model| {
+            !model.supports_streaming && belongs_to_repo(&model.id, BEST_STANDARD_REPO_ID)
+        })
+        .map(|model| model.id.clone())
+        .ok_or_else(|| "Grain's best Standard model is missing from the catalog".to_string())?;
+
+    let asr_model_id = models
+        .iter()
+        .find(|model| model.supports_streaming && belongs_to_repo(&model.id, BEST_ASR_REPO_ID))
+        .map(|model| model.id.clone())
+        .ok_or_else(|| "Grain's best ASR model is missing from the catalog".to_string())?;
+
+    Ok(OnboardingModelDefaults {
+        standard_model_id,
+        asr_model_id,
+    })
+}
+
+#[cfg(debug_assertions)]
+fn force_onboarding_for_development() -> bool {
+    std::env::var_os("GRAIN_FORCE_ONBOARDING")
+        .is_some_and(|value| !value.is_empty() && value != "0")
+}
+
+#[cfg(not(debug_assertions))]
+fn force_onboarding_for_development() -> bool {
+    false
 }
 
 /// Are the permissions Grain needs in place?
@@ -102,6 +476,14 @@ pub async fn resolve_onboarding_state(
     app: AppHandle,
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<OnboardingState, String> {
+    if force_onboarding_for_development() {
+        return Ok(OnboardingState {
+            step: OnboardingStep::Accessibility,
+            is_returning_user: false,
+            blocked_on_permissions: false,
+        });
+    }
+
     let has_models = model_manager
         .get_available_models()
         .iter()
@@ -136,14 +518,14 @@ pub async fn resolve_onboarding_state(
 }
 
 /// Where "permissions granted" leads. A returning user already has a model, so
-/// the picker would be a dead screen; a new user needs it.
+/// the remaining setup would be a dead path; a new user first sees the modes.
 #[tauri::command]
 #[specta::specta]
 pub fn onboarding_step_after_permissions(is_returning_user: bool) -> OnboardingStep {
     if is_returning_user {
         OnboardingStep::Done
     } else {
-        OnboardingStep::Model
+        OnboardingStep::Modes
     }
 }
 
@@ -152,14 +534,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returning_users_skip_the_model_picker() {
+    fn returning_users_skip_the_remaining_setup() {
         assert_eq!(
             onboarding_step_after_permissions(true),
             OnboardingStep::Done
         );
         assert_eq!(
             onboarding_step_after_permissions(false),
-            OnboardingStep::Model
+            OnboardingStep::Modes
         );
+    }
+
+    #[test]
+    fn best_model_repo_matching_requires_a_registry_child() {
+        assert!(belongs_to_repo(
+            "handy-computer/canary-180m-flash-gguf/canary-Q8_0.gguf",
+            BEST_STANDARD_REPO_ID,
+        ));
+        assert!(!belongs_to_repo(
+            "handy-computer/canary-180m-flash-gguf-extra/model.gguf",
+            BEST_STANDARD_REPO_ID,
+        ));
+    }
+
+    #[test]
+    fn closing_an_idle_microphone_test_is_a_noop() {
+        let recorder = Mutex::new(None);
+        assert!(close_microphone_test(&recorder).is_ok());
+    }
+
+    #[test]
+    fn microphone_measurement_reports_rms_peak_and_fixed_buckets() {
+        let measurement = microphone_measurement(&[0.0, 0.25, -0.5, 1.0]);
+        assert_eq!(measurement.levels.len(), ONBOARDING_METER_BUCKETS);
+        assert!((measurement.peak_dbfs - 0.0).abs() < 0.01);
+        assert!((measurement.rms_dbfs - -4.84).abs() < 0.02);
     }
 }

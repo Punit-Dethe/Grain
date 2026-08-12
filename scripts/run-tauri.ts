@@ -44,6 +44,17 @@ function configuredTargetDir(): string | null {
   return null;
 }
 
+const tauriArgs = process.argv.slice(2);
+const onboardingFlagIndex = tauriArgs.indexOf("--onboarding");
+
+if (onboardingFlagIndex !== -1) {
+  tauriArgs.splice(onboardingFlagIndex, 1);
+  process.env.GRAIN_FORCE_ONBOARDING = "1";
+  console.log(
+    "[run-tauri] forcing first-run onboarding for this debug launch.",
+  );
+}
+
 if (process.platform === "win32") {
   const target = configuredTargetDir()?.replace(/[/\\]+$/, "");
   // "Short" ⇒ the build root won't blow MAX_PATH on its own, so the junction is
@@ -60,7 +71,7 @@ if (process.platform === "win32") {
   }
 }
 
-run(process.argv.slice(2), "tauri").catch((e) => {
+run(tauriArgs, "tauri").catch((e) => {
   console.error(e);
   process.exit(1);
 });

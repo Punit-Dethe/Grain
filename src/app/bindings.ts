@@ -7,11 +7,11 @@
 export const commands = {
 /**
  * Is there a newer release?
- * 
+ *
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
- * 
+ *
  * Returns `Ok(None)` both when the app is current and when checks are off — to
  * every caller those are the same answer ("nothing to show"), and reporting a
  * disabled setting as an error would surface it as a failure in the UI.
@@ -750,10 +750,67 @@ async resolveOnboardingState() : Promise<Result<OnboardingState, string>> {
 },
 /**
  * Where "permissions granted" leads. A returning user already has a model, so
- * the picker would be a dead screen; a new user needs it.
+ * the remaining setup would be a dead path; a new user first sees the modes.
  */
 async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<OnboardingStep> {
     return await TAURI_INVOKE("onboarding_step_after_permissions", { isReturningUser });
+},
+/**
+ * Resolve the Grain-owned editorial defaults against the live catalog.
+ */
+async getOnboardingModelDefaults() : Promise<Result<OnboardingModelDefaults, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_onboarding_model_defaults") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the selected input just long enough to verify that it carries speech.
+ */
+async startOnboardingMicrophoneTest(deviceName: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_onboarding_microphone_test", { deviceName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop the onboarding probe and release the device immediately.
+ */
+async stopOnboardingMicrophoneTest() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_microphone_test") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startOnboardingTranscriptionTest(mode: OnboardingTestMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_onboarding_transcription_test", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async stopOnboardingTranscriptionTest() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_transcription_test") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelOnboardingTranscriptionTest() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_onboarding_transcription_test") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 async getTheme() : Promise<ThemeState> {
     return await TAURI_INVOKE("get_theme");
@@ -2244,6 +2301,7 @@ modelExtractionStarted: ModelExtractionStarted,
 modelStateChanged: ModelStateChanged,
 modelVerificationCompleted: ModelVerificationCompleted,
 modelVerificationStarted: ModelVerificationStarted,
+onboardingMicrophoneLevel: OnboardingMicrophoneLevel,
 pasteError: PasteError,
 recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
@@ -2261,6 +2319,7 @@ modelExtractionStarted: "model-extraction-started",
 modelStateChanged: "model-state-changed",
 modelVerificationCompleted: "model-verification-completed",
 modelVerificationStarted: "model-verification-started",
+onboardingMicrophoneLevel: "onboarding-microphone-level",
 pasteError: "paste-error",
 recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
@@ -2923,6 +2982,18 @@ folder: string | null;
  * list. (Legacy field name kept for the wire schema.)
  */
 readonly: boolean }
+/**
+ * Live level measurements from the short-lived onboarding microphone probe.
+ */
+export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
+/**
+ * The single editorially "best" model in each onboarding family.
+ *
+ * These are full registry IDs (repo + default quant filename), ready to pass
+ * to the existing download/select commands. Keeping the pair behind a command
+ * lets us update the defaults without teaching the frontend catalog internals.
+ */
+export type OnboardingModelDefaults = { standard_model_id: string; asr_model_id: string }
 export type OnboardingState = { step: OnboardingStep; 
 /**
  * Has models already. Decides where "permissions granted" goes next: a
@@ -2945,14 +3016,27 @@ export type OnboardingStep =
  */
 "accessibility" | 
 /**
+ * Short demonstration of Standard, Flow, and Streaming for a new user.
+ */
+"modes" |
+/**
  * Model picker. Only ever reached by a genuinely new user, and only after
- * permissions are settled.
+ * the capture-mode tour.
  */
 "model" | 
+/**
+ * Real capture against the models installed during onboarding.
+ */
+"try" |
+/**
+ * Choose the everyday capture mode and configure its real global shortcut.
+ */
+"shortcuts" |
 /**
  * Nothing in the way; show the app.
  */
 "done"
+export type OnboardingTestMode = "standard" | "flow" | "streaming"
 /**
  * Where the single pill anchors on screen (`None` = never show). Lives in the
  * SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
