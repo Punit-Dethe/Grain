@@ -494,7 +494,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           className="onboarding-stepper"
           aria-label={t("onboarding.setup.progress")}
         >
-          {(["microphone", "modes", "models", "try", "shortcuts"] as const).map(
+          {(["microphone", "modes", "models", "try"] as const).map(
             (step, index) => (
               <li
                 key={step}
