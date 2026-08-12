@@ -59,6 +59,8 @@ pub enum OnboardingStep {
     Model,
     /// Real capture against the models installed during onboarding.
     Try,
+    /// Choose the everyday capture mode and configure its real global shortcut.
+    Shortcuts,
     /// Nothing in the way; show the app.
     Done,
 }

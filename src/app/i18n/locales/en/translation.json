@@ -228,6 +228,25 @@
             "hint": "Words appear while you are still speaking."
           }
         }
+      },
+      "shortcuts": {
+        "title": "Choose your everyday shortcut",
+        "description": "Pick the capture mode you want available from any application, then set the keys that start and stop it.",
+        "modeLabel": "Default capture mode",
+        "shortcutLabel": "Your global shortcut",
+        "editHint": "Click the keys, then press your new key combination.",
+        "allModes": "All three capture modes are enabled. Set each global shortcut below.",
+        "settingsNote": "You can enable more capture shortcuts later in Settings → Capture.",
+        "back": "Back",
+        "finish": "Open Grain",
+        "modes": {
+          "flow": "Fast everyday dictation",
+          "standard": "The cleanest final transcript",
+          "streaming": "Live words while you speak"
+        },
+        "errors": {
+          "mode": "Grain could not change the default capture mode. Try again."
+        }
       }
     },
     "subtitle": "To get started, choose a transcription model",

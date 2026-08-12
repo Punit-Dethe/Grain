@@ -1358,6 +1358,184 @@
   font-size: 10.5px;
 }
 
+.onboarding-shortcuts-step {
+  width: min(820px, 100%);
+  margin: auto;
+  animation: onboarding-enter 420ms var(--ease-out) both;
+}
+
+.onboarding-shortcuts-step .onboarding-heading {
+  margin-bottom: 28px;
+}
+
+.onboarding-shortcut-mode-section {
+  margin-bottom: 20px;
+}
+
+.onboarding-shortcut-modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.onboarding-shortcut-modes > button {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 68px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 11px;
+  outline: 1px solid var(--hairline-soft);
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--bg-3) 58%, transparent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    background 160ms ease,
+    outline-color 160ms ease,
+    transform 160ms var(--ease-out);
+}
+
+.onboarding-shortcut-modes > button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bg-3) 82%, transparent);
+  outline-color: var(--hairline);
+  transform: translateY(-1px);
+}
+
+.onboarding-shortcut-modes > button.selected {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-3));
+  outline-color: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
+.onboarding-shortcut-modes > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.onboarding-shortcut-mode-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  color: var(--text-3);
+  background: var(--hairline-soft);
+}
+
+.onboarding-shortcut-modes > button.selected .onboarding-shortcut-mode-icon {
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.onboarding-shortcut-mode-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.onboarding-shortcut-modes > button > span:last-child,
+.onboarding-shortcut-modes strong,
+.onboarding-shortcut-modes small {
+  display: block;
+  min-width: 0;
+}
+
+.onboarding-shortcut-modes strong {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 640;
+}
+
+.onboarding-shortcut-modes small {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--text-4);
+  font-size: 9.5px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onboarding-shortcut-editor {
+  overflow: hidden;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--bg-3) 64%, transparent);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+}
+
+.onboarding-shortcut-editor-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.onboarding-shortcut-editor-head strong {
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 630;
+}
+
+.onboarding-shortcut-editor-head span {
+  color: var(--text-4);
+  font-size: 10px;
+}
+
+.onboarding-shortcut-list .setting-row {
+  min-height: 70px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.onboarding-shortcut-list .setting-row:last-child {
+  border-bottom: 0;
+}
+
+.onboarding-shortcut-list .setting-row h3 {
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.onboarding-shortcut-list .setting-row p {
+  margin-top: 3px;
+  color: var(--text-4);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.onboarding-shortcut-list .setting-row [class*="font-mono"] {
+  min-width: 88px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  text-align: center;
+}
+
+.onboarding-shortcut-all-note {
+  margin: 0 0 14px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.onboarding-shortcut-note,
+.onboarding-shortcut-error {
+  margin: 13px 0 0;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.onboarding-shortcut-note {
+  color: var(--text-4);
+}
+
+.onboarding-shortcut-error {
+  color: color-mix(in srgb, var(--peach) 82%, var(--text-1));
+}
+
 @keyframes onboarding-confirm-enter {
   from {
     opacity: 0.55;
@@ -1637,6 +1815,20 @@
     flex-direction: column;
   }
 
+  .onboarding-shortcut-modes {
+    grid-template-columns: 1fr;
+  }
+
+  .onboarding-shortcut-modes small {
+    white-space: normal;
+  }
+
+  .onboarding-shortcut-editor-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
   .onboarding-model-family-main {
     padding: 15px 13px;
   }
@@ -1696,6 +1888,7 @@
   .onboarding-modes-step,
   .onboarding-models-step,
   .onboarding-try-step,
+  .onboarding-shortcuts-step,
   .onboarding-mic-pulse,
   .spin,
   .onboarding-loading svg {

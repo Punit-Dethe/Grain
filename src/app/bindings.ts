@@ -3029,6 +3029,10 @@ export type OnboardingStep =
  */
 "try" |
 /**
+ * Choose the everyday capture mode and configure its real global shortcut.
+ */
+"shortcuts" |
+/**
  * Nothing in the way; show the app.
  */
 "done"

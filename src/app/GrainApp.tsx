@@ -13,6 +13,7 @@ import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
   AccessibilityOnboarding,
   ModesOnboarding,
+  ShortcutsOnboarding,
   TryOnboarding,
 } from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
@@ -990,6 +991,17 @@ function NextShell() {
       <>
         <TryOnboarding
           onBack={() => setOnboardingStep("model")}
+          onComplete={() => setOnboardingStep("shortcuts")}
+        />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+  if (onboardingStep === "shortcuts") {
+    return (
+      <>
+        <ShortcutsOnboarding
+          onBack={() => setOnboardingStep("try")}
           onComplete={() => setOnboardingStep("done")}
         />
         <Toaster theme={isDark ? "dark" : "light"} />

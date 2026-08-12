@@ -35,9 +35,24 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
   );
   const [originalBinding, setOriginalBinding] = useState<string>("");
   const shortcutRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+  const editingShortcutIdRef = useRef<string | null>(null);
   const osType = useOsType();
 
   const bindings = getSetting("bindings") || {};
+
+  useEffect(() => {
+    editingShortcutIdRef.current = editingShortcutId;
+  }, [editingShortcutId]);
+
+  useEffect(
+    () => () => {
+      const editingId = editingShortcutIdRef.current;
+      if (editingId) {
+        void commands.resumeBinding(editingId).catch(console.error);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     // Only add event listeners when we're in editing mode
