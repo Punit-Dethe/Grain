@@ -164,7 +164,11 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
               </span>
             </div>
 
-            <div className="onboarding-mode-showcase" data-mode={mode}>
+            <div
+              className="onboarding-mode-showcase"
+              data-mode={mode}
+              data-phase={phase}
+            >
               <div className="onboarding-mode-head">
                 <div>
                   <strong>{t(`onboarding.setup.modes.${mode}.title`)}</strong>

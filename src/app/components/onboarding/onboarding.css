@@ -481,9 +481,11 @@
 
 .onboarding-mode-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
+  align-items: center;
+  flex-direction: column;
+  justify-content: center;
+  gap: 13px;
+  text-align: center;
 }
 
 .onboarding-mode-head > div:first-child strong,
@@ -493,22 +495,22 @@
 
 .onboarding-mode-head > div:first-child strong {
   color: var(--text-1);
-  font-size: 23px;
-  font-weight: 620;
+  font-size: clamp(30px, 4vw, 38px);
+  font-weight: 650;
   line-height: 1.1;
   letter-spacing: -0.035em;
 }
 
 .onboarding-mode-head > div:first-child span {
-  margin-top: 6px;
+  margin-top: 7px;
   color: var(--text-3);
-  font-size: 11.5px;
+  font-size: 13px;
 }
 
 .onboarding-mode-traits {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 6px;
 }
 
@@ -665,6 +667,16 @@
   font-size: 9.5px;
 }
 
+.onboarding-mode-showcase[data-phase="recording"] .onboarding-demo-label,
+.onboarding-mode-showcase[data-phase="processing"] .onboarding-demo-label {
+  margin-bottom: 13px;
+  color: var(--text-1);
+  font-size: clamp(20px, 2.6vw, 27px);
+  font-weight: 650;
+  line-height: 1.05;
+  letter-spacing: -0.025em;
+}
+
 .onboarding-demo-transcript {
   min-height: 80px;
   max-width: 480px;
@@ -726,9 +738,9 @@
 }
 
 .onboarding-demo-processing i {
-  width: 14px;
-  height: 14px;
-  border: 2px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  width: 22px;
+  height: 22px;
+  border: 3px solid color-mix(in srgb, var(--accent) 18%, transparent);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: onboarding-spin 750ms linear infinite;
