@@ -13,7 +13,19 @@ type DemoPhase = "recording" | "processing" | "result";
 
 const MODES: ModeId[] = ["standard", "flow", "streaming"];
 const WAVE_BARS = Array.from({ length: 22 }, (_, index) => index);
-const STREAMING_WORDS = ["words", "appear", "here", "live"];
+const STREAMING_WORDS = [
+  "this",
+  "is",
+  "what",
+  "streaming",
+  "looks",
+  "like",
+  "while",
+  "you",
+  "are",
+  "still",
+  "speaking",
+];
 
 const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
   onBack,
