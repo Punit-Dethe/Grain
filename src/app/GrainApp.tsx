@@ -32,7 +32,17 @@ import {
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
 import { UpdateNotice } from "@/components/UpdateNotice";
+import { QuickPanel } from "./quick-panel/QuickPanel";
 import "./app.css";
+
+/** ⌘ K on macOS, Ctrl K elsewhere — matches the platform's palette convention. */
+function quickPanelShortcutLabel(): string {
+  try {
+    return platform() === "macos" ? "⌘ K" : "Ctrl K";
+  } catch {
+    return "Ctrl K";
+  }
+}
 
 let onboardingResolution: ReturnType<
   typeof commands.resolveOnboardingState
@@ -363,7 +373,13 @@ const NAV_GROUPS = [
   },
 ] as const;
 
-function Sidebar({ route }: { route: AppRoute }) {
+function Sidebar({
+  route,
+  onOpenQuickPanel,
+}: {
+  route: AppRoute;
+  onOpenQuickPanel: () => void;
+}) {
   const currentModel = useModelStore((state) => state.currentModel);
   const models = useModelStore((state) => state.models);
   const loading = useModelStore((state) => state.loading);
@@ -432,12 +448,13 @@ function Sidebar({ route }: { route: AppRoute }) {
       <button
         className="quick-panel-button"
         type="button"
-        disabled
-        aria-label="Quick panel (not available in this phase)"
+        onClick={onOpenQuickPanel}
+        aria-label="Open quick panel"
+        title="Quick panel"
       >
         <Icon name="command" />
         <span>{PROTOTYPE_COPY.quickPanel}</span>
-        <kbd>{PROTOTYPE_COPY.quickPanelShortcut}</kbd>
+        <kbd>{quickPanelShortcutLabel()}</kbd>
       </button>
     </aside>
   );
@@ -834,6 +851,7 @@ function NextShell() {
   const { settings, updateSetting, refreshAudioDevices, refreshOutputDevices } =
     useSettings();
   const hasInitializedRuntime = useRef(false);
+  const [quickPanelOpen, setQuickPanelOpen] = useState(false);
 
   useEffect(() => {
     document.documentElement.dataset.theme = isDark ? "dark" : "light";
@@ -895,6 +913,18 @@ function NextShell() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [settings?.debug_mode, updateSetting]);
 
+  // ⌘/Ctrl-K toggles the Quick Panel from anywhere in the app.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setQuickPanelOpen((prev) => !prev);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   const handleAccessibilityComplete = async () => {
     setOnboardingStep(
       await commands.onboardingStepAfterPermissions(isReturningUser),
@@ -929,7 +959,7 @@ function NextShell() {
     >
       <IconSprite />
       <WindowChrome route={route} />
-      <Sidebar route={route} />
+      <Sidebar route={route} onOpenQuickPanel={() => setQuickPanelOpen(true)} />
       <main className="main">
         {route.page === "history" ? (
           <HistorySettings variant="next" controller={history} />
@@ -947,6 +977,10 @@ function NextShell() {
           <OverviewPage history={history} />
         )}
       </main>
+      <QuickPanel
+        open={quickPanelOpen}
+        onClose={() => setQuickPanelOpen(false)}
+      />
       <Toaster theme={isDark ? "dark" : "light"} />
     </div>
   );

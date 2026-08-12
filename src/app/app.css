@@ -4904,3 +4904,163 @@ html[data-theme="light"] .extension-readme {
     padding: 30px 22px 60px;
   }
 }
+
+/* [GRAIN] Quick Panel — ⌘/Ctrl-K command palette. Transient surface, so it may
+   lean on blur (the material rule reserves hard outlines for containment). */
+.qp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(3px);
+  animation: qp-fade 0.12s ease;
+}
+html[data-theme="light"] .qp-overlay {
+  background: rgba(24, 29, 37, 0.22);
+}
+.qp-panel {
+  width: min(560px, calc(100vw - 40px));
+  max-height: 62vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-paper-raised);
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  animation: qp-rise 0.14s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.qp-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--color-line);
+}
+.qp-search .icon {
+  width: 17px;
+  height: 17px;
+  color: var(--color-ink-faint);
+  flex-shrink: 0;
+}
+.qp-input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 14px;
+  outline: none;
+}
+.qp-input::placeholder {
+  color: var(--color-ink-faint);
+}
+.qp-kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10px;
+  color: var(--color-ink-soft);
+  border: 1px solid var(--color-line);
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+.qp-list {
+  overflow-y: auto;
+  padding: 6px;
+}
+.qp-group {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-ink-faint);
+  padding: 10px 10px 5px;
+}
+.qp-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 8px;
+  color: var(--color-ink-soft);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+.qp-item .icon {
+  width: 16px;
+  height: 16px;
+  color: var(--color-ink-faint);
+  flex-shrink: 0;
+}
+.qp-item.is-active {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  color: var(--color-ink);
+}
+.qp-item.is-active .icon {
+  color: var(--color-accent);
+}
+.qp-item-title {
+  flex: 1;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qp-item-meta {
+  font-size: 10.5px;
+  color: var(--color-ink-faint);
+  flex-shrink: 0;
+}
+.qp-empty {
+  padding: 26px 10px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-ink-faint);
+}
+@keyframes qp-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes qp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Pulse the row a Quick Panel jump lands on. */
+.qp-focus-pulse {
+  animation: qp-pulse 1.5s ease;
+  border-radius: 10px;
+}
+@keyframes qp-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    background: transparent;
+  }
+  18% {
+    box-shadow: 0 0 0 2px var(--color-accent);
+    background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .qp-overlay,
+  .qp-panel,
+  .qp-focus-pulse {
+    animation: none;
+  }
+}

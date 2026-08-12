@@ -16,6 +16,7 @@ import {
   isSettingsSectionEnabled,
   SETTINGS_SECTIONS,
 } from "../settings/sections";
+import { consumeSettingFocus, focusSettingByTitle } from "../quick-panel/focus";
 
 const sectionComponents: Record<SettingsSectionId, ComponentType> = {
   capture: CapturePane,
@@ -68,6 +69,27 @@ export function SettingsPage({ section }: SettingsPageProps) {
         );
       });
     }
+  }, [activeSection, isLoading, section]);
+
+  // A Quick Panel jump lands us on the section, then asks us to scroll to the
+  // exact row. Panes settle asynchronously (provider pools, device lists), so
+  // retry a few frames before giving up.
+  useEffect(() => {
+    if (isLoading || activeSection !== section) return;
+    const request = consumeSettingFocus(activeSection);
+    if (!request) return;
+
+    let cancelled = false;
+    const attempt = (remaining: number) => {
+      if (cancelled) return;
+      if (focusSettingByTitle(request.title) || remaining <= 0) return;
+      window.setTimeout(() => attempt(remaining - 1), 90);
+    };
+    const frame = requestAnimationFrame(() => attempt(6));
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(frame);
+    };
   }, [activeSection, isLoading, section]);
 
   const availableSections = SETTINGS_SECTIONS.filter((item) =>
