@@ -2961,7 +2961,7 @@ readonly: boolean }
 /**
  * Live spectrum buckets from the short-lived onboarding microphone probe.
  */
-export type OnboardingMicrophoneLevel = { levels: number[] }
+export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
 /**
  * The single editorially "best" model in each onboarding family.
  *

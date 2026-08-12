@@ -200,6 +200,8 @@
 }
 
 .onboarding-mic-panel.no-signal,
+.onboarding-mic-panel.too-quiet,
+.onboarding-mic-panel.too-loud,
 .onboarding-mic-panel.error {
   background: color-mix(in srgb, var(--peach) 6%, var(--bg-3));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--peach) 20%, transparent);
@@ -247,6 +249,8 @@
 }
 
 .onboarding-mic-panel.no-signal .onboarding-mic-button,
+.onboarding-mic-panel.too-quiet .onboarding-mic-button,
+.onboarding-mic-panel.too-loud .onboarding-mic-button,
 .onboarding-mic-panel.error .onboarding-mic-button {
   color: var(--bg-1);
   background: var(--peach);
@@ -315,6 +319,62 @@
 
 .onboarding-mic-panel.success .onboarding-mic-meter i {
   background: var(--sage);
+}
+
+.onboarding-level-result {
+  align-self: center;
+}
+
+.onboarding-level-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: 31% 45% 24%;
+  gap: 3px;
+  height: 10px;
+}
+
+.onboarding-level-track span {
+  display: block;
+  border-radius: 999px;
+}
+
+.onboarding-level-track .quiet {
+  background: color-mix(in srgb, var(--peach) 50%, var(--bg-4));
+}
+
+.onboarding-level-track .balanced {
+  background: var(--sage);
+}
+
+.onboarding-level-track .loud {
+  background: color-mix(in srgb, var(--peach) 82%, var(--bg-4));
+}
+
+.onboarding-level-track i {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--text-1);
+  box-shadow: 0 3px 9px color-mix(in srgb, var(--bg-1) 45%, transparent);
+  transform: translate(-50%, -50%);
+}
+
+.onboarding-level-labels {
+  display: grid;
+  grid-template-columns: 31% 45% 24%;
+  margin-top: 7px;
+  color: var(--text-4);
+  font-size: 9px;
+}
+
+.onboarding-level-labels span:nth-child(2) {
+  text-align: center;
+}
+
+.onboarding-level-labels span:last-child {
+  text-align: right;
 }
 
 .onboarding-mic-result {

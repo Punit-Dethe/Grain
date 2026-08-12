@@ -24,6 +24,8 @@ type MicrophoneTestStatus =
   | "starting"
   | "listening"
   | "success"
+  | "too-quiet"
+  | "too-loud"
   | "no-signal"
   | "error";
 
@@ -33,9 +35,12 @@ interface PermissionsState {
 }
 
 const METER_BAR_COUNT = 34;
-const TEST_TIMEOUT_MS = 6500;
-const PASS_SIGNAL_LEVEL = 0.14;
-const PASS_SIGNAL_FRAMES = 3;
+const TEST_DURATION_MS = 5000;
+const ACTIVE_SPEECH_FLOOR_DBFS = -48;
+const QUIET_SPEECH_DBFS = -34;
+const LOUD_SPEECH_DBFS = -8;
+const CLIPPING_PEAK_DBFS = -0.5;
+const MIN_ACTIVE_FRAMES = 12;
 
 const EMPTY_LEVELS = Array.from({ length: METER_BAR_COUNT }, () => 0);
 
@@ -71,15 +76,20 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   });
   const [testStatus, setTestStatus] = useState<MicrophoneTestStatus>("idle");
   const [meterLevels, setMeterLevels] = useState<number[]>(EMPTY_LEVELS);
+  const [secondsRemaining, setSecondsRemaining] = useState(5);
+  const [measuredLevel, setMeasuredLevel] = useState<number | null>(null);
   const [isCompleting, setIsCompleting] = useState(false);
 
   const permissionPollingRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
   );
   const testTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
   const meterUnlistenRef = useRef<(() => void) | null>(null);
-  const signalFramesRef = useRef(0);
-  const testSucceededRef = useRef(false);
+  const rmsSamplesRef = useRef<number[]>([]);
+  const peakDbfsRef = useRef(-80);
 
   const isMacOS = permissionPlatform === "macos";
   const isWindows = permissionPlatform === "windows";
@@ -107,9 +117,14 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
       clearTimeout(testTimeoutRef.current);
       testTimeoutRef.current = null;
     }
+    if (progressIntervalRef.current) {
+      clearInterval(progressIntervalRef.current);
+      progressIntervalRef.current = null;
+    }
     meterUnlistenRef.current?.();
     meterUnlistenRef.current = null;
-    signalFramesRef.current = 0;
+    rmsSamplesRef.current = [];
+    peakDbfsRef.current = -80;
     if (resetMeter) setMeterLevels(EMPTY_LEVELS);
     try {
       await commands.stopOnboardingMicrophoneTest();
@@ -237,6 +252,8 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
     return () => {
       stopPermissionPolling();
       if (testTimeoutRef.current) clearTimeout(testTimeoutRef.current);
+      if (progressIntervalRef.current)
+        clearInterval(progressIntervalRef.current);
       meterUnlistenRef.current?.();
       void commands.stopOnboardingMicrophoneTest();
     };
@@ -279,7 +296,7 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
   ) => {
     await stopMicrophoneTest();
     setTestStatus("idle");
-    testSucceededRef.current = false;
+    setMeasuredLevel(null);
     await updateSetting("selected_microphone", event.target.value);
   };
 
@@ -288,7 +305,8 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
 
     await stopMicrophoneTest();
     setTestStatus("starting");
-    testSucceededRef.current = false;
+    setMeasuredLevel(null);
+    setSecondsRemaining(5);
     setMeterLevels(EMPTY_LEVELS);
 
     try {
@@ -296,18 +314,11 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         (event) => {
           const nextLevels = normalizeLevels(event.payload.levels);
           setMeterLevels(nextLevels);
-
-          if (Math.max(...nextLevels) < PASS_SIGNAL_LEVEL) {
-            signalFramesRef.current = 0;
-            return;
-          }
-
-          signalFramesRef.current += 1;
-          if (signalFramesRef.current < PASS_SIGNAL_FRAMES) return;
-
-          testSucceededRef.current = true;
-          setTestStatus("success");
-          void stopMicrophoneTest(false);
+          rmsSamplesRef.current.push(event.payload.rms_dbfs);
+          peakDbfsRef.current = Math.max(
+            peakDbfsRef.current,
+            event.payload.peak_dbfs,
+          );
         },
       );
 
@@ -315,13 +326,41 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
         await commands.startOnboardingMicrophoneTest(selectedMicrophone);
       if (result.status === "error") throw new Error(result.error);
 
-      if (!testSucceededRef.current) {
-        setTestStatus("listening");
-        testTimeoutRef.current = setTimeout(() => {
+      setTestStatus("listening");
+      const startedAt = Date.now();
+      progressIntervalRef.current = setInterval(() => {
+        const remaining = Math.max(
+          0,
+          Math.ceil((TEST_DURATION_MS - (Date.now() - startedAt)) / 1000),
+        );
+        setSecondsRemaining(remaining);
+      }, 100);
+      testTimeoutRef.current = setTimeout(() => {
+        const activeSamples = rmsSamplesRef.current
+          .filter((level) => level >= ACTIVE_SPEECH_FLOOR_DBFS)
+          .sort((left, right) => left - right);
+
+        if (activeSamples.length < MIN_ACTIVE_FRAMES) {
           setTestStatus("no-signal");
-          void stopMicrophoneTest();
-        }, TEST_TIMEOUT_MS);
-      }
+          setMeasuredLevel(null);
+        } else {
+          const representativeLevel =
+            activeSamples[Math.floor((activeSamples.length - 1) * 0.75)];
+          setMeasuredLevel(representativeLevel);
+          if (
+            peakDbfsRef.current >= CLIPPING_PEAK_DBFS ||
+            representativeLevel >= LOUD_SPEECH_DBFS
+          ) {
+            setTestStatus("too-loud");
+          } else if (representativeLevel < QUIET_SPEECH_DBFS) {
+            setTestStatus("too-quiet");
+          } else {
+            setTestStatus("success");
+          }
+        }
+        setSecondsRemaining(0);
+        void stopMicrophoneTest();
+      }, TEST_DURATION_MS);
     } catch (error) {
       await stopMicrophoneTest();
       console.error("Microphone test failed:", error);
@@ -376,6 +415,16 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           title: t("onboarding.setup.microphone.success"),
           detail: t("onboarding.setup.microphone.successDetail"),
         };
+      case "too-quiet":
+        return {
+          title: t("onboarding.setup.microphone.tooQuiet"),
+          detail: t("onboarding.setup.microphone.tooQuietDetail"),
+        };
+      case "too-loud":
+        return {
+          title: t("onboarding.setup.microphone.tooLoud"),
+          detail: t("onboarding.setup.microphone.tooLoudDetail"),
+        };
       case "no-signal":
         return {
           title: t("onboarding.setup.microphone.noSignal"),
@@ -420,6 +469,15 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
           ? t("onboarding.setup.microphone.waitingPermission")
           : t("onboarding.setup.microphone.enableShortcuts")
         : t("onboarding.setup.continue");
+
+  const hasLevelResult =
+    testStatus === "success" ||
+    testStatus === "too-quiet" ||
+    testStatus === "too-loud";
+  const levelMarker =
+    measuredLevel === null
+      ? 0
+      : Math.max(0, Math.min(100, ((measuredLevel + 48) / 45) * 100));
 
   return (
     <div className="onboarding-shell">
@@ -548,7 +606,10 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                 >
                   {testStatus === "success" ? (
                     <Check aria-hidden="true" />
-                  ) : testStatus === "no-signal" || testStatus === "error" ? (
+                  ) : testStatus === "no-signal" ||
+                    testStatus === "too-quiet" ||
+                    testStatus === "too-loud" ||
+                    testStatus === "error" ? (
                     <RotateCcw aria-hidden="true" />
                   ) : isTesting ? (
                     <span className="onboarding-mic-pulse">
@@ -564,14 +625,36 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                     <strong>{statusCopy.title}</strong>
                     <span>{statusCopy.detail}</span>
                   </div>
-                  <div className="onboarding-mic-meter" aria-hidden="true">
-                    {meterLevels.map((level, index) => (
-                      <i
-                        key={index}
-                        style={{ height: `${8 + level * 34}px` }}
-                      />
-                    ))}
-                  </div>
+                  {hasLevelResult ? (
+                    <div className="onboarding-level-result">
+                      <div
+                        className="onboarding-level-track"
+                        aria-hidden="true"
+                      >
+                        <span className="quiet" />
+                        <span className="balanced" />
+                        <span className="loud" />
+                        <i style={{ left: `${levelMarker}%` }} />
+                      </div>
+                      <div
+                        className="onboarding-level-labels"
+                        aria-hidden="true"
+                      >
+                        <span>{t("onboarding.setup.microphone.quiet")}</span>
+                        <span>{t("onboarding.setup.microphone.balanced")}</span>
+                        <span>{t("onboarding.setup.microphone.loud")}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="onboarding-mic-meter" aria-hidden="true">
+                      {meterLevels.map((level, index) => (
+                        <i
+                          key={index}
+                          style={{ height: `${8 + level * 34}px` }}
+                        />
+                      ))}
+                    </div>
+                  )}
                   <div className="onboarding-mic-result">
                     {testStatus === "success" ? (
                       <span className="onboarding-success-mark">
@@ -582,8 +665,13 @@ const AccessibilityOnboarding: React.FC<AccessibilityOnboardingProps> = ({
                       {testStatus === "success"
                         ? t("onboarding.setup.microphone.inputGood")
                         : isTesting
-                          ? t("onboarding.setup.microphone.checkingInput")
-                          : t("onboarding.setup.microphone.ready")}
+                          ? t("onboarding.setup.microphone.checkingInput", {
+                              count: secondsRemaining,
+                            })
+                          : testStatus === "too-quiet" ||
+                              testStatus === "too-loud"
+                            ? t("onboarding.setup.microphone.adjustAndRetry")
+                            : t("onboarding.setup.microphone.ready")}
                     </span>
                   </div>
                 </div>

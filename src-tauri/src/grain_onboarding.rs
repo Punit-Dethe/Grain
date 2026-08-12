@@ -80,10 +80,55 @@ pub struct OnboardingModelDefaults {
     pub asr_model_id: String,
 }
 
-/// Live spectrum buckets from the short-lived onboarding microphone probe.
+/// Live level measurements from the short-lived onboarding microphone probe.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct OnboardingMicrophoneLevel {
     pub levels: Vec<f32>,
+    pub rms_dbfs: f32,
+    pub peak_dbfs: f32,
+}
+
+const ONBOARDING_METER_BUCKETS: usize = 34;
+const ONBOARDING_METER_FLOOR_DBFS: f32 = -60.0;
+const ONBOARDING_METER_CEILING_DBFS: f32 = -6.0;
+
+fn amplitude_to_dbfs(amplitude: f32) -> f32 {
+    20.0 * amplitude.max(0.0001).log10()
+}
+
+fn microphone_measurement(frame: &[f32]) -> OnboardingMicrophoneLevel {
+    if frame.is_empty() {
+        return OnboardingMicrophoneLevel {
+            levels: vec![0.0; ONBOARDING_METER_BUCKETS],
+            rms_dbfs: -80.0,
+            peak_dbfs: -80.0,
+        };
+    }
+
+    let sum_squares = frame.iter().map(|sample| sample * sample).sum::<f32>();
+    let peak = frame
+        .iter()
+        .map(|sample| sample.abs())
+        .fold(0.0_f32, f32::max);
+    let bucket_size = frame.len().div_ceil(ONBOARDING_METER_BUCKETS);
+    let mut levels = frame
+        .chunks(bucket_size)
+        .map(|bucket| {
+            let bucket_rms = (bucket.iter().map(|sample| sample * sample).sum::<f32>()
+                / bucket.len() as f32)
+                .sqrt();
+            ((amplitude_to_dbfs(bucket_rms) - ONBOARDING_METER_FLOOR_DBFS)
+                / (ONBOARDING_METER_CEILING_DBFS - ONBOARDING_METER_FLOOR_DBFS))
+                .clamp(0.0, 1.0)
+        })
+        .collect::<Vec<_>>();
+    levels.resize(ONBOARDING_METER_BUCKETS, 0.0);
+
+    OnboardingMicrophoneLevel {
+        levels,
+        rms_dbfs: amplitude_to_dbfs((sum_squares / frame.len() as f32).sqrt()).max(-80.0),
+        peak_dbfs: amplitude_to_dbfs(peak).max(-80.0),
+    }
 }
 
 /// Owns the microphone probe only while the onboarding test is running.
@@ -148,9 +193,9 @@ pub async fn start_onboarding_microphone_test(
         let mut recorder = AudioRecorder::new()
             .map_err(|error| format!("Failed to create microphone test: {error}"))?
             .with_selected_channel(selected_channel)
-            .with_level_callback(move |levels| {
+            .with_sample_callback(move |frame, _speech| {
                 use tauri_specta::Event as _;
-                if let Err(error) = (OnboardingMicrophoneLevel { levels }).emit(&event_app) {
+                if let Err(error) = microphone_measurement(frame).emit(&event_app) {
                     log::warn!("failed to emit onboarding microphone level: {error}");
                 }
             });
@@ -352,5 +397,13 @@ mod tests {
     fn closing_an_idle_microphone_test_is_a_noop() {
         let recorder = Mutex::new(None);
         assert!(close_microphone_test(&recorder).is_ok());
+    }
+
+    #[test]
+    fn microphone_measurement_reports_rms_peak_and_fixed_buckets() {
+        let measurement = microphone_measurement(&[0.0, 0.25, -0.5, 1.0]);
+        assert_eq!(measurement.levels.len(), ONBOARDING_METER_BUCKETS);
+        assert!((measurement.peak_dbfs - 0.0).abs() < 0.01);
+        assert!((measurement.rms_dbfs - -4.84).abs() < 0.02);
     }
 }
