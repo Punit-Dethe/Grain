@@ -31,6 +31,10 @@ interface ModelsStore {
   loading: boolean;
   /** Whether the local ASR model is currently resident in RAM (event-driven). */
   isModelLoaded: boolean;
+  /** The model the transcription manager currently has (or last had) resident —
+   * the single model across Standard/Live/Batch. Persists the last-known id
+   * across idle unloads so the sidebar name doesn't blank out. */
+  loadedModelId: string | null;
   error: string | null;
   hasAnyModels: boolean;
   isFirstRun: boolean;
@@ -70,6 +74,7 @@ export const useModelStore = create<ModelsStore>()(
     downloadStats: {},
     loading: true,
     isModelLoaded: false,
+    loadedModelId: null,
     error: null,
     hasAnyModels: false,
     isFirstRun: false,
@@ -136,7 +141,12 @@ export const useModelStore = create<ModelsStore>()(
       try {
         const result = await commands.getModelLoadStatus();
         if (result.status === "ok") {
-          set({ isModelLoaded: result.data.is_loaded });
+          set((state) => ({
+            isModelLoaded: result.data.is_loaded,
+            // Keep the last known id when the manager reports none (idle unload),
+            // so the name stays put and only "Unloaded" changes.
+            loadedModelId: result.data.current_model ?? state.loadedModelId,
+          }));
         }
       } catch (err) {
         console.error("Failed to load model status:", err);

@@ -381,6 +381,7 @@ function Sidebar({
   onOpenQuickPanel: () => void;
 }) {
   const currentModel = useModelStore((state) => state.currentModel);
+  const loadedModelId = useModelStore((state) => state.loadedModelId);
   const models = useModelStore((state) => state.models);
   const loading = useModelStore((state) => state.loading);
   const isModelLoaded = useModelStore((state) => state.isModelLoaded);
@@ -392,16 +393,22 @@ function Sidebar({
 
   const modelStatus = useMemo(() => {
     if (cloudStt) return { title: "Cloud model", subtitle: "Cloud" };
-    if (loading && !currentModel)
+    // The manager holds ONE resident model across Standard/Live/Batch. When a
+    // model is loaded, show exactly that (so a Live/Batch switch is reflected,
+    // not just the Standard slot). When nothing is resident, show the selected
+    // Standard model so a fresh switch appears immediately, before it loads.
+    const activeId =
+      isModelLoaded && loadedModelId ? loadedModelId : currentModel;
+    if (loading && !activeId)
       return { title: "Checking model", subtitle: "Checking" };
     const name =
-      models.find((model) => model.id === currentModel)?.name ?? currentModel;
+      models.find((model) => model.id === activeId)?.name ?? activeId;
     if (!name) return { title: "No model", subtitle: "Not loaded" };
     return {
       title: name,
       subtitle: `${isModelLoaded ? "Loaded" : "Unloaded"} · Local`,
     };
-  }, [cloudStt, loading, currentModel, models, isModelLoaded]);
+  }, [cloudStt, loading, currentModel, loadedModelId, models, isModelLoaded]);
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
