@@ -897,6 +897,9 @@ pub fn run(cli_args: CliArgs) {
             grain_onboarding::get_onboarding_model_defaults,
             grain_onboarding::start_onboarding_microphone_test,
             grain_onboarding::stop_onboarding_microphone_test,
+            grain_onboarding::start_onboarding_transcription_test,
+            grain_onboarding::stop_onboarding_transcription_test,
+            grain_onboarding::cancel_onboarding_transcription_test,
             grain_theme::get_theme,
             grain_theme::set_theme_mode,
             shortcut::change_experimental_enabled_setting,
@@ -1189,6 +1192,7 @@ pub fn run(cli_args: CliArgs) {
         ))
         .manage(cli_args.clone())
         .manage(grain_onboarding::OnboardingMicrophoneTest::default())
+        .manage(grain_onboarding::OnboardingTranscriptionTest::default())
         .setup(move |app| {
             specta_builder.mount_events(app);
 

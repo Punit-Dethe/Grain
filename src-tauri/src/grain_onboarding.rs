@@ -35,7 +35,9 @@ use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
 use crate::audio_toolkit::{list_input_devices, AudioRecorder, VadPolicy};
+use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::ModelManager;
+use crate::managers::transcription::TranscriptionManager;
 
 // [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
 // needs one editorial default per model family, so keep that narrower policy in
@@ -55,6 +57,8 @@ pub enum OnboardingStep {
     /// Model picker. Only ever reached by a genuinely new user, and only after
     /// the capture-mode tour.
     Model,
+    /// Real capture against the models installed during onboarding.
+    Try,
     /// Nothing in the way; show the app.
     Done,
 }
@@ -141,6 +145,162 @@ fn microphone_measurement(frame: &[f32]) -> OnboardingMicrophoneLevel {
 #[derive(Clone, Default)]
 pub struct OnboardingMicrophoneTest {
     recorder: Arc<Mutex<Option<AudioRecorder>>>,
+}
+
+const ONBOARDING_TRANSCRIPTION_BINDING: &str = "grain_onboarding_transcription_test";
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingTestMode {
+    Standard,
+    Flow,
+    Streaming,
+}
+
+/// Owns only the lifecycle marker for the real onboarding transcription test.
+/// Audio and inference stay in Grain's existing managers, so this adds no
+/// parallel recorder, model engine, history entry, or paste path.
+#[derive(Clone, Default)]
+pub struct OnboardingTranscriptionTest {
+    active_mode: Arc<Mutex<Option<OnboardingTestMode>>>,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn start_onboarding_transcription_test(
+    app: AppHandle,
+    state: State<'_, OnboardingTranscriptionTest>,
+    recording_manager: State<'_, Arc<AudioRecordingManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+    model_manager: State<'_, Arc<ModelManager>>,
+    mode: OnboardingTestMode,
+) -> Result<(), String> {
+    let active_mode = Arc::clone(&state.active_mode);
+    let recording_manager = Arc::clone(&recording_manager);
+    let transcription_manager = Arc::clone(&transcription_manager);
+    let model_manager = Arc::clone(&model_manager);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut active = active_mode
+            .lock()
+            .map_err(|_| "Transcription test state is unavailable".to_string())?;
+        if active.is_some() {
+            return Err("A transcription test is already running".to_string());
+        }
+
+        let settings = crate::settings::get_settings(&app);
+        let (model_id, vad_policy) = match mode {
+            OnboardingTestMode::Streaming => (settings.selected_asr_model, VadPolicy::Streaming),
+            OnboardingTestMode::Standard | OnboardingTestMode::Flow => {
+                (settings.selected_model, VadPolicy::Offline)
+            }
+        };
+        let model = model_manager
+            .get_model_info(&model_id)
+            .ok_or_else(|| "The selected test model is no longer in the catalog".to_string())?;
+        if !model.is_downloaded {
+            return Err(format!("{} is not installed", model.name));
+        }
+        if matches!(mode, OnboardingTestMode::Streaming) && !model.supports_streaming {
+            return Err(format!("{} does not support Streaming", model.name));
+        }
+        if !matches!(mode, OnboardingTestMode::Streaming) && model.supports_streaming {
+            return Err(format!("{} is not a Standard/Flow model", model.name));
+        }
+
+        transcription_manager.initiate_model_load_for(model_id);
+        if matches!(mode, OnboardingTestMode::Streaming) {
+            transcription_manager.start_stream();
+        }
+
+        if let Err(error) =
+            recording_manager.try_start_recording(ONBOARDING_TRANSCRIPTION_BINDING, vad_policy)
+        {
+            if matches!(mode, OnboardingTestMode::Streaming) {
+                transcription_manager.cancel_stream();
+            }
+            return Err(format!("Failed to start the transcription test: {error}"));
+        }
+
+        *active = Some(mode);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Transcription test worker failed: {error}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn stop_onboarding_transcription_test(
+    state: State<'_, OnboardingTranscriptionTest>,
+    recording_manager: State<'_, Arc<AudioRecordingManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+) -> Result<String, String> {
+    let mode = state
+        .active_mode
+        .lock()
+        .map_err(|_| "Transcription test state is unavailable".to_string())?
+        .take()
+        .ok_or_else(|| "No transcription test is running".to_string())?;
+    let recording_manager = Arc::clone(&recording_manager);
+    let transcription_manager = Arc::clone(&transcription_manager);
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let cancel_generation = recording_manager.cancel_generation();
+        let samples = recording_manager
+            .stop_recording(ONBOARDING_TRANSCRIPTION_BINDING, cancel_generation)
+            .unwrap_or_default();
+        if samples.is_empty() {
+            if matches!(mode, OnboardingTestMode::Streaming) {
+                transcription_manager.cancel_stream();
+            }
+            return Err("No speech was captured. Please try again.".to_string());
+        }
+
+        let text = if matches!(mode, OnboardingTestMode::Streaming) {
+            match transcription_manager.finalize_stream() {
+                Ok(Some(text)) if !text.trim().is_empty() => text,
+                Ok(_) => transcription_manager
+                    .transcribe(samples)
+                    .map_err(|error| error.to_string())?,
+                Err(error) => return Err(format!("Streaming test failed: {error}")),
+            }
+        } else {
+            transcription_manager
+                .transcribe(samples)
+                .map_err(|error| error.to_string())?
+        };
+
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            Err("No words were recognized. Speak a little longer and try again.".to_string())
+        } else {
+            Ok(text)
+        }
+    })
+    .await
+    .map_err(|error| format!("Transcription test worker failed: {error}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn cancel_onboarding_transcription_test(
+    state: State<'_, OnboardingTranscriptionTest>,
+    recording_manager: State<'_, Arc<AudioRecordingManager>>,
+    transcription_manager: State<'_, Arc<TranscriptionManager>>,
+) -> Result<(), String> {
+    let mode = state
+        .active_mode
+        .lock()
+        .map_err(|_| "Transcription test state is unavailable".to_string())?
+        .take();
+    if mode.is_some() {
+        recording_manager.cancel_recording();
+    }
+    if matches!(mode, Some(OnboardingTestMode::Streaming)) {
+        transcription_manager.cancel_stream();
+    }
+    Ok(())
 }
 
 fn close_microphone_test(recorder: &Mutex<Option<AudioRecorder>>) -> Result<(), String> {

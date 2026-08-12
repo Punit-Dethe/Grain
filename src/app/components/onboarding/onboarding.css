@@ -1166,6 +1166,186 @@
   height: 11px;
 }
 
+.onboarding-try-step {
+  width: min(820px, 100%);
+  margin: auto;
+  animation: onboarding-enter 420ms var(--ease-out) both;
+}
+
+.onboarding-test-tabs {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  margin-bottom: 12px;
+  border-radius: 9px;
+  background: var(--hairline-soft);
+}
+
+.onboarding-test-tabs button {
+  min-width: 88px;
+  height: 31px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+}
+
+.onboarding-test-tabs button:hover:not(:disabled) {
+  color: var(--text-1);
+}
+
+.onboarding-test-tabs button.active {
+  color: var(--text-1);
+  background: var(--hairline);
+}
+
+.onboarding-test-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.44;
+}
+
+.onboarding-transcription-test {
+  display: grid;
+  grid-template-rows: auto minmax(118px, 1fr) auto;
+  min-height: 285px;
+  padding: 20px;
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--bg-3) 60%, transparent);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  transition:
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.onboarding-transcription-test.result {
+  background: color-mix(in srgb, var(--sage) 4%, var(--bg-3));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sage) 16%, transparent);
+}
+
+.onboarding-transcription-test.error {
+  background: color-mix(in srgb, var(--peach) 5%, var(--bg-3));
+}
+
+.onboarding-test-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-4);
+  font-size: 10.5px;
+}
+
+.onboarding-test-status > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.onboarding-test-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-4);
+}
+
+.onboarding-transcription-test.recording .onboarding-test-status i {
+  background: var(--accent);
+  animation: onboarding-test-blink 1.2s ease-in-out infinite;
+}
+
+.onboarding-transcription-test.result .onboarding-test-status i {
+  background: var(--sage);
+}
+
+.onboarding-transcription-test.error .onboarding-test-status i {
+  background: var(--peach);
+}
+
+@keyframes onboarding-test-blink {
+  50% {
+    opacity: 0.35;
+    transform: scale(0.78);
+  }
+}
+
+.onboarding-test-status strong {
+  color: var(--text-3);
+  font-size: 10px;
+  font-weight: 540;
+  font-variant-numeric: tabular-nums;
+}
+
+.onboarding-test-output {
+  align-self: center;
+  max-width: 680px;
+  min-height: 96px;
+  color: var(--text-1);
+  font-size: 21px;
+  line-height: 1.48;
+  letter-spacing: -0.02em;
+}
+
+.onboarding-test-output.placeholder {
+  color: var(--text-4);
+}
+
+.onboarding-test-output.error {
+  color: color-mix(in srgb, var(--peach) 82%, var(--text-1));
+  font-size: 14px;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+}
+
+.onboarding-test-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.onboarding-test-controls > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--accent-ink);
+  background: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.onboarding-test-controls > button.recording {
+  color: var(--text-1);
+  background: var(--hairline);
+}
+
+.onboarding-test-controls > button:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.onboarding-test-controls > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.onboarding-test-controls > button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.onboarding-test-controls > span {
+  color: var(--text-4);
+  font-size: 10.5px;
+}
+
 @keyframes onboarding-confirm-enter {
   from {
     opacity: 0.55;
@@ -1429,6 +1609,22 @@
     padding: 22px 18px;
   }
 
+  .onboarding-test-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+  }
+
+  .onboarding-test-tabs button {
+    min-width: 0;
+    padding-inline: 6px;
+  }
+
+  .onboarding-test-controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .onboarding-model-family-main {
     padding: 15px 13px;
   }
@@ -1487,6 +1683,7 @@
   .onboarding-microphone-step,
   .onboarding-modes-step,
   .onboarding-models-step,
+  .onboarding-try-step,
   .onboarding-mic-pulse,
   .spin,
   .onboarding-loading svg {
@@ -1504,6 +1701,10 @@
   .onboarding-demo-cursor,
   .onboarding-demo-processing i,
   .onboarding-flow-confirmation {
+    animation: none !important;
+  }
+
+  .onboarding-test-status i {
     animation: none !important;
   }
 }

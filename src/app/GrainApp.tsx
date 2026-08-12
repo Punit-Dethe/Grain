@@ -13,6 +13,7 @@ import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
 import Onboarding, {
   AccessibilityOnboarding,
   ModesOnboarding,
+  TryOnboarding,
 } from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
@@ -978,7 +979,18 @@ function NextShell() {
       <>
         <Onboarding
           onBack={() => setOnboardingStep("modes")}
-          onModelSelected={() => setOnboardingStep("done")}
+          onModelSelected={() => setOnboardingStep("try")}
+        />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+  if (onboardingStep === "try") {
+    return (
+      <>
+        <TryOnboarding
+          onBack={() => setOnboardingStep("model")}
+          onComplete={() => setOnboardingStep("done")}
         />
         <Toaster theme={isDark ? "dark" : "light"} />
       </>

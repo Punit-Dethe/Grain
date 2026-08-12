@@ -193,6 +193,41 @@
           "defaults": "Grain could not find its recommended models. Refresh the catalog and try again.",
           "download": "The selected models could not be installed. Please try again."
         }
+      },
+      "try": {
+        "title": "Try what you installed",
+        "description": "Speak once and watch the selected model transcribe your real microphone input.",
+        "modeLabel": "Test capture mode",
+        "placeholder": "Your test transcription will appear here.",
+        "ready": "Ready",
+        "opening": "Opening microphone…",
+        "listening": "Listening",
+        "processing": "Transcribing…",
+        "complete": "Transcription complete",
+        "failed": "Test needs attention",
+        "start": "Start test",
+        "stop": "Stop and transcribe",
+        "again": "Test again",
+        "skip": "Skip test",
+        "back": "Back",
+        "continue": "Continue",
+        "modes": {
+          "flow": {
+            "title": "Flow",
+            "speed": "Fast response",
+            "hint": "Accurate everyday dictation with a quick finish."
+          },
+          "standard": {
+            "title": "Standard",
+            "speed": "Cleanest result",
+            "hint": "Waits a little longer for the most polished text."
+          },
+          "streaming": {
+            "title": "Streaming",
+            "speed": "Live text",
+            "hint": "Words appear while you are still speaking."
+          }
+        }
       }
     },
     "subtitle": "To get started, choose a transcription model",

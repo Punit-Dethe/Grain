@@ -11,7 +11,7 @@ export const commands = {
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
- * 
+ *
  * Returns `Ok(None)` both when the app is current and when checks are off — to
  * every caller those are the same answer ("nothing to show"), and reporting a
  * disabled setting as an error would surface it as a failure in the UI.
@@ -750,7 +750,7 @@ async resolveOnboardingState() : Promise<Result<OnboardingState, string>> {
 },
 /**
  * Where "permissions granted" leads. A returning user already has a model, so
- * the picker would be a dead screen; a new user needs it.
+ * the remaining setup would be a dead path; a new user first sees the modes.
  */
 async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<OnboardingStep> {
     return await TAURI_INVOKE("onboarding_step_after_permissions", { isReturningUser });
@@ -783,6 +783,30 @@ async startOnboardingMicrophoneTest(deviceName: string) : Promise<Result<null, s
 async stopOnboardingMicrophoneTest() : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_microphone_test") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startOnboardingTranscriptionTest(mode: OnboardingTestMode) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_onboarding_transcription_test", { mode }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async stopOnboardingTranscriptionTest() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_transcription_test") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async cancelOnboardingTranscriptionTest() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_onboarding_transcription_test") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2959,7 +2983,7 @@ folder: string | null;
  */
 readonly: boolean }
 /**
- * Live spectrum buckets from the short-lived onboarding microphone probe.
+ * Live level measurements from the short-lived onboarding microphone probe.
  */
 export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
 /**
@@ -3001,9 +3025,14 @@ export type OnboardingStep =
  */
 "model" | 
 /**
+ * Real capture against the models installed during onboarding.
+ */
+"try" |
+/**
  * Nothing in the way; show the app.
  */
 "done"
+export type OnboardingTestMode = "standard" | "flow" | "streaming"
 /**
  * Where the single pill anchors on screen (`None` = never show). Lives in the
  * SDK because it crosses the wire inside [`DaemonEvent::OverlayConfig`]; it is
