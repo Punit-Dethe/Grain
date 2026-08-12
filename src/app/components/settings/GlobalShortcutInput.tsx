@@ -291,7 +291,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
         // listening for the next keypress.
         <div
           ref={(ref) => setShortcutRef(shortcutId, ref)}
-          className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-md animate-pulse tabular-nums"
+          className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-[5.5px] animate-pulse tabular-nums"
         >
           {formatCurrentKeys()}
         </div>
@@ -300,7 +300,7 @@ export const GlobalShortcutInput: React.FC<GlobalShortcutInputProps> = ({
         // border, a hairline shadow under it. Reads as a thing you press —
         // and it actually depresses on click (travels down, shadow collapses).
         <div
-          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-md cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow,transform] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent active:translate-y-px active:shadow-none active:bg-[var(--accent-tint)]"
+          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow,transform] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent active:translate-y-px active:shadow-none active:bg-[var(--accent-tint)]"
           style={{ boxShadow: "var(--shadow-hair)" }}
           onClick={() => startRecording(shortcutId)}
         >

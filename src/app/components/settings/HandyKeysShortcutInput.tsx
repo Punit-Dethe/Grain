@@ -268,7 +268,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         // listening for the next keypress. Mirrors GlobalShortcutInput.
         <div
           ref={shortcutRef}
-          className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-md animate-pulse tabular-nums"
+          className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-[5.5px] animate-pulse tabular-nums"
         >
           {formatCurrentKeys()}
         </div>
@@ -276,7 +276,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
         // Idle: a physical keycap — raised paper surface, mono type, crisp
         // border, a hairline shadow under it. Reads as a thing you press.
         <div
-          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-md cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent"
+          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent"
           style={{ boxShadow: "var(--shadow-hair)" }}
           onClick={startRecording}
         >

@@ -260,6 +260,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                 placeholder={t(
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
+                className="prompt-instructions-input"
               />
               <p className="text-xs text-mid-gray/70">
                 <Trans
@@ -340,6 +341,7 @@ const PostProcessingSettingsPromptsComponent: React.FC = () => {
                 placeholder={t(
                   "settings.postProcessing.prompts.promptInstructionsPlaceholder",
                 )}
+                className="prompt-instructions-input"
               />
               <p className="text-xs text-mid-gray/70">
                 <Trans

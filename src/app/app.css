@@ -2164,7 +2164,7 @@ html[data-theme="light"] .model-role-tabs {
 .capture-mode-picker {
   display: grid;
   gap: 6px;
-  padding: 4px 14px 12px;
+  padding: 12px 14px;
 }
 
 /* All three capture modes are always live. Each is a static row — name and
@@ -2443,6 +2443,14 @@ html[data-theme="light"] .capture-mode-option {
   background: rgba(255, 255, 255, 0.045) !important;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035) !important;
   font-size: 13px !important;
+}
+
+/* The prompt-instruction editor is the main workspace for writing a prompt —
+   give it a tall default. Needs !important + extra specificity to clear the
+   36px floor the rule above forces on every settings textarea. Still resize-y,
+   so the user can drag it taller. */
+.next-settings-content textarea.prompt-instructions-input {
+  min-height: 240px !important;
 }
 
 .next-settings-content .app-select__value-container {
