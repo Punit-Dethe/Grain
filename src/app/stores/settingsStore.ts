@@ -7,7 +7,6 @@ import type {
   AgentPanelPosition,
   AppSettings as Settings,
   AudioDevice,
-  CaptureModeSet,
   GrainSpaceBackend,
   ModelUnloadTimeout,
   Snippet,
@@ -133,14 +132,8 @@ const settingUpdaters: {
     commands.extensionSetEnabled("grain.snippets", value as boolean),
   agent_enabled: (value) =>
     commands.extensionSetEnabled("grain.agent", value as boolean),
-  // [GRAIN] Capture-mode policy. The schema + read-side logic shipped without
-  // persistence commands, so every one of these was a silent optimistic-only
-  // no-op that reverted on the next refetch. Mode-set/primary reconcile the live
-  // shortcuts backend-side; the rest are runtime-only flags.
-  capture_mode_set: (value) =>
-    commands.changeCaptureModeSetSetting(value as CaptureModeSet),
-  capture_primary_mode: (value) =>
-    commands.changeCapturePrimaryModeSetting(value as string),
+  // [GRAIN] The AI shortcut's idle start mode. Runtime-only — every capture
+  // mode is always registered, so this writes a flag without touching hotkeys.
   capture_ai_start_mode: (value) =>
     commands.changeCaptureAiStartModeSetting(value as string),
   capture_end_with_ai: (value) =>

@@ -2167,55 +2167,23 @@ html[data-theme="light"] .model-role-tabs {
   padding: 4px 14px 12px;
 }
 
+/* All three capture modes are always live. Each is a static row — name and
+   description on the left, its shortcut keycap on the right edge. No selection
+   state: there is nothing to pick any more. */
 .capture-mode-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   padding: 11px 12px;
   border-radius: 9px;
   color: inherit;
   background: rgba(255, 255, 255, 0.022);
   text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.capture-mode-option:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.capture-mode-option.selected {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent-focus);
-}
-
-.capture-mode-option:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-focus);
-}
-
-.capture-mode-mark {
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--text-4);
-  transition:
-    box-shadow 0.15s ease,
-    background 0.15s ease;
-}
-
-.capture-mode-option.selected .capture-mode-mark {
-  background: var(--accent);
-  box-shadow:
-    inset 0 0 0 1.5px var(--accent),
-    inset 0 0 0 4px var(--bg-1);
 }
 
 .capture-mode-copy {
+  flex: 1;
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -2233,16 +2201,13 @@ html[data-theme="light"] .model-role-tabs {
   line-height: 1.45;
 }
 
+/* The bare keycap control sits flush to the right edge and never shrinks. */
+.capture-mode-shortcut {
+  flex: none;
+}
+
 html[data-theme="light"] .capture-mode-option {
   background: rgba(24, 29, 37, 0.035);
-}
-
-html[data-theme="light"] .capture-mode-option:hover {
-  background: rgba(24, 29, 37, 0.055);
-}
-
-html[data-theme="light"] .capture-mode-option.selected {
-  background: var(--accent-soft);
 }
 
 /* About has no section rail of its own — it is one surface, not a set. */

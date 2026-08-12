@@ -7,11 +7,11 @@
 export const commands = {
 /**
  * Is there a newer release?
- *
+ * 
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
- *
+ * 
  * Returns `Ok(None)` both when the app is current and when checks are off — to
  * every caller those are the same answer ("nothing to show"), and reporting a
  * disabled setting as an error would surface it as a failure in the UI.
@@ -920,34 +920,8 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] How many capture shortcuts are registered (Single vs All). The schema
- * and read-side policy shipped without a way to persist a change from the UI;
- * this is that writer. Reconciles the live hotkeys so the choice takes effect
- * without a restart.
- */
-async changeCaptureModeSetSetting(set: CaptureModeSet) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_capture_mode_set_setting", { set }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] The one capture mode that owns the shortcut under `Single`. Changing
- * it moves the live hotkey from the old primary to the new one.
- */
-async changeCapturePrimaryModeSetting(mode: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_capture_primary_mode_setting", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Which mode the AI shortcut starts from idle (only meaningful under
- * `All`). Runtime-only — no capture key is registered or dropped by this.
+ * [GRAIN] Which mode the AI shortcut starts from idle. Runtime-only — every
+ * capture mode is always registered, so no key is added or dropped by this.
  */
 async changeCaptureAiStartModeSetting(mode: string) : Promise<Result<null, string>> {
     try {
@@ -2410,18 +2384,9 @@ default_panel?: DefaultPanel;
  */
 theme?: ThemeMode; 
 /**
- * [GRAIN] How many capture shortcuts are registered. See `CaptureModeSet`.
- */
-capture_mode_set?: CaptureModeSet; 
-/**
- * [GRAIN] The capture mode that owns the one shortcut under
- * `CaptureModeSet::Single`. One of `CAPTURE_MODE_IDS`.
- */
-capture_primary_mode?: string; 
-/**
- * [GRAIN] Which mode the AI shortcut starts when pressed from idle. Under
- * `Single` this follows `capture_primary_mode`; it is only independently
- * meaningful when all three modes are live.
+ * [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
+ * three capture modes are always live, so this is a free choice among
+ * `CAPTURE_MODE_IDS`.
  */
 capture_ai_start_mode?: string; 
 /**
@@ -2667,28 +2632,6 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
-/**
- * [GRAIN] How many capture modes are live at once.
- * 
- * Grain ships three ways to capture — Standard, Flow and Live — and used to
- * register a global shortcut for each, plus a fourth to send a transcript to
- * AI. Four keys to remember before you have said a word is the single biggest
- * source of friction in the product, and most people only ever use one mode.
- * 
- * `Single` keeps exactly one capture shortcut registered. The other modes are
- * not disabled or removed — they are one dropdown away, and their bindings
- * stay in settings untouched — they simply stop occupying a global hotkey the
- * user has to hold in their head.
- */
-export type CaptureModeSet = 
-/**
- * One capture shortcut, chosen by `capture_primary_mode`.
- */
-"single" | 
-/**
- * All three capture shortcuts registered, as Grain has always done.
- */
-"all"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"
@@ -2988,7 +2931,7 @@ readonly: boolean }
 export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
 /**
  * The single editorially "best" model in each onboarding family.
- *
+ * 
  * These are full registry IDs (repo + default quant filename), ready to pass
  * to the existing download/select commands. Keeping the pair behind a command
  * lets us update the defaults without teaching the frontend catalog internals.
@@ -3018,7 +2961,7 @@ export type OnboardingStep =
 /**
  * Short demonstration of Standard, Flow, and Streaming for a new user.
  */
-"modes" |
+"modes" | 
 /**
  * Model picker. Only ever reached by a genuinely new user, and only after
  * the capture-mode tour.
@@ -3027,11 +2970,11 @@ export type OnboardingStep =
 /**
  * Real capture against the models installed during onboarding.
  */
-"try" |
+"try" | 
 /**
  * Choose the everyday capture mode and configure its real global shortcut.
  */
-"shortcuts" |
+"shortcuts" | 
 /**
  * Nothing in the way; show the app.
  */

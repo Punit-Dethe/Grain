@@ -347,32 +347,6 @@ impl Default for ThemeMode {
     }
 }
 
-/// [GRAIN] How many capture modes are live at once.
-///
-/// Grain ships three ways to capture — Standard, Flow and Live — and used to
-/// register a global shortcut for each, plus a fourth to send a transcript to
-/// AI. Four keys to remember before you have said a word is the single biggest
-/// source of friction in the product, and most people only ever use one mode.
-///
-/// `Single` keeps exactly one capture shortcut registered. The other modes are
-/// not disabled or removed — they are one dropdown away, and their bindings
-/// stay in settings untouched — they simply stop occupying a global hotkey the
-/// user has to hold in their head.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum CaptureModeSet {
-    /// One capture shortcut, chosen by `capture_primary_mode`.
-    Single,
-    /// All three capture shortcuts registered, as Grain has always done.
-    All,
-}
-
-impl Default for CaptureModeSet {
-    fn default() -> Self {
-        CaptureModeSet::Single
-    }
-}
-
 /// The three binding ids that start a capture. Order is the order they are
 /// offered in the UI: least to most machinery.
 pub const CAPTURE_MODE_IDS: [&str; 3] = [
@@ -638,16 +612,9 @@ pub struct AppSettings {
     /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
     #[serde(default)]
     pub theme: ThemeMode,
-    /// [GRAIN] How many capture shortcuts are registered. See `CaptureModeSet`.
-    #[serde(default)]
-    pub capture_mode_set: CaptureModeSet,
-    /// [GRAIN] The capture mode that owns the one shortcut under
-    /// `CaptureModeSet::Single`. One of `CAPTURE_MODE_IDS`.
-    #[serde(default = "default_capture_mode")]
-    pub capture_primary_mode: String,
-    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. Under
-    /// `Single` this follows `capture_primary_mode`; it is only independently
-    /// meaningful when all three modes are live.
+    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
+    /// three capture modes are always live, so this is a free choice among
+    /// `CAPTURE_MODE_IDS`.
     #[serde(default = "default_capture_mode")]
     pub capture_ai_start_mode: String,
     /// [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
@@ -1637,8 +1604,6 @@ pub fn get_default_settings() -> AppSettings {
         sound_theme: default_sound_theme(),
         default_panel: DefaultPanel::default(),
         theme: ThemeMode::default(),
-        capture_mode_set: CaptureModeSet::default(),
-        capture_primary_mode: default_capture_mode(),
         capture_ai_start_mode: default_capture_mode(),
         capture_end_with_ai: default_capture_end_with_ai(),
         capture_always_ai: false,

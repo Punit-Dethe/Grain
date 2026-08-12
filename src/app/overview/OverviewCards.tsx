@@ -216,13 +216,10 @@ function ShortcutsCard() {
   const { getSetting } = useSettings();
   const bindings = getSetting("bindings") ?? {};
 
-  // Which capture key to surface. Under Single there is exactly one, so show
-  // it. Under All there are three and the card only has room for one — Flow is
+  // All three capture modes are live; the card only has room for one — Flow is
   // the mode this card's AI key actually pairs with, and the other two are one
   // click away in Settings.
-  const modeSet = getSetting("capture_mode_set") ?? "single";
-  const primary = getSetting("capture_primary_mode") ?? "transcribe";
-  const captureId = modeSet === "single" ? primary : FLOW_BINDING_ID;
+  const captureId = FLOW_BINDING_ID;
 
   const capture = bindings[captureId];
   const ai = bindings[AI_BINDING_ID];

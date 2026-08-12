@@ -914,8 +914,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             grain_commands::update_snippets,
-            grain_commands::change_capture_mode_set_setting,
-            grain_commands::change_capture_primary_mode_setting,
             grain_commands::change_capture_ai_start_mode_setting,
             grain_commands::change_capture_end_with_ai_setting,
             grain_commands::change_capture_always_ai_setting,
