@@ -11,8 +11,8 @@
 //!    becomes arithmetic — a repeated phrase can never be over-stripped and a
 //!    differently-transcribed overlap can never eat new words.
 //!
-//! 2. [`merge_transcript`] (text-based, fallback). For models that provide no
-//!    word timestamps: longest suffix/prefix word match over a 30-word window.
+//! 2. Bounded lexical escrow for segment-only and timestamp-free models. Only
+//!    the last few words remain replaceable by the next overlapping decode.
 
 /// A single transcribed word with chunk-relative timing in seconds.
 ///
@@ -102,9 +102,24 @@ const BOUNDARY_TOLERANCE_SEC: f64 = 0.25;
 /// that the tolerance window let through twice.
 const SEAM_SEARCH_WORDS: usize = 3;
 
-use crate::merge::seam_overlap_len;
+use crate::merge::{seam_alignment, seam_overlap_len};
 use crate::normalize::{canonicalize_text, canonicalize_token, comparison_key};
 use crate::CutKind;
+
+/// Provenance of the timing evidence attached to one decoded chunk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TimingQuality {
+    /// Real per-word timestamps returned by the model.
+    NativeWord,
+    /// Only segment-level timing was available; lexical alignment is safer.
+    SegmentApproximate,
+    /// The model returned text without usable timing rows.
+    #[default]
+    Unavailable,
+}
+
+/// Only this bounded suffix remains replaceable by the next overlapping chunk.
+const LEXICAL_ESCROW_WORDS: usize = 8;
 
 /// Builds the session transcript from time-tagged chunk results.
 ///
@@ -115,13 +130,15 @@ use crate::CutKind;
 /// region (with a small tolerance for model timing jitter), so overlap dedup
 /// never depends on the model transcribing the same audio the same way twice.
 ///
-/// Falls back to [`merge_transcript`] for chunks without word timings.
+/// Segment-only and timestamp-free chunks use bounded lexical seam alignment.
 #[derive(Default)]
 pub struct TimelineAssembler {
     text: String,
+    provisional_start: usize,
+    provisional: Vec<String>,
     /// When `Some(window_sec)`, run an extra fuzzy/number-aware seam dedup over
     /// accepted words within `window_sec` of the fresh boundary — catches residue
-    /// that synthesized (approximate) timings and exact text matching miss. `None`
+    /// that native timing jitter and exact text matching miss. `None`
     /// (default) keeps the exact behavior the ported Python tests pin.
     fuzzy_seam_window: Option<f64>,
 }
@@ -132,8 +149,7 @@ impl TimelineAssembler {
     }
 
     /// Enable the fuzzy seam dedup over a `window_sec`-wide zone after the fresh
-    /// boundary (typically the chunk overlap length). Used for synthesized-timing
-    /// models; harmless for exact-timing models.
+    /// boundary (typically the chunk overlap length).
     pub fn with_fuzzy_seam(mut self, window_sec: f64) -> Self {
         self.fuzzy_seam_window = Some(window_sec);
         self
@@ -146,6 +162,51 @@ impl TimelineAssembler {
 
     pub fn reset(&mut self) {
         self.text.clear();
+        self.provisional_start = 0;
+        self.provisional.clear();
+    }
+
+    /// Commit the bounded lexical escrow at session end without copying text.
+    pub fn finish(&mut self) -> &str {
+        self.provisional.clear();
+        self.provisional_start = self.text.len();
+        &self.text
+    }
+
+    fn push_word(&mut self, word: &str) {
+        if !self.text.is_empty() {
+            self.text.push(' ');
+        }
+        self.text.push_str(word);
+    }
+
+    fn append_tokens(&mut self, incoming: Vec<String>, reconcile_lexically: bool) {
+        if incoming.is_empty() {
+            return;
+        }
+
+        self.text.truncate(self.provisional_start);
+        let mut combined = std::mem::take(&mut self.provisional);
+        if reconcile_lexically && !combined.is_empty() {
+            let tail: Vec<&str> = combined.iter().map(String::as_str).collect();
+            let head: Vec<&str> = incoming.iter().map(String::as_str).collect();
+            if let Some((tail_start, _)) = seam_alignment(&tail, &head) {
+                // The right-hand window owns the still-provisional seam.
+                combined.truncate(tail_start);
+            }
+        }
+        combined.extend(incoming);
+
+        let commit_count = combined.len().saturating_sub(LEXICAL_ESCROW_WORDS);
+        for word in &combined[..commit_count] {
+            self.push_word(word);
+        }
+        self.provisional_start = self.text.len();
+        self.provisional = combined[commit_count..].to_vec();
+        let provisional = self.provisional.clone();
+        for word in &provisional {
+            self.push_word(word);
+        }
     }
 
     /// Merge one chunk's transcription and return the updated transcript.
@@ -164,6 +225,31 @@ impl TimelineAssembler {
         fresh_start_sec: f64,
         text: &str,
         words: Option<&[WordTiming]>,
+        boundary: CutKind,
+    ) -> &str {
+        let quality = if words.is_some_and(|words| !words.is_empty()) {
+            TimingQuality::NativeWord
+        } else {
+            TimingQuality::Unavailable
+        };
+        self.add_chunk_with_quality(
+            chunk_start_sec,
+            fresh_start_sec,
+            text,
+            words,
+            quality,
+            boundary,
+        )
+    }
+
+    /// Merge a chunk while honoring the provenance of its timing evidence.
+    pub fn add_chunk_with_quality(
+        &mut self,
+        chunk_start_sec: f64,
+        fresh_start_sec: f64,
+        text: &str,
+        words: Option<&[WordTiming]>,
+        timing_quality: TimingQuality,
         _boundary: CutKind,
     ) -> &str {
         let canonical_words: Vec<WordTiming> = words
@@ -175,16 +261,15 @@ impl TimelineAssembler {
                     .map(|surface| WordTiming::new(surface, word.start, word.end))
             })
             .collect();
-        let words = match canonical_words.as_slice() {
-            w if !w.is_empty() => w,
-            _ => {
-                let text = canonicalize_text(text);
-                if !text.is_empty() {
-                    self.text = merge_transcript(&self.text, &text);
-                }
-                return &self.text;
-            }
-        };
+        if timing_quality != TimingQuality::NativeWord || canonical_words.is_empty() {
+            let incoming = canonicalize_text(text)
+                .split_whitespace()
+                .map(str::to_string)
+                .collect();
+            self.append_tokens(incoming, true);
+            return &self.text;
+        }
+        let words = canonical_words.as_slice();
 
         // A chunk with no audio PAST the fresh boundary carries only overlap
         // context the previous chunk already covered — e.g. `SessionCursor::stop`
@@ -218,9 +303,14 @@ impl TimelineAssembler {
         // words that exactly repeat the committed tail AND sit inside the
         // tolerance window — never anything beyond it.
         let existing_tail: Vec<&str> = {
-            let all: Vec<&str> = self.text.split_whitespace().collect();
-            let start = all.len().saturating_sub(SEAM_SEARCH_WORDS);
-            all[start..].to_vec()
+            let mut tail: Vec<&str> = self
+                .text
+                .split_whitespace()
+                .rev()
+                .take(SEAM_SEARCH_WORDS)
+                .collect();
+            tail.reverse();
+            tail
         };
         let max_n = SEAM_SEARCH_WORDS
             .min(accepted.len())
@@ -251,9 +341,8 @@ impl TimelineAssembler {
         // `O3`/`03`, token-count slips from approximate synthesized timing).
         if let Some(window) = self.fuzzy_seam_window {
             if !accepted.is_empty() && !self.text.is_empty() {
-                let committed: Vec<&str> = self.text.split_whitespace().collect();
-                let tail_start = committed.len().saturating_sub(8);
-                let tail = &committed[tail_start..];
+                let mut tail: Vec<&str> = self.text.split_whitespace().rev().take(8).collect();
+                tail.reverse();
                 let seam_n = accepted
                     .iter()
                     .take_while(|w| (chunk_start_sec + w.midpoint()) < fresh_start_sec + window)
@@ -261,7 +350,7 @@ impl TimelineAssembler {
                 if seam_n > 0 {
                     let head: Vec<&str> =
                         accepted[..seam_n].iter().map(|w| w.word.as_str()).collect();
-                    let drop = seam_overlap_len(tail, &head);
+                    let drop = seam_overlap_len(&tail, &head);
                     if drop > 0 {
                         accepted.drain(..drop);
                     }
@@ -269,19 +358,8 @@ impl TimelineAssembler {
             }
         }
 
-        if !accepted.is_empty() {
-            let addition = accepted
-                .iter()
-                .map(|word| word.word.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-            if self.text.is_empty() {
-                self.text = addition;
-            } else {
-                self.text.push(' ');
-                self.text.push_str(&addition);
-            }
-        }
+        let incoming = accepted.iter().map(|word| word.word.clone()).collect();
+        self.append_tokens(incoming, false);
         &self.text
     }
 }
@@ -680,5 +758,74 @@ mod tests {
             .add_chunk(0.0, 0.0, "bought milk .", Some(&c1), HC)
             .to_string();
         assert_eq!(text, "bought milk");
+    }
+
+    #[test]
+    fn segment_timing_is_not_used_as_word_position_evidence() {
+        let mut a = TimelineAssembler::new();
+        a.add_chunk_with_quality(
+            0.0,
+            0.0,
+            "hello world",
+            None,
+            TimingQuality::Unavailable,
+            HC,
+        );
+        let misleading = words("world again", 5.0);
+        let text = a
+            .add_chunk_with_quality(
+                8.0,
+                10.0,
+                "world again",
+                Some(&misleading),
+                TimingQuality::SegmentApproximate,
+                HC,
+            )
+            .to_string();
+        assert_eq!(text, "hello world again");
+    }
+
+    #[test]
+    fn lexical_escrow_gives_the_right_window_boundary_ownership() {
+        let mut a = TimelineAssembler::new();
+        a.add_chunk_with_quality(
+            0.0,
+            0.0,
+            "we use color",
+            None,
+            TimingQuality::Unavailable,
+            HC,
+        );
+        let text = a
+            .add_chunk_with_quality(
+                8.0,
+                10.0,
+                "colour today",
+                None,
+                TimingQuality::Unavailable,
+                HC,
+            )
+            .to_string();
+        assert_eq!(text, "we use colour today");
+    }
+
+    #[test]
+    fn lexical_escrow_remains_bounded_and_finish_commits_it() {
+        let mut a = TimelineAssembler::new();
+        for i in 0..100 {
+            a.add_chunk_with_quality(
+                i as f64,
+                i as f64,
+                &format!("unique{i}"),
+                None,
+                TimingQuality::Unavailable,
+                HC,
+            );
+            assert!(a.provisional.len() <= LEXICAL_ESCROW_WORDS);
+        }
+        let before = a.text().to_string();
+        assert_eq!(a.finish(), before);
+        assert!(a.provisional.is_empty());
+        assert_eq!(a.provisional_start, a.text.len());
     }
 }

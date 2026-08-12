@@ -4,8 +4,8 @@
 // `EngineType` ONNX variants remain as inert enum tags for upstream-diff
 // parity; loading one yields a clear error pointing at the GGUF equivalent.
 use crate::audio_toolkit::{
-    apply_custom_words, detect_output_language, normalize_transcription_output, remove_filler_words,
-    OutputLanguageEvidence,
+    apply_custom_words, detect_output_language, normalize_transcription_output,
+    remove_filler_words, OutputLanguageEvidence,
 };
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::model::{EngineType, ModelManager};
@@ -1443,8 +1443,8 @@ impl TranscriptionManager {
             // — some (seen in release builds) reject it outright with
             // "unsupported timestamp granularity". Rather than dropping the chunk,
             // retry with the SAME granularity the (working) batch path uses and
-            // let `synthesize_word_timings` fill in evenly-spaced timings; rolling
-            // still assembles, just with coarser word positions.
+            // let rolling use its bounded lexical seam path. Segment-only and
+            // timestamp-free output is never presented as fake word evidence.
             let mut run_options = RunOptions {
                 task: run_plan.task,
                 language: run_plan.language,

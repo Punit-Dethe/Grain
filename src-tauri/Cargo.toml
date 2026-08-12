@@ -34,6 +34,7 @@ grain-core = { path = "../crates/grain-core" } # [GRAIN] headless core: owned se
 grain-sdk = { path = "../crates/grain-sdk" } # [GRAIN] the wire contract: events, actions, WS auth handshake
 rolling-window = { path = "../crates/rolling-window" } # [GRAIN] pure cursor + assembler
 provider-router = { path = "../crates/provider-router" } # [GRAIN] smart rotation: cooldowns + headroom ordering
+tempfile = "3" # [GRAIN] auto-deleted PCM journal for low-RAM rolling sessions
 once_cell = "1"
 tauri = { version = "2.11.5", features = [
   "protocol-asset",
@@ -220,7 +221,6 @@ tao = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6
 tao-macros = { git = "https://github.com/cjpais/tao", rev = "c3bee28c1d446d95f08c95c3b6f8d4bde052b876" }
 
 [dev-dependencies]
-tempfile = "3"
 # Test-only tokio features for the local socket servers exercising the
 # resumable HTTP downloader; normal builds keep the leaner feature set.
 tokio = { version = "1.43.0", features = ["macros", "net", "io-util", "sync", "time", "rt-multi-thread"] }

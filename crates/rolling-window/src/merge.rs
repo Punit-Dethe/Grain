@@ -1,14 +1,14 @@
 //! Fuzzy, number-aware overlap detection for the seam between chunks.
 //!
 //! Background: the time-based assembler dedups by POSITION (we own the timeline).
-//! With real word timestamps (Parakeet) that is exact. With *synthesized* timings
-//! (timestamp-less models) the boundary is approximate, and the model may also
+//! With real word timestamps (Parakeet) that is exact. Timestamp-less models use
+//! this bounded lexical path directly, and the model may also
 //! transcribe the overlap region differently across passes (`O3`/`03`,
 //! `3`/`three`). This module is the text-side complement recommended by the
 //! research (semi-global fuzzy alignment, §5): within a position-bounded seam
-//! zone, detect how many leading new words are a fuzzy repeat of the committed
-//! tail and drop them — catching residue that exact matching and approximate
-//! timing miss, without touching genuine new speech (which can't fuzzily match
+//! zone, detect how many leading new words are a fuzzy repeat of the provisional
+//! tail — catching residue that exact matching misses, without touching genuine new speech
+//! (which can't fuzzily match
 //! the tail).
 
 use strsim::jaro_winkler;
@@ -70,18 +70,29 @@ pub fn words_similar(a: &str, b: &str) -> bool {
 /// Only a match that runs to the end of `tail` counts — the overlap sits at the
 /// boundary — so unrelated new speech is never stripped.
 pub fn seam_overlap_len(tail: &[&str], head: &[&str]) -> usize {
+    seam_alignment(tail, head)
+        .map(|(_, head_len)| head_len)
+        .unwrap_or(0)
+}
+
+/// Return `(tail_start, head_len)` for the best fuzzy suffix/prefix seam.
+/// `tail_start` lets the lexical escrow replace its still-provisional suffix
+/// with the right-hand window's wording instead of merely dropping that wording.
+pub fn seam_alignment(tail: &[&str], head: &[&str]) -> Option<(usize, usize)> {
     if tail.is_empty() || head.is_empty() {
-        return 0;
+        return None;
     }
-    let mut best = 0usize;
+    let mut best = None;
     // Try every tail start; the overlap is some suffix of tail re-transcribed.
     for start in 0..tail.len() {
         let mut ti = start;
         let mut hi = 0usize;
         let mut matched = 0usize;
         let mut gaps = 0usize;
+        let mut first_matched_tail = None;
         while ti < tail.len() && hi < head.len() {
             if words_similar(tail[ti], head[hi]) {
+                first_matched_tail.get_or_insert(ti);
                 matched += 1;
                 ti += 1;
                 hi += 1;
@@ -98,10 +109,14 @@ pub fn seam_overlap_len(tail: &[&str], head: &[&str]) -> usize {
         // Require the run to reach (near) the tail's end — a boundary overlap,
         // tolerating up to 2 trailing junk words the prior pass may have added —
         // and to be mostly matches, then drop the head words it consumed.
-        let consumed_to_end = ti + 2 >= tail.len();
-        let solid = matched >= 1 && matched * 2 >= hi; // >=50% real matches
-        if consumed_to_end && solid && hi > best {
-            best = hi;
+        let trailing_tail = tail.len().saturating_sub(ti);
+        let consumed_to_end = trailing_tail <= 2;
+        // A single common word is enough only when it reaches the actual tail.
+        // Replacing one or two trailing "junk" words needs correspondingly more
+        // agreement, otherwise phrases such as "the ..." can erase real text.
+        let solid = matched >= trailing_tail + 1 && matched * 2 >= hi;
+        if consumed_to_end && solid && best.is_none_or(|(_, best_head_len)| hi > best_head_len) {
+            best = Some((first_matched_tail.unwrap_or(start), hi));
         }
     }
     best
@@ -148,5 +163,12 @@ mod tests {
         let tail = ["finance", "meets", "innovation"];
         let head = ["explore", "diverse", "offerings"];
         assert_eq!(seam_overlap_len(&tail, &head), 0);
+    }
+
+    #[test]
+    fn one_common_word_cannot_replace_two_unmatched_tail_words() {
+        let tail = ["we", "saw", "the", "old", "station"];
+        let head = ["the", "new", "route"];
+        assert_eq!(seam_alignment(&tail, &head), None);
     }
 }

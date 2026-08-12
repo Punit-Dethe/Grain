@@ -738,6 +738,25 @@ impl AudioRecordingManager {
         binding_id: &str,
         vad_policy: VadPolicy,
     ) -> Result<(), String> {
+        self.try_start_recording_with_retention(binding_id, vad_policy, true)
+    }
+
+    /// [GRAIN] Start a recording whose full audio is owned by Grain's PCM
+    /// journal instead of a duplicate in-memory f32 buffer.
+    pub fn try_start_recording_low_ram(
+        &self,
+        binding_id: &str,
+        vad_policy: VadPolicy,
+    ) -> Result<(), String> {
+        self.try_start_recording_with_retention(binding_id, vad_policy, false)
+    }
+
+    fn try_start_recording_with_retention(
+        &self,
+        binding_id: &str,
+        vad_policy: VadPolicy,
+        retain_full_audio: bool,
+    ) -> Result<(), String> {
         let mut state = self.state.lock().unwrap();
 
         if let RecordingState::Idle = *state {
@@ -756,7 +775,10 @@ impl AudioRecordingManager {
             }
 
             if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
-                if rec.start(vad_policy).is_ok() {
+                if rec
+                    .start_with_retention(vad_policy, retain_full_audio)
+                    .is_ok()
+                {
                     *self.is_recording.lock().unwrap() = true;
                     // [GRAIN] Fresh Prompt Record baseline: no split marked yet.
                     *self.prompt_mark.lock().unwrap() = None;
