@@ -383,13 +383,25 @@ function Sidebar({
   const currentModel = useModelStore((state) => state.currentModel);
   const models = useModelStore((state) => state.models);
   const loading = useModelStore((state) => state.loading);
-  const modelName = useMemo(
-    () =>
-      models.find((model) => model.id === currentModel)?.name ??
-      currentModel ??
-      "Parakeet TDT 0.6B",
-    [currentModel, models],
-  );
+  const isModelLoaded = useModelStore((state) => state.isModelLoaded);
+  const { settings } = useSettings();
+  // Cloud STT rotation replaces the local model entirely: when it is on there
+  // is no resident model, so we say "Cloud" and stop — name and load state only
+  // mean something for a local model.
+  const cloudStt = settings?.stt_smart_rotation === true;
+
+  const modelStatus = useMemo(() => {
+    if (cloudStt) return { title: "Cloud model", subtitle: "Cloud" };
+    if (loading && !currentModel)
+      return { title: "Checking model", subtitle: "Checking" };
+    const name =
+      models.find((model) => model.id === currentModel)?.name ?? currentModel;
+    if (!name) return { title: "No model", subtitle: "Not loaded" };
+    return {
+      title: name,
+      subtitle: `${isModelLoaded ? "Loaded" : "Unloaded"} · Local`,
+    };
+  }, [cloudStt, loading, currentModel, models, isModelLoaded]);
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
@@ -441,9 +453,9 @@ function Sidebar({
       <UpdateNotice />
       <div className="model-status">
         <div className="status-row">
-          <strong>{loading ? "Checking model" : modelName}</strong>
+          <strong>{modelStatus.title}</strong>
         </div>
-        <p>{loading ? "Checking · on device" : "Loaded · on device"}</p>
+        <p>{modelStatus.subtitle}</p>
       </div>
       <button
         className="quick-panel-button"

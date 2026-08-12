@@ -29,6 +29,8 @@ interface ModelsStore {
   downloadProgress: Record<string, DownloadProgress>;
   downloadStats: Record<string, DownloadStats>;
   loading: boolean;
+  /** Whether the local ASR model is currently resident in RAM (event-driven). */
+  isModelLoaded: boolean;
   error: string | null;
   hasAnyModels: boolean;
   isFirstRun: boolean;
@@ -38,6 +40,7 @@ interface ModelsStore {
   initialize: () => Promise<void>;
   loadModels: () => Promise<void>;
   loadCurrentModel: () => Promise<void>;
+  loadModelStatus: () => Promise<void>;
   checkFirstRun: () => Promise<boolean>;
   selectModel: (modelId: string) => Promise<boolean>;
   downloadModel: (modelId: string) => Promise<boolean>;
@@ -66,6 +69,7 @@ export const useModelStore = create<ModelsStore>()(
     downloadProgress: {},
     downloadStats: {},
     loading: true,
+    isModelLoaded: false,
     error: null,
     hasAnyModels: false,
     isFirstRun: false,
@@ -125,6 +129,17 @@ export const useModelStore = create<ModelsStore>()(
         }
       } catch (err) {
         console.error("Failed to load current model:", err);
+      }
+    },
+
+    loadModelStatus: async () => {
+      try {
+        const result = await commands.getModelLoadStatus();
+        if (result.status === "ok") {
+          set({ isModelLoaded: result.data.is_loaded });
+        }
+      } catch (err) {
+        console.error("Failed to load model status:", err);
       }
     },
 
@@ -273,10 +288,16 @@ export const useModelStore = create<ModelsStore>()(
     initialize: async () => {
       if (get().initialized) return;
 
-      const { loadModels, loadCurrentModel, checkFirstRun } = get();
+      const { loadModels, loadCurrentModel, loadModelStatus, checkFirstRun } =
+        get();
 
       // Load initial data
-      await Promise.all([loadModels(), loadCurrentModel(), checkFirstRun()]);
+      await Promise.all([
+        loadModels(),
+        loadCurrentModel(),
+        loadModelStatus(),
+        checkFirstRun(),
+      ]);
 
       // Set up event listeners
       listen<DownloadProgress>("model-download-progress", (event) => {
@@ -424,6 +445,7 @@ export const useModelStore = create<ModelsStore>()(
       listen("model-state-changed", () => {
         get().loadModels();
         get().loadCurrentModel();
+        get().loadModelStatus();
       });
 
       set({ initialized: true });
