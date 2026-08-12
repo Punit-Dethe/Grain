@@ -36,6 +36,12 @@ use tauri::{AppHandle, State};
 
 use crate::managers::model::ModelManager;
 
+// [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
+// needs one editorial default per model family, so keep that narrower policy in
+// Grain-owned code instead of adding another feature to the Handy model types.
+const BEST_STANDARD_REPO_ID: &str = "handy-computer/canary-180m-flash-gguf";
+const BEST_ASR_REPO_ID: &str = "handy-computer/parakeet-unified-en-0.6b-gguf";
+
 /// Which screen the app should open on.
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
@@ -60,6 +66,62 @@ pub struct OnboardingState {
     /// rather than because this is a first run. Lets the UI say "Grain lost
     /// microphone access" instead of "welcome".
     pub blocked_on_permissions: bool,
+}
+
+/// The single editorially "best" model in each onboarding family.
+///
+/// These are full registry IDs (repo + default quant filename), ready to pass
+/// to the existing download/select commands. Keeping the pair behind a command
+/// lets us update the defaults without teaching the frontend catalog internals.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Type)]
+pub struct OnboardingModelDefaults {
+    pub standard_model_id: String,
+    pub asr_model_id: String,
+}
+
+fn belongs_to_repo(model_id: &str, repo_id: &str) -> bool {
+    model_id
+        .strip_prefix(repo_id)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+/// Resolve the Grain-owned editorial defaults against the live catalog.
+#[tauri::command]
+#[specta::specta]
+pub fn get_onboarding_model_defaults(
+    model_manager: State<'_, Arc<ModelManager>>,
+) -> Result<OnboardingModelDefaults, String> {
+    let models = model_manager.get_available_models();
+
+    let standard_model_id = models
+        .iter()
+        .find(|model| {
+            !model.supports_streaming && belongs_to_repo(&model.id, BEST_STANDARD_REPO_ID)
+        })
+        .map(|model| model.id.clone())
+        .ok_or_else(|| "Grain's best Standard model is missing from the catalog".to_string())?;
+
+    let asr_model_id = models
+        .iter()
+        .find(|model| model.supports_streaming && belongs_to_repo(&model.id, BEST_ASR_REPO_ID))
+        .map(|model| model.id.clone())
+        .ok_or_else(|| "Grain's best ASR model is missing from the catalog".to_string())?;
+
+    Ok(OnboardingModelDefaults {
+        standard_model_id,
+        asr_model_id,
+    })
+}
+
+#[cfg(debug_assertions)]
+fn force_onboarding_for_development() -> bool {
+    std::env::var_os("GRAIN_FORCE_ONBOARDING")
+        .is_some_and(|value| !value.is_empty() && value != "0")
+}
+
+#[cfg(not(debug_assertions))]
+fn force_onboarding_for_development() -> bool {
+    false
 }
 
 /// Are the permissions Grain needs in place?
@@ -102,6 +164,14 @@ pub async fn resolve_onboarding_state(
     app: AppHandle,
     model_manager: State<'_, Arc<ModelManager>>,
 ) -> Result<OnboardingState, String> {
+    if force_onboarding_for_development() {
+        return Ok(OnboardingState {
+            step: OnboardingStep::Accessibility,
+            is_returning_user: false,
+            blocked_on_permissions: false,
+        });
+    }
+
     let has_models = model_manager
         .get_available_models()
         .iter()
@@ -161,5 +231,17 @@ mod tests {
             onboarding_step_after_permissions(false),
             OnboardingStep::Model
         );
+    }
+
+    #[test]
+    fn best_model_repo_matching_requires_a_registry_child() {
+        assert!(belongs_to_repo(
+            "handy-computer/canary-180m-flash-gguf/canary-Q8_0.gguf",
+            BEST_STANDARD_REPO_ID,
+        ));
+        assert!(!belongs_to_repo(
+            "handy-computer/canary-180m-flash-gguf-extra/model.gguf",
+            BEST_STANDARD_REPO_ID,
+        ));
     }
 }

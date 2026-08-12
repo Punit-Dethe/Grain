@@ -755,6 +755,17 @@ async resolveOnboardingState() : Promise<Result<OnboardingState, string>> {
 async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<OnboardingStep> {
     return await TAURI_INVOKE("onboarding_step_after_permissions", { isReturningUser });
 },
+/**
+ * Resolve the Grain-owned editorial defaults against the live catalog.
+ */
+async getOnboardingModelDefaults() : Promise<Result<OnboardingModelDefaults, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_onboarding_model_defaults") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getTheme() : Promise<ThemeState> {
     return await TAURI_INVOKE("get_theme");
 },
@@ -2923,6 +2934,14 @@ folder: string | null;
  * list. (Legacy field name kept for the wire schema.)
  */
 readonly: boolean }
+/**
+ * The single editorially "best" model in each onboarding family.
+ *
+ * These are full registry IDs (repo + default quant filename), ready to pass
+ * to the existing download/select commands. Keeping the pair behind a command
+ * lets us update the defaults without teaching the frontend catalog internals.
+ */
+export type OnboardingModelDefaults = { standard_model_id: string; asr_model_id: string }
 export type OnboardingState = { step: OnboardingStep; 
 /**
  * Has models already. Decides where "permissions granted" goes next: a

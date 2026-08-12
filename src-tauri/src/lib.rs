@@ -894,6 +894,7 @@ pub fn run(cli_args: CliArgs) {
             grain_locale::resolve_app_locale,
             grain_onboarding::resolve_onboarding_state,
             grain_onboarding::onboarding_step_after_permissions,
+            grain_onboarding::get_onboarding_model_defaults,
             grain_theme::get_theme,
             grain_theme::set_theme_mode,
             shortcut::change_experimental_enabled_setting,
