@@ -50,8 +50,10 @@ pub enum OnboardingStep {
     /// Permissions screen — either first-run, or a returning user who has since
     /// had a permission revoked.
     Accessibility,
+    /// Short demonstration of Standard, Flow, and Streaming for a new user.
+    Modes,
     /// Model picker. Only ever reached by a genuinely new user, and only after
-    /// permissions are settled.
+    /// the capture-mode tour.
     Model,
     /// Nothing in the way; show the app.
     Done,
@@ -354,14 +356,14 @@ pub async fn resolve_onboarding_state(
 }
 
 /// Where "permissions granted" leads. A returning user already has a model, so
-/// the picker would be a dead screen; a new user needs it.
+/// the remaining setup would be a dead path; a new user first sees the modes.
 #[tauri::command]
 #[specta::specta]
 pub fn onboarding_step_after_permissions(is_returning_user: bool) -> OnboardingStep {
     if is_returning_user {
         OnboardingStep::Done
     } else {
-        OnboardingStep::Model
+        OnboardingStep::Modes
     }
 }
 
@@ -370,14 +372,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn returning_users_skip_the_model_picker() {
+    fn returning_users_skip_the_remaining_setup() {
         assert_eq!(
             onboarding_step_after_permissions(true),
             OnboardingStep::Done
         );
         assert_eq!(
             onboarding_step_after_permissions(false),
-            OnboardingStep::Model
+            OnboardingStep::Modes
         );
     }
 

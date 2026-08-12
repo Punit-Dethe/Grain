@@ -10,7 +10,10 @@ import { platform } from "@tauri-apps/plugin-os";
 import { Toaster } from "sonner";
 import { HistorySettings } from "@/components/settings/history/HistorySettings";
 import { AudioPlayerGroup } from "@/components/ui/AudioPlayer";
-import Onboarding, { AccessibilityOnboarding } from "@/components/onboarding";
+import Onboarding, {
+  AccessibilityOnboarding,
+  ModesOnboarding,
+} from "@/components/onboarding";
 import { commands, type OnboardingStep } from "@/bindings";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { useSettings } from "@/hooks/useSettings";
@@ -955,6 +958,17 @@ function NextShell() {
     return (
       <>
         <AccessibilityOnboarding onComplete={handleAccessibilityComplete} />
+        <Toaster theme={isDark ? "dark" : "light"} />
+      </>
+    );
+  }
+  if (onboardingStep === "modes") {
+    return (
+      <>
+        <ModesOnboarding
+          onBack={() => setOnboardingStep("accessibility")}
+          onComplete={() => setOnboardingStep("model")}
+        />
         <Toaster theme={isDark ? "dark" : "light"} />
       </>
     );

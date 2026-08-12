@@ -110,6 +110,46 @@
         "errors": {
           "continue": "Microphone setup could not finish. Please try again."
         }
+      },
+      "modes": {
+        "title": "Three ways to speak to Grain",
+        "description": "Watch each one once. The difference should be clear before you install anything.",
+        "skip": "Skip tour",
+        "back": "Back",
+        "next": "Next mode",
+        "chooseModels": "Choose models",
+        "showMode": "Show {{mode}} mode",
+        "recording": "Recording…",
+        "standard": {
+          "title": "Standard",
+          "subtitle": "For the cleanest final transcript",
+          "traitOne": "Most accurate",
+          "traitTwo": "Formatted",
+          "label": "Transcribes after you stop",
+          "processing": "Transcribing · about 10 seconds…",
+          "result": "This is how Grain returns a clean, accurate, and properly punctuated transcription.",
+          "footnote": "A three-minute recording takes about ten seconds to finish."
+        },
+        "flow": {
+          "title": "Flow",
+          "subtitle": "For long everyday dictation",
+          "traitOne": "Accurate",
+          "traitTwo": "Near-instant",
+          "label": "Records normally, then returns almost immediately",
+          "processing": "Finishing · about 1–2 seconds…",
+          "result": "this is how grain keeps long dictation fast and accurate without making you wait",
+          "footnote": "Even after ten minutes of speaking, your transcript is ready in about a second or two."
+        },
+        "streaming": {
+          "title": "Streaming",
+          "subtitle": "See words while you speak",
+          "traitOne": "Real-time",
+          "traitTwo": "Fast",
+          "label": "Words appear live while you are speaking",
+          "processing": "",
+          "result": "",
+          "footnote": "Use it when seeing the transcript live matters more than maximum accuracy."
+        }
       }
     },
     "subtitle": "To get started, choose a transcription model",

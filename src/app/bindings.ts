@@ -2992,8 +2992,12 @@ export type OnboardingStep =
  */
 "accessibility" | 
 /**
+ * Short demonstration of Standard, Flow, and Streaming for a new user.
+ */
+"modes" |
+/**
  * Model picker. Only ever reached by a genuinely new user, and only after
- * permissions are settled.
+ * the capture-mode tour.
  */
 "model" | 
 /**
