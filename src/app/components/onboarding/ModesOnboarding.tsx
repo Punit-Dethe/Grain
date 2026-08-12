@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronLeft, Mic } from "lucide-react";
+import { Check, ChevronLeft, Mic } from "lucide-react";
 import "./onboarding.css";
 
 interface ModesOnboardingProps {
@@ -67,11 +67,14 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
         schedule(() => setDemoCycle((current) => current + 1), 1900);
       }, 185);
     } else {
-      schedule(() => setPhase("processing"), 1250);
-      schedule(() => setPhase("result"), mode === "standard" ? 3000 : 1750);
+      schedule(
+        () => setPhase(mode === "standard" ? "processing" : "result"),
+        1750,
+      );
+      if (mode === "standard") schedule(() => setPhase("result"), 4300);
       schedule(
         () => setDemoCycle((current) => current + 1),
-        mode === "standard" ? 5600 : 4250,
+        mode === "standard" ? 7200 : 5200,
       );
     }
 
@@ -187,12 +190,19 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
                         />
                       ))}
                     </span>
-                    <span className="onboarding-demo-time">
-                      {mode === "standard"
-                        ? "03:00"
-                        : mode === "flow"
-                          ? "10:00"
-                          : `00:0${Math.min(8, 3 + Math.floor(streamingWordCount / 3))}`}
+                    <span className="onboarding-demo-duration">
+                      <strong>
+                        {mode === "standard"
+                          ? "05:00"
+                          : mode === "flow"
+                            ? "10:00"
+                            : `00:0${Math.min(8, 3 + Math.floor(streamingWordCount / 3))}`}
+                      </strong>
+                      {mode !== "streaming" ? (
+                        <small>
+                          {t(`onboarding.setup.modes.${mode}.recordingLength`)}
+                        </small>
+                      ) : null}
                     </span>
                   </div>
                 </div>
@@ -205,7 +215,12 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
                     <div className="onboarding-demo-processing">
                       <i aria-hidden="true" />
                       <span>
-                        {t(`onboarding.setup.modes.${mode}.processing`)}
+                        <strong>
+                          {t("onboarding.setup.modes.standard.waitTime")}
+                        </strong>
+                        <small>
+                          {t("onboarding.setup.modes.standard.processing")}
+                        </small>
                       </span>
                     </div>
                   ) : (
@@ -223,6 +238,14 @@ const ModesOnboarding: React.FC<ModesOnboardingProps> = ({
                       ) : null}
                     </div>
                   )}
+                  {mode === "flow" && phase === "result" ? (
+                    <div className="onboarding-flow-confirmation" role="status">
+                      <span>
+                        <Check aria-hidden="true" />
+                      </span>
+                      {t("onboarding.setup.modes.flow.confirmation")}
+                    </div>
+                  ) : null}
                   <p>{t(`onboarding.setup.modes.${mode}.footnote`)}</p>
                 </div>
               </div>

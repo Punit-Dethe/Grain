@@ -125,20 +125,24 @@
           "subtitle": "For the cleanest final transcript",
           "traitOne": "Most accurate",
           "traitTwo": "Formatted",
+          "recordingLength": "Recording for 5 minutes",
           "label": "Transcribes after you stop",
-          "processing": "Transcribing · about 10 seconds…",
+          "waitTime": "About 15 seconds",
+          "processing": "Finishing a clean transcript from 5 minutes of speech",
           "result": "This is how Grain returns a clean, accurate, and properly punctuated transcription.",
-          "footnote": "A three-minute recording takes about ten seconds to finish."
+          "footnote": "Standard takes a little longer after you stop to produce the cleanest result."
         },
         "flow": {
           "title": "Flow",
           "subtitle": "For long everyday dictation",
           "traitOne": "Accurate",
           "traitTwo": "Near-instant",
+          "recordingLength": "Recording for 10 minutes",
           "label": "Records normally, then returns almost immediately",
-          "processing": "Finishing · about 1–2 seconds…",
+          "processing": "",
+          "confirmation": "Pasted in 1–2 seconds",
           "result": "this is how grain keeps long dictation fast and accurate without making you wait",
-          "footnote": "Even after ten minutes of speaking, your transcript is ready in about a second or two."
+          "footnote": "Flow skips the visible waiting stage—even after ten minutes of speaking."
         },
         "streaming": {
           "title": "Streaming",
