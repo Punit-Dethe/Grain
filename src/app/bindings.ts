@@ -7,7 +7,7 @@
 export const commands = {
 /**
  * Is there a newer release?
- * 
+ *
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
@@ -761,6 +761,28 @@ async onboardingStepAfterPermissions(isReturningUser: boolean) : Promise<Onboard
 async getOnboardingModelDefaults() : Promise<Result<OnboardingModelDefaults, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_onboarding_model_defaults") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open the selected input just long enough to verify that it carries speech.
+ */
+async startOnboardingMicrophoneTest(deviceName: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("start_onboarding_microphone_test", { deviceName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop the onboarding probe and release the device immediately.
+ */
+async stopOnboardingMicrophoneTest() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("stop_onboarding_microphone_test") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2255,6 +2277,7 @@ modelExtractionStarted: ModelExtractionStarted,
 modelStateChanged: ModelStateChanged,
 modelVerificationCompleted: ModelVerificationCompleted,
 modelVerificationStarted: ModelVerificationStarted,
+onboardingMicrophoneLevel: OnboardingMicrophoneLevel,
 pasteError: PasteError,
 recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
@@ -2272,6 +2295,7 @@ modelExtractionStarted: "model-extraction-started",
 modelStateChanged: "model-state-changed",
 modelVerificationCompleted: "model-verification-completed",
 modelVerificationStarted: "model-verification-started",
+onboardingMicrophoneLevel: "onboarding-microphone-level",
 pasteError: "paste-error",
 recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
@@ -2934,6 +2958,10 @@ folder: string | null;
  * list. (Legacy field name kept for the wire schema.)
  */
 readonly: boolean }
+/**
+ * Live spectrum buckets from the short-lived onboarding microphone probe.
+ */
+export type OnboardingMicrophoneLevel = { levels: number[] }
 /**
  * The single editorially "best" model in each onboarding family.
  *

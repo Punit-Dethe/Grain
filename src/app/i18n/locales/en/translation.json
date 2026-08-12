@@ -57,6 +57,52 @@
     "about": "About"
   },
   "onboarding": {
+    "setup": {
+      "brand": "GRAIN",
+      "label": "SETUP",
+      "progress": "Setup progress",
+      "skipTest": "Skip test",
+      "continue": "Continue",
+      "steps": {
+        "microphone": "Microphone",
+        "modes": "Modes",
+        "models": "Models",
+        "try": "Try",
+        "shortcuts": "Shortcuts"
+      },
+      "microphone": {
+        "title": "Choose your microphone",
+        "description": "Pick the input you normally use, then speak for a moment so Grain can check it.",
+        "inputLabel": "Input device",
+        "checking": "Checking microphone access…",
+        "test": "Test microphone",
+        "testDetail": "Speak normally for a moment",
+        "testAction": "Test microphone",
+        "retest": "Test microphone again",
+        "starting": "Opening microphone…",
+        "startingDetail": "Connecting to the selected input",
+        "listening": "Listening…",
+        "listeningDetail": "Keep speaking normally",
+        "success": "Microphone sounds good",
+        "successDetail": "Grain can hear this input clearly",
+        "noSignal": "No voice detected",
+        "noSignalDetail": "Check the selected input and try again",
+        "error": "Microphone could not start",
+        "errorDetail": "Choose another input or try again",
+        "inputGood": "Input looks good.",
+        "checkingInput": "Checking input…",
+        "ready": "Ready when you are.",
+        "allow": "Allow microphone",
+        "waitingPermission": "Waiting for permission…",
+        "enableShortcuts": "Enable shortcuts",
+        "shortcutsTitle": "Enable global shortcuts",
+        "shortcutsDescription": "Accessibility access lets Grain start capture and paste text in other apps.",
+        "footerHint": "Audio is checked locally and is not saved.",
+        "errors": {
+          "continue": "Microphone setup could not finish. Please try again."
+        }
+      }
+    },
     "subtitle": "To get started, choose a transcription model",
     "recommended": "Recommended",
     "download": "Download",

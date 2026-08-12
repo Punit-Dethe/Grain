@@ -31,9 +31,10 @@
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, State};
 
+use crate::audio_toolkit::{list_input_devices, AudioRecorder, VadPolicy};
 use crate::managers::model::ModelManager;
 
 // [GRAIN] `recommended` is intentionally a broad catalog badge. Onboarding
@@ -77,6 +78,108 @@ pub struct OnboardingState {
 pub struct OnboardingModelDefaults {
     pub standard_model_id: String,
     pub asr_model_id: String,
+}
+
+/// Live spectrum buckets from the short-lived onboarding microphone probe.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct OnboardingMicrophoneLevel {
+    pub levels: Vec<f32>,
+}
+
+/// Owns the microphone probe only while the onboarding test is running.
+///
+/// The normal audio manager is deliberately not initialized until onboarding
+/// finishes. This lightweight recorder has no VAD/model and retains no audio;
+/// stop, device change, navigation, or unmount closes its CPAL stream outright.
+#[derive(Clone, Default)]
+pub struct OnboardingMicrophoneTest {
+    recorder: Arc<Mutex<Option<AudioRecorder>>>,
+}
+
+fn close_microphone_test(recorder: &Mutex<Option<AudioRecorder>>) -> Result<(), String> {
+    let mut slot = recorder
+        .lock()
+        .map_err(|_| "Microphone test state is unavailable".to_string())?;
+    close_microphone_test_slot(&mut slot)
+}
+
+fn close_microphone_test_slot(slot: &mut Option<AudioRecorder>) -> Result<(), String> {
+    if let Some(mut active) = slot.take() {
+        active
+            .close()
+            .map_err(|error| format!("Failed to close microphone test: {error}"))?;
+    }
+    Ok(())
+}
+
+/// Open the selected input just long enough to verify that it carries speech.
+#[tauri::command]
+#[specta::specta]
+pub async fn start_onboarding_microphone_test(
+    app: AppHandle,
+    state: State<'_, OnboardingMicrophoneTest>,
+    device_name: String,
+) -> Result<(), String> {
+    let recorder_state = Arc::clone(&state.recorder);
+    tauri::async_runtime::spawn_blocking(move || {
+        // Hold the slot through open/start. A concurrent stop then waits for the
+        // recorder to become visible and closes it, instead of observing an
+        // empty slot while this command later installs a leaked live stream.
+        let mut slot = recorder_state
+            .lock()
+            .map_err(|_| "Microphone test state is unavailable".to_string())?;
+        close_microphone_test_slot(&mut slot)?;
+
+        let device = if device_name.eq_ignore_ascii_case("default") {
+            None
+        } else {
+            Some(
+                list_input_devices()
+                    .map_err(|error| format!("Failed to list microphones: {error}"))?
+                    .into_iter()
+                    .find(|candidate| candidate.name == device_name)
+                    .map(|candidate| candidate.device)
+                    .ok_or_else(|| format!("Microphone '{device_name}' is no longer available"))?,
+            )
+        };
+
+        let selected_channel = crate::settings::get_settings(&app).selected_channel;
+        let event_app = app.clone();
+        let mut recorder = AudioRecorder::new()
+            .map_err(|error| format!("Failed to create microphone test: {error}"))?
+            .with_selected_channel(selected_channel)
+            .with_level_callback(move |levels| {
+                use tauri_specta::Event as _;
+                if let Err(error) = (OnboardingMicrophoneLevel { levels }).emit(&event_app) {
+                    log::warn!("failed to emit onboarding microphone level: {error}");
+                }
+            });
+
+        recorder
+            .open(device)
+            .map_err(|error| format!("Failed to open microphone: {error}"))?;
+        if let Err(error) = recorder.start_with_retention(VadPolicy::Disabled, false) {
+            let _ = recorder.close();
+            return Err(format!("Failed to start microphone test: {error}"));
+        }
+
+        *slot = Some(recorder);
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("Microphone test worker failed: {error}"))?
+}
+
+/// Stop the onboarding probe and release the device immediately.
+#[tauri::command]
+#[specta::specta]
+pub async fn stop_onboarding_microphone_test(
+    state: State<'_, OnboardingMicrophoneTest>,
+) -> Result<(), String> {
+    let recorder_state = Arc::clone(&state.recorder);
+    tauri::async_runtime::spawn_blocking(move || close_microphone_test(&recorder_state))
+        .await
+        .map_err(|error| format!("Microphone test worker failed: {error}"))?
 }
 
 fn belongs_to_repo(model_id: &str, repo_id: &str) -> bool {
@@ -243,5 +346,11 @@ mod tests {
             "handy-computer/canary-180m-flash-gguf-extra/model.gguf",
             BEST_STANDARD_REPO_ID,
         ));
+    }
+
+    #[test]
+    fn closing_an_idle_microphone_test_is_a_noop() {
+        let recorder = Mutex::new(None);
+        assert!(close_microphone_test(&recorder).is_ok());
     }
 }
