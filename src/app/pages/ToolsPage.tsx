@@ -48,9 +48,9 @@ const TOOL_COPY: Record<
     icon: Code2,
   },
   context: {
-    title: "Context",
+    title: "Context awareness",
     description:
-      "Control what Grain can use from the focused application to improve terminology, casing, and insertion.",
+      "Grain uses the active application to match terminology, tone, and formatting.",
     icon: Sparkles,
   },
   agent: {
@@ -629,6 +629,30 @@ function SnippetsMasterToggle() {
   );
 }
 
+function ContextMasterToggle() {
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const enabled = getSetting("context_awareness_enabled") ?? false;
+  const busy = isUpdating("context_awareness_enabled");
+
+  return (
+    <label
+      className="tool-master-toggle"
+      title="Turn context awareness on or off"
+    >
+      <span className="sr-only">Enable context awareness</span>
+      <input
+        type="checkbox"
+        checked={enabled}
+        disabled={busy}
+        onChange={(event) =>
+          void updateSetting("context_awareness_enabled", event.target.checked)
+        }
+      />
+      <span className="tool-master-toggle-track" aria-hidden="true" />
+    </label>
+  );
+}
+
 function SnippetsTool() {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("snippets_enabled") ?? false;
@@ -795,27 +819,16 @@ function SnippetsTool() {
 }
 
 function ContextTool() {
+  const { getSetting } = useSettings();
+  const enabled = getSetting("context_awareness_enabled") ?? false;
+
   return (
     <>
-      <section className="tool-section">
-        <div className="tool-section-head">
-          <div>
-            <h2>Context awareness</h2>
-            <p>
-              Context is processed locally and only during an eligible capture.
-            </p>
-          </div>
-        </div>
-        <div className="tool-component-host space-y-6">
-          <FeaturePanel
-            settingKey="context_awareness_enabled"
-            title="Context awareness"
-            info="Use local application context to make terminology and insertion fit naturally."
-          >
-            <ContextAwareSection />
-          </FeaturePanel>
-        </div>
-      </section>
+      {enabled && (
+        <section className="context-awareness-workspace">
+          <ContextAwareSection />
+        </section>
+      )}
       <ExtensionAnchor anchor="context.after" />
       <ToolRecommendations tool="context" />
     </>
@@ -908,7 +921,7 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
             <div className="tools-scroll">
               <div className="tools-content next-settings-content">
                 <header
-                  className={`tool-main-heading ${section === "snippets" ? "has-toggle" : ""}`}
+                  className={`tool-main-heading ${section === "snippets" || section === "context" ? "has-toggle" : ""}`}
                 >
                   <div>
                     <h1 id="next-tool-title">
@@ -919,6 +932,7 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                     <p>{copy.description}</p>
                   </div>
                   {section === "snippets" && <SnippetsMasterToggle />}
+                  {section === "context" && <ContextMasterToggle />}
                 </header>
                 {section === "dictionary" ? (
                   <DictionaryTool />

@@ -3969,23 +3969,27 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   max-width: none;
 }
 
-.context-profile-settings {
-  padding: 18px;
+.context-awareness-workspace {
+  margin-bottom: 34px;
   display: grid;
-  gap: 16px;
+  gap: 26px;
+}
+
+.context-profile-settings {
+  display: grid;
+  gap: 20px;
 }
 
 .context-profile-tabs {
   width: fit-content;
   max-width: 100%;
-  padding: 3px;
+  padding: 4px;
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 0;
   overflow-x: auto;
-  border-radius: 12px;
+  border-radius: 999px;
   background: var(--bg-2);
-  box-shadow: inset 0 0 0 1px var(--hairline-soft);
   scrollbar-width: none;
 }
 
@@ -3994,10 +3998,14 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-profile-tabs button {
-  min-height: 32px;
-  padding: 0 14px;
+  min-height: 34px;
+  padding: 0 15px;
   flex: 0 0 auto;
-  border-radius: 9px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   color: var(--text-3);
   background: transparent;
   font-size: 12px;
@@ -4017,7 +4025,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .context-profile-tabs button.active {
   color: var(--text-1);
   background: var(--bg-3);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.12),
+    inset 0 0 0 1px var(--hairline);
 }
 
 .context-profile-tabs button:focus-visible,
@@ -4035,13 +4045,13 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .context-profile-card {
   overflow: hidden;
   border-radius: 14px;
-  background: var(--bg-2);
+  background: transparent;
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
 
 .context-profile-card-header {
-  min-height: 76px;
-  padding: 14px 16px;
+  min-height: 72px;
+  padding: 15px 16px;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -4060,7 +4070,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   place-items: center;
   border-radius: 50%;
   color: var(--text-2);
-  background: var(--bg-3);
+  background: var(--bg-2);
   box-shadow:
     0 3px 10px rgba(0, 0, 0, 0.18),
     inset 0 0 0 1px var(--hairline);
@@ -4102,16 +4112,15 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   flex: 0 0 auto;
   display: inline-flex;
   gap: 2px;
-  border-radius: 10px;
-  background: var(--bg-1);
-  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  border-radius: 999px;
+  background: var(--bg-2);
 }
 
 .context-profile-mode button {
   min-width: 50px;
   min-height: 28px;
   padding: 0 10px;
-  border-radius: 7px;
+  border-radius: 999px;
   color: var(--text-3);
   font-size: 11.5px;
   font-weight: 610;
@@ -4131,7 +4140,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-profile-prompt {
-  min-height: 110px;
+  min-height: 100px;
   padding: 15px 16px 18px;
   border-top: 1px solid var(--hairline);
   display: grid;
@@ -4148,7 +4157,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .context-profile-prompt p,
 .context-profile-prompt textarea {
   width: 100%;
-  max-width: 74ch;
   margin: 0;
   color: var(--text-2);
   font: inherit;
@@ -4172,11 +4180,41 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   box-shadow: inset 0 -1px 0 var(--accent);
 }
 
-@media (max-width: 700px) {
-  .context-profile-settings {
-    padding: 14px;
-  }
+.context-profile-options {
+  min-width: 0;
+}
 
+.next-settings-content .context-profile-options .setting-row {
+  padding-inline: 2px;
+}
+
+.next-settings-content
+  .context-profile-options
+  .setting-row
+  + .setting-row::before {
+  right: 2px;
+  left: 2px;
+}
+
+html[data-theme="light"] .context-profile-tabs {
+  background: #f0f0f2;
+}
+
+html[data-theme="light"] .context-profile-tabs button.active,
+html[data-theme="light"] .context-profile-mode button.active {
+  color: #202124;
+  background: #ffffff;
+}
+
+html[data-theme="light"] .context-profile-card {
+  background: #ffffff;
+}
+
+html[data-theme="light"] .context-profile-mode {
+  background: #f0f0f2;
+}
+
+@media (max-width: 700px) {
   .context-profile-tabs {
     width: 100%;
   }

@@ -10,6 +10,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Send,
+  Shapes,
   Smartphone,
   SquareTerminal,
   Users,
@@ -23,6 +24,7 @@ type ContextProfileId = "email" | "work" | "casual" | "technical" | "other";
 type ContextProfile = {
   id: ContextProfileId;
   label: string;
+  tabIcon: LucideIcon;
   summary: string;
   detail: string;
   applications: ReadonlyArray<{ name: string; icon: LucideIcon }>;
@@ -34,6 +36,7 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   {
     id: "email",
     label: "Email",
+    tabIcon: Mail,
     summary: "This profile applies in email applications",
     detail: "Grain keeps dictated email polished without inventing structure.",
     applications: [
@@ -48,6 +51,7 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   {
     id: "work",
     label: "Work",
+    tabIcon: BriefcaseBusiness,
     summary: "This profile applies in work applications",
     detail: "Grain stays concise across team chat, tickets, and tasks.",
     applications: [
@@ -62,6 +66,7 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   {
     id: "casual",
     label: "Casual",
+    tabIcon: MessageCircle,
     summary: "This profile applies in casual applications",
     detail: "Grain protects the phrasing and personality of everyday messages.",
     applications: [
@@ -76,6 +81,7 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   {
     id: "technical",
     label: "Technical",
+    tabIcon: Code2,
     summary: "This profile applies in technical applications",
     detail: "Grain preserves exact syntax in editors, terminals, and AI tools.",
     applications: [
@@ -90,6 +96,7 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   {
     id: "other",
     label: "Other",
+    tabIcon: Shapes,
     summary: "",
     detail: "",
     applications: [],
@@ -98,8 +105,8 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   },
 ];
 
-/** [GRAIN] Context awareness settings — the rows BELOW the feature's own switch,
- * rendered inside its panel (see [`FeaturePanel`]), not a section of their own.
+/** [GRAIN] Context awareness settings rendered below the page-level feature
+ * switch. The public profiles are a frontend-only presentation layer for now.
  *
  * The automatic SOFT tone/vocabulary layer is the feature itself and has no
  * setting; what is configurable is how much it may read. HARD per-app formatting
@@ -137,6 +144,7 @@ export const ContextAwareSection: React.FC = () => {
         >
           {CONTEXT_PROFILES.map((profile) => {
             const active = profile.id === activeProfileId;
+            const TabIcon = profile.tabIcon;
             return (
               <button
                 key={profile.id}
@@ -156,7 +164,8 @@ export const ContextAwareSection: React.FC = () => {
                   setMode("read");
                 }}
               >
-                {profile.label}
+                <TabIcon size={14} strokeWidth={1.8} aria-hidden="true" />
+                <span>{profile.label}</span>
               </button>
             );
           })}
@@ -238,28 +247,30 @@ export const ContextAwareSection: React.FC = () => {
         )}
       </section>
 
-      <ToggleSwitch
-        label="Nearby-term hints (silent)"
-        description="Read UNIQUE names and identifiers (e.g. Rita, useGrainStore, PyTorch) from the field you're dictating into and use them to improve accuracy — both as a spelling hint for the AI and to bias the recognizer itself. Never sends raw text, never stored, password fields skipped."
-        descriptionMode="tooltip"
-        grouped
-        checked={nearbyTerms}
-        isUpdating={isUpdating("context_nearby_terms")}
-        onChange={(v) => updateSetting("context_nearby_terms", v)}
-      />
-      {/* Deliberately a second switch rather than part of the one above: that
-          one promises to send only unique tokens and never raw text, and this
-          one sends a short raw excerpt of what surrounds the cursor. Folding
-          them together would quietly break the narrower promise. */}
-      <ToggleSwitch
-        label="Fit text to the cursor"
-        description="Read a short span of text either side of your cursor so dictation inserted mid-sentence flows: correct spacing, no stray capital, no repeated words. Sends that excerpt (up to ~320 characters each side) to your AI provider along with the transcript. Never stored, password fields skipped."
-        descriptionMode="tooltip"
-        grouped
-        checked={caretText}
-        isUpdating={isUpdating("context_caret_text")}
-        onChange={(v) => updateSetting("context_caret_text", v)}
-      />
+      <div className="context-profile-options" aria-label="Context sources">
+        <ToggleSwitch
+          label="Nearby-term hints (silent)"
+          description="Read UNIQUE names and identifiers (e.g. Rita, useGrainStore, PyTorch) from the field you're dictating into and use them to improve accuracy — both as a spelling hint for the AI and to bias the recognizer itself. Never sends raw text, never stored, password fields skipped."
+          descriptionMode="tooltip"
+          grouped
+          checked={nearbyTerms}
+          isUpdating={isUpdating("context_nearby_terms")}
+          onChange={(v) => updateSetting("context_nearby_terms", v)}
+        />
+        {/* Deliberately a second switch rather than part of the one above: that
+            one promises to send only unique tokens and never raw text, and this
+            one sends a short raw excerpt of what surrounds the cursor. Folding
+            them together would quietly break the narrower promise. */}
+        <ToggleSwitch
+          label="Fit text to the cursor"
+          description="Read a short span of text either side of your cursor so dictation inserted mid-sentence flows: correct spacing, no stray capital, no repeated words. Sends that excerpt (up to ~320 characters each side) to your AI provider along with the transcript. Never stored, password fields skipped."
+          descriptionMode="tooltip"
+          grouped
+          checked={caretText}
+          isUpdating={isUpdating("context_caret_text")}
+          onChange={(v) => updateSetting("context_caret_text", v)}
+        />
+      </div>
     </>
   );
 };
