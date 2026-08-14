@@ -59,7 +59,7 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
 /// Edge length of the icon the core hands the pill, in pixels. Fixed so the
 /// wire payload is always exactly `PILL_ICON_PX² × 4` bytes and neither side has
 /// to negotiate a size; the pill scales it down to whatever its skin draws at.
-pub const PILL_ICON_PX: usize = 32;
+pub const PILL_ICON_PX: usize = 64;
 
 /// Capability required to receive (or be woken by) a daemon event variant.
 /// Unknown names return `None` so manifest tooling can reject them rather than

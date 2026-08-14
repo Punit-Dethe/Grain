@@ -31,7 +31,7 @@ pub const ICON_BYTES: usize = PILL_ICON_PX * PILL_ICON_PX * 4;
 /// Bumped whenever the stored format or the resolution ladder changes in a way
 /// that would make previously cached pixels wrong. Folded into the cache key, so
 /// a bump invalidates everything at once without a migration.
-const CACHE_SCHEMA: u32 = 1;
+const CACHE_SCHEMA: u32 = 2;
 
 /// What we want a picture of. Deliberately NOT an exe path: on macOS `Id` is a
 /// bundle identifier and on Linux a desktop-file id, so the platform-specific

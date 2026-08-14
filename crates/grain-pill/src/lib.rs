@@ -56,12 +56,12 @@ const SCALE: f32 = 1.0; // px per grid unit — small pill (native QML size)
 //
 // [GRAIN] The collapsed pill has more than one built-in LOOK (`PillSkin`), and a
 // look owns its own size. The dot-matrix skin keeps the grid-derived numbers
-// above verbatim; the wave skin — the new default — is the same capsule at 80%.
+// above verbatim; the wave skin — the new default — is the same capsule at SKIN_SHRINK.
 // Everything on the collapsed path reads its geometry from `PillGeom` rather
 // than from COLS/ROWS/CELL directly, so a skin change is a resize and nothing
 // more. (The Studio and AgentInput surfaces have their own fixed geometry and
 // are deliberately untouched by the skin.)
-const SKIN_SHRINK: f32 = 0.8;
+const SKIN_SHRINK: f32 = 0.85;
 
 /// Runtime geometry of the COLLAPSED pill for one skin. Pure and copy-cheap —
 /// recomputed wherever it's needed instead of cached, so a skin change can never
@@ -89,9 +89,9 @@ impl PillGeom {
         };
         match skin {
             PillSkin::Matrix => base,
-            // The wave capsule is the matrix capsule at 80% — same proportions,
-            // quieter footprint. `y_off` does NOT shrink: that band is the
-            // prompt capsule's runway, not part of the pill.
+            // The wave capsule is the matrix capsule at SKIN_SHRINK — same
+            // proportions, quieter footprint. `y_off` does NOT shrink: that band
+            // is the prompt capsule's runway, not part of the pill.
             PillSkin::Wave => PillGeom {
                 core_w: base.core_w * SKIN_SHRINK,
                 inset: base.inset * SKIN_SHRINK,
@@ -1117,9 +1117,14 @@ const WAVE_DOT_GAP: f32 = 9.0;
 /// [GRAIN] Pill identity: edge length the app icon is drawn at, in place of the
 /// state disc. Larger than the dot, so the wave's start shifts with it — see
 /// `wave_slot_w`.
-const WAVE_ICON_PX: u32 = 16;
+const WAVE_ICON_PX: u32 = 22;
 /// Fraction of the capsule's half-height the wave may reach at full volume.
 const WAVE_FILL: f32 = 0.62;
+/// Minimum bar amplitude (relative to the centre bar's peak) at the left and
+/// right edges of the wave row. The bars taper from 1.0 at the centre toward
+/// this value at the tips — a soft triangular envelope that reads as more
+/// contained rather than bluntly uniform.
+const WAVE_TAPER_MIN: f32 = 0.32;
 
 /// The waveform's ink, per state. Deliberately quiet — the wave skin's whole
 /// point is that it reads as calm at a glance.
@@ -1253,6 +1258,7 @@ impl WaveField {
     /// Read the sample `back` positions behind the write head (0 = newest).
     /// Out-of-range reads clamp to the ends, which is what keeps the outer
     /// control points of the interpolator well-defined.
+    #[allow(dead_code)]
     fn at(&self, back: i32) -> f32 {
         if self.written == 0 {
             return 0.0;
@@ -1266,6 +1272,7 @@ impl WaveField {
     /// The envelope at normalised position `t` across the visible span
     /// (0 = oldest/left, 1 = newest/right), resampled at the current sub-sample
     /// offset so the values slide continuously rather than stepping.
+    #[allow(dead_code)]
     fn value_at(&self, t: f32) -> f32 {
         let back = (1.0 - t.clamp(0.0, 1.0)) * WAVE_SPAN + self.accum;
         let b = back.floor();
@@ -1274,6 +1281,26 @@ impl WaveField {
         // at(b) is the newer neighbour, at(b + 1) the older one.
         catmull_scalar(self.at(b - 1), self.at(b), self.at(b + 1), self.at(b + 2), f)
             .clamp(0.0, 1.0)
+    }
+
+    /// Bar amplitude for a STATIONARY display at normalised position `t` (0 =
+    /// left, 1 = right). Unlike `value_at`, nothing here scrolls — each bar
+    /// sits at a fixed x position and only its height moves, driven by three
+    /// oscillators with mutually incommensurate frequencies whose phase shifts
+    /// are spread across `t`. The result looks like a frequency-spectrum meter:
+    /// adjacent bars diverge in height, the pattern never obviously repeats, and
+    /// the whole field rises/falls with the current amplitude follower `level`.
+    fn stable_at(&self, t: f32) -> f32 {
+        if self.level < 1e-4 {
+            return 0.0;
+        }
+        let p = t * std::f32::consts::TAU;
+        let w1 = (self.clock * 1.3 + p * 1.7).sin();
+        let w2 = (self.clock * 2.1 + p * 2.9).sin();
+        let w3 = (self.clock * 3.7 + p * 0.8).sin();
+        // Average the three sines and rescale [-1,1] → [0,1].
+        let osc = (w1 + w2 + w3) / 3.0 * 0.5 + 0.5;
+        (self.level * osc).clamp(0.0, 1.0)
     }
 
     /// Drop back to silence so the next session opens on a flat line instead of
@@ -1386,14 +1413,11 @@ fn paint_wave_body(
 }
 
 /// Draw the waveform: a row of vertical rounded bars centred on `cy`, each one
-/// as tall as the voice was at that point in the visible span.
-///
-/// The bars sit at FIXED x positions and only their heights animate. The scroll
-/// lives in the data — each bar reads the history at a fractional offset that
-/// slides continuously (see `WaveField::value_at`), so the shape flows through a
-/// stationary row instead of the row itself marching sideways. That is what a
-/// recording meter actually does, and it avoids the shimmer that sub-pixel bar
-/// positions produce on a software renderer.
+/// animated by the current amplitude level. Bars sit at FIXED x positions —
+/// nothing scrolls. Instead, three oscillators with different bar-position phase
+/// offsets drive each bar semi-independently (see `WaveField::stable_at`), and a
+/// half-sine taper softens the edges so the row tapers toward the tips rather
+/// than chopping off square.
 #[allow(clippy::too_many_arguments)]
 fn draw_wave_bars(
     pixmap: &mut Pixmap,
@@ -1430,13 +1454,16 @@ fn draw_wave_bars(
     paint.set_color(Color::from_rgba8(color[0], color[1], color[2], a));
 
     for i in 0..n {
-        let t = if n == 1 {
-            1.0
+        let t = if n <= 1 {
+            0.5
         } else {
             i as f32 / (n - 1) as f32
         };
-        let v = field.value_at(t);
-        let h = WAVE_BAR_MIN_H + v * reach;
+        let v = field.stable_at(t);
+        // Taper: half-sine envelope — edge bars are WAVE_TAPER_MIN × the reach
+        // of the centre bar, rising smoothly to the full reach at t = 0.5.
+        let taper = WAVE_TAPER_MIN + (1.0 - WAVE_TAPER_MIN) * (std::f32::consts::PI * t).sin();
+        let h = WAVE_BAR_MIN_H + v * taper * reach;
         let bx = x0 + i as f32 * pitch;
         let by = cy - h / 2.0;
         if let Some(path) = rounded_rect_path(bx, by, WAVE_BAR_W, h, r) {
@@ -5520,12 +5547,12 @@ mod tests {
     }
 
     #[test]
-    fn the_wave_skin_is_exactly_twenty_percent_smaller_than_the_matrix_skin() {
+    fn the_wave_skin_is_smaller_than_the_matrix_skin_by_the_shrink_factor() {
         let m = PillGeom::for_skin(PillSkin::Matrix);
         let w = PillGeom::for_skin(PillSkin::Wave);
-        assert_eq!(w.core_w, m.core_w * 0.8);
-        assert_eq!(w.body_h, m.body_h * 0.8);
-        assert_eq!(w.inset, m.inset * 0.8);
+        assert_eq!(w.core_w, m.core_w * SKIN_SHRINK);
+        assert_eq!(w.body_h, m.body_h * SKIN_SHRINK);
+        assert_eq!(w.inset, m.inset * SKIN_SHRINK);
         // The band above the pill is the prompt capsule's runway, not part of
         // the pill — it must NOT shrink with the body.
         assert_eq!(w.y_off, m.y_off);
