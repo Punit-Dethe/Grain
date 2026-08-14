@@ -3860,6 +3860,69 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   margin-bottom: 34px;
 }
 
+.tool-main-heading.has-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.tool-main-heading.has-toggle > div {
+  min-width: 0;
+}
+
+.tool-master-toggle {
+  flex: 0 0 auto;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.tool-master-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.tool-master-toggle-track {
+  width: 40px;
+  height: 24px;
+  padding: 3px;
+  border-radius: 999px;
+  display: block;
+  background: var(--bg-4);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  transition: background 180ms ease;
+}
+
+.tool-master-toggle-track::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: block;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+  transition: transform 180ms var(--ease-out);
+}
+
+.tool-master-toggle input:checked + .tool-master-toggle-track {
+  background: #5269c7;
+}
+
+.tool-master-toggle input:checked + .tool-master-toggle-track::after {
+  transform: translateX(16px);
+}
+
+.tool-master-toggle input:focus-visible + .tool-master-toggle-track {
+  box-shadow: 0 0 0 3px var(--accent-focus);
+}
+
+.tool-master-toggle input:disabled + .tool-master-toggle-track {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .tool-main-heading h1 {
   font-size: 25px;
   font-weight: 640;
@@ -3916,7 +3979,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   padding: 20px 22px;
   position: relative;
   overflow: hidden;
-  border-radius: var(--radius-md);
+  border-radius: 16px;
   background: var(--bg-2);
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
@@ -3950,6 +4013,10 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   font-size: 11.5px;
   font-weight: 620;
   cursor: default;
+}
+
+.next-settings-content .dictionary-learn-more {
+  border-radius: 999px !important;
 }
 
 .dictionary-guide-examples {
@@ -4044,6 +4111,20 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   font-size: 12px;
 }
 
+.next-settings-content .tool-search input.tool-search-input {
+  min-height: 0 !important;
+  height: 100% !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  color: var(--text-1) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
 .dictionary-search input::placeholder {
   color: var(--text-2);
 }
@@ -4061,8 +4142,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  color: var(--accent-ink);
-  background: var(--accent);
+  color: #fff;
+  background: #5269c7;
   font-size: 12px;
   font-weight: 640;
   cursor: pointer;
@@ -4073,7 +4154,13 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .dictionary-add-button:hover,
 .dictionary-save-button:hover {
-  background: var(--accent-hover);
+  background: #6078d5;
+}
+
+.next-settings-content .dictionary-add-button,
+.next-settings-content .dictionary-save-button {
+  border-radius: 999px !important;
+  color: #fff !important;
 }
 
 .dictionary-add-button:active,
@@ -4087,36 +4174,105 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   transform: none;
 }
 
+.next-settings-content .dictionary-save-button:disabled {
+  opacity: 0.48 !important;
+}
+
 .dictionary-term-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
-.dictionary-term {
+.dictionary-term-card,
+.snippet-card {
   min-width: 0;
-  min-height: 44px;
-  padding: 0 16px;
+  position: relative;
   overflow: hidden;
-  border-radius: 12px;
-  color: var(--text-2);
+  border-radius: 16px;
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--hairline);
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.dictionary-term-card:hover,
+.dictionary-term-card:focus-within,
+.snippet-card:hover,
+.snippet-card:focus-within {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
+}
+
+.dictionary-term {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 44px 0 16px;
+  overflow: hidden;
+  color: var(--text-2);
+  background: transparent;
   font-size: 12.5px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
-  transition:
-    color 150ms ease,
-    background 150ms ease,
-    box-shadow 150ms ease;
+  transition: color 150ms ease;
 }
 
-.dictionary-term:hover {
+.dictionary-term-card:hover .dictionary-term,
+.dictionary-term:focus-visible {
   color: var(--text-1);
-  background: var(--bg-2);
-  box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
+}
+
+.next-settings-content .dictionary-term,
+.next-settings-content .snippet-card-main {
+  border-radius: 16px !important;
+}
+
+.tool-card-delete {
+  width: 32px;
+  height: 32px;
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  z-index: 1;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: var(--bg-3);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scale(0.92);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    opacity 140ms ease,
+    transform 180ms var(--ease-out);
+}
+
+.dictionary-term-card:hover .tool-card-delete,
+.dictionary-term-card:focus-within .tool-card-delete,
+.snippet-card:hover .tool-card-delete,
+.snippet-card:focus-within .tool-card-delete {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+}
+
+.tool-card-delete:hover {
+  color: var(--danger);
+}
+
+.next-settings-content .tool-card-delete {
+  border-radius: 10px !important;
+}
+
+.tool-card-delete:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .dictionary-empty-state {
@@ -4151,8 +4307,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .dictionary-dialog {
   width: min(448px, 100%);
-  min-height: 264px;
-  padding: 27px 31px 30px;
+  padding: 28px 32px 30px;
   position: relative;
   border-radius: var(--radius-lg);
   color: var(--text-1);
@@ -4179,6 +4334,10 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   color: var(--text-1);
 }
 
+.next-settings-content .dictionary-dialog-close {
+  border-radius: 50% !important;
+}
+
 .dictionary-dialog h2 {
   padding-right: 34px;
   font-size: 17px;
@@ -4186,11 +4345,32 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   letter-spacing: -0.02em;
 }
 
-.dictionary-dialog form > p {
-  margin: 20px 0 17px;
+.dictionary-dialog-header {
+  padding-right: 34px;
+  display: grid;
+  gap: 8px;
+}
+
+.dictionary-dialog-header p {
+  margin: 0;
   color: var(--text-2);
   font-size: 12.5px;
   line-height: 1.5;
+}
+
+.dictionary-dialog-form {
+  margin-top: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.dictionary-dialog-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.dictionary-dialog-fields label {
+  display: block;
 }
 
 .dictionary-dialog-input {
@@ -4206,12 +4386,34 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   font-size: 12.5px;
 }
 
+.next-settings-content .dictionary-dialog input.dictionary-dialog-input,
+.next-settings-content .dictionary-dialog textarea.dictionary-dialog-input {
+  min-height: 44px !important;
+  border-radius: 14px !important;
+  color: var(--text-1) !important;
+  background: var(--bg-3) !important;
+  box-shadow: inset 0 0 0 1px var(--hairline-soft) !important;
+}
+
+.next-settings-content .dictionary-dialog textarea.dictionary-dialog-textarea {
+  height: 96px;
+  padding: 13px 15px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
 .dictionary-dialog-input::placeholder {
   color: var(--text-2);
 }
 
 .dictionary-dialog-input[aria-invalid="true"] {
   box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.next-settings-content
+  .dictionary-dialog
+  :is(input, textarea).dictionary-dialog-input[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--danger) !important;
 }
 
 .dictionary-term-error {
@@ -4222,30 +4424,72 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .dictionary-dialog-actions {
-  margin-top: 17px;
   display: flex;
   justify-content: flex-end;
   align-items: center;
   gap: 12px;
 }
 
-.dictionary-dialog-actions.has-remove {
-  justify-content: space-between;
+.dictionary-dialog-actions .dictionary-save-button {
+  min-width: 104px;
 }
 
-.dictionary-remove-button {
-  min-height: 34px;
-  padding: 0 4px;
-  color: var(--danger);
+.snippet-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.snippet-card {
+  min-height: 116px;
+}
+
+.snippet-card-main {
+  width: 100%;
+  min-height: 116px;
+  padding: 17px 52px 17px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-1);
   background: transparent;
-  font-size: 11.5px;
-  font-weight: 580;
+  text-align: left;
   cursor: pointer;
 }
 
-.dictionary-remove-button:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+.snippet-card-main strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snippet-card-replacement {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.snippet-card-replacement > svg {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.snippet-card-replacement > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
 }
 
 @keyframes dictionary-backdrop-in {
@@ -4272,7 +4516,17 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   }
 
   .dictionary-term-grid {
+    gap: 8px;
+  }
+
+  .snippet-card-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 660px) {
+  .dictionary-term-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

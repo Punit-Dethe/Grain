@@ -5,25 +5,24 @@ import {
   BookOpen,
   ChevronRight,
   Code2,
+  CornerDownRight,
   Plus,
   Search,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import {
   commands,
   type ExtensionCard,
+  type Snippet,
   type StoreEntry,
   type StoreView,
 } from "@/bindings";
 import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
-import {
-  FeaturePanel,
-  useFeatureEnabled,
-} from "@/components/settings/experimentations/FeaturePanel";
+import { FeaturePanel } from "@/components/settings/experimentations/FeaturePanel";
 import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
-import { SnippetsSection } from "@/components/settings/experimentations/SnippetsSection";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
 import { StoreCard } from "../extensions/StoreCard";
@@ -202,28 +201,28 @@ type DictionaryDialogState =
   | { mode: "add" }
   | { mode: "edit"; original: string };
 
-function DictionaryTermDialog({
-  state,
+function ToolDialog({
+  id,
+  title,
+  description,
   busy,
   onClose,
-  onSave,
-  onRemove,
+  children,
 }: {
-  state: DictionaryDialogState;
+  id: string;
+  title: string;
+  description: string;
   busy: boolean;
   onClose: () => void;
-  onSave: (value: string) => Promise<string | null>;
-  onRemove: () => Promise<void>;
+  children: React.ReactNode;
 }) {
-  const editing = state.mode === "edit";
-  const [term, setTerm] = useState(editing ? state.original : "");
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
 
   useEffect(() => {
     const returnFocusTo = document.activeElement as HTMLElement | null;
-    inputRef.current?.focus();
+    dialogRef.current
+      ?.querySelector<HTMLElement>("[data-dialog-initial-focus]")
+      ?.focus();
     return () => returnFocusTo?.focus();
   }, []);
 
@@ -232,7 +231,7 @@ function DictionaryTermDialog({
       if (event.key === "Escape" && !busy) onClose();
       if (event.key !== "Tab") return;
       const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        "button:not(:disabled), input:not(:disabled)",
+        "button:not(:disabled), input:not(:disabled), textarea:not(:disabled)",
       );
       if (!focusable?.length) return;
       const first = focusable[0];
@@ -249,16 +248,6 @@ function DictionaryTermDialog({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [busy, onClose]);
 
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const nextError = await onSave(term);
-    if (nextError) {
-      setError(nextError);
-    } else {
-      onClose();
-    }
-  };
-
   return (
     <div
       className="dictionary-dialog-backdrop"
@@ -272,7 +261,8 @@ function DictionaryTermDialog({
         className="dictionary-dialog"
         role="dialog"
         aria-modal="true"
-        aria-labelledby="dictionary-dialog-title"
+        aria-labelledby={`${id}-title`}
+        aria-describedby={`${id}-description`}
       >
         <button
           className="dictionary-dialog-close"
@@ -283,17 +273,60 @@ function DictionaryTermDialog({
         >
           <X size={16} aria-hidden="true" />
         </button>
-        <form onSubmit={(event) => void submit(event)}>
-          <h2 id="dictionary-dialog-title">
-            {editing ? "Edit term" : "Add a term"}
-          </h2>
-          <p>
-            {editing
-              ? "Update this term in your personal dictionary."
-              : "Help Grain recognize names, slang, or custom terms."}
-          </p>
+        <header className="dictionary-dialog-header">
+          <h2 id={`${id}-title`}>{title}</h2>
+          <p id={`${id}-description`}>{description}</p>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+function DictionaryTermDialog({
+  state,
+  busy,
+  onClose,
+  onSave,
+}: {
+  state: DictionaryDialogState;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (value: string) => Promise<string | null>;
+}) {
+  const editing = state.mode === "edit";
+  const [term, setTerm] = useState(editing ? state.original : "");
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const nextError = await onSave(term);
+    if (nextError) {
+      setError(nextError);
+    } else {
+      onClose();
+    }
+  };
+
+  return (
+    <ToolDialog
+      id="dictionary-term-dialog"
+      title={editing ? "Edit term" : "Add a term"}
+      description={
+        editing
+          ? "Update this term in your personal dictionary."
+          : "Help Grain recognize names, slang, or custom terms."
+      }
+      busy={busy}
+      onClose={onClose}
+    >
+      <form
+        className="dictionary-dialog-form"
+        onSubmit={(event) => void submit(event)}
+      >
+        <div className="dictionary-dialog-fields">
           <input
-            ref={inputRef}
+            data-dialog-initial-focus
             className="dictionary-dialog-input"
             value={term}
             maxLength={50}
@@ -309,39 +342,27 @@ function DictionaryTermDialog({
               setError(null);
             }}
           />
-          {error && (
-            <span
-              id="dictionary-term-error"
-              className="dictionary-term-error"
-              role="alert"
-            >
-              {error}
-            </span>
-          )}
-          <div
-            className={`dictionary-dialog-actions ${editing ? "has-remove" : ""}`}
+        </div>
+        {error && (
+          <span
+            id="dictionary-term-error"
+            className="dictionary-term-error"
+            role="alert"
           >
-            {editing && (
-              <button
-                className="dictionary-remove-button"
-                type="button"
-                disabled={busy}
-                onClick={() => void onRemove()}
-              >
-                Remove term
-              </button>
-            )}
-            <button
-              className="dictionary-save-button"
-              type="submit"
-              disabled={!term.trim() || busy}
-            >
-              {busy ? "Saving…" : editing ? "Save changes" : "Add"}
-            </button>
-          </div>
-        </form>
-      </section>
-    </div>
+            {error}
+          </span>
+        )}
+        <div className="dictionary-dialog-actions">
+          <button
+            className="dictionary-save-button"
+            type="submit"
+            disabled={!term.trim() || busy}
+          >
+            {busy ? "Saving…" : editing ? "Save changes" : "Add"}
+          </button>
+        </div>
+      </form>
+    </ToolDialog>
   );
 }
 
@@ -387,18 +408,15 @@ function DictionaryTool() {
     return null;
   };
 
-  const removeTerm = async () => {
-    if (dialog?.mode !== "edit") return;
-    const index = words.indexOf(dialog.original);
+  const removeTerm = async (word: string) => {
+    const index = words.indexOf(word);
     if (index < 0) {
-      closeDialog();
       return;
     }
     await updateSetting(
       "custom_words",
       words.filter((_, wordIndex) => wordIndex !== index),
     );
-    closeDialog();
   };
 
   return (
@@ -422,10 +440,11 @@ function DictionaryTool() {
       </div>
 
       <div className="dictionary-toolbar">
-        <label className="dictionary-search">
+        <label className="dictionary-search tool-search">
           <Search size={17} aria-hidden="true" />
           <span className="sr-only">Search dictionary</span>
           <input
+            className="tool-search-input"
             type="search"
             value={query}
             placeholder="Search"
@@ -445,15 +464,25 @@ function DictionaryTool() {
       {filteredWords.length > 0 ? (
         <div className="dictionary-term-grid" aria-label="Dictionary terms">
           {filteredWords.map((word) => (
-            <button
-              key={word}
-              className="dictionary-term"
-              type="button"
-              aria-label={`Edit ${word}`}
-              onClick={() => setDialog({ mode: "edit", original: word })}
-            >
-              {word}
-            </button>
+            <div key={word} className="dictionary-term-card">
+              <button
+                className="dictionary-term"
+                type="button"
+                aria-label={`Edit ${word}`}
+                onClick={() => setDialog({ mode: "edit", original: word })}
+              >
+                {word}
+              </button>
+              <button
+                className="tool-card-delete"
+                type="button"
+                aria-label={`Remove ${word}`}
+                disabled={busy}
+                onClick={() => void removeTerm(word)}
+              >
+                <Trash2 size={15} aria-hidden="true" />
+              </button>
+            </div>
           ))}
         </div>
       ) : (
@@ -473,32 +502,291 @@ function DictionaryTool() {
           busy={busy}
           onClose={closeDialog}
           onSave={saveTerm}
-          onRemove={removeTerm}
         />
       )}
     </section>
   );
 }
 
+const MAX_SNIPPET_TRIGGER_LENGTH = 100;
+
+const normalizeSnippetTrigger = (trigger: string) =>
+  trigger.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+
+type SnippetDialogState = { mode: "add" } | { mode: "edit"; snippet: Snippet };
+
+function SnippetDialog({
+  state,
+  busy,
+  onClose,
+  onSave,
+}: {
+  state: SnippetDialogState;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (trigger: string, replacement: string) => Promise<string | null>;
+}) {
+  const editing = state.mode === "edit";
+  const [trigger, setTrigger] = useState(editing ? state.snippet.trigger : "");
+  const [replacement, setReplacement] = useState(
+    editing ? state.snippet.replacement : "",
+  );
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const nextError = await onSave(trigger, replacement);
+    if (nextError) {
+      setError(nextError);
+    } else {
+      onClose();
+    }
+  };
+
+  return (
+    <ToolDialog
+      id="snippet-dialog"
+      title={editing ? "Edit shortcut" : "Add a shortcut"}
+      description="Say the trigger phrase and Grain types the saved text."
+      busy={busy}
+      onClose={onClose}
+    >
+      <form
+        className="dictionary-dialog-form"
+        onSubmit={(event) => void submit(event)}
+      >
+        <div className="dictionary-dialog-fields">
+          <label>
+            <span className="sr-only">Trigger phrase</span>
+            <input
+              data-dialog-initial-focus
+              className="dictionary-dialog-input"
+              value={trigger}
+              maxLength={MAX_SNIPPET_TRIGGER_LENGTH}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+              aria-invalid={Boolean(error) || undefined}
+              placeholder="The phrase you'll say"
+              onChange={(event) => {
+                setTrigger(event.target.value);
+                setError(null);
+              }}
+            />
+          </label>
+          <label>
+            <span className="sr-only">Replacement text</span>
+            <textarea
+              className="dictionary-dialog-input dictionary-dialog-textarea"
+              value={replacement}
+              disabled={busy}
+              aria-invalid={Boolean(error) || undefined}
+              placeholder="What Grain should type"
+              onChange={(event) => {
+                setReplacement(event.target.value);
+                setError(null);
+              }}
+            />
+          </label>
+        </div>
+        {error && (
+          <span className="dictionary-term-error" role="alert">
+            {error}
+          </span>
+        )}
+        <div className="dictionary-dialog-actions">
+          <button
+            className="dictionary-save-button"
+            type="submit"
+            disabled={!trigger.trim() || !replacement.trim() || busy}
+          >
+            {busy ? "Saving…" : editing ? "Save changes" : "Add"}
+          </button>
+        </div>
+      </form>
+    </ToolDialog>
+  );
+}
+
+function SnippetsMasterToggle() {
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const enabled = getSetting("snippets_enabled") ?? false;
+  const busy = isUpdating("snippets_enabled");
+
+  return (
+    <label className="tool-master-toggle" title="Turn snippets on or off">
+      <span className="sr-only">Enable snippets</span>
+      <input
+        type="checkbox"
+        checked={enabled}
+        disabled={busy}
+        onChange={(event) =>
+          void updateSetting("snippets_enabled", event.target.checked)
+        }
+      />
+      <span className="tool-master-toggle-track" aria-hidden="true" />
+    </label>
+  );
+}
+
 function SnippetsTool() {
-  const enabled = useFeatureEnabled("snippets_enabled");
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const enabled = getSetting("snippets_enabled") ?? false;
+  const [query, setQuery] = useState("");
+  const [dialog, setDialog] = useState<SnippetDialogState | null>(null);
+  const snippets = getSetting("snippets") ?? [];
+  const busy = isUpdating("snippets");
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const filteredSnippets = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return snippets;
+    return snippets.filter((snippet) =>
+      `${snippet.trigger}\n${snippet.replacement}`
+        .toLocaleLowerCase()
+        .includes(normalizedQuery),
+    );
+  }, [query, snippets]);
+
+  const saveSnippet = async (trigger: string, replacement: string) => {
+    const candidate = trigger.trim();
+    if (!candidate) return "Enter a trigger phrase to continue.";
+    if (candidate.length > MAX_SNIPPET_TRIGGER_LENGTH) {
+      return `Keep the trigger under ${MAX_SNIPPET_TRIGGER_LENGTH} characters.`;
+    }
+    if (!replacement.trim()) return "Enter the text Grain should type.";
+
+    const editingId = dialog?.mode === "edit" ? dialog.snippet.id : null;
+    const normalized = normalizeSnippetTrigger(candidate);
+    if (!normalized) return "Use at least one letter or number in the trigger.";
+    const duplicate = snippets.some(
+      (snippet) =>
+        snippet.id !== editingId &&
+        normalizeSnippetTrigger(snippet.trigger) === normalized,
+    );
+    if (duplicate) return `“${candidate}” already has a shortcut.`;
+
+    const nextSnippets: Snippet[] = editingId
+      ? snippets.map((snippet) =>
+          snippet.id === editingId
+            ? { ...snippet, trigger: candidate, replacement }
+            : snippet,
+        )
+      : [
+          ...snippets,
+          {
+            id: crypto.randomUUID(),
+            trigger: candidate,
+            replacement,
+            enabled: true,
+          },
+        ];
+    await updateSetting("snippets", nextSnippets);
+    return null;
+  };
+
+  const removeSnippet = async (id: string) => {
+    await updateSetting(
+      "snippets",
+      snippets.filter((snippet) => snippet.id !== id),
+    );
+  };
+
+  if (!enabled) return null;
+
   return (
     <>
-      <section className="tool-section">
-        <div className="tool-section-head">
-          <div>
-            <h2>Snippet library</h2>
-            <p>Create and manage phrases Grain can expand from your voice.</p>
+      <section className="dictionary-workspace" aria-label="Personal shortcuts">
+        <div className="dictionary-guide snippets-guide">
+          <div className="dictionary-guide-copy">
+            <h2>How to use snippets</h2>
+            <p>
+              Say a short trigger phrase and Grain replaces it with your saved
+              text. Snippets stay on this device.
+            </p>
+            <button type="button" className="dictionary-learn-more" disabled>
+              Learn more
+            </button>
+          </div>
+          <div className="dictionary-guide-examples" aria-hidden="true">
+            <span>my email</span>
+            <span>meeting link</span>
+            <span>sign off</span>
           </div>
         </div>
-        <div className="tool-component-host space-y-6">
-          <FeaturePanel
-            settingKey="snippets_enabled"
-            title="Snippets"
-            info="Speak a trigger phrase and Grain expands it into saved text locally before paste."
-          />
-          {enabled && <SnippetsSection untitled />}
+
+        <div className="dictionary-toolbar">
+          <label className="dictionary-search tool-search">
+            <Search size={17} aria-hidden="true" />
+            <span className="sr-only">Search shortcuts</span>
+            <input
+              className="tool-search-input"
+              type="search"
+              value={query}
+              placeholder="Search"
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </label>
+          <button
+            className="dictionary-add-button"
+            type="button"
+            onClick={() => setDialog({ mode: "add" })}
+          >
+            <Plus size={16} aria-hidden="true" />
+            Add shortcut
+          </button>
         </div>
+
+        {filteredSnippets.length > 0 ? (
+          <div className="snippet-card-grid" aria-label="Saved shortcuts">
+            {filteredSnippets.map((snippet) => (
+              <div key={snippet.id} className="snippet-card">
+                <button
+                  className="snippet-card-main"
+                  type="button"
+                  aria-label={`Edit ${snippet.trigger}`}
+                  onClick={() =>
+                    setDialog({ mode: "edit", snippet: { ...snippet } })
+                  }
+                >
+                  <strong>{snippet.trigger}</strong>
+                  <span className="snippet-card-replacement">
+                    <CornerDownRight size={14} aria-hidden="true" />
+                    <span>{snippet.replacement}</span>
+                  </span>
+                </button>
+                <button
+                  className="tool-card-delete"
+                  type="button"
+                  aria-label={`Remove ${snippet.trigger}`}
+                  disabled={busy}
+                  onClick={() => void removeSnippet(snippet.id)}
+                >
+                  <Trash2 size={15} aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="dictionary-empty-state">
+            <strong>
+              {query.trim() ? "No matching shortcuts" : "No shortcuts yet"}
+            </strong>
+            <span>
+              {query.trim()
+                ? "Try another search."
+                : "Add a phrase Grain should expand."}
+            </span>
+          </div>
+        )}
+
+        {dialog && (
+          <SnippetDialog
+            state={dialog}
+            busy={busy}
+            onClose={closeDialog}
+            onSave={saveSnippet}
+          />
+        )}
       </section>
       <ExtensionAnchor anchor="snippets.after" />
       <ToolRecommendations tool="snippets" />
@@ -619,13 +907,18 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
           <section className="tools-canvas" aria-labelledby="next-tool-title">
             <div className="tools-scroll">
               <div className="tools-content next-settings-content">
-                <header className="tool-main-heading">
-                  <h1 id="next-tool-title">
-                    {section === "dictionary"
-                      ? "Personal Dictionary"
-                      : copy.title}
-                  </h1>
-                  <p>{copy.description}</p>
+                <header
+                  className={`tool-main-heading ${section === "snippets" ? "has-toggle" : ""}`}
+                >
+                  <div>
+                    <h1 id="next-tool-title">
+                      {section === "dictionary"
+                        ? "Personal Dictionary"
+                        : copy.title}
+                    </h1>
+                    <p>{copy.description}</p>
+                  </div>
+                  {section === "snippets" && <SnippetsMasterToggle />}
                 </header>
                 {section === "dictionary" ? (
                   <DictionaryTool />
