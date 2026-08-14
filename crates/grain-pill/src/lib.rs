@@ -63,6 +63,13 @@ const SCALE: f32 = 1.0; // px per grid unit — small pill (native QML size)
 // more. (The Studio and AgentInput surfaces have their own fixed geometry and
 // are deliberately untouched by the skin.)
 const SKIN_SHRINK: f32 = 0.85;
+/// [GRAIN] Extra HEIGHT for the wave capsule, on top of `SKIN_SHRINK`. The wave
+/// wanted a little more room to breathe than the square-ish shrink gave it.
+/// Height only — the width is already where it should be — so this is the one
+/// place the capsule stops being a uniform scale of the matrix one. Everything
+/// inside is positioned from the body's centre line, so nothing needs moving:
+/// see `cy` in `paint_wave_body`.
+const WAVE_H_BOOST: f32 = 1.12;
 
 /// Runtime geometry of the COLLAPSED pill for one skin. Pure and copy-cheap —
 /// recomputed wherever it's needed instead of cached, so a skin change can never
@@ -96,7 +103,7 @@ impl PillGeom {
             PillSkin::Wave => PillGeom {
                 core_w: base.core_w * SKIN_SHRINK,
                 inset: base.inset * SKIN_SHRINK,
-                body_h: base.body_h * SKIN_SHRINK,
+                body_h: base.body_h * SKIN_SHRINK * WAVE_H_BOOST,
                 y_off: base.y_off,
             },
         }
@@ -116,14 +123,14 @@ impl PillGeom {
     }
 }
 
-/// [GRAIN] The surface colour every Grain pill body shares: a deep charcoal
-/// carrying a green cast — "grain", not neutral black.
+/// [GRAIN] The surface colour every Grain pill body shares: #1E1E20, a neutral
+/// near-black with a whisper of warmth.
 ///
-/// Pure black (what this was) reads as a HOLE punched in the desktop, because
-/// nothing else on a real screen is #000. A few points of green lift it just
-/// far enough to read as a dark material sitting on top, while staying dark
-/// enough that white text keeps its full contrast against it.
-const GRAIN_SURFACE: [u8; 3] = [17, 23, 20];
+/// Pure black (what this was before) reads as a HOLE punched in the desktop,
+/// because nothing else on a real screen is #000. This sits just far enough
+/// above it to read as dark material lying on top, while staying dark enough
+/// that white text keeps its full contrast.
+const GRAIN_SURFACE: [u8; 3] = [0x1E, 0x1E, 0x20];
 /// Body alpha for the floating capsule, and the (slightly more opaque) alpha for
 /// the larger card surfaces, which would otherwise show too much desktop.
 const GRAIN_SURFACE_A: u8 = 242;
@@ -132,12 +139,11 @@ const GRAIN_CARD_A: f32 = 246.0;
 /// [GRAIN] A hairline rim around every Grain surface.
 ///
 /// On a dark desktop the capsule's edge dissolves into whatever is behind it and
-/// the pill loses its shape; one pixel of a lighter grey-green gives it a
-/// defined edge. Picked as a desaturated lift of `GRAIN_SURFACE` rather than a
-/// neutral grey, so the rim belongs to the surface instead of outlining it —
-/// at this weight a true grey reads as a drawn border.
-const GRAIN_BORDER: [u8; 3] = [58, 70, 63];
-const GRAIN_BORDER_A: u8 = 165;
+/// the pill loses its shape; one pixel of #4B4B4D gives it a defined edge. It is
+/// the same hue as `GRAIN_SURFACE`, lifted — so the rim reads as the lit top
+/// edge of the surface rather than as a line drawn around it.
+const GRAIN_BORDER: [u8; 3] = [0x4B, 0x4B, 0x4D];
+const GRAIN_BORDER_A: u8 = 255;
 /// Hairline. Kept at exactly 1px: the pill is drawn unscaled into a layered
 /// window, so anything wider stops reading as a rim and starts reading as a frame.
 const GRAIN_BORDER_W: f32 = 1.0;
@@ -378,20 +384,32 @@ const STUDIO_WORD_REVEAL: Duration = Duration::from_millis(260);
 // dot / waveform / timer so the Studio Window matches the collapsed capsule.
 const ACCENT: [u8; 3] = [255, 93, 30];
 
-/// A rounded-rect path (quadratic corners — plenty smooth at this size; tiny-skia
-/// has no built-in rounded-rect constructor). Used for the Studio Window background.
+/// The cubic Bézier circle constant: the control-point offset, as a fraction of
+/// the radius, that approximates a 90° arc to within ~0.02% of a true circle.
+const KAPPA: f32 = 0.552_284_75;
+
+/// A rounded-rect path (tiny-skia has no built-in rounded-rect constructor).
+///
+/// [GRAIN] The corners are CUBIC. They were quadratic, with a comment claiming
+/// that was "plenty smooth at this size" — which was true while the only caller
+/// was the Studio card's 16px corners on a 420px card. It stopped being true the
+/// moment the collapsed pill asked for `r = h/2`: one quadratic spanning a full
+/// 90° of a semicircle bulges visibly short of the arc, so the capsule's ends
+/// read as flattened rather than round. A cubic with `KAPPA` is exact enough to
+/// be indistinguishable, at the same cost per corner.
 fn rounded_rect_path(x: f32, y: f32, w: f32, h: f32, r: f32) -> Option<tiny_skia::Path> {
     let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let c = r * KAPPA;
     let mut pb = PathBuilder::new();
     pb.move_to(x + r, y);
     pb.line_to(x + w - r, y);
-    pb.quad_to(x + w, y, x + w, y + r);
+    pb.cubic_to(x + w - r + c, y, x + w, y + r - c, x + w, y + r);
     pb.line_to(x + w, y + h - r);
-    pb.quad_to(x + w, y + h, x + w - r, y + h);
+    pb.cubic_to(x + w, y + h - r + c, x + w - r + c, y + h, x + w - r, y + h);
     pb.line_to(x + r, y + h);
-    pb.quad_to(x, y + h, x, y + h - r);
+    pb.cubic_to(x + r - c, y + h, x, y + h - r + c, x, y + h - r);
     pb.line_to(x, y + r);
-    pb.quad_to(x, y, x + r, y);
+    pb.cubic_to(x, y + r - c, x + r - c, y, x + r, y);
     pb.close();
     pb.finish()
 }
@@ -1215,7 +1233,7 @@ const WAVE_DOT_GAP: f32 = 9.0;
 /// [GRAIN] Pill identity: edge length the app icon is drawn at, in place of the
 /// state disc. Larger than the dot, so the wave's start shifts with it — see
 /// `wave_slot_w`.
-const WAVE_ICON_PX: u32 = 22;
+const WAVE_ICON_PX: u32 = 18;
 /// Fraction of the capsule's half-height the wave may reach at full volume.
 const WAVE_FILL: f32 = 0.62;
 /// [GRAIN] The SHOULDERS. Each bar has its own ceiling on how far it may travel.
@@ -4585,25 +4603,12 @@ impl App {
                 body_rgba[2],
                 body_rgba[3],
             ));
-            if let Some(rect) = Rect::from_ltrb(x0 + r, y_off, x1 - r, y_off + pill_h) {
-                pixmap.fill_path(
-                    &PathBuilder::from_rect(rect),
-                    &body,
-                    FillRule::Winding,
-                    Transform::identity(),
-                    None,
-                );
-            }
-            for cx in [x0 + r, x1 - r] {
-                if let Some(circle) = PathBuilder::from_circle(cx, y_off + r, r) {
-                    pixmap.fill_path(
-                        &circle,
-                        &body,
-                        FillRule::Winding,
-                        Transform::identity(),
-                        None,
-                    );
-                }
+            // One path for the whole capsule. This was a rect plus two circles;
+            // now that `rounded_rect_path` is cubic it traces the same shape, and
+            // sharing it with the rim below guarantees the two cannot disagree
+            // about where the edge is.
+            if let Some(path) = rounded_rect_path(x0, y_off, x1 - x0, pill_h, r) {
+                pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
             }
             // …and its hairline rim, so the capsule keeps its edge against a
             // dark desktop. Skipped for a themed body: an extension that picked
@@ -5864,8 +5869,17 @@ mod tests {
         let m = PillGeom::for_skin(PillSkin::Matrix);
         let w = PillGeom::for_skin(PillSkin::Wave);
         assert_eq!(w.core_w, m.core_w * SKIN_SHRINK);
-        assert_eq!(w.body_h, m.body_h * SKIN_SHRINK);
         assert_eq!(w.inset, m.inset * SKIN_SHRINK);
+        // Height carries an extra boost — the wave capsule is deliberately not a
+        // uniform scale of the matrix one.
+        assert_eq!(w.body_h, m.body_h * SKIN_SHRINK * WAVE_H_BOOST);
+        assert!(w.body_h > m.body_h * SKIN_SHRINK, "the boost must add height");
+        // It must still be a CAPSULE: a full semicircle at each end, which is
+        // only true while the radius is half the height and the body is wider
+        // than it is tall.
+        assert_eq!(w.radius(), w.body_h / 2.0);
+        let (x0, x1) = w.body_x();
+        assert!(x1 - x0 > w.body_h, "a taller-than-wide body is not a capsule");
         // The band above the pill is the prompt capsule's runway, not part of
         // the pill — it must NOT shrink with the body.
         assert_eq!(w.y_off, m.y_off);
