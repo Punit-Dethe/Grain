@@ -1,5 +1,5 @@
 /* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
-import React, { useState } from "react";
+import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
 import {
   AtSign,
   Bot,
@@ -20,6 +20,8 @@ import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
 type ContextProfileId = "email" | "work" | "casual" | "technical" | "other";
+
+const INSTRUCTION_EDITOR_MAX_HEIGHT = 184;
 
 type ContextProfile = {
   id: ContextProfileId;
@@ -130,6 +132,24 @@ export const ContextAwareSection: React.FC = () => {
   const activeProfile =
     CONTEXT_PROFILES.find((profile) => profile.id === activeProfileId) ??
     CONTEXT_PROFILES[0];
+  const instructionEditorRef = useRef<HTMLTextAreaElement>(null);
+  const fitInstructionEditor = useCallback(
+    (editor: HTMLTextAreaElement | null) => {
+      if (!editor) return;
+      editor.style.height = "auto";
+      const overflowing = editor.scrollHeight > INSTRUCTION_EDITOR_MAX_HEIGHT;
+      editor.style.height = `${Math.min(
+        editor.scrollHeight,
+        INSTRUCTION_EDITOR_MAX_HEIGHT,
+      )}px`;
+      editor.style.overflowY = overflowing ? "auto" : "hidden";
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    if (mode === "write") fitInstructionEditor(instructionEditorRef.current);
+  }, [activeProfileId, fitInstructionEditor, instructions, mode]);
 
   return (
     <>
@@ -231,6 +251,7 @@ export const ContextAwareSection: React.FC = () => {
               ) : (
                 <textarea
                   id={`context-profile-prompt-${activeProfile.id}`}
+                  ref={instructionEditorRef}
                   autoFocus
                   value={instructions[activeProfile.id]}
                   aria-labelledby={`context-profile-tab-${activeProfile.id} context-profile-instruction-label-${activeProfile.id}`}
