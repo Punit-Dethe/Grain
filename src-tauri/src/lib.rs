@@ -64,6 +64,7 @@ mod grain_llm_client;
 // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
 mod grain_overlay;
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
+mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
 mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
@@ -86,6 +87,7 @@ mod paste_tx;
 #[path = "handy/portable.rs"]
 pub mod portable;
 mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
+mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
 mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
@@ -404,6 +406,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());
+    // [GRAIN] Paste Catch: empty at idle — it only holds anything between a
+    // confirmed missed paste and the moment the clipboard is handed back.
+    app_handle.manage(paste_catch::PasteCatchState::default());
 
     // [GRAIN] start the local WebSocket event transport + launch/supervise the pill.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
@@ -839,6 +844,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_selected_language_setting,
             shortcut::change_overlay_position_setting,
             grain_commands::change_pill_skin_setting,
+            grain_commands::change_pill_show_app_icon_setting,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
             shortcut::change_extra_recording_buffer_setting,

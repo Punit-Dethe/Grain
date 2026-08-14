@@ -667,6 +667,12 @@ pub struct AppSettings {
     /// see `PillSkin`). Defaults to the smooth waveform.
     #[serde(default)]
     pub pill_skin: PillSkin,
+    /// [GRAIN] Show the icon of the app being dictated into, in place of the
+    /// pill's state dot. ON while the behaviour is being developed; it will
+    /// later be folded into Context Awareness and shown only for surfaces Grain
+    /// actually differentiates.
+    #[serde(default = "default_pill_show_app_icon")]
+    pub pill_show_app_icon: bool,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
@@ -805,6 +811,19 @@ pub struct AppSettings {
     /// available).
     #[serde(default)]
     pub agent_enabled: bool,
+    /// [GRAIN] Paste Catch: when a dictation paste provably misses the text
+    /// field, hold the transcript on the clipboard behind a visible offer
+    /// instead of letting the restore destroy it. ON by default — a missed
+    /// paste currently loses the transcript outright, and the detection only
+    /// fires on positive evidence, so the failure mode is "no offer shown".
+    #[serde(default = "default_paste_catch_enabled")]
+    pub paste_catch_enabled: bool,
+    /// [GRAIN] How long the caught transcript stays on the clipboard before the
+    /// clipboard is handed back exactly as Handy would have. Long enough to
+    /// notice the offer and reach a field; short enough that holding someone
+    /// else's clipboard stays defensible.
+    #[serde(default = "default_paste_catch_hold_ms")]
+    pub paste_catch_hold_ms: u64,
     /// [GRAIN] One-time marker for the extension-platform settings import above
     /// (SPEC §10.1 upgrade rule). False in files written before the platform;
     /// `load_settings` performs the import exactly once and sets it.
@@ -954,6 +973,16 @@ fn default_audio_conditioning() -> bool {
 fn default_rolling_live_preview() -> bool {
     false
 }
+/// Paste Catch defaults ON: without it a paste that misses the field destroys
+/// the transcript, and the detection only ever acts on positive evidence.
+fn default_paste_catch_enabled() -> bool {
+    true
+}
+/// 20s. Below ~15s a user who has to find a window and click into a field runs
+/// out of time; much above 20s and Grain is squatting on someone's clipboard.
+fn default_paste_catch_hold_ms() -> u64 {
+    20_000
+}
 fn default_translate_to_english() -> bool {
     false
 }
@@ -974,6 +1003,9 @@ fn default_overlay_position() -> OverlayPosition {
     return OverlayPosition::None;
     #[cfg(not(target_os = "linux"))]
     return OverlayPosition::Bottom;
+}
+fn default_pill_show_app_icon() -> bool {
+    true
 }
 fn default_debug_mode() -> bool {
     false
@@ -1528,6 +1560,27 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    // [GRAIN] Paste Catch: deliver a transcript whose paste missed the text
+    // field. Like `agent_followup`, this is registered as a GLOBAL shortcut only
+    // while an offer is live — outside that window the keys belong to whatever
+    // else the user has bound them to.
+    #[cfg(target_os = "macos")]
+    let default_paste_catch_shortcut = "option+v";
+    #[cfg(not(target_os = "macos"))]
+    let default_paste_catch_shortcut = "alt+v";
+    bindings.insert(
+        "paste_catch_deliver".to_string(),
+        ShortcutBinding {
+            id: "paste_catch_deliver".to_string(),
+            name: "Paste Missed Transcript".to_string(),
+            description:
+                "Paste a transcript that missed the text field. Active only while Grain is holding one."
+                    .to_string(),
+            default_binding: default_paste_catch_shortcut.to_string(),
+            current_binding: default_paste_catch_shortcut.to_string(),
+        },
+    );
+
     #[cfg(target_os = "macos")]
     let default_send_to_ai_shortcut = "option+enter";
     #[cfg(not(target_os = "macos"))]
@@ -1630,6 +1683,7 @@ pub fn get_default_settings() -> AppSettings {
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
         pill_skin: PillSkin::default(),
+        pill_show_app_icon: default_pill_show_app_icon(),
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
@@ -1679,6 +1733,8 @@ pub fn get_default_settings() -> AppSettings {
         // the upgrade import in context.rs turns them on for existing users.
         snippets_enabled: false,
         agent_enabled: false,
+        paste_catch_enabled: default_paste_catch_enabled(),
+        paste_catch_hold_ms: default_paste_catch_hold_ms(),
         extensions_imported_v1: false,
         extension_developer_mode: false,
         context_nearby_terms: false,

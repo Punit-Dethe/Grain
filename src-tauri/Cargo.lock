@@ -2951,6 +2951,7 @@ dependencies = [
 name = "grain-pill"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "cpal 0.15.3",
  "fontdue",
  "futures-util",

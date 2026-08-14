@@ -16,6 +16,21 @@ pub fn is_capture_mode(id: &str) -> bool {
     CAPTURE_MODE_IDS.contains(&id)
 }
 
+/// Bindings that are registered **dynamically** — held only while the surface
+/// that owns them is live, never at init:
+///
+/// - `cancel` — while a recording is running.
+/// - `agent_followup` — while an Agent surface (panel / pill offer) is open.
+/// - `paste_catch_deliver` — while Grain is holding a transcript whose paste
+///   missed the text field.
+///
+/// This is the list every registration path consults, so adding a dynamic
+/// binding is a change here and nowhere else. Registering one of these globally
+/// would squat on the user's keys for a surface that is not on screen.
+pub fn is_dynamic_binding(id: &str) -> bool {
+    matches!(id, "cancel" | "agent_followup" | "paste_catch_deliver")
+}
+
 /// Whether a shortcut id should hold a global hotkey at registration time,
 /// given the current settings.
 ///
@@ -25,10 +40,9 @@ pub fn is_capture_mode(id: &str) -> bool {
 /// and left disabled features holding global hotkeys after a Tauri↔HandyKeys
 /// switch. One function means they cannot disagree again.
 ///
-/// `cancel` and `agent_followup` are registered dynamically (on record start /
-/// while the Agent is open), never at init, so they are never held here.
+/// Dynamic bindings are never held here — see [`is_dynamic_binding`].
 pub fn shortcut_holds_hotkey(settings: &AppSettings, id: &str) -> bool {
-    if id == "cancel" || id == "agent_followup" {
+    if is_dynamic_binding(id) {
         return false;
     }
     // The AI key must not hold a hotkey with no post-processing behind it.
@@ -185,8 +199,25 @@ mod tests {
         // Dynamic keys are never held at registration time.
         assert!(!shortcut_holds_hotkey(&s, "cancel"));
         assert!(!shortcut_holds_hotkey(&s, "agent_followup"));
+        assert!(!shortcut_holds_hotkey(&s, "paste_catch_deliver"));
         // An unrelated shortcut is untouched.
         assert!(shortcut_holds_hotkey(&s, "prompt_next"));
+    }
+
+    #[test]
+    fn dynamic_bindings_stay_dynamic_regardless_of_settings() {
+        // The gate must not let a feature toggle promote a dynamic binding to a
+        // globally-held hotkey — that would squat on the keys while the surface
+        // that owns them is off screen.
+        let mut s = get_default_settings();
+        s.post_process_enabled = true;
+        s.agent_enabled = true;
+        s.paste_catch_enabled = true;
+        for id in ["cancel", "agent_followup", "paste_catch_deliver"] {
+            assert!(is_dynamic_binding(id));
+            assert!(!shortcut_holds_hotkey(&s, id));
+        }
+        assert!(!is_dynamic_binding("prompt_next"));
     }
 
     #[test]

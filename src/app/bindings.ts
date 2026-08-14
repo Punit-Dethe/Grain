@@ -148,6 +148,14 @@ async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async changePillShowAppIconSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pill_show_app_icon_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeDebugModeSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_debug_mode_setting", { enabled }) };
@@ -2430,7 +2438,14 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
  * see `PillSkin`). Defaults to the smooth waveform.
  */
-pill_skin?: PillSkin; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
+pill_skin?: PillSkin;
+/**
+ * [GRAIN] Show the icon of the app being dictated into, in place of the
+ * pill's state dot. ON while the behaviour is being developed; it will
+ * later be folded into Context Awareness and shown only for surfaces Grain
+ * actually differentiates.
+ */
+pill_show_app_icon?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */

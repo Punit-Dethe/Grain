@@ -40,6 +40,8 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "ShowOverlay",
     "HideOverlay",
     "PasteError",
+    "PasteMissed",
+    "PasteMissedClear",
     "OverlayConfig",
     "ThemeConfig",
     "AsrStreamText",
@@ -51,7 +53,13 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "ExtensionDisabled",
     "PillTheme",
     "PillSkin",
+    "PillIcon",
 ];
+
+/// Edge length of the icon the core hands the pill, in pixels. Fixed so the
+/// wire payload is always exactly `PILL_ICON_PX² × 4` bytes and neither side has
+/// to negotiate a size; the pill scales it down to whatever its skin draws at.
+pub const PILL_ICON_PX: usize = 32;
 
 /// Capability required to receive (or be woken by) a daemon event variant.
 /// Unknown names return `None` so manifest tooling can reject them rather than
@@ -255,6 +263,20 @@ pub enum DaemonEvent {
         error: String,
     },
 
+    /// [GRAIN] Paste Catch: a transcript's paste provably missed the text field,
+    /// so Grain is holding it on the clipboard instead of letting the restore
+    /// destroy it. The pill shows an offer for the hold's lifetime; pressing
+    /// `shortcut` (or plain Ctrl+V — the transcript really is on the clipboard)
+    /// delivers it. `chars` is the transcript length, for a "42 words held"
+    /// style hint without shipping the text itself to the surface.
+    PasteMissed {
+        shortcut: String,
+        chars: u32,
+    },
+    /// [GRAIN] Withdraw the Paste Catch offer: delivered, superseded by a new
+    /// dictation, or the hold expired and the clipboard was handed back.
+    PasteMissedClear,
+
     /// Where the single pill should anchor — and whether to show at all
     /// (`OverlayPosition::None` = never show). Emitted on session start and when
     /// the user changes the position setting, so the pill can place/hide itself.
@@ -343,6 +365,21 @@ pub enum DaemonEvent {
         #[serde(default)]
         skin: crate::PillSkin,
     },
+
+    /// [GRAIN] The icon of whatever the user is dictating into, so the pill can
+    /// show that it understands the surface rather than merely that it is on.
+    ///
+    /// `PILL_ICON_PX`² **premultiplied** RGBA, base64 — finished pixels, because
+    /// resolving them means COM and the shell on Windows and entirely different
+    /// machinery elsewhere, and none of that belongs in the pill process. `None`
+    /// means "no icon, draw the plain state dot", which is also what the pill
+    /// shows until a cold resolve lands (it never blocks a recording).
+    ///
+    /// Sent at most twice per session, never per frame.
+    PillIcon {
+        #[serde(default)]
+        rgba: Option<String>,
+    },
 }
 
 impl DaemonEvent {
@@ -382,6 +419,8 @@ impl DaemonEvent {
             ShowOverlay => "ShowOverlay",
             HideOverlay => "HideOverlay",
             PasteError { .. } => "PasteError",
+            PasteMissed { .. } => "PasteMissed",
+            PasteMissedClear => "PasteMissedClear",
             OverlayConfig { .. } => "OverlayConfig",
             AsrStreamText { .. } => "AsrStreamText",
             AsrPartial { .. } => "AsrPartial",
@@ -392,6 +431,7 @@ impl DaemonEvent {
             ExtensionDisabled { .. } => "ExtensionDisabled",
             PillTheme { .. } => "PillTheme",
             PillSkin { .. } => "PillSkin",
+            PillIcon { .. } => "PillIcon",
         }
     }
 }

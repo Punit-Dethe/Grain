@@ -736,6 +736,16 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
         }
     }
 
+    // [GRAIN] Paste Catch (pre-flight). Returns true when Grain has taken
+    // ownership of the transcript: focus is provably not editable, so the OS
+    // paste below would be a no-op that destroys the transcript on restore —
+    // and the chord could fire a real command in the target app. The transcript
+    // is held on the clipboard behind a visible offer instead. Every
+    // inconclusive reading returns false and leaves this path untouched.
+    if crate::paste_catch::intercept(&app_handle, &text) {
+        return Ok(());
+    }
+
     let settings = get_settings(&app_handle);
     let paste_method = settings.paste_method;
     let paste_delay_ms = settings.paste_delay_ms;
@@ -823,6 +833,14 @@ pub fn paste(text: String, app_handle: AppHandle) -> Result<(), String> {
     if settings.clipboard_handling == ClipboardHandling::CopyToClipboard {
         write_text_to_clipboard(&app_handle, &text)?;
     }
+
+    // [GRAIN] Paste Catch (post-flight). Sequenced here rather than timed from
+    // the top of this function, so it stays correct if the body above is
+    // re-ordered or re-timed upstream, and so the clipboard snapshot it may need
+    // is taken lazily — a paste that lands costs it no clipboard work at all.
+    // Fire-and-forget: the check runs on a worker and is silent unless it finds
+    // positive evidence that the transcript never arrived.
+    crate::paste_catch::verify(&app_handle, &text);
 
     Ok(())
 }

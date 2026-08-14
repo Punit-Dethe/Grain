@@ -61,6 +61,11 @@ fn emit_session_started_with_owner(
             position: get_settings(app).overlay_position,
         },
     );
+    // [GRAIN] Pill identity: the icon of whatever we are dictating into, before
+    // the pill is told to show itself, so a cached icon is already there on the
+    // first painted frame. A cold app emits nothing here and resolves behind the
+    // session — this call never blocks the start.
+    crate::pill_icon::emit_for_session(app);
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -307,6 +312,20 @@ struct AgentFollowupAction;
 impl ShortcutAction for AgentFollowupAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         crate::agent::open_followup(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+// Deliver a transcript whose paste missed the text field. Registered
+// transiently by paste_catch.rs while a hold is armed — never global. All work
+// (including releasing this very shortcut) happens off the input thread inside
+// `paste_catch::deliver`.
+struct PasteCatchDeliverAction;
+
+impl ShortcutAction for PasteCatchDeliverAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::paste_catch::deliver(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -988,6 +1007,10 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "agent_followup".to_string(),
         Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "paste_catch_deliver".to_string(),
+        Arc::new(PasteCatchDeliverAction) as Arc<dyn ShortcutAction>,
     );
     // Grain Space bindings. Quick add is the one the Agent's note tools cannot
     // replace: no UI, no model, no wait — and it now ships unbound, because a

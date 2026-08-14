@@ -1186,6 +1186,40 @@ pub fn read_window_text() -> Option<String> {
     }
 }
 
+/// [GRAIN] Whether the focused element can receive a pasted transcript.
+///
+/// Used by Paste Catch on the paste path. Returns [`FocusTarget::Unknown`] on
+/// non-Windows, where there is no classifier yet — which is the inert verdict,
+/// so the feature degrades to "no detection" rather than to a wrong one.
+pub fn focus_target() -> FocusTarget {
+    #[cfg(windows)]
+    {
+        classify(uia::read_focus_facts())
+    }
+    #[cfg(not(windows))]
+    {
+        FocusTarget::Unknown
+    }
+}
+
+/// [GRAIN] The text either side of the caret in the focused field, read on
+/// demand.
+///
+/// Used by Paste Catch to verify that a paste actually arrived. `None` for every
+/// "cannot tell" case — no caret to anchor on, a password field, an unsupported
+/// platform, any failure — because the caller treats absence of evidence as
+/// "assume it landed", never as a miss.
+pub fn read_caret_now() -> Option<CaretContext> {
+    #[cfg(windows)]
+    {
+        uia::read_caret_now()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
 /// Read the currently focused editable field's full text via UI Automation.
 /// Used by the Agent (field context at summon) and by context bias. `None` on
 /// unsupported platforms, password fields, or any failure. Silent — no UI.
@@ -2115,6 +2149,23 @@ mod uia {
         .any(|id| id.0 == control_type)
     }
 
+    /// The caret neighbourhood in the focused field. Own COM scope so it is safe
+    /// to call standalone from Paste Catch's verification worker.
+    pub(in crate::context_detect) fn read_caret_now() -> Option<CaretContext> {
+        unsafe {
+            let _com = ComGuard::init();
+            let automation: IUIAutomation =
+                CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            let el = automation.GetFocusedElement().ok()?;
+            // Nothing is ever read from a password field — which also means a
+            // transcript dictated into one is never held on the clipboard.
+            if is_password(&el) {
+                return None;
+            }
+            read_caret(&el)
+        }
+    }
+
     /// Read the focused element into [`FocusFacts`]. Own COM scope, so it is
     /// safe to call standalone from the paste thread.
     ///
@@ -2210,6 +2261,120 @@ fn host_from_url(raw: &str) -> Option<String> {
         Some(host)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod focus_target_tests {
+    use super::*;
+
+    fn facts() -> FocusFacts {
+        FocusFacts::default()
+    }
+
+    #[test]
+    fn password_field_counts_as_landed_and_is_never_held() {
+        let f = FocusFacts {
+            is_password: true,
+            // Even with every other signal screaming "not editable", a password
+            // box must never route the transcript into a held clipboard.
+            value_read_only: Some(true),
+            control: ControlClass::NonText,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Editable);
+    }
+
+    #[test]
+    fn text_edit_pattern_is_decisive() {
+        let f = FocusFacts {
+            has_text_edit_pattern: true,
+            control: ControlClass::Other,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Editable);
+    }
+
+    #[test]
+    fn read_only_value_is_positive_evidence_of_a_miss() {
+        let f = FocusFacts {
+            value_read_only: Some(true),
+            control: ControlClass::Edit,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::NotEditable);
+    }
+
+    #[test]
+    fn writable_value_is_editable() {
+        let f = FocusFacts {
+            value_read_only: Some(false),
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Editable);
+    }
+
+    #[test]
+    fn edit_control_without_patterns_is_editable() {
+        let f = FocusFacts {
+            control: ControlClass::Edit,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Editable);
+    }
+
+    #[test]
+    fn caret_less_document_is_a_read_only_surface() {
+        // PDF viewer, mail preview, rendered reader.
+        let f = FocusFacts {
+            control: ControlClass::Document,
+            has_caret: false,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::NotEditable);
+    }
+
+    #[test]
+    fn document_with_a_caret_stays_ambiguous() {
+        // A selectable web page and a real editor both present a caret. This is
+        // the case we must NOT guess wrong about, so it falls through to
+        // post-paste verification instead.
+        let f = FocusFacts {
+            control: ControlClass::Document,
+            has_caret: true,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Unknown);
+    }
+
+    #[test]
+    fn leaf_widgets_are_positive_evidence() {
+        let f = FocusFacts {
+            control: ControlClass::NonText,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::NotEditable);
+    }
+
+    #[test]
+    fn container_control_types_never_report_not_editable() {
+        // `Pane`/`Window`/`Group`/`Custom` map to `Other`. Electron and canvas
+        // editors report those for perfectly editable surfaces, so suppressing
+        // a paste on that basis would break real apps.
+        assert_eq!(
+            classify(FocusFacts {
+                control: ControlClass::Other,
+                ..facts()
+            }),
+            FocusTarget::Unknown
+        );
+    }
+
+    #[test]
+    fn a_failed_read_yields_no_evidence() {
+        // `read_focus_facts` returns the default on every failure path, and the
+        // default must never be actionable.
+        assert_eq!(classify(FocusFacts::default()), FocusTarget::Unknown);
     }
 }
 

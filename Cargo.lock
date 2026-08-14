@@ -990,6 +990,7 @@ dependencies = [
 name = "grain-pill"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "cpal",
  "fontdue",
  "futures-util",

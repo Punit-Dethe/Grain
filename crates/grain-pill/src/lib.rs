@@ -25,10 +25,12 @@ use std::time::{Duration, Instant};
 
 use grain_sdk::{
     AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillPattern, PillSkin,
-    PillStateTheme, PillTheme, SessionMode,
+    PillStateTheme, PillTheme, SessionMode, PILL_ICON_PX,
 };
 
-use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
+use tiny_skia::{
+    Color, FillRule, FilterQuality, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform,
+};
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
@@ -1112,6 +1114,10 @@ const WAVE_PAD_X: f32 = 10.0;
 /// The state disc on the LEFT, and the gap before the waveform starts.
 const WAVE_DOT_R: f32 = 3.0;
 const WAVE_DOT_GAP: f32 = 9.0;
+/// [GRAIN] Pill identity: edge length the app icon is drawn at, in place of the
+/// state disc. Larger than the dot, so the wave's start shifts with it — see
+/// `wave_slot_w`.
+const WAVE_ICON_PX: u32 = 16;
 /// Fraction of the capsule's half-height the wave may reach at full volume.
 const WAVE_FILL: f32 = 0.62;
 
@@ -1121,6 +1127,38 @@ const WAVE_INK: [u8; 3] = [236, 239, 245];
 const WAVE_INK_IDLE: [u8; 3] = [138, 146, 163];
 /// Prompt Record keeps the established light-blue signal (see `Aura`).
 const WAVE_INK_PROMPT: [u8; 3] = [150, 194, 255];
+
+/// [GRAIN] Pill identity: scale the core's `PILL_ICON_PX`² icon down to the size
+/// the pill actually draws it at, once, on receipt.
+///
+/// The core sends one fixed size so the wire contract does not depend on the
+/// pill's geometry; paying for the resample here — rather than letting the
+/// blitter do it every frame — keeps the draw a straight copy and lets us use a
+/// better filter than a per-frame path could afford.
+fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
+    let src = Pixmap::from_vec(
+        rgba.to_vec(),
+        tiny_skia::IntSize::from_wh(PILL_ICON_PX as u32, PILL_ICON_PX as u32)?,
+    )?;
+    let n = WAVE_ICON_PX;
+    if n == PILL_ICON_PX as u32 {
+        return Some(src);
+    }
+    let mut out = Pixmap::new(n, n)?;
+    let s = n as f32 / PILL_ICON_PX as f32;
+    out.draw_pixmap(
+        0,
+        0,
+        src.as_ref(),
+        &PixmapPaint {
+            quality: FilterQuality::Bicubic,
+            ..Default::default()
+        },
+        Transform::from_scale(s, s),
+        None,
+    );
+    Some(out)
+}
 
 /// Catmull-Rom interpolation of a scalar between `p1` and `p2` at `t` in 0..1.
 /// Used for the VALUE axis (the outline uses the Bezier form below) — it is what
@@ -1246,6 +1284,105 @@ impl WaveField {
         self.accum = 0.0;
         self.level = 0.0;
     }
+}
+
+/// Paint the whole `PillSkin::Wave` body: the left mark (the app icon when we
+/// have one, otherwise the plain state disc) and the waveform filling the rest.
+///
+/// A free function rather than a method so the preview test paints the exact
+/// pixels that ship, instead of a copy of this that can quietly drift from it.
+/// `themed_dot` is an extension theme's colour, which still wins over the
+/// state's own ink — a theme keeps working across a skin change.
+fn paint_wave_body(
+    pixmap: &mut Pixmap,
+    geom: PillGeom,
+    state: PillState,
+    prompt_recording: bool,
+    themed_dot: Option<[u8; 3]>,
+    icon: Option<&Pixmap>,
+    wave: &WaveField,
+) {
+    let (x0, x1) = geom.body_x();
+    let cy = geom.y_off + geom.body_h / 2.0;
+
+    let ink = themed_dot.unwrap_or(match state {
+        PillState::Recording if prompt_recording => WAVE_INK_PROMPT,
+        PillState::Recording => WAVE_INK,
+        PillState::Processing => ACCENT,
+        PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
+    });
+
+    // The left cap holds either the app icon (pill identity) or the plain state
+    // disc; the wave takes whatever is left. The slot is sized to whichever is
+    // actually there, so the wave neither overlaps the icon nor leaves a gap
+    // when there is only a dot.
+    let slot_w = match icon {
+        Some(i) => i.width() as f32,
+        None => WAVE_DOT_R * 2.0,
+    };
+    let slot_x = x0 + WAVE_PAD_X;
+    let wave_x0 = slot_x + slot_w + WAVE_DOT_GAP;
+    let wave_x1 = x1 - WAVE_PAD_X;
+
+    // How present the left mark is. Recording is full strength; processing
+    // breathes; idle is dim. The wave already carries the state, so this is
+    // reinforcement rather than the only signal — which is what lets the icon
+    // take the disc's place without losing information.
+    let mark_a = match state {
+        PillState::Recording => 1.0,
+        PillState::Processing => 0.75 + 0.25 * (wave.clock * 3.6).sin(),
+        PillState::Idle | PillState::Fallback => 0.55,
+    }
+    .clamp(0.0, 1.0);
+
+    match icon {
+        Some(icon) => {
+            // Already scaled to its draw size, so this is a straight blit. Round
+            // the origin so it lands on whole pixels — a half-pixel offset on
+            // 16px art is visibly soft.
+            let ix = slot_x.round() as i32;
+            let iy = (cy - icon.height() as f32 / 2.0).round() as i32;
+            pixmap.draw_pixmap(
+                ix,
+                iy,
+                icon.as_ref(),
+                &PixmapPaint {
+                    opacity: mark_a,
+                    quality: FilterQuality::Nearest,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+        None => {
+            let mut paint = Paint {
+                anti_alias: true,
+                ..Default::default()
+            };
+            let cx = slot_x + WAVE_DOT_R;
+            if let Some(disc) = PathBuilder::from_circle(cx, cy, WAVE_DOT_R) {
+                paint.set_color(Color::from_rgba8(
+                    ink[0],
+                    ink[1],
+                    ink[2],
+                    (mark_a * 255.0) as u8,
+                ));
+                pixmap.fill_path(&disc, &paint, FillRule::Winding, Transform::identity(), None);
+            }
+        }
+    }
+
+    draw_wave_bars(
+        pixmap,
+        wave_x0,
+        cy,
+        wave_x1 - wave_x0,
+        geom.body_h / 2.0 * WAVE_FILL,
+        wave,
+        ink,
+        1.0,
+    );
 }
 
 /// Draw the waveform: a row of vertical rounded bars centred on `cy`, each one
@@ -2503,6 +2640,13 @@ struct Remote {
     /// whenever the user changes the setting. Unlike a theme this changes the
     /// pill's geometry, so `about_to_wait` resizes the window when it moves.
     skin: PillSkin,
+    /// [GRAIN] Pill identity: the icon of the app being dictated into, already
+    /// decoded to `PILL_ICON_PX`² premultiplied RGBA. `None` = draw the plain
+    /// state dot, which is also the state until a cold resolve lands.
+    icon: Option<Vec<u8>>,
+    /// Bumped on every `PillIcon`, so `App` knows to rebuild its scaled copy
+    /// (comparing the pixels themselves every frame would be silly).
+    icon_seq: u64,
 }
 
 impl Default for Remote {
@@ -2527,6 +2671,8 @@ impl Default for Remote {
             asr: AsrDisplay::default(),
             theme: None,
             skin: PillSkin::default(),
+            icon: None,
+            icon_seq: 0,
         }
     }
 }
@@ -2685,6 +2831,20 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         DaemonEvent::PillSkin { skin } => {
             r.skin = skin;
         }
+        // [GRAIN] Pill identity. Decoded here (on the socket thread) rather than
+        // at paint time, and dropped outright if it is not exactly the agreed
+        // size — a malformed payload must degrade to the dot, never to a
+        // garbled or out-of-bounds blit.
+        DaemonEvent::PillIcon { rgba } => {
+            r.icon = rgba.and_then(|b64| {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(b64)
+                    .ok()
+                    .filter(|v| v.len() == PILL_ICON_PX * PILL_ICON_PX * 4)
+            });
+            r.icon_seq = r.icon_seq.wrapping_add(1);
+        }
         _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
     }
 
@@ -2812,6 +2972,10 @@ fn spawn_event_client(
                                             // decides the window SIZE — wake so the
                                             // resize happens before the next reveal.
                                             | DaemonEvent::PillSkin { .. }
+                                            // A cold icon resolve lands mid-session
+                                            // (or just before the reveal); wake so it
+                                            // is painted rather than waited on.
+                                            | DaemonEvent::PillIcon { .. }
                                     );
                                     apply_event(&remote, ev);
                                     if is_session_event {
@@ -2962,6 +3126,10 @@ struct App {
     /// `Remote::skin`). A change here resizes the window, so it is applied in
     /// `about_to_wait` alongside the mode change, never mid-paint.
     skin: PillSkin,
+    /// [GRAIN] Pill identity, already scaled to the size it is drawn at, so the
+    /// per-frame cost is one straight blit. Rebuilt only when `icon_seq` moves.
+    icon: Option<Pixmap>,
+    last_icon_seq: u64,
     state: PillState,
     /// [GRAIN] Active pill theme (mirrors `Remote::theme`, SPEC §9). Read by the
     /// collapsed-pill roll; `None` is Grain's own look.
@@ -3076,6 +3244,8 @@ impl App {
             wave: WaveField::new(),
             wave_at: Instant::now(),
             skin: PillSkin::default(),
+            icon: None,
+            last_icon_seq: 0,
             state: PillState::Idle,
             theme: None,
             prompt_recording: false,
@@ -4354,48 +4524,14 @@ impl App {
     /// final visual spec. A theme's `dot` colour still wins over the state ink,
     /// so an extension theme keeps working across a skin change.
     fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom) {
-        let (x0, x1) = geom.body_x();
-        let cy = geom.y_off + geom.body_h / 2.0;
-
-        // Ink: a theme's colour first, then the state's own.
-        let themed = theme_for_state(self.theme.as_ref(), self.state).and_then(|t| t.dot);
-        let ink = themed.unwrap_or(match self.state {
-            PillState::Recording if self.prompt_recording => WAVE_INK_PROMPT,
-            PillState::Recording => WAVE_INK,
-            PillState::Processing => ACCENT,
-            PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
-        });
-
-        // The state disc sits inside the left cap; the wave takes what's left.
-        let dot_cx = x0 + WAVE_PAD_X + WAVE_DOT_R;
-        let wave_x0 = dot_cx + WAVE_DOT_R + WAVE_DOT_GAP;
-        let wave_x1 = x1 - WAVE_PAD_X;
-
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        // A gentle breath keeps the resting pill alive without motion noise.
-        let disc_a = match self.state {
-            PillState::Recording => 1.0,
-            PillState::Processing => 0.75 + 0.25 * (self.wave.clock * 3.6).sin(),
-            PillState::Idle | PillState::Fallback => 0.45,
-        };
-        if let Some(disc) = PathBuilder::from_circle(dot_cx, cy, WAVE_DOT_R) {
-            let a = (disc_a.clamp(0.0, 1.0) * 255.0) as u8;
-            paint.set_color(Color::from_rgba8(ink[0], ink[1], ink[2], a));
-            pixmap.fill_path(&disc, &paint, FillRule::Winding, Transform::identity(), None);
-        }
-
-        draw_wave_bars(
+        paint_wave_body(
             pixmap,
-            wave_x0,
-            cy,
-            wave_x1 - wave_x0,
-            geom.body_h / 2.0 * WAVE_FILL,
+            geom,
+            self.state,
+            self.prompt_recording,
+            theme_for_state(self.theme.as_ref(), self.state).and_then(|t| t.dot),
+            self.icon.as_ref(),
             &self.wave,
-            ink,
-            1.0,
         );
     }
 
@@ -4981,6 +5117,13 @@ impl ApplicationHandler<UserEvent> for App {
                 // Open the new look on silence, not on the old look's tail.
                 self.wave.clear();
             }
+            // [GRAIN] Pill identity: rebuild the scaled copy only when the core
+            // actually sent a new icon. Scaling is a one-time cost per session,
+            // never a per-frame one.
+            if r.icon_seq != self.last_icon_seq {
+                self.last_icon_seq = r.icon_seq;
+                self.icon = r.icon.as_deref().and_then(scale_icon);
+            }
             if desired_mode != self.mode {
                 // [GRAIN] Collapsed→Studio while already on screen is the FIRST-WORD
                 // expand (mid-session): keep it visible at full opacity so it grows
@@ -5541,6 +5684,68 @@ mod tests {
         assert!(hi <= 1.0 && lo >= 0.0, "the pulse stays inside the capsule");
     }
 
+    /// A solid-colour icon payload of the agreed size.
+    fn icon_payload(rgb: [u8; 3]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(PILL_ICON_PX * PILL_ICON_PX * 4);
+        for _ in 0..PILL_ICON_PX * PILL_ICON_PX {
+            v.extend_from_slice(&[rgb[0], rgb[1], rgb[2], 255]);
+        }
+        v
+    }
+
+    #[test]
+    fn a_malformed_icon_payload_degrades_to_the_dot() {
+        // The icon is a claim about context; a garbled one must vanish, never
+        // blit out of bounds or paint noise.
+        use base64::Engine;
+        let b64 = |v: &[u8]| base64::engine::general_purpose::STANDARD.encode(v);
+        for bad in [
+            b64(&[0u8; 16]),                  // far too small
+            b64(&vec![0u8; 4 * 4 * 4]),       // a plausible icon, wrong size
+            "not base64 at all!!".to_string(),
+            String::new(),
+        ] {
+            let remote = Mutex::new(Remote::default());
+            apply_event(&remote, DaemonEvent::PillIcon { rgba: Some(bad) });
+            let r = remote.lock().unwrap();
+            assert!(r.icon.is_none(), "a malformed payload must not be kept");
+            assert_eq!(r.icon_seq, 1, "but it still counts as a change");
+        }
+    }
+
+    #[test]
+    fn a_well_formed_icon_is_kept_and_scales_to_the_draw_size() {
+        let remote = Mutex::new(Remote::default());
+        use base64::Engine;
+        let payload = base64::engine::general_purpose::STANDARD.encode(icon_payload([200, 40, 40]));
+        apply_event(&remote, DaemonEvent::PillIcon { rgba: Some(payload) });
+        let r = remote.lock().unwrap();
+        let raw = r.icon.as_deref().expect("a valid icon is kept");
+        assert_eq!(raw.len(), PILL_ICON_PX * PILL_ICON_PX * 4);
+
+        let scaled = scale_icon(raw).expect("scales");
+        assert_eq!(scaled.width(), WAVE_ICON_PX);
+        assert_eq!(scaled.height(), WAVE_ICON_PX);
+        assert!(
+            scaled.pixels().iter().all(|p| p.alpha() > 0),
+            "an opaque icon must survive the downscale opaque"
+        );
+    }
+
+    #[test]
+    fn clearing_the_icon_returns_the_pill_to_the_dot() {
+        let remote = Mutex::new(Remote::default());
+        use base64::Engine;
+        let payload = base64::engine::general_purpose::STANDARD.encode(icon_payload([9, 9, 9]));
+        apply_event(&remote, DaemonEvent::PillIcon { rgba: Some(payload) });
+        assert!(remote.lock().unwrap().icon.is_some());
+        // The core sends `None` when the setting is off or the app is unknown.
+        apply_event(&remote, DaemonEvent::PillIcon { rgba: None });
+        let r = remote.lock().unwrap();
+        assert!(r.icon.is_none());
+        assert_eq!(r.icon_seq, 2);
+    }
+
     #[test]
     fn clearing_the_wave_drops_the_previous_sessions_tail() {
         let mut f = WaveField::new();
@@ -5628,33 +5833,24 @@ mod tests {
         let (w, _h) = App::win_size(PillSkin::Wave);
         let pw = geom.core_w.ceil() as u32;
         let ph = (geom.y_off + geom.body_h).ceil() as u32;
-        let mut pixmap = Pixmap::new(w, ph).unwrap();
-        pixmap.fill(Color::TRANSPARENT);
 
-        // The capsule body, exactly as `render_collapsed` paints it.
-        let (x0, x1) = geom.body_x();
-        let r = geom.radius();
-        let mut body = Paint {
+        // A stand-in "app icon": a rounded blue tile with a lighter notch, so
+        // both the silhouette and the alpha edges are visible at 16px.
+        let mut art = Pixmap::new(PILL_ICON_PX as u32, PILL_ICON_PX as u32).unwrap();
+        art.fill(Color::TRANSPARENT);
+        let mut p = Paint {
             anti_alias: true,
             ..Default::default()
         };
-        body.set_color(Color::from_rgba8(0, 0, 0, 240));
-        if let Some(path) = rounded_rect_path(x0, geom.y_off, x1 - x0, geom.body_h, r) {
-            pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
+        p.set_color(Color::from_rgba8(64, 132, 246, 255));
+        if let Some(path) = rounded_rect_path(1.0, 1.0, 30.0, 30.0, 7.0) {
+            art.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
         }
-
-        let cy = geom.y_off + geom.body_h / 2.0;
-        let dot_cx = x0 + WAVE_PAD_X + WAVE_DOT_R;
-        let mut ink = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        ink.set_color(Color::from_rgba8(
-            WAVE_INK[0], WAVE_INK[1], WAVE_INK[2], 255,
-        ));
-        if let Some(d) = PathBuilder::from_circle(dot_cx, cy, WAVE_DOT_R) {
-            pixmap.fill_path(&d, &ink, FillRule::Winding, Transform::identity(), None);
+        p.set_color(Color::from_rgba8(240, 246, 255, 255));
+        if let Some(path) = rounded_rect_path(9.0, 9.0, 14.0, 14.0, 3.0) {
+            art.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
         }
+        let icon = scale_icon(art.data()).expect("scale");
 
         let mut f = WaveField::new();
         for i in 0..200 {
@@ -5662,52 +5858,74 @@ mod tests {
             let amp = (0.30 + 0.34 * (t * 2.3).sin() + 0.22 * (t * 5.7).sin()).clamp(0.0, 1.0);
             f.advance(FRAME, PillState::Recording, amp);
         }
-        let wave_x0 = dot_cx + WAVE_DOT_R + WAVE_DOT_GAP;
-        let wave_x1 = x1 - WAVE_PAD_X;
-        draw_wave_bars(
-            &mut pixmap,
-            wave_x0,
-            cy,
-            wave_x1 - wave_x0,
-            geom.body_h / 2.0 * WAVE_FILL,
-            &f,
-            WAVE_INK,
-            1.0,
-        );
 
-        // Composite over a neutral desktop grey and magnify (nearest-neighbour,
-        // so the actual pixels are what you inspect).
-        let mut out = Pixmap::new(pw * ZOOM, ph * ZOOM).unwrap();
+        // Two rows: the plain state dot, and the same pill wearing an app icon.
+        let rows: [(Option<&Pixmap>, PillState); 3] = [
+            (None, PillState::Recording),
+            (Some(&icon), PillState::Recording),
+            (None, PillState::Idle),
+        ];
+        let gap = 6u32;
+        let mut out = Pixmap::new(pw * ZOOM, (ph + gap) * ZOOM * rows.len() as u32).unwrap();
         out.fill(Color::from_rgba8(48, 50, 54, 255));
-        for y in 0..ph {
-            for x in 0..pw {
-                let p = pixmap.pixels()[(y * w + x) as usize];
-                if p.alpha() == 0 {
-                    continue;
-                }
-                let mut q = Paint::default();
-                // Pixmap pixels are premultiplied; demultiply for the flat fill.
-                let a = p.alpha() as f32 / 255.0;
-                let de = |c: u8| if a > 0.0 { (c as f32 / a) as u8 } else { 0 };
-                q.set_color(Color::from_rgba8(
-                    de(p.red()),
-                    de(p.green()),
-                    de(p.blue()),
-                    p.alpha(),
-                ));
-                if let Some(rect) = Rect::from_xywh(
-                    (x * ZOOM) as f32,
-                    (y * ZOOM) as f32,
-                    ZOOM as f32,
-                    ZOOM as f32,
-                ) {
-                    out.fill_path(
-                        &PathBuilder::from_rect(rect),
-                        &q,
-                        FillRule::Winding,
-                        Transform::identity(),
-                        None,
-                    );
+
+        for (row, (icon, state)) in rows.into_iter().enumerate() {
+            let mut pixmap = Pixmap::new(w, ph).unwrap();
+            pixmap.fill(Color::TRANSPARENT);
+
+            // The capsule body, exactly as `render_collapsed` paints it …
+            let (x0, x1) = geom.body_x();
+            let mut body = Paint {
+                anti_alias: true,
+                ..Default::default()
+            };
+            body.set_color(Color::from_rgba8(0, 0, 0, 240));
+            if let Some(path) =
+                rounded_rect_path(x0, geom.y_off, x1 - x0, geom.body_h, geom.radius())
+            {
+                pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
+            }
+            // … and the SHIPPING body painter, not a copy of it.
+            let wave = if state == PillState::Idle {
+                &WaveField::new()
+            } else {
+                &f
+            };
+            paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave);
+
+            // Composite over a neutral desktop grey and magnify (nearest, so the
+            // actual pixels are what you inspect).
+            let y_base = row as u32 * (ph + gap) * ZOOM;
+            for y in 0..ph {
+                for x in 0..pw {
+                    let px = pixmap.pixels()[(y * w + x) as usize];
+                    if px.alpha() == 0 {
+                        continue;
+                    }
+                    let mut q = Paint::default();
+                    // Pixmap pixels are premultiplied; demultiply for the fill.
+                    let a = px.alpha() as f32 / 255.0;
+                    let de = |c: u8| if a > 0.0 { (c as f32 / a) as u8 } else { 0 };
+                    q.set_color(Color::from_rgba8(
+                        de(px.red()),
+                        de(px.green()),
+                        de(px.blue()),
+                        px.alpha(),
+                    ));
+                    if let Some(rect) = Rect::from_xywh(
+                        (x * ZOOM) as f32,
+                        (y_base + y * ZOOM) as f32,
+                        ZOOM as f32,
+                        ZOOM as f32,
+                    ) {
+                        out.fill_path(
+                            &PathBuilder::from_rect(rect),
+                            &q,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                    }
                 }
             }
         }

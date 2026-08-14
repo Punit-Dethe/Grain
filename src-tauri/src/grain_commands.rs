@@ -284,6 +284,18 @@ pub fn change_pill_skin_setting(app: AppHandle, skin: String) -> Result<(), Stri
     Ok(())
 }
 
+/// [GRAIN] Pill identity: show the icon of the app being dictated into in place
+/// of the pill's state dot. Takes effect on the next session — the icon is
+/// resolved at record-start, never held between sessions.
+#[tauri::command]
+#[specta::specta]
+pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.pill_show_app_icon = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Master toggle for Grain Space. Registers/unregisters the feature's
 /// global shortcuts immediately so OFF is zero-overhead without a restart.
 /// Never touches on-disk note data.

@@ -40,7 +40,7 @@ pub use error::{HostError, HostErrorCode};
 pub use event::{
     daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction, ResolvedTheme,
     SessionMode,
-    DAEMON_EVENT_VARIANTS,
+    DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
 };
 pub use manifest::{
     CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl,

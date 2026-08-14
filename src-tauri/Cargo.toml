@@ -168,6 +168,13 @@ windows = { version = "0.61.3", features = [
   # reading; COM for the automation object.
   "Win32_UI_Accessibility",
   "Win32_System_Com",
+  # [GRAIN] Pill identity: IShellItemImageFactory for the foreground app's icon.
+  # The Shell (not the icon-resource APIs) because only it can see
+  # `shell:AppsFolder`, where every packaged/Store app's real asset lives.
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  # GetApplicationUserModelId — tells a packaged app from a classic Win32 one.
+  "Win32_Storage_Packaging_Appx",
 ] }
 winreg = "0.55"
 
