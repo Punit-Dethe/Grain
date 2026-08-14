@@ -6,6 +6,7 @@ import DefaultPanel from "@/components/settings/DefaultPanel";
 import { ExperimentalToggle } from "@/components/settings/ExperimentalToggle";
 import { HistoryLimit } from "@/components/settings/HistoryLimit";
 import { LazyStreamClose } from "@/components/settings/LazyStreamClose";
+import { PillSkinSelector } from "@/components/settings/PillSkinSelector";
 import { RecordingRetentionPeriodSelector } from "@/components/settings/RecordingRetentionPeriod";
 import { ShowOverlay } from "@/components/settings/ShowOverlay";
 import { ShowTrayIcon } from "@/components/settings/ShowTrayIcon";
@@ -38,6 +39,7 @@ export function ApplicationPane() {
         <AppearanceMode />
         <DefaultPanel grouped />
         <ShowOverlay descriptionMode="tooltip" grouped />
+        <PillSkinSelector descriptionMode="tooltip" grouped />
       </SettingsGroup>
 
       <SettingsGroup

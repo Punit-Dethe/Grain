@@ -308,6 +308,11 @@ fn default_stt_api_keys() -> SecretMap {
 // paths — and the generated bindings — are unchanged.
 pub use grain_sdk::OverlayPosition;
 
+// [GRAIN] PillSkin lives in grain-sdk (it crosses the wire in
+// DaemonEvent::PillSkin); re-exported here so it is a `settings::PillSkin` like
+// every other settings-visible enum, and so specta generates its binding.
+pub use grain_sdk::PillSkin;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DefaultPanel {
@@ -658,6 +663,10 @@ pub struct AppSettings {
     pub selected_language: String,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: OverlayPosition,
+    /// [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
+    /// see `PillSkin`). Defaults to the smooth waveform.
+    #[serde(default)]
+    pub pill_skin: PillSkin,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
@@ -1620,6 +1629,7 @@ pub fn get_default_settings() -> AppSettings {
         translate_to_english: false,
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
+        pill_skin: PillSkin::default(),
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),

@@ -86,6 +86,7 @@ mod paste_tx;
 #[path = "handy/portable.rs"]
 pub mod portable;
 mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
+mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
@@ -837,6 +838,7 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_translate_to_english_setting,
             shortcut::change_selected_language_setting,
             shortcut::change_overlay_position_setting,
+            grain_commands::change_pill_skin_setting,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
             shortcut::change_extra_recording_buffer_setting,

@@ -134,6 +134,14 @@ async changeOverlayPositionSetting(position: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pill_skin_setting", { skin }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeDebugModeSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_debug_mode_setting", { enabled }) };
@@ -2411,7 +2419,12 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition;
+/**
+ * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
+ * see `PillSkin`). Defaults to the smooth waveform.
+ */
+pill_skin?: PillSkin; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
@@ -2993,6 +3006,21 @@ export type OverlayPosition = "none" | "top" | "bottom" |
  */
 "center"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
+/**
+ * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
+ * pill look must touch in the protocol; the renderer owns everything else.
+ */
+export type PillSkin =
+/**
+ * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
+ * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
+ */
+"wave" |
+/**
+ * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
+ * the voice. Kept as a selectable look, no longer the default.
+ */
+"matrix"
 /**
  * The transcript could not be pasted. Carries no payload — the technical
  * detail is logged on the Rust side and the window shows a localized message.

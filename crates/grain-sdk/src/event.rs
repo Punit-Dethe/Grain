@@ -50,6 +50,7 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AsrError",
     "ExtensionDisabled",
     "PillTheme",
+    "PillSkin",
 ];
 
 /// Capability required to receive (or be woken by) a daemon event variant.
@@ -332,6 +333,16 @@ pub enum DaemonEvent {
         #[serde(default)]
         theme: Option<crate::PillTheme>,
     },
+
+    /// [GRAIN] Which built-in look the collapsed pill should wear. Sent when the
+    /// pill authenticates and whenever the user changes the `pill_skin` setting.
+    /// Separate from [`DaemonEvent::PillTheme`] on purpose: a skin is Grain's own
+    /// *form* (geometry + visualisation), a theme is an extension's *colours*.
+    /// Changing it resizes the pill window, so it is never sent per frame.
+    PillSkin {
+        #[serde(default)]
+        skin: crate::PillSkin,
+    },
 }
 
 impl DaemonEvent {
@@ -380,6 +391,7 @@ impl DaemonEvent {
             AsrError { .. } => "AsrError",
             ExtensionDisabled { .. } => "ExtensionDisabled",
             PillTheme { .. } => "PillTheme",
+            PillSkin { .. } => "PillSkin",
         }
     }
 }

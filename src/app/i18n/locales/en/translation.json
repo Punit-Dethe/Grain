@@ -567,6 +567,14 @@
           "center": "Center"
         }
       },
+      "pillSkin": {
+        "title": "Pill Style",
+        "description": "How the pill visualizes your voice while recording.",
+        "options": {
+          "wave": "Waveform",
+          "matrix": "Dot Matrix"
+        }
+      },
       "pasteMethod": {
         "title": "Paste Method",
         "description": "Choose how text is inserted. Direct: simulates typing via system input. None: skips paste, only updates history/clipboard.",

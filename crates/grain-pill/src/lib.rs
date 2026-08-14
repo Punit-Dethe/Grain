@@ -24,8 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use grain_sdk::{
-    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillPattern, PillStateTheme,
-    PillTheme, SessionMode,
+    AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillPattern, PillSkin,
+    PillStateTheme, PillTheme, SessionMode,
 };
 
 use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform};
@@ -49,6 +49,69 @@ const ROWS: usize = 8;
 const DOT_D: f32 = 3.0;
 const CELL: f32 = 5.0;
 const SCALE: f32 = 1.0; // px per grid unit — small pill (native QML size)
+
+// ── Pill skin geometry ──────────────────────────────────────────────────────
+//
+// [GRAIN] The collapsed pill has more than one built-in LOOK (`PillSkin`), and a
+// look owns its own size. The dot-matrix skin keeps the grid-derived numbers
+// above verbatim; the wave skin — the new default — is the same capsule at 80%.
+// Everything on the collapsed path reads its geometry from `PillGeom` rather
+// than from COLS/ROWS/CELL directly, so a skin change is a resize and nothing
+// more. (The Studio and AgentInput surfaces have their own fixed geometry and
+// are deliberately untouched by the skin.)
+const SKIN_SHRINK: f32 = 0.8;
+
+/// Runtime geometry of the COLLAPSED pill for one skin. Pure and copy-cheap —
+/// recomputed wherever it's needed instead of cached, so a skin change can never
+/// leave a stale size behind in some corner of the app.
+#[derive(Clone, Copy, PartialEq)]
+struct PillGeom {
+    /// The pill's own footprint width — what the OS window is centered on. The
+    /// window itself is wider (it hosts the sibling prompt capsule).
+    core_w: f32,
+    /// Symmetric inset between the footprint and the painted capsule.
+    inset: f32,
+    /// Capsule height. The body is a full-round capsule, so its radius is h/2.
+    body_h: f32,
+    /// Transparent band reserved ABOVE the body for the prompt capsule.
+    y_off: f32,
+}
+
+impl PillGeom {
+    fn for_skin(skin: PillSkin) -> Self {
+        let base = PillGeom {
+            core_w: COLS as f32 * CELL * SCALE,
+            inset: CELL * SCALE,
+            body_h: ROWS as f32 * CELL * SCALE,
+            y_off: RISER_RESERVE * CELL * SCALE,
+        };
+        match skin {
+            PillSkin::Matrix => base,
+            // The wave capsule is the matrix capsule at 80% — same proportions,
+            // quieter footprint. `y_off` does NOT shrink: that band is the
+            // prompt capsule's runway, not part of the pill.
+            PillSkin::Wave => PillGeom {
+                core_w: base.core_w * SKIN_SHRINK,
+                inset: base.inset * SKIN_SHRINK,
+                body_h: base.body_h * SKIN_SHRINK,
+                y_off: base.y_off,
+            },
+        }
+    }
+
+    fn radius(self) -> f32 {
+        self.body_h / 2.0
+    }
+
+    /// Left/right edges of the painted capsule within the window.
+    fn body_x(self) -> (f32, f32) {
+        (self.inset, self.core_w - self.inset)
+    }
+
+    fn win_h(self) -> u32 {
+        (self.y_off + self.body_h).round() as u32
+    }
+}
 
 // The 4×4 confirm/recording zone (cols 18–21, rows 2–5) minus its 4 corners.
 const BTN_COL: usize = 18;
@@ -994,6 +1057,179 @@ impl Aura {
 /// [GRAIN] The theme entry for a pill state (SPEC §9), or `None` for Grain's own
 /// look. Maps the pill's own `PillState` onto the SDK theme's per-state fields —
 /// the SDK stays UI-agnostic, the mapping lives here.
+// ── Wave skin ───────────────────────────────────────────────────────────────
+//
+// [GRAIN] The DEFAULT pill's voice visualisation: a smooth, centre-mirrored
+// waveform that scrolls right-to-left, resting as a hairline through the middle
+// when there is nothing to say. It is a value, not an engine — a fixed-length
+// envelope living inline in `App` (WAVE_POINTS f32s, ~144 B), advanced in the
+// existing tick and drawn with the primitives already in use. No allocation per
+// frame, no thread, no extra state machine.
+//
+// NOTE: these are first-pass proportions. The layout consts below are the dial
+// board for the visual spec — retuning the look should not need new structure.
+const WAVE_POINTS: usize = 36;
+/// Eased amplitude follower. Fast attack, slow release: the line swells with the
+/// voice and settles gently, which is what reads as "smooth" rather than the
+/// per-sample chatter a raw meter produces.
+const WAVE_ATTACK: f32 = 0.34;
+const WAVE_RELEASE: f32 = 0.11;
+/// Thickness of the resting centre line (px) — silence is a hairline, not a gap.
+const WAVE_MIN_THICKNESS: f32 = 1.6;
+/// Horizontal padding inside the capsule.
+const WAVE_PAD_X: f32 = 10.0;
+/// The state disc on the LEFT, and the gap before the waveform starts.
+const WAVE_DOT_R: f32 = 3.0;
+const WAVE_DOT_GAP: f32 = 9.0;
+/// Fraction of the capsule's half-height the wave may reach at full volume.
+const WAVE_FILL: f32 = 0.62;
+
+/// The waveform's ink, per state. Deliberately quiet — the wave skin's whole
+/// point is that it reads as calm at a glance.
+const WAVE_INK: [u8; 3] = [236, 239, 245];
+const WAVE_INK_IDLE: [u8; 3] = [138, 146, 163];
+/// Prompt Record keeps the established light-blue signal (see `Aura`).
+const WAVE_INK_PROMPT: [u8; 3] = [150, 194, 255];
+
+/// The wave skin's voice field: a fixed-length envelope, newest sample last.
+struct WaveField {
+    env: [f32; WAVE_POINTS],
+    /// The eased follower that actually gets pushed into `env`.
+    level: f32,
+    phase: f32,
+}
+
+impl WaveField {
+    const fn new() -> Self {
+        WaveField {
+            env: [0.0; WAVE_POINTS],
+            level: 0.0,
+            phase: 0.0,
+        }
+    }
+
+    /// Advance one step. Mirrors `Aura::roll` — the state picks the motion.
+    fn roll(&mut self, state: PillState, amp: f32) {
+        self.phase += 1.0;
+        match state {
+            PillState::Recording => self.push_voice(amp),
+            PillState::Processing => self.sweep(),
+            // Idle/Fallback drain to the resting line rather than snapping to it.
+            PillState::Idle | PillState::Fallback => self.push_voice(0.0),
+        }
+    }
+
+    fn push_voice(&mut self, amp: f32) {
+        let target = Self::shape(amp);
+        let k = if target > self.level {
+            WAVE_ATTACK
+        } else {
+            WAVE_RELEASE
+        };
+        self.level += (target - self.level) * k;
+        self.env.rotate_left(1);
+        self.env[WAVE_POINTS - 1] = self.level;
+    }
+
+    /// Map the mic's raw level to a visually linear 0..1. Speech sits low in the
+    /// raw range, so without a curve quiet speech is invisible and loud speech
+    /// pins the top.
+    fn shape(amp: f32) -> f32 {
+        (amp.clamp(0.0, 1.0) * 3.2).sqrt().clamp(0.0, 1.0)
+    }
+
+    /// Processing: a soft bump travels the line — the same "working on it" cue
+    /// as the matrix skin's sparkle, said in the wave's own language.
+    fn sweep(&mut self) {
+        let t = (self.phase * 0.011).fract();
+        let center = t * 1.4 - 0.2; // enters and leaves past both ends
+        for (i, e) in self.env.iter_mut().enumerate() {
+            let x = i as f32 / (WAVE_POINTS - 1) as f32;
+            let d = (x - center) / 0.15;
+            *e = (-(d * d)).exp() * 0.72;
+        }
+    }
+
+    /// Drop back to silence so the next session opens on a flat line instead of
+    /// the tail of the last one.
+    fn clear(&mut self) {
+        self.env = [0.0; WAVE_POINTS];
+        self.level = 0.0;
+    }
+}
+
+/// Append a Catmull-Rom spline through `pts` (the first point must already be
+/// the path's current position). Each segment becomes the equivalent cubic
+/// Bezier — tiny-skia has no spline primitive, and a plain polyline here is
+/// exactly the faceted look the wave skin exists to avoid.
+fn spline_through(pb: &mut PathBuilder, pts: &[(f32, f32)]) {
+    let n = pts.len();
+    if n < 2 {
+        return;
+    }
+    for i in 0..n - 1 {
+        let p0 = pts[i.saturating_sub(1)];
+        let p1 = pts[i];
+        let p2 = pts[i + 1];
+        let p3 = pts[(i + 2).min(n - 1)];
+        let c1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
+        let c2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
+        pb.cubic_to(c1.0, c1.1, c2.0, c2.1, p2.0, p2.1);
+    }
+}
+
+/// Draw the smooth centre-line waveform: the envelope mirrored about `cy`,
+/// closed and filled through a spline. Both ends taper to the resting hairline
+/// so the wave emerges from the centre line rather than being chopped off by the
+/// capsule edge.
+#[allow(clippy::too_many_arguments)]
+fn draw_wave_field(
+    pixmap: &mut Pixmap,
+    x: f32,
+    cy: f32,
+    w: f32,
+    max_half: f32,
+    env: &[f32],
+    color: [u8; 3],
+    alpha: f32,
+) {
+    let n = env.len().min(WAVE_POINTS);
+    let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+    if n < 2 || w <= 0.5 || a == 0 {
+        return;
+    }
+    let min_half = WAVE_MIN_THICKNESS / 2.0;
+    let reach = (max_half - min_half).max(0.0);
+    let step = w / (n - 1) as f32;
+
+    let mut top = [(0.0f32, 0.0f32); WAVE_POINTS];
+    let mut bottom_rev = [(0.0f32, 0.0f32); WAVE_POINTS];
+    for i in 0..n {
+        let hx = x + i as f32 * step;
+        // Window the envelope so amplitude fades in/out at the ends.
+        let t = i as f32 / (n - 1) as f32;
+        let edge = (t * (1.0 - t) * 4.0).clamp(0.0, 1.0).powf(0.35);
+        let h = min_half + env[i].clamp(0.0, 1.0) * reach * edge;
+        top[i] = (hx, cy - h);
+        bottom_rev[n - 1 - i] = (hx, cy + h);
+    }
+
+    let mut pb = PathBuilder::new();
+    pb.move_to(top[0].0, top[0].1);
+    spline_through(&mut pb, &top[..n]);
+    pb.line_to(bottom_rev[0].0, bottom_rev[0].1);
+    spline_through(&mut pb, &bottom_rev[..n]);
+    pb.close();
+    if let Some(path) = pb.finish() {
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        paint.set_color(Color::from_rgba8(color[0], color[1], color[2], a));
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+}
+
 fn theme_for_state(theme: Option<&PillTheme>, state: PillState) -> Option<&PillStateTheme> {
     let t = theme?;
     match state {
@@ -2185,6 +2421,10 @@ struct Remote {
     /// the agent card stay Grain's). Every gap falls back per-state, so no theme
     /// can blank the pill.
     theme: Option<PillTheme>,
+    /// [GRAIN] The built-in LOOK the collapsed pill wears. Sent on connect and
+    /// whenever the user changes the setting. Unlike a theme this changes the
+    /// pill's geometry, so `about_to_wait` resizes the window when it moves.
+    skin: PillSkin,
 }
 
 impl Default for Remote {
@@ -2208,6 +2448,7 @@ impl Default for Remote {
             agent_input_saved_seq: 0,
             asr: AsrDisplay::default(),
             theme: None,
+            skin: PillSkin::default(),
         }
     }
 }
@@ -2363,6 +2604,9 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         DaemonEvent::PillTheme { theme } => {
             r.theme = theme;
         }
+        DaemonEvent::PillSkin { skin } => {
+            r.skin = skin;
+        }
         _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
     }
 
@@ -2486,6 +2730,10 @@ fn spawn_event_client(
                                             // hidden (on connect); wake so the next
                                             // reveal already wears it.
                                             | DaemonEvent::PillTheme { .. }
+                                            // A skin also arrives on connect, and it
+                                            // decides the window SIZE — wake so the
+                                            // resize happens before the next reveal.
+                                            | DaemonEvent::PillSkin { .. }
                                     );
                                     apply_event(&remote, ev);
                                     if is_session_event {
@@ -2624,6 +2872,16 @@ impl AgentInputUi {
 struct App {
     window: Option<Rc<Window>>,
     aura: Aura,
+    /// [GRAIN] The wave skin's voice field. Kept alongside `aura` rather than in
+    /// place of it because the two skins are switchable at runtime and the
+    /// Studio surface always uses the dot field — but only ONE of them is rolled
+    /// per frame (see `about_to_wait`), so the idle skin costs nothing but its
+    /// (tiny, fixed) buffer.
+    wave: WaveField,
+    /// [GRAIN] The built-in look currently being rendered (mirrors
+    /// `Remote::skin`). A change here resizes the window, so it is applied in
+    /// `about_to_wait` alongside the mode change, never mid-paint.
+    skin: PillSkin,
     state: PillState,
     /// [GRAIN] Active pill theme (mirrors `Remote::theme`, SPEC §9). Read by the
     /// collapsed-pill roll; `None` is Grain's own look.
@@ -2735,6 +2993,8 @@ impl App {
         App {
             window: None,
             aura: Aura::new(),
+            wave: WaveField::new(),
+            skin: PillSkin::default(),
             state: PillState::Idle,
             theme: None,
             prompt_recording: false,
@@ -2795,29 +3055,26 @@ impl App {
     /// insets. The OS window is wider (see `win_size`) to make room for the
     /// sibling prompt capsule, but the pill body + horizontal centering are keyed
     /// to this so the pill never moves when the sibling appears.
-    fn collapsed_core_w() -> f32 {
-        COLS as f32 * CELL * SCALE
+    fn collapsed_core_w(skin: PillSkin) -> f32 {
+        PillGeom::for_skin(skin).core_w
     }
 
-    fn win_size() -> (u32, u32) {
-        let cell = CELL * SCALE;
+    fn win_size(skin: PillSkin) -> (u32, u32) {
+        let g = PillGeom::for_skin(skin);
         // Extra width to the RIGHT for the sibling prompt capsule (its widest
         // form — the agent follow-up offer) plus a matching right inset. Kept
         // transparent until a switch, so it is click-through at rest.
-        let extra = SIB_GAP + SIB_MAX_W + cell;
-        (
-            (Self::collapsed_core_w() + extra).round() as u32,
-            ((ROWS as f32 + RISER_RESERVE) * CELL * SCALE).round() as u32,
-        )
+        let extra = SIB_GAP + SIB_MAX_W + g.inset;
+        ((g.core_w + extra).round() as u32, g.win_h())
     }
 
     /// Window size for the given surface — the classic collapsed capsule or
     /// the Native ASR Studio Window. Switching between them resizes the single
     /// OS window (see `about_to_wait`'s mode-change handling); both are fixed
     /// sizes, so the Studio Window scrolls its transcript rather than growing.
-    fn win_size_for(mode: PillMode) -> (u32, u32) {
+    fn win_size_for(mode: PillMode, skin: PillSkin) -> (u32, u32) {
         match mode {
-            PillMode::Collapsed => Self::win_size(),
+            PillMode::Collapsed => Self::win_size(skin),
             PillMode::Studio => studio_pixel_size(),
             PillMode::AgentInput => (AIN_WIN_W, AIN_WIN_H),
         }
@@ -2826,9 +3083,9 @@ impl App {
     /// Width to horizontally center the OS window on (see `position_window`). The
     /// collapsed window is wider than the pill for the sibling capsule, so it is
     /// centered on the pill's own footprint; the others center on the full window.
-    fn center_w_for(mode: PillMode, w: u32) -> f32 {
+    fn center_w_for(mode: PillMode, skin: PillSkin, w: u32) -> f32 {
         match mode {
-            PillMode::Collapsed => Self::collapsed_core_w(),
+            PillMode::Collapsed => Self::collapsed_core_w(skin),
             _ => w as f32,
         }
     }
@@ -3075,13 +3332,9 @@ impl App {
         }
     }
 
+    /// The dot grid's cell size. Matrix-skin only — the wave skin has no grid.
     fn cell_px() -> f32 {
         CELL * SCALE
-    }
-
-    /// Vertical offset of the pill body (the riser reserve sits above it).
-    fn y_offset() -> f32 {
-        RISER_RESERVE * CELL * SCALE
     }
 
     fn current_amp(&mut self) -> f32 {
@@ -3752,7 +4005,7 @@ impl App {
         if self.window.is_none() {
             return;
         }
-        let (w, h) = Self::win_size();
+        let (w, h) = Self::win_size(self.skin);
         // Reuse one pixmap across frames (no per-frame allocation); clear it.
         let mut pixmap = self
             .pixmap
@@ -3760,15 +4013,15 @@ impl App {
             .unwrap_or_else(|| Pixmap::new(w, h).unwrap());
         pixmap.fill(Color::TRANSPARENT);
 
-        let cell_px = Self::cell_px();
-        let y_off = Self::y_offset();
-        let pill_h = ROWS as f32 * cell_px;
-        let r = pill_h / 2.0;
-        // [GRAIN] The pill body is keyed to its OWN footprint (`core_w`), not the
-        // window width — the window is wider to the right to host the sibling
-        // prompt capsule, and the pill must stay put/centered regardless.
-        let core_w = Self::collapsed_core_w();
-        let (x0, x1) = (cell_px, core_w - cell_px);
+        // [GRAIN] All collapsed geometry comes from the active skin — the pill
+        // body is keyed to its OWN footprint (`core_w`), not the window width,
+        // because the window is wider to the right to host the sibling prompt
+        // capsule and the pill must stay put/centered regardless.
+        let geom = PillGeom::for_skin(self.skin);
+        let y_off = geom.y_off;
+        let pill_h = geom.body_h;
+        let r = geom.radius();
+        let (x0, x1) = geom.body_x();
 
         // [GRAIN] Centered overlay-only: the pill is visible ONLY to show a
         // transient capsule (idle prompt-switch preview or agent follow-up
@@ -3817,35 +4070,10 @@ impl App {
                 }
             }
 
-            // 2) Dots.
-            let dots = &self.aura.dots;
-            let radius = DOT_D * SCALE / 2.0;
-            let mut paint = Paint {
-                anti_alias: true,
-                ..Default::default()
-            };
-            for row in 0..ROWS {
-                for col in 0..COLS {
-                    if is_edge(col, row) {
-                        continue;
-                    }
-                    let c = dots[row * COLS + col];
-                    if c[3] == 0 {
-                        continue;
-                    }
-                    let dx = col as f32 * cell_px + cell_px / 2.0;
-                    let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
-                    if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
-                        paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
-                        pixmap.fill_path(
-                            &circle,
-                            &paint,
-                            FillRule::Winding,
-                            Transform::identity(),
-                            None,
-                        );
-                    }
-                }
+            // 2) The voice visualisation — whichever the active skin defines.
+            match self.skin {
+                PillSkin::Matrix => self.draw_matrix_body(&mut pixmap, y_off),
+                PillSkin::Wave => self.draw_wave_body(&mut pixmap, geom),
             }
         }
 
@@ -3903,7 +4131,7 @@ impl App {
             .as_ref()
             .map(|f| font_for(f, self.fallback_font.as_ref(), &transcript_probe));
 
-        let (w, h) = Self::win_size_for(PillMode::Studio);
+        let (w, h) = Self::win_size_for(PillMode::Studio, self.skin);
         let mut pixmap = self
             .pixmap
             .take()
@@ -4001,6 +4229,93 @@ impl App {
             presenter.blit(&pixmap);
         }
         self.pixmap = Some(pixmap);
+    }
+
+    /// [GRAIN] `PillSkin::Matrix` body — the original dot-matrix aura. Unchanged
+    /// from when it was the default; it simply no longer is one.
+    fn draw_matrix_body(&self, pixmap: &mut Pixmap, y_off: f32) {
+        let cell_px = Self::cell_px();
+        let dots = &self.aura.dots;
+        let radius = DOT_D * SCALE / 2.0;
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                if is_edge(col, row) {
+                    continue;
+                }
+                let c = dots[row * COLS + col];
+                if c[3] == 0 {
+                    continue;
+                }
+                let dx = col as f32 * cell_px + cell_px / 2.0;
+                let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
+                if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
+                    paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
+                    pixmap.fill_path(
+                        &circle,
+                        &paint,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
+    /// [GRAIN] `PillSkin::Wave` body — the new default look: a small state disc
+    /// at the LEFT and a smooth centre-line waveform filling the RIGHT.
+    ///
+    /// First-pass proportions; the `WAVE_*` consts are the dial board for the
+    /// final visual spec. A theme's `dot` colour still wins over the state ink,
+    /// so an extension theme keeps working across a skin change.
+    fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom) {
+        let (x0, x1) = geom.body_x();
+        let cy = geom.y_off + geom.body_h / 2.0;
+
+        // Ink: a theme's colour first, then the state's own.
+        let themed = theme_for_state(self.theme.as_ref(), self.state).and_then(|t| t.dot);
+        let ink = themed.unwrap_or(match self.state {
+            PillState::Recording if self.prompt_recording => WAVE_INK_PROMPT,
+            PillState::Recording => WAVE_INK,
+            PillState::Processing => ACCENT,
+            PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
+        });
+
+        // The state disc sits inside the left cap; the wave takes what's left.
+        let dot_cx = x0 + WAVE_PAD_X + WAVE_DOT_R;
+        let wave_x0 = dot_cx + WAVE_DOT_R + WAVE_DOT_GAP;
+        let wave_x1 = x1 - WAVE_PAD_X;
+
+        let mut paint = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        // A gentle breath keeps the resting pill alive without motion noise.
+        let disc_a = match self.state {
+            PillState::Recording => 1.0,
+            PillState::Processing => 0.75 + 0.25 * (self.wave.phase * 0.06).sin(),
+            PillState::Idle | PillState::Fallback => 0.45,
+        };
+        if let Some(disc) = PathBuilder::from_circle(dot_cx, cy, WAVE_DOT_R) {
+            let a = (disc_a.clamp(0.0, 1.0) * 255.0) as u8;
+            paint.set_color(Color::from_rgba8(ink[0], ink[1], ink[2], a));
+            pixmap.fill_path(&disc, &paint, FillRule::Winding, Transform::identity(), None);
+        }
+
+        draw_wave_field(
+            pixmap,
+            wave_x0,
+            cy,
+            wave_x1 - wave_x0,
+            geom.body_h / 2.0 * WAVE_FILL,
+            &self.wave.env,
+            ink,
+            1.0,
+        );
     }
 
     /// [GRAIN] The collapsed pill's SIBLING prompt capsule — a fixed-width pill
@@ -4281,7 +4596,11 @@ impl ApplicationHandler<UserEvent> for App {
         if self.window.is_some() {
             return;
         }
-        let (w, h) = Self::win_size();
+        // [GRAIN] Adopt the skin the core already sent (its welcome frame lands
+        // before the window exists) so the window is CREATED at the right size
+        // rather than created wrong and resized on the first tick.
+        self.skin = self.remote.lock().unwrap().skin;
+        let (w, h) = Self::win_size(self.skin);
         #[allow(unused_mut)]
         let mut attrs = Window::default_attributes()
             .with_title("")
@@ -4301,7 +4620,7 @@ impl ApplicationHandler<UserEvent> for App {
 
         // Initial placement using the current anchor; repositioned on each show.
         let anchor = self.remote.lock().unwrap().anchor;
-        Self::position_window(&window, anchor, h, Self::collapsed_core_w());
+        Self::position_window(&window, anchor, h, Self::collapsed_core_w(self.skin));
 
         eprintln!("window: created {w}x{h} (hidden until a session starts)");
         self.window = Some(window);
@@ -4571,6 +4890,16 @@ impl ApplicationHandler<UserEvent> for App {
             // frame. The Presenter caches a fixed-size GDI bitmap, so it must be
             // rebuilt for the new size; the cached pixmap is invalidated too
             // (wrong dimensions otherwise).
+            // [GRAIN] A skin change resizes the pill exactly like a mode change
+            // does (it IS a geometry change), so it rides the same path rather
+            // than getting its own. It is a settings action — rare, never a
+            // per-frame cost.
+            let skin_changed = r.skin != self.skin;
+            if skin_changed {
+                self.skin = r.skin;
+                // Open the new look on silence, not on the old look's tail.
+                self.wave.clear();
+            }
             if desired_mode != self.mode {
                 // [GRAIN] Collapsed→Studio while already on screen is the FIRST-WORD
                 // expand (mid-session): keep it visible at full opacity so it grows
@@ -4581,7 +4910,7 @@ impl ApplicationHandler<UserEvent> for App {
                     && (self.visible || self.closing);
                 self.mode = desired_mode;
                 if let Some(window) = &self.window {
-                    let (w, h) = Self::win_size_for(self.mode);
+                    let (w, h) = Self::win_size_for(self.mode, self.skin);
                     // [GRAIN] winit 0.30 renamed this `request_inner_size` (the
                     // resize isn't always synchronous on every platform); on
                     // Windows it applies immediately, so the Presenter rebuilt
@@ -4599,7 +4928,7 @@ impl ApplicationHandler<UserEvent> for App {
                             window,
                             r.anchor,
                             h,
-                            Self::center_w_for(self.mode, w),
+                            Self::center_w_for(self.mode, self.skin, w),
                         );
                     }
                 }
@@ -4620,6 +4949,22 @@ impl ApplicationHandler<UserEvent> for App {
                     self.visible = false;
                     self.closing = false;
                 }
+            } else if skin_changed && self.mode == PillMode::Collapsed {
+                // A skin change with no mode change still needs the window
+                // resized to the new geometry (and re-centered on the new
+                // footprint) — but none of the Studio reset above.
+                if let Some(window) = &self.window {
+                    let (w, h) = Self::win_size(self.skin);
+                    let _ = window.request_inner_size(PhysicalSize::new(w, h));
+                    self.presenter = present::Presenter::new(window, w as i32, h as i32);
+                    Self::position_window(
+                        window,
+                        r.anchor,
+                        h,
+                        Self::center_w_for(self.mode, self.skin, w),
+                    );
+                }
+                self.pixmap = None;
             }
 
             // [GRAIN] Prompt switched → show the riser, and briefly reveal the
@@ -4752,9 +5097,19 @@ impl ApplicationHandler<UserEvent> for App {
             }
 
             if self.visible {
+                // [GRAIN] The WAVE skin advances every frame, not on the dot
+                // field's slow cadence — its whole character is a continuously
+                // scrolling line, and an 80ms step would read as a stutter. The
+                // dot field is skipped entirely while the wave is on screen, so
+                // only one of the two ever costs anything per frame.
+                let wave_live = self.skin == PillSkin::Wave && self.mode == PillMode::Collapsed;
+                if wave_live {
+                    let amp = self.current_amp();
+                    self.wave.roll(self.state, amp);
+                }
                 // Re-roll the dot field on its own (slower) cadence so it stays
                 // calm; everything else eases every frame for smoothness.
-                if now >= self.next_roll {
+                if now >= self.next_roll && !wave_live {
                     let amp = self.current_amp();
                     // The expanded pill uses the 2-column field: center-outward
                     // waveform while recording, orange sparkle while processing,
@@ -4814,7 +5169,7 @@ impl ApplicationHandler<UserEvent> for App {
                             present::show_window(window);
                             present::force_foreground(window);
                         } else {
-                            let (w, h) = Self::win_size_for(self.mode);
+                            let (w, h) = Self::win_size_for(self.mode, self.skin);
                             // [GRAIN] A centered overlay (idle prompt-switch
                             // preview or agent follow-up offer) shows ONLY the
                             // capsule, so center the window on the capsule's
@@ -4829,7 +5184,7 @@ impl ApplicationHandler<UserEvent> for App {
                                     SIB_W
                                 }
                             } else {
-                                Self::center_w_for(self.mode, w)
+                                Self::center_w_for(self.mode, self.skin, w)
                             };
                             Self::position_window(window, r.anchor, h, center_w);
                             eprintln!("window: show (content primed)");
@@ -4845,12 +5200,12 @@ impl ApplicationHandler<UserEvent> for App {
                     // instead of offset to the left.
                     if let Some(window) = &self.window {
                         if self.mode != PillMode::AgentInput {
-                            let (w, h) = Self::win_size_for(self.mode);
+                            let (w, h) = Self::win_size_for(self.mode, self.skin);
                             Self::position_window(
                                 window,
                                 r.anchor,
                                 h,
-                                Self::center_w_for(self.mode, w),
+                                Self::center_w_for(self.mode, self.skin, w),
                             );
                         }
                     }
@@ -4921,6 +5276,193 @@ pub fn run_pill() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Pill skins ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_matrix_skin_keeps_the_original_grid_derived_geometry() {
+        // The legacy look must be pixel-identical to when it was the default —
+        // it is now a choice, not a rewrite.
+        let g = PillGeom::for_skin(PillSkin::Matrix);
+        assert_eq!(g.core_w, COLS as f32 * CELL * SCALE);
+        assert_eq!(g.body_h, ROWS as f32 * CELL * SCALE);
+        assert_eq!(g.inset, CELL * SCALE);
+        assert_eq!(g.y_off, RISER_RESERVE * CELL * SCALE);
+        assert_eq!(g.radius(), g.body_h / 2.0);
+    }
+
+    #[test]
+    fn the_wave_skin_is_exactly_twenty_percent_smaller_than_the_matrix_skin() {
+        let m = PillGeom::for_skin(PillSkin::Matrix);
+        let w = PillGeom::for_skin(PillSkin::Wave);
+        assert_eq!(w.core_w, m.core_w * 0.8);
+        assert_eq!(w.body_h, m.body_h * 0.8);
+        assert_eq!(w.inset, m.inset * 0.8);
+        // The band above the pill is the prompt capsule's runway, not part of
+        // the pill — it must NOT shrink with the body.
+        assert_eq!(w.y_off, m.y_off);
+    }
+
+    #[test]
+    fn a_skin_change_changes_the_window_size_but_keeps_the_sibling_reserve() {
+        let (mw, mh) = App::win_size(PillSkin::Matrix);
+        let (ww, wh) = App::win_size(PillSkin::Wave);
+        assert!(wh < mh, "the wave window is shorter: {wh} vs {mh}");
+        assert!(ww < mw, "the wave window is narrower: {ww} vs {mw}");
+        // Both must still fit the widest sibling capsule, or a prompt switch
+        // would be clipped on the smaller skin.
+        for (w, skin) in [(mw, PillSkin::Matrix), (ww, PillSkin::Wave)] {
+            let core = App::collapsed_core_w(skin);
+            assert!(
+                w as f32 - core >= SIB_GAP + SIB_MAX_W,
+                "{skin:?} leaves no room for the sibling capsule"
+            );
+        }
+    }
+
+    #[test]
+    fn the_window_is_centered_on_the_pills_own_footprint_not_the_window() {
+        // The window is wider than the pill (the sibling capsule lives to the
+        // right), so centering on the window would push the pill off-center.
+        for skin in [PillSkin::Wave, PillSkin::Matrix] {
+            let (w, _) = App::win_size(skin);
+            let center_w = App::center_w_for(PillMode::Collapsed, skin, w);
+            assert_eq!(center_w, PillGeom::for_skin(skin).core_w);
+            assert!(center_w < w as f32);
+        }
+    }
+
+    #[test]
+    fn the_wave_rests_flat_and_returns_to_flat_after_speech() {
+        let mut f = WaveField::new();
+        assert!(f.env.iter().all(|&e| e == 0.0), "opens silent");
+
+        for _ in 0..80 {
+            f.roll(PillState::Recording, 0.9);
+        }
+        assert!(
+            f.env[WAVE_POINTS - 1] > 0.5,
+            "speech drives the line off centre"
+        );
+
+        // Release is slow but must actually reach the resting line.
+        for _ in 0..400 {
+            f.roll(PillState::Idle, 0.0);
+        }
+        assert!(
+            f.env.iter().all(|&e| e < 0.02),
+            "silence returns to the centre line"
+        );
+    }
+
+    #[test]
+    fn the_wave_never_steps_more_than_the_follower_allows() {
+        // The whole point of the skin is smoothness: even an instant jump from
+        // silence to full volume may not produce a discontinuity in the line.
+        let mut f = WaveField::new();
+        for _ in 0..WAVE_POINTS {
+            f.roll(PillState::Recording, 0.0);
+        }
+        let mut prev = f.env[WAVE_POINTS - 1];
+        for _ in 0..60 {
+            f.roll(PillState::Recording, 1.0);
+            let cur = f.env[WAVE_POINTS - 1];
+            assert!(
+                (cur - prev).abs() <= WAVE_ATTACK + 1e-4,
+                "step {} exceeds the attack limit",
+                cur - prev
+            );
+            prev = cur;
+        }
+    }
+
+    #[test]
+    fn processing_sweeps_a_travelling_bump_along_the_line() {
+        let mut f = WaveField::new();
+        f.roll(PillState::Processing, 0.0);
+        let first = f.env;
+        for _ in 0..40 {
+            f.roll(PillState::Processing, 0.0);
+        }
+        assert!(
+            first != f.env,
+            "the processing sweep must actually move the line"
+        );
+        assert!(
+            f.env.iter().all(|&e| (0.0..=1.0).contains(&e)),
+            "the sweep stays inside the capsule"
+        );
+    }
+
+    #[test]
+    fn clearing_the_wave_drops_the_previous_sessions_tail() {
+        let mut f = WaveField::new();
+        for _ in 0..50 {
+            f.roll(PillState::Recording, 0.8);
+        }
+        f.clear();
+        assert!(f.env.iter().all(|&e| e == 0.0));
+        assert_eq!(f.level, 0.0);
+    }
+
+    #[test]
+    fn the_wave_skin_renders_to_png() {
+        // Renders the wave body straight into a pixmap (no window/presenter) —
+        // proves the spline path closes and actually paints ink.
+        let geom = PillGeom::for_skin(PillSkin::Wave);
+        let (w, h) = App::win_size(PillSkin::Wave);
+        let mut pixmap = Pixmap::new(w, h).unwrap();
+        pixmap.fill(Color::TRANSPARENT);
+
+        let mut f = WaveField::new();
+        for i in 0..90 {
+            f.roll(PillState::Recording, 0.25 + 0.6 * ((i as f32) * 0.2).sin().abs());
+        }
+        let cy = geom.y_off + geom.body_h / 2.0;
+        let (x0, x1) = geom.body_x();
+        draw_wave_field(
+            &mut pixmap,
+            x0 + WAVE_PAD_X,
+            cy,
+            (x1 - WAVE_PAD_X) - (x0 + WAVE_PAD_X),
+            geom.body_h / 2.0 * WAVE_FILL,
+            &f.env,
+            WAVE_INK,
+            1.0,
+        );
+
+        let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
+        assert!(painted > 200, "the wave painted almost nothing ({painted}px)");
+
+        // Every painted pixel must sit inside the capsule's vertical bounds.
+        let top = geom.y_off as usize;
+        let bottom = (geom.y_off + geom.body_h).ceil() as usize;
+        for (i, p) in pixmap.pixels().iter().enumerate() {
+            if p.alpha() > 0 {
+                let y = i / w as usize;
+                assert!(y >= top && y <= bottom, "wave ink escaped the capsule at y={y}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_flat_field_still_draws_the_centre_line() {
+        // Silence must read as a hairline through the middle, never as nothing.
+        let mut pixmap = Pixmap::new(160, 40).unwrap();
+        pixmap.fill(Color::TRANSPARENT);
+        draw_wave_field(
+            &mut pixmap,
+            10.0,
+            20.0,
+            140.0,
+            12.0,
+            &[0.0; WAVE_POINTS],
+            WAVE_INK_IDLE,
+            1.0,
+        );
+        let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
+        assert!(painted > 50, "the resting line vanished ({painted}px)");
+    }
 
     #[test]
     fn extension_session_owner_lives_through_processing_and_clears_at_terminal() {

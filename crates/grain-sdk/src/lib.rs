@@ -25,6 +25,7 @@ pub mod error;
 pub mod flagged;
 pub mod event;
 pub mod manifest;
+pub mod pill_skin;
 pub mod pill_theme;
 pub mod protocol;
 pub mod settings_schema;
@@ -46,6 +47,7 @@ pub use manifest::{
     PackPayloads, PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces,
     Tier, WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS, SURFACE_PROMPTS,
 };
+pub use pill_skin::PillSkin;
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
 pub use protocol::{
     ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,
