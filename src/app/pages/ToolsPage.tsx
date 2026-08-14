@@ -1,13 +1,21 @@
 /* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bot, BookOpen, ChevronRight, Code2, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Bot,
+  BookOpen,
+  ChevronRight,
+  Code2,
+  Plus,
+  Search,
+  Sparkles,
+  X,
+} from "lucide-react";
 import {
   commands,
   type ExtensionCard,
   type StoreEntry,
   type StoreView,
 } from "@/bindings";
-import { CustomWords } from "@/components/settings/CustomWords";
 import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
 import {
@@ -16,8 +24,6 @@ import {
 } from "@/components/settings/experimentations/FeaturePanel";
 import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
 import { SnippetsSection } from "@/components/settings/experimentations/SnippetsSection";
-import { SettingsGroup } from "@/components/ui/SettingsGroup";
-import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
 import { StoreCard } from "../extensions/StoreCard";
@@ -33,8 +39,7 @@ const TOOL_COPY: Record<
 > = {
   dictionary: {
     title: "Dictionary",
-    description:
-      "Teach Grain names, product terms, acronyms, and specialist vocabulary ordinary speech models may miss.",
+    description: "Teach Grain the words that matter to you.",
     icon: BookOpen,
   },
   snippets: {
@@ -193,26 +198,285 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
   );
 }
 
-function DictionaryTool() {
+type DictionaryDialogState =
+  | { mode: "add" }
+  | { mode: "edit"; original: string };
+
+function DictionaryTermDialog({
+  state,
+  busy,
+  onClose,
+  onSave,
+  onRemove,
+}: {
+  state: DictionaryDialogState;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (value: string) => Promise<string | null>;
+  onRemove: () => Promise<void>;
+}) {
+  const editing = state.mode === "edit";
+  const [term, setTerm] = useState(editing ? state.original : "");
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const returnFocusTo = document.activeElement as HTMLElement | null;
+    inputRef.current?.focus();
+    return () => returnFocusTo?.focus();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+      if (event.key !== "Tab") return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled)",
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [busy, onClose]);
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const nextError = await onSave(term);
+    if (nextError) {
+      setError(nextError);
+    } else {
+      onClose();
+    }
+  };
+
   return (
-    <>
-      <section className="tool-section">
-        <div className="tool-section-head">
-          <div>
-            <h2>Personal dictionary</h2>
-            <p>Terms stay local and are used across every capture mode.</p>
+    <div
+      className="dictionary-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="dictionary-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="dictionary-dialog-title"
+      >
+        <button
+          className="dictionary-dialog-close"
+          type="button"
+          aria-label="Close"
+          disabled={busy}
+          onClick={onClose}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+        <form onSubmit={(event) => void submit(event)}>
+          <h2 id="dictionary-dialog-title">
+            {editing ? "Edit term" : "Add a term"}
+          </h2>
+          <p>
+            {editing
+              ? "Update this term in your personal dictionary."
+              : "Help Grain recognize names, slang, or custom terms."}
+          </p>
+          <input
+            ref={inputRef}
+            className="dictionary-dialog-input"
+            value={term}
+            maxLength={50}
+            spellCheck={false}
+            autoComplete="off"
+            disabled={busy}
+            aria-label={editing ? "Term" : "The term you'll say"}
+            aria-invalid={Boolean(error) || undefined}
+            aria-describedby={error ? "dictionary-term-error" : undefined}
+            placeholder={editing ? undefined : "The term you'll say"}
+            onChange={(event) => {
+              setTerm(event.target.value);
+              setError(null);
+            }}
+          />
+          {error && (
+            <span
+              id="dictionary-term-error"
+              className="dictionary-term-error"
+              role="alert"
+            >
+              {error}
+            </span>
+          )}
+          <div
+            className={`dictionary-dialog-actions ${editing ? "has-remove" : ""}`}
+          >
+            {editing && (
+              <button
+                className="dictionary-remove-button"
+                type="button"
+                disabled={busy}
+                onClick={() => void onRemove()}
+              >
+                Remove term
+              </button>
+            )}
+            <button
+              className="dictionary-save-button"
+              type="submit"
+              disabled={!term.trim() || busy}
+            >
+              {busy ? "Saving…" : editing ? "Save changes" : "Add"}
+            </button>
           </div>
-        </div>
-        <div className="tool-component-host">
-          <SettingsGroup>
-            <CustomWords descriptionMode="tooltip" grouped />
-          </SettingsGroup>
-        </div>
+        </form>
       </section>
-      {/* No "Enhance Dictionary" row: no host surface maps to the dictionary, so
-          nothing can ever be recommended here — an always-empty section reads as
-          broken. The other three tools do have surfaces and keep theirs. */}
-    </>
+    </div>
+  );
+}
+
+function DictionaryTool() {
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const [query, setQuery] = useState("");
+  const [dialog, setDialog] = useState<DictionaryDialogState | null>(null);
+  const words = getSetting("custom_words") ?? [];
+  const busy = isUpdating("custom_words");
+  const closeDialog = useCallback(() => setDialog(null), []);
+  const filteredWords = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (!normalizedQuery) return words;
+    return words.filter((word) =>
+      word.toLocaleLowerCase().includes(normalizedQuery),
+    );
+  }, [query, words]);
+
+  const saveTerm = async (value: string) => {
+    const candidate = value.trim().replace(/[<>"']/g, "");
+    if (!candidate) return "Enter a term to continue.";
+    if (/\s/.test(candidate)) return "Use one word or a hyphenated term.";
+    if (candidate.length > 50) return "Keep the term under 50 characters.";
+
+    const original = dialog?.mode === "edit" ? dialog.original : null;
+    const duplicate = words.some(
+      (word) =>
+        word !== original &&
+        word.toLocaleLowerCase() === candidate.toLocaleLowerCase(),
+    );
+    if (duplicate) return `“${candidate}” is already in your dictionary.`;
+
+    if (original === null) {
+      await updateSetting("custom_words", [...words, candidate]);
+      return null;
+    }
+
+    const index = words.indexOf(original);
+    if (index < 0) return "This term is no longer in your dictionary.";
+    const nextWords = [...words];
+    nextWords[index] = candidate;
+    await updateSetting("custom_words", nextWords);
+    return null;
+  };
+
+  const removeTerm = async () => {
+    if (dialog?.mode !== "edit") return;
+    const index = words.indexOf(dialog.original);
+    if (index < 0) {
+      closeDialog();
+      return;
+    }
+    await updateSetting(
+      "custom_words",
+      words.filter((_, wordIndex) => wordIndex !== index),
+    );
+    closeDialog();
+  };
+
+  return (
+    <section className="dictionary-workspace" aria-label="Personal dictionary">
+      <div className="dictionary-guide">
+        <div className="dictionary-guide-copy">
+          <h2>How to use your personal dictionary</h2>
+          <p>
+            Add names, product terms, and specialist words Grain should
+            recognize. Your dictionary stays on this device.
+          </p>
+          <button type="button" className="dictionary-learn-more" disabled>
+            Learn more
+          </button>
+        </div>
+        <div className="dictionary-guide-examples" aria-hidden="true">
+          <span>Grain</span>
+          <span>Tauri</span>
+          <span>MacBook Pro</span>
+        </div>
+      </div>
+
+      <div className="dictionary-toolbar">
+        <label className="dictionary-search">
+          <Search size={17} aria-hidden="true" />
+          <span className="sr-only">Search dictionary</span>
+          <input
+            type="search"
+            value={query}
+            placeholder="Search"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+        </label>
+        <button
+          className="dictionary-add-button"
+          type="button"
+          onClick={() => setDialog({ mode: "add" })}
+        >
+          <Plus size={16} aria-hidden="true" />
+          Add term
+        </button>
+      </div>
+
+      {filteredWords.length > 0 ? (
+        <div className="dictionary-term-grid" aria-label="Dictionary terms">
+          {filteredWords.map((word) => (
+            <button
+              key={word}
+              className="dictionary-term"
+              type="button"
+              aria-label={`Edit ${word}`}
+              onClick={() => setDialog({ mode: "edit", original: word })}
+            >
+              {word}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="dictionary-empty-state">
+          <strong>{query.trim() ? "No matching terms" : "No terms yet"}</strong>
+          <span>
+            {query.trim()
+              ? "Try another search."
+              : "Add a term Grain should recognize."}
+          </span>
+        </div>
+      )}
+
+      {dialog && (
+        <DictionaryTermDialog
+          state={dialog}
+          busy={busy}
+          onClose={closeDialog}
+          onSave={saveTerm}
+          onRemove={removeTerm}
+        />
+      )}
+    </section>
   );
 }
 
@@ -356,7 +620,11 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
             <div className="tools-scroll">
               <div className="tools-content next-settings-content">
                 <header className="tool-main-heading">
-                  <h1 id="next-tool-title">{copy.title}</h1>
+                  <h1 id="next-tool-title">
+                    {section === "dictionary"
+                      ? "Personal Dictionary"
+                      : copy.title}
+                  </h1>
                   <p>{copy.description}</p>
                 </header>
                 {section === "dictionary" ? (
