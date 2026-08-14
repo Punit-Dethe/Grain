@@ -631,9 +631,11 @@ export const ContextAwareSection: React.FC = () => {
                 }
               >
                 <CustomProfileTargetStack targets={profile.targets} />
-                <strong>{profile.title}</strong>
-                <span className="context-custom-profile-instruction">
-                  {profile.instruction}
+                <span className="context-custom-profile-create-copy">
+                  <strong>{profile.title}</strong>
+                  <span className="context-custom-profile-instruction">
+                    {profile.instruction}
+                  </span>
                 </span>
               </button>
             ))}

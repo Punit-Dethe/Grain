@@ -4225,11 +4225,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   border-radius: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
-  grid-template-rows: auto auto;
   align-content: center;
   align-items: center;
-  column-gap: 14px;
-  row-gap: 5px;
+  gap: 14px;
   overflow: hidden;
   color: var(--text-1);
   background: transparent;
@@ -4256,23 +4254,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   transform: scale(0.99);
 }
 
-.context-custom-profile-card > strong {
-  width: 100%;
-  grid-column: 2;
-  grid-row: 1;
-  align-self: end;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 620;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .context-custom-profile-instruction {
   width: 100%;
-  grid-column: 2;
-  grid-row: 2;
-  align-self: start;
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-2);
@@ -4281,14 +4264,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   white-space: pre-wrap;
-}
-
-.context-custom-profile-create {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-content: center;
-  align-items: center;
-  gap: 14px;
 }
 
 .context-custom-profile-create-icon {
@@ -4308,8 +4283,12 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-create-copy strong {
+  width: 100%;
+  overflow: hidden;
   font-size: 13px;
   font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .context-custom-profile-create-copy > span {
@@ -4319,12 +4298,12 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-icons {
+  min-width: 38px;
   min-height: 34px;
-  grid-column: 1;
-  grid-row: 1 / span 2;
-  align-self: center;
   display: flex;
+  flex-direction: column;
   align-items: center;
+  justify-content: center;
 }
 
 .context-custom-profile-icons > span {
@@ -4341,7 +4320,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-icons > span + span {
-  margin-left: -8px;
+  margin-top: -12px;
 }
 
 .context-custom-profile-icons > span:nth-child(2) {
