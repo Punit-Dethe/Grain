@@ -4220,13 +4220,16 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .context-custom-profile-card {
   min-width: 0;
-  min-height: 142px;
-  padding: 18px;
+  min-height: 112px;
+  padding: 16px;
   border-radius: 16px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 5px;
   overflow: hidden;
   color: var(--text-1);
   background: transparent;
@@ -4255,6 +4258,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .context-custom-profile-card > strong {
   width: 100%;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
   overflow: hidden;
   font-size: 13px;
   font-weight: 620;
@@ -4263,13 +4269,17 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-instruction {
+  width: 100%;
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-2);
   font-size: 12px;
   line-height: 1.52;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   white-space: pre-wrap;
 }
 
@@ -4310,6 +4320,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .context-custom-profile-icons {
   min-height: 34px;
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  align-self: center;
   display: flex;
   align-items: center;
 }
