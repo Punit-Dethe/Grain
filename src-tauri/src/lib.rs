@@ -88,6 +88,7 @@ mod paste_tx;
 pub mod portable;
 mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
+mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
 mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)

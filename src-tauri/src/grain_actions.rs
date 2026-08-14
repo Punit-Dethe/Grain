@@ -66,6 +66,10 @@ fn emit_session_started_with_owner(
     // first painted frame. A cold app emits nothing here and resolves behind the
     // session — this call never blocks the start.
     crate::pill_icon::emit_for_session(app);
+    // [GRAIN] …and keep following it: switching windows mid-dictation moves the
+    // paste target, and the pill should end up agreeing with post-processing
+    // (which resolves its context at paste time, after every switch).
+    crate::surface_watch::start(app);
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -97,6 +101,9 @@ pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
 /// [`emit_processing_complete`] reuses it.
 pub(crate) fn emit_recording_stopped(app: &AppHandle) -> u64 {
     let session_id = current_session_id();
+    // [GRAIN] Nothing left to follow — drop the hook rather than leave it live
+    // between sessions, and invalidate any settle still counting down.
+    crate::surface_watch::stop(app);
     crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
     session_id
 }
