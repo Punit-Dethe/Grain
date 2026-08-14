@@ -1086,10 +1086,17 @@ const WAVE_SPAN_SECS: f32 = 0.85;
 /// Ring capacity: the visible span plus margin for the interpolator's outer
 /// control points.
 const WAVE_HISTORY: usize = 64;
-/// Control points drawn across the width (≈ one per sample of the visible span).
-const WAVE_POINTS: usize = 40;
 /// Visible span in samples.
 const WAVE_SPAN: f32 = WAVE_SPAN_SECS * WAVE_SAMPLE_HZ;
+
+// Bar geometry — the classic waveform look. Width and gap set the bar count for
+// whatever width the capsule gives us; `WAVE_BAR_MAX` is only a sanity ceiling.
+const WAVE_BAR_W: f32 = 2.0;
+const WAVE_BAR_GAP: f32 = 1.7;
+const WAVE_BAR_MAX: usize = 48;
+/// Shortest a bar ever gets. Equal to the bar width, so a resting bar is a
+/// circle and silence reads as an even row of dots rather than a gap.
+const WAVE_BAR_MIN_H: f32 = 2.0;
 
 /// Amplitude follower coefficients AT `WAVE_SAMPLE_HZ` — fast attack so a
 /// syllable's onset is caught, slow release so the line settles rather than
@@ -1100,10 +1107,6 @@ const WAVE_K_RELEASE: f32 = 0.095;
 /// Mic level below this is room tone, not speech. Without a floor the resting
 /// line never actually settles.
 const WAVE_NOISE_FLOOR: f32 = 0.012;
-/// Fraction of the width over which each end tapers into the resting line.
-const WAVE_EDGE_FRAC: f32 = 0.14;
-/// Thickness of the resting centre line (px) — silence is a hairline, not a gap.
-const WAVE_MIN_THICKNESS: f32 = 1.6;
 /// Horizontal padding inside the capsule.
 const WAVE_PAD_X: f32 = 10.0;
 /// The state disc on the LEFT, and the gap before the waveform starts.
@@ -1222,19 +1225,17 @@ impl WaveField {
         self.hist[idx.rem_euclid(WAVE_HISTORY as i64) as usize]
     }
 
-    /// Fill `out` with the drawable envelope, oldest (left) first, resampled at
-    /// the current sub-sample offset so the shape slides rather than steps.
-    fn sample_into(&self, out: &mut [f32; WAVE_POINTS]) {
-        for (i, o) in out.iter_mut().enumerate() {
-            let t = i as f32 / (WAVE_POINTS - 1) as f32;
-            let back = (1.0 - t) * WAVE_SPAN + self.accum;
-            let b = back.floor();
-            let f = back - b;
-            let b = b as i32;
-            // at(b) is the newer neighbour, at(b+1) the older one.
-            *o = catmull_scalar(self.at(b - 1), self.at(b), self.at(b + 1), self.at(b + 2), f)
-                .clamp(0.0, 1.0);
-        }
+    /// The envelope at normalised position `t` across the visible span
+    /// (0 = oldest/left, 1 = newest/right), resampled at the current sub-sample
+    /// offset so the values slide continuously rather than stepping.
+    fn value_at(&self, t: f32) -> f32 {
+        let back = (1.0 - t.clamp(0.0, 1.0)) * WAVE_SPAN + self.accum;
+        let b = back.floor();
+        let f = back - b;
+        let b = b as i32;
+        // at(b) is the newer neighbour, at(b + 1) the older one.
+        catmull_scalar(self.at(b - 1), self.at(b), self.at(b + 1), self.at(b + 2), f)
+            .clamp(0.0, 1.0)
     }
 
     /// Drop back to silence so the next session opens on a flat line instead of
@@ -1247,81 +1248,63 @@ impl WaveField {
     }
 }
 
-/// Append a Catmull-Rom spline through `pts` (the first point must already be
-/// the path's current position). Each segment becomes the equivalent cubic
-/// Bezier — tiny-skia has no spline primitive, and a plain polyline here is
-/// exactly the faceted look the wave skin exists to avoid.
-fn spline_through(pb: &mut PathBuilder, pts: &[(f32, f32)]) {
-    let n = pts.len();
-    if n < 2 {
-        return;
-    }
-    for i in 0..n - 1 {
-        let p0 = pts[i.saturating_sub(1)];
-        let p1 = pts[i];
-        let p2 = pts[i + 1];
-        let p3 = pts[(i + 2).min(n - 1)];
-        let c1 = (p1.0 + (p2.0 - p0.0) / 6.0, p1.1 + (p2.1 - p0.1) / 6.0);
-        let c2 = (p2.0 - (p3.0 - p1.0) / 6.0, p2.1 - (p3.1 - p1.1) / 6.0);
-        pb.cubic_to(c1.0, c1.1, c2.0, c2.1, p2.0, p2.1);
-    }
-}
-
-/// Draw the smooth centre-line waveform: the envelope mirrored about `cy`,
-/// closed and filled through a spline. Both ends taper to the resting hairline
-/// so the wave emerges from the centre line rather than being chopped off by the
-/// capsule edge.
+/// Draw the waveform: a row of vertical rounded bars centred on `cy`, each one
+/// as tall as the voice was at that point in the visible span.
+///
+/// The bars sit at FIXED x positions and only their heights animate. The scroll
+/// lives in the data — each bar reads the history at a fractional offset that
+/// slides continuously (see `WaveField::value_at`), so the shape flows through a
+/// stationary row instead of the row itself marching sideways. That is what a
+/// recording meter actually does, and it avoids the shimmer that sub-pixel bar
+/// positions produce on a software renderer.
 #[allow(clippy::too_many_arguments)]
-fn draw_wave_field(
+fn draw_wave_bars(
     pixmap: &mut Pixmap,
     x: f32,
     cy: f32,
     w: f32,
     max_half: f32,
-    env: &[f32],
+    field: &WaveField,
     color: [u8; 3],
     alpha: f32,
 ) {
-    let n = env.len().min(WAVE_POINTS);
     let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
-    if n < 2 || w <= 0.5 || a == 0 {
+    if w <= 0.5 || a == 0 {
         return;
     }
-    let min_half = WAVE_MIN_THICKNESS / 2.0;
-    let reach = (max_half - min_half).max(0.0);
-    let step = w / (n - 1) as f32;
-
-    let mut top = [(0.0f32, 0.0f32); WAVE_POINTS];
-    let mut bottom_rev = [(0.0f32, 0.0f32); WAVE_POINTS];
-    for i in 0..n {
-        let hx = x + i as f32 * step;
-        // Taper the outer WAVE_EDGE_FRAC of each end into the resting line with
-        // a smoothstep, so the wave emerges from the centre line instead of
-        // being clipped by the capsule. Smoothstep (not a power curve) because
-        // its slope is zero at both limits — no visible kink where it lands.
-        let t = i as f32 / (n - 1) as f32;
-        let e = (t / WAVE_EDGE_FRAC)
-            .min((1.0 - t) / WAVE_EDGE_FRAC)
-            .clamp(0.0, 1.0);
-        let edge = e * e * (3.0 - 2.0 * e);
-        let h = min_half + env[i].clamp(0.0, 1.0) * reach * edge;
-        top[i] = (hx, cy - h);
-        bottom_rev[n - 1 - i] = (hx, cy + h);
+    let pitch = WAVE_BAR_W + WAVE_BAR_GAP;
+    let n = (((w + WAVE_BAR_GAP) / pitch).floor() as usize).min(WAVE_BAR_MAX);
+    if n == 0 {
+        return;
     }
+    // Centre the row: the width rarely divides evenly by the pitch, and letting
+    // the remainder fall on the right would read as a misaligned capsule.
+    let used = n as f32 * pitch - WAVE_BAR_GAP;
+    let x0 = x + (w - used) / 2.0;
 
-    let mut pb = PathBuilder::new();
-    pb.move_to(top[0].0, top[0].1);
-    spline_through(&mut pb, &top[..n]);
-    pb.line_to(bottom_rev[0].0, bottom_rev[0].1);
-    spline_through(&mut pb, &bottom_rev[..n]);
-    pb.close();
-    if let Some(path) = pb.finish() {
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Default::default()
+    let full_h = max_half * 2.0;
+    let reach = (full_h - WAVE_BAR_MIN_H).max(0.0);
+    let r = WAVE_BAR_W / 2.0;
+
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    paint.set_color(Color::from_rgba8(color[0], color[1], color[2], a));
+
+    for i in 0..n {
+        let t = if n == 1 {
+            1.0
+        } else {
+            i as f32 / (n - 1) as f32
         };
-        paint.set_color(Color::from_rgba8(color[0], color[1], color[2], a));
-        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        let v = field.value_at(t);
+        let h = WAVE_BAR_MIN_H + v * reach;
+        let bx = x0 + i as f32 * pitch;
+        let by = cy - h / 2.0;
+        if let Some(path) = rounded_rect_path(bx, by, WAVE_BAR_W, h, r) {
+            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+        }
     }
 }
 
@@ -4404,17 +4387,13 @@ impl App {
             pixmap.fill_path(&disc, &paint, FillRule::Winding, Transform::identity(), None);
         }
 
-        // Resample the history at the current sub-sample offset. A stack array —
-        // the field owns time, this is just the frame's view of it.
-        let mut env = [0.0f32; WAVE_POINTS];
-        self.wave.sample_into(&mut env);
-        draw_wave_field(
+        draw_wave_bars(
             pixmap,
             wave_x0,
             cy,
             wave_x1 - wave_x0,
             geom.body_h / 2.0 * WAVE_FILL,
-            &env,
+            &self.wave,
             ink,
             1.0,
         );
@@ -5441,9 +5420,13 @@ mod tests {
     /// One 60 fps frame, in seconds.
     const FRAME: f32 = 1.0 / 60.0;
 
-    fn env_of(f: &WaveField) -> [f32; WAVE_POINTS] {
-        let mut e = [0.0; WAVE_POINTS];
-        f.sample_into(&mut e);
+    /// The drawable envelope, sampled the way the bars sample it.
+    const PROBE: usize = 40;
+    fn env_of(f: &WaveField) -> [f32; PROBE] {
+        let mut e = [0.0; PROBE];
+        for (i, o) in e.iter_mut().enumerate() {
+            *o = f.value_at(i as f32 / (PROBE - 1) as f32);
+        }
         e
     }
 
@@ -5456,8 +5439,8 @@ mod tests {
             f.advance(FRAME, PillState::Recording, 0.9);
         }
         assert!(
-            env_of(&f)[WAVE_POINTS - 1] > 0.5,
-            "speech drives the line off centre"
+            env_of(&f)[PROBE - 1] > 0.5,
+            "speech drives the bars off centre"
         );
 
         // Release is slow but must actually reach the resting line.
@@ -5571,9 +5554,10 @@ mod tests {
     }
 
     #[test]
-    fn the_wave_skin_renders_to_png() {
-        // Renders the wave body straight into a pixmap (no window/presenter) —
-        // proves the spline path closes and actually paints ink.
+    fn the_wave_skin_renders_separated_bars() {
+        // Renders the wave body straight into a pixmap (no window/presenter).
+        // The load-bearing assertion is that the row is BARS — vertical ink
+        // separated by gaps — and not the continuous blob this replaced.
         let geom = PillGeom::for_skin(PillSkin::Wave);
         let (w, h) = App::win_size(PillSkin::Wave);
         let mut pixmap = Pixmap::new(w, h).unwrap();
@@ -5587,22 +5571,40 @@ mod tests {
                 0.25 + 0.6 * ((i as f32) * 0.2).sin().abs(),
             );
         }
-        let env = env_of(&f);
         let cy = geom.y_off + geom.body_h / 2.0;
         let (x0, x1) = geom.body_x();
-        draw_wave_field(
+        let wx = x0 + WAVE_PAD_X;
+        let ww = (x1 - WAVE_PAD_X) - wx;
+        draw_wave_bars(
             &mut pixmap,
-            x0 + WAVE_PAD_X,
+            wx,
             cy,
-            (x1 - WAVE_PAD_X) - (x0 + WAVE_PAD_X),
+            ww,
             geom.body_h / 2.0 * WAVE_FILL,
-            &env,
+            &f,
             WAVE_INK,
             1.0,
         );
 
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
-        assert!(painted > 200, "the wave painted almost nothing ({painted}px)");
+        assert!(painted > 100, "the wave painted almost nothing ({painted}px)");
+
+        // Walk the centre row: ink must alternate with empty gaps. A blob would
+        // be one unbroken run.
+        let row = cy as usize;
+        let mut runs = 0;
+        let mut inside = false;
+        for x in 0..w as usize {
+            let lit = pixmap.pixels()[row * w as usize + x].alpha() > 0;
+            if lit && !inside {
+                runs += 1;
+            }
+            inside = lit;
+        }
+        assert!(
+            runs >= 8,
+            "expected a row of separate bars, found {runs} run(s) of ink"
+        );
 
         // Every painted pixel must sit inside the capsule's vertical bounds.
         let top = geom.y_off as usize;
@@ -5615,23 +5617,126 @@ mod tests {
         }
     }
 
+    /// A look-at-it preview of the real wave body over the real capsule, saved
+    /// magnified so the bar rhythm is legible. Same convention as the theme and
+    /// studio previews above — the render path is the shipping one, not a
+    /// replica; only the final upscale is for human eyes.
     #[test]
-    fn a_flat_field_still_draws_the_centre_line() {
-        // Silence must read as a hairline through the middle, never as nothing.
-        let mut pixmap = Pixmap::new(160, 40).unwrap();
+    fn wave_skin_preview_png() {
+        const ZOOM: u32 = 6;
+        let geom = PillGeom::for_skin(PillSkin::Wave);
+        let (w, _h) = App::win_size(PillSkin::Wave);
+        let pw = geom.core_w.ceil() as u32;
+        let ph = (geom.y_off + geom.body_h).ceil() as u32;
+        let mut pixmap = Pixmap::new(w, ph).unwrap();
         pixmap.fill(Color::TRANSPARENT);
-        draw_wave_field(
+
+        // The capsule body, exactly as `render_collapsed` paints it.
+        let (x0, x1) = geom.body_x();
+        let r = geom.radius();
+        let mut body = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        body.set_color(Color::from_rgba8(0, 0, 0, 240));
+        if let Some(path) = rounded_rect_path(x0, geom.y_off, x1 - x0, geom.body_h, r) {
+            pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
+        }
+
+        let cy = geom.y_off + geom.body_h / 2.0;
+        let dot_cx = x0 + WAVE_PAD_X + WAVE_DOT_R;
+        let mut ink = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        ink.set_color(Color::from_rgba8(
+            WAVE_INK[0], WAVE_INK[1], WAVE_INK[2], 255,
+        ));
+        if let Some(d) = PathBuilder::from_circle(dot_cx, cy, WAVE_DOT_R) {
+            pixmap.fill_path(&d, &ink, FillRule::Winding, Transform::identity(), None);
+        }
+
+        let mut f = WaveField::new();
+        for i in 0..200 {
+            let t = i as f32 * 0.09;
+            let amp = (0.30 + 0.34 * (t * 2.3).sin() + 0.22 * (t * 5.7).sin()).clamp(0.0, 1.0);
+            f.advance(FRAME, PillState::Recording, amp);
+        }
+        let wave_x0 = dot_cx + WAVE_DOT_R + WAVE_DOT_GAP;
+        let wave_x1 = x1 - WAVE_PAD_X;
+        draw_wave_bars(
             &mut pixmap,
-            10.0,
-            20.0,
-            140.0,
-            12.0,
-            &[0.0; WAVE_POINTS],
-            WAVE_INK_IDLE,
+            wave_x0,
+            cy,
+            wave_x1 - wave_x0,
+            geom.body_h / 2.0 * WAVE_FILL,
+            &f,
+            WAVE_INK,
             1.0,
         );
+
+        // Composite over a neutral desktop grey and magnify (nearest-neighbour,
+        // so the actual pixels are what you inspect).
+        let mut out = Pixmap::new(pw * ZOOM, ph * ZOOM).unwrap();
+        out.fill(Color::from_rgba8(48, 50, 54, 255));
+        for y in 0..ph {
+            for x in 0..pw {
+                let p = pixmap.pixels()[(y * w + x) as usize];
+                if p.alpha() == 0 {
+                    continue;
+                }
+                let mut q = Paint::default();
+                // Pixmap pixels are premultiplied; demultiply for the flat fill.
+                let a = p.alpha() as f32 / 255.0;
+                let de = |c: u8| if a > 0.0 { (c as f32 / a) as u8 } else { 0 };
+                q.set_color(Color::from_rgba8(
+                    de(p.red()),
+                    de(p.green()),
+                    de(p.blue()),
+                    p.alpha(),
+                ));
+                if let Some(rect) = Rect::from_xywh(
+                    (x * ZOOM) as f32,
+                    (y * ZOOM) as f32,
+                    ZOOM as f32,
+                    ZOOM as f32,
+                ) {
+                    out.fill_path(
+                        &PathBuilder::from_rect(rect),
+                        &q,
+                        FillRule::Winding,
+                        Transform::identity(),
+                        None,
+                    );
+                }
+            }
+        }
+        let path = std::env::temp_dir().join("grain_pill_wave_preview.png");
+        out.save_png(&path).expect("save png");
+        eprintln!("PILL_WAVE_PREVIEW_PNG={}", path.display());
+    }
+
+    #[test]
+    fn silence_still_draws_an_even_row_of_resting_bars() {
+        // Silence must read as an even row of dots, never as nothing.
+        let mut pixmap = Pixmap::new(160, 40).unwrap();
+        pixmap.fill(Color::TRANSPARENT);
+        let f = WaveField::new();
+        draw_wave_bars(&mut pixmap, 10.0, 20.0, 140.0, 12.0, &f, WAVE_INK_IDLE, 1.0);
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
-        assert!(painted > 50, "the resting line vanished ({painted}px)");
+        assert!(painted > 40, "the resting row vanished ({painted}px)");
+
+        // At rest every bar is the same height, so the ink is confined to a thin
+        // band about the centre line.
+        for (i, p) in pixmap.pixels().iter().enumerate() {
+            if p.alpha() > 0 {
+                let y = (i / 160) as f32;
+                assert!(
+                    (y - 20.0).abs() <= WAVE_BAR_MIN_H,
+                    "a resting bar reached y={y}, far from the centre line"
+                );
+            }
+        }
     }
 
     #[test]
