@@ -134,6 +134,12 @@ async changeOverlayPositionSetting(position: string) : Promise<Result<null, stri
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
+ * (an extension's colours), a skin changes the pill's geometry — so the pill
+ * resizes its own window on receipt. An unknown name resolves to the default
+ * rather than erroring: the user must never end up with no pill.
+ */
 async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_pill_skin_setting", { skin }) };
@@ -2419,12 +2425,12 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition;
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; 
 /**
  * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
  * see `PillSkin`). Defaults to the smooth waveform.
  */
-pill_skin?: PillSkin; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[];
+pill_skin?: PillSkin; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
@@ -3007,27 +3013,27 @@ export type OverlayPosition = "none" | "top" | "bottom" |
 "center"
 export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 /**
- * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
- * pill look must touch in the protocol; the renderer owns everything else.
- */
-export type PillSkin =
-/**
- * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
- * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
- */
-"wave" |
-/**
- * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
- * the voice. Kept as a selectable look, no longer the default.
- */
-"matrix"
-/**
  * The transcript could not be pasted. Carries no payload — the technical
  * detail is logged on the Rust side and the window shows a localized message.
  */
 export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+/**
+ * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
+ * pill look must touch in the protocol; the renderer owns everything else.
+ */
+export type PillSkin = 
+/**
+ * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
+ * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
+ */
+"wave" | 
+/**
+ * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
+ * the voice. Kept as a selectable look, no longer the default.
+ */
+"matrix"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
 /**
  * [GRAIN] Included in smart rotation when true. Defaults true so existing

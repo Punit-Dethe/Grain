@@ -1068,12 +1068,40 @@ impl Aura {
 //
 // NOTE: these are first-pass proportions. The layout consts below are the dial
 // board for the visual spec — retuning the look should not need new structure.
-const WAVE_POINTS: usize = 36;
-/// Eased amplitude follower. Fast attack, slow release: the line swells with the
-/// voice and settles gently, which is what reads as "smooth" rather than the
-/// per-sample chatter a raw meter produces.
-const WAVE_ATTACK: f32 = 0.34;
-const WAVE_RELEASE: f32 = 0.11;
+//
+// SMOOTHNESS comes from three decisions, in order of how much they matter:
+//   1. Samples are written at a FIXED rate, not once per frame. The wave then
+//      scrolls at the same speed on a 60 Hz and a 144 Hz display, and a dropped
+//      frame shifts nothing — it just draws the same motion a little later.
+//   2. The draw resamples the history at a FRACTIONAL offset (`accum`), so the
+//      shape slides continuously instead of stepping a whole sample per frame.
+//      This is the difference between "smooth" and "smooth but ticking".
+//   3. Both the value interpolation and the outline are Catmull-Rom, so the
+//      curve is C1-continuous in space as well as in time.
+
+/// Samples written per second. Fixed so motion is frame-rate independent.
+const WAVE_SAMPLE_HZ: f32 = 50.0;
+/// Seconds of audio visible across the wave's width — sets the scroll speed.
+const WAVE_SPAN_SECS: f32 = 0.85;
+/// Ring capacity: the visible span plus margin for the interpolator's outer
+/// control points.
+const WAVE_HISTORY: usize = 64;
+/// Control points drawn across the width (≈ one per sample of the visible span).
+const WAVE_POINTS: usize = 40;
+/// Visible span in samples.
+const WAVE_SPAN: f32 = WAVE_SPAN_SECS * WAVE_SAMPLE_HZ;
+
+/// Amplitude follower coefficients AT `WAVE_SAMPLE_HZ` — fast attack so a
+/// syllable's onset is caught, slow release so the line settles rather than
+/// chatters. Written as coefficients because `exp` is not const: these are
+/// `1 - exp(-dt/tau)` at 50 Hz for tau = 40 ms and 200 ms respectively.
+const WAVE_K_ATTACK: f32 = 0.393;
+const WAVE_K_RELEASE: f32 = 0.095;
+/// Mic level below this is room tone, not speech. Without a floor the resting
+/// line never actually settles.
+const WAVE_NOISE_FLOOR: f32 = 0.012;
+/// Fraction of the width over which each end tapers into the resting line.
+const WAVE_EDGE_FRAC: f32 = 0.14;
 /// Thickness of the resting centre line (px) — silence is a hairline, not a gap.
 const WAVE_MIN_THICKNESS: f32 = 1.6;
 /// Horizontal padding inside the capsule.
@@ -1091,69 +1119,130 @@ const WAVE_INK_IDLE: [u8; 3] = [138, 146, 163];
 /// Prompt Record keeps the established light-blue signal (see `Aura`).
 const WAVE_INK_PROMPT: [u8; 3] = [150, 194, 255];
 
-/// The wave skin's voice field: a fixed-length envelope, newest sample last.
+/// Catmull-Rom interpolation of a scalar between `p1` and `p2` at `t` in 0..1.
+/// Used for the VALUE axis (the outline uses the Bezier form below) — it is what
+/// keeps the wave smooth as it slides between whole samples.
+fn catmull_scalar(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    0.5 * ((2.0 * p1)
+        + (-p0 + p2) * t
+        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
+        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
+}
+
+/// The wave skin's voice field: a fixed-rate ring of amplitude samples plus the
+/// fractional cursor that makes it scroll continuously. ~280 B, no allocation.
 struct WaveField {
-    env: [f32; WAVE_POINTS],
-    /// The eased follower that actually gets pushed into `env`.
+    hist: [f32; WAVE_HISTORY],
+    /// Total samples ever written; the ring index is `written % WAVE_HISTORY`.
+    written: u64,
+    /// Fractional sample not yet written, in sample units (0..1). Doubles as the
+    /// sub-sample scroll offset at draw time.
+    accum: f32,
+    /// The eased follower that gets written.
     level: f32,
-    phase: f32,
+    /// Seconds since the field started — drives the processing pulse.
+    clock: f32,
 }
 
 impl WaveField {
     const fn new() -> Self {
         WaveField {
-            env: [0.0; WAVE_POINTS],
+            hist: [0.0; WAVE_HISTORY],
+            written: 0,
+            accum: 0.0,
             level: 0.0,
-            phase: 0.0,
+            clock: 0.0,
         }
     }
 
-    /// Advance one step. Mirrors `Aura::roll` — the state picks the motion.
-    fn roll(&mut self, state: PillState, amp: f32) {
-        self.phase += 1.0;
-        match state {
-            PillState::Recording => self.push_voice(amp),
-            PillState::Processing => self.sweep(),
+    /// Advance by real elapsed time. Writes whole samples at `WAVE_SAMPLE_HZ`
+    /// and carries the remainder, so scroll speed is independent of frame rate.
+    fn advance(&mut self, dt: f32, state: PillState, amp: f32) {
+        let dt = dt.clamp(0.0, 0.25);
+        self.clock += dt;
+        self.accum += dt * WAVE_SAMPLE_HZ;
+        // A long stall (the window was hidden, the machine slept) must not
+        // burst-write the whole ring — cap the catch-up and drop the backlog.
+        let mut budget = WAVE_HISTORY;
+        while self.accum >= 1.0 && budget > 0 {
+            self.accum -= 1.0;
+            budget -= 1;
+            let s = self.next_sample(state, amp);
+            self.hist[(self.written % WAVE_HISTORY as u64) as usize] = s;
+            self.written = self.written.wrapping_add(1);
+        }
+        if self.accum >= 1.0 {
+            self.accum = 0.0;
+        }
+    }
+
+    fn next_sample(&mut self, state: PillState, amp: f32) -> f32 {
+        let target = match state {
+            PillState::Recording => Self::shape(amp),
+            PillState::Processing => self.processing_target(),
             // Idle/Fallback drain to the resting line rather than snapping to it.
-            PillState::Idle | PillState::Fallback => self.push_voice(0.0),
-        }
-    }
-
-    fn push_voice(&mut self, amp: f32) {
-        let target = Self::shape(amp);
+            PillState::Idle | PillState::Fallback => 0.0,
+        };
         let k = if target > self.level {
-            WAVE_ATTACK
+            WAVE_K_ATTACK
         } else {
-            WAVE_RELEASE
+            WAVE_K_RELEASE
         };
         self.level += (target - self.level) * k;
-        self.env.rotate_left(1);
-        self.env[WAVE_POINTS - 1] = self.level;
+        self.level
     }
 
     /// Map the mic's raw level to a visually linear 0..1. Speech sits low in the
     /// raw range, so without a curve quiet speech is invisible and loud speech
-    /// pins the top.
+    /// pins the top; without the floor, room tone keeps the line off centre.
     fn shape(amp: f32) -> f32 {
-        (amp.clamp(0.0, 1.0) * 3.2).sqrt().clamp(0.0, 1.0)
+        let a = (amp.clamp(0.0, 1.0) - WAVE_NOISE_FLOOR).max(0.0) / (1.0 - WAVE_NOISE_FLOOR);
+        a.powf(0.45).clamp(0.0, 1.0)
     }
 
-    /// Processing: a soft bump travels the line — the same "working on it" cue
-    /// as the matrix skin's sparkle, said in the wave's own language.
-    fn sweep(&mut self) {
-        let t = (self.phase * 0.011).fract();
-        let center = t * 1.4 - 0.2; // enters and leaves past both ends
-        for (i, e) in self.env.iter_mut().enumerate() {
-            let x = i as f32 / (WAVE_POINTS - 1) as f32;
-            let d = (x - center) / 0.15;
-            *e = (-(d * d)).exp() * 0.72;
+    /// Processing: an even pulse train scrolls through the line — "working on
+    /// it" in the same motion language as speech, rather than a second idiom.
+    fn processing_target(&self) -> f32 {
+        let s = (self.clock * std::f32::consts::TAU * 0.9).sin();
+        0.18 + 0.34 * s * s
+    }
+
+    /// Read the sample `back` positions behind the write head (0 = newest).
+    /// Out-of-range reads clamp to the ends, which is what keeps the outer
+    /// control points of the interpolator well-defined.
+    fn at(&self, back: i32) -> f32 {
+        if self.written == 0 {
+            return 0.0;
+        }
+        let newest = self.written as i64 - 1;
+        let oldest = (newest - (WAVE_HISTORY as i64 - 1)).max(0);
+        let idx = (newest - back as i64).clamp(oldest, newest);
+        self.hist[idx.rem_euclid(WAVE_HISTORY as i64) as usize]
+    }
+
+    /// Fill `out` with the drawable envelope, oldest (left) first, resampled at
+    /// the current sub-sample offset so the shape slides rather than steps.
+    fn sample_into(&self, out: &mut [f32; WAVE_POINTS]) {
+        for (i, o) in out.iter_mut().enumerate() {
+            let t = i as f32 / (WAVE_POINTS - 1) as f32;
+            let back = (1.0 - t) * WAVE_SPAN + self.accum;
+            let b = back.floor();
+            let f = back - b;
+            let b = b as i32;
+            // at(b) is the newer neighbour, at(b+1) the older one.
+            *o = catmull_scalar(self.at(b - 1), self.at(b), self.at(b + 1), self.at(b + 2), f)
+                .clamp(0.0, 1.0);
         }
     }
 
     /// Drop back to silence so the next session opens on a flat line instead of
     /// the tail of the last one.
     fn clear(&mut self) {
-        self.env = [0.0; WAVE_POINTS];
+        self.hist = [0.0; WAVE_HISTORY];
+        self.written = 0;
+        self.accum = 0.0;
         self.level = 0.0;
     }
 }
@@ -1206,9 +1295,15 @@ fn draw_wave_field(
     let mut bottom_rev = [(0.0f32, 0.0f32); WAVE_POINTS];
     for i in 0..n {
         let hx = x + i as f32 * step;
-        // Window the envelope so amplitude fades in/out at the ends.
+        // Taper the outer WAVE_EDGE_FRAC of each end into the resting line with
+        // a smoothstep, so the wave emerges from the centre line instead of
+        // being clipped by the capsule. Smoothstep (not a power curve) because
+        // its slope is zero at both limits — no visible kink where it lands.
         let t = i as f32 / (n - 1) as f32;
-        let edge = (t * (1.0 - t) * 4.0).clamp(0.0, 1.0).powf(0.35);
+        let e = (t / WAVE_EDGE_FRAC)
+            .min((1.0 - t) / WAVE_EDGE_FRAC)
+            .clamp(0.0, 1.0);
+        let edge = e * e * (3.0 - 2.0 * e);
         let h = min_half + env[i].clamp(0.0, 1.0) * reach * edge;
         top[i] = (hx, cy - h);
         bottom_rev[n - 1 - i] = (hx, cy + h);
@@ -2878,6 +2973,8 @@ struct App {
     /// per frame (see `about_to_wait`), so the idle skin costs nothing but its
     /// (tiny, fixed) buffer.
     wave: WaveField,
+    /// When the wave was last advanced — the clock its `dt` comes from.
+    wave_at: Instant,
     /// [GRAIN] The built-in look currently being rendered (mirrors
     /// `Remote::skin`). A change here resizes the window, so it is applied in
     /// `about_to_wait` alongside the mode change, never mid-paint.
@@ -2994,6 +3091,7 @@ impl App {
             window: None,
             aura: Aura::new(),
             wave: WaveField::new(),
+            wave_at: Instant::now(),
             skin: PillSkin::default(),
             state: PillState::Idle,
             theme: None,
@@ -4297,7 +4395,7 @@ impl App {
         // A gentle breath keeps the resting pill alive without motion noise.
         let disc_a = match self.state {
             PillState::Recording => 1.0,
-            PillState::Processing => 0.75 + 0.25 * (self.wave.phase * 0.06).sin(),
+            PillState::Processing => 0.75 + 0.25 * (self.wave.clock * 3.6).sin(),
             PillState::Idle | PillState::Fallback => 0.45,
         };
         if let Some(disc) = PathBuilder::from_circle(dot_cx, cy, WAVE_DOT_R) {
@@ -4306,13 +4404,17 @@ impl App {
             pixmap.fill_path(&disc, &paint, FillRule::Winding, Transform::identity(), None);
         }
 
+        // Resample the history at the current sub-sample offset. A stack array —
+        // the field owns time, this is just the frame's view of it.
+        let mut env = [0.0f32; WAVE_POINTS];
+        self.wave.sample_into(&mut env);
         draw_wave_field(
             pixmap,
             wave_x0,
             cy,
             wave_x1 - wave_x0,
             geom.body_h / 2.0 * WAVE_FILL,
-            &self.wave.env,
+            &env,
             ink,
             1.0,
         );
@@ -5104,8 +5206,12 @@ impl ApplicationHandler<UserEvent> for App {
                 // only one of the two ever costs anything per frame.
                 let wave_live = self.skin == PillSkin::Wave && self.mode == PillMode::Collapsed;
                 if wave_live {
+                    // Real elapsed time, not `TICK` — a dropped frame must delay
+                    // the motion, never slow it down.
+                    let dt = now.saturating_duration_since(self.wave_at).as_secs_f32();
+                    self.wave_at = now;
                     let amp = self.current_amp();
-                    self.wave.roll(self.state, amp);
+                    self.wave.advance(dt, self.state, amp);
                 }
                 // Re-roll the dot field on its own (slower) cadence so it stays
                 // calm; everything else eases every frame for smoothness.
@@ -5332,77 +5438,136 @@ mod tests {
         }
     }
 
+    /// One 60 fps frame, in seconds.
+    const FRAME: f32 = 1.0 / 60.0;
+
+    fn env_of(f: &WaveField) -> [f32; WAVE_POINTS] {
+        let mut e = [0.0; WAVE_POINTS];
+        f.sample_into(&mut e);
+        e
+    }
+
     #[test]
     fn the_wave_rests_flat_and_returns_to_flat_after_speech() {
         let mut f = WaveField::new();
-        assert!(f.env.iter().all(|&e| e == 0.0), "opens silent");
+        assert!(env_of(&f).iter().all(|&e| e == 0.0), "opens silent");
 
-        for _ in 0..80 {
-            f.roll(PillState::Recording, 0.9);
+        for _ in 0..90 {
+            f.advance(FRAME, PillState::Recording, 0.9);
         }
         assert!(
-            f.env[WAVE_POINTS - 1] > 0.5,
+            env_of(&f)[WAVE_POINTS - 1] > 0.5,
             "speech drives the line off centre"
         );
 
         // Release is slow but must actually reach the resting line.
-        for _ in 0..400 {
-            f.roll(PillState::Idle, 0.0);
+        for _ in 0..600 {
+            f.advance(FRAME, PillState::Idle, 0.0);
         }
         assert!(
-            f.env.iter().all(|&e| e < 0.02),
+            env_of(&f).iter().all(|&e| e < 0.02),
             "silence returns to the centre line"
         );
     }
 
     #[test]
-    fn the_wave_never_steps_more_than_the_follower_allows() {
-        // The whole point of the skin is smoothness: even an instant jump from
-        // silence to full volume may not produce a discontinuity in the line.
-        let mut f = WaveField::new();
-        for _ in 0..WAVE_POINTS {
-            f.roll(PillState::Recording, 0.0);
-        }
-        let mut prev = f.env[WAVE_POINTS - 1];
+    fn scroll_speed_is_the_same_at_sixty_and_at_one_hundred_forty_four_fps() {
+        // The whole reason samples are written on a clock rather than per frame:
+        // the wave must look identical on any display.
+        let mut slow = WaveField::new();
+        let mut fast = WaveField::new();
         for _ in 0..60 {
-            f.roll(PillState::Recording, 1.0);
-            let cur = f.env[WAVE_POINTS - 1];
-            assert!(
-                (cur - prev).abs() <= WAVE_ATTACK + 1e-4,
-                "step {} exceeds the attack limit",
-                cur - prev
-            );
-            prev = cur;
+            slow.advance(1.0 / 60.0, PillState::Recording, 0.7);
+        }
+        for _ in 0..144 {
+            fast.advance(1.0 / 144.0, PillState::Recording, 0.7);
+        }
+        assert_eq!(
+            slow.written, fast.written,
+            "one second of audio must be the same number of samples"
+        );
+        for (a, b) in env_of(&slow).iter().zip(env_of(&fast).iter()) {
+            assert!((a - b).abs() < 0.02, "shapes diverged: {a} vs {b}");
         }
     }
 
     #[test]
-    fn processing_sweeps_a_travelling_bump_along_the_line() {
+    fn the_wave_slides_between_whole_samples_rather_than_stepping() {
+        // Sub-sample scrolling: advancing by less than one sample period must
+        // still move the drawn shape, or the wave ticks instead of gliding.
         let mut f = WaveField::new();
-        f.roll(PillState::Processing, 0.0);
-        let first = f.env;
-        for _ in 0..40 {
-            f.roll(PillState::Processing, 0.0);
+        for i in 0..120 {
+            f.advance(FRAME, PillState::Recording, 0.3 + 0.5 * (i as f32 * 0.3).sin().abs());
         }
+        let before = env_of(&f);
+        let written_before = f.written;
+        // A third of a sample period — far too small to write a new sample.
+        f.advance(1.0 / (WAVE_SAMPLE_HZ * 3.0), PillState::Recording, 0.6);
+        assert_eq!(f.written, written_before, "no whole sample should be written");
+        let after = env_of(&f);
         assert!(
-            first != f.env,
-            "the processing sweep must actually move the line"
+            before.iter().zip(after.iter()).any(|(a, b)| (a - b).abs() > 1e-6),
+            "the shape must slide even between samples"
         );
+    }
+
+    #[test]
+    fn the_wave_never_steps_more_than_the_follower_allows() {
+        // Even an instant jump from silence to full volume may not produce a
+        // discontinuity in the written line.
+        let mut f = WaveField::new();
+        for _ in 0..WAVE_HISTORY {
+            f.advance(FRAME, PillState::Recording, 0.0);
+        }
+        let mut prev = f.level;
+        for _ in 0..90 {
+            f.advance(FRAME, PillState::Recording, 1.0);
+            assert!(
+                (f.level - prev).abs() <= WAVE_K_ATTACK + 1e-4,
+                "step {} exceeds the attack limit",
+                f.level - prev
+            );
+            prev = f.level;
+        }
+    }
+
+    #[test]
+    fn a_long_stall_does_not_burst_write_the_whole_ring() {
+        // The window can be hidden for minutes; waking must not replay them.
+        let mut f = WaveField::new();
+        f.advance(600.0, PillState::Recording, 0.8);
         assert!(
-            f.env.iter().all(|&e| (0.0..=1.0).contains(&e)),
-            "the sweep stays inside the capsule"
+            f.written <= WAVE_HISTORY as u64,
+            "wrote {} samples for a 10-minute stall",
+            f.written
         );
+        assert!(f.accum < 1.0, "backlog was not dropped");
+    }
+
+    #[test]
+    fn processing_pulses_without_ever_going_flat_or_loud() {
+        let mut f = WaveField::new();
+        let mut seen: Vec<f32> = Vec::new();
+        for _ in 0..200 {
+            f.advance(FRAME, PillState::Processing, 0.0);
+            seen.push(f.level);
+        }
+        let lo = seen.iter().cloned().fold(f32::MAX, f32::min);
+        let hi = seen.iter().cloned().fold(f32::MIN, f32::max);
+        assert!(hi > lo + 0.05, "the processing pulse must actually move");
+        assert!(hi <= 1.0 && lo >= 0.0, "the pulse stays inside the capsule");
     }
 
     #[test]
     fn clearing_the_wave_drops_the_previous_sessions_tail() {
         let mut f = WaveField::new();
-        for _ in 0..50 {
-            f.roll(PillState::Recording, 0.8);
+        for _ in 0..60 {
+            f.advance(FRAME, PillState::Recording, 0.8);
         }
         f.clear();
-        assert!(f.env.iter().all(|&e| e == 0.0));
+        assert!(env_of(&f).iter().all(|&e| e == 0.0));
         assert_eq!(f.level, 0.0);
+        assert_eq!(f.written, 0);
     }
 
     #[test]
@@ -5415,9 +5580,14 @@ mod tests {
         pixmap.fill(Color::TRANSPARENT);
 
         let mut f = WaveField::new();
-        for i in 0..90 {
-            f.roll(PillState::Recording, 0.25 + 0.6 * ((i as f32) * 0.2).sin().abs());
+        for i in 0..150 {
+            f.advance(
+                FRAME,
+                PillState::Recording,
+                0.25 + 0.6 * ((i as f32) * 0.2).sin().abs(),
+            );
         }
+        let env = env_of(&f);
         let cy = geom.y_off + geom.body_h / 2.0;
         let (x0, x1) = geom.body_x();
         draw_wave_field(
@@ -5426,7 +5596,7 @@ mod tests {
             cy,
             (x1 - WAVE_PAD_X) - (x0 + WAVE_PAD_X),
             geom.body_h / 2.0 * WAVE_FILL,
-            &f.env,
+            &env,
             WAVE_INK,
             1.0,
         );
