@@ -93,7 +93,9 @@ zerocopy = "0.8"
 # an image). `image` downscales and encodes the grab; `base64` builds the data URI
 # the OpenAI-compatible vision wire format takes. Both are already in the tree as
 # transitive dependencies, so this only promotes them to direct use.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# [GRAIN] `ico` is for website icons (pill identity): `/favicon.ico` is still the
+# last-resort rung and is an ICO container, which the PNG decoder cannot read.
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 base64 = "0.22"
 # Guaranteed clearing of the captured frame on drop. A plain write loop over a
 # buffer about to be freed is a dead store the optimizer may remove.
