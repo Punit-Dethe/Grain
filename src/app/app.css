@@ -4212,6 +4212,298 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   box-shadow: inset 0 -1px 0 var(--accent);
 }
 
+.context-custom-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.context-custom-profile-card {
+  min-width: 0;
+  min-height: 142px;
+  padding: 18px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  overflow: hidden;
+  color: var(--text-1);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 180ms var(--ease-out);
+}
+
+.next-settings-content .context-custom-profile-card {
+  border-radius: 16px !important;
+}
+
+.context-custom-profile-card:hover,
+.context-custom-profile-card:focus-visible {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
+}
+
+.context-custom-profile-card:active {
+  transform: scale(0.99);
+}
+
+.context-custom-profile-card > strong {
+  width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-custom-profile-instruction {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.52;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
+}
+
+.context-custom-profile-create {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  gap: 14px;
+}
+
+.context-custom-profile-create-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.context-custom-profile-create-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.context-custom-profile-create-copy strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.context-custom-profile-create-copy > span {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.context-custom-profile-icons {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+}
+
+.context-custom-profile-icons > span {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.context-custom-profile-icons > span + span {
+  margin-left: -8px;
+}
+
+.context-custom-profile-icons > span:nth-child(2) {
+  color: var(--sky);
+}
+
+.context-custom-profile-icons > span:nth-child(3) {
+  color: var(--accent-strong);
+}
+
+.context-profile-editor-dialog {
+  width: min(540px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+}
+
+.context-profile-editor-dialog::-webkit-scrollbar,
+.context-profile-editor-instruction::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-profile-editor-dialog::-webkit-scrollbar-track,
+.context-profile-editor-instruction::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.context-profile-editor-dialog::-webkit-scrollbar-thumb,
+.context-profile-editor-instruction::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--text-4);
+  background-clip: padding-box;
+}
+
+.context-profile-editor-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.context-profile-editor-field {
+  display: grid;
+  gap: 7px;
+}
+
+.context-profile-editor-field > span:first-child {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.next-settings-content
+  .dictionary-dialog
+  textarea.context-profile-editor-instruction {
+  height: 112px;
+  min-height: 112px !important;
+  max-height: 180px;
+  resize: none !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+}
+
+.context-profile-target-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.context-profile-target {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 5px 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  font-size: 11.5px;
+}
+
+.context-profile-target > span {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-profile-target > button,
+.context-profile-target-cancel {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.next-settings-content .context-profile-target > button,
+.next-settings-content .context-profile-target-cancel {
+  border-radius: 50% !important;
+}
+
+.context-profile-target > button:hover,
+.context-profile-target-cancel:hover {
+  color: var(--text-1);
+  background: var(--hairline);
+}
+
+.context-profile-target-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.context-profile-target-actions button,
+.context-profile-target-add {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.next-settings-content .context-profile-target-actions button,
+.next-settings-content .context-profile-target-add {
+  border-radius: 999px !important;
+}
+
+.context-profile-target-actions button:hover,
+.context-profile-target-add:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.context-profile-target-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-profile-target-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-profile-target-entry > svg {
+  color: var(--text-3);
+}
+
+.next-settings-content
+  .context-profile-target-entry
+  input.dictionary-dialog-input {
+  min-width: 0;
+  height: 38px;
+  min-height: 38px !important;
+}
+
+html[data-theme="light"] .context-custom-profile-card {
+  background: #ffffff;
+}
+
 .context-profile-options {
   min-width: 0;
 }
@@ -4262,6 +4554,10 @@ html[data-theme="light"] .context-profile-mode {
 
   .context-profile-mode {
     margin-left: 96px;
+  }
+
+  .context-custom-profile-grid {
+    grid-template-columns: 1fr;
   }
 }
 

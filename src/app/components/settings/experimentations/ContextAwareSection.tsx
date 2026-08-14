@@ -1,19 +1,29 @@
 /* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
-import React, { useCallback, useLayoutEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
+  AppWindow,
   AtSign,
   Bot,
   BriefcaseBusiness,
   Code2,
+  Globe2,
   ListChecks,
   Mail,
   MessageCircle,
   MessagesSquare,
+  Plus,
   Send,
   Shapes,
   Smartphone,
   SquareTerminal,
   Users,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
@@ -103,9 +113,310 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     detail: "",
     applications: [],
     instruction: "",
-    available: false,
+    available: true,
   },
 ];
+
+type CustomProfileTarget = {
+  id: string;
+  kind: "application" | "website";
+  label: string;
+};
+
+type CustomContextProfile = {
+  id: string;
+  title: string;
+  instruction: string;
+  targets: CustomProfileTarget[];
+};
+
+type CustomProfileDialogState =
+  | { mode: "create" }
+  | { mode: "edit"; profile: CustomContextProfile };
+
+function CustomProfileTargetStack({
+  targets,
+}: {
+  targets: CustomProfileTarget[];
+}) {
+  return (
+    <div className="context-custom-profile-icons" aria-hidden="true">
+      {targets.slice(0, 3).map((target) => {
+        const Icon = target.kind === "website" ? Globe2 : AppWindow;
+        return (
+          <span key={target.id} title={target.label}>
+            <Icon size={15} strokeWidth={1.8} />
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function CustomProfileDialog({
+  state,
+  onClose,
+  onSave,
+}: {
+  state: CustomProfileDialogState;
+  onClose: () => void;
+  onSave: (profile: CustomContextProfile) => void;
+}) {
+  const editing = state.mode === "edit";
+  const [title, setTitle] = useState(editing ? state.profile.title : "");
+  const [instruction, setInstruction] = useState(
+    editing ? state.profile.instruction : "",
+  );
+  const [targets, setTargets] = useState<CustomProfileTarget[]>(
+    editing ? state.profile.targets.map((target) => ({ ...target })) : [],
+  );
+  const [targetKind, setTargetKind] = useState<
+    CustomProfileTarget["kind"] | null
+  >(null);
+  const [targetValue, setTargetValue] = useState("");
+  const dialogRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const returnFocusTo = document.activeElement as HTMLElement | null;
+    dialogRef.current
+      ?.querySelector<HTMLElement>("[data-dialog-initial-focus]")
+      ?.focus();
+    return () => returnFocusTo?.focus();
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab") return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), input:not(:disabled), textarea:not(:disabled)",
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const addTarget = () => {
+    const label = targetValue.trim();
+    if (!label || !targetKind) return;
+    const duplicate = targets.some(
+      (target) =>
+        target.kind === targetKind &&
+        target.label.toLocaleLowerCase() === label.toLocaleLowerCase(),
+    );
+    if (!duplicate) {
+      setTargets((current) => [
+        ...current,
+        { id: crypto.randomUUID(), kind: targetKind, label },
+      ]);
+    }
+    setTargetValue("");
+    setTargetKind(null);
+  };
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!title.trim() || !instruction.trim() || targets.length === 0) return;
+    onSave({
+      id: editing ? state.profile.id : crypto.randomUUID(),
+      title: title.trim(),
+      instruction: instruction.trim(),
+      targets,
+    });
+    onClose();
+  };
+
+  return (
+    <div
+      className="dictionary-dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="dictionary-dialog context-profile-editor-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="context-profile-editor-title"
+        aria-describedby="context-profile-editor-description"
+      >
+        <button
+          className="dictionary-dialog-close"
+          type="button"
+          aria-label="Close"
+          onClick={onClose}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+        <header className="dictionary-dialog-header">
+          <h2 id="context-profile-editor-title">
+            {editing ? "Edit profile" : "Create profile"}
+          </h2>
+          <p id="context-profile-editor-description">
+            Choose where this profile applies and how Grain should shape your
+            dictation.
+          </p>
+        </header>
+
+        <form
+          className="dictionary-dialog-form context-profile-editor-form"
+          onSubmit={submit}
+        >
+          <div className="context-profile-editor-fields">
+            <label className="context-profile-editor-field">
+              <span>Title</span>
+              <input
+                data-dialog-initial-focus
+                className="dictionary-dialog-input"
+                value={title}
+                maxLength={48}
+                placeholder="e.g. Customer support"
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </label>
+
+            <label className="context-profile-editor-field">
+              <span>Instruction</span>
+              <textarea
+                className="dictionary-dialog-input dictionary-dialog-textarea context-profile-editor-instruction"
+                value={instruction}
+                maxLength={1200}
+                placeholder="Describe how Grain should write in this profile"
+                onChange={(event) => setInstruction(event.target.value)}
+              />
+            </label>
+
+            <div
+              className="context-profile-editor-field"
+              role="group"
+              aria-labelledby="context-profile-targets-label"
+            >
+              <span id="context-profile-targets-label">
+                Applications and websites
+              </span>
+              {targets.length > 0 && (
+                <div className="context-profile-target-list">
+                  {targets.map((target) => {
+                    const Icon = target.kind === "website" ? Globe2 : AppWindow;
+                    return (
+                      <span key={target.id} className="context-profile-target">
+                        <Icon size={13} aria-hidden="true" />
+                        <span>{target.label}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${target.label}`}
+                          onClick={() =>
+                            setTargets((current) =>
+                              current.filter((item) => item.id !== target.id),
+                            )
+                          }
+                        >
+                          <X size={12} aria-hidden="true" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+
+              {targetKind ? (
+                <div className="context-profile-target-entry">
+                  {targetKind === "website" ? (
+                    <Globe2 size={15} aria-hidden="true" />
+                  ) : (
+                    <AppWindow size={15} aria-hidden="true" />
+                  )}
+                  <input
+                    autoFocus
+                    className="dictionary-dialog-input"
+                    value={targetValue}
+                    aria-label={
+                      targetKind === "website"
+                        ? "Website address"
+                        : "Application name"
+                    }
+                    placeholder={
+                      targetKind === "website"
+                        ? "example.com"
+                        : "Application name"
+                    }
+                    onChange={(event) => setTargetValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addTarget();
+                      }
+                    }}
+                  />
+                  <button
+                    className="context-profile-target-add"
+                    type="button"
+                    disabled={!targetValue.trim()}
+                    onClick={addTarget}
+                  >
+                    Add
+                  </button>
+                  <button
+                    className="context-profile-target-cancel"
+                    type="button"
+                    aria-label="Cancel adding target"
+                    onClick={() => {
+                      setTargetKind(null);
+                      setTargetValue("");
+                    }}
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </div>
+              ) : (
+                <div className="context-profile-target-actions">
+                  <button
+                    type="button"
+                    onClick={() => setTargetKind("application")}
+                  >
+                    <AppWindow size={14} aria-hidden="true" />
+                    Add application
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTargetKind("website")}
+                  >
+                    <Globe2 size={14} aria-hidden="true" />
+                    Add website
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="dictionary-dialog-actions">
+            <button
+              className="dictionary-save-button"
+              type="submit"
+              disabled={
+                !title.trim() || !instruction.trim() || targets.length === 0
+              }
+            >
+              {editing ? "Save changes" : "Create profile"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
 
 /** [GRAIN] Context awareness settings rendered below the page-level feature
  * switch. The public profiles are a frontend-only presentation layer for now.
@@ -129,6 +440,11 @@ export const ContextAwareSection: React.FC = () => {
         CONTEXT_PROFILES.map((profile) => [profile.id, profile.instruction]),
       ) as Record<ContextProfileId, string>,
   );
+  const [customProfiles, setCustomProfiles] = useState<CustomContextProfile[]>(
+    [],
+  );
+  const [customProfileDialog, setCustomProfileDialog] =
+    useState<CustomProfileDialogState | null>(null);
   const activeProfile =
     CONTEXT_PROFILES.find((profile) => profile.id === activeProfileId) ??
     CONTEXT_PROFILES[0];
@@ -150,6 +466,14 @@ export const ContextAwareSection: React.FC = () => {
   useLayoutEffect(() => {
     if (mode === "write") fitInstructionEditor(instructionEditorRef.current);
   }, [activeProfileId, fitInstructionEditor, instructions, mode]);
+
+  const saveCustomProfile = (profile: CustomContextProfile) => {
+    setCustomProfiles((current) => {
+      const existing = current.findIndex((item) => item.id === profile.id);
+      if (existing < 0) return [...current, profile];
+      return current.map((item) => (item.id === profile.id ? profile : item));
+    });
+  };
 
   return (
     <>
@@ -191,7 +515,7 @@ export const ContextAwareSection: React.FC = () => {
           })}
         </div>
 
-        {activeProfile.available && (
+        {activeProfile.available && activeProfile.id !== "other" && (
           <div
             id={`context-profile-panel-${activeProfile.id}`}
             className="context-profile-card"
@@ -266,6 +590,55 @@ export const ContextAwareSection: React.FC = () => {
             </div>
           </div>
         )}
+
+        {activeProfile.id === "other" && (
+          <div
+            className="context-custom-profile-grid"
+            role="region"
+            aria-labelledby="context-profile-tab-other"
+          >
+            <button
+              className="context-custom-profile-card context-custom-profile-create"
+              type="button"
+              onClick={() => setCustomProfileDialog({ mode: "create" })}
+            >
+              <span className="context-custom-profile-create-icon">
+                <Plus size={18} aria-hidden="true" />
+              </span>
+              <span className="context-custom-profile-create-copy">
+                <strong>Create profile</strong>
+                <span>
+                  Add a title, instruction, and the applications or websites it
+                  applies to.
+                </span>
+              </span>
+            </button>
+
+            {customProfiles.map((profile) => (
+              <button
+                key={profile.id}
+                className="context-custom-profile-card"
+                type="button"
+                aria-label={`Edit ${profile.title} profile`}
+                onClick={() =>
+                  setCustomProfileDialog({
+                    mode: "edit",
+                    profile: {
+                      ...profile,
+                      targets: profile.targets.map((target) => ({ ...target })),
+                    },
+                  })
+                }
+              >
+                <CustomProfileTargetStack targets={profile.targets} />
+                <strong>{profile.title}</strong>
+                <span className="context-custom-profile-instruction">
+                  {profile.instruction}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       <div className="context-profile-options" aria-label="Context sources">
@@ -292,6 +665,19 @@ export const ContextAwareSection: React.FC = () => {
           onChange={(v) => updateSetting("context_caret_text", v)}
         />
       </div>
+
+      {customProfileDialog && (
+        <CustomProfileDialog
+          key={
+            customProfileDialog.mode === "edit"
+              ? customProfileDialog.profile.id
+              : "create-profile"
+          }
+          state={customProfileDialog}
+          onClose={() => setCustomProfileDialog(null)}
+          onSave={saveCustomProfile}
+        />
+      )}
     </>
   );
 };
