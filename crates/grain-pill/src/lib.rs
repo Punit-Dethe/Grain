@@ -115,6 +115,19 @@ impl PillGeom {
     }
 }
 
+/// [GRAIN] The surface colour every Grain pill body shares: a deep charcoal
+/// carrying a green cast — "grain", not neutral black.
+///
+/// Pure black (what this was) reads as a HOLE punched in the desktop, because
+/// nothing else on a real screen is #000. A few points of green lift it just
+/// far enough to read as a dark material sitting on top, while staying dark
+/// enough that white text keeps its full contrast against it.
+const GRAIN_SURFACE: [u8; 3] = [17, 23, 20];
+/// Body alpha for the floating capsule, and the (slightly more opaque) alpha for
+/// the larger card surfaces, which would otherwise show too much desktop.
+const GRAIN_SURFACE_A: u8 = 242;
+const GRAIN_CARD_A: f32 = 246.0;
+
 // The 4×4 confirm/recording zone (cols 18–21, rows 2–5) minus its 4 corners.
 const BTN_COL: usize = 18;
 const BTN_ROW: usize = 2;
@@ -258,6 +271,14 @@ const STUDIO_CTRL_H: f32 = 26.0; // holds the 22px cancel disc + the trimmed mat
                                  // the capsule's bottom edge (per the unified-pill spec — the pill "grows a little
                                  // bit down" past the matrix).
 const STUDIO_BOTTOM_PAD: f32 = 5.0;
+/// [GRAIN] Width of the WAVE skin's bar row in the Studio control row. Fixed and
+/// centred rather than derived from the capsule edges, so the row does not
+/// reflow (and the bar count does not change) while the card grows.
+const STUDIO_WAVE_W: f32 = 140.0;
+/// Fraction of the control row's half-height the bars may reach. Taller than the
+/// collapsed pill's `WAVE_FILL` because the control row is a band with room to
+/// spare, where the pill's capsule needs breathing space above and below.
+const STUDIO_WAVE_FILL: f32 = 0.82;
 // [GRAIN] The card GROWS with the transcript: 1 line → 4 lines, then it caps and
 // scrolls. The OS window is sized to the TALLEST the card ever gets (the capped
 // 4-line height) and shorter cards are drawn bottom-anchored inside it, the
@@ -1081,16 +1102,6 @@ impl Aura {
 //   3. Both the value interpolation and the outline are Catmull-Rom, so the
 //      curve is C1-continuous in space as well as in time.
 
-/// Samples written per second. Fixed so motion is frame-rate independent.
-const WAVE_SAMPLE_HZ: f32 = 50.0;
-/// Seconds of audio visible across the wave's width — sets the scroll speed.
-const WAVE_SPAN_SECS: f32 = 0.85;
-/// Ring capacity: the visible span plus margin for the interpolator's outer
-/// control points.
-const WAVE_HISTORY: usize = 64;
-/// Visible span in samples.
-const WAVE_SPAN: f32 = WAVE_SPAN_SECS * WAVE_SAMPLE_HZ;
-
 // Bar geometry — the classic waveform look. Width and gap set the bar count for
 // whatever width the capsule gives us; `WAVE_BAR_MAX` is only a sanity ceiling.
 const WAVE_BAR_W: f32 = 2.0;
@@ -1099,13 +1110,26 @@ const WAVE_BAR_MAX: usize = 48;
 /// Shortest a bar ever gets. Equal to the bar width, so a resting bar is a
 /// circle and silence reads as an even row of dots rather than a gap.
 const WAVE_BAR_MIN_H: f32 = 2.0;
+/// [GRAIN] Bars dropped from whatever the width would otherwise fit. The row was
+/// reading as too dense; one fewer bar opens it up without changing the rhythm,
+/// and the centring maths below keeps it even.
+const WAVE_BAR_TRIM: usize = 1;
 
-/// Amplitude follower coefficients AT `WAVE_SAMPLE_HZ` — fast attack so a
-/// syllable's onset is caught, slow release so the line settles rather than
-/// chatters. Written as coefficients because `exp` is not const: these are
-/// `1 - exp(-dt/tau)` at 50 Hz for tau = 40 ms and 200 ms respectively.
-const WAVE_K_ATTACK: f32 = 0.393;
-const WAVE_K_RELEASE: f32 = 0.095;
+/// Loudness follower time constants, in SECONDS. Fast attack so a syllable's
+/// onset registers immediately, slower release so the field settles instead of
+/// chattering. Applied as `1 - exp(-dt/tau)` against real elapsed time, so the
+/// follower behaves identically at any frame rate — no fixed sample clock.
+const WAVE_TAU_ATTACK: f32 = 0.045;
+const WAVE_TAU_RELEASE: f32 = 0.22;
+
+/// Critically damped spring rate (rad/s) for the CENTRE bar and for the bars at
+/// the very edges. The centre is stiffer, so it leads the movement; the edges
+/// are softer and trail slightly. That difference alone — no oscillator, no
+/// noise source — is what makes the row ripple outward from the middle and read
+/// as alive rather than as one block scaling up and down.
+const WAVE_OMEGA_CENTER: f32 = 26.0;
+const WAVE_OMEGA_EDGE: f32 = 13.0;
+
 /// Mic level below this is room tone, not speech. Without a floor the resting
 /// line never actually settles.
 const WAVE_NOISE_FLOOR: f32 = 0.012;
@@ -1120,11 +1144,72 @@ const WAVE_DOT_GAP: f32 = 9.0;
 const WAVE_ICON_PX: u32 = 22;
 /// Fraction of the capsule's half-height the wave may reach at full volume.
 const WAVE_FILL: f32 = 0.62;
-/// Minimum bar amplitude (relative to the centre bar's peak) at the left and
-/// right edges of the wave row. The bars taper from 1.0 at the centre toward
-/// this value at the tips — a soft triangular envelope that reads as more
-/// contained rather than bluntly uniform.
-const WAVE_TAPER_MIN: f32 = 0.32;
+/// [GRAIN] The SHOULDERS. Each bar has its own ceiling on how far it may travel.
+/// Loudness drives every bar from the same signal — the ceiling is what shapes
+/// the row, and it is why the outermost bars read as "less responsive" even
+/// though they hear exactly the same audio.
+///
+/// The taper is deliberately LOCAL: only `WAVE_EDGE_BARS` at each end step down,
+/// and everything between them is at full height. A taper spread across the
+/// whole row (which is what a sine arch gives) collapses into a lens — the exact
+/// shape that was rejected before. Keep this an edge treatment, not a global
+/// envelope.
+const WAVE_TAPER_MIN: f32 = 0.30;
+/// How many bars at EACH end the taper covers.
+const WAVE_EDGE_BARS: usize = 3;
+
+/// The height ceiling for bar `i` of `n`: full across the middle, ramping down
+/// over the outermost `WAVE_EDGE_BARS` at each end. The ramp is a raised cosine
+/// so the shoulder has no corner where it meets the flat top.
+fn wave_gain_at(i: usize, n: usize) -> f32 {
+    if n <= 1 {
+        return 1.0;
+    }
+    // Never let the ramps meet in the middle on a very short row — the row would
+    // have no full-height bar at all.
+    let edge = WAVE_EDGE_BARS.min((n - 1) / 2);
+    if edge == 0 {
+        return 1.0;
+    }
+    let d = i.min(n - 1 - i); // bars from the nearer end
+    if d >= edge {
+        return 1.0;
+    }
+    let x = (d as f32 + 1.0) / (edge as f32 + 1.0); // 0..1 across the ramp
+    let s = 0.5 - 0.5 * (std::f32::consts::PI * x).cos();
+    WAVE_TAPER_MIN + (1.0 - WAVE_TAPER_MIN) * s
+}
+
+/// One step of a CRITICALLY DAMPED spring, integrated implicitly.
+///
+/// Implicit (rather than the obvious explicit) Euler because it is
+/// unconditionally stable: a long frame cannot make it explode, which an
+/// explicit integrator very much can. Critically damped means it converges as
+/// fast as possible *without overshooting* — the bars glide into place and stop,
+/// which is the "floating" quality being asked for, as opposed to the springy
+/// wobble an underdamped system gives.
+fn spring_step(x: f32, v: f32, target: f32, omega: f32, dt: f32) -> (f32, f32) {
+    let f = 1.0 + 2.0 * dt * omega;
+    let oo = omega * omega;
+    let hoo = dt * oo;
+    let hhoo = dt * hoo;
+    let det_inv = 1.0 / (f + hhoo);
+    let det_x = f * x + dt * v + hhoo * target;
+    let det_v = v + hoo * (target - x);
+    (det_x * det_inv, det_v * det_inv)
+}
+
+/// How many bars a row `w` px wide carries. One function so the physics and the
+/// draw can never disagree about which spring is which bar.
+fn wave_bar_count(w: f32) -> usize {
+    if w <= 0.5 {
+        return 0;
+    }
+    let pitch = WAVE_BAR_W + WAVE_BAR_GAP;
+    (((w + WAVE_BAR_GAP) / pitch).floor() as usize)
+        .min(WAVE_BAR_MAX)
+        .saturating_sub(WAVE_BAR_TRIM)
+}
 
 /// The waveform's ink, per state. Deliberately quiet — the wave skin's whole
 /// point is that it reads as calm at a glance.
@@ -1165,28 +1250,37 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
     Some(out)
 }
 
-/// Catmull-Rom interpolation of a scalar between `p1` and `p2` at `t` in 0..1.
-/// Used for the VALUE axis (the outline uses the Bezier form below) — it is what
-/// keeps the wave smooth as it slides between whole samples.
-fn catmull_scalar(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
-    let t2 = t * t;
-    let t3 = t2 * t;
-    0.5 * ((2.0 * p1)
-        + (-p0 + p2) * t
-        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2
-        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3)
-}
-
-/// The wave skin's voice field: a fixed-rate ring of amplitude samples plus the
-/// fractional cursor that makes it scroll continuously. ~280 B, no allocation.
+/// The wave skin's voice field: one loudness follower plus a critically damped
+/// spring per bar. ~400 B, no allocation, no history buffer.
+///
+/// [GRAIN] LOUDNESS ONLY. There is exactly one input — how loud the mic is right
+/// now — and every bar chases that same number. What separates the bars is not
+/// the signal but their PHYSICS: each has its own ceiling (`wave_gain`, the
+/// slope) and its own spring rate (stiff in the middle, soft at the edges). The
+/// centre therefore reacts first and travels furthest while the tips move a
+/// little and lag a little, so the row breathes outward from the middle.
+///
+/// This replaced a scrolling history buffer. Nothing translates sideways any
+/// more: a bar owns a fixed x position for the life of the session and only its
+/// height changes. Do not reintroduce scrolling — it was explicitly rejected.
+///
+/// SMOOTHNESS comes from the integrator, not from filtering after the fact:
+///   1. Everything advances on REAL elapsed `dt`, so motion is identical at 60
+///      and 144 Hz and a dropped frame costs nothing.
+///   2. Bars are driven by a critically damped spring, so they accelerate and
+///      settle instead of stepping — and never overshoot, which is the
+///      difference between "floating" and "loose".
+///   3. The spring is integrated IMPLICITLY, so it is stable at any `dt`; a
+///      long frame can never make it blow up or snap.
 struct WaveField {
-    hist: [f32; WAVE_HISTORY],
-    /// Total samples ever written; the ring index is `written % WAVE_HISTORY`.
-    written: u64,
-    /// Fractional sample not yet written, in sample units (0..1). Doubles as the
-    /// sub-sample scroll offset at draw time.
-    accum: f32,
-    /// The eased follower that gets written.
+    /// Per-bar height, 0..1. Index `i` is the i-th bar from the left.
+    bars: [f32; WAVE_BAR_MAX],
+    /// Per-bar spring velocity.
+    vel: [f32; WAVE_BAR_MAX],
+    /// How many bars the current layout uses — set by `advance` so the physics
+    /// and the draw always agree on which spring belongs to which bar.
+    n: usize,
+    /// The loudness follower every bar chases.
     level: f32,
     /// Seconds since the field started — drives the processing pulse.
     clock: f32,
@@ -1195,49 +1289,67 @@ struct WaveField {
 impl WaveField {
     const fn new() -> Self {
         WaveField {
-            hist: [0.0; WAVE_HISTORY],
-            written: 0,
-            accum: 0.0,
+            bars: [0.0; WAVE_BAR_MAX],
+            vel: [0.0; WAVE_BAR_MAX],
+            n: 0,
             level: 0.0,
             clock: 0.0,
         }
     }
 
-    /// Advance by real elapsed time. Writes whole samples at `WAVE_SAMPLE_HZ`
-    /// and carries the remainder, so scroll speed is independent of frame rate.
-    fn advance(&mut self, dt: f32, state: PillState, amp: f32) {
-        let dt = dt.clamp(0.0, 0.25);
+    /// Advance every bar by real elapsed time. `n` is how many bars the surface
+    /// being drawn actually shows (see `wave_bar_count`).
+    fn advance(&mut self, dt: f32, state: PillState, amp: f32, n: usize) {
+        // A stall (window hidden, machine asleep) should resume, not fast-forward
+        // through a minute of animation. The spring is stable at any dt, so this
+        // clamp is about intent rather than numerics.
+        let dt = dt.clamp(0.0, 0.1);
         self.clock += dt;
-        self.accum += dt * WAVE_SAMPLE_HZ;
-        // A long stall (the window was hidden, the machine slept) must not
-        // burst-write the whole ring — cap the catch-up and drop the backlog.
-        let mut budget = WAVE_HISTORY;
-        while self.accum >= 1.0 && budget > 0 {
-            self.accum -= 1.0;
-            budget -= 1;
-            let s = self.next_sample(state, amp);
-            self.hist[(self.written % WAVE_HISTORY as u64) as usize] = s;
-            self.written = self.written.wrapping_add(1);
-        }
-        if self.accum >= 1.0 {
-            self.accum = 0.0;
-        }
-    }
+        self.n = n.min(WAVE_BAR_MAX);
 
-    fn next_sample(&mut self, state: PillState, amp: f32) -> f32 {
         let target = match state {
             PillState::Recording => Self::shape(amp),
             PillState::Processing => self.processing_target(),
             // Idle/Fallback drain to the resting line rather than snapping to it.
             PillState::Idle | PillState::Fallback => 0.0,
         };
-        let k = if target > self.level {
-            WAVE_K_ATTACK
+        let tau = if target > self.level {
+            WAVE_TAU_ATTACK
         } else {
-            WAVE_K_RELEASE
+            WAVE_TAU_RELEASE
         };
-        self.level += (target - self.level) * k;
-        self.level
+        self.level += (target - self.level) * (1.0 - (-dt / tau).exp());
+
+        for i in 0..self.n {
+            let t = Self::bar_t(i, self.n);
+            let arch = (std::f32::consts::PI * t).sin().max(0.0);
+            // Stiff at the centre, soft at the tips — the whole source of the
+            // outward ripple.
+            let omega = WAVE_OMEGA_EDGE + (WAVE_OMEGA_CENTER - WAVE_OMEGA_EDGE) * arch;
+            let (x, v) = spring_step(
+                self.bars[i],
+                self.vel[i],
+                self.level * wave_gain_at(i, self.n),
+                omega,
+                dt,
+            );
+            self.bars[i] = x.clamp(0.0, 1.0);
+            self.vel[i] = v;
+        }
+    }
+
+    /// Normalised position of bar `i` in a row of `n`.
+    fn bar_t(i: usize, n: usize) -> f32 {
+        if n <= 1 {
+            0.5
+        } else {
+            i as f32 / (n - 1) as f32
+        }
+    }
+
+    /// Current height of bar `i`, 0..1.
+    fn bar(&self, i: usize) -> f32 {
+        self.bars.get(i).copied().unwrap_or(0.0)
     }
 
     /// Map the mic's raw level to a visually linear 0..1. Speech sits low in the
@@ -1248,67 +1360,18 @@ impl WaveField {
         a.powf(0.45).clamp(0.0, 1.0)
     }
 
-    /// Processing: an even pulse train scrolls through the line — "working on
-    /// it" in the same motion language as speech, rather than a second idiom.
+    /// Processing: a slow swell — "working on it" in the same motion language as
+    /// speech, rather than a second idiom.
     fn processing_target(&self) -> f32 {
-        let s = (self.clock * std::f32::consts::TAU * 0.9).sin();
-        0.18 + 0.34 * s * s
-    }
-
-    /// Read the sample `back` positions behind the write head (0 = newest).
-    /// Out-of-range reads clamp to the ends, which is what keeps the outer
-    /// control points of the interpolator well-defined.
-    #[allow(dead_code)]
-    fn at(&self, back: i32) -> f32 {
-        if self.written == 0 {
-            return 0.0;
-        }
-        let newest = self.written as i64 - 1;
-        let oldest = (newest - (WAVE_HISTORY as i64 - 1)).max(0);
-        let idx = (newest - back as i64).clamp(oldest, newest);
-        self.hist[idx.rem_euclid(WAVE_HISTORY as i64) as usize]
-    }
-
-    /// The envelope at normalised position `t` across the visible span
-    /// (0 = oldest/left, 1 = newest/right), resampled at the current sub-sample
-    /// offset so the values slide continuously rather than stepping.
-    #[allow(dead_code)]
-    fn value_at(&self, t: f32) -> f32 {
-        let back = (1.0 - t.clamp(0.0, 1.0)) * WAVE_SPAN + self.accum;
-        let b = back.floor();
-        let f = back - b;
-        let b = b as i32;
-        // at(b) is the newer neighbour, at(b + 1) the older one.
-        catmull_scalar(self.at(b - 1), self.at(b), self.at(b + 1), self.at(b + 2), f)
-            .clamp(0.0, 1.0)
-    }
-
-    /// Bar amplitude for a STATIONARY display at normalised position `t` (0 =
-    /// left, 1 = right). Unlike `value_at`, nothing here scrolls — each bar
-    /// sits at a fixed x position and only its height moves, driven by three
-    /// oscillators with mutually incommensurate frequencies whose phase shifts
-    /// are spread across `t`. The result looks like a frequency-spectrum meter:
-    /// adjacent bars diverge in height, the pattern never obviously repeats, and
-    /// the whole field rises/falls with the current amplitude follower `level`.
-    fn stable_at(&self, t: f32) -> f32 {
-        if self.level < 1e-4 {
-            return 0.0;
-        }
-        let p = t * std::f32::consts::TAU;
-        let w1 = (self.clock * 1.3 + p * 1.7).sin();
-        let w2 = (self.clock * 2.1 + p * 2.9).sin();
-        let w3 = (self.clock * 3.7 + p * 0.8).sin();
-        // Average the three sines and rescale [-1,1] → [0,1].
-        let osc = (w1 + w2 + w3) / 3.0 * 0.5 + 0.5;
-        (self.level * osc).clamp(0.0, 1.0)
+        let s = (self.clock * std::f32::consts::TAU * 0.42).sin();
+        0.18 + 0.30 * s * s
     }
 
     /// Drop back to silence so the next session opens on a flat line instead of
     /// the tail of the last one.
     fn clear(&mut self) {
-        self.hist = [0.0; WAVE_HISTORY];
-        self.written = 0;
-        self.accum = 0.0;
+        self.bars = [0.0; WAVE_BAR_MAX];
+        self.vel = [0.0; WAVE_BAR_MAX];
         self.level = 0.0;
     }
 }
@@ -1434,12 +1497,14 @@ fn draw_wave_bars(
         return;
     }
     let pitch = WAVE_BAR_W + WAVE_BAR_GAP;
-    let n = (((w + WAVE_BAR_GAP) / pitch).floor() as usize).min(WAVE_BAR_MAX);
+    let n = wave_bar_count(w);
     if n == 0 {
         return;
     }
     // Centre the row: the width rarely divides evenly by the pitch, and letting
-    // the remainder fall on the right would read as a misaligned capsule.
+    // the remainder fall on the right would read as a misaligned capsule. With
+    // WAVE_BAR_TRIM bars removed there is more slack here than there used to be,
+    // so this is what keeps the row even rather than left-hugging.
     let used = n as f32 * pitch - WAVE_BAR_GAP;
     let x0 = x + (w - used) / 2.0;
 
@@ -1454,16 +1519,10 @@ fn draw_wave_bars(
     paint.set_color(Color::from_rgba8(color[0], color[1], color[2], a));
 
     for i in 0..n {
-        let t = if n <= 1 {
-            0.5
-        } else {
-            i as f32 / (n - 1) as f32
-        };
-        let v = field.stable_at(t);
-        // Taper: half-sine envelope — edge bars are WAVE_TAPER_MIN × the reach
-        // of the centre bar, rising smoothly to the full reach at t = 0.5.
-        let taper = WAVE_TAPER_MIN + (1.0 - WAVE_TAPER_MIN) * (std::f32::consts::PI * t).sin();
-        let h = WAVE_BAR_MIN_H + v * taper * reach;
+        // The slope already lives in the spring's target (`wave_gain`), so the
+        // height here is the bar's settled position and nothing more — no second
+        // envelope applied on top, which would double-taper the row.
+        let h = WAVE_BAR_MIN_H + field.bar(i) * reach;
         let bx = x0 + i as f32 * pitch;
         let by = cy - h / 2.0;
         if let Some(path) = rounded_rect_path(bx, by, WAVE_BAR_W, h, r) {
@@ -1847,6 +1906,12 @@ fn paint_studio_card(
     dots: &[Rgba],
     // Width-grow 0..1 (collapsed pill width → full card width).
     expand: f32,
+    // [GRAIN] The active skin, and the state each skin's centre needs: the wave
+    // field for `Wave`, the app icon for its left mark. `Matrix` ignores both and
+    // draws exactly what it always did.
+    skin: PillSkin,
+    wave: &WaveField,
+    icon: Option<&Pixmap>,
 ) {
     let (w, h) = studio_pixel_size();
     let (wf, hf) = (w as f32, h as f32);
@@ -1870,7 +1935,12 @@ fn paint_studio_card(
         anti_alias: true,
         ..Default::default()
     };
-    bg.set_color(Color::from_rgba8(13, 13, 15, (244.0 * fade) as u8));
+    bg.set_color(Color::from_rgba8(
+        GRAIN_SURFACE[0],
+        GRAIN_SURFACE[1],
+        GRAIN_SURFACE[2],
+        (GRAIN_CARD_A * fade) as u8,
+    ));
     if let Some(path) = rounded_rect_path(cap_left, card_top, cap_w, card_h, STUDIO_CORNER_R) {
         pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
     }
@@ -1926,7 +1996,7 @@ fn paint_studio_card(
 
     // 3) Control row pinned to the card's bottom.
     draw_control_row(
-        pixmap, state, phase, dots, cap_left, cap_right, ctrl_top, fade, expand,
+        pixmap, state, phase, dots, cap_left, cap_right, ctrl_top, fade, expand, skin, wave, icon,
     );
 }
 
@@ -2133,6 +2203,11 @@ fn draw_control_row(
     ctrl_top: f32,
     fade: f32,
     expand: f32,
+    // [GRAIN] The active skin decides what the centre and the left mark are; the
+    // cancel X on the right is the same in both.
+    skin: PillSkin,
+    wave: &WaveField,
+    icon: Option<&Pixmap>,
 ) {
     let cy = ctrl_top + STUDIO_CTRL_H / 2.0;
     let recording = state == PillState::Recording;
@@ -2140,25 +2215,66 @@ fn draw_control_row(
     // the collapsed pill (expand≈0) is just the bare dot-matrix, as before.
     let side = fade * expand.clamp(0.0, 1.0);
 
-    // LEFT — pulsing recording dot, or a spinner while finalizing.
+    // LEFT — the app icon under the wave skin (pill identity, same as the
+    // collapsed pill), otherwise the pulsing recording dot / finalizing spinner.
+    // Falling back to the dot matters: no icon must never mean no left mark.
     let left_cx = cap_left + STUDIO_PAD + 6.0;
-    if recording {
-        draw_rec_dot(pixmap, left_cx, cy, phase, side);
-    } else {
-        draw_spinner(pixmap, left_cx, cy, phase, side);
+    match icon.filter(|_| skin == PillSkin::Wave) {
+        Some(icon) if side > 0.01 => {
+            let ix = (left_cx - icon.width() as f32 / 2.0).round() as i32;
+            let iy = (cy - icon.height() as f32 / 2.0).round() as i32;
+            pixmap.draw_pixmap(
+                ix,
+                iy,
+                icon.as_ref(),
+                &PixmapPaint {
+                    opacity: side,
+                    quality: FilterQuality::Nearest,
+                    ..Default::default()
+                },
+                Transform::identity(),
+                None,
+            );
+        }
+        _ if recording => draw_rec_dot(pixmap, left_cx, cy, phase, side),
+        _ => draw_spinner(pixmap, left_cx, cy, phase, side),
     }
 
     // RIGHT — cancel glyph (display-only), 22px circle inset from the edge.
     let x_cx = cap_right - STUDIO_PAD - 11.0;
     draw_x_button(pixmap, x_cx, cy, side);
 
-    // CENTER — the reduced 2-row dot-matrix, centered on the control row.
-    // Rows 3–4 are the studio strip; their vertical center sits on `cy`.
+    // CENTER — the active skin's voice visualisation, centred on the card.
     let (w, _) = studio_pixel_size();
-    let field_w = COLS as f32 * CELL;
-    let mtx_left = (w as f32 - field_w) / 2.0;
-    let visible_mid = (STUDIO_MTX_R0 as f32 + STUDIO_MTX_R1 as f32 + 1.0) * 0.5 * CELL;
-    draw_dot_matrix(pixmap, dots, mtx_left, cy - visible_mid, fade);
+    match skin {
+        PillSkin::Wave => {
+            // The same bar row as the collapsed pill, at the same bar pitch, so
+            // expanding the pill does not change the waveform's language.
+            let ink = match state {
+                PillState::Recording => WAVE_INK,
+                PillState::Processing => ACCENT,
+                PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
+            };
+            draw_wave_bars(
+                pixmap,
+                (w as f32 - STUDIO_WAVE_W) / 2.0,
+                cy,
+                STUDIO_WAVE_W,
+                STUDIO_CTRL_H / 2.0 * STUDIO_WAVE_FILL,
+                wave,
+                ink,
+                fade,
+            );
+        }
+        PillSkin::Matrix => {
+            // The reduced 2-row dot-matrix. Rows 3–4 are the studio strip; their
+            // vertical center sits on `cy`.
+            let field_w = COLS as f32 * CELL;
+            let mtx_left = (w as f32 - field_w) / 2.0;
+            let visible_mid = (STUDIO_MTX_R0 as f32 + STUDIO_MTX_R1 as f32 + 1.0) * 0.5 * CELL;
+            draw_dot_matrix(pixmap, dots, mtx_left, cy - visible_mid, fade);
+        }
+    }
 }
 
 /// Draw the COLS×ROWS aura dot-field at `(left, top)` (cell = `CELL·SCALE`),
@@ -4320,7 +4436,12 @@ impl App {
             // themeable.
             let body_rgba = theme_for_state(self.theme.as_ref(), self.state)
                 .and_then(|t| t.background)
-                .unwrap_or([0, 0, 0, 240]);
+                .unwrap_or([
+                    GRAIN_SURFACE[0],
+                    GRAIN_SURFACE[1],
+                    GRAIN_SURFACE[2],
+                    GRAIN_SURFACE_A,
+                ]);
             body.set_color(Color::from_rgba8(
                 body_rgba[0],
                 body_rgba[1],
@@ -4487,6 +4608,9 @@ impl App {
             &reveal_alpha,
             &self.aura.dots,
             self.studio_expand,
+            self.skin,
+            &self.wave,
+            self.icon.as_ref(),
         );
 
         // [GRAIN] Prompt switcher — the same mid-speech switch as the collapsed
@@ -4560,6 +4684,32 @@ impl App {
             self.icon.as_ref(),
             &self.wave,
         );
+    }
+
+    /// [GRAIN] Width of the wave row on the surface currently being drawn.
+    ///
+    /// The physics needs the bar COUNT before the draw runs (each bar owns a
+    /// spring), and the count comes from the row width — so this has to agree
+    /// with what the painters compute, exactly. Both derive it from the same
+    /// `wave_row_w`/`wave_bar_count` pair rather than each doing their own
+    /// arithmetic, which is what keeps bar `i` the same bar in both places.
+    fn wave_row_w(&self) -> f32 {
+        match self.mode {
+            PillMode::Studio => STUDIO_WAVE_W,
+            _ => {
+                let geom = PillGeom::for_skin(self.skin);
+                let (x0, x1) = geom.body_x();
+                (x1 - WAVE_PAD_X) - (x0 + WAVE_PAD_X + self.wave_slot_w() + WAVE_DOT_GAP)
+            }
+        }
+    }
+
+    /// Width of the left mark — the app icon when we have one, otherwise the
+    /// plain state disc. The wave starts after it, so it moves the row's origin.
+    fn wave_slot_w(&self) -> f32 {
+        self.icon
+            .as_ref()
+            .map_or(WAVE_DOT_R * 2.0, |i| i.width() as f32)
     }
 
     /// [GRAIN] The collapsed pill's SIBLING prompt capsule — a fixed-width pill
@@ -4649,19 +4799,24 @@ impl App {
         let cap_w = OFFER_CAPSULE_PAD + label_w + OFFER_LABEL_KEY_GAP + key_w + OFFER_CAPSULE_PAD;
         let left = 0.0_f32;
 
-        let fill_a = (alpha * 244.0) as u8;
+        let fill_a = (alpha * GRAIN_CARD_A) as u8;
         if fill_a == 0 {
             self.prompt_switch_rect = None;
             return;
         }
 
-        // 1) Capsule background (near-black, same fill as the pill body).
+        // 1) Capsule background (the shared Grain surface, same as the pill body).
         let rr = (pill_h / 2.0).min(cap_w / 2.0).max(0.0);
         let mut fill = Paint {
             anti_alias: true,
             ..Default::default()
         };
-        fill.set_color(Color::from_rgba8(13, 13, 15, fill_a));
+        fill.set_color(Color::from_rgba8(
+            GRAIN_SURFACE[0],
+            GRAIN_SURFACE[1],
+            GRAIN_SURFACE[2],
+            fill_a,
+        ));
         if let Some(path) = rounded_rect_path(left, y_off, cap_w, pill_h, rr) {
             pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
@@ -4782,7 +4937,7 @@ impl App {
         alpha: f32,
     ) {
         let alpha = alpha.clamp(0.0, 1.0);
-        let fill_a = (alpha * 244.0) as u8;
+        let fill_a = (alpha * GRAIN_CARD_A) as u8;
         if fill_a == 0 || px1 <= px0 {
             return;
         }
@@ -4791,7 +4946,12 @@ impl App {
             anti_alias: true,
             ..Default::default()
         };
-        fill.set_color(Color::from_rgba8(13, 13, 15, fill_a));
+        fill.set_color(Color::from_rgba8(
+            GRAIN_SURFACE[0],
+            GRAIN_SURFACE[1],
+            GRAIN_SURFACE[2],
+            fill_a,
+        ));
         if let Some(path) = rounded_rect_path(px0, top, px1 - px0, ph, rr) {
             pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
@@ -5353,14 +5513,19 @@ impl ApplicationHandler<UserEvent> for App {
                 // scrolling line, and an 80ms step would read as a stutter. The
                 // dot field is skipped entirely while the wave is on screen, so
                 // only one of the two ever costs anything per frame.
-                let wave_live = self.skin == PillSkin::Wave && self.mode == PillMode::Collapsed;
+                // [GRAIN] Both surfaces that can show the wave skin drive it: the
+                // collapsed pill and the expanded Studio card. AgentInput has its
+                // own visualisation and keeps rolling the dot field below.
+                let wave_live = self.skin == PillSkin::Wave
+                    && matches!(self.mode, PillMode::Collapsed | PillMode::Studio);
                 if wave_live {
                     // Real elapsed time, not `TICK` — a dropped frame must delay
                     // the motion, never slow it down.
                     let dt = now.saturating_duration_since(self.wave_at).as_secs_f32();
                     self.wave_at = now;
                     let amp = self.current_amp();
-                    self.wave.advance(dt, self.state, amp);
+                    let n = wave_bar_count(self.wave_row_w());
+                    self.wave.advance(dt, self.state, amp, n);
                 }
                 // Re-roll the dot field on its own (slower) cadence so it stays
                 // calm; everything else eases every frame for smoothness.
@@ -5590,125 +5755,224 @@ mod tests {
     /// One 60 fps frame, in seconds.
     const FRAME: f32 = 1.0 / 60.0;
 
-    /// The drawable envelope, sampled the way the bars sample it.
-    const PROBE: usize = 40;
-    fn env_of(f: &WaveField) -> [f32; PROBE] {
-        let mut e = [0.0; PROBE];
-        for (i, o) in e.iter_mut().enumerate() {
-            *o = f.value_at(i as f32 / (PROBE - 1) as f32);
+    /// A representative bar count — an odd number, so one bar sits exactly at
+    /// the centre of the slope and the row is symmetric about it.
+    const BARS: usize = 21;
+
+    /// The drawn bar heights, left to right.
+    fn bars_of(f: &WaveField) -> Vec<f32> {
+        (0..f.n).map(|i| f.bar(i)).collect()
+    }
+
+    /// Run `secs` of audio at `amp` through the field at 60 fps.
+    fn run(f: &mut WaveField, secs: f32, state: PillState, amp: f32) {
+        for _ in 0..(secs / FRAME) as usize {
+            f.advance(FRAME, state, amp, BARS);
         }
-        e
     }
 
     #[test]
     fn the_wave_rests_flat_and_returns_to_flat_after_speech() {
         let mut f = WaveField::new();
-        assert!(env_of(&f).iter().all(|&e| e == 0.0), "opens silent");
+        run(&mut f, 0.1, PillState::Idle, 0.0);
+        assert!(bars_of(&f).iter().all(|&b| b < 1e-4), "opens silent");
 
-        for _ in 0..90 {
-            f.advance(FRAME, PillState::Recording, 0.9);
-        }
+        run(&mut f, 1.5, PillState::Recording, 0.9);
         assert!(
-            env_of(&f)[PROBE - 1] > 0.5,
-            "speech drives the bars off centre"
+            bars_of(&f).iter().any(|&b| b > 0.5),
+            "speech drives the bars up"
         );
 
         // Release is slow but must actually reach the resting line.
-        for _ in 0..600 {
-            f.advance(FRAME, PillState::Idle, 0.0);
-        }
+        run(&mut f, 10.0, PillState::Idle, 0.0);
         assert!(
-            env_of(&f).iter().all(|&e| e < 0.02),
-            "silence returns to the centre line"
+            bars_of(&f).iter().all(|&b| b < 0.02),
+            "silence returns to the resting row"
         );
     }
 
     #[test]
-    fn scroll_speed_is_the_same_at_sixty_and_at_one_hundred_forty_four_fps() {
-        // The whole reason samples are written on a clock rather than per frame:
-        // the wave must look identical on any display.
+    fn the_row_has_a_flat_top_with_tapered_shoulders_not_a_lens() {
+        // The defining property of the look. A sustained tone must paint a row
+        // that is LEVEL across the middle and steps down only over the outermost
+        // WAVE_EDGE_BARS. A taper spread across every bar reads as a lens, which
+        // is the shape this replaced — so the flat middle is the assertion that
+        // matters most here.
+        let mut f = WaveField::new();
+        run(&mut f, 3.0, PillState::Recording, 1.0);
+        let bars = bars_of(&f);
+        let mid = BARS / 2;
+
+        // 1) The middle is flat: every bar outside the shoulders is the same
+        //    height as the centre bar.
+        for i in WAVE_EDGE_BARS..BARS - WAVE_EDGE_BARS {
+            assert!(
+                (bars[i] - bars[mid]).abs() < 1e-3,
+                "bar {i} breaks the flat top: {bars:?}"
+            );
+        }
+        // 2) The shoulders step down monotonically toward each tip.
+        for i in 1..=WAVE_EDGE_BARS {
+            assert!(
+                bars[i] >= bars[i - 1] - 1e-3,
+                "left shoulder dips at bar {i}: {bars:?}"
+            );
+            let r = BARS - 1 - i;
+            assert!(
+                bars[r] >= bars[r + 1] - 1e-3,
+                "right shoulder dips at bar {r}: {bars:?}"
+            );
+        }
+        // 3) And the tips are meaningfully shorter, not fractionally so.
+        assert!(
+            bars[0] < bars[mid] * 0.6,
+            "the taper must be visible, not cosmetic: {bars:?}"
+        );
+    }
+
+    #[test]
+    fn the_row_is_symmetric_about_its_centre() {
+        // Same ceiling, same spring rate at mirrored positions — an asymmetric
+        // row would mean the slope maths had drifted from the physics.
+        let mut f = WaveField::new();
+        run(&mut f, 2.0, PillState::Recording, 0.8);
+        let bars = bars_of(&f);
+        for i in 0..BARS / 2 {
+            let (l, r) = (bars[i], bars[BARS - 1 - i]);
+            assert!((l - r).abs() < 1e-4, "bars {i} and {} differ: {l} vs {r}", BARS - 1 - i);
+        }
+    }
+
+    #[test]
+    fn the_centre_leads_and_the_edges_trail_on_a_sudden_onset() {
+        // The only source of life in the row: the centre is a stiffer spring, so
+        // on a hard onset it has covered more of its own travel than the tips
+        // have of theirs. Compare FRACTIONS of each bar's ceiling, or the slope
+        // itself would trivially satisfy this.
+        let mut f = WaveField::new();
+        run(&mut f, 1.0, PillState::Idle, 0.0);
+        // A brief burst — long enough to move, short enough that nothing settles.
+        for _ in 0..4 {
+            f.advance(FRAME, PillState::Recording, 1.0, BARS);
+        }
+        let bars = bars_of(&f);
+        let mid = BARS / 2;
+        let frac = |i: usize| bars[i] / (f.level * wave_gain_at(i, BARS)).max(1e-6);
+        assert!(
+            frac(mid) > frac(0) + 0.05,
+            "the centre must lead: centre {:.3} vs edge {:.3}",
+            frac(mid),
+            frac(0)
+        );
+    }
+
+    #[test]
+    fn motion_is_the_same_at_sixty_and_at_one_hundred_forty_four_fps() {
+        // Everything integrates against real elapsed time, so the wave must look
+        // identical on any display — no fixed sample clock to drift against.
         let mut slow = WaveField::new();
         let mut fast = WaveField::new();
-        for _ in 0..60 {
-            slow.advance(1.0 / 60.0, PillState::Recording, 0.7);
+        for _ in 0..120 {
+            slow.advance(1.0 / 60.0, PillState::Recording, 0.7, BARS);
         }
-        for _ in 0..144 {
-            fast.advance(1.0 / 144.0, PillState::Recording, 0.7);
+        for _ in 0..288 {
+            fast.advance(1.0 / 144.0, PillState::Recording, 0.7, BARS);
         }
-        assert_eq!(
-            slow.written, fast.written,
-            "one second of audio must be the same number of samples"
-        );
-        for (a, b) in env_of(&slow).iter().zip(env_of(&fast).iter()) {
-            assert!((a - b).abs() < 0.02, "shapes diverged: {a} vs {b}");
+        for (i, (a, b)) in bars_of(&slow).iter().zip(bars_of(&fast).iter()).enumerate() {
+            assert!((a - b).abs() < 0.01, "bar {i} diverged: {a} vs {b}");
         }
     }
 
     #[test]
-    fn the_wave_slides_between_whole_samples_rather_than_stepping() {
-        // Sub-sample scrolling: advancing by less than one sample period must
-        // still move the drawn shape, or the wave ticks instead of gliding.
+    fn the_bars_glide_rather_than_snapping_to_the_level() {
+        // A spring, not a direct assignment: one frame after a silent field is
+        // hit with full volume, the bars must have moved a little, not arrived.
         let mut f = WaveField::new();
-        for i in 0..120 {
-            f.advance(FRAME, PillState::Recording, 0.3 + 0.5 * (i as f32 * 0.3).sin().abs());
-        }
-        let before = env_of(&f);
-        let written_before = f.written;
-        // A third of a sample period — far too small to write a new sample.
-        f.advance(1.0 / (WAVE_SAMPLE_HZ * 3.0), PillState::Recording, 0.6);
-        assert_eq!(f.written, written_before, "no whole sample should be written");
-        let after = env_of(&f);
+        run(&mut f, 1.0, PillState::Idle, 0.0);
+        f.advance(FRAME, PillState::Recording, 1.0, BARS);
+        let mid = BARS / 2;
+        let target = f.level * wave_gain_at(mid, BARS);
+        assert!(f.bar(mid) > 0.0, "the bar must start moving immediately");
         assert!(
-            before.iter().zip(after.iter()).any(|(a, b)| (a - b).abs() > 1e-6),
-            "the shape must slide even between samples"
+            f.bar(mid) < target * 0.75,
+            "a single frame must not arrive: {} of {target}",
+            f.bar(mid)
         );
     }
 
     #[test]
-    fn the_wave_never_steps_more_than_the_follower_allows() {
-        // Even an instant jump from silence to full volume may not produce a
-        // discontinuity in the written line.
+    fn the_bars_never_overshoot_their_target() {
+        // Critically damped, not springy — overshoot is what would read as
+        // "loose". Hold a constant loudness and check no bar ever passes its own
+        // ceiling on the way up.
         let mut f = WaveField::new();
-        for _ in 0..WAVE_HISTORY {
-            f.advance(FRAME, PillState::Recording, 0.0);
-        }
-        let mut prev = f.level;
-        for _ in 0..90 {
-            f.advance(FRAME, PillState::Recording, 1.0);
-            assert!(
-                (f.level - prev).abs() <= WAVE_K_ATTACK + 1e-4,
-                "step {} exceeds the attack limit",
-                f.level - prev
-            );
-            prev = f.level;
+        for _ in 0..600 {
+            f.advance(FRAME, PillState::Recording, 0.9, BARS);
+            for i in 0..BARS {
+                let ceiling = f.level * wave_gain_at(i, BARS);
+                assert!(
+                    f.bar(i) <= ceiling + 1e-4,
+                    "bar {i} overshot: {} > {ceiling}",
+                    f.bar(i)
+                );
+            }
         }
     }
 
     #[test]
-    fn a_long_stall_does_not_burst_write_the_whole_ring() {
-        // The window can be hidden for minutes; waking must not replay them.
+    fn a_long_stall_resumes_instead_of_exploding() {
+        // The window can be hidden for minutes. The implicit integrator is stable
+        // at any dt, and the clamp keeps a wake-up from fast-forwarding — either
+        // way the field must stay inside the capsule and stay finite.
         let mut f = WaveField::new();
-        f.advance(600.0, PillState::Recording, 0.8);
-        assert!(
-            f.written <= WAVE_HISTORY as u64,
-            "wrote {} samples for a 10-minute stall",
-            f.written
-        );
-        assert!(f.accum < 1.0, "backlog was not dropped");
+        f.advance(600.0, PillState::Recording, 0.8, BARS);
+        for i in 0..BARS {
+            let b = f.bar(i);
+            assert!(b.is_finite() && (0.0..=1.0).contains(&b), "bar {i} = {b}");
+        }
+        assert!(f.level.is_finite() && f.level <= 1.0);
     }
 
     #[test]
     fn processing_pulses_without_ever_going_flat_or_loud() {
         let mut f = WaveField::new();
         let mut seen: Vec<f32> = Vec::new();
-        for _ in 0..200 {
-            f.advance(FRAME, PillState::Processing, 0.0);
+        for _ in 0..600 {
+            f.advance(FRAME, PillState::Processing, 0.0, BARS);
             seen.push(f.level);
         }
         let lo = seen.iter().cloned().fold(f32::MAX, f32::min);
         let hi = seen.iter().cloned().fold(f32::MIN, f32::max);
         assert!(hi > lo + 0.05, "the processing pulse must actually move");
         assert!(hi <= 1.0 && lo >= 0.0, "the pulse stays inside the capsule");
+    }
+
+    #[test]
+    fn trimming_a_bar_keeps_the_row_centred() {
+        // WAVE_BAR_TRIM removes a bar; the leftover slack must be split evenly or
+        // the row would visibly hug one side of the capsule.
+        let pitch = WAVE_BAR_W + WAVE_BAR_GAP;
+        for w in [60.0f32, 96.0, 120.0, 168.0, 200.0] {
+            let n = wave_bar_count(w);
+            assert!(n > 0, "width {w} must fit at least one bar");
+            let used = n as f32 * pitch - WAVE_BAR_GAP;
+            let slack = w - used;
+            assert!(
+                slack >= 0.0,
+                "width {w}: {n} bars overflow the row by {}",
+                -slack
+            );
+            // One trimmed bar leaves at most two pitches of slack; more than that
+            // would mean the trim had compounded. A row wide enough to hit
+            // WAVE_BAR_MAX is exempt — there the leftover space is the ceiling
+            // doing its job, not a centring fault.
+            if n < WAVE_BAR_MAX - WAVE_BAR_TRIM {
+                assert!(
+                    slack < 2.0 * pitch,
+                    "width {w}: {slack} px of slack is too much"
+                );
+            }
+        }
     }
 
     /// A solid-colour icon payload of the agreed size.
@@ -5777,12 +6041,11 @@ mod tests {
     fn clearing_the_wave_drops_the_previous_sessions_tail() {
         let mut f = WaveField::new();
         for _ in 0..60 {
-            f.advance(FRAME, PillState::Recording, 0.8);
+            f.advance(FRAME, PillState::Recording, 0.8, BARS);
         }
         f.clear();
-        assert!(env_of(&f).iter().all(|&e| e == 0.0));
+        assert!(bars_of(&f).iter().all(|&b| b == 0.0));
         assert_eq!(f.level, 0.0);
-        assert_eq!(f.written, 0);
     }
 
     #[test]
@@ -5795,18 +6058,20 @@ mod tests {
         let mut pixmap = Pixmap::new(w, h).unwrap();
         pixmap.fill(Color::TRANSPARENT);
 
+        let cy = geom.y_off + geom.body_h / 2.0;
+        let (x0, x1) = geom.body_x();
+        let wx = x0 + WAVE_PAD_X;
+        let ww = (x1 - WAVE_PAD_X) - wx;
+
         let mut f = WaveField::new();
         for i in 0..150 {
             f.advance(
                 FRAME,
                 PillState::Recording,
                 0.25 + 0.6 * ((i as f32) * 0.2).sin().abs(),
+                wave_bar_count(ww),
             );
         }
-        let cy = geom.y_off + geom.body_h / 2.0;
-        let (x0, x1) = geom.body_x();
-        let wx = x0 + WAVE_PAD_X;
-        let ww = (x1 - WAVE_PAD_X) - wx;
         draw_wave_bars(
             &mut pixmap,
             wx,
@@ -5879,12 +6144,24 @@ mod tests {
         }
         let icon = scale_icon(art.data()).expect("scale");
 
-        let mut f = WaveField::new();
-        for i in 0..200 {
-            let t = i as f32 * 0.09;
-            let amp = (0.30 + 0.34 * (t * 2.3).sin() + 0.22 * (t * 5.7).sin()).clamp(0.0, 1.0);
-            f.advance(FRAME, PillState::Recording, amp);
-        }
+        // A left mark's width sets where the row starts, so the dot rows and the
+        // icon row carry DIFFERENT bar counts. Each row therefore gets a field
+        // advanced at its own count — simulating one count and drawing another
+        // would leave the surplus bars sitting at zero.
+        let (bx0, bx1) = geom.body_x();
+        let field_for = |slot_w: f32| {
+            let row_w = (bx1 - WAVE_PAD_X) - (bx0 + WAVE_PAD_X + slot_w + WAVE_DOT_GAP);
+            let n = wave_bar_count(row_w);
+            let mut f = WaveField::new();
+            for i in 0..200 {
+                let t = i as f32 * 0.09;
+                let amp = (0.30 + 0.34 * (t * 2.3).sin() + 0.22 * (t * 5.7).sin()).clamp(0.0, 1.0);
+                f.advance(FRAME, PillState::Recording, amp, n);
+            }
+            f
+        };
+        let f_dot = field_for(WAVE_DOT_R * 2.0);
+        let f_icon = field_for(WAVE_ICON_PX as f32);
 
         // Two rows: the plain state dot, and the same pill wearing an app icon.
         let rows: [(Option<&Pixmap>, PillState); 3] = [
@@ -5906,17 +6183,22 @@ mod tests {
                 anti_alias: true,
                 ..Default::default()
             };
-            body.set_color(Color::from_rgba8(0, 0, 0, 240));
+            body.set_color(Color::from_rgba8(
+                GRAIN_SURFACE[0],
+                GRAIN_SURFACE[1],
+                GRAIN_SURFACE[2],
+                GRAIN_SURFACE_A,
+            ));
             if let Some(path) =
                 rounded_rect_path(x0, geom.y_off, x1 - x0, geom.body_h, geom.radius())
             {
                 pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
             }
             // … and the SHIPPING body painter, not a copy of it.
-            let wave = if state == PillState::Idle {
-                &WaveField::new()
-            } else {
-                &f
+            let wave = match (state, icon) {
+                (PillState::Idle, _) => &WaveField::new(),
+                (_, Some(_)) => &f_icon,
+                (_, None) => &f_dot,
             };
             paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave);
 
@@ -6272,6 +6554,9 @@ mod tests {
                 &[],
                 &aura.dots,
                 1.0,
+                PillSkin::Matrix,
+                &WaveField::new(),
+                None,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -6287,6 +6572,93 @@ mod tests {
         let path = std::env::temp_dir().join("grain_studio_preview.png");
         bg.save_png(&path).expect("save png");
         eprintln!("STUDIO_PREVIEW_PNG={}", path.display());
+    }
+
+    /// [GRAIN] The WAVE skin's Studio card: app icon (left) · bar row (centre) ·
+    /// cancel X (right). Renders the shipping painter, so what lands in the PNG
+    /// is what the app draws. Leaves an artifact rather than asserting a look.
+    #[test]
+    fn studio_wave_skin_renders_to_png() {
+        use tiny_skia::PixmapPaint;
+
+        let font = font();
+        let (cw, ch) = studio_pixel_size();
+
+        let mut asr = AsrDisplay::default();
+        asr.append_commit(
+            "The wave skin carries the same bar row into the expanded card, with the app icon standing where the recording dot used to be",
+        );
+        asr.partial = "and the cancel button unchanged".into();
+        asr.partial_stable = false;
+
+        // A stand-in app icon, built the way a real one arrives (a PILL_ICON_PX
+        // square that `scale_icon` reduces to the drawn size).
+        let mut art = Pixmap::new(PILL_ICON_PX as u32, PILL_ICON_PX as u32).unwrap();
+        art.fill(Color::TRANSPARENT);
+        let mut p = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        let s = PILL_ICON_PX as f32 / 32.0;
+        p.set_color(Color::from_rgba8(64, 132, 246, 255));
+        if let Some(path) = rounded_rect_path(s, s, 30.0 * s, 30.0 * s, 7.0 * s) {
+            art.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
+        }
+        p.set_color(Color::from_rgba8(240, 246, 255, 255));
+        if let Some(path) = rounded_rect_path(9.0 * s, 9.0 * s, 14.0 * s, 14.0 * s, 3.0 * s) {
+            art.fill_path(&path, &p, FillRule::Winding, Transform::identity(), None);
+        }
+        let icon = scale_icon(art.data()).expect("scale");
+
+        let n = wave_bar_count(STUDIO_WAVE_W);
+        let mut f = WaveField::new();
+        for i in 0..200 {
+            let t = i as f32 * 0.09;
+            let amp = (0.32 + 0.34 * (t * 2.3).sin() + 0.20 * (t * 5.7).sin()).clamp(0.0, 1.0);
+            f.advance(FRAME, PillState::Recording, amp, n);
+        }
+
+        let margin = 24i32;
+        let gap = 20i32;
+        let bw = cw + margin as u32 * 2;
+        let bh = ch * 2 + margin as u32 * 2 + gap as u32;
+        let mut bg = Pixmap::new(bw, bh).unwrap();
+        bg.fill(Color::from_rgba8(205, 203, 198, 255));
+
+        // Row 1 wears an icon, row 2 falls back to the recording dot — the
+        // fallback is the case that must not regress when no icon resolves.
+        for (i, icon) in [Some(&icon), None].into_iter().enumerate() {
+            let mut card = Pixmap::new(cw, ch).unwrap();
+            paint_studio_card(
+                &mut card,
+                &asr,
+                PillState::Recording,
+                1.0,
+                12.0,
+                Some(&font),
+                studio_card_height(STUDIO_MAX_LINES),
+                STUDIO_MAX_LINES,
+                &[],
+                &Aura::new().dots,
+                1.0,
+                PillSkin::Wave,
+                &f,
+                icon,
+            );
+            let y = margin + i as i32 * (ch as i32 + gap);
+            bg.draw_pixmap(
+                margin,
+                y,
+                card.as_ref(),
+                &PixmapPaint::default(),
+                Transform::identity(),
+                None,
+            );
+        }
+
+        let path = std::env::temp_dir().join("grain_studio_wave_preview.png");
+        bg.save_png(&path).expect("save png");
+        eprintln!("STUDIO_WAVE_PREVIEW_PNG={}", path.display());
     }
 
     /// [GRAIN] Render the card at 1 → 4 wrapped lines so the GROW behavior is
@@ -6338,6 +6710,9 @@ mod tests {
                 &[],
                 &aura.dots,
                 1.0,
+                PillSkin::Matrix,
+                &WaveField::new(),
+                None,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -6406,6 +6781,9 @@ mod tests {
                 &[],
                 &aura.dots,
                 expand,
+                PillSkin::Matrix,
+                &WaveField::new(),
+                None,
             );
             let y = margin + i as i32 * (ch as i32 + gap);
             bg.draw_pixmap(
@@ -6464,6 +6842,9 @@ mod tests {
             &[],
             &aura.dots,
             1.0,
+            PillSkin::Matrix,
+            &WaveField::new(),
+            None,
         );
         bg.draw_pixmap(
             margin,
