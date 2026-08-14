@@ -219,6 +219,100 @@ pub enum FieldKind {
     Unknown,
 }
 
+/// [GRAIN] Whether the focused element can actually receive pasted text.
+///
+/// Distinct from [`FieldKind`], which answers "what SHAPE is this field" for
+/// prompt construction and maps `TextPattern` presence straight to `MultiLine`.
+/// That mapping is wrong for this question: a rendered web page body exposes
+/// `TextPattern` and is the single most common surface a dictation paste lands
+/// on by mistake. Telling the two apart needs `IsReadOnly` and `TextEditPattern`.
+///
+/// Used by Paste Catch (`paste_catch`) to decide whether a paste is about to be
+/// thrown away. The three-way split is the whole point: `Unknown` means *no
+/// evidence*, and must never be treated as a miss — see [`classify`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FocusTarget {
+    /// Text pasted here will land.
+    Editable,
+    /// Positive evidence that it will not: a read-only value, a button, a
+    /// caret-less document.
+    NotEditable,
+    /// Resolved nothing conclusive. Not a miss — just no evidence either way.
+    #[default]
+    Unknown,
+}
+
+/// The focused element's control type, reduced to the three cases [`classify`]
+/// reasons about. Keeping the UIA ids on the Windows side of this boundary is
+/// what lets the decision table be a pure function with tests that run anywhere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlClass {
+    /// `Edit` — a text input.
+    Edit,
+    /// `Document` — an editor body, or a rendered page. Ambiguous by itself.
+    Document,
+    /// A control that unambiguously takes no typed text (button, list item,
+    /// scroll bar, ...).
+    NonText,
+    /// Anything else, including the container types (`Pane`, `Window`, `Group`,
+    /// `Custom`) that Electron and canvas apps report for real editors. These
+    /// must stay inconclusive rather than be called non-editable.
+    #[default]
+    Other,
+}
+
+/// One read of the focused element, as facts. Filled by `uia::read_focus_facts`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FocusFacts {
+    pub is_password: bool,
+    /// `TextEditPattern` is available. Only controls supporting text *editing*
+    /// expose it, which makes it the one unambiguous positive signal here.
+    pub has_text_edit_pattern: bool,
+    /// `Some(is_read_only)` when `ValuePattern` is available.
+    pub value_read_only: Option<bool>,
+    pub control: ControlClass,
+    /// `TextPattern` yielded a caret (or selection) to anchor on.
+    pub has_caret: bool,
+}
+
+/// The decision table. Pure, so the whole matrix is unit-testable without COM.
+///
+/// The governing rule is asymmetric on purpose: **only report `NotEditable` on
+/// positive evidence.** A false `NotEditable` suppresses a paste the user wanted
+/// and holds their clipboard behind an offer they did not need; a false
+/// `Unknown` merely falls through to post-paste verification. So every
+/// ambiguous case resolves to `Unknown`.
+pub fn classify(facts: FocusFacts) -> FocusTarget {
+    // A password box counts as landed and is never held: parking a password on
+    // the clipboard behind a visible offer is a worse outcome than losing it.
+    if facts.is_password {
+        return FocusTarget::Editable;
+    }
+    if facts.has_text_edit_pattern {
+        return FocusTarget::Editable;
+    }
+    // An explicit read-only flag is the clearest negative evidence available —
+    // a disabled or display-only input that would silently swallow the paste.
+    if let Some(read_only) = facts.value_read_only {
+        return if read_only {
+            FocusTarget::NotEditable
+        } else {
+            FocusTarget::Editable
+        };
+    }
+    match facts.control {
+        ControlClass::Edit => FocusTarget::Editable,
+        // A document with no caret to anchor on is a read-only surface: a PDF
+        // viewer, a mail preview, a rendered reader. WITH a caret it stays
+        // ambiguous — a real editor and a selectable web page both present one,
+        // and the web page is exactly the case we must not guess wrong about.
+        ControlClass::Document if facts.has_caret => FocusTarget::Unknown,
+        ControlClass::Document => FocusTarget::NotEditable,
+        ControlClass::NonText => FocusTarget::NotEditable,
+        ControlClass::Other => FocusTarget::Unknown,
+    }
+}
+
 /// The text immediately around the caret, for seamless insertion.
 ///
 /// Dictating into the middle of an existing sentence is where the pipeline is
@@ -1305,7 +1399,8 @@ mod windows_impl {
 #[cfg(windows)]
 mod uia {
     use super::{
-        extract_unique_terms, host_from_url, CaretContext, Confidence, FieldKind, MAX_CARET_CHARS,
+        extract_unique_terms, host_from_url, CaretContext, Confidence, ControlClass, FieldKind,
+        FocusFacts, MAX_CARET_CHARS,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -1314,10 +1409,18 @@ mod uia {
     };
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
-        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-        IUIAutomationValuePattern, TreeScope_Descendants, TreeScope_Element,
-        UIA_AriaRolePropertyId, UIA_ControlTypePropertyId, UIA_DocumentControlTypeId,
-        UIA_EditControlTypeId, UIA_TextControlTypeId, UIA_TextPatternId, UIA_ValuePatternId,
+        CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextEditPattern,
+        IUIAutomationTextPattern, IUIAutomationValuePattern, TreeScope_Descendants,
+        TreeScope_Element, UIA_AriaRolePropertyId, UIA_ButtonControlTypeId,
+        UIA_CalendarControlTypeId, UIA_CheckBoxControlTypeId, UIA_ControlTypePropertyId,
+        UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_HeaderControlTypeId,
+        UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId,
+        UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuItemControlTypeId,
+        UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId,
+        UIA_SeparatorControlTypeId, UIA_SliderControlTypeId, UIA_SplitButtonControlTypeId,
+        UIA_StatusBarControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
+        UIA_TextEditPatternId, UIA_TextPatternId, UIA_ThumbControlTypeId, UIA_TitleBarControlTypeId,
+        UIA_TreeItemControlTypeId, UIA_ValuePatternId,
     };
     use windows::Win32::UI::Accessibility::{
         TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
@@ -1973,6 +2076,106 @@ mod uia {
 
     unsafe fn is_password(el: &IUIAutomationElement) -> bool {
         el.CurrentIsPassword().map(|b| b.as_bool()).unwrap_or(false)
+    }
+
+    /// Control types that unambiguously accept no typed text.
+    ///
+    /// Deliberately excludes the CONTAINER types — `Pane`, `Window`, `Group`,
+    /// `Custom`, `List`, `Tree`, `ToolBar`. Electron apps, canvas editors and
+    /// custom chromes routinely report those for surfaces that are perfectly
+    /// editable, and a wrong `NotEditable` is the expensive error here (it
+    /// suppresses a paste the user wanted). Leaf widgets are safe; containers
+    /// are not.
+    fn is_non_text_control(control_type: i32) -> bool {
+        [
+            UIA_ButtonControlTypeId,
+            UIA_CalendarControlTypeId,
+            UIA_CheckBoxControlTypeId,
+            UIA_HeaderControlTypeId,
+            UIA_HeaderItemControlTypeId,
+            UIA_HyperlinkControlTypeId,
+            UIA_ImageControlTypeId,
+            UIA_ListItemControlTypeId,
+            UIA_MenuBarControlTypeId,
+            UIA_MenuItemControlTypeId,
+            UIA_ProgressBarControlTypeId,
+            UIA_RadioButtonControlTypeId,
+            UIA_ScrollBarControlTypeId,
+            UIA_SeparatorControlTypeId,
+            UIA_SliderControlTypeId,
+            UIA_SplitButtonControlTypeId,
+            UIA_StatusBarControlTypeId,
+            UIA_TabItemControlTypeId,
+            UIA_TextControlTypeId,
+            UIA_ThumbControlTypeId,
+            UIA_TitleBarControlTypeId,
+            UIA_TreeItemControlTypeId,
+        ]
+        .iter()
+        .any(|id| id.0 == control_type)
+    }
+
+    /// Read the focused element into [`FocusFacts`]. Own COM scope, so it is
+    /// safe to call standalone from the paste thread.
+    ///
+    /// Only cheap calls: control type, pattern availability, and one selection
+    /// probe. No text is read — this runs on the paste path, where the user is
+    /// already waiting, and reading a large document's text there would be the
+    /// one thing that makes dictation feel slow.
+    pub(in crate::context_detect) fn read_focus_facts() -> FocusFacts {
+        unsafe {
+            let mut facts = FocusFacts::default();
+            let _com = ComGuard::init();
+            let Ok(automation) =
+                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+            else {
+                return facts;
+            };
+            let Ok(el) = automation.GetFocusedElement() else {
+                return facts;
+            };
+
+            facts.is_password = is_password(&el);
+            if facts.is_password {
+                // Nothing else is read off a password field, ever.
+                return facts;
+            }
+
+            facts.has_text_edit_pattern = el
+                .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
+                .is_ok();
+
+            facts.value_read_only = el
+                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+                .ok()
+                .and_then(|vp| vp.CurrentIsReadOnly().ok())
+                .map(|b| b.as_bool());
+
+            if let Ok(control_type) = el.CurrentControlType() {
+                facts.control = if control_type == UIA_EditControlTypeId {
+                    ControlClass::Edit
+                } else if control_type == UIA_DocumentControlTypeId {
+                    ControlClass::Document
+                } else if is_non_text_control(control_type.0) {
+                    ControlClass::NonText
+                } else {
+                    ControlClass::Other
+                };
+            }
+
+            // Only asked when it can change the verdict (see `classify`): a
+            // Document with a caret is ambiguous, without one it is read-only.
+            if facts.control == ControlClass::Document {
+                facts.has_caret = el
+                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+                    .ok()
+                    .and_then(|tp| tp.GetSelection().ok())
+                    .and_then(|sel| sel.GetElement(0).ok())
+                    .is_some();
+            }
+
+            facts
+        }
     }
 }
 
