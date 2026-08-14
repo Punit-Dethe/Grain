@@ -29,7 +29,8 @@ use grain_sdk::{
 };
 
 use tiny_skia::{
-    Color, FillRule, FilterQuality, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Transform,
+    Color, FillRule, FilterQuality, Paint, PathBuilder, Pixmap, PixmapPaint, Rect, Stroke,
+    Transform,
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
@@ -127,6 +128,61 @@ const GRAIN_SURFACE: [u8; 3] = [17, 23, 20];
 /// the larger card surfaces, which would otherwise show too much desktop.
 const GRAIN_SURFACE_A: u8 = 242;
 const GRAIN_CARD_A: f32 = 246.0;
+
+/// [GRAIN] A hairline rim around every Grain surface.
+///
+/// On a dark desktop the capsule's edge dissolves into whatever is behind it and
+/// the pill loses its shape; one pixel of a lighter grey-green gives it a
+/// defined edge. Picked as a desaturated lift of `GRAIN_SURFACE` rather than a
+/// neutral grey, so the rim belongs to the surface instead of outlining it —
+/// at this weight a true grey reads as a drawn border.
+const GRAIN_BORDER: [u8; 3] = [58, 70, 63];
+const GRAIN_BORDER_A: u8 = 165;
+/// Hairline. Kept at exactly 1px: the pill is drawn unscaled into a layered
+/// window, so anything wider stops reading as a rim and starts reading as a frame.
+const GRAIN_BORDER_W: f32 = 1.0;
+
+/// Stroke a hairline `GRAIN_BORDER` rim just inside `(x, y, w, h)`.
+///
+/// Inset by half the stroke width so the rim lands ON the fill's edge rather
+/// than straddling it — a stroke centred on the boundary spills half its width
+/// into the transparent margin and reads as a soft halo.
+fn stroke_grain_rim(pixmap: &mut Pixmap, x: f32, y: f32, w: f32, h: f32, r: f32, alpha: f32) {
+    let a = (GRAIN_BORDER_A as f32 * alpha.clamp(0.0, 1.0)) as u8;
+    if a == 0 || w <= GRAIN_BORDER_W || h <= GRAIN_BORDER_W {
+        return;
+    }
+    let inset = GRAIN_BORDER_W / 2.0;
+    let Some(path) = rounded_rect_path(
+        x + inset,
+        y + inset,
+        w - GRAIN_BORDER_W,
+        h - GRAIN_BORDER_W,
+        (r - inset).max(0.0),
+    ) else {
+        return;
+    };
+    let mut paint = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    paint.set_color(Color::from_rgba8(
+        GRAIN_BORDER[0],
+        GRAIN_BORDER[1],
+        GRAIN_BORDER[2],
+        a,
+    ));
+    pixmap.stroke_path(
+        &path,
+        &paint,
+        &Stroke {
+            width: GRAIN_BORDER_W,
+            ..Default::default()
+        },
+        Transform::identity(),
+        None,
+    );
+}
 
 // The 4×4 confirm/recording zone (cols 18–21, rows 2–5) minus its 4 corners.
 const BTN_COL: usize = 18;
@@ -1119,16 +1175,34 @@ const WAVE_BAR_TRIM: usize = 1;
 /// onset registers immediately, slower release so the field settles instead of
 /// chattering. Applied as `1 - exp(-dt/tau)` against real elapsed time, so the
 /// follower behaves identically at any frame rate — no fixed sample clock.
-const WAVE_TAU_ATTACK: f32 = 0.045;
-const WAVE_TAU_RELEASE: f32 = 0.22;
+///
+/// Deliberately quicker than a comfortable meter would be: the follower is no
+/// longer the last stage of smoothing, so it should keep the TEXTURE of speech
+/// rather than iron it out. What the eye finally sees is smoothed by the spring
+/// below; a follower slow enough to look good on its own would leave the
+/// travelling wave nothing to carry.
+const WAVE_TAU_ATTACK: f32 = 0.028;
+const WAVE_TAU_RELEASE: f32 = 0.14;
 
-/// Critically damped spring rate (rad/s) for the CENTRE bar and for the bars at
-/// the very edges. The centre is stiffer, so it leads the movement; the edges
-/// are softer and trail slightly. That difference alone — no oscillator, no
-/// noise source — is what makes the row ripple outward from the middle and read
-/// as alive rather than as one block scaling up and down.
-const WAVE_OMEGA_CENTER: f32 = 26.0;
-const WAVE_OMEGA_EDGE: f32 = 13.0;
+/// [GRAIN] The wave TRAVELS. Loudness is written to a short history, and a bar's
+/// target is that history read `distance-from-centre × WAVE_TRAVEL_SECS` in the
+/// past. A change therefore appears at the middle bar first and reaches the tips
+/// last, so crests and troughs move outward from the centre and die at the
+/// edges — instead of the whole row swelling as one bulge, which is what a
+/// common, undelayed target produces no matter how the springs are tuned.
+///
+/// Keep this SMALL. The effect should register as the row being alive, not as a
+/// visible animation crossing the pill.
+const WAVE_TRAVEL_SECS: f32 = 0.22;
+/// Rate the loudness history is written at, and how many samples are kept —
+/// enough for `WAVE_TRAVEL_SECS` plus margin for the interpolator.
+const WAVE_LEVEL_HZ: f32 = 60.0;
+const WAVE_LEVEL_HISTORY: usize = 24;
+
+/// Critically damped spring rate (rad/s). One value for every bar: the offset
+/// between bars is now the travel delay, and a per-bar stiffness on top of it
+/// would only smear the wavefront it is meant to carry.
+const WAVE_OMEGA: f32 = 26.0;
 
 /// Mic level below this is room tone, not speech. Without a floor the resting
 /// line never actually settles.
@@ -1253,12 +1327,16 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
 /// The wave skin's voice field: one loudness follower plus a critically damped
 /// spring per bar. ~400 B, no allocation, no history buffer.
 ///
-/// [GRAIN] LOUDNESS ONLY. There is exactly one input — how loud the mic is right
-/// now — and every bar chases that same number. What separates the bars is not
-/// the signal but their PHYSICS: each has its own ceiling (`wave_gain`, the
-/// slope) and its own spring rate (stiff in the middle, soft at the edges). The
-/// centre therefore reacts first and travels furthest while the tips move a
-/// little and lag a little, so the row breathes outward from the middle.
+/// [GRAIN] LOUDNESS ONLY, TRAVELLING OUTWARD. There is exactly one input — how
+/// loud the mic is right now. What separates the bars is WHEN they see it: a
+/// bar's target is the loudness from `distance-from-centre × WAVE_TRAVEL_SECS`
+/// ago, so a crest appears in the middle and moves out to the tips, where the
+/// shoulder taper fades it out.
+///
+/// Giving every bar the same, undelayed target is what made the earlier version
+/// read as a BULGE: the whole row swelled and shrank together, and no amount of
+/// per-bar spring tuning fixed that, because the shape was never travelling in
+/// the first place. The delay is the fix; the springs only smooth it.
 ///
 /// This replaced a scrolling history buffer. Nothing translates sideways any
 /// more: a bar owns a fixed x position for the life of the session and only its
@@ -1280,8 +1358,16 @@ struct WaveField {
     /// How many bars the current layout uses — set by `advance` so the physics
     /// and the draw always agree on which spring belongs to which bar.
     n: usize,
-    /// The loudness follower every bar chases.
+    /// The loudness follower. The newest value; older ones live in `lvl_hist`.
     level: f32,
+    /// Recent history of `level`, written at a fixed `WAVE_LEVEL_HZ`. This is
+    /// what lets a bar read loudness from the past and the wave travel outward.
+    /// Only the SCALAR level is kept — there is no waveform buffer here.
+    lvl_hist: [f32; WAVE_LEVEL_HISTORY],
+    lvl_written: u64,
+    /// Fractional sample not yet written; doubles as the sub-sample read offset,
+    /// so the wavefront slides continuously rather than stepping.
+    lvl_accum: f32,
     /// Seconds since the field started — drives the processing pulse.
     clock: f32,
 }
@@ -1293,6 +1379,9 @@ impl WaveField {
             vel: [0.0; WAVE_BAR_MAX],
             n: 0,
             level: 0.0,
+            lvl_hist: [0.0; WAVE_LEVEL_HISTORY],
+            lvl_written: 0,
+            lvl_accum: 0.0,
             clock: 0.0,
         }
     }
@@ -1319,23 +1408,59 @@ impl WaveField {
             WAVE_TAU_RELEASE
         };
         self.level += (target - self.level) * (1.0 - (-dt / tau).exp());
+        self.push_level(dt);
 
         for i in 0..self.n {
-            let t = Self::bar_t(i, self.n);
-            let arch = (std::f32::consts::PI * t).sin().max(0.0);
-            // Stiff at the centre, soft at the tips — the whole source of the
-            // outward ripple.
-            let omega = WAVE_OMEGA_EDGE + (WAVE_OMEGA_CENTER - WAVE_OMEGA_EDGE) * arch;
-            let (x, v) = spring_step(
-                self.bars[i],
-                self.vel[i],
-                self.level * wave_gain_at(i, self.n),
-                omega,
-                dt,
-            );
+            // Distance from the middle of the row: 0 at the centre bar, 1 at
+            // either tip. It sets how far in the past this bar reads loudness,
+            // which is what sends the wavefront outward.
+            let d = (Self::bar_t(i, self.n) - 0.5).abs() * 2.0;
+            let target = self.level_delayed(d * WAVE_TRAVEL_SECS) * wave_gain_at(i, self.n);
+            let (x, v) = spring_step(self.bars[i], self.vel[i], target, WAVE_OMEGA, dt);
             self.bars[i] = x.clamp(0.0, 1.0);
             self.vel[i] = v;
         }
+    }
+
+    /// Write the follower into the propagation history on its fixed clock,
+    /// carrying the remainder so the read offset stays sub-sample smooth.
+    fn push_level(&mut self, dt: f32) {
+        self.lvl_accum += dt * WAVE_LEVEL_HZ;
+        // A stall must not replay its whole backlog into the ring.
+        let mut budget = WAVE_LEVEL_HISTORY;
+        while self.lvl_accum >= 1.0 && budget > 0 {
+            self.lvl_accum -= 1.0;
+            budget -= 1;
+            self.lvl_hist[(self.lvl_written % WAVE_LEVEL_HISTORY as u64) as usize] = self.level;
+            self.lvl_written = self.lvl_written.wrapping_add(1);
+        }
+        if self.lvl_accum >= 1.0 {
+            self.lvl_accum = 0.0;
+        }
+    }
+
+    /// The follower's value `secs` in the past. Reads clamp at the ends of the
+    /// ring, so a young field simply reports its oldest value rather than
+    /// wrapping into stale samples.
+    fn level_delayed(&self, secs: f32) -> f32 {
+        if self.lvl_written == 0 {
+            return self.level;
+        }
+        let back = secs * WAVE_LEVEL_HZ + self.lvl_accum;
+        let b = back.floor();
+        let f = back - b;
+        let b = b as i32;
+        // Linear is enough here: the spring is the last stage of smoothing, and
+        // a higher-order fit between two already-eased samples buys nothing.
+        let near = self.lvl_at(b);
+        near + (self.lvl_at(b + 1) - near) * f
+    }
+
+    fn lvl_at(&self, back: i32) -> f32 {
+        let newest = self.lvl_written as i64 - 1;
+        let oldest = (newest - (WAVE_LEVEL_HISTORY as i64 - 1)).max(0);
+        let idx = (newest - back as i64).clamp(oldest, newest);
+        self.lvl_hist[idx.rem_euclid(WAVE_LEVEL_HISTORY as i64) as usize]
     }
 
     /// Normalised position of bar `i` in a row of `n`.
@@ -1373,6 +1498,9 @@ impl WaveField {
         self.bars = [0.0; WAVE_BAR_MAX];
         self.vel = [0.0; WAVE_BAR_MAX];
         self.level = 0.0;
+        self.lvl_hist = [0.0; WAVE_LEVEL_HISTORY];
+        self.lvl_written = 0;
+        self.lvl_accum = 0.0;
     }
 }
 
@@ -1944,6 +2072,15 @@ fn paint_studio_card(
     if let Some(path) = rounded_rect_path(cap_left, card_top, cap_w, card_h, STUDIO_CORNER_R) {
         pixmap.fill_path(&path, &bg, FillRule::Winding, Transform::identity(), None);
     }
+    stroke_grain_rim(
+        pixmap,
+        cap_left,
+        card_top,
+        cap_w,
+        card_h,
+        STUDIO_CORNER_R,
+        fade,
+    );
     let mut hair = Paint {
         anti_alias: true,
         ..Default::default()
@@ -4468,6 +4605,15 @@ impl App {
                     );
                 }
             }
+            // …and its hairline rim, so the capsule keeps its edge against a
+            // dark desktop. Skipped for a themed body: an extension that picked
+            // its own background did not ask for our outline on top of it.
+            if theme_for_state(self.theme.as_ref(), self.state)
+                .and_then(|t| t.background)
+                .is_none()
+            {
+                stroke_grain_rim(&mut pixmap, x0, y_off, x1 - x0, pill_h, r, 1.0);
+            }
 
             // 2) The voice visualisation — whichever the active skin defines.
             match self.skin {
@@ -4820,6 +4966,7 @@ impl App {
         if let Some(path) = rounded_rect_path(left, y_off, cap_w, pill_h, rr) {
             pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
+        stroke_grain_rim(pixmap, left, y_off, cap_w, pill_h, rr, alpha);
 
         let cy = y_off + pill_h / 2.0;
 
@@ -4955,6 +5102,7 @@ impl App {
         if let Some(path) = rounded_rect_path(px0, top, px1 - px0, ph, rr) {
             pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
+        stroke_grain_rim(pixmap, px0, top, px1 - px0, ph, rr, alpha);
 
         if let Some(font) = &self.font {
             let cy = top + ph / 2.0;
@@ -5844,14 +5992,13 @@ mod tests {
     }
 
     #[test]
-    fn the_centre_leads_and_the_edges_trail_on_a_sudden_onset() {
-        // The only source of life in the row: the centre is a stiffer spring, so
-        // on a hard onset it has covered more of its own travel than the tips
-        // have of theirs. Compare FRACTIONS of each bar's ceiling, or the slope
-        // itself would trivially satisfy this.
+    fn a_crest_starts_at_the_centre_and_travels_out_to_the_tips() {
+        // The defining behaviour. A bar reads loudness delayed by its distance
+        // from the middle, so after a sudden onset the centre has risen and the
+        // tips have not yet heard about it. Compare FRACTIONS of each bar's own
+        // ceiling, or the shoulder taper would satisfy this trivially.
         let mut f = WaveField::new();
         run(&mut f, 1.0, PillState::Idle, 0.0);
-        // A brief burst — long enough to move, short enough that nothing settles.
         for _ in 0..4 {
             f.advance(FRAME, PillState::Recording, 1.0, BARS);
         }
@@ -5860,9 +6007,40 @@ mod tests {
         let frac = |i: usize| bars[i] / (f.level * wave_gain_at(i, BARS)).max(1e-6);
         assert!(
             frac(mid) > frac(0) + 0.05,
-            "the centre must lead: centre {:.3} vs edge {:.3}",
+            "the crest must start at the centre: centre {:.3} vs tip {:.3}",
             frac(mid),
             frac(0)
+        );
+
+        // …and the wavefront must actually REACH the tips: hold the tone long
+        // enough for the delay to elapse and the row levels out. A wave that
+        // starts at the centre but never arrives is just a bulge again.
+        run(&mut f, 2.0, PillState::Recording, 1.0);
+        let bars = bars_of(&f);
+        let frac = |i: usize| bars[i] / (f.level * wave_gain_at(i, BARS)).max(1e-6);
+        assert!(
+            (frac(mid) - frac(0)).abs() < 0.02,
+            "the wavefront never arrived: centre {:.3} vs tip {:.3}",
+            frac(mid),
+            frac(0)
+        );
+    }
+
+    #[test]
+    fn the_travel_delay_is_subtle_not_a_visible_animation() {
+        // A guard on taste as much as on correctness: the outermost bar must lag
+        // the centre by WAVE_TRAVEL_SECS and no more, or the wave stops reading
+        // as texture and starts reading as something crossing the pill.
+        assert!(
+            WAVE_TRAVEL_SECS <= 0.30,
+            "a {WAVE_TRAVEL_SECS}s crossing is long enough to watch, not to feel"
+        );
+        // The history has to actually cover the delay, or the tips would read a
+        // clamped (stale) value and the wavefront would stall short of the end.
+        let covered = WAVE_LEVEL_HISTORY as f32 / WAVE_LEVEL_HZ;
+        assert!(
+            covered > WAVE_TRAVEL_SECS,
+            "history covers {covered}s but the wave travels for {WAVE_TRAVEL_SECS}s"
         );
     }
 
@@ -6194,6 +6372,15 @@ mod tests {
             {
                 pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
             }
+            stroke_grain_rim(
+                &mut pixmap,
+                x0,
+                geom.y_off,
+                x1 - x0,
+                geom.body_h,
+                geom.radius(),
+                1.0,
+            );
             // … and the SHIPPING body painter, not a copy of it.
             let wave = match (state, icon) {
                 (PillState::Idle, _) => &WaveField::new(),
@@ -6572,6 +6759,100 @@ mod tests {
         let path = std::env::temp_dir().join("grain_studio_preview.png");
         bg.save_png(&path).expect("save png");
         eprintln!("STUDIO_PREVIEW_PNG={}", path.display());
+    }
+
+    /// [GRAIN] The travelling wave, frame by frame. A short loud burst is fed to
+    /// a silent field and successive frames are stacked top-to-bottom, so the
+    /// crest should be seen forming at the CENTRE of the top rows and moving
+    /// outward to the tips as the strip descends.
+    ///
+    /// A single frame cannot show this — the bulge version and this one look
+    /// nearly identical frozen — which is exactly why the still preview was not
+    /// enough to catch the problem the first time.
+    #[test]
+    fn wave_travel_filmstrip_png() {
+        let geom = PillGeom::for_skin(PillSkin::Wave);
+        let (w, _) = App::win_size(PillSkin::Wave);
+        let (x0, x1) = geom.body_x();
+        let wx = x0 + WAVE_PAD_X + WAVE_DOT_R * 2.0 + WAVE_DOT_GAP;
+        let ww = (x1 - WAVE_PAD_X) - wx;
+        let n = wave_bar_count(ww);
+
+        // Band tall enough for the bar row alone — the capsule chrome would only
+        // repeat 16 times and make the motion harder to read.
+        let band = 26u32;
+        const ROWS_N: usize = 16;
+        const ZOOM: u32 = 3;
+        let pw = (x1 - x0).ceil() as u32;
+        let mut out = Pixmap::new(pw * ZOOM, band * ZOOM * ROWS_N as u32).unwrap();
+        out.fill(Color::from_rgba8(
+            GRAIN_SURFACE[0],
+            GRAIN_SURFACE[1],
+            GRAIN_SURFACE[2],
+            255,
+        ));
+
+        let mut f = WaveField::new();
+        // Settle silent, then one short burst — an impulse, so there is a single
+        // identifiable crest to follow rather than a continuous swell.
+        for _ in 0..60 {
+            f.advance(FRAME, PillState::Recording, 0.0, n);
+        }
+        for row in 0..ROWS_N {
+            // 5 frames (~83 ms) of tone, silence thereafter.
+            for _ in 0..2 {
+                let amp = if row < 3 { 1.0 } else { 0.0 };
+                f.advance(FRAME, PillState::Recording, amp, n);
+            }
+            let mut strip = Pixmap::new(pw, band).unwrap();
+            strip.fill(Color::TRANSPARENT);
+            draw_wave_bars(
+                &mut strip,
+                wx - x0,
+                band as f32 / 2.0,
+                ww,
+                geom.body_h / 2.0 * WAVE_FILL,
+                &f,
+                WAVE_INK,
+                1.0,
+            );
+            let y_base = row as u32 * band * ZOOM;
+            for y in 0..band {
+                for x in 0..pw {
+                    let px = strip.pixels()[(y * pw + x) as usize];
+                    if px.alpha() == 0 {
+                        continue;
+                    }
+                    let a = px.alpha() as f32 / 255.0;
+                    let de = |c: u8| if a > 0.0 { (c as f32 / a) as u8 } else { 0 };
+                    let mut q = Paint::default();
+                    q.set_color(Color::from_rgba8(
+                        de(px.red()),
+                        de(px.green()),
+                        de(px.blue()),
+                        px.alpha(),
+                    ));
+                    if let Some(rect) = Rect::from_xywh(
+                        (x * ZOOM) as f32,
+                        (y_base + y * ZOOM) as f32,
+                        ZOOM as f32,
+                        ZOOM as f32,
+                    ) {
+                        out.fill_path(
+                            &PathBuilder::from_rect(rect),
+                            &q,
+                            FillRule::Winding,
+                            Transform::identity(),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+        let _ = w;
+        let path = std::env::temp_dir().join("grain_wave_travel.png");
+        out.save_png(&path).expect("save png");
+        eprintln!("WAVE_TRAVEL_PNG={}", path.display());
     }
 
     /// [GRAIN] The WAVE skin's Studio card: app icon (left) · bar row (centre) ·
