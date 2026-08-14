@@ -116,11 +116,21 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("outlook.office.com", AppCategory::Email),
     ("outlook.office365.com", AppCategory::Email),
     ("outlook.live.com", AppCategory::Email),
+    // Bare `outlook.com` AFTER the three specific Outlook hosts above; none of
+    // them is a subdomain of it, but keeping the order obvious is what stops the
+    // next addition getting it wrong.
+    ("outlook.com", AppCategory::Email),
     ("mail.yahoo.com", AppCategory::Email),
     ("mail.zoho.com", AppCategory::Email),
     ("fastmail.com", AppCategory::Email),
     ("hey.com", AppCategory::Email),
     ("superhuman.com", AppCategory::Email),
+    ("mail.aol.com", AppCategory::Email),
+    ("mail.yandex.com", AppCategory::Email),
+    ("app.tuta.com", AppCategory::Email),
+    ("tutanota.com", AppCategory::Email),
+    ("gmx.com", AppCategory::Email),
+    ("icloud.com", AppCategory::Email),
     ("roundcube.", AppCategory::Email),
     // -- AI assistants (prompt boxes) --
     ("claude.ai", AppCategory::AiChat),
@@ -136,6 +146,18 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("grok.com", AppCategory::AiChat),
     ("t3.chat", AppCategory::AiChat),
     ("openrouter.ai", AppCategory::AiChat),
+    ("claude.com", AppCategory::AiChat),
+    ("notebooklm.google.com", AppCategory::AiChat),
+    ("chat.qwen.ai", AppCategory::AiChat),
+    ("kimi.com", AppCategory::AiChat),
+    ("meta.ai", AppCategory::AiChat),
+    ("lmarena.ai", AppCategory::AiChat),
+    ("huggingface.co", AppCategory::AiChat),
+    // Prompt-driven builders. The box you type into is a prompt box, so the
+    // AiChat profile is the right one even though the output is an app.
+    ("bolt.new", AppCategory::AiChat),
+    ("lovable.dev", AppCategory::AiChat),
+    ("v0.app", AppCategory::AiChat),
     // -- Code review / repo hosts. Writing into a text box on these is almost
     //    always a PR body, an issue, or a review comment.
     ("github.com", AppCategory::CodeReview),
@@ -154,20 +176,33 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("height.app", AppCategory::Ticket),
     ("monday.com", AppCategory::Ticket),
     ("clickup.com", AppCategory::Ticket),
-    // -- Work chat --
+    // -- Work chat (formal register) --
     ("slack.com", AppCategory::WorkChat),
     ("teams.microsoft.com", AppCategory::WorkChat),
     ("teams.live.com", AppCategory::WorkChat),
-    ("discord.com", AppCategory::WorkChat),
     ("chat.google.com", AppCategory::WorkChat),
+    ("meet.google.com", AppCategory::WorkChat),
     ("webex.com", AppCategory::WorkChat),
     ("zoom.us", AppCategory::WorkChat),
-    // -- Personal messengers --
+    ("mattermost.com", AppCategory::WorkChat),
+    ("rocket.chat", AppCategory::WorkChat),
+    ("chime.aws", AppCategory::WorkChat),
+    // -- Personal messengers (casual register) --
     ("web.whatsapp.com", AppCategory::PersonalChat),
     ("web.telegram.org", AppCategory::PersonalChat),
     ("messenger.com", AppCategory::PersonalChat),
     ("signal.org", AppCategory::PersonalChat),
     ("instagram.com", AppCategory::PersonalChat),
+    // [GRAIN] Discord moved here from WorkChat. It is overwhelmingly a casual
+    // surface, so the formal register was tightening up text that should have
+    // stayed loose. Flip it back if a workspace-heavy user disagrees — it is one
+    // line, and the icon works from either category.
+    ("discord.com", AppCategory::PersonalChat),
+    ("messages.google.com", AppCategory::PersonalChat),
+    ("web.skype.com", AppCategory::PersonalChat),
+    ("web.snapchat.com", AppCategory::PersonalChat),
+    ("element.io", AppCategory::PersonalChat),
+    ("beeper.com", AppCategory::PersonalChat),
     // -- Social composers --
     ("x.com", AppCategory::Social),
     ("twitter.com", AppCategory::Social),
@@ -270,9 +305,84 @@ pub struct FocusFacts {
     pub has_text_edit_pattern: bool,
     /// `Some(is_read_only)` when `ValuePattern` is available.
     pub value_read_only: Option<bool>,
+    /// `TextPattern` is available at all (editors, documents, page bodies).
+    pub has_text_pattern: bool,
     pub control: ControlClass,
     /// `TextPattern` yielded a caret (or selection) to anchor on.
     pub has_caret: bool,
+    /// Focus belongs to **Grain itself** (the pill, a panel, the settings
+    /// window). Nothing can be concluded about someone else's paste from our
+    /// own window, and Grain's surfaces expose no text affordance — so without
+    /// this every focus steal by the pill would read as a missed paste.
+    pub is_own_process: bool,
+    /// The foreground GUI thread owns a **system caret** (`GetGUIThreadInfo`'s
+    /// `hwndCaret`).
+    ///
+    /// This is the signal UI Automation misses. Terminal emulators, custom-drawn
+    /// editors and older Win32 applications accept pasted text while exposing
+    /// little or no UIA text pattern — judged on UIA alone they look like a
+    /// missed paste, which would hold a transcript that landed perfectly well.
+    /// A blinking caret is proof that an insertion point exists.
+    pub has_native_caret: bool,
+}
+
+impl FocusFacts {
+    /// Whether this element exposes **any** route by which typed or pasted text
+    /// could enter it.
+    ///
+    /// The negation is the useful direction: an element offering no text
+    /// pattern, no value, no text control type and no system caret cannot have
+    /// received a paste. That is a statement about the element, not a guess
+    /// about the application, which is what makes it usable as evidence.
+    ///
+    /// The two mechanisms are complementary rather than redundant: UI
+    /// Automation covers web and modern frameworks, the system caret covers
+    /// native and custom-drawn ones.
+    pub fn has_any_text_affordance(&self) -> bool {
+        self.has_text_edit_pattern
+            || self.value_read_only.is_some()
+            || self.has_text_pattern
+            || self.has_native_caret
+            || matches!(self.control, ControlClass::Edit | ControlClass::Document)
+    }
+}
+
+/// A cheap composite identity for the focused element.
+///
+/// Not a true `RuntimeId` — that is a SAFEARRAY needing manual COM lifetime
+/// handling for no benefit here. All this has to answer is "is the thing I am
+/// looking at now the same thing the paste went to?", and a changed process,
+/// control type or owning window answers that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FocusIdentity {
+    pub process_id: i32,
+    pub control_type: i32,
+    pub native_window: isize,
+}
+
+/// Everything Paste Catch needs about the focused element, from one read.
+#[derive(Debug, Clone, Default)]
+pub struct FocusProbe {
+    pub facts: FocusFacts,
+    pub identity: FocusIdentity,
+    /// The caret neighbourhood, when there is a caret to anchor on.
+    pub caret: Option<CaretContext>,
+    /// The element's value — read only when there is no caret, since
+    /// single-line inputs expose `ValuePattern` but often no usable selection.
+    pub value: Option<String>,
+}
+
+/// One read of the focused element for Paste Catch. `None` only when focus
+/// itself could not be resolved, which is the genuinely inconclusive case.
+pub fn read_focus_probe() -> Option<FocusProbe> {
+    #[cfg(windows)]
+    {
+        uia::read_focus_probe()
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
 }
 
 /// The decision table. Pure, so the whole matrix is unit-testable without COM.
@@ -1186,40 +1296,6 @@ pub fn read_window_text() -> Option<String> {
     }
 }
 
-/// [GRAIN] Whether the focused element can receive a pasted transcript.
-///
-/// Used by Paste Catch on the paste path. Returns [`FocusTarget::Unknown`] on
-/// non-Windows, where there is no classifier yet — which is the inert verdict,
-/// so the feature degrades to "no detection" rather than to a wrong one.
-pub fn focus_target() -> FocusTarget {
-    #[cfg(windows)]
-    {
-        classify(uia::read_focus_facts())
-    }
-    #[cfg(not(windows))]
-    {
-        FocusTarget::Unknown
-    }
-}
-
-/// [GRAIN] The text either side of the caret in the focused field, read on
-/// demand.
-///
-/// Used by Paste Catch to verify that a paste actually arrived. `None` for every
-/// "cannot tell" case — no caret to anchor on, a password field, an unsupported
-/// platform, any failure — because the caller treats absence of evidence as
-/// "assume it landed", never as a miss.
-pub fn read_caret_now() -> Option<CaretContext> {
-    #[cfg(windows)]
-    {
-        uia::read_caret_now()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
-}
-
 /// Read the currently focused editable field's full text via UI Automation.
 /// Used by the Agent (field context at summon) and by context bias. `None` on
 /// unsupported platforms, password fields, or any failure. Silent — no UI.
@@ -1434,7 +1510,7 @@ mod windows_impl {
 mod uia {
     use super::{
         extract_unique_terms, host_from_url, CaretContext, Confidence, ControlClass, FieldKind,
-        FocusFacts, MAX_CARET_CHARS,
+        FocusFacts, FocusIdentity, FocusProbe, MAX_CARET_CHARS,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -2149,84 +2225,118 @@ mod uia {
         .any(|id| id.0 == control_type)
     }
 
-    /// The caret neighbourhood in the focused field. Own COM scope so it is safe
-    /// to call standalone from Paste Catch's verification worker.
-    pub(in crate::context_detect) fn read_caret_now() -> Option<CaretContext> {
+    /// Facts + caret (+ value only when there is no caret) in ONE pass.
+    ///
+    /// One `GetFocusedElement` for everything: Paste Catch needs all three to
+    /// reach a verdict, and asking twice would both cost a second cross-process
+    /// round trip and risk the two reads seeing different focus.
+    pub(in crate::context_detect) fn read_focus_probe() -> Option<FocusProbe> {
         unsafe {
             let _com = ComGuard::init();
             let automation: IUIAutomation =
                 CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
             let el = automation.GetFocusedElement().ok()?;
-            // Nothing is ever read from a password field — which also means a
-            // transcript dictated into one is never held on the clipboard.
-            if is_password(&el) {
-                return None;
+
+            let mut facts = FocusFacts {
+                is_password: is_password(&el),
+                ..FocusFacts::default()
+            };
+            let mut identity = FocusIdentity::default();
+            if facts.is_password {
+                return Some(FocusProbe {
+                    facts,
+                    identity,
+                    caret: None,
+                    value: None,
+                });
             }
-            read_caret(&el)
+            fill_patterns(&el, &mut facts, &mut identity);
+
+            let caret = read_caret(&el).filter(|c| !c.is_empty());
+            // Only when there is no caret to anchor on: single-line inputs
+            // expose ValuePattern but often no usable selection range.
+            let value = if caret.is_none() {
+                read_value(&el)
+            } else {
+                None
+            };
+            Some(FocusProbe {
+                facts,
+                identity,
+                caret,
+                value,
+            })
         }
     }
 
-    /// Read the focused element into [`FocusFacts`]. Own COM scope, so it is
-    /// safe to call standalone from the paste thread.
+    /// Whether the foreground GUI thread owns a system caret.
     ///
-    /// Only cheap calls: control type, pattern availability, and one selection
-    /// probe. No text is read — this runs on the paste path, where the user is
-    /// already waiting, and reading a large document's text there would be the
-    /// one thing that makes dictation feel slow.
-    pub(in crate::context_detect) fn read_focus_facts() -> FocusFacts {
-        unsafe {
-            let mut facts = FocusFacts::default();
-            let _com = ComGuard::init();
-            let Ok(automation) =
-                CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
-            else {
-                return facts;
-            };
-            let Ok(el) = automation.GetFocusedElement() else {
-                return facts;
-            };
-
-            facts.is_password = is_password(&el);
-            if facts.is_password {
-                // Nothing else is read off a password field, ever.
-                return facts;
-            }
-
-            facts.has_text_edit_pattern = el
-                .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
-                .is_ok();
-
-            facts.value_read_only = el
-                .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
-                .ok()
-                .and_then(|vp| vp.CurrentIsReadOnly().ok())
-                .map(|b| b.as_bool());
-
-            if let Ok(control_type) = el.CurrentControlType() {
-                facts.control = if control_type == UIA_EditControlTypeId {
-                    ControlClass::Edit
-                } else if control_type == UIA_DocumentControlTypeId {
-                    ControlClass::Document
-                } else if is_non_text_control(control_type.0) {
-                    ControlClass::NonText
-                } else {
-                    ControlClass::Other
-                };
-            }
-
-            // Only asked when it can change the verdict (see `classify`): a
-            // Document with a caret is ambiguous, without one it is read-only.
-            if facts.control == ControlClass::Document {
-                facts.has_caret = el
-                    .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
-                    .ok()
-                    .and_then(|tp| tp.GetSelection().ok())
-                    .and_then(|sel| sel.GetElement(0).ok())
-                    .is_some();
-            }
-
-            facts
+    /// Deliberately asked of the foreground THREAD rather than the element: the
+    /// caret is a thread-level concept, and this is exactly the case where the
+    /// element itself tells us nothing. One Win32 call, no COM.
+    unsafe fn foreground_has_caret() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetGUIThreadInfo, GetWindowThreadProcessId, GUITHREADINFO,
+        };
+        let Some(hwnd) = super::windows_impl::foreground_window() else {
+            return false;
+        };
+        let thread_id = GetWindowThreadProcessId(hwnd, None);
+        if thread_id == 0 {
+            return false;
         }
+        let mut info = GUITHREADINFO {
+            cbSize: std::mem::size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        GetGUIThreadInfo(thread_id, &mut info).is_ok() && !info.hwndCaret.is_invalid()
+    }
+
+    /// Pattern availability, control class and identity — one pass over the
+    /// focused element.
+    unsafe fn fill_patterns(
+        el: &IUIAutomationElement,
+        facts: &mut FocusFacts,
+        identity: &mut FocusIdentity,
+    ) {
+        identity.process_id = el.CurrentProcessId().unwrap_or(0);
+        identity.native_window = el
+            .CurrentNativeWindowHandle()
+            .map(|hwnd| hwnd.0 as isize)
+            .unwrap_or(0);
+        facts.is_own_process = identity.process_id as u32 == std::process::id();
+        facts.has_native_caret = foreground_has_caret();
+        facts.has_text_edit_pattern = el
+            .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
+            .is_ok();
+        facts.value_read_only = el
+            .GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+            .ok()
+            .and_then(|vp| vp.CurrentIsReadOnly().ok())
+            .map(|b| b.as_bool());
+
+        let text_pattern = el
+            .GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            .ok();
+        facts.has_text_pattern = text_pattern.is_some();
+
+        if let Ok(control_type) = el.CurrentControlType() {
+            identity.control_type = control_type.0;
+            facts.control = if control_type == UIA_EditControlTypeId {
+                ControlClass::Edit
+            } else if control_type == UIA_DocumentControlTypeId {
+                ControlClass::Document
+            } else if is_non_text_control(control_type.0) {
+                ControlClass::NonText
+            } else {
+                ControlClass::Other
+            };
+        }
+
+        facts.has_caret = text_pattern
+            .and_then(|tp| tp.GetSelection().ok())
+            .and_then(|sel| sel.GetElement(0).ok())
+            .is_some();
     }
 }
 
@@ -2375,6 +2485,67 @@ mod focus_target_tests {
         // `read_focus_facts` returns the default on every failure path, and the
         // default must never be actionable.
         assert_eq!(classify(FocusFacts::default()), FocusTarget::Unknown);
+    }
+}
+
+#[cfg(test)]
+mod site_table_tests {
+    use super::*;
+
+    /// [GRAIN] `SITE_TABLE` is matched in order and [`host_matches`] accepts
+    /// subdomains, so a general pattern placed above a specific one silently
+    /// swallows it — the specific row still compiles, still looks right, and
+    /// never fires. That is a wrong post-processing profile with no error
+    /// anywhere, which is exactly the kind of bug nobody finds by reading.
+    ///
+    /// Every host in the table must therefore resolve to its OWN category.
+    #[test]
+    fn no_site_entry_is_shadowed_by_an_earlier_pattern() {
+        for (i, (host, category)) in SITE_TABLE.iter().enumerate() {
+            // Bare prefixes (`jira.`, `confluence.`) are patterns, not hosts —
+            // they match by prefix and cannot be probed as a hostname.
+            if host.ends_with('.') {
+                continue;
+            }
+            let resolved = category_for_site(host)
+                .unwrap_or_else(|| panic!("row {i} ({host}) does not resolve at all"));
+            assert_eq!(
+                resolved, *category,
+                "row {i} ({host}) is shadowed by an earlier, more general pattern \
+                 — move it above whichever row is swallowing it"
+            );
+        }
+    }
+
+    /// The subdomain rule is what makes one row cover a whole service, and also
+    /// what makes shadowing possible — so pin both halves of it.
+    #[test]
+    fn a_pattern_covers_its_subdomains_but_not_a_lookalike_domain() {
+        assert_eq!(category_for_site("slack.com"), Some(AppCategory::WorkChat));
+        assert_eq!(
+            category_for_site("app.slack.com"),
+            Some(AppCategory::WorkChat),
+            "a subdomain must inherit its parent's row"
+        );
+        // The attack this guards: a domain that merely ENDS WITH a trusted one
+        // must not inherit its profile.
+        assert_eq!(category_for_site("notslack.com"), None);
+        assert_eq!(category_for_site("slack.com.evil.test"), None);
+    }
+
+    /// Bare `outlook.com` sits below three more specific Outlook hosts. None is
+    /// a subdomain of it, but the ordering is easy to get wrong on the next
+    /// addition, so state the expectation rather than leaving it to the comment.
+    #[test]
+    fn the_specific_outlook_hosts_still_resolve_alongside_the_bare_one() {
+        for host in [
+            "outlook.office.com",
+            "outlook.office365.com",
+            "outlook.live.com",
+            "outlook.com",
+        ] {
+            assert_eq!(category_for_site(host), Some(AppCategory::Email), "{host}");
+        }
     }
 }
 

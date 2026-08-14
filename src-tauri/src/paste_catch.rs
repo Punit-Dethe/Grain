@@ -45,7 +45,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use crate::context_detect::{focus_target, FocusTarget};
+use crate::context_detect::{classify, FocusTarget};
 use crate::settings::{get_settings, ClipboardHandling, PasteMethod, ShortcutBinding};
 
 /// Settings id of the deliver binding. Registered only while a hold is armed —
@@ -57,6 +57,12 @@ const BINDING_ID: &str = "paste_catch_deliver";
 /// Grain controls (the bottom of `paste()`), not inferred from upstream's delay
 /// constants, so it stays correct if upstream re-times that body.
 const VERIFY_SETTLE_MS: u64 = 150;
+
+/// Extra wait before re-reading a suspected miss. Long enough that a loaded
+/// application has finished handling the paste, short enough that the offer
+/// still appears while the user is looking at the screen — and only ever paid
+/// when the first read already said "missed".
+const VERIFY_CONFIRM_MS: u64 = 350;
 
 /// Below this length the tail match is too weak to trust in either direction —
 /// a three-character transcript can match existing text by coincidence.
@@ -93,6 +99,12 @@ struct Held {
 pub struct PasteCatchState {
     held: Mutex<Option<Held>>,
     gen: AtomicU64,
+    /// The focused element as it was **immediately before** the paste, captured
+    /// by [`intercept`] at no extra cost (it already reads focus for pre-flight).
+    /// Differencing against the post-paste read is far stronger than matching
+    /// the transcript's tail: it survives an application reflowing, autocorrecting
+    /// or smart-quoting the text, because *any* change proves something arrived.
+    before: Mutex<Option<crate::context_detect::FocusProbe>>,
 }
 
 // -- Pure logic (unit-tested; no COM, no Tauri) --------------------------------
@@ -128,19 +140,117 @@ fn tail_of(text: &str, n: usize) -> String {
     normalized.chars().skip(count - n).collect()
 }
 
-/// Did the paste land? Compares the caret's preceding text against the
-/// transcript's tail.
+/// What the post-paste read concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasteOutcome {
+    /// The transcript is there, or something says it is. Do nothing.
+    Landed,
+    /// Positive evidence it is not. Hold it.
+    Missed,
+    /// Genuinely cannot tell. Do nothing.
+    Unknown,
+}
+
+/// The post-paste decision table.
 ///
-/// Uses the caret NEIGHBOURHOOD rather than the field's full text on purpose:
-/// `read_focused_value` truncates from the start, so a paste at the end of a
-/// long document would fall outside the window entirely.
-fn landed(caret_before: &str, transcript: &str) -> bool {
+/// # Why this is allowed to be more aggressive than [`classify`]
+///
+/// The two probes are not symmetric, and conflating them was the original bug.
+///
+/// - **Pre-flight** ([`classify`]) *suppresses an action*: a wrong answer means a
+///   paste the user wanted never happens. It must be conservative.
+/// - **Post-flight** (here) only *adds a safety net*: the paste has already
+///   happened, so a wrong answer costs a spurious offer and a borrowed
+///   clipboard — never a lost keystroke or a lost transcript.
+///
+/// That is what licenses rule 3 below. An element exposing **no text
+/// affordance at all** cannot have received the paste, so the absence of a caret
+/// there is not "no evidence" — it is the evidence. Treating it as inconclusive
+/// is why a paste that started in a text box and ended outside one was silently
+/// dropped: focus reported `Pane`/`Group`/`Custom`, pre-flight correctly refused
+/// to guess, and post-flight then found no caret and gave up.
+pub fn verdict_after_paste(
+    before: Option<&ProbeView<'_>>,
+    after: &ProbeView<'_>,
+    transcript: &str,
+) -> PasteOutcome {
+    // A transcript dictated into a password box is never held on the clipboard.
+    if after.facts.is_password {
+        return PasteOutcome::Landed;
+    }
+    // Focus is one of Grain's own windows (the pill, a panel). Our surfaces
+    // expose no text affordance, so without this every focus steal would read
+    // as a missed paste — and nothing about someone else's paste can be
+    // concluded from our own window anyway.
+    if after.facts.is_own_process {
+        return PasteOutcome::Unknown;
+    }
+
+    // 1. The transcript is demonstrably there. Strongest possible evidence.
+    if let Some(observed) = after.readable() {
+        if landed_in(observed, transcript) {
+            return PasteOutcome::Landed;
+        }
+    }
+
+    // 2. Differencing, but only against the SAME element. If focus moved
+    //    between the paste and this read we are looking at something the paste
+    //    never targeted, and nothing can be concluded from it.
+    if let Some(before) = before.filter(|b| b.identity == after.identity) {
+        match (before.readable(), after.readable()) {
+            // Byte-identical content: the paste changed nothing at all. This is
+            // the robust miss signal — it needs no tail match to hold.
+            (Some(was), Some(now)) if was == now => return PasteOutcome::Missed,
+            // Content moved, but not into a tail we recognise. Something
+            // arrived and the application reshaped it (autocorrect, smart
+            // quotes, newline stripping). Landed is the safe reading.
+            (Some(_), Some(_)) => return PasteOutcome::Landed,
+            _ => {}
+        }
+    }
+
+    // 3. Nothing readable, and the element offers no way for text to enter it —
+    //    neither a UI Automation text pattern nor a system caret. A paste cannot
+    //    have landed somewhere that accepts no text.
+    if after.readable().is_none() && !after.facts.has_any_text_affordance() {
+        return PasteOutcome::Missed;
+    }
+
+    // 4. Readable but without our text, or claims to accept text and told us
+    //    nothing. Without a before-image to difference against, neither is
+    //    conclusive: applications rewrite pasted text, and poor accessibility
+    //    implementations report empty fields that are not empty.
+    PasteOutcome::Unknown
+}
+
+/// Whether `observed` shows the transcript's tail, by either mechanism.
+fn landed_in(observed: &str, transcript: &str) -> bool {
     let tail = tail_of(transcript, TAIL_CHARS);
     if tail.is_empty() {
-        // Nothing to look for — no evidence of a miss, so do not act.
         return true;
     }
-    normalize(caret_before).ends_with(&tail)
+    let normalized = normalize(observed);
+    // The caret sits just after inserted text, so `ends_with` is the precise
+    // test; `contains` additionally covers a value read, where the caret
+    // position is not reflected in the string at all.
+    normalized.ends_with(&tail) || normalized.contains(&tail)
+}
+
+/// The parts of a focus probe the verdict needs, borrowed so the decision table
+/// stays a pure function over plain data.
+pub struct ProbeView<'a> {
+    pub facts: crate::context_detect::FocusFacts,
+    pub identity: crate::context_detect::FocusIdentity,
+    pub caret_before: Option<&'a str>,
+    pub value: Option<&'a str>,
+}
+
+impl ProbeView<'_> {
+    /// Whatever the element was willing to tell us, or `None` if it said
+    /// nothing — which is not the same as saying "empty".
+    fn readable(&self) -> Option<&str> {
+        self.caret_before.or(self.value)
+    }
 }
 
 /// Whether a paste is worth verifying at all.
@@ -197,7 +307,22 @@ pub fn intercept(app: &AppHandle, text: &str) -> bool {
     if settings.paste_method == PasteMethod::None {
         return false;
     }
-    if focus_target() != FocusTarget::NotEditable {
+    // ONE focus read serving two purposes: the pre-flight verdict, and the
+    // before-image that post-flight differences against. Reading focus twice
+    // would cost a second cross-process round trip on the paste path and risk
+    // the two reads disagreeing.
+    let probe = crate::context_detect::read_focus_probe();
+    let target = probe
+        .as_ref()
+        .map(|p| classify(p.facts))
+        .unwrap_or(FocusTarget::Unknown);
+    if let Some(state) = app.try_state::<PasteCatchState>() {
+        if let Ok(mut slot) = state.before.lock() {
+            *slot = probe;
+        }
+    }
+
+    if target != FocusTarget::NotEditable {
         return false;
     }
     info!("[paste-catch] focus is not editable — holding the transcript instead of pasting");
@@ -226,17 +351,58 @@ pub fn verify(app: &AppHandle, text: &str) {
     let text = text.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(VERIFY_SETTLE_MS));
-        // No caret to read means no evidence — not a miss. Password fields
-        // return `None` here too, and are deliberately never held.
-        let Some(caret) = crate::context_detect::read_caret_now() else {
-            return;
-        };
-        if landed(&caret.before, &text) {
-            return;
+        if confirmed_miss(&app, &text) {
+            info!("[paste-catch] the paste missed — holding the transcript");
+            arm(&app, &text);
         }
-        info!("[paste-catch] transcript is not at the caret — the paste missed; holding it");
-        arm(&app, &text);
     });
+}
+
+/// A miss, read twice.
+///
+/// One read is a race: a slow application can still be processing the paste at
+/// [`VERIFY_SETTLE_MS`], and focus can be mid-flight while the user clicks
+/// around. Requiring the same answer after a second, longer wait turns that race
+/// into a confirmation — and costs nothing on the common path, because a paste
+/// that landed answers `Landed` the first time and returns immediately.
+fn confirmed_miss(app: &AppHandle, transcript: &str) -> bool {
+    if observe(app, transcript) != PasteOutcome::Missed {
+        return false;
+    }
+    std::thread::sleep(Duration::from_millis(VERIFY_CONFIRM_MS));
+    let again = observe(app, transcript);
+    if again != PasteOutcome::Missed {
+        info!("[paste-catch] first read said missed, confirmation said {again:?} — standing down");
+        return false;
+    }
+    true
+}
+
+/// Read the focused element and reach a verdict, differencing against the
+/// before-image [`intercept`] captured. `Unknown` when focus cannot be resolved.
+fn observe(app: &AppHandle, transcript: &str) -> PasteOutcome {
+    let Some(after) = crate::context_detect::read_focus_probe() else {
+        return PasteOutcome::Unknown;
+    };
+    // Borrowed, not taken: the confirmation read differences against the same
+    // before-image as the first one.
+    let before = app
+        .try_state::<PasteCatchState>()
+        .and_then(|state| state.before.lock().ok().and_then(|slot| slot.clone()));
+
+    // Bound rather than chained: `before.as_ref().map(view_of).as_ref()` would
+    // borrow a temporary that dies at the end of the statement.
+    let before_view = before.as_ref().map(view_of);
+    verdict_after_paste(before_view.as_ref(), &view_of(&after), transcript)
+}
+
+fn view_of(probe: &crate::context_detect::FocusProbe) -> ProbeView<'_> {
+    ProbeView {
+        facts: probe.facts,
+        identity: probe.identity,
+        caret_before: probe.caret.as_ref().map(|c| c.before.as_str()),
+        value: probe.value.as_deref(),
+    }
 }
 
 // -- Hold lifecycle ------------------------------------------------------------
@@ -425,6 +591,13 @@ pub fn deliver(app: &AppHandle) {
             }
         }
 
+        // Refresh the before-image so the delivery is verified against the
+        // element it is actually going to, not the one the original paste
+        // missed — otherwise the identity check disables differencing here.
+        if let Ok(mut slot) = state.before.lock() {
+            *slot = crate::context_detect::read_focus_probe();
+        }
+
         if let Err(e) = send_paste_chord(&app) {
             warn!("[paste-catch] delivery chord failed: {e}");
         }
@@ -433,11 +606,9 @@ pub fn deliver(app: &AppHandle) {
         // it missed again the hold simply comes back — reusing the ORIGINAL
         // snapshot, because the clipboard currently holds the transcript.
         std::thread::sleep(Duration::from_millis(VERIFY_SETTLE_MS));
-        let delivered = crate::context_detect::read_caret_now()
-            .map(|caret| landed(&caret.before, &held.text))
-            // No caret to read is no evidence; treat it as delivered rather
-            // than trapping the user in a loop of re-offers.
-            .unwrap_or(true);
+        // Only a CONFIRMED miss re-arms. `Unknown` counts as delivered, so an
+        // unreadable target cannot trap the user in a loop of re-offers.
+        let delivered = !confirmed_miss(&app, &held.text);
 
         if delivered {
             info!("[paste-catch] delivered");
@@ -549,7 +720,7 @@ mod tests {
     fn landed_accepts_text_at_the_caret() {
         let transcript = "the quick brown fox jumps over the lazy dog";
         let before = format!("Existing content. {transcript}");
-        assert!(landed(&before, transcript));
+        assert!(landed_in(&before, transcript));
     }
 
     #[test]
@@ -557,18 +728,18 @@ mod tests {
         // A composer that collapsed the newline still received the paste.
         let transcript = "first line\nsecond line of the transcript";
         let before = "first line second line of the transcript";
-        assert!(landed(before, transcript));
+        assert!(landed_in(before, transcript));
     }
 
     #[test]
     fn landed_tolerates_a_trailing_space() {
         let transcript = "a reasonably long transcript ";
-        assert!(landed("a reasonably long transcript", transcript));
+        assert!(landed_in("a reasonably long transcript", transcript));
     }
 
     #[test]
     fn landed_rejects_an_untouched_field() {
-        assert!(!landed(
+        assert!(!landed_in(
             "whatever was already here",
             "the transcript that never arrived"
         ));
@@ -576,7 +747,7 @@ mod tests {
 
     #[test]
     fn landed_rejects_an_empty_caret() {
-        assert!(!landed("", "the transcript that never arrived"));
+        assert!(!landed_in("", "the transcript that never arrived"));
     }
 
     #[test]
@@ -585,12 +756,245 @@ mod tests {
         // with the transcript even though more text follows it in the field.
         let transcript = "inserted sentence goes right here";
         let before = format!("Preamble. {transcript}");
-        assert!(landed(&before, transcript));
+        assert!(landed_in(&before, transcript));
     }
 
     #[test]
     fn empty_transcript_is_never_reported_as_a_miss() {
-        assert!(landed("", ""));
+        assert!(landed_in("", ""));
+    }
+
+    fn view<'a>(
+        facts: crate::context_detect::FocusFacts,
+        caret_before: Option<&'a str>,
+        value: Option<&'a str>,
+    ) -> ProbeView<'a> {
+        ProbeView {
+            facts,
+            identity: crate::context_detect::FocusIdentity {
+                process_id: 1234,
+                control_type: 50004,
+                native_window: 99,
+            },
+            caret_before,
+            value,
+        }
+    }
+
+    /// Same shape, but a different element than [`view`] produces.
+    fn other_view<'a>(
+        facts: crate::context_detect::FocusFacts,
+        caret_before: Option<&'a str>,
+    ) -> ProbeView<'a> {
+        ProbeView {
+            identity: crate::context_detect::FocusIdentity {
+                process_id: 4321,
+                control_type: 50030,
+                native_window: 7,
+            },
+            ..view(facts, caret_before, None)
+        }
+    }
+
+    /// Verdict with no before-image (the pre-paste read failed).
+    fn verdict(after: &ProbeView<'_>, transcript: &str) -> PasteOutcome {
+        verdict_after_paste(None, after, transcript)
+    }
+
+    /// A focused element that accepts text but told us nothing readable.
+    fn editable_but_silent() -> crate::context_detect::FocusFacts {
+        crate::context_detect::FocusFacts {
+            has_text_edit_pattern: true,
+            ..Default::default()
+        }
+    }
+
+    /// A focused element with no route for text to enter it: the desktop, a
+    /// pane, a button. This is the case the original implementation dropped.
+    fn no_text_affordance() -> crate::context_detect::FocusFacts {
+        crate::context_detect::FocusFacts::default()
+    }
+
+    #[test]
+    fn seeing_the_transcript_is_decisive_without_any_before_image() {
+        let t = "a reasonably long transcript to match";
+        assert_eq!(
+            verdict(&view(editable_but_silent(), Some(&format!("x. {t}")), None), t),
+            PasteOutcome::Landed
+        );
+    }
+
+    #[test]
+    fn value_is_used_when_there_is_no_caret() {
+        // Single-line inputs expose ValuePattern but often no usable selection.
+        let t = "search terms that were dictated";
+        assert_eq!(
+            verdict(&view(editable_but_silent(), None, Some(t)), t),
+            PasteOutcome::Landed
+        );
+    }
+
+    #[test]
+    fn a_readable_field_without_our_text_needs_a_before_image() {
+        // Deliberately NOT a miss on its own. An application that rewrote the
+        // pasted text presents exactly this picture, and so does a field whose
+        // accessibility implementation under-reports its contents. Only the
+        // comparison against the pre-paste image settles it.
+        let t = "a reasonably long transcript to match";
+        let f = editable_but_silent();
+        assert_eq!(
+            verdict(&view(f, Some("untouched"), None), t),
+            PasteOutcome::Unknown
+        );
+        assert_eq!(
+            verdict(&view(f, None, Some("something else")), t),
+            PasteOutcome::Unknown
+        );
+
+        // With a before-image showing the SAME content, it is conclusive.
+        let before = view(f, Some("untouched"), None);
+        let after = view(f, Some("untouched"), None);
+        assert_eq!(
+            verdict_after_paste(Some(&before), &after, t),
+            PasteOutcome::Missed
+        );
+    }
+
+    #[test]
+    fn no_text_affordance_is_a_miss_not_an_unknown() {
+        // THE REGRESSION TEST. Focus moved out of the text box before the
+        // paste: no caret, no value, and nothing that could accept text. The
+        // first implementation returned silently here and lost the transcript.
+        assert_eq!(
+            verdict(
+                &view(no_text_affordance(), None, None),
+                "the transcript that had nowhere to go"
+            ),
+            PasteOutcome::Missed
+        );
+    }
+
+    #[test]
+    fn an_editable_but_unreadable_target_stays_unknown() {
+        // It claims to accept text and told us nothing — a poor-UIA editor.
+        // Holding here would interrupt a paste that probably worked.
+        assert_eq!(
+            verdict(&view(editable_but_silent(), None, None), "some transcript"),
+            PasteOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_text_pattern_alone_is_enough_to_stay_unknown() {
+        let facts = crate::context_detect::FocusFacts {
+            has_text_pattern: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            verdict(&view(facts, None, None), "some transcript"),
+            PasteOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_native_caret_alone_prevents_a_false_miss() {
+        // A terminal emulator or a custom-drawn editor: UI Automation exposes
+        // nothing, but GetGUIThreadInfo reports a blinking caret, so text CAN
+        // be inserted. Without this the paste would be judged missed and a
+        // transcript that landed would be held.
+        let facts = crate::context_detect::FocusFacts {
+            has_native_caret: true,
+            ..Default::default()
+        };
+        assert!(facts.has_any_text_affordance());
+        assert_eq!(
+            verdict(&view(facts, None, None), "a transcript that did land"),
+            PasteOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn identical_content_before_and_after_is_a_miss() {
+        // The robust miss signal: the paste changed nothing at all. Needs no
+        // tail match, so it holds even for text the application would rewrite.
+        let f = editable_but_silent();
+        let before = view(f, Some("unchanged content"), None);
+        let after = view(f, Some("unchanged content"), None);
+        assert_eq!(
+            verdict_after_paste(Some(&before), &after, "a transcript that never arrived"),
+            PasteOutcome::Missed
+        );
+    }
+
+    #[test]
+    fn changed_content_counts_as_landed_even_if_the_app_rewrote_it() {
+        // Smart quotes, autocorrect, newline stripping: the tail no longer
+        // matches, but something demonstrably arrived. This is the false
+        // positive that differencing exists to remove.
+        let f = editable_but_silent();
+        let before = view(f, Some("Dear Bob "), None);
+        let after = view(f, Some("Dear Bob \u{201c}rewritten\u{201d} by the app"), None);
+        assert_eq!(
+            verdict_after_paste(Some(&before), &after, "\"rewritten\" by the app!!"),
+            PasteOutcome::Landed
+        );
+    }
+
+    #[test]
+    fn differencing_is_skipped_when_focus_moved() {
+        // Focus changed between the paste and the read, so the element in front
+        // of us is not the one the paste targeted. Its content proves nothing.
+        let f = editable_but_silent();
+        let before = view(f, Some("same text"), None);
+        let after = other_view(f, Some("same text"));
+        assert_eq!(
+            verdict_after_paste(Some(&before), &after, "a transcript"),
+            PasteOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_positive_tail_match_wins_over_everything() {
+        // Even with a before-image showing identical content, seeing the
+        // transcript is decisive.
+        let f = editable_but_silent();
+        let t = "the transcript that certainly arrived";
+        let observed = format!("x{t}");
+        let before = view(f, Some("x"), None);
+        let after = view(f, Some(&observed), None);
+        assert_eq!(
+            verdict_after_paste(Some(&before), &after, t),
+            PasteOutcome::Landed
+        );
+    }
+
+    #[test]
+    fn grains_own_window_is_never_judged() {
+        // The pill or a panel took focus. Grain's surfaces expose no text
+        // affordance, so without this guard every focus steal would read as a
+        // missed paste and hold a transcript that landed perfectly well.
+        let facts = crate::context_detect::FocusFacts {
+            is_own_process: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            verdict(&view(facts, None, None), "some transcript"),
+            PasteOutcome::Unknown
+        );
+    }
+
+    #[test]
+    fn a_password_field_is_never_held() {
+        let facts = crate::context_detect::FocusFacts {
+            is_password: true,
+            ..Default::default()
+        };
+        // No caret, no value, no affordance — every other rule would say
+        // "missed". Privacy wins over the safety net.
+        assert_eq!(
+            verdict(&view(facts, None, None), "a spoken password"),
+            PasteOutcome::Landed
+        );
     }
 
     #[test]

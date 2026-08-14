@@ -148,6 +148,11 @@ async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] Pill identity: show the icon of the app being dictated into in place
+ * of the pill's state dot. Takes effect on the next session — the icon is
+ * resolved at record-start, never held between sessions.
+ */
 async changePillShowAppIconSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_pill_show_app_icon_setting", { enabled }) };
@@ -2438,7 +2443,7 @@ selected_channel?: number | null; clamshell_microphone?: string | null; selected
  * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
  * see `PillSkin`). Defaults to the smooth waveform.
  */
-pill_skin?: PillSkin;
+pill_skin?: PillSkin; 
 /**
  * [GRAIN] Show the icon of the app being dictated into, in place of the
  * pill's state dot. ON while the behaviour is being developed; it will
@@ -2533,6 +2538,21 @@ snippets_enabled?: boolean;
  * available).
  */
 agent_enabled?: boolean; 
+/**
+ * [GRAIN] Paste Catch: when a dictation paste provably misses the text
+ * field, hold the transcript on the clipboard behind a visible offer
+ * instead of letting the restore destroy it. ON by default — a missed
+ * paste currently loses the transcript outright, and the detection only
+ * fires on positive evidence, so the failure mode is "no offer shown".
+ */
+paste_catch_enabled?: boolean; 
+/**
+ * [GRAIN] How long the caught transcript stays on the clipboard before the
+ * clipboard is handed back exactly as Handy would have. Long enough to
+ * notice the offer and reach a field; short enough that holding someone
+ * else's clipboard stays defensible.
+ */
+paste_catch_hold_ms?: number; 
 /**
  * [GRAIN] One-time marker for the extension-platform settings import above
  * (SPEC §10.1 upgrade rule). False in files written before the platform;
