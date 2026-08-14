@@ -3969,6 +3969,232 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   max-width: none;
 }
 
+.context-profile-settings {
+  padding: 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.context-profile-tabs {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  border-radius: 12px;
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  scrollbar-width: none;
+}
+
+.context-profile-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.context-profile-tabs button {
+  min-height: 32px;
+  padding: 0 14px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  color: var(--text-3);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 610;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.context-profile-tabs button:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--hairline-soft);
+}
+
+.context-profile-tabs button.active {
+  color: var(--text-1);
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.context-profile-tabs button:focus-visible,
+.context-profile-mode button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.context-profile-tabs button:disabled {
+  color: var(--text-4);
+  opacity: 0.58;
+  cursor: default;
+}
+
+.context-profile-card {
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.context-profile-card-header {
+  min-height: 76px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.context-profile-apps {
+  min-width: 82px;
+  display: flex;
+  align-items: center;
+}
+
+.context-profile-apps span {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-2);
+  background: var(--bg-3);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.context-profile-apps span + span {
+  margin-left: -7px;
+}
+
+.context-profile-apps span:nth-child(2) {
+  color: var(--sky);
+}
+
+.context-profile-apps span:nth-child(3) {
+  color: var(--accent-strong);
+}
+
+.context-profile-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.context-profile-copy strong {
+  color: var(--text-1);
+  font-size: 12.5px;
+  font-weight: 620;
+}
+
+.context-profile-copy span {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.context-profile-mode {
+  margin-left: auto;
+  padding: 3px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  border-radius: 10px;
+  background: var(--bg-1);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+}
+
+.context-profile-mode button {
+  min-width: 50px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 610;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
+}
+
+.context-profile-mode button:hover {
+  color: var(--text-1);
+}
+
+.context-profile-mode button.active {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.context-profile-prompt {
+  min-height: 110px;
+  padding: 15px 16px 18px;
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.context-profile-prompt-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.context-profile-prompt p,
+.context-profile-prompt textarea {
+  width: 100%;
+  max-width: 74ch;
+  margin: 0;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.62;
+}
+
+.context-profile-prompt textarea {
+  min-height: 68px;
+  padding: 0 0 5px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  resize: vertical;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+  transition: box-shadow 150ms ease;
+}
+
+.context-profile-prompt textarea:focus-visible {
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+@media (max-width: 700px) {
+  .context-profile-settings {
+    padding: 14px;
+  }
+
+  .context-profile-tabs {
+    width: 100%;
+  }
+
+  .context-profile-card-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .context-profile-copy {
+    width: calc(100% - 96px);
+  }
+
+  .context-profile-mode {
+    margin-left: 96px;
+  }
+}
+
 .dictionary-workspace {
   display: grid;
   gap: 20px;

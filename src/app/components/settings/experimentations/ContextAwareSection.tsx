@@ -1,6 +1,102 @@
-import React from "react";
+/* eslint-disable i18next/no-literal-string -- UI 2.0 prototype copy is a frozen visual contract until the cutover translation pass. */
+import React, { useState } from "react";
+import {
+  AtSign,
+  Bot,
+  BriefcaseBusiness,
+  Code2,
+  ListChecks,
+  Mail,
+  MessageCircle,
+  MessagesSquare,
+  Send,
+  Smartphone,
+  SquareTerminal,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
+
+type ContextProfileId = "email" | "work" | "casual" | "technical" | "other";
+
+type ContextProfile = {
+  id: ContextProfileId;
+  label: string;
+  summary: string;
+  detail: string;
+  applications: ReadonlyArray<{ name: string; icon: LucideIcon }>;
+  instruction: string;
+  available: boolean;
+};
+
+const CONTEXT_PROFILES: readonly ContextProfile[] = [
+  {
+    id: "email",
+    label: "Email",
+    summary: "This profile applies in email applications",
+    detail: "Grain keeps dictated email polished without inventing structure.",
+    applications: [
+      { name: "Email", icon: Mail },
+      { name: "Webmail", icon: AtSign },
+      { name: "Mail composer", icon: Send },
+    ],
+    instruction:
+      "Polish for professional email. Keep the user's meaning and structure; add no subject, greeting, sign-off, or email layout unless dictated.",
+    available: true,
+  },
+  {
+    id: "work",
+    label: "Work",
+    summary: "This profile applies in work applications",
+    detail: "Grain stays concise across team chat, tickets, and tasks.",
+    applications: [
+      { name: "Work chat", icon: MessagesSquare },
+      { name: "Project workspace", icon: BriefcaseBusiness },
+      { name: "Issue tracker", icon: ListChecks },
+    ],
+    instruction:
+      "Keep work messages professional, concise, and conversational. Preserve names and technical terms; add no greeting, pleasantries, or formal paragraph structure unless dictated.",
+    available: true,
+  },
+  {
+    id: "casual",
+    label: "Casual",
+    summary: "This profile applies in casual applications",
+    detail: "Grain protects the phrasing and personality of everyday messages.",
+    applications: [
+      { name: "Messages", icon: MessageCircle },
+      { name: "Mobile messenger", icon: Smartphone },
+      { name: "Social conversation", icon: Users },
+    ],
+    instruction:
+      "Keep the user's own voice, slang, and phrasing. Use light cleanup only; add no hashtags, emoji, or formality unless dictated.",
+    available: true,
+  },
+  {
+    id: "technical",
+    label: "Technical",
+    summary: "This profile applies in technical applications",
+    detail: "Grain preserves exact syntax in editors, terminals, and AI tools.",
+    applications: [
+      { name: "Code editor", icon: Code2 },
+      { name: "Terminal", icon: SquareTerminal },
+      { name: "AI assistant", icon: Bot },
+    ],
+    instruction:
+      "Treat this as technical writing, code, a command, or an AI instruction. Preserve identifiers, flags, paths, casing, and exact intent; for commands, add no sentence casing or trailing period.",
+    available: true,
+  },
+  {
+    id: "other",
+    label: "Other",
+    summary: "",
+    detail: "",
+    applications: [],
+    instruction: "",
+    available: false,
+  },
+];
 
 /** [GRAIN] Context awareness settings — the rows BELOW the feature's own switch,
  * rendered inside its panel (see [`FeaturePanel`]), not a section of their own.
@@ -13,9 +109,135 @@ export const ContextAwareSection: React.FC = () => {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const nearbyTerms = getSetting("context_nearby_terms") ?? false;
   const caretText = getSetting("context_caret_text") ?? false;
+  const [activeProfileId, setActiveProfileId] =
+    useState<ContextProfileId>("email");
+  const [mode, setMode] = useState<"read" | "write">("read");
+  const [instructions, setInstructions] = useState<
+    Record<ContextProfileId, string>
+  >(
+    () =>
+      Object.fromEntries(
+        CONTEXT_PROFILES.map((profile) => [profile.id, profile.instruction]),
+      ) as Record<ContextProfileId, string>,
+  );
+  const activeProfile =
+    CONTEXT_PROFILES.find((profile) => profile.id === activeProfileId) ??
+    CONTEXT_PROFILES[0];
 
   return (
     <>
+      <section
+        className="context-profile-settings"
+        aria-label="Context profiles"
+      >
+        <div
+          className="context-profile-tabs"
+          role="group"
+          aria-label="Context profiles"
+        >
+          {CONTEXT_PROFILES.map((profile) => {
+            const active = profile.id === activeProfileId;
+            return (
+              <button
+                key={profile.id}
+                id={`context-profile-tab-${profile.id}`}
+                className={active ? "active" : undefined}
+                type="button"
+                aria-pressed={active}
+                aria-disabled={!profile.available || undefined}
+                disabled={!profile.available}
+                title={
+                  profile.available
+                    ? undefined
+                    : "Custom profiles will be available later"
+                }
+                onClick={() => {
+                  setActiveProfileId(profile.id);
+                  setMode("read");
+                }}
+              >
+                {profile.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {activeProfile.available && (
+          <div
+            id={`context-profile-panel-${activeProfile.id}`}
+            className="context-profile-card"
+            role="region"
+            aria-labelledby={`context-profile-tab-${activeProfile.id}`}
+          >
+            <div className="context-profile-card-header">
+              <div className="context-profile-apps" aria-hidden="true">
+                {activeProfile.applications.map(({ name, icon: Icon }) => (
+                  <span key={name} title={name}>
+                    <Icon size={15} strokeWidth={1.8} />
+                  </span>
+                ))}
+              </div>
+              <div className="context-profile-copy">
+                <strong>{activeProfile.summary}</strong>
+                <span>{activeProfile.detail}</span>
+              </div>
+              <div
+                className="context-profile-mode"
+                role="group"
+                aria-label="Instruction mode"
+              >
+                <button
+                  type="button"
+                  className={mode === "read" ? "active" : undefined}
+                  aria-pressed={mode === "read"}
+                  onClick={() => setMode("read")}
+                >
+                  Read
+                </button>
+                <button
+                  type="button"
+                  className={mode === "write" ? "active" : undefined}
+                  aria-pressed={mode === "write"}
+                  onClick={() => setMode("write")}
+                >
+                  Write
+                </button>
+              </div>
+            </div>
+
+            <div className="context-profile-prompt">
+              <span
+                id={`context-profile-instruction-label-${activeProfile.id}`}
+                className="context-profile-prompt-label"
+              >
+                Instruction
+              </span>
+              {mode === "read" ? (
+                <p
+                  id={`context-profile-prompt-${activeProfile.id}`}
+                  aria-labelledby={`context-profile-instruction-label-${activeProfile.id}`}
+                >
+                  {instructions[activeProfile.id]}
+                </p>
+              ) : (
+                <textarea
+                  id={`context-profile-prompt-${activeProfile.id}`}
+                  autoFocus
+                  value={instructions[activeProfile.id]}
+                  aria-labelledby={`context-profile-tab-${activeProfile.id} context-profile-instruction-label-${activeProfile.id}`}
+                  onChange={(event) =>
+                    setInstructions((current) => ({
+                      ...current,
+                      [activeProfile.id]: event.target.value,
+                    }))
+                  }
+                />
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
       <ToggleSwitch
         label="Nearby-term hints (silent)"
         description="Read UNIQUE names and identifiers (e.g. Rita, useGrainStore, PyTorch) from the field you're dictating into and use them to improve accuracy — both as a spelling hint for the AI and to bias the recognizer itself. Never sends raw text, never stored, password fields skipped."
