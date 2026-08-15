@@ -122,10 +122,8 @@ pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
 }
 
 /// Register the shortcuts that live only while a recording session is open:
-/// the master chords (Alt+1 Prompt Record / Alt+2 switcher) and — unless
-/// push-to-talk owns the key — send-to-AI. Both defer their actual registration
-/// internally, which is what keeps this safe to call from inside a
-/// `ShortcutAction`.
+/// the transient Alt+2 prompt switcher chord. Registration is deferred
+/// internally, which keeps this safe to call from inside a `ShortcutAction`.
 pub(crate) fn register_session_shortcuts(app: &AppHandle) {
     crate::master_key::register_chords(app);
     // [GRAIN] send-to-AI is no longer taken here. It is registered globally at
@@ -240,29 +238,6 @@ impl ShortcutAction for SwitcherArrowAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         cycle_prompt(app, self.delta);
         crate::master_key::bump_switcher(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// Master chord Alt+1 — Prompt Record. Exactly the pill-click path: arm
-// the audio-mark split on the recording manager, then echo
-// `PromptRecordingChanged` so the pill turns blue only once the mark is real.
-// Arming is a no-op when not recording or already armed (one-way per session).
-struct MasterPromptRecordAction;
-
-impl ShortcutAction for MasterPromptRecordAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        let rm = app.state::<Arc<AudioRecordingManager>>();
-        if rm.arm_prompt_record() {
-            crate::bridge::emit(
-                app,
-                DaemonEvent::PromptRecordingChanged {
-                    session_id: current_session_id(),
-                    active: true,
-                },
-            );
-        }
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -552,7 +527,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             let samples = rm
                 .stop_recording(&binding_id, cancel_generation)
                 .unwrap_or_default();
-            // Prompt Record mark (the pill-click / Alt+1 split point),
+            // Prompt Record mark (the explicit pill-control split point),
             // taken before draining the worker.
             let prompt_mark = rm.take_prompt_mark();
             // Drain the rolling worker → final assembled transcript. Always done,
@@ -849,7 +824,7 @@ impl ShortcutAction for NativeAsrAction {
             let samples = rm
                 .stop_recording(&binding_id, cancel_generation)
                 .unwrap_or_default();
-            // Prompt Record split mark (a pill click on the Studio waveform).
+            // Prompt Record split mark (the explicit Studio hover control).
             let prompt_mark = rm.take_prompt_mark();
 
             // `finalize_stream` blocks up to its internal timeout while the worker
@@ -980,12 +955,8 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "prompt_prev".to_string(),
         Arc::new(PromptSwitchAction { delta: -1 }) as Arc<dyn ShortcutAction>,
     );
-    // Master chords (transiently registered by `master_key` while a
+    // Master switch chord (transiently registered by `master_key` while a
     // recording session is live) + the switcher's transient arrow keys.
-    map.insert(
-        "master_prompt_record".to_string(),
-        Arc::new(MasterPromptRecordAction) as Arc<dyn ShortcutAction>,
-    );
     map.insert(
         "master_prompt_switch".to_string(),
         Arc::new(MasterPromptSwitchAction) as Arc<dyn ShortcutAction>,

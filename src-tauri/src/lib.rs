@@ -79,7 +79,7 @@ pub(crate) use grain_llm_client as llm_client;
 pub(crate) use grain_overlay as overlay;
 #[path = "handy/managers/mod.rs"]
 mod managers;
-mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
+mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
 #[path = "handy/memory.rs"]
 mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
 #[path = "handy/paste_tx/mod.rs"]
@@ -92,7 +92,7 @@ mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
 mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
-mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
+mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 #[path = "handy/secure_input.rs"]

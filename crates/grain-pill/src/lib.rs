@@ -231,6 +231,25 @@ fn clipboard_capsule_width(progress: f32, pill_h: f32) -> f32 {
     pill_h + (CLIPBOARD_SIB_W - pill_h) * eased
 }
 
+fn eased_progress(progress: f32) -> f32 {
+    let p = progress.clamp(0.0, 1.0);
+    p * p * (3.0 - 2.0 * p)
+}
+
+/// The collapsed Prompt Record control is always a full circle, exactly as tall
+/// as the active pill skin. Motion is limited to a short, non-overlapping slide;
+/// the final `SIB_GAP` remains transparent so the two controls read separately.
+fn prompt_record_button_rect(
+    pill_right: f32,
+    y_off: f32,
+    pill_h: f32,
+    progress: f32,
+) -> HitRect {
+    let eased = eased_progress(progress);
+    let left = pill_right + SIB_GAP + SIB_SLIDE * (1.0 - eased);
+    (left, y_off, left + pill_h, y_off + pill_h)
+}
+
 // [GRAIN] Agent follow-up offer capsule — centered alone (no pill body) when
 // idle. A muted "Ask follow-up" label on the left + a key-cap (rounded rect
 // with a lighter rim) carrying the shortcut on the right. All dimensions are
@@ -278,6 +297,27 @@ enum PillMode {
     Collapsed,
     Studio,
     AgentInput,
+}
+
+type HitRect = (f32, f32, f32, f32);
+
+fn point_in_rect(point: (f32, f32), rect: HitRect) -> bool {
+    point.0 >= rect.0 && point.0 <= rect.2 && point.1 >= rect.1 && point.1 <= rect.3
+}
+
+/// The release contract: Prompt Record can only fire from its explicit hover
+/// control. A click on the recording pill/card without that rect is inert.
+fn should_trigger_prompt_record(
+    state: PillState,
+    prompt_recording: bool,
+    prompt_record_requested: bool,
+    action_rect: Option<HitRect>,
+    cursor: (f32, f32),
+) -> bool {
+    state == PillState::Recording
+        && !prompt_recording
+        && !prompt_record_requested
+        && action_rect.is_some_and(|rect| point_in_rect(cursor, rect))
 }
 
 // ── Agent input geometry (the native summon card, per the reference design) ──
@@ -1354,6 +1394,57 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
         None,
     );
     Some(out)
+}
+
+/// Tiny four-point sparkle used for the explicit Prompt Record control. It is a
+/// static bitmap, materialized into a `Pixmap` once in `App::new`, then blitted
+/// exactly like the foreground-application icon. No image decoder, font glyph,
+/// render-time allocation, or additional dependency is involved.
+const PROMPT_RECORD_ICON_PX: u32 = 18;
+const PROMPT_RECORD_ICON_MASK: [u32; PROMPT_RECORD_ICON_PX as usize] = [
+    0b000000001000000000,
+    0b000000001000000000,
+    0b000000001000001000,
+    0b000000001000011100,
+    0b000000011100001000,
+    0b000000011100000000,
+    0b000000111110000000,
+    0b000011111111100000,
+    0b111111111111111110,
+    0b000011111111100000,
+    0b000000111110000000,
+    0b000000011100000000,
+    0b001000001000000000,
+    0b011100001000000000,
+    0b001000001000000000,
+    0b000000001000000000,
+    0b000000001000000000,
+    0b000000000000000000,
+];
+
+fn prompt_record_icon() -> Pixmap {
+    let n = PROMPT_RECORD_ICON_PX as usize;
+    let mut rgba = vec![0; n * n * 4];
+    for (y, row) in PROMPT_RECORD_ICON_MASK.iter().copied().enumerate() {
+        for x in 0..n {
+            if row & (1 << (n - 1 - x)) == 0 {
+                continue;
+            }
+            let i = (y * n + x) * 4;
+            rgba[i..i + 4].copy_from_slice(&[
+                WAVE_INK_PROMPT[0],
+                WAVE_INK_PROMPT[1],
+                WAVE_INK_PROMPT[2],
+                255,
+            ]);
+        }
+    }
+    Pixmap::from_vec(
+        rgba,
+        tiny_skia::IntSize::from_wh(PROMPT_RECORD_ICON_PX, PROMPT_RECORD_ICON_PX)
+            .expect("non-zero Prompt Record icon size"),
+    )
+    .expect("Prompt Record icon buffer matches its dimensions")
 }
 
 /// The wave skin's voice field: one loudness follower plus a critically damped
@@ -2654,7 +2745,7 @@ mod present {
             unsafe {
                 let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
                 // [GRAIN] WS_EX_LAYERED for per-pixel alpha; WS_EX_NOACTIVATE so a
-                // Prompt Record click on the pill delivers WM_LBUTTONDOWN (→ winit
+                // Prompt Record control delivers WM_LBUTTONDOWN (→ winit
                 // MouseInput) WITHOUT activating the window — the dictation target
                 // keeps focus, so the paste still lands where the user is typing.
                 SetWindowLongPtrW(
@@ -2917,7 +3008,7 @@ struct Remote {
     /// live preview). Only a streaming session is allowed to expand into `Studio`,
     /// and only once it has text.
     streaming: bool,
-    /// [GRAIN] Prompt Record: the user clicked the pill mid-recording and is now
+    /// [GRAIN] Prompt Record: the user armed the hover action mid-recording and is now
     /// dictating an AI instruction. Tints the recording dots / Studio waveform blue
     /// (the sole visual indicator). Set by `PromptRecordingChanged`; reset per session.
     prompt_recording: bool,
@@ -3041,7 +3132,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_recording = false; // recording over → drop the blue tint.
             eprintln!("event: RecordingStopped -> processing");
         }
-        // [GRAIN] Prompt Record: the core registered the pill-click / Alt+1 split
+        // [GRAIN] Prompt Record: the core registered the explicit-control split
         // mark. Flips the dot field / Studio waveform to the blue tint — the sole
         // visual indicator that the user is now dictating an AI instruction.
         DaemonEvent::PromptRecordingChanged { active, .. } => {
@@ -3206,7 +3297,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
 fn spawn_event_client(
     remote: Arc<Mutex<Remote>>,
     proxy: EventLoopProxy<UserEvent>,
-    // [GRAIN] Outbound pill actions (Prompt Record clicks) from the winit thread,
+    // [GRAIN] Outbound pill actions (including Prompt Record) from the winit thread,
     // forwarded over the same WebSocket's write half.
     mut action_rx: tokio::sync::mpsc::UnboundedReceiver<PillAction>,
 ) {
@@ -3268,7 +3359,7 @@ fn spawn_event_client(
 
             if let Some(ws) = ws_stream {
                 // [GRAIN] Duplex: read DaemonEvents in, write PillActions out
-                // (the reverse channel — e.g. a Prompt Record click).
+                // (the reverse channel — e.g. the Prompt Record control).
                 let (mut write, mut read) = ws.split();
                 loop {
                     tokio::select! {
@@ -3465,6 +3556,9 @@ struct App {
     /// per-frame cost is one straight blit. Rebuilt only when `icon_seq` moves.
     icon: Option<Pixmap>,
     last_icon_seq: u64,
+    /// Static AI sparkle for the Prompt Record hover button. Built once and
+    /// blitted through the same tiny-skia path as `icon` above.
+    prompt_record_icon: Pixmap,
     state: PillState,
     /// [GRAIN] Active pill theme (mirrors `Remote::theme`, SPEC §9). Read by the
     /// collapsed-pill roll; `None` is Grain's own look.
@@ -3511,6 +3605,14 @@ struct App {
     last_agent_input_saved_seq: u64,
     /// Last cursor position (physical px) for card/button hit-testing.
     cursor_pos: (f32, f32),
+    /// Prompt Record is never attached to a click on the pill body. Hovering the
+    /// recording surface reveals one explicit, separate action instead.
+    prompt_record_hover: bool,
+    /// Set as soon as the explicit action is clicked so repeated clicks cannot
+    /// enqueue duplicate requests while the authoritative core echo is in flight.
+    prompt_record_requested: bool,
+    prompt_record_hover_progress: f32,
+    prompt_record_rect: Option<(f32, f32, f32, f32)>,
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
     /// [GRAIN] Shift held — Capture submits the note on Shift/Ctrl+Enter (plain
@@ -3535,8 +3637,8 @@ struct App {
     next_tick: Instant,
     next_roll: Instant,
     remote: Arc<Mutex<Remote>>,
-    /// [GRAIN] Reverse channel to the core: a pill click (Prompt Record) is sent as
-    /// a `PillAction` over the same WebSocket. The winit thread hands the action to
+    /// [GRAIN] Reverse channel to the core: explicit pill controls send a
+    /// `PillAction` over the same WebSocket. The winit thread hands the action to
     /// the WS task through this unbounded sender.
     action_tx: tokio::sync::mpsc::UnboundedSender<PillAction>,
     visible: bool,
@@ -3575,7 +3677,7 @@ impl App {
         // "mic in use" indicator). We open it only while the pill is visible and
         // close it on hide — see `about_to_wait`.
         let remote = Arc::new(Mutex::new(Remote::default()));
-        // [GRAIN] Reverse channel for pill clicks (Prompt Record). Unbounded so the
+        // [GRAIN] Reverse channel for explicit pill controls. Unbounded so the
         // winit thread never blocks handing an action to the async WS task.
         let (action_tx, action_rx) = tokio::sync::mpsc::unbounded_channel::<PillAction>();
         spawn_event_client(remote.clone(), proxy, action_rx);
@@ -3587,6 +3689,7 @@ impl App {
             skin: PillSkin::default(),
             icon: None,
             last_icon_seq: 0,
+            prompt_record_icon: prompt_record_icon(),
             state: PillState::Idle,
             theme: None,
             prompt_recording: false,
@@ -3621,6 +3724,10 @@ impl App {
             last_agent_submit_req_seq: 0,
             last_agent_input_saved_seq: 0,
             cursor_pos: (0.0, 0.0),
+            prompt_record_hover: false,
+            prompt_record_requested: false,
+            prompt_record_hover_progress: 0.0,
+            prompt_record_rect: None,
             ctrl_down: false,
             shift_down: false,
             fallback_font: None,
@@ -3684,6 +3791,57 @@ impl App {
             PillMode::Collapsed => Self::collapsed_core_w(skin),
             _ => w as f32,
         }
+    }
+
+    fn cursor_in_rect(&self, rect: (f32, f32, f32, f32)) -> bool {
+        point_in_rect(self.cursor_pos, rect)
+    }
+
+    /// Re-evaluate the hover affordance from the current physical cursor
+    /// position. Once open, the hit zone bridges the recording surface, gap, and
+    /// separate action, so moving onto the button cannot collapse it mid-travel.
+    fn update_prompt_record_hover(&mut self) {
+        if self.state != PillState::Recording
+            || self.prompt_recording
+            || self.prompt_record_requested
+        {
+            self.prompt_record_hover = false;
+            return;
+        }
+
+        let primary = match self.mode {
+            PillMode::Collapsed => {
+                let geom = PillGeom::for_skin(self.skin);
+                let (x0, x1) = geom.body_x();
+                self.cursor_in_rect((x0, geom.y_off, x1, geom.y_off + geom.body_h))
+            }
+            PillMode::Studio => {
+                let (w, h) = Self::win_size_for(PillMode::Studio, self.skin);
+                let card_h = self
+                    .studio_grown_h
+                    .clamp(studio_card_height(0), h as f32);
+                self.cursor_in_rect((0.0, h as f32 - card_h, w as f32, h as f32))
+            }
+            PillMode::AgentInput => false,
+        };
+
+        let attached = self
+            .prompt_record_rect
+            .is_some_and(|rect| self.cursor_in_rect(rect));
+        let bridge = self.prompt_record_hover
+            && self.prompt_record_rect.is_some_and(|rect| match self.mode {
+                PillMode::Collapsed => {
+                    let geom = PillGeom::for_skin(self.skin);
+                    let (x0, _) = geom.body_x();
+                    self.cursor_in_rect((x0, geom.y_off, rect.2, geom.y_off + geom.body_h))
+                }
+                PillMode::Studio => {
+                    let (w, h) = Self::win_size_for(PillMode::Studio, self.skin);
+                    self.cursor_in_rect((0.0, rect.1, w as f32, h as f32))
+                }
+                PillMode::AgentInput => false,
+            });
+        self.prompt_record_hover = primary || attached || bridge;
     }
 
     /// [GRAIN] Place the pill on the monitor under it (or primary) per the user's
@@ -4635,6 +4793,14 @@ impl App {
         // capsule as before.
         let overlay_only = self.is_centered_overlay_only();
 
+        // Prompt Record is a separate, explicit control rather than an action on
+        // the pill body. It is a same-height circle with a transparent gap.
+        if self.prompt_record_hover_progress > 0.01 {
+            self.draw_collapsed_prompt_record(&mut pixmap, x1, y_off, pill_h);
+        } else {
+            self.prompt_record_rect = None;
+        }
+
         // 1) Floating capsule body (offset below the transparent top reserve).
         if !overlay_only {
             let mut body = Paint {
@@ -4688,7 +4854,9 @@ impl App {
         // the pill so its slide-in never clips under the body. When the pill is
         // visible ONLY for a centered overlay (idle prompt-switch preview or
         // agent follow-up offer), the capsule is drawn alone and centered.
-        if self.riser_progress > 0.01 {
+        if self.prompt_record_hover_progress > 0.01 {
+            self.prompt_switch_rect = None;
+        } else if self.riser_progress > 0.01 {
             if overlay_only {
                 if self.agent_offer.is_some() {
                     self.draw_offer_capsule(&mut pixmap, y_off, pill_h);
@@ -4827,13 +4995,21 @@ impl App {
         // above the transcript card. Drawn AFTER the card; the two share the same
         // near-black fill, so the capsule's lower edge tucking behind the card
         // during the slide is seamless (identical color over identical color).
-        if self.riser_progress > 0.01 {
+        if self.prompt_record_hover_progress > 0.01 {
+            let hf = h as f32;
+            let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
+            let card_top = hf - card_h;
+            self.draw_studio_prompt_record(&mut pixmap, w as f32, card_top, fade);
+            self.prompt_switch_rect = None;
+        } else if self.riser_progress > 0.01 {
             let hf = h as f32;
             let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
             let card_top = hf - card_h;
             self.draw_studio_top_pill(&mut pixmap, w as f32, card_top, fade);
+            self.prompt_record_rect = None;
         } else {
             self.prompt_switch_rect = None;
+            self.prompt_record_rect = None;
         }
 
         if let Some(presenter) = &self.presenter {
@@ -4919,6 +5095,90 @@ impl App {
         self.icon
             .as_ref()
             .map_or(WAVE_DOT_R * 2.0, |i| i.width() as f32)
+    }
+
+    /// Draw the explicit Prompt Record action as a full-round, icon-only button.
+    /// Its sparkle is a prebuilt pixmap and takes the same straight-blit path as
+    /// the foreground application icon.
+    fn draw_prompt_record_button(
+        &self,
+        pixmap: &mut Pixmap,
+        left: f32,
+        top: f32,
+        diameter: f32,
+        alpha: f32,
+    ) {
+        let alpha = alpha.clamp(0.0, 1.0);
+        if alpha < 0.01 || diameter <= 0.0 {
+            return;
+        }
+        let radius = diameter / 2.0;
+        let mut fill = Paint {
+            anti_alias: true,
+            ..Default::default()
+        };
+        fill.set_color(Color::from_rgba8(
+            GRAIN_SURFACE[0],
+            GRAIN_SURFACE[1],
+            GRAIN_SURFACE[2],
+            (alpha * GRAIN_CARD_A) as u8,
+        ));
+        if let Some(path) = PathBuilder::from_circle(left + radius, top + radius, radius) {
+            pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
+        }
+        stroke_grain_rim(pixmap, left, top, diameter, diameter, radius, alpha);
+
+        let ix = (left + (diameter - self.prompt_record_icon.width() as f32) / 2.0).round() as i32;
+        let iy = (top + (diameter - self.prompt_record_icon.height() as f32) / 2.0).round() as i32;
+        pixmap.draw_pixmap(
+            ix,
+            iy,
+            self.prompt_record_icon.as_ref(),
+            &PixmapPaint {
+                opacity: alpha,
+                quality: FilterQuality::Nearest,
+                ..Default::default()
+            },
+            Transform::identity(),
+            None,
+        );
+    }
+
+    fn draw_collapsed_prompt_record(
+        &mut self,
+        pixmap: &mut Pixmap,
+        pill_right: f32,
+        y_off: f32,
+        pill_h: f32,
+    ) {
+        let p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
+        let eased = eased_progress(p);
+        let rect = prompt_record_button_rect(pill_right, y_off, pill_h, p);
+        self.draw_prompt_record_button(pixmap, rect.0, rect.1, pill_h, eased);
+        self.prompt_record_rect = Some(rect);
+    }
+
+    fn draw_studio_prompt_record(
+        &mut self,
+        pixmap: &mut Pixmap,
+        width: f32,
+        card_top: f32,
+        fade: f32,
+    ) {
+        let p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
+        let eased = eased_progress(p);
+        let diameter = STUDIO_TOP_PILL_H;
+        let left = width - diameter;
+        let final_top = card_top - STUDIO_TOP_GAP - diameter;
+        let top = final_top - SIB_SLIDE * (1.0 - eased);
+        self.draw_prompt_record_button(
+            pixmap,
+            left,
+            top,
+            diameter,
+            eased * fade.clamp(0.0, 1.0),
+        );
+        self.prompt_record_rect = Some((left, top, left + diameter, top + diameter));
     }
 
     /// [GRAIN] The collapsed pill's SIBLING prompt capsule — a fixed-width pill
@@ -5309,14 +5569,15 @@ impl ApplicationHandler<UserEvent> for App {
                         && self.cursor_pos.1 >= y0
                         && self.cursor_pos.1 <= y1;
                 }
+                self.update_prompt_record_hover();
             }
-            // [GRAIN] Prompt Record: a left-click on the pill while recording enters
-            // AI-instruction mode — everything spoken after this is a prompt for the
-            // LLM, not content. Works on the collapsed capsule AND the expanded
-            // Studio card (its center waveform). One-way (no un-toggle, to keep it
-            // dead simple). We send the action to the core and let its
-            // `PromptRecordingChanged` echo flip the visuals, so the tint only
-            // changes once the mark is actually registered.
+            WindowEvent::CursorLeft { .. } => {
+                self.prompt_record_hover = false;
+            }
+            // [GRAIN] Prompt Record is deliberately NOT attached to the pill
+            // body. Hover reveals an explicit action; only a click inside that
+            // action enters AI-instruction mode. The core echo remains the source
+            // of truth for the blue active state.
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,
                 button: MouseButton::Left,
@@ -5343,6 +5604,18 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     return;
                 }
+                if should_trigger_prompt_record(
+                    self.state,
+                    self.prompt_recording,
+                    self.prompt_record_requested,
+                    self.prompt_record_rect,
+                    self.cursor_pos,
+                ) {
+                    self.prompt_record_hover = false;
+                    self.prompt_record_requested = true;
+                    let _ = self.action_tx.send(PillAction::PromptRecord);
+                    return;
+                }
                 // [GRAIN] Ignore clicks that land on the prompt-SWITCHER capsule —
                 // it is a display-only indicator (cycled by the shortcut, not the
                 // mouse), so a click there must not fire a pill action.
@@ -5352,11 +5625,7 @@ impl ApplicationHandler<UserEvent> for App {
                         return;
                     }
                 }
-                // Works on BOTH surfaces: the collapsed capsule and the expanded
-                // Studio card (whose center waveform is the click affordance).
-                if self.state == PillState::Recording && !self.prompt_recording {
-                    let _ = self.action_tx.send(PillAction::PromptRecord);
-                } else if self.agent_offer.is_some() && self.state != PillState::Recording {
+                if self.agent_offer.is_some() && self.state != PillState::Recording {
                     // [GRAIN] Quick Agent: the pill is up as a follow-up offer —
                     // a click reopens the Agent expanded with the conversation.
                     let _ = self.action_tx.send(PillAction::AgentFollowup);
@@ -5471,6 +5740,17 @@ impl ApplicationHandler<UserEvent> for App {
                 self.offer_fade_close = false;
             }
             self.prompt_recording = r.prompt_recording;
+            if self.state != PillState::Recording {
+                self.prompt_record_requested = false;
+            } else if prev_state != PillState::Recording {
+                self.prompt_record_requested = false;
+            }
+            if self.state != PillState::Recording
+                || self.prompt_recording
+                || self.prompt_record_requested
+            {
+                self.prompt_record_hover = false;
+            }
             self.theme = r.theme.clone();
             self.asr = r.asr.clone();
 
@@ -5888,6 +6168,30 @@ impl ApplicationHandler<UserEvent> for App {
                         self.clipboard_notice_until = None;
                     }
                 }
+                // Prompt Record fades/slides beside the recording surface on
+                // hover and withdraws faster on exit. This uses the pill's
+                // existing frame clock: no timer, worker, or idle resource.
+                let prompt_record_target = if self.prompt_record_hover
+                    && self.state == PillState::Recording
+                    && !self.prompt_recording
+                    && !self.prompt_record_requested
+                {
+                    1.0
+                } else {
+                    0.0
+                };
+                let prompt_record_rate = if prompt_record_target > self.prompt_record_hover_progress
+                {
+                    0.18
+                } else {
+                    0.26
+                };
+                self.prompt_record_hover_progress +=
+                    (prompt_record_target - self.prompt_record_hover_progress) * prompt_record_rate;
+                if prompt_record_target == 0.0 && self.prompt_record_hover_progress < 0.01 {
+                    self.prompt_record_hover_progress = 0.0;
+                    self.prompt_record_rect = None;
+                }
                 // [GRAIN] Agent input per-frame motion: the wave/caret clock and
                 // the expand ease (≈ the reference's 300ms ease-out curve).
                 if let Some(ui) = &mut self.agent_input {
@@ -6060,6 +6364,58 @@ mod tests {
         let remote = Mutex::new(Remote::default());
         apply_event(&remote, DaemonEvent::PasteCatchDisabled);
         assert_eq!(remote.lock().unwrap().clipboard_notice_clear_seq, 1);
+    }
+
+    #[test]
+    fn prompt_record_requires_the_explicit_hover_action() {
+        let action = Some((100.0, 20.0, 220.0, 60.0));
+        assert!(should_trigger_prompt_record(
+            PillState::Recording,
+            false,
+            false,
+            action,
+            (150.0, 40.0)
+        ));
+        assert!(!should_trigger_prompt_record(
+            PillState::Recording,
+            false,
+            false,
+            action,
+            (60.0, 40.0)
+        ));
+        assert!(!should_trigger_prompt_record(
+            PillState::Recording,
+            false,
+            false,
+            None,
+            (60.0, 40.0)
+        ));
+        assert!(!should_trigger_prompt_record(
+            PillState::Recording,
+            true,
+            false,
+            action,
+            (150.0, 40.0)
+        ));
+        assert!(!should_trigger_prompt_record(
+            PillState::Recording,
+            false,
+            true,
+            action,
+            (150.0, 40.0)
+        ));
+
+        let pill_h = PillGeom::for_skin(PillSkin::Wave).body_h;
+        let pill_right = 120.0;
+        let rect = prompt_record_button_rect(pill_right, 20.0, pill_h, 1.0);
+        assert_eq!(rect.0 - pill_right, SIB_GAP);
+        assert_eq!(rect.2 - rect.0, pill_h);
+        assert_eq!(rect.3 - rect.1, pill_h);
+
+        let icon = prompt_record_icon();
+        assert_eq!(icon.width(), PROMPT_RECORD_ICON_PX);
+        assert_eq!(icon.height(), PROMPT_RECORD_ICON_PX);
+        assert!(icon.pixels().iter().any(|pixel| pixel.alpha() > 0));
     }
 
     // ── Pill skins ──────────────────────────────────────────────────────────

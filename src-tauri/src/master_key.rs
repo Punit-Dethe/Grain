@@ -1,20 +1,14 @@
 //! [GRAIN] Master-key chords — the deterministic mid-dictation command surface.
 //!
-//! While a recording session is live, two transient global chords are held:
+//! While a recording session is live, **Alt+2** opens the prompt switcher. It
+//! reveals the switcher capsule and grabs **A** (previous) / **D** (next) to
+//! cycle the active post-processing prompt. A/D were chosen over arrow keys
+//! deliberately — arrows are awkward or absent on many compact laptop
+//! keyboards. The capsule and keys auto-release after a short idle window.
 //!
-//! - **Alt+1** → Prompt Record: everything spoken from here is an AI
-//!   instruction. Identical to clicking the pill — it arms the same audio-mark
-//!   split on the recording manager, so it works in ALL capture modes (Batch,
-//!   Rolling, Native ASR) and the existing stop-path handling needs no changes.
-//! - **Alt+2** → the prompt switcher: reveals the switcher capsule and grabs
-//!   **A** (previous) / **D** (next) to cycle the active post-processing prompt.
-//!   A/D were chosen over arrow keys deliberately — arrows are awkward or
-//!   absent on many compact laptop keyboards. The capsule and keys auto-release
-//!   after a short idle window.
-//!
-//! The chords are registered when a recording starts and released when it stops
-//! or is cancelled (the same transient pattern as the cancel shortcut), so they
-//! never shadow these keys in other apps outside a dictation session.
+//! The chord is registered when a recording starts and released when it stops
+//! or is cancelled (the same transient pattern as the cancel shortcut), so it
+//! never shadows the key in other apps outside a dictation session.
 //!
 //! ## Threading rule (the hard-won part)
 //!
@@ -45,29 +39,20 @@ const IDLE_MS: u64 = 3500;
 
 // ── Master chords (active for the whole recording session) ──────────────────
 
-/// Binding ids — must match the `ACTION_MAP` entries in `actions.rs`.
-const RECORD_CHORD_ID: &str = "master_prompt_record";
+/// Binding id — must match the `ACTION_MAP` entry in `actions.rs`.
 const SWITCH_CHORD_ID: &str = "master_prompt_switch";
-const RECORD_CHORD_KEY: &str = "alt+1";
 const SWITCH_CHORD_KEY: &str = "alt+2";
 
 /// Whether the session chords should currently be registered (source of truth;
 /// the actual plugin calls are deferred).
 static CHORDS: AtomicBool = AtomicBool::new(false);
 
-/// Register the master chords (on recording start). Idempotent, and safe to
+/// Register the prompt-switch chord (on recording start). Idempotent, and safe to
 /// call from a shortcut action: the plugin work happens on the async runtime.
 pub fn register_chords(app: &AppHandle) {
     if CHORDS.swap(true, Ordering::SeqCst) {
         return;
     }
-    deferred_register(
-        app,
-        RECORD_CHORD_ID,
-        RECORD_CHORD_KEY,
-        "Prompt Record",
-        &CHORDS,
-    );
     deferred_register(
         app,
         SWITCH_CHORD_ID,
@@ -77,12 +62,11 @@ pub fn register_chords(app: &AppHandle) {
     );
 }
 
-/// Release the master chords (on recording stop/cancel). Also closes the
+/// Release the prompt-switch chord (on recording stop/cancel). Also closes the
 /// switcher if it was left open. Idempotent; plugin work is deferred.
 pub fn unregister_chords(app: &AppHandle) {
     close_switcher(app);
     if CHORDS.swap(false, Ordering::SeqCst) {
-        deferred_unregister(app, RECORD_CHORD_ID, RECORD_CHORD_KEY);
         deferred_unregister(app, SWITCH_CHORD_ID, SWITCH_CHORD_KEY);
     }
 }

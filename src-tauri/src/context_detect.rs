@@ -1296,7 +1296,7 @@ pub struct ActiveContext {
 /// Compose the final post-processing system prompt from up to four stages.
 ///
 /// `spoken_instruction` is the **Prompt Record** layer: an instruction the user
-/// dictated mid-recording (by clicking the pill), aimed at THIS transcript. It is
+/// dictated mid-recording (through Prompt Record), aimed at THIS transcript. It is
 /// the absolute highest authority, and is applied even when context awareness is
 /// off.
 ///
