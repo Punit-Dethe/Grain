@@ -4727,11 +4727,6 @@ html[data-theme="light"] .context-profile-mode {
   color: var(--text-2);
 }
 
-.dictionary-search input::-webkit-search-cancel-button {
-  display: none;
-  -webkit-appearance: none;
-}
-
 .dictionary-add-button,
 .dictionary-save-button {
   min-height: 36px;
