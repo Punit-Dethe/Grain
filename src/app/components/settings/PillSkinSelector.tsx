@@ -22,7 +22,10 @@ export const PillSkinSelector: React.FC<PillSkinSelectorProps> = React.memo(
 
     const skinOptions = [
       { value: "wave", label: t("settings.advanced.pillSkin.options.wave") },
-      { value: "matrix", label: t("settings.advanced.pillSkin.options.matrix") },
+      {
+        value: "matrix",
+        label: t("settings.advanced.pillSkin.options.matrix"),
+      },
     ];
 
     const selectedSkin = (getSetting("pill_skin") || "wave") as PillSkin;

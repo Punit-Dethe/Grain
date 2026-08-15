@@ -199,7 +199,6 @@ pub async fn grain_space_move_note(
     result
 }
 
-
 /// Delete a Grain collection (subfolder). Its notes are moved back to the Grain
 /// root — they reappear as loose notes — and the empty folder is removed. Never
 /// deletes a note.

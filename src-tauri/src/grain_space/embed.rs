@@ -591,5 +591,4 @@ mod tests {
             "prefixed query must rank the related note first"
         );
     }
-
 }

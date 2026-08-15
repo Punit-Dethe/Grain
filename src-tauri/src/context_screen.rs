@@ -218,11 +218,7 @@ mod windows_impl {
             GetWindowRect(window, &mut rect).ok()?;
             let width = rect.right - rect.left;
             let height = rect.bottom - rect.top;
-            if width <= 0
-                || height <= 0
-                || width > MAX_SOURCE_EDGE
-                || height > MAX_SOURCE_EDGE
-            {
+            if width <= 0 || height <= 0 || width > MAX_SOURCE_EDGE || height > MAX_SOURCE_EDGE {
                 return None;
             }
 
@@ -257,15 +253,9 @@ mod windows_impl {
             };
 
             let mut pixels: *mut core::ffi::c_void = std::ptr::null_mut();
-            let bitmap = CreateDIBSection(
-                Some(screen_dc),
-                &info,
-                DIB_RGB_COLORS,
-                &mut pixels,
-                None,
-                0,
-            )
-            .ok()?; // guard above releases both DCs on this path
+            let bitmap =
+                CreateDIBSection(Some(screen_dc), &info, DIB_RGB_COLORS, &mut pixels, None, 0)
+                    .ok()?; // guard above releases both DCs on this path
             gdi.bitmap = Some(bitmap);
             gdi.previous = Some(SelectObject(mem_dc, bitmap.into()));
 

@@ -170,8 +170,12 @@ pub async fn transcribe(app: &AppHandle, samples: Vec<f32>) -> Result<String, St
                                 settings.filler_word_removal_enabled,
                                 false,
                                 // [GRAIN] Snippets built-in extension gate (SPEC 10.1): disabled ->
-                            // empty slice, the zero-cost no-op path.
-                            if settings.snippets_enabled { &settings.snippets } else { &[] },
+                                // empty slice, the zero-cost no-op path.
+                                if settings.snippets_enabled {
+                                    &settings.snippets
+                                } else {
+                                    &[]
+                                },
                                 settings.scrap_that_enabled,
                             ),
                             remaining_requests: res.remaining_requests,

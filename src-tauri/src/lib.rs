@@ -38,59 +38,58 @@ mod context_screen; // [GRAIN] foreground-window image capture — extension cap
 mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
-// [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
-// replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
-// disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
-// cleanly; port anything relevant into `crates/grain-core`. The alias keeps
-// every `crate::settings::` path working.
-mod grain_settings;
-pub(crate) use grain_settings as settings;
-mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
-mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
-mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
-mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
-mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
-mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
+mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
+mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
+mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
-// [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
-// single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
-// UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
-// the alias keeps every `crate::llm_client::` path working.
+mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
+mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
+                  // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
+                  // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
+                  // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
+                  // the alias keeps every `crate::llm_client::` path working.
 mod grain_llm_client;
-// [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
-// webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
-// keeps `crate::overlay::` paths (e.g. utils' re-export) working.
+mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
+mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
+                      // [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
+                      // webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
+                      // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
 mod grain_overlay;
+mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
-mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
-mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+                 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
+                 // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
+                 // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
+                 // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
+                 // every `crate::settings::` path working.
+mod grain_settings;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
-mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
-mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
-mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
-mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
+mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
+mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
+mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/input.rs"]
 mod input;
+mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
 pub(crate) use grain_llm_client as llm_client;
 pub(crate) use grain_overlay as overlay;
+pub(crate) use grain_settings as settings;
 #[path = "handy/managers/mod.rs"]
 mod managers;
 mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
 #[path = "handy/memory.rs"]
 mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
+mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;
-#[path = "handy/portable.rs"]
-pub mod portable;
-mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
-mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
 mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
 mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
+#[path = "handy/portable.rs"]
+pub mod portable;
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
 mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
@@ -99,11 +98,12 @@ mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), s
 mod secure_input;
 #[path = "handy/shortcut/mod.rs"]
 mod shortcut;
-mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
 #[path = "handy/signal_handle.rs"]
 mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
+mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
+mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
 #[path = "handy/tray.rs"]
@@ -1313,7 +1313,9 @@ pub fn run(cli_args: CliArgs) {
                 // [GRAIN] Phase 5A: the store client — loads verified roots +
                 // revocations from cache-or-seed (small, resident); the parsed
                 // index stays out of memory until the store is opened.
-                app.manage(std::sync::Arc::new(grain_store::StoreState::init(&data_dir)));
+                app.manage(std::sync::Arc::new(grain_store::StoreState::init(
+                    &data_dir,
+                )));
                 // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::reconcile_builtin_packs(&app.handle());

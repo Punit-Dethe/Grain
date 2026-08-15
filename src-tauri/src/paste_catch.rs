@@ -647,7 +647,9 @@ fn send_paste_chord(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| format!("Failed to lock Enigo: {e}"))?;
     match method {
         PasteMethod::CtrlShiftV => crate::input::send_paste_ctrl_shift_v(&mut enigo, CHORD_HOLD_MS),
-        PasteMethod::ShiftInsert => crate::input::send_paste_shift_insert(&mut enigo, CHORD_HOLD_MS),
+        PasteMethod::ShiftInsert => {
+            crate::input::send_paste_shift_insert(&mut enigo, CHORD_HOLD_MS)
+        }
         // Direct typing and external scripts have no chord of their own, and a
         // manual delivery is a clipboard paste by construction.
         _ => crate::input::send_paste_ctrl_v(&mut enigo, CHORD_HOLD_MS),
@@ -829,7 +831,10 @@ mod tests {
     fn seeing_the_transcript_is_decisive_without_any_before_image() {
         let t = "a reasonably long transcript to match";
         assert_eq!(
-            verdict(&view(editable_but_silent(), Some(&format!("x. {t}")), None), t),
+            verdict(
+                &view(editable_but_silent(), Some(&format!("x. {t}")), None),
+                t
+            ),
             PasteOutcome::Landed
         );
     }
@@ -943,7 +948,11 @@ mod tests {
         // positive that differencing exists to remove.
         let f = editable_but_silent();
         let before = view(f, Some("Dear Bob "), None);
-        let after = view(f, Some("Dear Bob \u{201c}rewritten\u{201d} by the app"), None);
+        let after = view(
+            f,
+            Some("Dear Bob \u{201c}rewritten\u{201d} by the app"),
+            None,
+        );
         assert_eq!(
             verdict_after_paste(Some(&before), &after, "\"rewritten\" by the app!!"),
             PasteOutcome::Landed
@@ -1027,7 +1036,13 @@ mod tests {
 
     #[test]
     fn verification_is_skipped_for_very_short_transcripts() {
-        assert!(!should_verify(true, false, false, true, MIN_VERIFY_CHARS - 1));
+        assert!(!should_verify(
+            true,
+            false,
+            false,
+            true,
+            MIN_VERIFY_CHARS - 1
+        ));
         assert!(should_verify(true, false, false, true, MIN_VERIFY_CHARS));
     }
 

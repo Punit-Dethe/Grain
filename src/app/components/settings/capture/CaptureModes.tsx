@@ -141,7 +141,9 @@ export const CaptureModes: React.FC = () => {
                 label: mode.name,
               }))}
               selectedValue={aiStartMode}
-              onSelect={(value) => updateSetting("capture_ai_start_mode", value)}
+              onSelect={(value) =>
+                updateSetting("capture_ai_start_mode", value)
+              }
             />
           </SettingContainer>
         )}

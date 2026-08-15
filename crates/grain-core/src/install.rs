@@ -127,10 +127,7 @@ pub fn plan_record(
     // Update with NEW permissions installs but stays disabled until the diff is
     // approved (SPEC §6). A fresh install is disabled anyway (enable is the
     // user's explicit second step).
-    let adds_permissions = entry
-        .capabilities
-        .iter()
-        .any(|cap| !granted.contains(cap));
+    let adds_permissions = entry.capabilities.iter().any(|cap| !granted.contains(cap));
     let enabled = prior_enabled && !adds_permissions;
 
     ExtensionRecord {
@@ -163,10 +160,14 @@ pub fn install_from_verified_entry(
 ) -> Result<PathBuf, InstallError> {
     let dir = stage_artifact(root, entry, bytes, limits)?;
     let prior = reg.installed_record(&entry.id);
-    let granted = prior.as_ref().map(|r| r.granted.clone()).unwrap_or_default();
+    let granted = prior
+        .as_ref()
+        .map(|r| r.granted.clone())
+        .unwrap_or_default();
     let (slots, variant_slots) = manifest_slots(bytes);
     let record = plan_record(entry, granted, prior.as_ref(), slots, variant_slots);
-    reg.install(record).map_err(|e| InstallError::Io(e.to_string()))?;
+    reg.install(record)
+        .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
 }
 
@@ -320,8 +321,9 @@ mod tests {
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         let bytes = b"{\"id\":\"com.example.x\",\"name\":\"X\"}";
         let e = entry("com.example.x", "2.0.0", Trust::Verified, &[], bytes);
-        let out = install_from_verified_entry(&reg, dir.path(), &e, bytes, ExtractLimits::default())
-            .expect("install");
+        let out =
+            install_from_verified_entry(&reg, dir.path(), &e, bytes, ExtractLimits::default())
+                .expect("install");
         assert!(out.join("pack.grainpack.json").exists());
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "2.0.0");
@@ -342,11 +344,20 @@ mod tests {
 
         // 1.1 adds a capability → held disabled until the diff is approved.
         let b2 = b"{\"v\":2}";
-        let e2 = entry("com.example.x", "1.1.0", Trust::Verified, &["net:api.example.com"], b2);
+        let e2 = entry(
+            "com.example.x",
+            "1.1.0",
+            Trust::Verified,
+            &["net:api.example.com"],
+            b2,
+        );
         install_from_verified_entry(&reg, dir.path(), &e2, b2, ExtractLimits::default()).unwrap();
         let rec = reg.record("com.example.x").unwrap();
         assert_eq!(rec.installed_version, "1.1.0");
-        assert!(!rec.enabled, "new permissions must hold the update disabled");
+        assert!(
+            !rec.enabled,
+            "new permissions must hold the update disabled"
+        );
     }
 
     #[test]

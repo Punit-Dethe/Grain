@@ -109,7 +109,14 @@ pub(crate) async fn run_one_provider_with_timeout(
 ) -> CallOutcome {
     match tokio::time::timeout(
         LLM_REQUEST_TIMEOUT,
-        crate::grain_post_process::run_one_provider(client, provider, model, api_key, prompt, transcription),
+        crate::grain_post_process::run_one_provider(
+            client,
+            provider,
+            model,
+            api_key,
+            prompt,
+            transcription,
+        ),
     )
     .await
     {

@@ -149,7 +149,10 @@ mod tests {
     fn the_ai_key_borrows_a_capture_engine_but_others_run_their_own() {
         let mut s = get_default_settings();
         s.capture_ai_start_mode = "transcribe_realtime".to_string();
-        assert_eq!(action_id_for(&s, "transcribe_send_to_ai"), "transcribe_realtime");
+        assert_eq!(
+            action_id_for(&s, "transcribe_send_to_ai"),
+            "transcribe_realtime"
+        );
         assert_eq!(action_id_for(&s, "transcribe"), "transcribe");
         assert_eq!(action_id_for(&s, "summon_agent"), "summon_agent");
     }

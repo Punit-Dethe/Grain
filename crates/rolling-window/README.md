@@ -45,11 +45,11 @@ fresh voiced audio, while a forced full window snaps to a short low-energy gap
 when possible. Silence-only spans advance the absolute timeline without an ASR
 job and retain only 300 ms of speech pre-roll.
 
-| Boundary | Next-window overlap |
-|---|---:|
-| Clean VAD silence | 1.0 s |
-| Short quiet-gap snap | 1.5 s |
-| Forced hard cut | 2.0 s |
+| Boundary             | Next-window overlap |
+| -------------------- | ------------------: |
+| Clean VAD silence    |               1.0 s |
+| Short quiet-gap snap |               1.5 s |
+| Forced hard cut      |               2.0 s |
 
 No model-family branch changes this geometry. If decode real-time factor is at
 or above 1.0, Flow cannot eliminate stop debt; select a faster/smaller model

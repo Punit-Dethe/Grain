@@ -5,6 +5,11 @@ import { useSettings } from "../../../hooks/useSettings";
 import { SettingsGroup } from "../../ui/SettingsGroup";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
+const BRIDGE_LIFETIME_DESCRIPTION =
+  "The assistant starts its own copy of the bridge when it needs one and closes it afterwards, so nothing runs while nobody is asking. Turning this off cuts off every client immediately.";
+const COPIED_LABEL = "Copied";
+const COPY_LABEL = "Copy";
+
 /**
  * [GRAIN] The Grain Space MCP bridge (docs/Grain Space 2.0/MCP-PLAN.md).
  *
@@ -77,9 +82,7 @@ export const McpBridge: React.FC = () => {
             onCopy={() => void copy("json", config)}
           />
           <p className="text-xs text-ink-faint leading-relaxed">
-            The assistant starts its own copy of the bridge when it needs one and
-            closes it afterwards, so nothing runs while nobody is asking. Turning
-            this off cuts off every client immediately.
+            {BRIDGE_LIFETIME_DESCRIPTION}
           </p>
         </div>
       )}
@@ -106,11 +109,11 @@ const Snippet: React.FC<{
       >
         {copied ? (
           <>
-            <Check width={12} height={12} /> Copied
+            <Check width={12} height={12} /> {COPIED_LABEL}
           </>
         ) : (
           <>
-            <Copy width={12} height={12} /> Copy
+            <Copy width={12} height={12} /> {COPY_LABEL}
           </>
         )}
       </button>

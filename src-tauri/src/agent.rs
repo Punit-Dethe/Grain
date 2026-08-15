@@ -443,7 +443,8 @@ fn start_dictation(app: &AppHandle) {
     }
     // Agent dictation is a batch-style capture: offline VAD profile (VAD is
     // always on — grain-core settings have no `vad_enabled` toggle).
-    if let Err(e) = rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
+    if let Err(e) = rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline)
+    {
         warn!("[GRAIN] agent: failed to start dictation: {e}");
     }
 }

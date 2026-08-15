@@ -542,7 +542,11 @@ fn query_terms(query: &str) -> Vec<String> {
 ///
 /// An empty `idf` map (the probe failed, or an empty corpus) falls back to
 /// uniform weights — the previous behaviour, never an error.
-fn term_overlap(terms: &[String], note: &Note, idf: &std::collections::HashMap<String, f64>) -> f64 {
+fn term_overlap(
+    terms: &[String],
+    note: &Note,
+    idf: &std::collections::HashMap<String, f64>,
+) -> f64 {
     if terms.is_empty() {
         return 0.0;
     }

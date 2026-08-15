@@ -768,7 +768,11 @@ mod registry_gate_tests {
         s.context_awareness_enabled = false;
         assert!(site_key("mail.google.com", &s).is_some());
         assert!(site_key("figma.com", &s).is_some());
-        assert_eq!(site_key("example.test", &s), None, "still gated, just not by the switch");
+        assert_eq!(
+            site_key("example.test", &s),
+            None,
+            "still gated, just not by the switch"
+        );
     }
 
     /// One decision, not two that agree today. If these ever diverge, a site can
@@ -1386,10 +1390,19 @@ mod site_fetch {
         #[test]
         fn the_well_known_path_survives_a_page_that_declares_a_full_budget() {
             let html: String = (0..8)
-                .map(|i| format!(r#"<link rel="icon" href="/i{i}.png" sizes="{}x{}">"#, 64 - i, 64 - i))
+                .map(|i| {
+                    format!(
+                        r#"<link rel="icon" href="/i{i}.png" sizes="{}x{}">"#,
+                        64 - i,
+                        64 - i
+                    )
+                })
                 .collect();
             let mut declared = declared_icons(&html, "https://x.test");
-            assert!(declared.len() > MAX_TRIES, "the setup must overflow the budget");
+            assert!(
+                declared.len() > MAX_TRIES,
+                "the setup must overflow the budget"
+            );
 
             // What `candidates` does to the declared list before appending.
             declared.truncate(MAX_TRIES - 1);

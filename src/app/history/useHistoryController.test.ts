@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "@/bindings";
-import {
-  hasProcessedText,
-  reduceHistoryEntries,
-} from "./useHistoryController";
+import { hasProcessedText, reduceHistoryEntries } from "./useHistoryController";
 
 const entry = (id: number, saved = false): HistoryEntry => ({
   id,
@@ -45,12 +42,12 @@ describe("UI 2.0 history reducer", () => {
 
   it("ignores delete and toggle events handled by optimistic commands", () => {
     const current = [entry(2), entry(1)];
-    expect(
-      reduceHistoryEntries(current, { action: "deleted", id: 2 }),
-    ).toBe(current);
-    expect(
-      reduceHistoryEntries(current, { action: "toggled", id: 1 }),
-    ).toBe(current);
+    expect(reduceHistoryEntries(current, { action: "deleted", id: 2 })).toBe(
+      current,
+    );
+    expect(reduceHistoryEntries(current, { action: "toggled", id: 1 })).toBe(
+      current,
+    );
   });
 });
 

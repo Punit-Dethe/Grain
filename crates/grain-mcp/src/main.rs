@@ -137,7 +137,10 @@ impl GrainSpace {
         let params = json!({ "query": p.query, "limit": p.limit.unwrap_or(8) });
         self.relay("space.search", params, |v| {
             let empty = Vec::new();
-            let results = v.get("results").and_then(|r| r.as_array()).unwrap_or(&empty);
+            let results = v
+                .get("results")
+                .and_then(|r| r.as_array())
+                .unwrap_or(&empty);
             if results.is_empty() {
                 return "No notes matched.".to_string();
             }

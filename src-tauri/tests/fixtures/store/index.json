@@ -9,9 +9,7 @@
       "version": "1.0.0",
       "tier": "scripted",
       "trust": "verified",
-      "capabilities": [
-        "transform:transcript"
-      ],
+      "capabilities": ["transform:transcript"],
       "sha256": "10046c61be5d612027adf58abdae14e8e5511f7b69826e4b913f03163880bc66",
       "size": 549,
       "min_grain_api": "1.0",

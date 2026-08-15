@@ -110,7 +110,10 @@ mod tests {
 
     #[test]
     fn no_network_means_no_flags() {
-        let f = flagged_combinations(&perms(&["capture:screen-image", "events:transcripts"]), Tier::Native);
+        let f = flagged_combinations(
+            &perms(&["capture:screen-image", "events:transcripts"]),
+            Tier::Native,
+        );
         assert!(f.is_empty(), "flags require a net grant to be present");
     }
 
@@ -141,7 +144,11 @@ mod tests {
     #[test]
     fn multiple_flags_can_coexist() {
         let f = flagged_combinations(
-            &perms(&["events:transcripts", "capture:screen-image", "net:x.example.com"]),
+            &perms(&[
+                "events:transcripts",
+                "capture:screen-image",
+                "net:x.example.com",
+            ]),
             Tier::Native,
         );
         assert_eq!(f.len(), 3);
@@ -174,7 +181,12 @@ mod tests {
     #[test]
     fn every_watched_capability_is_a_real_one() {
         use crate::manifest::KNOWN_CAPABILITIES;
-        for watched in ["notes", "capture:screen-image", "capture:screen-text", "events:transcripts"] {
+        for watched in [
+            "notes",
+            "capture:screen-image",
+            "capture:screen-text",
+            "events:transcripts",
+        ] {
             assert!(
                 KNOWN_CAPABILITIES.contains(&watched),
                 "flagged.rs watches '{watched}', which no manifest can declare"

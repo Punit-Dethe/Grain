@@ -158,7 +158,10 @@ where
     let mut categories: Vec<String> = Vec::new();
 
     while let Some(flag) = args.next() {
-        let mut val = || args.next().with_context(|| format!("{flag} requires a value"));
+        let mut val = || {
+            args.next()
+                .with_context(|| format!("{flag} requires a value"))
+        };
         match flag.as_str() {
             "--registry" => registry = Some(PathBuf::from(val()?)),
             "--repo" => repo = Some(val()?),
@@ -729,7 +732,8 @@ mod tests {
     #[test]
     fn submit_writes_a_valid_submission_into_the_registry() {
         let temp = tempfile::tempdir().unwrap();
-        let project = init_project(temp.path(), "Hello Ext", Some("com.example.hello-ext")).unwrap();
+        let project =
+            init_project(temp.path(), "Hello Ext", Some("com.example.hello-ext")).unwrap();
         let registry = tempfile::tempdir().unwrap();
         let output = run(
             [

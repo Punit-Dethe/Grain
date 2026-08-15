@@ -4,7 +4,11 @@ import { Dropdown } from "../ui/Dropdown";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { DefaultPanel as DefaultPanelType } from "@/bindings";
 
-export default function DefaultPanel({ grouped = false }: { grouped?: boolean }) {
+export default function DefaultPanel({
+  grouped = false,
+}: {
+  grouped?: boolean;
+}) {
   const { t } = useTranslation();
   const getSetting = useSettingsStore((state) => state.getSetting);
   const updateSetting = useSettingsStore((state) => state.updateSetting);
@@ -19,7 +23,9 @@ export default function DefaultPanel({ grouped = false }: { grouped?: boolean })
     >
       <Dropdown
         selectedValue={defaultPanel as string}
-        onSelect={(value: string) => updateSetting("default_panel", value as DefaultPanelType)}
+        onSelect={(value: string) =>
+          updateSetting("default_panel", value as DefaultPanelType)
+        }
         options={[
           {
             value: "settings",

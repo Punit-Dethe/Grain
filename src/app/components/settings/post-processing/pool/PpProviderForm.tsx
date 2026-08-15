@@ -128,7 +128,9 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder={t("settings.postProcessing.pool.form.labelPlaceholder")}
+            placeholder={t(
+              "settings.postProcessing.pool.form.labelPlaceholder",
+            )}
             variant="compact"
           />
         </label>
@@ -158,7 +160,9 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
           type="text"
           value={baseUrl}
           onChange={(e) => setBaseUrl(e.target.value)}
-          placeholder={t("settings.postProcessing.pool.form.baseUrlPlaceholder")}
+          placeholder={t(
+            "settings.postProcessing.pool.form.baseUrlPlaceholder",
+          )}
           variant="compact"
           disabled={baseUrlLocked}
         />
@@ -174,7 +178,9 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
             value={model}
             list={canFetchModels ? datalistId : undefined}
             onChange={(e) => setModel(e.target.value)}
-            placeholder={t("settings.postProcessing.pool.form.modelPlaceholder")}
+            placeholder={t(
+              "settings.postProcessing.pool.form.modelPlaceholder",
+            )}
             variant="compact"
             className="flex-1"
           />

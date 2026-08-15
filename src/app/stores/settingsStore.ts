@@ -373,7 +373,9 @@ export const useSettingsStore = create<SettingsStore>()(
           // before (agent/snippets/capture had no updater). Throw so the catch
           // below rolls the optimistic change back and the failure is visible,
           // rather than quietly pretending the setting was saved.
-          throw new Error(`No persistence handler for setting "${String(key)}"`);
+          throw new Error(
+            `No persistence handler for setting "${String(key)}"`,
+          );
         }
       } catch (error) {
         console.error(`Failed to update setting ${String(key)}:`, error);

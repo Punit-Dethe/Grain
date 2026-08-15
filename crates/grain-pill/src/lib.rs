@@ -243,12 +243,7 @@ fn eased_progress(progress: f32) -> f32 {
 /// The collapsed Prompt Record control is always a full circle, exactly as tall
 /// as the active pill skin. Motion is limited to a short, non-overlapping slide;
 /// the final `PROMPT_RECORD_GAP` remains transparent so the controls stay separate.
-fn prompt_record_button_rect(
-    pill_right: f32,
-    y_off: f32,
-    pill_h: f32,
-    progress: f32,
-) -> HitRect {
+fn prompt_record_button_rect(pill_right: f32, y_off: f32, pill_h: f32, progress: f32) -> HitRect {
     let eased = eased_progress(progress);
     let left = pill_right + PROMPT_RECORD_GAP + SIB_SLIDE * (1.0 - eased);
     (left, y_off, left + pill_h, y_off + pill_h)
@@ -330,8 +325,7 @@ fn should_show_prompt_record(
     hold_until: Option<Instant>,
     now: Instant,
 ) -> bool {
-    state == PillState::Recording
-        && (hovered || hold_until.is_some_and(|deadline| now < deadline))
+    state == PillState::Recording && (hovered || hold_until.is_some_and(|deadline| now < deadline))
 }
 
 // ── Agent input geometry (the native summon card, per the reference design) ──
@@ -1417,24 +1411,19 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
 /// No image decoder, per-frame resampling, or additional dependency is involved.
 const PROMPT_RECORD_ICON_PX: u32 = 18;
 const PROMPT_RECORD_ICON_ALPHA: [u8; (PROMPT_RECORD_ICON_PX * PROMPT_RECORD_ICON_PX) as usize] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 109, 54, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 230, 135, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 58, 29, 0, 10, 92, 171, 255, 235, 135, 58, 0,
-    0, 0, 0, 0, 0, 0, 5, 224, 127, 0, 19, 173, 245, 255, 255, 229, 110, 0,
-    0, 0, 0, 0, 0, 0, 39, 251, 173, 0, 0, 0, 47, 247, 174, 9, 0, 0,
-    0, 0, 0, 0, 0, 0, 95, 255, 225, 14, 0, 0, 0, 172, 87, 0, 0, 0,
-    0, 0, 0, 0, 0, 21, 209, 255, 255, 133, 0, 0, 0, 18, 10, 0, 0, 0,
-    0, 0, 0, 4, 54, 194, 255, 255, 255, 250, 131, 19, 0, 0, 0, 0, 0, 0,
-    0, 71, 143, 194, 246, 255, 255, 255, 255, 255, 255, 225, 171, 127, 31, 0, 0, 0,
-    0, 134, 234, 255, 255, 255, 255, 255, 255, 255, 255, 255, 248, 223, 59, 0, 0, 0,
-    0, 0, 17, 62, 136, 246, 255, 255, 255, 255, 205, 94, 42, 3, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 78, 243, 255, 255, 193, 24, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 136, 255, 243, 46, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 56, 254, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 16, 245, 149, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 134, 71, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    109, 54, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 230, 135, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 58, 29, 0, 10, 92, 171, 255, 235, 135, 58, 0, 0, 0, 0, 0, 0, 0, 5, 224, 127, 0, 19, 173,
+    245, 255, 255, 229, 110, 0, 0, 0, 0, 0, 0, 0, 39, 251, 173, 0, 0, 0, 47, 247, 174, 9, 0, 0, 0,
+    0, 0, 0, 0, 0, 95, 255, 225, 14, 0, 0, 0, 172, 87, 0, 0, 0, 0, 0, 0, 0, 0, 21, 209, 255, 255,
+    133, 0, 0, 0, 18, 10, 0, 0, 0, 0, 0, 0, 4, 54, 194, 255, 255, 255, 250, 131, 19, 0, 0, 0, 0, 0,
+    0, 0, 71, 143, 194, 246, 255, 255, 255, 255, 255, 255, 225, 171, 127, 31, 0, 0, 0, 0, 134, 234,
+    255, 255, 255, 255, 255, 255, 255, 255, 255, 248, 223, 59, 0, 0, 0, 0, 0, 17, 62, 136, 246,
+    255, 255, 255, 255, 205, 94, 42, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 78, 243, 255, 255, 193, 24, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 136, 255, 243, 46, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 56, 254, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16, 245, 149, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 134, 71, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
 fn prompt_record_icon() -> Pixmap {
@@ -1713,7 +1702,13 @@ fn paint_wave_body(
                     ink[2],
                     (mark_a * 255.0) as u8,
                 ));
-                pixmap.fill_path(&disc, &paint, FillRule::Winding, Transform::identity(), None);
+                pixmap.fill_path(
+                    &disc,
+                    &paint,
+                    FillRule::Winding,
+                    Transform::identity(),
+                    None,
+                );
             }
         }
     }
@@ -1781,7 +1776,13 @@ fn draw_wave_bars(
         let bx = x0 + i as f32 * pitch;
         let by = cy - h / 2.0;
         if let Some(path) = rounded_rect_path(bx, by, WAVE_BAR_W, h, r) {
-            pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+            pixmap.fill_path(
+                &path,
+                &paint,
+                FillRule::Winding,
+                Transform::identity(),
+                None,
+            );
         }
     }
 }
@@ -3835,9 +3836,7 @@ impl App {
             }
             PillMode::Studio => {
                 let (w, h) = Self::win_size_for(PillMode::Studio, self.skin);
-                let card_h = self
-                    .studio_grown_h
-                    .clamp(studio_card_height(0), h as f32);
+                let card_h = self.studio_grown_h.clamp(studio_card_height(0), h as f32);
                 self.cursor_in_rect((0.0, h as f32 - card_h, w as f32, h as f32))
             }
             PillMode::AgentInput => false,
@@ -5189,13 +5188,7 @@ impl App {
         let left = width - diameter;
         let final_top = card_top - STUDIO_TOP_GAP - diameter;
         let top = final_top - SIB_SLIDE * (1.0 - eased);
-        self.draw_prompt_record_button(
-            pixmap,
-            left,
-            top,
-            diameter,
-            eased * fade.clamp(0.0, 1.0),
-        );
+        self.draw_prompt_record_button(pixmap, left, top, diameter, eased * fade.clamp(0.0, 1.0));
         self.prompt_record_rect = Some((left, top, left + diameter, top + diameter));
     }
 
@@ -5253,26 +5246,13 @@ impl App {
     /// Standalone clipboard acknowledgement. The OS window is centered on the
     /// final width; expanding equally from both ends keeps the capsule itself
     /// screen-centered for the whole entrance and exit.
-    fn draw_centered_clipboard_capsule(
-        &mut self,
-        pixmap: &mut Pixmap,
-        y_off: f32,
-        pill_h: f32,
-    ) {
+    fn draw_centered_clipboard_capsule(&mut self, pixmap: &mut Pixmap, y_off: f32, pill_h: f32) {
         let p = self.riser_progress.clamp(0.0, 1.0);
         let cap_w = clipboard_capsule_width(p, pill_h);
         let left = (CLIPBOARD_SIB_W - cap_w) / 2.0;
         let right = left + cap_w;
         let alpha = p * p * (3.0 - 2.0 * p);
-        self.draw_prompt_capsule(
-            pixmap,
-            left,
-            right,
-            y_off,
-            pill_h,
-            SIB_ARROW_INSET,
-            alpha,
-        );
+        self.draw_prompt_capsule(pixmap, left, right, y_off, pill_h, SIB_ARROW_INSET, alpha);
         self.prompt_switch_rect = Some((left, y_off, right, y_off + pill_h));
     }
 
@@ -5485,7 +5465,11 @@ impl App {
             // static label. This avoids text spilling outside the narrow opening
             // geometry; the text itself does not scale or slide.
             let content_alpha = if self.clipboard_notice {
-                if alpha >= 0.72 { 1.0 } else { 0.0 }
+                if alpha >= 0.72 {
+                    1.0
+                } else {
+                    0.0
+                }
             } else {
                 alpha
             };
@@ -6041,10 +6025,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.clipboard_notice = false;
                 self.clipboard_notice_until = None;
                 self.riser_hide_at = None;
-            } else if self.clipboard_notice
-                && !clipboard_notice_visible
-                && !r.visible
-            {
+            } else if self.clipboard_notice && !clipboard_notice_visible && !r.visible {
                 // A standalone acknowledgement contracts and fades instead of
                 // disappearing at the hold deadline.
                 self.offer_fade_close = true;
@@ -6200,7 +6181,9 @@ impl ApplicationHandler<UserEvent> for App {
                     now,
                 );
                 if !prompt_record_visible
-                    && self.prompt_record_hold_until.is_some_and(|deadline| now >= deadline)
+                    && self
+                        .prompt_record_hold_until
+                        .is_some_and(|deadline| now >= deadline)
                 {
                     self.prompt_record_hold_until = None;
                 }
@@ -6536,13 +6519,19 @@ mod tests {
         // Height carries an extra boost — the wave capsule is deliberately not a
         // uniform scale of the matrix one.
         assert_eq!(w.body_h, m.body_h * SKIN_SHRINK * WAVE_H_BOOST);
-        assert!(w.body_h > m.body_h * SKIN_SHRINK, "the boost must add height");
+        assert!(
+            w.body_h > m.body_h * SKIN_SHRINK,
+            "the boost must add height"
+        );
         // It must still be a CAPSULE: a full semicircle at each end, which is
         // only true while the radius is half the height and the body is wider
         // than it is tall.
         assert_eq!(w.radius(), w.body_h / 2.0);
         let (x0, x1) = w.body_x();
-        assert!(x1 - x0 > w.body_h, "a taller-than-wide body is not a capsule");
+        assert!(
+            x1 - x0 > w.body_h,
+            "a taller-than-wide body is not a capsule"
+        );
         // The band above the pill is the prompt capsule's runway, not part of
         // the pill — it must NOT shrink with the body.
         assert_eq!(w.y_off, m.y_off);
@@ -6664,7 +6653,11 @@ mod tests {
         let bars = bars_of(&f);
         for i in 0..BARS / 2 {
             let (l, r) = (bars[i], bars[BARS - 1 - i]);
-            assert!((l - r).abs() < 1e-4, "bars {i} and {} differ: {l} vs {r}", BARS - 1 - i);
+            assert!(
+                (l - r).abs() < 1e-4,
+                "bars {i} and {} differ: {l} vs {r}",
+                BARS - 1 - i
+            );
         }
     }
 
@@ -6846,8 +6839,8 @@ mod tests {
         use base64::Engine;
         let b64 = |v: &[u8]| base64::engine::general_purpose::STANDARD.encode(v);
         for bad in [
-            b64(&[0u8; 16]),                  // far too small
-            b64(&vec![0u8; 4 * 4 * 4]),       // a plausible icon, wrong size
+            b64(&[0u8; 16]),            // far too small
+            b64(&vec![0u8; 4 * 4 * 4]), // a plausible icon, wrong size
             "not base64 at all!!".to_string(),
             String::new(),
         ] {
@@ -6864,7 +6857,12 @@ mod tests {
         let remote = Mutex::new(Remote::default());
         use base64::Engine;
         let payload = base64::engine::general_purpose::STANDARD.encode(icon_payload([200, 40, 40]));
-        apply_event(&remote, DaemonEvent::PillIcon { rgba: Some(payload) });
+        apply_event(
+            &remote,
+            DaemonEvent::PillIcon {
+                rgba: Some(payload),
+            },
+        );
         let r = remote.lock().unwrap();
         let raw = r.icon.as_deref().expect("a valid icon is kept");
         assert_eq!(raw.len(), PILL_ICON_PX * PILL_ICON_PX * 4);
@@ -6883,7 +6881,12 @@ mod tests {
         let remote = Mutex::new(Remote::default());
         use base64::Engine;
         let payload = base64::engine::general_purpose::STANDARD.encode(icon_payload([9, 9, 9]));
-        apply_event(&remote, DaemonEvent::PillIcon { rgba: Some(payload) });
+        apply_event(
+            &remote,
+            DaemonEvent::PillIcon {
+                rgba: Some(payload),
+            },
+        );
         assert!(remote.lock().unwrap().icon.is_some());
         // The core sends `None` when the setting is off or the app is unknown.
         apply_event(&remote, DaemonEvent::PillIcon { rgba: None });
@@ -6939,7 +6942,10 @@ mod tests {
         );
 
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
-        assert!(painted > 100, "the wave painted almost nothing ({painted}px)");
+        assert!(
+            painted > 100,
+            "the wave painted almost nothing ({painted}px)"
+        );
 
         // Walk the centre row: ink must alternate with empty gaps. A blob would
         // be one unbroken run.
@@ -6964,7 +6970,10 @@ mod tests {
         for (i, p) in pixmap.pixels().iter().enumerate() {
             if p.alpha() > 0 {
                 let y = i / w as usize;
-                assert!(y >= top && y <= bottom, "wave ink escaped the capsule at y={y}");
+                assert!(
+                    y >= top && y <= bottom,
+                    "wave ink escaped the capsule at y={y}"
+                );
             }
         }
     }

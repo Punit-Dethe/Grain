@@ -402,11 +402,8 @@ impl Default for ThemeMode {
 
 /// The three binding ids that start a capture. Order is the order they are
 /// offered in the UI: least to most machinery.
-pub const CAPTURE_MODE_IDS: [&str; 3] = [
-    "transcribe",
-    "transcribe_realtime",
-    "transcribe_native_asr",
-];
+pub const CAPTURE_MODE_IDS: [&str; 3] =
+    ["transcribe", "transcribe_realtime", "transcribe_native_asr"];
 
 pub fn default_capture_mode() -> String {
     "transcribe".to_string()
@@ -1864,13 +1861,24 @@ mod binding_migration_tests {
         let mut settings = get_default_settings();
         let fresh = get_default_settings();
         // Never customised: current still equals the old default.
-        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "ctrl+alt+space");
+        stored_as(
+            &mut settings,
+            "transcribe_realtime",
+            "ctrl+alt+space",
+            "ctrl+alt+space",
+        );
 
         ensure_post_process_defaults(&mut settings);
 
         let moved = &settings.bindings["transcribe_realtime"];
-        assert_eq!(moved.current_binding, fresh.bindings["transcribe_realtime"].current_binding);
-        assert_eq!(moved.default_binding, fresh.bindings["transcribe_realtime"].default_binding);
+        assert_eq!(
+            moved.current_binding,
+            fresh.bindings["transcribe_realtime"].current_binding
+        );
+        assert_eq!(
+            moved.default_binding,
+            fresh.bindings["transcribe_realtime"].default_binding
+        );
     }
 
     #[test]
@@ -1884,18 +1892,28 @@ mod binding_migration_tests {
         let kept = &settings.bindings["transcribe_realtime"];
         assert_eq!(kept.current_binding, "f9", "the user's key must survive");
         // Reset should still offer the CURRENT default, not the retired one.
-        assert_eq!(kept.default_binding, fresh.bindings["transcribe_realtime"].default_binding);
+        assert_eq!(
+            kept.default_binding,
+            fresh.bindings["transcribe_realtime"].default_binding
+        );
     }
 
     #[test]
     fn a_repoint_never_steals_a_chord_the_user_chose() {
         let mut settings = get_default_settings();
         let fresh = get_default_settings();
-        let flow_target = fresh.bindings["transcribe_realtime"].current_binding.clone();
+        let flow_target = fresh.bindings["transcribe_realtime"]
+            .current_binding
+            .clone();
 
         // The user put Standard on exactly the chord Flow is about to adopt.
         stored_as(&mut settings, "transcribe", "ctrl+space", &flow_target);
-        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "ctrl+alt+space");
+        stored_as(
+            &mut settings,
+            "transcribe_realtime",
+            "ctrl+alt+space",
+            "ctrl+alt+space",
+        );
 
         ensure_post_process_defaults(&mut settings);
 
@@ -1925,13 +1943,20 @@ mod binding_migration_tests {
 
         ensure_post_process_defaults(&mut settings);
 
-        assert!(!settings.bindings.contains_key("transcribe_with_post_process"));
+        assert!(!settings
+            .bindings
+            .contains_key("transcribe_with_post_process"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let mut settings = get_default_settings();
-        stored_as(&mut settings, "summon_agent", "ctrl+shift+a", "ctrl+shift+a");
+        stored_as(
+            &mut settings,
+            "summon_agent",
+            "ctrl+shift+a",
+            "ctrl+shift+a",
+        );
 
         let snapshot = |s: &AppSettings| {
             let mut rows: Vec<(String, String, String)> = s

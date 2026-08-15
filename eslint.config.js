@@ -43,7 +43,10 @@ const LEGACY_RAW_LISTEN = [
 // `events` live in the same module, so importing either retains all ~204 command
 // wrappers; that is a real cost to pay on two pages that make five calls
 // between them. `bindings.ts` is the generated file the rules point everyone at.
-const STANDALONE_ENTRIES = ["src/app/extension-host.ts", "src/app/extension-surface.ts"];
+const STANDALONE_ENTRIES = [
+  "src/app/extension-host.ts",
+  "src/app/extension-surface.ts",
+];
 const GENERATED = [...STANDALONE_ENTRIES, "src/app/bindings.ts"];
 
 const NO_RAW_INVOKE = {

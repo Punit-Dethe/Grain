@@ -785,10 +785,7 @@ pub(crate) fn category_for_site(host: &str) -> Option<AppCategory> {
 pub(crate) fn host_matches(host: &str, pattern: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix('.') {
         // `jira.` → matches `jira.acme.com`, but not `myjira.acme.com`.
-        return host
-            .split('.')
-            .next()
-            .is_some_and(|label| label == prefix);
+        return host.split('.').next().is_some_and(|label| label == prefix);
     }
     if host == pattern {
         return true;
@@ -898,9 +895,8 @@ fn category_for_exe(stem: &str) -> AppCategory {
     // ("editor" contains "tor", "examine" contains "min"). Longer keys may match as
     // a substring so channel variants ("code - insiders", "whatsappdesktop") resolve.
     let hit = |set: &[&str]| {
-        set.iter().any(|k| {
-            stem == *k || (k.len() >= 4 && !EXACT_ONLY.contains(k) && stem.contains(k))
-        })
+        set.iter()
+            .any(|k| stem == *k || (k.len() >= 4 && !EXACT_ONLY.contains(k) && stem.contains(k)))
     };
     // Desktop AI assistants. Checked BEFORE the IDE list on purpose: "claude"
     // and "chatgpt" are prompt boxes wherever they run, and the editors that
@@ -1933,8 +1929,8 @@ mod uia {
         UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId,
         UIA_SeparatorControlTypeId, UIA_SliderControlTypeId, UIA_SplitButtonControlTypeId,
         UIA_StatusBarControlTypeId, UIA_TabItemControlTypeId, UIA_TextControlTypeId,
-        UIA_TextEditPatternId, UIA_TextPatternId, UIA_ThumbControlTypeId, UIA_TitleBarControlTypeId,
-        UIA_TreeItemControlTypeId, UIA_ValuePatternId,
+        UIA_TextEditPatternId, UIA_TextPatternId, UIA_ThumbControlTypeId,
+        UIA_TitleBarControlTypeId, UIA_TreeItemControlTypeId, UIA_ValuePatternId,
     };
     use windows::Win32::UI::Accessibility::{
         TextPatternRangeEndpoint_End, TextPatternRangeEndpoint_Start, TextUnit_Character,
@@ -2070,7 +2066,11 @@ mod uia {
 
     /// How many descendants of the window have a given control type. Diagnostic
     /// only, and only ever run on the path where everything else already failed.
-    unsafe fn count_descendants(automation: &IUIAutomation, hwnd: HWND, control_type: i32) -> usize {
+    unsafe fn count_descendants(
+        automation: &IUIAutomation,
+        hwnd: HWND,
+        control_type: i32,
+    ) -> usize {
         descendants_of_type(automation, hwnd, control_type, i32::MAX).len()
     }
 
@@ -2343,11 +2343,7 @@ mod uia {
                     )
                     .ok()?;
                 range
-                    .MoveEndpointByUnit(
-                        TextPatternRangeEndpoint_Start,
-                        TextUnit_Character,
-                        -span,
-                    )
+                    .MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -span)
                     .ok()?;
                 range.GetText(-1).ok()
             })
@@ -2433,20 +2429,15 @@ mod uia {
     /// of the tree (e.g. Zen compact mode with the bar hidden), nothing is found
     /// and we degrade to the generic Browser category — no error, no UI.
     unsafe fn read_url(automation: &IUIAutomation, hwnd: HWND) -> Option<String> {
-        descendants_of_type(
-            automation,
-            hwnd,
-            UIA_EditControlTypeId.0,
-            MAX_EDIT_SCAN,
-        )
-        .into_iter()
-        // The URL can surface as the edit's value (typical) or, on some
-        // browsers, its name — try both.
-        .find_map(|edit| {
-            read_value(&edit)
-                .or_else(|| read_name(&edit))
-                .and_then(|v| host_from_url(&v))
-        })
+        descendants_of_type(automation, hwnd, UIA_EditControlTypeId.0, MAX_EDIT_SCAN)
+            .into_iter()
+            // The URL can surface as the edit's value (typical) or, on some
+            // browsers, its name — try both.
+            .find_map(|edit| {
+                read_value(&edit)
+                    .or_else(|| read_name(&edit))
+                    .and_then(|v| host_from_url(&v))
+            })
     }
 
     // [GRAIN] `read_focused_terms` used to fetch the focused element a second
@@ -3038,7 +3029,11 @@ mod tests {
             AppCategory::AiChat,
         ] {
             let sites = sample_sites(category, 3);
-            assert_eq!(sites.len(), 3, "{category:?} cannot fill its card: {sites:?}");
+            assert_eq!(
+                sites.len(),
+                3,
+                "{category:?} cannot fill its card: {sites:?}"
+            );
             let unique: std::collections::HashSet<_> = sites.iter().collect();
             assert_eq!(unique.len(), 3, "{category:?} repeats a site: {sites:?}");
         }
@@ -3073,13 +3068,22 @@ mod tests {
     /// the SITE is, not to "a browser".
     #[test]
     fn site_table_resolves_webapps_to_real_categories() {
-        assert_eq!(category_for_site("mail.google.com"), Some(AppCategory::Email));
+        assert_eq!(
+            category_for_site("mail.google.com"),
+            Some(AppCategory::Email)
+        );
         assert_eq!(category_for_site("outlook.com"), Some(AppCategory::Email));
         assert_eq!(category_for_site("claude.ai"), Some(AppCategory::AiChat));
-        assert_eq!(category_for_site("github.com"), Some(AppCategory::Technical));
+        assert_eq!(
+            category_for_site("github.com"),
+            Some(AppCategory::Technical)
+        );
         assert_eq!(category_for_site("linear.app"), Some(AppCategory::Work));
         assert_eq!(category_for_site("app.slack.com"), Some(AppCategory::Work));
-        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Work));
+        assert_eq!(
+            category_for_site("docs.google.com"),
+            Some(AppCategory::Work)
+        );
         assert_eq!(category_for_site("x.com"), Some(AppCategory::Casual));
         // Unknown sites resolve to nothing, so the caller keeps `Browser`.
         assert_eq!(category_for_site("example.com"), None);
@@ -3088,9 +3092,18 @@ mod tests {
     /// Subdomains inherit, and `www.` is irrelevant.
     #[test]
     fn site_matching_accepts_subdomains_and_strips_www() {
-        assert_eq!(category_for_site("www.github.com"), Some(AppCategory::Technical));
-        assert_eq!(category_for_site("gist.github.com"), Some(AppCategory::Technical));
-        assert_eq!(category_for_site("acme.atlassian.net"), Some(AppCategory::Work));
+        assert_eq!(
+            category_for_site("www.github.com"),
+            Some(AppCategory::Technical)
+        );
+        assert_eq!(
+            category_for_site("gist.github.com"),
+            Some(AppCategory::Technical)
+        );
+        assert_eq!(
+            category_for_site("acme.atlassian.net"),
+            Some(AppCategory::Work)
+        );
     }
 
     /// The dot boundary is a security property, not a nicety: a bare
@@ -3109,7 +3122,10 @@ mod tests {
     #[test]
     fn site_matching_supports_selfhosted_prefixes() {
         assert_eq!(category_for_site("jira.acme.com"), Some(AppCategory::Work));
-        assert_eq!(category_for_site("confluence.acme.com"), Some(AppCategory::Work));
+        assert_eq!(
+            category_for_site("confluence.acme.com"),
+            Some(AppCategory::Work)
+        );
         // A prefix wildcard must not match a longer first label.
         assert_eq!(category_for_site("myjira.acme.com"), None);
     }
@@ -3121,9 +3137,18 @@ mod tests {
     fn specific_sites_win_over_general_ones() {
         // chat.google.com is WorkChat even though docs.google.com is Docs —
         // neither may collapse into the other.
-        assert_eq!(category_for_site("chat.google.com"), Some(AppCategory::Work));
-        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Work));
-        assert_eq!(category_for_site("gemini.google.com"), Some(AppCategory::AiChat));
+        assert_eq!(
+            category_for_site("chat.google.com"),
+            Some(AppCategory::Work)
+        );
+        assert_eq!(
+            category_for_site("docs.google.com"),
+            Some(AppCategory::Work)
+        );
+        assert_eq!(
+            category_for_site("gemini.google.com"),
+            Some(AppCategory::AiChat)
+        );
     }
 
     /// A single-line field must not get a trailing period bolted on. This is the
@@ -3289,7 +3314,9 @@ mod tests {
 
         let mut side = ctx("chrome", AppCategory::Work);
         side.region = Some("complementary".into());
-        assert!(compose_prompt("BASE", &s, Some(&side), None).contains("page region: complementary"));
+        assert!(
+            compose_prompt("BASE", &s, Some(&side), None).contains("page region: complementary")
+        );
     }
 
     /// Each profile absorbed several older, narrower lines. These are the rules
@@ -3337,7 +3364,9 @@ mod tests {
             AppCategory::Technical,
             AppCategory::AiChat,
         ] {
-            let line = category.default_instruction().expect("profile adds context");
+            let line = category
+                .default_instruction()
+                .expect("profile adds context");
             let lower = line.to_ascii_lowercase();
             assert!(
                 ["only if", "only what", "nothing", "leave "]
@@ -3415,7 +3444,10 @@ mod tests {
         let claimed = ctx("code", AppCategory::Technical);
         let out = compose_prompt("BASE", &s, Some(&claimed), None);
         assert!(out.contains("Speak only in haiku."));
-        assert!(!out.contains("exactly as spoken"), "built-in leaked through");
+        assert!(
+            !out.contains("exactly as spoken"),
+            "built-in leaked through"
+        );
 
         // A different app in the same built-in category is untouched.
         let other = ctx("nvim", AppCategory::Technical);

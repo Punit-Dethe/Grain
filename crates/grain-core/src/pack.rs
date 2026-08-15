@@ -52,7 +52,7 @@ impl Default for ExtractLimits {
     fn default() -> Self {
         ExtractLimits {
             max_entries: 4_096,
-            max_entry_size: 25 * 1024 * 1024, // 25 MiB per file
+            max_entry_size: 25 * 1024 * 1024,  // 25 MiB per file
             max_total_size: 100 * 1024 * 1024, // 100 MiB total
             max_ratio: 200,
         }
@@ -281,7 +281,8 @@ mod tests {
     #[test]
     fn rejects_parent_dir_traversal() {
         let bytes = zip_with(|w| {
-            w.start_file("../evil.txt", SimpleFileOptions::default()).unwrap();
+            w.start_file("../evil.txt", SimpleFileOptions::default())
+                .unwrap();
             w.write_all(b"pwned").unwrap();
         });
         let d = tmp();
@@ -294,7 +295,8 @@ mod tests {
     #[test]
     fn rejects_nested_traversal() {
         let bytes = zip_with(|w| {
-            w.start_file("a/b/../../../evil.txt", SimpleFileOptions::default()).unwrap();
+            w.start_file("a/b/../../../evil.txt", SimpleFileOptions::default())
+                .unwrap();
             w.write_all(b"x").unwrap();
         });
         let d = tmp();
@@ -307,7 +309,8 @@ mod tests {
     #[test]
     fn rejects_absolute_path() {
         let bytes = zip_with(|w| {
-            w.start_file("/etc/passwd", SimpleFileOptions::default()).unwrap();
+            w.start_file("/etc/passwd", SimpleFileOptions::default())
+                .unwrap();
             w.write_all(b"x").unwrap();
         });
         let d = tmp();
@@ -335,7 +338,8 @@ mod tests {
     #[test]
     fn rejects_symlink_entry() {
         let bytes = zip_with(|w| {
-            w.add_symlink("link", "/etc/passwd", SimpleFileOptions::default()).unwrap();
+            w.add_symlink("link", "/etc/passwd", SimpleFileOptions::default())
+                .unwrap();
         });
         let d = tmp();
         assert!(matches!(
@@ -348,7 +352,8 @@ mod tests {
     fn rejects_too_many_entries() {
         let bytes = zip_with(|w| {
             for i in 0..10 {
-                w.start_file(format!("f{i}.txt"), SimpleFileOptions::default()).unwrap();
+                w.start_file(format!("f{i}.txt"), SimpleFileOptions::default())
+                    .unwrap();
                 w.write_all(b"x").unwrap();
             }
         });
@@ -366,7 +371,8 @@ mod tests {
     #[test]
     fn rejects_entry_too_large() {
         let bytes = zip_with(|w| {
-            w.start_file("big.bin", SimpleFileOptions::default()).unwrap();
+            w.start_file("big.bin", SimpleFileOptions::default())
+                .unwrap();
             w.write_all(&vec![7u8; 4096]).unwrap();
         });
         let limits = ExtractLimits {
@@ -384,7 +390,8 @@ mod tests {
     fn rejects_total_too_large() {
         let bytes = zip_with(|w| {
             for i in 0..4 {
-                w.start_file(format!("f{i}.bin"), SimpleFileOptions::default()).unwrap();
+                w.start_file(format!("f{i}.bin"), SimpleFileOptions::default())
+                    .unwrap();
                 w.write_all(&vec![3u8; 4096]).unwrap();
             }
         });
@@ -404,8 +411,8 @@ mod tests {
     fn rejects_ratio_bomb() {
         // Highly compressible: 1 MiB of zeros deflates to almost nothing.
         let bytes = zip_with(|w| {
-            let opts = SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
+            let opts =
+                SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
             w.start_file("bomb.bin", opts).unwrap();
             w.write_all(&vec![0u8; 1024 * 1024]).unwrap();
         });
@@ -425,10 +432,13 @@ mod tests {
     #[test]
     fn good_archive_round_trips() {
         let bytes = zip_with(|w| {
-            w.start_file("manifest.json", SimpleFileOptions::default()).unwrap();
+            w.start_file("manifest.json", SimpleFileOptions::default())
+                .unwrap();
             w.write_all(b"{\"id\":\"com.example.x\"}").unwrap();
-            w.add_directory("assets/", SimpleFileOptions::default()).unwrap();
-            w.start_file("assets/icon.txt", SimpleFileOptions::default()).unwrap();
+            w.add_directory("assets/", SimpleFileOptions::default())
+                .unwrap();
+            w.start_file("assets/icon.txt", SimpleFileOptions::default())
+                .unwrap();
             w.write_all(b"icon").unwrap();
         });
         let d = tmp();

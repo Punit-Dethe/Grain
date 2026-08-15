@@ -7,7 +7,12 @@ type Block =
   | { type: "ordered-list"; items: string[][]; start: number }
   | { type: "quote"; lines: string[] }
   | { type: "code"; language: string; lines: string[] }
-  | { type: "table"; header: string[]; alignments: TableAlignment[]; rows: string[][] }
+  | {
+      type: "table";
+      header: string[];
+      alignments: TableAlignment[];
+      rows: string[][];
+    }
   | { type: "rule" };
 
 type TableAlignment = "left" | "center" | "right";
@@ -98,7 +103,11 @@ function parseBlocks(markdown: string): Block[] {
     }
     const heading = line.match(HEADING);
     if (heading) {
-      blocks.push({ type: "heading", depth: heading[1].length, text: heading[2] });
+      blocks.push({
+        type: "heading",
+        depth: heading[1].length,
+        text: heading[2],
+      });
       i += 1;
       continue;
     }
@@ -126,7 +135,14 @@ function parseBlocks(markdown: string): Block[] {
         const next = lines[i].match(UNORDERED_ITEM);
         if (!next) break;
         i += 1;
-        items.push([next[1], ...readContinuation(lines, () => i, (n) => (i = n))]);
+        items.push([
+          next[1],
+          ...readContinuation(
+            lines,
+            () => i,
+            (n) => (i = n),
+          ),
+        ]);
       }
       blocks.push({ type: "unordered-list", items });
       continue;
@@ -139,7 +155,14 @@ function parseBlocks(markdown: string): Block[] {
         const next = lines[i].match(ORDERED_ITEM);
         if (!next) break;
         i += 1;
-        items.push([next[2], ...readContinuation(lines, () => i, (n) => (i = n))]);
+        items.push([
+          next[2],
+          ...readContinuation(
+            lines,
+            () => i,
+            (n) => (i = n),
+          ),
+        ]);
       }
       blocks.push({ type: "ordered-list", items, start });
       continue;
@@ -181,14 +204,28 @@ function readContinuation(
 }
 
 function isBlockStart(line: string) {
-  return HEADING.test(line) || RULE.test(line) || QUOTE.test(line) || UNORDERED_ITEM.test(line) || ORDERED_ITEM.test(line) || FENCE.test(line);
+  return (
+    HEADING.test(line) ||
+    RULE.test(line) ||
+    QUOTE.test(line) ||
+    UNORDERED_ITEM.test(line) ||
+    ORDERED_ITEM.test(line) ||
+    FENCE.test(line)
+  );
 }
 
 /** Read the GFM `header | header` + `--- | ---` table form. */
-function readTable(lines: string[], start: number): { block: Block; next: number } | null {
+function readTable(
+  lines: string[],
+  start: number,
+): { block: Block; next: number } | null {
   const header = splitTableRow(lines[start]);
   const divider = lines[start + 1] ? splitTableRow(lines[start + 1]) : [];
-  if (header.length < 2 || divider.length !== header.length || !divider.every((cell) => TABLE_DIVIDER_CELL.test(cell))) {
+  if (
+    header.length < 2 ||
+    divider.length !== header.length ||
+    !divider.every((cell) => TABLE_DIVIDER_CELL.test(cell))
+  ) {
     return null;
   }
 
@@ -199,7 +236,11 @@ function readTable(lines: string[], start: number): { block: Block; next: number
   });
   const rows: string[][] = [];
   let next = start + 2;
-  while (next < lines.length && lines[next].trim() && lines[next].includes("|")) {
+  while (
+    next < lines.length &&
+    lines[next].trim() &&
+    lines[next].includes("|")
+  ) {
     const cells = splitTableRow(lines[next]);
     if (!cells.length) break;
     rows.push(normalizeTableRow(cells, header.length));
@@ -242,23 +283,57 @@ function renderBlock(block: Block, key: number, soft: boolean): ReactNode {
       return <Tag key={key}>{inline(block.text)}</Tag>;
     }
     case "unordered-list":
-      return <ul key={key}>{block.items.map((item, i) => <li key={i}>{joinLines(item, soft)}</li>)}</ul>;
+      return (
+        <ul key={key}>
+          {block.items.map((item, i) => (
+            <li key={i}>{joinLines(item, soft)}</li>
+          ))}
+        </ul>
+      );
     case "ordered-list":
-      return <ol key={key} start={block.start}>{block.items.map((item, i) => <li key={i}>{joinLines(item, soft)}</li>)}</ol>;
+      return (
+        <ol key={key} start={block.start}>
+          {block.items.map((item, i) => (
+            <li key={i}>{joinLines(item, soft)}</li>
+          ))}
+        </ol>
+      );
     case "quote":
       return <blockquote key={key}>{joinLines(block.lines, soft)}</blockquote>;
     case "code":
-      return <pre key={key} data-language={block.language || undefined}><code>{block.lines.join("\n")}</code></pre>;
+      return (
+        <pre key={key} data-language={block.language || undefined}>
+          <code>{block.lines.join("\n")}</code>
+        </pre>
+      );
     case "table":
       return (
         <div key={key} className="agc-md-table-wrap">
           <table>
             <thead>
-              <tr>{block.header.map((cell, index) => <th key={index} className={`agc-md-align-${block.alignments[index]}`}>{inline(cell)}</th>)}</tr>
+              <tr>
+                {block.header.map((cell, index) => (
+                  <th
+                    key={index}
+                    className={`agc-md-align-${block.alignments[index]}`}
+                  >
+                    {inline(cell)}
+                  </th>
+                ))}
+              </tr>
             </thead>
             <tbody>
               {block.rows.map((row, rowIndex) => (
-                <tr key={rowIndex}>{row.map((cell, index) => <td key={index} className={`agc-md-align-${block.alignments[index]}`}>{inline(cell)}</td>)}</tr>
+                <tr key={rowIndex}>
+                  {row.map((cell, index) => (
+                    <td
+                      key={index}
+                      className={`agc-md-align-${block.alignments[index]}`}
+                    >
+                      {inline(cell)}
+                    </td>
+                  ))}
+                </tr>
               ))}
             </tbody>
           </table>
@@ -284,7 +359,8 @@ function joinLines(lines: string[], soft: boolean): ReactNode[] {
   const out: ReactNode[] = [];
   let run: string[] = [];
   const flush = (key: number) => {
-    if (run.length) out.push(<Fragment key={`run-${key}`}>{inline(run.join(" "))}</Fragment>);
+    if (run.length)
+      out.push(<Fragment key={`run-${key}`}>{inline(run.join(" "))}</Fragment>);
     run = [];
   };
   lines.forEach((line, index) => {
@@ -302,22 +378,31 @@ function joinLines(lines: string[], soft: boolean): ReactNode[] {
 
 function inline(text: string): ReactNode[] {
   const parts: ReactNode[] = [];
-  const token = /(\[([^\]]+)]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|\*([^*\n]+)\*|_([^_\n]+)_)/g;
+  const token =
+    /(\[([^\]]+)]\((https?:\/\/[^\s)]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|\*([^*\n]+)\*|_([^_\n]+)_)/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
   while ((match = token.exec(text))) {
     if (match.index > cursor) parts.push(text.slice(cursor, match.index));
     if (match[2] && match[3]) {
-      parts.push(<a key={match.index} href={match[3]} target="_blank" rel="noreferrer">{inline(match[2])}</a>);
+      parts.push(
+        <a key={match.index} href={match[3]} target="_blank" rel="noreferrer">
+          {inline(match[2])}
+        </a>,
+      );
     } else if (match[4]) {
       parts.push(<code key={match.index}>{match[4]}</code>);
     } else if (match[5] || match[6]) {
-      parts.push(<strong key={match.index}>{inline(match[5] ?? match[6])}</strong>);
+      parts.push(
+        <strong key={match.index}>{inline(match[5] ?? match[6])}</strong>,
+      );
     } else if (match[7]) {
       parts.push(<del key={match.index}>{inline(match[7])}</del>);
     } else {
-      parts.push(<em key={match.index}>{inline(match[8] ?? match[9] ?? "")}</em>);
+      parts.push(
+        <em key={match.index}>{inline(match[8] ?? match[9] ?? "")}</em>,
+      );
     }
     cursor = token.lastIndex;
   }

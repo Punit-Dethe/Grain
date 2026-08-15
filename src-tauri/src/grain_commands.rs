@@ -563,7 +563,11 @@ pub fn change_default_panel_setting(app: AppHandle, panel: String) -> Result<(),
 pub fn change_pill_skin_setting(app: AppHandle, skin: String) -> Result<(), String> {
     let parsed = PillSkin::from_wire(&skin);
     if parsed.as_wire() != skin {
-        warn!("Invalid pill skin '{}', defaulting to {}", skin, parsed.as_wire());
+        warn!(
+            "Invalid pill skin '{}', defaulting to {}",
+            skin,
+            parsed.as_wire()
+        );
     }
     let mut settings = settings::get_settings(&app);
     settings.pill_skin = parsed;
@@ -654,7 +658,6 @@ pub fn change_grain_space_mcp_setting(app: AppHandle, enabled: bool) -> Result<(
     crate::grain_space::apply_mcp(&app, enabled);
     Ok(())
 }
-
 
 /// [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
 /// download (opt-in consent flow) is driven by the frontend before it turns
@@ -757,7 +760,6 @@ pub fn change_grain_space_auto_reminders_setting(
     settings::write_settings(&app, settings);
     Ok(())
 }
-
 
 /// [GRAIN] Toggle voice conditioning (85 Hz high-pass + boost-only AGC for quiet
 /// mics). Persists the setting and live-updates the open recorder so it applies
@@ -1333,9 +1335,15 @@ fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
         K::AppPath => ("app_path", None, None, None, vec![], vec![], None),
         K::Url => ("url", None, None, None, vec![], vec![], None),
         K::Number { min, max } => ("number", *min, *max, None, vec![], vec![], None),
-        K::Slider { min, max, step } => {
-            ("slider", Some(*min), Some(*max), *step, vec![], vec![], None)
-        }
+        K::Slider { min, max, step } => (
+            "slider",
+            Some(*min),
+            Some(*max),
+            *step,
+            vec![],
+            vec![],
+            None,
+        ),
         K::Select { options } => (
             "select",
             None,
@@ -1744,9 +1752,12 @@ pub async fn extension_host_call(
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or_else(|| internal("extensions registry unavailable", ""))?;
-    let record = reg
-        .record(&id)
-        .ok_or_else(|| internal("unknown extension", "Reinstall the extension and try again."))?;
+    let record = reg.record(&id).ok_or_else(|| {
+        internal(
+            "unknown extension",
+            "Reinstall the extension and try again.",
+        )
+    })?;
     if !record.enabled {
         return Err(internal(
             "extension is disabled",

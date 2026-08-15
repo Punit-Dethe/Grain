@@ -22,7 +22,6 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
   return <PostProcessingPool />;
 };
 
-
 /** [GRAIN] A prompt an extension brought with it carries a namespaced id —
  * `ext:<extension-id>:<key>` — assigned when its pack is applied
  * (grain-core::apply_prompt_pack) and removed by that same prefix when the

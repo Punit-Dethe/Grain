@@ -20,7 +20,10 @@ use clap::{Parser, Subcommand};
 use minisign::{KeyPair, PublicKeyBox, SecretKeyBox};
 
 #[derive(Parser)]
-#[command(name = "grain-registry", about = "Grain extension registry maintainer tools")]
+#[command(
+    name = "grain-registry",
+    about = "Grain extension registry maintainer tools"
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -194,8 +197,7 @@ fn check_submission(dir: PathBuf) -> Result<()> {
     let mut ids: Vec<String> = Vec::new();
     let mut problems = 0usize;
 
-    let entries = fs::read_dir(&ext_dir)
-        .with_context(|| format!("read {}", ext_dir.display()))?;
+    let entries = fs::read_dir(&ext_dir).with_context(|| format!("read {}", ext_dir.display()))?;
     for entry in entries.flatten() {
         if !entry.path().is_dir() {
             continue;
@@ -261,7 +263,9 @@ fn check_submission(dir: PathBuf) -> Result<()> {
         // Typosquat: reject a near-miss of an id already seen.
         for existing in &ids {
             if existing != &s.id && edit_distance(existing, &s.id) <= 1 {
-                fail(&format!("id is a near-miss of existing '{existing}' (typosquat)"));
+                fail(&format!(
+                    "id is a near-miss of existing '{existing}' (typosquat)"
+                ));
                 problems += 1;
             }
         }
@@ -368,7 +372,11 @@ fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
         serde_json::from_str(&manifest_raw).context("parse manifest.json")?;
 
     // Inline the entry file → entry_source, drop the project-only `entry` path.
-    if let Some(entry) = manifest.get("entry").and_then(|v| v.as_str()).map(String::from) {
+    if let Some(entry) = manifest
+        .get("entry")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+    {
         let js = fs::read_to_string(src.join(&entry))
             .with_context(|| format!("read entry file {entry}"))?;
         manifest["entry_source"] = serde_json::Value::String(js);
@@ -462,7 +470,11 @@ fn build_pack(src: PathBuf, out: PathBuf) -> Result<()> {
     // reserved-prefix rule stay an import-time (untrusted) guard.
     let _built: grain_sdk::GrainPack = serde_json::from_slice(&fs::read(&out)?)
         .context("emitted pack does not parse as a GrainPack")?;
-    println!("built {} ({} bytes)", out.display(), fs::metadata(&out)?.len());
+    println!(
+        "built {} ({} bytes)",
+        out.display(),
+        fs::metadata(&out)?.len()
+    );
     Ok(())
 }
 
@@ -543,7 +555,11 @@ against a pinned key; this site is a shop window only.</footer>
     );
 
     fs::write(out.join("index.html"), page)?;
-    println!("wrote {}/index.html ({} entrie(s))", out.display(), index.entries.len());
+    println!(
+        "wrote {}/index.html ({} entrie(s))",
+        out.display(),
+        index.entries.len()
+    );
     Ok(())
 }
 
@@ -554,7 +570,10 @@ fn verify(v1: PathBuf) -> Result<()> {
     let roots_sig = fs::read_to_string(v1.join("roots.json.minisig")).context("read roots sig")?;
     let roots = grain_core::trust::verify_roots(&roots_doc, &roots_sig)
         .map_err(|e| anyhow::anyhow!("roots verification failed (pinned key): {e}"))?;
-    println!("roots.json OK — publishing key {}", &roots.publishing_key[..16.min(roots.publishing_key.len())]);
+    println!(
+        "roots.json OK — publishing key {}",
+        &roots.publishing_key[..16.min(roots.publishing_key.len())]
+    );
 
     let idx_doc = fs::read(v1.join("index.json")).context("read index.json")?;
     let idx_sig = fs::read_to_string(v1.join("index.json.minisig")).context("read index sig")?;
@@ -568,7 +587,13 @@ fn verify(v1: PathBuf) -> Result<()> {
         status
     );
     for e in &index.entries {
-        println!("  · {} {} [{}] {}", e.id, e.version, tier_dbg(&e.tier), e.sha256);
+        println!(
+            "  · {} {} [{}] {}",
+            e.id,
+            e.version,
+            tier_dbg(&e.tier),
+            e.sha256
+        );
     }
 
     let rev_path = v1.join("revocations.json");
@@ -660,7 +685,9 @@ fn manifest_of(bytes: &[u8]) -> Result<(grain_sdk::ExtensionManifest, Vec<String
             let extends = manifest.extends();
             Ok((manifest, extends))
         }
-        PackShape::Unknown => anyhow::bail!("not a recognised .grainpack (first byte is not {{ or PK)"),
+        PackShape::Unknown => {
+            anyhow::bail!("not a recognised .grainpack (first byte is not {{ or PK)")
+        }
     }
 }
 
@@ -702,14 +729,21 @@ fn collect_media(
             .filter(|p| {
                 p.is_file()
                     && matches!(
-                        p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                        p.extension()
+                            .and_then(|e| e.to_str())
+                            .map(str::to_ascii_lowercase)
+                            .as_deref(),
                         Some("webp") | Some("gif")
                     )
             })
             .collect();
         // `cover.*` leads; the rest follow in filename order.
         files.sort_by_key(|p| {
-            let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let name = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
             (name != "cover", name)
         });
         for f in files {
@@ -719,7 +753,11 @@ fn collect_media(
                 .unwrap_or("webp")
                 .to_ascii_lowercase();
             let (sha256, size) = put_media(v1, &f, &ext)?;
-            media.push(grain_sdk::MediaRef { sha256, kind: ext, size });
+            media.push(grain_sdk::MediaRef {
+                sha256,
+                kind: ext,
+                size,
+            });
         }
     }
     Ok((readme, media))
@@ -1007,12 +1045,16 @@ fn keygen(out: PathBuf, name: String) -> Result<()> {
         KeyPair::generate_encrypted_keypair(Some(String::new())).context("generate keypair")?;
 
     let pk_box = pk.to_box().context("encode public key")?;
-    let sk_box = sk.to_box(Some(&format!("grain registry key: {name}"))).context("encode secret key")?;
+    let sk_box = sk
+        .to_box(Some(&format!("grain registry key: {name}")))
+        .context("encode secret key")?;
 
     let pub_path = out.join(format!("{name}.pub"));
     let key_path = out.join(format!("{name}.key"));
-    fs::write(&pub_path, pk_box.to_string()).with_context(|| format!("write {}", pub_path.display()))?;
-    fs::write(&key_path, sk_box.to_string()).with_context(|| format!("write {}", key_path.display()))?;
+    fs::write(&pub_path, pk_box.to_string())
+        .with_context(|| format!("write {}", pub_path.display()))?;
+    fs::write(&key_path, sk_box.to_string())
+        .with_context(|| format!("write {}", key_path.display()))?;
 
     println!("wrote {}", pub_path.display());
     println!("wrote {}  (SECRET — never commit)", key_path.display());
@@ -1048,7 +1090,8 @@ fn sign(key: PathBuf, input: PathBuf, out: Option<PathBuf>) -> Result<()> {
         p.push(".minisig");
         PathBuf::from(p)
     });
-    fs::write(&sig_path, sig_box.into_string()).with_context(|| format!("write {}", sig_path.display()))?;
+    fs::write(&sig_path, sig_box.into_string())
+        .with_context(|| format!("write {}", sig_path.display()))?;
     println!("wrote {}", sig_path.display());
     Ok(())
 }

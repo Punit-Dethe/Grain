@@ -158,9 +158,15 @@ pub struct IndexEntry {
 /// can usefully ask before you have opened anything. A longer taxonomy would
 /// need the user to already know the catalogue to use it.
 pub const CATEGORIES: &[(&str, &str)] = &[
-    ("visual", "Changes how Grain looks — surfaces, layouts, themes."),
+    (
+        "visual",
+        "Changes how Grain looks — surfaces, layouts, themes.",
+    ),
     ("prompts", "Ships prompts you can select."),
-    ("dictation", "Changes what happens to your words on the way out."),
+    (
+        "dictation",
+        "Changes what happens to your words on the way out.",
+    ),
     ("tools", "Adds something Grain could not do before."),
 ];
 

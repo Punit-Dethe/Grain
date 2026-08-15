@@ -775,10 +775,9 @@ async fn post_chat(
         });
     }
 
-    let body = response
-        .text()
-        .await
-        .map_err(|e| LlmError::Other(report_reqwest_error("Failed to read API response body", &e)))?;
+    let body = response.text().await.map_err(|e| {
+        LlmError::Other(report_reqwest_error("Failed to read API response body", &e))
+    })?;
     if !status.is_success() {
         return Err(LlmError::Other(format!(
             "API request failed with status {}: {}",

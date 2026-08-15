@@ -24,10 +24,7 @@ pub fn current(app: &AppHandle) -> PillSkin {
 /// A serialized `PillSkin` event for the current skin, ready to queue onto a
 /// connection. Used by the events server to greet the pill.
 pub fn welcome_frame(app: &AppHandle) -> Option<String> {
-    serde_json::to_string(&DaemonEvent::PillSkin {
-        skin: current(app),
-    })
-    .ok()
+    serde_json::to_string(&DaemonEvent::PillSkin { skin: current(app) }).ok()
 }
 
 /// Broadcast the current skin to every subscriber (the pill). Harmless if

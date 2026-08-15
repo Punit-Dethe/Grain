@@ -21,7 +21,8 @@
   --orange: #ff5d1e;
   --green: #10b981;
   --error: #c0392f;
-  --mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+  --mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
   --body: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
 
   box-sizing: border-box;
@@ -111,7 +112,9 @@
   border-radius: 10px;
   background: var(--input-bg);
   border: 1px solid rgba(20, 19, 18, 0.15);
-  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+  transition:
+    box-shadow 0.12s ease,
+    border-color 0.12s ease;
 }
 .agent-pal-input:focus-within {
   border-color: var(--ink);
@@ -221,8 +224,8 @@
   --agc-line: rgba(255, 255, 255, 0.09);
   --orange: #ff5d1e;
   --green: #10b981;
-  --agc-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas",
-    monospace;
+  --agc-mono:
+    "JetBrains Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
   --agc-body-font: "Inter", system-ui, "Segoe UI", -apple-system, sans-serif;
 
   box-sizing: border-box;
@@ -288,7 +291,9 @@
   background: transparent;
   color: var(--agc-muted);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .agc-pager-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.1);
@@ -317,7 +322,9 @@
   background: rgba(255, 255, 255, 0.06);
   color: var(--agc-muted);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .agc-close:hover {
   background: rgba(255, 255, 255, 0.12);
@@ -522,7 +529,9 @@
   font-size: 11px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .agc-followup-btn:hover:not(:disabled) {
   background: #2f2f34;
@@ -559,7 +568,9 @@
   background: transparent;
   color: var(--agc-muted);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .agc-icon-btn:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.08);
@@ -808,7 +819,9 @@
   background: transparent;
   color: rgba(255, 255, 255, 0.58);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .agc-c-x:hover {
   background: rgba(255, 255, 255, 0.09);
@@ -903,9 +916,15 @@
   font-weight: 700;
   line-height: 1.35;
 }
-.agc-markdown h1 { font-size: 1.28em; }
-.agc-markdown h2 { font-size: 1.15em; }
-.agc-markdown h3 { font-size: 1.06em; }
+.agc-markdown h1 {
+  font-size: 1.28em;
+}
+.agc-markdown h2 {
+  font-size: 1.15em;
+}
+.agc-markdown h3 {
+  font-size: 1.06em;
+}
 .agc-markdown ul,
 .agc-markdown ol {
   padding-left: 1.35em;
@@ -962,9 +981,15 @@
 .agc-markdown tbody tr:last-child td {
   border-bottom: 0;
 }
-.agc-md-align-left { text-align: left; }
-.agc-md-align-center { text-align: center; }
-.agc-md-align-right { text-align: right; }
+.agc-md-align-left {
+  text-align: left;
+}
+.agc-md-align-center {
+  text-align: center;
+}
+.agc-md-align-right {
+  text-align: right;
+}
 .agc-markdown a {
   color: #9fc1ff;
   text-decoration: underline;
@@ -1001,7 +1026,10 @@
   color: var(--agc-muted);
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.14s ease, background 0.12s ease, color 0.12s ease;
+  transition:
+    opacity 0.14s ease,
+    background 0.12s ease,
+    color 0.12s ease;
 }
 .agc-c-turn:hover .agc-c-tool {
   opacity: 0.62;
@@ -1059,7 +1087,9 @@
   font-size: 12.5px;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 0.12s ease, background 0.12s ease;
+  transition:
+    color 0.12s ease,
+    background 0.12s ease;
 }
 .agc-c-followup:hover:not(:disabled) {
   color: var(--agc-ink);
@@ -1095,7 +1125,9 @@
   font-size: 12.5px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 .agc-c-insert:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.17);
@@ -1126,7 +1158,9 @@
   max-height: 132px;
   overflow-y: auto;
   padding: 9px 13px;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
 }
 .agc-c-textarea:focus {
   border-color: rgba(255, 255, 255, 0.22);

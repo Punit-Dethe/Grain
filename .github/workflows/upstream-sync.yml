@@ -19,14 +19,14 @@ name: Upstream Sync
 
 on:
   schedule:
-    - cron: '0 */2 * * *' # Runs every 2 hours
+    - cron: "0 */2 * * *" # Runs every 2 hours
   push:
     # A human recording a verdict republishes immediately. (Human pushes do
     # trigger workflows; the bot's would not — which is why it no longer pushes.)
     branches: [main]
     paths:
-      - 'Upstream/**'
-      - '.github/workflows/upstream-sync.yml'
+      - "Upstream/**"
+      - ".github/workflows/upstream-sync.yml"
   workflow_dispatch: # Allows manual trigger from GitHub UI
 
 permissions:
@@ -54,7 +54,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Fetch Upstream
         run: |

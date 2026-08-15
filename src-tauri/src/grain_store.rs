@@ -859,7 +859,10 @@ mod tests {
                         head.extend_from_slice(&bytes);
                         head
                     }
-                    None => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+                    None => {
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_vec()
+                    }
                 };
                 let _ = stream.write_all(&resp);
                 let _ = stream.flush();
@@ -926,12 +929,22 @@ mod tests {
                 "1.0.0",
             ))
             .expect("install over HTTP");
-        assert!(dir.join("pack.grainpack.json").exists(), "artifact unpacked");
+        assert!(
+            dir.join("pack.grainpack.json").exists(),
+            "artifact unpacked"
+        );
 
         let rec = reg.record("com.example.hello").expect("registry record");
-        assert_eq!(rec.trust, grain_sdk::Trust::Verified, "trust from signed index");
+        assert_eq!(
+            rec.trust,
+            grain_sdk::Trust::Verified,
+            "trust from signed index"
+        );
         assert_eq!(rec.installed_version, "1.0.0");
-        assert!(!rec.enabled, "fresh install lands disabled (enable is explicit)");
+        assert!(
+            !rec.enabled,
+            "fresh install lands disabled (enable is explicit)"
+        );
 
         let _ = std::fs::remove_dir_all(&data);
     }
@@ -954,7 +967,9 @@ mod tests {
         let view = rt.block_on(refresh(&state, &client));
         assert_eq!(view.status, "fresh", "live index verified + fresh");
         assert!(
-            view.entries.iter().any(|e| e.id == "grain.agent-center-layout"),
+            view.entries
+                .iter()
+                .any(|e| e.id == "grain.agent-center-layout"),
             "the centre layout is published in the live catalogue"
         );
 
@@ -987,7 +1002,9 @@ mod tests {
             "1.0.0",
         ))
         .expect("install voice actions from the live blob");
-        let va = reg.record("grain.voice-actions").expect("voice actions installed");
+        let va = reg
+            .record("grain.voice-actions")
+            .expect("voice actions installed");
         assert_eq!(va.trust, grain_sdk::Trust::Core);
         // Its single-file pack unpacked into the versioned dir.
         assert!(
