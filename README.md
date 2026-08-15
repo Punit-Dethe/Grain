@@ -55,38 +55,126 @@ All three modes get their own configurable shortcut, so switching is a keypress,
 
 _See [docs/grain-features.md](docs/grain-features.md) for the full breakdown, including model routing and smart key rotation for cloud providers._
 
-## The extension platform: go far beyond dictation
+## The extension platform: build far beyond dictation
 
-Dictation is the part of Grain everyone installs it for. Extensions are the part that decide how far it goes from there — and they're a first-class part of Grain, not an afterthought bolted on after the fact.
+Grain is designed to stay small at its core while letting extensions build much larger workflows around speech, context, AI, memory, and external services.
 
-Most speech-to-text apps have two options as feature requests pile up: say no forever, or say yes and turn into a crowded settings page full of background services most people never asked for and never turn off. Grain instead stays a small, trusted core — microphone, shortcuts, windows, permissions, cleanup — and pushes every specialized workflow out into **extensions** that install, enable, disable, and uninstall independently of the speech engine and of each other.
+Extensions can react to what you say, understand where you are working, inspect information you deliberately give them access to, use Grain's configured AI and local embedding systems, maintain their own persistent data, communicate with approved network services, and present their own Grain-managed interfaces.
 
-Because an extension can work with a finished transcript, text you've explicitly selected, the app or site you're in, your configured AI provider, and Grain's own panels and windows, it isn't limited to tweaking dictation. It can replicate — and combine — what a dedicated notes app, a snippet manager, a clipboard tool, and a custom AI assistant each do on their own, as one voice-first workflow. Grain's own built-in features (Snippets, Context Awareness, Agent, Grain Space) are all built on this same contract, not a private shortcut only we get to use.
+Grain's own features such as Snippets, Context Awareness, Agent, and Grain Space are built on this extension contract rather than relying on a separate private plugin system.
 
-### Three ways to build, pick the smallest one that works
+### What extensions can access
 
-| Tier                 | What it is                                                                      | Cost when idle                                                         | Good for                                                                          |
-| -------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| **Data pack**        | Just files — prompts, snippets, a theme, a set of voice actions. No code at all | Zero — there's nothing to run                                          | Sharing a prompt library, a snippet set, a pill theme                             |
-| **Scripted**         | JavaScript in its own sandboxed worker, started on activation                   | Zero — the worker is destroyed when idle, not paused in the background | Logic and UI: task trackers, custom panels, workflow automation                   |
-| **Native companion** | Your own small program, started and stopped by Grain                            | Zero — not spawned means not running                                   | Anything only a real OS program can do: screenshots, hardware, local integrations |
+Capabilities are granted individually. An extension only receives the parts of Grain that it explicitly requests and the user approves.
 
-Extensions never create their own windows. They _declare_ what they need — a settings section, an app-like window, an overlay — and Grain builds it, places it, puts it to sleep, and destroys it. The "destroy if not in use" rule the core app follows applies automatically to everyone else's code too, because it isn't optional.
+A scripted extension can currently request access to:
 
-### How we keep this safe
+* **Speech and sessions** — listen for session/transcript events, transform completed transcripts, start Grain recording sessions, or contribute a custom recording mode.
+* **Selected text** — read text the user has explicitly highlighted.
+* **Application context** — identify the foreground application, executable, and browser host when available.
+* **Visible screen text** — read text exposed by the active window's accessibility tree. Password fields are skipped.
+* **Foreground-window images** — capture the active window as an image when the user explicitly grants screenshot access.
+* **AI** — use the AI provider already configured in Grain, including vision when supported by that model.
+* **Local embeddings** — use Grain's on-device embedding model for semantic matching, retrieval, classification, or an extension's own memory system.
+* **Persistent storage** — private key/value storage and a document store for larger collections such as records, notes, histories, or indexes.
+* **Settings** — expose configuration through Grain, including secret values.
+* **Network services** — make host-proxied HTTP requests only to network hosts declared by the extension.
+* **Grain UI** — open an extension workspace, show temporary overlays, contribute settings, and use supported Grain UI slots.
+* **Launching** — open safe web links or applications the user has explicitly selected and approved.
+* **Grain Space notes** — extensions that specifically request the high-privilege `notes` capability can read or modify Space notes.
 
-An extension platform is only as trustworthy as its security model, so trust is enforced in Rust, not in JavaScript:
+This means an extension can be anything from a tiny voice utility to a persistent application with its own interface, semantic memory, AI processing, and external API integration.
 
-- **Every extension runs in its own isolated realm**, with its own authenticated connection. Extensions can't see, patch, or impersonate one another — there's no shared JavaScript global to exploit. (This is the exact class of hole that once broke Figma's plugin sandbox; Grain's boundary doesn't depend on JS being well-behaved.)
-- **Permissions are checked in Rust, on every message, at the connection itself.** An extension without a grant for something — your transcripts, say — doesn't receive a filtered or empty version of it. It never receives the message at all.
-- **Settings are physically isolated per extension.** One extension can never write to Grain's own settings or another extension's. "An extension broke my settings" isn't a bug we have to prevent — it isn't possible.
-- **Sensitive capabilities are named and approved individually** — reading the clipboard, taking a screenshot, opening a URL, sending data to a network host. Combining a sensitive read (like your transcripts) with network access is automatically flagged for closer human review before it can ever reach the store.
+### Three levels of extensions
 
-### Build it for yourself first
+Use the smallest tier that can do the job.
 
-Developer Mode loads an extension straight from a folder, with reload times under a second, using the exact same permission checks an installed extension gets. What you test locally behaves exactly like what you'd ship — Developer Mode changes where the code comes from, never what it's allowed to do. A small CLI (`grain-ext`) scaffolds a project, runs it against a live Grain install, and checks it with the same rules the store's review uses.
+| Tier                   | What it does                                                | Best for                                               |
+| ---------------------- | ----------------------------------------------------------- | ------------------------------------------------------ |
+| **Data pack**          | Ships data such as prompts or themes. No executable code.   | Prompt packs, themes and simple customisation          |
+| **Scripted extension** | Runs JavaScript inside its own isolated worker when needed. | Most integrations, tools, workflows and extension UIs  |
+| **Native companion**   | Runs a separate native program controlled by Grain.         | Functionality that genuinely requires native OS access |
 
-You never have to publish anything to get value from this. If a workflow only matters to your job — turning a dictated support update into your team's exact format, say — build it, keep it on your machine, and never think about it again.
+Scripted workers are created when required and destroyed when idle. Native companions are likewise started and stopped by Grain rather than becoming permanent background services.
+
+### Security is enforced by Grain, not trusted to the extension
+
+Giving extensions access to speech, screen content and external services makes the security boundary especially important.
+
+Grain therefore treats permissions as an enforcement mechanism rather than a convention.
+
+**Every scripted extension gets its own isolated worker and authenticated connection.** It cannot access Grain through normal Tauri IPC, share JavaScript globals with another extension, or impersonate another extension.
+
+**Permissions are checked by the Rust host.** If an extension does not have `capture:selection`, `llm`, `embed`, `capture:screen-image`, or another capability, the host rejects the operation. The extension cannot bypass the check from JavaScript.
+
+**Network access is host-proxied.** Extension workers do not receive unrestricted `fetch`. A manifest must request individual hosts such as `net:api.example.com`; wildcards, arbitrary URLs and undeclared hosts are rejected.
+
+**Extension data is isolated.** Storage and settings belong to the extension that created them. An extension cannot simply modify Grain's settings or another extension's private storage.
+
+**Sensitive capture is separated into individual permissions.** Reading selected text, detecting the active application, reading visible screen text, and taking a screenshot are different grants rather than one broad "screen access" permission.
+
+**Launching is restricted.** URLs are limited to safe supported schemes, and applications can only be launched after the user selects them through Grain's own application picker. Extensions cannot provide arbitrary executable paths and ask Grain to run them.
+
+**Powerful combinations are visible during review.** An extension requesting sensitive information together with network access can be treated differently from a simple local extension.
+
+For published extensions, the distribution system adds another boundary: releases point to a specific source commit, Grain builds the package from that source, the exact code is reviewed before publication, installations come from Grain's signed catalogue, and extensions can be revoked if a serious problem is discovered later.
+
+Developer Mode does not remove these runtime permission checks. Local development changes where the extension comes from, not what it is allowed to access.
+
+### What could you build?
+
+The platform is intentionally general. A few examples:
+
+#### Spotify-style voice controller
+
+A small scripted extension could expose a set of music actions such as:
+
+> "Next song."
+> "Play Daft Punk."
+> "Play my Focus playlist."
+> "Pause."
+
+The extension could use Grain's local embeddings to semantically match speech against a small set of supported commands, call the permitted music-service API, remember user-defined aliases in private storage, and briefly show the result through an overlay.
+
+For simple commands, no LLM needs to run at all.
+
+#### GitHub workflow assistant
+
+A more capable extension could combine several Grain primitives.
+
+Select a stack trace or leave the error visible on screen and say:
+
+> "Turn this into a GitHub issue."
+
+With the appropriate permissions, the extension could read the selected or visible text, use the foreground application as additional context, ask the user's configured AI model to structure the information into a title and issue description, send it to the GitHub API, and show the created issue in a Grain overlay.
+
+A workspace could then provide a richer interface for the extension's saved repositories, recent actions, or settings.
+
+That entire workflow can live inside one scripted extension.
+
+#### Screen-aware research collector
+
+An extension could capture information while the user browses without becoming a general-purpose notes application.
+
+Highlight a product, paper, quote, movie, library, or other item and trigger the extension. It could combine the selection, visible window text, or an explicitly permitted screenshot with AI to extract structured information.
+
+The extension can store those records in its own document store and embed them locally.
+
+Later:
+
+> "What was that speech recognition paper I saved about rolling windows?"
+
+The extension can semantically search its own collection using Grain's embedding system and display the result in an overlay or workspace.
+
+No separate vector database, embedding service, AI daemon, or background process is required.
+
+---
+
+The goal of Grain extensions is not to provide a predefined collection of plugins.
+
+It is to provide reusable primitives — **speech, context, AI, embeddings, storage, networking and UI** — while Grain handles the expensive platform concerns such as lifecycle, permissions, isolation and resource cleanup.
+
+What those primitives become is up to extension authors.
 
 ### Publish it for others, with trust that can't be faked
 
