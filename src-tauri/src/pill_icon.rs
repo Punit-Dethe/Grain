@@ -102,6 +102,10 @@ impl IconKey {
 /// Adding Perplexity is one row there, and its logo arrives by itself; nobody
 /// checks in a `perplexity.png` that goes stale at the next rebrand.
 ///
+/// The one exception is [`site_fetch::BUNDLED`], for hosts that refuse to serve
+/// their icon to any HTTP client at all. It is an exception, not a second way
+/// of doing this — see the reasoning there before adding to it.
+///
 /// It is also what keeps this safe. Grain never fetches from an arbitrary URL
 /// the foreground window happened to be showing — only from a host that matched
 /// a table compiled into the binary.
@@ -561,7 +565,64 @@ mod site_fetch {
     /// dozen requests.
     const MAX_TRIES: usize = 4;
 
+    /// Hosts whose icon CANNOT be fetched, with the icon shipped instead.
+    ///
+    /// A deliberate, narrow exception to "the registry holds identities, never
+    /// assets" — and the reason it is narrow is that the rule is still right.
+    /// An entry here earns its place only by being unfetchable, not by being
+    /// important: every OpenAI origin (`chatgpt.com`, `openai.com`, both `/`
+    /// and `/favicon.ico`) answers 403 to any plain HTTP client. Measured with
+    /// a full Chrome User-Agent as well as ours, so it is not a UA problem —
+    /// it is a TLS-fingerprint and JS challenge, which nothing short of
+    /// driving a real browser will pass. Their CDN does answer, but only at
+    /// content-hashed paths that change on every deploy, so there is no stable
+    /// URL to point at either.
+    ///
+    /// Checked BEFORE the network, not after. Falling back would mean burning
+    /// the whole candidate ladder — up to four requests at a 6 s timeout — on
+    /// every session at a host we already know will refuse, to arrive at the
+    /// same bytes. A host is listed here precisely because asking is pointless.
+    ///
+    /// The cost of the exception is staleness: a rebrand needs a new commit.
+    /// That is the trade being accepted, and it is why this list must not grow
+    /// to hold sites that merely *have* a nice logo.
+    ///
+    /// The art is the public-domain mark from Wikimedia Commons
+    /// (`File:ChatGPT-Logo.svg`), recoloured white and rendered to 128px. White
+    /// because the pill surface is `#1E1E20`: the source is a pure black glyph
+    /// on transparency and would have been invisible on it — and white-on-dark
+    /// is how OpenAI presents the mark themselves. See `assets/site-icons/`.
+    /// Both rows are hosts the registry already supports. Bare `openai.com` is
+    /// deliberately NOT here: it is not in `SITE_TABLE`, so `site_key` would
+    /// never let it reach this code, and an entry for it would be a file that
+    /// looks like it does something and does not.
+    static BUNDLED: &[(&str, &[u8])] = &[
+        (
+            "chatgpt.com",
+            include_bytes!("../assets/site-icons/chatgpt.png"),
+        ),
+        (
+            "chat.openai.com",
+            include_bytes!("../assets/site-icons/chatgpt.png"),
+        ),
+    ];
+
+    /// Matched with the registry's own host rule, so a row covers its
+    /// subdomains exactly as it does for site categories. Two spellings of
+    /// "same site" that could drift apart is a bug waiting to be filed.
+    fn bundled(host: &str) -> Option<&'static [u8]> {
+        BUNDLED
+            .iter()
+            .find(|(pattern, _)| crate::context_detect::host_matches(host, pattern))
+            .map(|(_, bytes)| *bytes)
+    }
+
     pub async fn resolve(host: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = bundled(host) {
+            // Through the same decode as a fetched icon: one downscale path,
+            // one premultiply, no second way for a site icon to be built.
+            return decode(bytes);
+        }
         let client = reqwest::Client::builder()
             .timeout(TIMEOUT)
             .redirect(reqwest::redirect::Policy::limited(4))
@@ -572,7 +633,11 @@ mod site_fetch {
             .ok()?;
         let origin = format!("https://{host}");
 
-        for url in candidates(&client, &origin).await.into_iter().take(MAX_TRIES) {
+        for url in candidates(&client, &origin)
+            .await
+            .into_iter()
+            .take(MAX_TRIES)
+        {
             let Some(bytes) = get(&client, &url, ICON_CAP).await else {
                 continue;
             };
@@ -620,7 +685,10 @@ mod site_fetch {
                 continue;
             };
             let rel_val = rel_val.to_ascii_lowercase();
-            if !rel_val.split_whitespace().any(|w| w == "icon" || w.ends_with("-icon")) {
+            if !rel_val
+                .split_whitespace()
+                .any(|w| w == "icon" || w.ends_with("-icon"))
+            {
                 continue;
             }
             let Some(href) = attr(tag_lo, tag_hi, "href") else {
@@ -647,7 +715,11 @@ mod site_fetch {
                         .filter_map(|p| p.trim().parse::<u32>().ok())
                         .max()
                 })
-                .unwrap_or(if rel_val.contains("apple-touch") { 180 } else { 32 });
+                .unwrap_or(if rel_val.contains("apple-touch") {
+                    180
+                } else {
+                    32
+                });
             found.push((px, url));
         }
 
@@ -783,6 +855,63 @@ mod site_fetch {
         use super::*;
 
         #[test]
+        fn a_bundled_host_decodes_to_a_usable_icon() {
+            // The whole point of shipping the bytes: they must survive the same
+            // decode a fetched icon goes through, or we have shipped a file that
+            // silently produces nothing.
+            let bytes = bundled("chatgpt.com").expect("chatgpt.com should be bundled");
+            let icon = decode(bytes).expect("the bundled PNG must decode");
+            assert_eq!(icon.len(), crate::pill_icon::ICON_BYTES);
+        }
+
+        #[test]
+        fn the_bundled_chatgpt_mark_is_light_enough_to_read_on_the_dark_pill() {
+            // A black-on-transparent favicon is the normal case for this mark,
+            // and on a #1E1E20 surface it is invisible. Recolouring it is the
+            // reason the file exists, so guard the recolour rather than trust it.
+            let icon = decode(bundled("chatgpt.com").unwrap()).unwrap();
+            let (mut lum, mut covered) = (0u64, 0u64);
+            for px in icon.chunks_exact(4) {
+                // Premultiplied, so compare against alpha: an opaque white pixel
+                // is (255,255,255,255) and an opaque black one is (0,0,0,255).
+                if px[3] > 128 {
+                    covered += 1;
+                    lum += (px[0] as u64 * 299 + px[1] as u64 * 587 + px[2] as u64 * 114) / 1000;
+                }
+            }
+            assert!(covered > 200, "the mark is nearly empty: {covered} px");
+            let mean = lum / covered;
+            assert!(
+                mean > 180,
+                "mean luminance {mean} would disappear on the pill surface"
+            );
+        }
+
+        #[test]
+        fn a_bundled_entry_covers_its_subdomains_the_way_the_registry_does() {
+            // A row covers anything under it...
+            assert!(bundled("chat.openai.com").is_some());
+            assert!(bundled("eu.chatgpt.com").is_some());
+            // ...but not a lookalike that merely ends the same way, and not the
+            // bare parent of a row (openai.com is not a supported site).
+            assert!(bundled("notchatgpt.com").is_none());
+            assert!(bundled("openai.com").is_none());
+            assert!(bundled("example.com").is_none());
+        }
+
+        #[test]
+        fn every_bundled_host_is_a_site_the_registry_already_knows() {
+            // A bundled icon for a host that is not in SITE_TABLE could never be
+            // shown: `site_key` gates on the registry before any of this runs.
+            for (host, _) in BUNDLED {
+                assert!(
+                    crate::context_detect::category_for_site(host).is_some(),
+                    "{host} is bundled but not a supported site"
+                );
+            }
+        }
+
+        #[test]
         fn declared_icons_are_ranked_by_size_and_svg_is_skipped() {
             let html = r#"
                 <html><head>
@@ -807,14 +936,23 @@ mod site_fetch {
         #[test]
         fn hrefs_resolve_against_the_origin_and_refuse_downgrades() {
             let o = "https://x.test";
-            assert_eq!(absolutise("/a.png", o).as_deref(), Some("https://x.test/a.png"));
-            assert_eq!(absolutise("a.png", o).as_deref(), Some("https://x.test/a.png"));
+            assert_eq!(
+                absolutise("/a.png", o).as_deref(),
+                Some("https://x.test/a.png")
+            );
+            assert_eq!(
+                absolutise("a.png", o).as_deref(),
+                Some("https://x.test/a.png")
+            );
             assert_eq!(
                 absolutise("//cdn.test/a.png", o).as_deref(),
                 Some("https://cdn.test/a.png"),
                 "protocol-relative must become https, not be dropped"
             );
-            assert_eq!(absolutise("https://cdn.test/a.png", o).as_deref(), Some("https://cdn.test/a.png"));
+            assert_eq!(
+                absolutise("https://cdn.test/a.png", o).as_deref(),
+                Some("https://cdn.test/a.png")
+            );
             // Refused: cleartext, data URIs, and anything exotic.
             assert_eq!(absolutise("http://x.test/a.png", o), None);
             assert_eq!(absolutise("data:image/png;base64,AAAA", o), None);
@@ -850,18 +988,12 @@ mod windows_impl {
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
     };
     use windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
-    use windows::Win32::System::Com::{
-        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
-    };
-    use windows::Win32::System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     /// Ask the Shell for a bigger bitmap than we need and downscale ourselves.
     /// The Shell's own fit is a GDI stretch blit; at pill sizes the difference
@@ -957,7 +1089,9 @@ mod windows_impl {
     }
 
     /// HBITMAP → straight-alpha RGBA plus its dimensions.
-    unsafe fn bitmap_to_rgba(hbm: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<(Vec<u8>, usize, usize)> {
+    unsafe fn bitmap_to_rgba(
+        hbm: windows::Win32::Graphics::Gdi::HBITMAP,
+    ) -> Option<(Vec<u8>, usize, usize)> {
         let mut bm = BITMAP::default();
         let n = GetObjectW(
             HGDIOBJ(hbm.0),
@@ -1035,5 +1169,4 @@ mod windows_impl {
         }
         Some((rgba, w, h))
     }
-
 }

@@ -499,7 +499,7 @@ pub(crate) fn category_for_site(host: &str) -> Option<AppCategory> {
 /// Patterns ending in `.` are prefix wildcards instead (`jira.` matches
 /// `jira.acme.com`), which is how self-hosted installs of Jira, Confluence,
 /// Gerrit and Roundcube name themselves.
-fn host_matches(host: &str, pattern: &str) -> bool {
+pub(crate) fn host_matches(host: &str, pattern: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix('.') {
         // `jira.` → matches `jira.acme.com`, but not `myjira.acme.com`.
         return host
