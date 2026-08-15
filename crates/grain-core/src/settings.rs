@@ -129,6 +129,35 @@ pub struct ContextProfileInstruction {
     pub instruction: String,
 }
 
+/// [GRAIN] One app or website a custom context profile claims.
+///
+/// `value` is an executable stem for `application` (lowercased, no extension,
+/// e.g. `figma`) and a bare host for `website` (no scheme, no path, e.g.
+/// `figma.com`). Anything else is ignored at match time rather than rejected at
+/// write time — a target that names nothing simply never matches.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ContextProfileTarget {
+    /// `application` or `website`.
+    pub kind: String,
+    pub value: String,
+}
+
+/// [GRAIN] A profile the user made, which OUTRANKS the built-in category for
+/// every app and site it claims.
+///
+/// The precedence is the whole point: naming a surface is a statement that the
+/// built-in guess is wrong for it. A profile is allowed exactly one target —
+/// that is how "this one app gets its own instruction" is expressed, and it
+/// needs no separate concept.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct CustomContextProfile {
+    pub id: String,
+    pub title: String,
+    pub instruction: String,
+    #[serde(default)]
+    pub targets: Vec<ContextProfileTarget>,
+}
+
 /// [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
 /// clipboard automatically as they arrive. `First` (default) mirrors the
 /// original behavior — only the first reply of a session is auto-copied.
@@ -823,6 +852,11 @@ pub struct AppSettings {
     /// empty `Vec` in `AppSettings` and nothing on the prompt path.
     #[serde(default)]
     pub context_profile_instructions: Vec<ContextProfileInstruction>,
+    /// [GRAIN] User-made context profiles. These OUTRANK the built-in category
+    /// for any app or site they claim — see [`CustomContextProfile`]. Empty for
+    /// everyone who has not made one, which is the default.
+    #[serde(default)]
+    pub context_custom_profiles: Vec<CustomContextProfile>,
     /// [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
     /// switch. OFF by default for NEW installs; the one-time import in
     /// `load_settings` turns it on for existing users who already have snippets
@@ -1755,6 +1789,7 @@ pub fn get_default_settings() -> AppSettings {
         rolling_live_preview: default_rolling_live_preview(),
         context_awareness_enabled: false,
         context_profile_instructions: Vec::new(),
+        context_custom_profiles: Vec::new(),
         // [GRAIN] Built-in extensions default OFF for new installs (SPEC §10.1);
         // the upgrade import in context.rs turns them on for existing users.
         snippets_enabled: false,

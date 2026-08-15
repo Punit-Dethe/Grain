@@ -107,14 +107,23 @@ impl IconKey {
 /// of doing this — see the reasoning there before adding to it.
 ///
 /// It is also what keeps this safe. Grain never fetches from an arbitrary URL
-/// the foreground window happened to be showing — only from a host that matched
-/// a table compiled into the binary.
-pub fn site_key(host: &str) -> Option<IconKey> {
+/// the foreground window happened to be showing — only from a host the USER or
+/// the compiled table has named.
+///
+/// The user's own custom context profiles extend the registry: a site named in
+/// one is a supported site, so its favicon resolves exactly like a built-in
+/// row's. That keeps one promise the feature would otherwise break — you add
+/// figma.com to a profile, and the pill starts showing Figma — without widening
+/// the safety property at all. The set of fetchable hosts is still a finite list
+/// of names, just one the user can add to; it is never "whatever tab is open".
+pub fn site_key(host: &str, settings: &grain_core::AppSettings) -> Option<IconKey> {
     let host = host.trim().trim_start_matches("www.").to_ascii_lowercase();
     if host.is_empty() || !host.contains('.') {
         return None;
     }
-    crate::context_detect::category_for_site(&host)?;
+    if !crate::context_detect::is_supported_site(&host, settings) {
+        return None;
+    }
     Some(IconKey::Site(host))
 }
 
@@ -150,12 +159,12 @@ fn cache_write(app: &AppHandle, key: &IconKey, rgba: &[u8]) {
 /// One detection round-trip serves both. The URL read is the expensive part (UI
 /// Automation), and `detect_active_context` already performs it for browsers, so
 /// asking separately would pay for it twice.
-fn foreground_keys() -> (Option<IconKey>, Option<IconKey>) {
+fn foreground_keys(settings: &grain_core::AppSettings) -> (Option<IconKey>, Option<IconKey>) {
     let ctx = crate::context_detect::detect_active_context(false, false);
     let site = ctx
         .as_ref()
         .and_then(|c| c.url_host.as_deref())
-        .and_then(site_key);
+        .and_then(|host| site_key(host, settings));
 
     #[cfg(windows)]
     if let Some(aumid) = windows_impl::foreground_aumid() {
@@ -228,14 +237,15 @@ pub fn refresh(app: &AppHandle) {
 /// a site whose icon is not cached yet, the browser's own icon shows at once and
 /// is replaced the moment the site's arrives.
 fn resolve_and_emit(app: &AppHandle, clear_when_unknown: bool) {
-    if !crate::settings::get_settings(app).pill_show_app_icon {
+    let settings = crate::settings::get_settings(app);
+    if !settings.pill_show_app_icon {
         // Clear any icon a previous session left on the pill.
         *SHOWING.lock().unwrap() = None;
         emit(app, None);
         return;
     }
     let generation = RESOLVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
-    let (app_key, site) = foreground_keys();
+    let (app_key, site) = foreground_keys(&settings);
 
     // Each key's OWN cache, kept separate.
     //

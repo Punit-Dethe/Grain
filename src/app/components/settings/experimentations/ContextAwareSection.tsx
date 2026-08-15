@@ -26,11 +26,21 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
-import { commands, type ContextProfileInfo } from "@/bindings";
+import {
+  commands,
+  type ContextProfileInfo,
+  type CustomContextProfile,
+} from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
-type ContextProfileId = "email" | "work" | "casual" | "technical" | "other";
+type ContextProfileId =
+  | "email"
+  | "work"
+  | "casual"
+  | "technical"
+  | "ai_chat"
+  | "other";
 
 const INSTRUCTION_EDITOR_MAX_HEIGHT = 184;
 
@@ -42,6 +52,11 @@ type ContextProfile = {
   detail: string;
   applications: ReadonlyArray<{ name: string; icon: LucideIcon }>;
   available: boolean;
+  /** Lives under the Other tab rather than getting a tab of its own. Keeps the
+   *  tab row to the four surfaces most people dictate into, while still being a
+   *  real built-in profile — and a worked example of what a profile in Other
+   *  looks like, next to the ones the user makes. */
+  inOtherTab?: boolean;
 };
 
 const CONTEXT_PROFILES: readonly ContextProfile[] = [
@@ -98,6 +113,21 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     available: true,
   },
   {
+    id: "ai_chat",
+    label: "AI chat",
+    tabIcon: Bot,
+    summary: "This profile applies in AI assistants",
+    detail:
+      "Grain writes your prompt into the box instead of answering it, and leaves your specifics alone.",
+    applications: [
+      { name: "AI assistant", icon: Bot },
+      { name: "Chat website", icon: Globe2 },
+      { name: "Prompt box", icon: MessageCircle },
+    ],
+    available: true,
+    inOtherTab: true,
+  },
+  {
     id: "other",
     label: "Other",
     tabIcon: Shapes,
@@ -108,17 +138,19 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
   },
 ];
 
-type CustomProfileTarget = {
-  id: string;
-  kind: "application" | "website";
-  label: string;
-};
+/** The tab row: everything that is not parked under Other. */
+const TAB_PROFILES = CONTEXT_PROFILES.filter((profile) => !profile.inOtherTab);
+/** Built-in profiles shown as cards inside the Other tab. */
+const OTHER_TAB_PROFILES = CONTEXT_PROFILES.filter(
+  (profile) => profile.inOtherTab,
+);
 
-type CustomContextProfile = {
-  id: string;
-  title: string;
-  instruction: string;
-  targets: CustomProfileTarget[];
+/** The backend's target shape, widened only where the editor needs it. `value`
+ *  is normalised on save (exe stem / bare host), so what is typed here is a
+ *  convenience — pasting a full path or URL is expected to work. */
+type CustomProfileTarget = {
+  kind: "application" | "website";
+  value: string;
 };
 
 type CustomProfileDialogState =
@@ -135,7 +167,7 @@ function CustomProfileTargetStack({
       {targets.slice(0, 3).map((target) => {
         const Icon = target.kind === "website" ? Globe2 : AppWindow;
         return (
-          <span key={target.id} title={target.label}>
+          <span key={`${target.kind}:${target.value}`} title={target.value}>
             <Icon size={15} strokeWidth={1.8} />
           </span>
         );
@@ -148,10 +180,12 @@ function CustomProfileDialog({
   state,
   onClose,
   onSave,
+  onDelete,
 }: {
   state: CustomProfileDialogState;
   onClose: () => void;
   onSave: (profile: CustomContextProfile) => void;
+  onDelete: (id: string) => void;
 }) {
   const editing = state.mode === "edit";
   const [title, setTitle] = useState(editing ? state.profile.title : "");
@@ -159,7 +193,12 @@ function CustomProfileDialog({
     editing ? state.profile.instruction : "",
   );
   const [targets, setTargets] = useState<CustomProfileTarget[]>(
-    editing ? state.profile.targets.map((target) => ({ ...target })) : [],
+    editing
+      ? (state.profile.targets ?? []).map((target) => ({
+          ...target,
+          kind: target.kind as CustomProfileTarget["kind"],
+        }))
+      : [],
   );
   const [targetKind, setTargetKind] = useState<
     CustomProfileTarget["kind"] | null
@@ -198,18 +237,15 @@ function CustomProfileDialog({
   }, [onClose]);
 
   const addTarget = () => {
-    const label = targetValue.trim();
-    if (!label || !targetKind) return;
+    const value = targetValue.trim();
+    if (!value || !targetKind) return;
     const duplicate = targets.some(
       (target) =>
         target.kind === targetKind &&
-        target.label.toLocaleLowerCase() === label.toLocaleLowerCase(),
+        target.value.toLocaleLowerCase() === value.toLocaleLowerCase(),
     );
     if (!duplicate) {
-      setTargets((current) => [
-        ...current,
-        { id: crypto.randomUUID(), kind: targetKind, label },
-      ]);
+      setTargets((current) => [...current, { kind: targetKind, value }]);
     }
     setTargetValue("");
     setTargetKind(null);
@@ -302,15 +338,24 @@ function CustomProfileDialog({
                   {targets.map((target) => {
                     const Icon = target.kind === "website" ? Globe2 : AppWindow;
                     return (
-                      <span key={target.id} className="context-profile-target">
+                      <span
+                        key={`${target.kind}:${target.value}`}
+                        className="context-profile-target"
+                      >
                         <Icon size={13} aria-hidden="true" />
-                        <span>{target.label}</span>
+                        <span>{target.value}</span>
                         <button
                           type="button"
-                          aria-label={`Remove ${target.label}`}
+                          aria-label={`Remove ${target.value}`}
                           onClick={() =>
                             setTargets((current) =>
-                              current.filter((item) => item.id !== target.id),
+                              current.filter(
+                                (item) =>
+                                  !(
+                                    item.kind === target.kind &&
+                                    item.value === target.value
+                                  ),
+                              ),
                             )
                           }
                         >
@@ -393,6 +438,18 @@ function CustomProfileDialog({
           </div>
 
           <div className="dictionary-dialog-actions">
+            {editing && (
+              <button
+                className="context-profile-delete"
+                type="button"
+                onClick={() => {
+                  onDelete(state.profile.id);
+                  onClose();
+                }}
+              >
+                Delete
+              </button>
+            )}
             <button
               className="dictionary-save-button"
               type="submit"
@@ -449,12 +506,18 @@ export const ContextAwareSection: React.FC = () => {
     );
   }, []);
 
-  useEffect(() => {
-    void loadProfiles();
-  }, [loadProfiles]);
   const [customProfiles, setCustomProfiles] = useState<CustomContextProfile[]>(
     [],
   );
+
+  const loadCustomProfiles = useCallback(async () => {
+    setCustomProfiles(await commands.contextCustomProfiles());
+  }, []);
+
+  useEffect(() => {
+    void loadProfiles();
+    void loadCustomProfiles();
+  }, [loadCustomProfiles, loadProfiles]);
   const [customProfileDialog, setCustomProfileDialog] =
     useState<CustomProfileDialogState | null>(null);
   const activeProfile =
@@ -506,12 +569,32 @@ export const ContextAwareSection: React.FC = () => {
     activeProfileId === "other" ? undefined : profileInfo[activeProfileId];
   const activeDraft = drafts[activeProfileId] ?? "";
 
+  /** Write the whole set back, then re-read. The backend normalises targets —
+   *  a pasted path becomes an exe stem, a pasted URL becomes a bare host — so
+   *  the list must come back FROM it rather than be assumed, or the editor
+   *  would show `https://figma.com/files` for a target stored as `figma.com`. */
+  const saveCustomProfiles = useCallback(
+    async (next: CustomContextProfile[]) => {
+      const result = await commands.updateContextCustomProfiles(next);
+      if (result.status === "error") return;
+      await loadCustomProfiles();
+    },
+    [loadCustomProfiles],
+  );
+
   const saveCustomProfile = (profile: CustomContextProfile) => {
-    setCustomProfiles((current) => {
-      const existing = current.findIndex((item) => item.id === profile.id);
-      if (existing < 0) return [...current, profile];
-      return current.map((item) => (item.id === profile.id ? profile : item));
-    });
+    const exists = customProfiles.some((item) => item.id === profile.id);
+    void saveCustomProfiles(
+      exists
+        ? customProfiles.map((item) =>
+            item.id === profile.id ? profile : item,
+          )
+        : [...customProfiles, profile],
+    );
+  };
+
+  const deleteCustomProfile = (id: string) => {
+    void saveCustomProfiles(customProfiles.filter((item) => item.id !== id));
   };
 
   return (
@@ -525,8 +608,12 @@ export const ContextAwareSection: React.FC = () => {
           role="group"
           aria-label="Context profiles"
         >
-          {CONTEXT_PROFILES.map((profile) => {
-            const active = profile.id === activeProfileId;
+          {TAB_PROFILES.map((profile) => {
+            // Selecting AI chat keeps the Other tab lit, because that is where
+            // you found it and where Back returns you to.
+            const active =
+              profile.id === activeProfileId ||
+              (profile.id === "other" && activeProfileId === "ai_chat");
             const TabIcon = profile.tabIcon;
             return (
               <button
@@ -577,6 +664,19 @@ export const ContextAwareSection: React.FC = () => {
               <div className="context-profile-copy">
                 <strong>{activeProfile.summary}</strong>
                 <span>{activeProfile.detail}</span>
+                {activeProfile.inOtherTab && (
+                  <button
+                    type="button"
+                    className="context-profile-back"
+                    onClick={() => {
+                      void persist(activeProfile.id, activeDraft);
+                      setActiveProfileId("other");
+                      setMode("read");
+                    }}
+                  >
+                    Back to Other
+                  </button>
+                )}
               </div>
               <div
                 className="context-profile-mode"
@@ -664,6 +764,34 @@ export const ContextAwareSection: React.FC = () => {
             role="region"
             aria-labelledby="context-profile-tab-other"
           >
+            {OTHER_TAB_PROFILES.map((profile) => {
+              const CardIcon = profile.tabIcon;
+              return (
+                <button
+                  key={profile.id}
+                  className="context-custom-profile-card"
+                  type="button"
+                  aria-label={`Edit the ${profile.label} profile`}
+                  onClick={() => setActiveProfileId(profile.id)}
+                >
+                  <div
+                    className="context-custom-profile-icons"
+                    aria-hidden="true"
+                  >
+                    <span>
+                      <CardIcon size={15} strokeWidth={1.8} />
+                    </span>
+                  </div>
+                  <span className="context-custom-profile-create-copy">
+                    <strong>{profile.label}</strong>
+                    <span className="context-custom-profile-instruction">
+                      {profileInfo[profile.id]?.instruction ?? profile.detail}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+
             <button
               className="context-custom-profile-card context-custom-profile-create"
               type="button"
@@ -692,12 +820,16 @@ export const ContextAwareSection: React.FC = () => {
                     mode: "edit",
                     profile: {
                       ...profile,
-                      targets: profile.targets.map((target) => ({ ...target })),
+                      targets: (profile.targets ?? []).map((target) => ({
+                        ...target,
+                      })),
                     },
                   })
                 }
               >
-                <CustomProfileTargetStack targets={profile.targets} />
+                <CustomProfileTargetStack
+                  targets={(profile.targets ?? []) as CustomProfileTarget[]}
+                />
                 <span className="context-custom-profile-create-copy">
                   <strong>{profile.title}</strong>
                   <span className="context-custom-profile-instruction">
@@ -743,6 +875,7 @@ export const ContextAwareSection: React.FC = () => {
           state={customProfileDialog}
           onClose={() => setCustomProfileDialog(null)}
           onSave={saveCustomProfile}
+          onDelete={deleteCustomProfile}
         />
       )}
     </>

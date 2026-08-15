@@ -106,6 +106,130 @@ pub fn set_context_profile_instruction(
     Ok(())
 }
 
+/// [GRAIN] The user's own context profiles, as stored.
+///
+/// Read back through a command rather than off the settings blob so the UI sees
+/// the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
+/// showing what was typed instead of what was saved is how a user ends up
+/// wondering why their profile never fires.
+#[tauri::command]
+#[specta::specta]
+pub fn context_custom_profiles(app: AppHandle) -> Vec<settings::CustomContextProfile> {
+    settings::get_settings(&app).context_custom_profiles
+}
+
+/// [GRAIN] Replace the whole set of user-made context profiles.
+///
+/// Whole-set rather than per-profile because the UI edits a list and the list is
+/// small; a partial update API would only add ordering questions. Targets are
+/// normalised here rather than trusted, since precedence and icon eligibility
+/// both key off them: an application is matched against a lowercased exe stem,
+/// and a website against a bare host, so a user who types `Figma.exe` or
+/// `https://figma.com/files` gets what they meant.
+#[tauri::command]
+#[specta::specta]
+pub fn update_context_custom_profiles(
+    app: AppHandle,
+    profiles: Vec<settings::CustomContextProfile>,
+) -> Result<(), String> {
+    let profiles: Vec<settings::CustomContextProfile> = profiles
+        .into_iter()
+        .filter(|p| !p.title.trim().is_empty())
+        .map(|mut p| {
+            p.title = p.title.trim().to_string();
+            p.instruction = p.instruction.trim().to_string();
+            p.targets = p
+                .targets
+                .into_iter()
+                .filter_map(|mut t| {
+                    t.value = match t.kind.as_str() {
+                        "application" => normalise_exe(&t.value),
+                        "website" => normalise_host(&t.value),
+                        _ => return None, // a kind we cannot match is not a target
+                    };
+                    (!t.value.is_empty()).then_some(t)
+                })
+                .collect();
+            p
+        })
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.context_custom_profiles = profiles;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// `C:\Program Files\Figma\Figma.exe` / `Figma.exe` / `figma` → `figma`.
+fn normalise_exe(raw: &str) -> String {
+    let raw = raw.trim().trim_matches('"');
+    std::path::Path::new(raw)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(raw)
+        .to_ascii_lowercase()
+}
+
+/// `https://www.Figma.com/files?x=1` → `figma.com`.
+///
+/// Hand-parsed rather than via a URL crate because the input is as likely to be
+/// a bare host someone typed as it is a pasted URL, and a parser strict enough
+/// to reject `figma.com` would be worse than useless here.
+fn normalise_host(raw: &str) -> String {
+    let raw = raw.trim().trim_matches('"');
+    let after_scheme = raw.split_once("://").map(|(_, rest)| rest).unwrap_or(raw);
+    let host = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .rsplit('@') // strip any user:pass@
+        .next()
+        .unwrap_or("");
+    // Drop a port, then `www.`, which the matcher also strips from live hosts.
+    let host = host.split(':').next().unwrap_or("");
+    let host = host.trim_start_matches("www.").to_ascii_lowercase();
+    // Must look like a domain, or it can never match a real address bar.
+    if host.contains('.') && !host.starts_with('.') && !host.ends_with('.') {
+        host
+    } else {
+        String::new()
+    }
+}
+
+#[cfg(test)]
+mod custom_profile_target_tests {
+    use super::{normalise_exe, normalise_host};
+
+    /// Whatever the user pastes has to end up as the lowercased stem the
+    /// detector compares against, or the profile silently never matches.
+    #[test]
+    fn an_application_target_becomes_an_exe_stem() {
+        assert_eq!(normalise_exe(r"C:\Program Files\Figma\Figma.exe"), "figma");
+        assert_eq!(normalise_exe("Figma.exe"), "figma");
+        assert_eq!(normalise_exe("  figma  "), "figma");
+        assert_eq!(normalise_exe("\"Code.exe\""), "code");
+    }
+
+    /// Same for a website: a pasted URL and a typed host must reach the same
+    /// bare host, since that is what an address bar yields.
+    #[test]
+    fn a_website_target_becomes_a_bare_host() {
+        assert_eq!(normalise_host("https://www.Figma.com/files?x=1"), "figma.com");
+        assert_eq!(normalise_host("figma.com"), "figma.com");
+        assert_eq!(normalise_host("http://localhost:3000/app"), "");
+        assert_eq!(normalise_host("https://user:pw@app.figma.com/"), "app.figma.com");
+        assert_eq!(normalise_host("figma.com:8443"), "figma.com");
+    }
+
+    /// Anything that could never match a real address bar is dropped rather
+    /// than stored, so a profile never carries a target that does nothing.
+    #[test]
+    fn a_target_that_can_never_match_is_rejected() {
+        for junk in ["", "   ", "not a host", "com", ".com", "figma."] {
+            assert_eq!(normalise_host(junk), "", "{junk:?} should not be a host");
+        }
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Result<(), String> {

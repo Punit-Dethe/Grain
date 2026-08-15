@@ -841,6 +841,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_default_panel_setting,
             grain_commands::context_profiles,
             grain_commands::set_context_profile_instruction,
+            grain_commands::context_custom_profiles,
+            grain_commands::update_context_custom_profiles,
             shortcut::change_start_hidden_setting,
             shortcut::change_autostart_setting,
             shortcut::change_translate_to_english_setting,

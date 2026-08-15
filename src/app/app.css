@@ -4116,6 +4116,45 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   color: var(--text-1);
 }
 
+/* Returns from a profile that lives inside the Other tab (AI chat) to the
+   grid it was opened from. */
+.context-profile-back {
+  align-self: flex-start;
+  margin-top: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 560;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.context-profile-back:hover {
+  color: var(--text-1);
+}
+
+.context-profile-delete {
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--danger, #e5484d);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.context-profile-delete:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .context-profile-prompt p,
 .context-profile-prompt textarea {
   width: 100%;

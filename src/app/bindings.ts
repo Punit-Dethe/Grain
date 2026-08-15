@@ -116,6 +116,35 @@ async setContextProfileInstruction(id: string, instruction: string) : Promise<Re
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] The user's own context profiles, as stored.
+ * 
+ * Read back through a command rather than off the settings blob so the UI sees
+ * the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
+ * showing what was typed instead of what was saved is how a user ends up
+ * wondering why their profile never fires.
+ */
+async contextCustomProfiles() : Promise<CustomContextProfile[]> {
+    return await TAURI_INVOKE("context_custom_profiles");
+},
+/**
+ * [GRAIN] Replace the whole set of user-made context profiles.
+ * 
+ * Whole-set rather than per-profile because the UI edits a list and the list is
+ * small; a partial update API would only add ordering questions. Targets are
+ * normalised here rather than trusted, since precedence and icon eligibility
+ * both key off them: an application is matched against a lowercased exe stem,
+ * and a website against a bare host, so a user who types `Figma.exe` or
+ * `https://figma.com/files` gets what they meant.
+ */
+async updateContextCustomProfiles(profiles: CustomContextProfile[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_context_custom_profiles", { profiles }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeStartHiddenSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_start_hidden_setting", { enabled }) };
@@ -2553,6 +2582,12 @@ context_awareness_enabled?: boolean;
  */
 context_profile_instructions?: ContextProfileInstruction[]; 
 /**
+ * [GRAIN] User-made context profiles. These OUTRANK the built-in category
+ * for any app or site they claim — see [`CustomContextProfile`]. Empty for
+ * everyone who has not made one, which is the default.
+ */
+context_custom_profiles?: CustomContextProfile[]; 
+/**
  * [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
  * switch. OFF by default for NEW installs; the one-time import in
  * `load_settings` turns it on for existing users who already have snippets
@@ -2760,6 +2795,29 @@ edited: boolean }
  * to the default instead of failing to load.
  */
 export type ContextProfileInstruction = { id: string; instruction: string }
+/**
+ * [GRAIN] One app or website a custom context profile claims.
+ * 
+ * `value` is an executable stem for `application` (lowercased, no extension,
+ * e.g. `figma`) and a bare host for `website` (no scheme, no path, e.g.
+ * `figma.com`). Anything else is ignored at match time rather than rejected at
+ * write time — a target that names nothing simply never matches.
+ */
+export type ContextProfileTarget = { 
+/**
+ * `application` or `website`.
+ */
+kind: string; value: string }
+/**
+ * [GRAIN] A profile the user made, which OUTRANKS the built-in category for
+ * every app and site it claims.
+ * 
+ * The precedence is the whole point: naming a surface is a statement that the
+ * built-in guess is wrong for it. A profile is allowed exactly one target —
+ * that is how "this one app gets its own instruction" is expressed, and it
+ * needs no separate concept.
+ */
+export type CustomContextProfile = { id: string; title: string; instruction: string; targets?: ContextProfileTarget[] }
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"
 /**
