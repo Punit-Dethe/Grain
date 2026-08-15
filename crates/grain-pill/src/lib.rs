@@ -222,6 +222,15 @@ const SIB_SLIDE: f32 = 16.0; // px the sibling travels in from the right
 const SIB_ARROW_INSET: f32 = 17.0; // ‹ › inset from each capsule end
 const SIB_TEXT_PAD: f32 = 6.0; // gap kept between the arrows and the label
 
+/// Width of the clipboard acknowledgement while it opens/closes. It grows from
+/// a circle into the short final capsule using smoothstep, so both ends settle
+/// without a visible velocity snap.
+fn clipboard_capsule_width(progress: f32, pill_h: f32) -> f32 {
+    let p = progress.clamp(0.0, 1.0);
+    let eased = p * p * (3.0 - 2.0 * p);
+    pill_h + (CLIPBOARD_SIB_W - pill_h) * eased
+}
+
 // [GRAIN] Agent follow-up offer capsule — centered alone (no pill body) when
 // idle. A muted "Ask follow-up" label on the left + a key-cap (rounded rect
 // with a lighter rim) carrying the shortcut on the right. All dimensions are
@@ -4573,12 +4582,14 @@ impl App {
     }
 
     /// [GRAIN] True when the overlay is visible ONLY for a transient centered
-    /// capsule — an idle prompt-switch preview OR the agent follow-up offer —
+    /// capsule — an idle prompt-switch preview, clipboard acknowledgement, or
+    /// agent follow-up offer —
     /// with no recording/processing session active. In this state the body +
     /// dot aura are suppressed and the capsule is drawn alone, centered.
     fn is_centered_overlay_only(&self) -> bool {
         matches!(self.state, PillState::Idle | PillState::Fallback)
             && (self.agent_offer.is_some()
+                || self.clipboard_notice
                 || self
                     .prompt_preview_until
                     .is_some_and(|t| t > Instant::now()))
@@ -4670,6 +4681,8 @@ impl App {
             if overlay_only {
                 if self.agent_offer.is_some() {
                     self.draw_offer_capsule(&mut pixmap, y_off, pill_h);
+                } else if self.clipboard_notice {
+                    self.draw_centered_clipboard_capsule(&mut pixmap, y_off, pill_h);
                 } else {
                     self.draw_centered_prompt_capsule(&mut pixmap, y_off, pill_h);
                 }
@@ -4908,14 +4921,19 @@ impl App {
         let is_status = is_offer || self.session_owner.is_some() || self.clipboard_notice;
         // Fixed width for the switcher; status capsules hug their label.
         let cap_w = if self.clipboard_notice {
-            CLIPBOARD_SIB_W
+            clipboard_capsule_width(p, pill_h)
         } else if is_status {
             let label_w = self.cached_label.as_ref().map_or(0.0, |c| c.total_width);
             (label_w + 4.0 * SIB_TEXT_PAD).clamp(SIB_W, SIB_MAX_W)
         } else {
             SIB_W
         };
-        let slide = SIB_SLIDE * (1.0 - p);
+        let motion = if self.clipboard_notice {
+            p * p * (3.0 - 2.0 * p)
+        } else {
+            p
+        };
+        let slide = SIB_SLIDE * (1.0 - motion);
         let left = pill_right + SIB_GAP + slide;
         let right = left + cap_w;
         self.draw_prompt_capsule(pixmap, left, right, y_off, pill_h, SIB_ARROW_INSET, p);
@@ -4940,6 +4958,32 @@ impl App {
         let left = 0.0;
         let right = SIB_W;
         self.draw_prompt_capsule(pixmap, left, right, y_off, pill_h, SIB_ARROW_INSET, p);
+        self.prompt_switch_rect = Some((left, y_off, right, y_off + pill_h));
+    }
+
+    /// Standalone clipboard acknowledgement. The OS window is centered on the
+    /// final width; expanding equally from both ends keeps the capsule itself
+    /// screen-centered for the whole entrance and exit.
+    fn draw_centered_clipboard_capsule(
+        &mut self,
+        pixmap: &mut Pixmap,
+        y_off: f32,
+        pill_h: f32,
+    ) {
+        let p = self.riser_progress.clamp(0.0, 1.0);
+        let cap_w = clipboard_capsule_width(p, pill_h);
+        let left = (CLIPBOARD_SIB_W - cap_w) / 2.0;
+        let right = left + cap_w;
+        let alpha = p * p * (3.0 - 2.0 * p);
+        self.draw_prompt_capsule(
+            pixmap,
+            left,
+            right,
+            y_off,
+            pill_h,
+            SIB_ARROW_INSET,
+            alpha,
+        );
         self.prompt_switch_rect = Some((left, y_off, right, y_off + pill_h));
     }
 
@@ -5148,6 +5192,14 @@ impl App {
         if let Some(font) = &self.font {
             let cy = top + ph / 2.0;
             let col = [236, 229, 218];
+            // Let the clipboard capsule establish its shape before placing the
+            // static label. This avoids text spilling outside the narrow opening
+            // geometry; the text itself does not scale or slide.
+            let content_alpha = if self.clipboard_notice {
+                if alpha >= 0.72 { 1.0 } else { 0.0 }
+            } else {
+                alpha
+            };
             // The `‹ ›` arrows belong to the SWITCHER; the follow-up offer is a
             // single clickable affordance, so it hides them.
             if self.agent_offer.is_none() && self.session_owner.is_none() && !self.clipboard_notice
@@ -5160,7 +5212,7 @@ impl App {
                     (px0 + arrow_inset, cy),
                     PROMPT_LABEL_PX,
                     col,
-                    alpha,
+                    content_alpha,
                 );
                 draw_cached_text_centered(
                     pixmap,
@@ -5168,7 +5220,7 @@ impl App {
                     (px1 - arrow_inset, cy),
                     PROMPT_LABEL_PX,
                     col,
-                    alpha,
+                    content_alpha,
                 );
             }
             if let Some(cached_label) = &self.cached_label {
@@ -5178,7 +5230,7 @@ impl App {
                     ((px0 + px1) / 2.0, cy),
                     PROMPT_LABEL_PX,
                     col,
-                    alpha,
+                    content_alpha,
                 );
             }
         }
@@ -5394,7 +5446,7 @@ impl ApplicationHandler<UserEvent> for App {
                         || self.clipboard_notice_until.is_some()
                         || self.agent_offer.is_some()
                         || self.riser_progress > 0.01);
-            if session_started_from_overlay {
+            if session_started_from_overlay && !self.clipboard_notice {
                 // Drop the riser immediately so no capsule renders beside the
                 // recording body, and clear the preview so it stops driving
                 // visibility/centering. The offer itself is already cleared by
@@ -5478,6 +5530,11 @@ impl ApplicationHandler<UserEvent> for App {
             // The agent input overrides every other surface while it is up.
             let desired_mode = if self.agent_input.is_some() {
                 PillMode::AgentInput
+            } else if self.clipboard_notice {
+                // Keep a fresh session compact until the short acknowledgement
+                // is gone, so it remains the same right-side sibling instead of
+                // becoming a full-width Studio top bar.
+                PillMode::Collapsed
             } else {
                 r.mode
             };
@@ -5596,6 +5653,14 @@ impl ApplicationHandler<UserEvent> for App {
                 self.riser_hide_at = Some(until);
                 self.prompt_preview_until = None;
                 self.update_cached_label();
+                self.offer_fade_close = false;
+                // A repeated miss during withdrawal reverses the fade from its
+                // current value; a cold reveal starts transparent.
+                if !self.visible && !self.closing {
+                    self.studio_alpha = 0.0;
+                    self.riser_progress = 0.0;
+                }
+                self.closing = false;
             }
 
             // [GRAIN] Extension-owned session changed -> show a host-controlled,
@@ -5647,12 +5712,19 @@ impl ApplicationHandler<UserEvent> for App {
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
             let clipboard_notice_visible = r.anchor != OverlayPosition::None
                 && self.clipboard_notice_until.is_some_and(|t| now < t);
-            if self.clipboard_notice_until.is_some() && !clipboard_notice_visible && !r.visible {
-                // A clipboard-only reveal hides immediately at its deadline, so
-                // clear its presentation mode here instead of waiting for an
-                // off-screen riser animation to settle.
+            if self.clipboard_notice && r.anchor == OverlayPosition::None {
+                // Respect the user's disabled-overlay setting without starting
+                // a hidden animation that would keep the render loop awake.
                 self.clipboard_notice = false;
                 self.clipboard_notice_until = None;
+                self.riser_hide_at = None;
+            } else if self.clipboard_notice
+                && !clipboard_notice_visible
+                && !r.visible
+            {
+                // A standalone acknowledgement contracts and fades instead of
+                // disappearing at the hold deadline.
+                self.offer_fade_close = true;
             }
             let want_visible = r.visible
                 || preview_visible
@@ -5720,6 +5792,10 @@ impl ApplicationHandler<UserEvent> for App {
                     self.studio_alpha = 0.0;
                     self.closing = false;
                     self.offer_fade_close = false;
+                    self.clipboard_notice = false;
+                    self.clipboard_notice_until = None;
+                    self.riser_hide_at = None;
+                    self.riser_progress = 0.0;
                     self.visible = false;
                     if let Some(window) = &self.window {
                         eprintln!("window: hide (fade complete)");
@@ -5785,8 +5861,10 @@ impl ApplicationHandler<UserEvent> for App {
                 if riser_target == 0.0 && self.riser_progress < 0.02 {
                     self.riser_progress = 0.0;
                     self.riser_hide_at = None;
-                    self.clipboard_notice = false;
-                    self.clipboard_notice_until = None;
+                    if !self.closing {
+                        self.clipboard_notice = false;
+                        self.clipboard_notice_until = None;
+                    }
                 }
                 // [GRAIN] Agent input per-frame motion: the wave/caret clock and
                 // the expand ease (≈ the reference's 300ms ease-out curve).
@@ -5823,6 +5901,8 @@ impl ApplicationHandler<UserEvent> for App {
                             {
                                 if self.agent_offer.is_some() {
                                     self.offer_capsule_w()
+                                } else if self.clipboard_notice {
+                                    CLIPBOARD_SIB_W
                                 } else {
                                     SIB_W
                                 }
@@ -5945,6 +6025,12 @@ mod tests {
                 <= CLIPBOARD_SIB_W - 2.0 * SIB_TEXT_PAD,
             "the confirmation must fit without truncation"
         );
+
+        let pill_h = PillGeom::for_skin(PillSkin::Wave).body_h;
+        assert_eq!(clipboard_capsule_width(0.0, pill_h), pill_h);
+        assert_eq!(clipboard_capsule_width(1.0, pill_h), CLIPBOARD_SIB_W);
+        let halfway = clipboard_capsule_width(0.5, pill_h);
+        assert!(halfway > pill_h && halfway < CLIPBOARD_SIB_W);
     }
 
     // ── Pill skins ──────────────────────────────────────────────────────────
