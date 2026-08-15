@@ -1410,46 +1410,45 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
     Some(out)
 }
 
-/// Two restrained four-point sparkles: a clear AI mark that stays legible at the
-/// pill's tiny size. Authored once into a `Pixmap` in `App::new`, then blitted
-/// exactly like the foreground-application icon. No image decoder, font glyph,
-/// render-time allocation, or additional dependency is involved.
+/// Prompt Record artwork derived from `assets/icons8-ai-100.png`.
+/// The source's antialiased alpha was high-quality bicubic-downsampled offline;
+/// runtime only maps that 18² coverage to premultiplied white RGBA once in
+/// `App::new`, then blits it exactly like the foreground-application icon.
+/// No image decoder, per-frame resampling, or additional dependency is involved.
 const PROMPT_RECORD_ICON_PX: u32 = 18;
+const PROMPT_RECORD_ICON_ALPHA: [u8; (PROMPT_RECORD_ICON_PX * PROMPT_RECORD_ICON_PX) as usize] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 97, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 99, 240, 228, 92, 6, 0, 0,
+    0, 0, 0, 0, 122, 31, 0, 0, 0, 0, 19, 170, 255, 255, 161, 11, 0, 0,
+    0, 0, 0, 0, 172, 44, 0, 0, 0, 0, 0, 0, 165, 143, 0, 0, 99, 4,
+    0, 0, 0, 0, 163, 43, 0, 0, 0, 0, 0, 0, 21, 17, 0, 118, 255, 144,
+    0, 3, 88, 0, 161, 38, 25, 14, 0, 0, 14, 27, 0, 0, 0, 33, 173, 50,
+    0, 8, 182, 2, 159, 23, 133, 78, 0, 0, 78, 138, 9, 72, 0, 0, 4, 0,
+    60, 4, 169, 2, 159, 23, 134, 70, 35, 35, 70, 133, 25, 175, 0, 0, 0, 61,
+    173, 0, 168, 2, 159, 23, 132, 56, 105, 105, 56, 132, 23, 161, 1, 108, 0, 175,
+    173, 0, 168, 2, 159, 23, 132, 56, 104, 104, 56, 132, 23, 159, 2, 180, 0, 173,
+    59, 4, 169, 2, 159, 23, 134, 70, 35, 35, 70, 134, 23, 159, 2, 169, 4, 59,
+    0, 8, 182, 2, 159, 23, 133, 78, 0, 0, 78, 133, 23, 159, 2, 182, 8, 0,
+    0, 3, 87, 0, 161, 38, 24, 14, 0, 0, 14, 24, 38, 161, 0, 87, 3, 0,
+    0, 0, 0, 0, 163, 43, 0, 0, 0, 0, 0, 0, 43, 163, 0, 0, 0, 0,
+    0, 0, 0, 0, 173, 45, 0, 0, 0, 0, 0, 0, 44, 173, 0, 0, 0, 0,
+    0, 0, 0, 0, 121, 31, 0, 0, 0, 0, 0, 0, 31, 121, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+];
 
 fn prompt_record_icon() -> Pixmap {
-    let mut icon = Pixmap::new(PROMPT_RECORD_ICON_PX, PROMPT_RECORD_ICON_PX)
-        .expect("non-zero Prompt Record icon size");
-    icon.fill(Color::TRANSPARENT);
-
-    let mut white = Paint {
-        anti_alias: true,
-        ..Default::default()
-    };
-    white.set_color(Color::from_rgba8(255, 255, 255, 255));
-
-    let sparkle = |cx: f32, cy: f32, rx: f32, ry: f32, inset: f32| {
-        let mut path = PathBuilder::new();
-        path.move_to(cx, cy - ry);
-        path.line_to(cx + inset, cy - inset);
-        path.line_to(cx + rx, cy);
-        path.line_to(cx + inset, cy + inset);
-        path.line_to(cx, cy + ry);
-        path.line_to(cx - inset, cy + inset);
-        path.line_to(cx - rx, cy);
-        path.line_to(cx - inset, cy - inset);
-        path.close();
-        path.finish()
-    };
-    for (cx, cy, rx, ry, inset) in [
-        (6.7, 10.1, 5.2, 6.5, 1.05),
-        (14.1, 4.3, 2.8, 3.5, 0.62),
-    ] {
-        if let Some(path) = sparkle(cx, cy, rx, ry, inset) {
-            icon.fill_path(&path, &white, FillRule::Winding, Transform::identity(), None);
-        }
+    let mut rgba = Vec::with_capacity(PROMPT_RECORD_ICON_ALPHA.len() * 4);
+    for alpha in PROMPT_RECORD_ICON_ALPHA {
+        // Premultiplied white: RGB equals alpha at antialiased edges.
+        rgba.extend_from_slice(&[alpha, alpha, alpha, alpha]);
     }
-
-    icon
+    Pixmap::from_vec(
+        rgba,
+        tiny_skia::IntSize::from_wh(PROMPT_RECORD_ICON_PX, PROMPT_RECORD_ICON_PX)
+            .expect("non-zero Prompt Record icon size"),
+    )
+    .expect("Prompt Record icon coverage matches its dimensions")
 }
 
 /// The wave skin's voice field: one loudness follower plus a critically damped
@@ -6470,12 +6469,29 @@ mod tests {
         let icon = prompt_record_icon();
         assert_eq!(icon.width(), PROMPT_RECORD_ICON_PX);
         assert_eq!(icon.height(), PROMPT_RECORD_ICON_PX);
-        assert!(icon.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        assert_eq!(
+            icon.pixels()
+                .iter()
+                .filter(|pixel| pixel.alpha() > 0)
+                .count(),
+            155
+        );
         assert!(icon
             .pixels()
             .iter()
             .filter(|pixel| pixel.alpha() > 0)
             .all(|pixel| pixel.red() == pixel.green() && pixel.green() == pixel.blue()));
+
+        let source = Pixmap::decode_png(include_bytes!(
+            "../assets/icons8-ai-100.png"
+        ))
+        .expect("tracked Prompt Record source is a PNG");
+        assert_eq!((source.width(), source.height()), (100, 100));
+        assert!(source
+            .pixels()
+            .iter()
+            .filter(|pixel| pixel.alpha() > 0)
+            .all(|pixel| pixel.red() == 0 && pixel.green() == 0 && pixel.blue() == 0));
     }
 
     // ── Pill skins ──────────────────────────────────────────────────────────
