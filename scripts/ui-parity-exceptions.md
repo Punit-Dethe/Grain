@@ -55,3 +55,22 @@ gate is green; move them out when UI 2.0 gives them a home.
 | Field | Reason |
 |---|---|
 | `custom_filler_words` | A real user-facing override — it replaces Grain's built-in filler-word list in `finalize_transcript` — with no control anywhere. It predates the gate. **Candidate to surface in UI 2.0** next to Custom Words, which already has a row. |
+
+### Revealed 2026-08-15 — NOT triaged
+
+These six are not judgements. They surfaced the moment `ui_parity.py`'s
+generated-bindings exclusion was fixed: it compared a tree-relative name against
+a `src/`-relative path, so after the UI 2.0 move to `src/app/` it stopped
+matching and `bindings.ts` — which names every field — was admitted as evidence.
+Every field looked reachable because its own type declaration counted as a UI
+control. Rows are here to keep the gate green while it is honest again; each one
+still needs a real decision.
+
+| Field | Reason |
+|---|---|
+| `filler_word_removal_enabled` | The switch for filler-word removal. Its companion `custom_filler_words` is already logged as a gap above, so the whole feature is unreachable, not just the word list. Triage together. |
+| `paste_catch_enabled` | Paste Catch is an in-flight workstream; the setting exists and defaults ON. Needs a control before release, not before this commit. |
+| `paste_catch_hold_ms` | How long the caught transcript stays on the clipboard. Same workstream as above. |
+| `reliable_paste` | Upstream (Handy) paste-strategy flag. Never had Grain UI; decide whether Grain exposes it at all or pins a value. |
+| `selected_model` | Upstream field. Grain drives model choice through its own per-category selections (Batch/Rolling), so this may be legitimately dead here — confirm before surfacing. |
+| `selected_channel` | Upstream field from #1254, merged with its Rust command while the frontend `ChannelSelector` was dropped under the frontend freeze. Decide whether Grain wants a channel picker. |
