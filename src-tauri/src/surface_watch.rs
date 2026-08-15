@@ -106,6 +106,9 @@ pub fn start(app: &AppHandle) {
 /// during the session's tail cannot repaint the pill after the session ended.
 pub fn stop(app: &AppHandle) {
     ACTIVE.store(false, Ordering::Relaxed);
+    // The settle task checks ACTIVE, but resolves already in flight do not —
+    // they answer to the icon path's own generation counter, so retire that too.
+    crate::pill_icon::cancel_pending();
     #[cfg(windows)]
     {
         let _ = app.run_on_main_thread(windows_impl::remove);

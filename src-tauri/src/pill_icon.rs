@@ -282,6 +282,17 @@ pub fn refresh(app: &AppHandle) {
     resolve_and_emit(app, false, true);
 }
 
+/// Stand down anything still resolving. Called when the session ends.
+///
+/// Bumping the generation is all it takes: every deferred path already drops its
+/// result when the value it started under is stale, so one atomic retires an
+/// in-flight favicon fetch, a cold app's icon resolve, and the browser retry
+/// alike. Without it the retry would wake up to a UI Automation read for a pill
+/// that stopped showing up to a second ago — work with nowhere to land.
+pub fn cancel_pending() {
+    RESOLVE_GEN.fetch_add(1, Ordering::Relaxed);
+}
+
 /// Two rungs, best-first: a supported WEBSITE outranks the browser showing it,
 /// because "Grain knows you are in Gmail" is a stronger claim than "Grain knows
 /// you are in Chrome".

@@ -180,8 +180,17 @@ const APP_PICKER_LIMIT = 50;
  *  application targets never pays for it at all. */
 let installedAppsPromise: Promise<InstalledApp[]> | null = null;
 
-function loadInstalledApps(): Promise<InstalledApp[]> {
-  installedAppsPromise ??= commands.installedApps().catch(() => []);
+/** `refresh` re-reads rather than reusing the cached walk.
+ *
+ *  The picker passes it on open, because that is the one moment freshness is
+ *  worth anything: without it an app installed since Grain started would be
+ *  missing from the list, with no hint as to why. Everywhere else — resolving an
+ *  icon for a target already on a profile — the cached answer is the right one,
+ *  and re-walking a shell namespace to draw a 18px tile would not be. */
+function loadInstalledApps(refresh = false): Promise<InstalledApp[]> {
+  if (refresh || !installedAppsPromise) {
+    installedAppsPromise = commands.installedApps().catch(() => []);
+  }
   return installedAppsPromise;
 }
 
@@ -341,7 +350,7 @@ function AppPicker({
 
   useEffect(() => {
     let live = true;
-    void loadInstalledApps().then((rows) => {
+    void loadInstalledApps(true).then((rows) => {
       if (live) setApps(rows);
     });
     return () => {
