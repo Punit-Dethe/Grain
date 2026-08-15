@@ -839,6 +839,8 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,
             grain_commands::change_default_panel_setting,
+            grain_commands::context_profiles,
+            grain_commands::set_context_profile_instruction,
             shortcut::change_start_hidden_setting,
             shortcut::change_autostart_setting,
             shortcut::change_translate_to_english_setting,

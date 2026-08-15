@@ -26,6 +26,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { commands, type ContextProfileInfo } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
@@ -40,7 +41,6 @@ type ContextProfile = {
   summary: string;
   detail: string;
   applications: ReadonlyArray<{ name: string; icon: LucideIcon }>;
-  instruction: string;
   available: boolean;
 };
 
@@ -56,8 +56,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
       { name: "Webmail", icon: AtSign },
       { name: "Mail composer", icon: Send },
     ],
-    instruction:
-      "Polish for professional email. Keep the user's meaning and structure; add no subject, greeting, sign-off, or email layout unless dictated.",
     available: true,
   },
   {
@@ -71,8 +69,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
       { name: "Project workspace", icon: BriefcaseBusiness },
       { name: "Issue tracker", icon: ListChecks },
     ],
-    instruction:
-      "Keep work messages professional, concise, and conversational. Preserve names and technical terms; add no greeting, pleasantries, or formal paragraph structure unless dictated.",
     available: true,
   },
   {
@@ -86,8 +82,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
       { name: "Mobile messenger", icon: Smartphone },
       { name: "Social conversation", icon: Users },
     ],
-    instruction:
-      "Keep the user's own voice, slang, and phrasing. Use light cleanup only; add no hashtags, emoji, or formality unless dictated.",
     available: true,
   },
   {
@@ -101,8 +95,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
       { name: "Terminal", icon: SquareTerminal },
       { name: "AI assistant", icon: Bot },
     ],
-    instruction:
-      "Treat this as technical writing, code, a command, or an AI instruction. Preserve identifiers, flags, paths, casing, and exact intent; for commands, add no sentence casing or trailing period.",
     available: true,
   },
   {
@@ -112,7 +104,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     summary: "",
     detail: "",
     applications: [],
-    instruction: "",
     available: true,
   },
 ];
@@ -432,14 +423,35 @@ export const ContextAwareSection: React.FC = () => {
   const [activeProfileId, setActiveProfileId] =
     useState<ContextProfileId>("email");
   const [mode, setMode] = useState<"read" | "write">("read");
-  const [instructions, setInstructions] = useState<
-    Record<ContextProfileId, string>
-  >(
-    () =>
+  /** Backend truth, keyed by profile id. Rust owns this text — the shipped
+   *  default AND the user's edit — so that what this editor shows is provably
+   *  the string the model receives. Undefined until the first load resolves. */
+  const [profileInfo, setProfileInfo] = useState<
+    Partial<Record<ContextProfileId, ContextProfileInfo>>
+  >({});
+  /** What is in the textarea right now. Separate from `profileInfo` because a
+   *  half-typed instruction must not be written to settings on every keystroke;
+   *  it is persisted on blur and when leaving the profile. */
+  const [drafts, setDrafts] = useState<
+    Partial<Record<ContextProfileId, string>>
+  >({});
+
+  const loadProfiles = useCallback(async () => {
+    const rows = await commands.contextProfiles();
+    const byId = Object.fromEntries(
+      rows.map((row) => [row.id, row]),
+    ) as Partial<Record<ContextProfileId, ContextProfileInfo>>;
+    setProfileInfo(byId);
+    setDrafts(
       Object.fromEntries(
-        CONTEXT_PROFILES.map((profile) => [profile.id, profile.instruction]),
-      ) as Record<ContextProfileId, string>,
-  );
+        rows.map((row) => [row.id, row.instruction]),
+      ) as Partial<Record<ContextProfileId, string>>,
+    );
+  }, []);
+
+  useEffect(() => {
+    void loadProfiles();
+  }, [loadProfiles]);
   const [customProfiles, setCustomProfiles] = useState<CustomContextProfile[]>(
     [],
   );
@@ -465,7 +477,34 @@ export const ContextAwareSection: React.FC = () => {
 
   useLayoutEffect(() => {
     if (mode === "write") fitInstructionEditor(instructionEditorRef.current);
-  }, [activeProfileId, fitInstructionEditor, instructions, mode]);
+  }, [activeProfileId, fitInstructionEditor, drafts, mode]);
+
+  /** Write one profile's instruction back, then re-read. The re-read is what
+   *  keeps `edited` honest: the backend clears the override when the text
+   *  matches the shipped default, so it — not this component — decides whether
+   *  a profile counts as customised. */
+  const persist = useCallback(
+    async (id: ContextProfileId, text: string) => {
+      if (id === "other") return; // not a real profile; nothing to store
+      if (text === profileInfo[id]?.instruction) return; // unchanged
+      const result = await commands.setContextProfileInstruction(id, text);
+      if (result.status === "error") {
+        // Put the stored text back rather than leaving the editor showing an
+        // edit that was never saved.
+        setDrafts((current) => ({
+          ...current,
+          [id]: profileInfo[id]?.instruction ?? "",
+        }));
+        return;
+      }
+      await loadProfiles();
+    },
+    [loadProfiles, profileInfo],
+  );
+
+  const activeInfo =
+    activeProfileId === "other" ? undefined : profileInfo[activeProfileId];
+  const activeDraft = drafts[activeProfileId] ?? "";
 
   const saveCustomProfile = (profile: CustomContextProfile) => {
     setCustomProfiles((current) => {
@@ -504,6 +543,11 @@ export const ContextAwareSection: React.FC = () => {
                     : "Custom profiles will be available later"
                 }
                 onClick={() => {
+                  // Commit the profile being left before the draft it belongs
+                  // to stops being the visible one.
+                  if (mode === "write" && profile.id !== activeProfileId) {
+                    void persist(activeProfileId, activeDraft);
+                  }
                   setActiveProfileId(profile.id);
                   setMode("read");
                 }}
@@ -543,7 +587,12 @@ export const ContextAwareSection: React.FC = () => {
                   type="button"
                   className={mode === "read" ? "active" : undefined}
                   aria-pressed={mode === "read"}
-                  onClick={() => setMode("read")}
+                  onClick={() => {
+                    // Leaving the editor is a commit point: the textarea's blur
+                    // does not fire when the toggle steals focus first.
+                    void persist(activeProfile.id, activeDraft);
+                    setMode("read");
+                  }}
                 >
                   Read
                 </button>
@@ -564,27 +613,45 @@ export const ContextAwareSection: React.FC = () => {
                 className="context-profile-prompt-label"
               >
                 Instruction
+                {activeInfo?.edited && (
+                  <button
+                    type="button"
+                    className="context-profile-reset"
+                    onClick={() => {
+                      const fallback = activeInfo.default_instruction;
+                      setDrafts((current) => ({
+                        ...current,
+                        [activeProfile.id]: fallback,
+                      }));
+                      void persist(activeProfile.id, fallback);
+                    }}
+                  >
+                    Reset to default
+                  </button>
+                )}
               </span>
               {mode === "read" ? (
                 <p
                   id={`context-profile-prompt-${activeProfile.id}`}
                   aria-labelledby={`context-profile-instruction-label-${activeProfile.id}`}
                 >
-                  {instructions[activeProfile.id]}
+                  {activeDraft}
                 </p>
               ) : (
                 <textarea
                   id={`context-profile-prompt-${activeProfile.id}`}
                   ref={instructionEditorRef}
                   autoFocus
-                  value={instructions[activeProfile.id]}
+                  value={activeDraft}
                   aria-labelledby={`context-profile-tab-${activeProfile.id} context-profile-instruction-label-${activeProfile.id}`}
-                  onChange={(event) =>
-                    setInstructions((current) => ({
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setDrafts((current) => ({
                       ...current,
-                      [activeProfile.id]: event.target.value,
-                    }))
-                  }
+                      [activeProfile.id]: next,
+                    }));
+                  }}
+                  onBlur={() => void persist(activeProfile.id, activeDraft)}
                 />
               )}
             </div>

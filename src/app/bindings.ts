@@ -94,6 +94,28 @@ async changeDefaultPanelSetting(panel: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] The four editable profiles, in display order.
+ */
+async contextProfiles() : Promise<ContextProfileInfo[]> {
+    return await TAURI_INVOKE("context_profiles");
+},
+/**
+ * [GRAIN] Set (or clear) one profile's instruction.
+ * 
+ * Passing text equal to the default CLEARS the override rather than storing a
+ * copy of it. That is what keeps an untouched-in-effect profile tracking the
+ * shipped wording as it improves, instead of being pinned by a user who opened
+ * the editor, changed their mind, and typed it back.
+ */
+async setContextProfileInstruction(id: string, instruction: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_context_profile_instruction", { id, instruction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeStartHiddenSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_start_hidden_setting", { enabled }) };
@@ -2524,6 +2546,13 @@ rolling_live_preview?: boolean;
  */
 context_awareness_enabled?: boolean; 
 /**
+ * [GRAIN] Per-profile instruction edits, stored SPARSELY — see
+ * [`ContextProfileInstruction`]. Empty on a fresh install and for anyone
+ * who never edits a profile, which is the common case, so this costs one
+ * empty `Vec` in `AppSettings` and nothing on the prompt path.
+ */
+context_profile_instructions?: ContextProfileInstruction[]; 
+/**
  * [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
  * switch. OFF by default for NEW installs; the one-time import in
  * `load_settings` turns it on for existing users who already have snippets
@@ -2687,6 +2716,50 @@ export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * [GRAIN] One context-awareness profile, as the settings UI needs it.
+ * 
+ * Carries BOTH texts on purpose. The UI has to be able to show the effective
+ * instruction, tell whether it has been edited, and put the shipped wording
+ * back — and deriving "edited" from a copy of the defaults kept in TypeScript
+ * is how the two drift apart. Rust ships the text; the frontend owns only the
+ * label and the icon.
+ */
+export type ContextProfileInfo = { 
+/**
+ * `email` / `work` / `casual` / `technical`.
+ */
+id: string; 
+/**
+ * What is sent to the model today: the user's edit, or the default.
+ */
+instruction: string; 
+/**
+ * The shipped wording, for "reset to default".
+ */
+default_instruction: string; 
+/**
+ * Whether the user has edited this profile. An override trimmed to empty
+ * counts as edited — "this profile says nothing" is a deliberate choice,
+ * not an absent one.
+ */
+edited: boolean }
+/**
+ * [GRAIN] A user's edit to one context-awareness profile's instruction.
+ * 
+ * **Overrides only.** A profile the user has never touched does not appear
+ * here at all, and keeps using the instruction compiled into the binary. That
+ * is the whole reason this is a sparse list rather than a full copy of the
+ * four texts: storing them all would freeze every user on whatever wording
+ * shipped the day they first opened the tab, and improvements to the defaults
+ * would then only ever reach people who had never looked at the feature.
+ * 
+ * `id` is [`AppCategory::profile_id`] — "email" / "work" / "casual" /
+ * "technical". An unknown id is ignored rather than rejected, so a settings
+ * file written by a newer build (or a profile that is later renamed) degrades
+ * to the default instead of failing to load.
+ */
+export type ContextProfileInstruction = { id: string; instruction: string }
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"
 /**

@@ -32,6 +32,80 @@ pub struct DetectedApp {
     pub url_host: Option<String>,
 }
 
+/// [GRAIN] One context-awareness profile, as the settings UI needs it.
+///
+/// Carries BOTH texts on purpose. The UI has to be able to show the effective
+/// instruction, tell whether it has been edited, and put the shipped wording
+/// back — and deriving "edited" from a copy of the defaults kept in TypeScript
+/// is how the two drift apart. Rust ships the text; the frontend owns only the
+/// label and the icon.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct ContextProfileInfo {
+    /// `email` / `work` / `casual` / `technical`.
+    pub id: String,
+    /// What is sent to the model today: the user's edit, or the default.
+    pub instruction: String,
+    /// The shipped wording, for "reset to default".
+    pub default_instruction: String,
+    /// Whether the user has edited this profile. An override trimmed to empty
+    /// counts as edited — "this profile says nothing" is a deliberate choice,
+    /// not an absent one.
+    pub edited: bool,
+}
+
+/// [GRAIN] The four editable profiles, in display order.
+#[tauri::command]
+#[specta::specta]
+pub fn context_profiles(app: AppHandle) -> Vec<ContextProfileInfo> {
+    let settings = settings::get_settings(&app);
+    crate::context_detect::PROFILE_IDS
+        .iter()
+        .filter_map(|id| {
+            let category = crate::context_detect::AppCategory::from_profile_id(id)?;
+            let default_instruction = category.default_instruction().unwrap_or_default();
+            Some(ContextProfileInfo {
+                id: (*id).to_string(),
+                instruction: category
+                    .instruction(&settings)
+                    .unwrap_or_default()
+                    .to_string(),
+                default_instruction: default_instruction.to_string(),
+                edited: settings
+                    .context_profile_instructions
+                    .iter()
+                    .any(|o| o.id == *id),
+            })
+        })
+        .collect()
+}
+
+/// [GRAIN] Set (or clear) one profile's instruction.
+///
+/// Passing text equal to the default CLEARS the override rather than storing a
+/// copy of it. That is what keeps an untouched-in-effect profile tracking the
+/// shipped wording as it improves, instead of being pinned by a user who opened
+/// the editor, changed their mind, and typed it back.
+#[tauri::command]
+#[specta::specta]
+pub fn set_context_profile_instruction(
+    app: AppHandle,
+    id: String,
+    instruction: String,
+) -> Result<(), String> {
+    let Some(category) = crate::context_detect::AppCategory::from_profile_id(&id) else {
+        return Err(format!("unknown context profile '{id}'"));
+    };
+    let mut settings = settings::get_settings(&app);
+    settings.context_profile_instructions.retain(|o| o.id != id);
+    if instruction.trim() != category.default_instruction().unwrap_or_default().trim() {
+        settings
+            .context_profile_instructions
+            .push(settings::ContextProfileInstruction { id, instruction });
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Result<(), String> {

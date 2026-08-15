@@ -110,6 +110,25 @@ fn default_snippet_enabled() -> bool {
     true
 }
 
+/// [GRAIN] A user's edit to one context-awareness profile's instruction.
+///
+/// **Overrides only.** A profile the user has never touched does not appear
+/// here at all, and keeps using the instruction compiled into the binary. That
+/// is the whole reason this is a sparse list rather than a full copy of the
+/// four texts: storing them all would freeze every user on whatever wording
+/// shipped the day they first opened the tab, and improvements to the defaults
+/// would then only ever reach people who had never looked at the feature.
+///
+/// `id` is [`AppCategory::profile_id`] — "email" / "work" / "casual" /
+/// "technical". An unknown id is ignored rather than rejected, so a settings
+/// file written by a newer build (or a profile that is later renamed) degrades
+/// to the default instead of failing to load.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ContextProfileInstruction {
+    pub id: String,
+    pub instruction: String,
+}
+
 /// [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
 /// clipboard automatically as they arrive. `First` (default) mirrors the
 /// original behavior — only the first reply of a session is auto-copied.
@@ -798,6 +817,12 @@ pub struct AppSettings {
     /// per-app formatting is the App Modes extension's job, not a setting here.
     #[serde(default)]
     pub context_awareness_enabled: bool,
+    /// [GRAIN] Per-profile instruction edits, stored SPARSELY — see
+    /// [`ContextProfileInstruction`]. Empty on a fresh install and for anyone
+    /// who never edits a profile, which is the common case, so this costs one
+    /// empty `Vec` in `AppSettings` and nothing on the prompt path.
+    #[serde(default)]
+    pub context_profile_instructions: Vec<ContextProfileInstruction>,
     /// [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
     /// switch. OFF by default for NEW installs; the one-time import in
     /// `load_settings` turns it on for existing users who already have snippets
@@ -1729,6 +1754,7 @@ pub fn get_default_settings() -> AppSettings {
         audio_conditioning: default_audio_conditioning(),
         rolling_live_preview: default_rolling_live_preview(),
         context_awareness_enabled: false,
+        context_profile_instructions: Vec::new(),
         // [GRAIN] Built-in extensions default OFF for new installs (SPEC §10.1);
         // the upgrade import in context.rs turns them on for existing users.
         snippets_enabled: false,

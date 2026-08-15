@@ -29,76 +29,138 @@ use grain_core::AppSettings;
 /// context at all, so behavior degrades safely for the long tail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppCategory {
-    /// Code editors and IDEs — technical vocabulary, keep jargon.
-    Ide,
-    /// Shells and terminals. Split from [`AppCategory::Ide`] because the output
-    /// wanted is a *command*, not prose: no sentence casing, no trailing period.
-    Terminal,
-    /// Email composers — slightly polished, but NO email layout unless dictated.
+    /// Email composers and webmail — slightly polished, but NO email layout
+    /// unless dictated.
     Email,
-    /// Work chat (Slack/Teams/…): professional but concise and conversational.
-    WorkChat,
-    /// Personal messengers (WhatsApp/Messenger/…): keep the user's casual tone.
-    PersonalChat,
-    /// Social post composers (X/Reddit/…): casual, punchy, user's own voice.
-    Social,
-    /// Docs / notes editors (Notion/Docs/Word): readable prose, preserve structure.
-    Docs,
-    /// A pull-request or issue body: prose mixed with identifiers, and markdown.
-    /// Neither [`AppCategory::Ide`] (not code) nor [`AppCategory::Docs`] (not
-    /// prose) fits it.
-    CodeReview,
-    /// A prompt box for an AI assistant. The user is writing an *instruction*, so
-    /// the usual "polish it" reflex is actively harmful — see [`soft_line`].
-    AiChat,
-    /// An issue tracker (Jira/Linear/Asana): imperative, factual, no narration.
-    Ticket,
-    /// A web browser whose site we could not resolve: tone-neutral light cleanup.
-    Browser,
-    /// Anything unrecognized — no soft context is added.
+    /// Team chat, issue trackers and shared documents: professional, concise,
+    /// factual.
+    Work,
+    /// Personal messengers and social posts: the user's own voice, kept.
+    Casual,
+    /// Code editors, terminals, code hosts and AI prompt boxes: exact tokens,
+    /// no padding, no polishing an instruction into vagueness.
+    Technical,
+    /// Anything unrecognized — no instruction is added. Also where a browser
+    /// sitting on an unresolved site lands: "a browser" says nothing about what
+    /// is being written, so it earns no tone rule of its own.
     Other,
 }
 
+/// The four editable profiles, in the order the settings UI shows them.
+/// [`AppCategory::Other`] is deliberately absent: it is the *absence* of a
+/// profile, has no instruction, and there is nothing for a user to edit.
+pub const PROFILE_IDS: [&str; 4] = ["email", "work", "casual", "technical"];
+
 impl AppCategory {
-    /// The SOFT context line for this category, or `None` when nothing should be
-    /// added (`Other`). Kept to ≤2 sentences and explicitly non-restructuring so
-    /// it stays token-cheap and honors the "no hard formatting" constraint.
-    ///
-    /// These are deliberately terse. They ride on EVERY dictation once context
-    /// awareness is on, so a wasted clause is a wasted clause a few thousand
-    /// times a week; the earlier wording spent ~55 tokens on the IDE line alone.
-    /// What must survive compression are the *negative* guards ("do not add",
-    /// "unless dictated") — they are what keeps this layer soft, and dropping
-    /// them would quietly turn tone hints into hard formatting.
-    fn soft_line(self) -> Option<&'static str> {
+    /// The settings id for this profile, or `None` for [`AppCategory::Other`],
+    /// which is not a profile. This is the string the UI and the stored
+    /// overrides key on, so it is the one name that must never drift.
+    pub fn profile_id(self) -> Option<&'static str> {
         Some(match self {
-            AppCategory::Ide => "A code editor. Keep identifiers and library names exactly as spoken (Tauri, useEffect); never 'correct' jargon into plain English. Terse; backtick code-like tokens.",
-            AppCategory::Terminal => "A terminal. This is a command or path, not prose: no sentence casing, no trailing period, and keep flags, paths and casing verbatim.",
-            AppCategory::Email => "An email composer. Slightly more polished and professional, but add no subject, greeting or sign-off, and impose no email layout unless dictated.",
-            AppCategory::WorkChat => "Work chat (Slack/Teams). Professional but concise and conversational; add no greeting and do not restructure into formal paragraphs.",
-            AppCategory::PersonalChat => "A casual messenger. Keep the user's own slang and phrasing; light cleanup only, never formalize.",
-            AppCategory::Social => "A social post composer. Casual and punchy in the user's own voice; add no hashtags or emoji unless dictated.",
-            AppCategory::Docs => "A document or notes editor. Readable prose is welcome, but preserve the user's wording and structure; impose no headings or lists unless dictated.",
-            AppCategory::CodeReview => "A pull-request or issue box: prose mixed with code. Keep identifiers exact and backticked, stay direct, and do not pad.",
-            // The one category whose instruction is "do LESS". A prompt is an
-            // instruction the user is composing for another model, where
-            // smoothing wording away is the exact failure mode: specifics are
-            // the payload.
-            AppCategory::AiChat => "A prompt box for an AI assistant. This is an instruction the user is writing, not prose to polish: preserve their exact intent, wording and specifics, and never soften, summarize or generalize it.",
-            AppCategory::Ticket => "An issue tracker (Jira/Linear). Factual and imperative; do not narrate or add pleasantries.",
-            // The fallback for an unresolved site, so it fires on the widest
-            // range of unknown surfaces — which is exactly why it, of all the
-            // lines, must say plainly that it does not restructure.
-            AppCategory::Browser => "A text field in a web browser. Light, tone-neutral cleanup; match the style the user is already writing in and do not restructure.",
+            AppCategory::Email => "email",
+            AppCategory::Work => "work",
+            AppCategory::Casual => "casual",
+            AppCategory::Technical => "technical",
             AppCategory::Other => return None,
         })
+    }
+
+    /// Inverse of [`Self::profile_id`].
+    pub fn from_profile_id(id: &str) -> Option<Self> {
+        match id {
+            "email" => Some(AppCategory::Email),
+            "work" => Some(AppCategory::Work),
+            "casual" => Some(AppCategory::Casual),
+            "technical" => Some(AppCategory::Technical),
+            _ => None,
+        }
+    }
+
+    /// The SHIPPED instruction for this profile, before any user edit.
+    ///
+    /// These ride on EVERY dictation once context awareness is on, so a wasted
+    /// clause is a wasted clause a few thousand times a week. What must survive
+    /// compression are the *negative* guards ("add no", "unless dictated") —
+    /// they are what keeps this layer soft, and dropping them would quietly turn
+    /// a tone hint into hard formatting.
+    ///
+    /// Each of these is a merge of what used to be several narrower lines, and
+    /// the merges are not free. Where two of the old lines disagreed, the
+    /// disagreement had to move somewhere: it is now a conditional clause inside
+    /// one instruction ("if it is a command…"), which asks the model to make a
+    /// judgement the classifier used to make for it. That is the honest cost of
+    /// four profiles instead of eleven, and it is why the conditionals are
+    /// phrased as sharply as they are.
+    pub fn default_instruction(self) -> Option<&'static str> {
+        Some(match self {
+            AppCategory::Email => {
+                "An email composer. Slightly more polished and professional, but add no \
+                 subject, greeting or sign-off, and impose no email layout unless dictated."
+            }
+            // Merged from work chat + issue tracker + docs. All three wanted
+            // "no ceremony"; they differed only in what ceremony to refuse, so
+            // the refusals are listed and the tone is stated once.
+            AppCategory::Work => {
+                "A work surface — team chat, an issue tracker, or a shared document. \
+                 Professional, concise and factual; preserve the user's wording and \
+                 structure, and add no greeting, pleasantries, headings or lists unless \
+                 dictated."
+            }
+            // Merged from personal messenger + social post. Same instinct —
+            // protect the user's voice — so this one lost nothing.
+            AppCategory::Casual => {
+                "A casual message or post. Keep the user's own slang, phrasing and voice; \
+                 light cleanup only, never formalize, and add no hashtags or emoji unless \
+                 dictated."
+            }
+            // The hardest merge: editor + terminal + code host + AI prompt box.
+            // The last two sentences are the two old lines that could not be
+            // dissolved into the others — a command must not be sentence-cased,
+            // and a prompt must not be smoothed. Losing either is immediately
+            // visible in the output, so they stay explicit even at token cost.
+            AppCategory::Technical => {
+                "A technical surface — code editor, terminal, code host, or AI prompt box. \
+                 Keep identifiers, library names, flags, paths and casing exactly as \
+                 spoken; never 'correct' jargon into plain English, and do not pad. \
+                 If it is a command, use no sentence casing and no trailing period. \
+                 If it is an instruction for an AI, preserve the exact intent and \
+                 specifics — never soften, summarize or generalize it."
+            }
+            AppCategory::Other => return None,
+        })
+    }
+
+    /// The instruction that will actually be sent: the user's edit if they made
+    /// one, otherwise [`Self::default_instruction`].
+    ///
+    /// Overrides are stored SPARSELY — only edited profiles appear in settings —
+    /// so an untouched profile keeps tracking the shipped wording as it improves
+    /// across releases instead of being frozen at whatever shipped the day the
+    /// user first opened the tab.
+    ///
+    /// An override trimmed to nothing means "this profile adds no instruction",
+    /// which is a legitimate thing to want and is why this can return `None` for
+    /// a profile that has a default.
+    pub fn instruction<'a>(self, settings: &'a AppSettings) -> Option<&'a str> {
+        let id = self.profile_id()?;
+        match settings
+            .context_profile_instructions
+            .iter()
+            .find(|o| o.id == id)
+        {
+            Some(o) => {
+                let text = o.instruction.trim();
+                (!text.is_empty()).then_some(text)
+            }
+            None => self.default_instruction(),
+        }
     }
 }
 
 /// Address-bar host → category. **This is the table that makes context awareness
 /// work at all for most people**: email, chat, docs and social overwhelmingly
 /// live in a browser tab, and until this existed every one of them resolved to
-/// the generic [`AppCategory::Browser`] line — the weakest bucket — even though
+/// the generic [`AppCategory::Other`] line — the weakest bucket — even though
 /// the host was already being read and then thrown away.
 ///
 /// Ordered MOST SPECIFIC FIRST and matched in order, because [`host_matches`]
@@ -133,104 +195,104 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("icloud.com", AppCategory::Email),
     ("roundcube.", AppCategory::Email),
     // -- AI assistants (prompt boxes) --
-    ("claude.ai", AppCategory::AiChat),
-    ("chatgpt.com", AppCategory::AiChat),
-    ("chat.openai.com", AppCategory::AiChat),
-    ("gemini.google.com", AppCategory::AiChat),
-    ("aistudio.google.com", AppCategory::AiChat),
-    ("perplexity.ai", AppCategory::AiChat),
-    ("poe.com", AppCategory::AiChat),
-    ("copilot.microsoft.com", AppCategory::AiChat),
-    ("chat.deepseek.com", AppCategory::AiChat),
-    ("chat.mistral.ai", AppCategory::AiChat),
-    ("grok.com", AppCategory::AiChat),
-    ("t3.chat", AppCategory::AiChat),
-    ("openrouter.ai", AppCategory::AiChat),
-    ("claude.com", AppCategory::AiChat),
-    ("notebooklm.google.com", AppCategory::AiChat),
-    ("chat.qwen.ai", AppCategory::AiChat),
-    ("kimi.com", AppCategory::AiChat),
-    ("meta.ai", AppCategory::AiChat),
-    ("lmarena.ai", AppCategory::AiChat),
-    ("huggingface.co", AppCategory::AiChat),
+    ("claude.ai", AppCategory::Technical),
+    ("chatgpt.com", AppCategory::Technical),
+    ("chat.openai.com", AppCategory::Technical),
+    ("gemini.google.com", AppCategory::Technical),
+    ("aistudio.google.com", AppCategory::Technical),
+    ("perplexity.ai", AppCategory::Technical),
+    ("poe.com", AppCategory::Technical),
+    ("copilot.microsoft.com", AppCategory::Technical),
+    ("chat.deepseek.com", AppCategory::Technical),
+    ("chat.mistral.ai", AppCategory::Technical),
+    ("grok.com", AppCategory::Technical),
+    ("t3.chat", AppCategory::Technical),
+    ("openrouter.ai", AppCategory::Technical),
+    ("claude.com", AppCategory::Technical),
+    ("notebooklm.google.com", AppCategory::Technical),
+    ("chat.qwen.ai", AppCategory::Technical),
+    ("kimi.com", AppCategory::Technical),
+    ("meta.ai", AppCategory::Technical),
+    ("lmarena.ai", AppCategory::Technical),
+    ("huggingface.co", AppCategory::Technical),
     // Prompt-driven builders. The box you type into is a prompt box, so the
     // AiChat profile is the right one even though the output is an app.
-    ("bolt.new", AppCategory::AiChat),
-    ("lovable.dev", AppCategory::AiChat),
-    ("v0.app", AppCategory::AiChat),
+    ("bolt.new", AppCategory::Technical),
+    ("lovable.dev", AppCategory::Technical),
+    ("v0.app", AppCategory::Technical),
     // -- Code review / repo hosts. Writing into a text box on these is almost
     //    always a PR body, an issue, or a review comment.
-    ("github.com", AppCategory::CodeReview),
-    ("gitlab.com", AppCategory::CodeReview),
-    ("bitbucket.org", AppCategory::CodeReview),
-    ("codeberg.org", AppCategory::CodeReview),
-    ("gerrit.", AppCategory::CodeReview),
-    ("stackoverflow.com", AppCategory::CodeReview),
+    ("github.com", AppCategory::Technical),
+    ("gitlab.com", AppCategory::Technical),
+    ("bitbucket.org", AppCategory::Technical),
+    ("codeberg.org", AppCategory::Technical),
+    ("gerrit.", AppCategory::Technical),
+    ("stackoverflow.com", AppCategory::Technical),
     // -- Issue trackers --
-    ("atlassian.net", AppCategory::Ticket),
-    ("jira.", AppCategory::Ticket),
-    ("linear.app", AppCategory::Ticket),
-    ("app.asana.com", AppCategory::Ticket),
-    ("trello.com", AppCategory::Ticket),
-    ("shortcut.com", AppCategory::Ticket),
-    ("height.app", AppCategory::Ticket),
-    ("monday.com", AppCategory::Ticket),
-    ("clickup.com", AppCategory::Ticket),
+    ("atlassian.net", AppCategory::Work),
+    ("jira.", AppCategory::Work),
+    ("linear.app", AppCategory::Work),
+    ("app.asana.com", AppCategory::Work),
+    ("trello.com", AppCategory::Work),
+    ("shortcut.com", AppCategory::Work),
+    ("height.app", AppCategory::Work),
+    ("monday.com", AppCategory::Work),
+    ("clickup.com", AppCategory::Work),
     // -- Work chat (formal register) --
-    ("slack.com", AppCategory::WorkChat),
-    ("teams.microsoft.com", AppCategory::WorkChat),
-    ("teams.live.com", AppCategory::WorkChat),
-    ("chat.google.com", AppCategory::WorkChat),
-    ("meet.google.com", AppCategory::WorkChat),
-    ("webex.com", AppCategory::WorkChat),
-    ("zoom.us", AppCategory::WorkChat),
-    ("mattermost.com", AppCategory::WorkChat),
-    ("rocket.chat", AppCategory::WorkChat),
-    ("chime.aws", AppCategory::WorkChat),
+    ("slack.com", AppCategory::Work),
+    ("teams.microsoft.com", AppCategory::Work),
+    ("teams.live.com", AppCategory::Work),
+    ("chat.google.com", AppCategory::Work),
+    ("meet.google.com", AppCategory::Work),
+    ("webex.com", AppCategory::Work),
+    ("zoom.us", AppCategory::Work),
+    ("mattermost.com", AppCategory::Work),
+    ("rocket.chat", AppCategory::Work),
+    ("chime.aws", AppCategory::Work),
     // -- Personal messengers (casual register) --
-    ("web.whatsapp.com", AppCategory::PersonalChat),
-    ("web.telegram.org", AppCategory::PersonalChat),
-    ("messenger.com", AppCategory::PersonalChat),
-    ("signal.org", AppCategory::PersonalChat),
-    ("instagram.com", AppCategory::PersonalChat),
+    ("web.whatsapp.com", AppCategory::Casual),
+    ("web.telegram.org", AppCategory::Casual),
+    ("messenger.com", AppCategory::Casual),
+    ("signal.org", AppCategory::Casual),
+    ("instagram.com", AppCategory::Casual),
     // [GRAIN] Discord moved here from WorkChat. It is overwhelmingly a casual
     // surface, so the formal register was tightening up text that should have
     // stayed loose. Flip it back if a workspace-heavy user disagrees — it is one
     // line, and the icon works from either category.
-    ("discord.com", AppCategory::PersonalChat),
-    ("messages.google.com", AppCategory::PersonalChat),
-    ("web.skype.com", AppCategory::PersonalChat),
-    ("web.snapchat.com", AppCategory::PersonalChat),
-    ("element.io", AppCategory::PersonalChat),
-    ("beeper.com", AppCategory::PersonalChat),
+    ("discord.com", AppCategory::Casual),
+    ("messages.google.com", AppCategory::Casual),
+    ("web.skype.com", AppCategory::Casual),
+    ("web.snapchat.com", AppCategory::Casual),
+    ("element.io", AppCategory::Casual),
+    ("beeper.com", AppCategory::Casual),
     // -- Social composers --
-    ("x.com", AppCategory::Social),
-    ("twitter.com", AppCategory::Social),
-    ("reddit.com", AppCategory::Social),
-    ("bsky.app", AppCategory::Social),
-    ("threads.net", AppCategory::Social),
-    ("mastodon.social", AppCategory::Social),
-    ("linkedin.com", AppCategory::Social),
-    ("news.ycombinator.com", AppCategory::Social),
+    ("x.com", AppCategory::Casual),
+    ("twitter.com", AppCategory::Casual),
+    ("reddit.com", AppCategory::Casual),
+    ("bsky.app", AppCategory::Casual),
+    ("threads.net", AppCategory::Casual),
+    ("mastodon.social", AppCategory::Casual),
+    ("linkedin.com", AppCategory::Casual),
+    ("news.ycombinator.com", AppCategory::Casual),
     // -- Docs / notes / long-form --
-    ("docs.google.com", AppCategory::Docs),
-    ("notion.so", AppCategory::Docs),
-    ("notion.site", AppCategory::Docs),
-    ("coda.io", AppCategory::Docs),
-    ("obsidian.md", AppCategory::Docs),
-    ("roamresearch.com", AppCategory::Docs),
-    ("workflowy.com", AppCategory::Docs),
-    ("evernote.com", AppCategory::Docs),
-    ("onenote.com", AppCategory::Docs),
-    ("dropbox.com", AppCategory::Docs),
-    ("medium.com", AppCategory::Docs),
-    ("substack.com", AppCategory::Docs),
-    ("ghost.io", AppCategory::Docs),
-    ("wordpress.com", AppCategory::Docs),
-    ("confluence.", AppCategory::Docs),
-    ("sharepoint.com", AppCategory::Docs),
-    ("quip.com", AppCategory::Docs),
-    ("hackmd.io", AppCategory::Docs),
+    ("docs.google.com", AppCategory::Work),
+    ("notion.so", AppCategory::Work),
+    ("notion.site", AppCategory::Work),
+    ("coda.io", AppCategory::Work),
+    ("obsidian.md", AppCategory::Work),
+    ("roamresearch.com", AppCategory::Work),
+    ("workflowy.com", AppCategory::Work),
+    ("evernote.com", AppCategory::Work),
+    ("onenote.com", AppCategory::Work),
+    ("dropbox.com", AppCategory::Work),
+    ("medium.com", AppCategory::Work),
+    ("substack.com", AppCategory::Work),
+    ("ghost.io", AppCategory::Work),
+    ("wordpress.com", AppCategory::Work),
+    ("confluence.", AppCategory::Work),
+    ("sharepoint.com", AppCategory::Work),
+    ("quip.com", AppCategory::Work),
+    ("hackmd.io", AppCategory::Work),
 ];
 
 /// What kind of text field the caret is in. Derived from the focused element's
@@ -482,7 +544,7 @@ impl Confidence {
 }
 
 /// Resolve an address-bar host to a category, or `None` when the site is
-/// unknown (the caller then keeps the generic [`AppCategory::Browser`]).
+/// unknown (the caller then keeps the generic [`AppCategory::Other`]).
 pub(crate) fn category_for_site(host: &str) -> Option<AppCategory> {
     let host = host.trim().trim_start_matches("www.");
     SITE_TABLE
@@ -516,12 +578,17 @@ pub(crate) fn host_matches(host: &str, pattern: &str) -> bool {
 }
 
 /// Map an executable stem (lowercased, no extension) to a coarse [`AppCategory`].
-/// Covers the popular desktop apps; everything else is `Other` (no soft context).
+/// Covers the popular desktop apps; everything else is `Other` (no instruction).
 /// Match is a substring/stem check so channel variants (`code`, `code - insiders`,
 /// `WhatsApp`, `WhatsAppDesktop`) all resolve.
+///
+/// The app lists below stay SPLIT even where several now feed one profile —
+/// editors and terminals are both `Technical`, messengers and social clients are
+/// both `Casual`. Merging the lists too would throw away the record of what each
+/// profile is made of, which is the only thing that makes re-splitting one later
+/// a small change rather than an archaeology exercise.
 fn category_for_exe(stem: &str) -> AppCategory {
-    // IDEs / editors. Terminals used to live here; they are their own category
-    // now because they want a command, not a sentence.
+    // IDEs / editors.
     const IDE: &[&str] = &[
         "code",
         "cursor",
@@ -568,8 +635,10 @@ fn category_for_exe(stem: &str) -> AppCategory {
         "spark",
     ];
     // Work chat.
-    const WORK_CHAT: &[&str] = &["slack", "teams", "ms-teams", "webex", "discord"];
-    // Personal messengers.
+    const WORK_CHAT: &[&str] = &["slack", "teams", "ms-teams", "webex"];
+    // Personal messengers. `discord` is here, not in work chat: the site table
+    // already treats discord.com as casual, and the desktop app disagreeing with
+    // the website about the same service is a bug nobody would think to look for.
     const PERSONAL_CHAT: &[&str] = &[
         "whatsapp",
         "messenger",
@@ -579,6 +648,7 @@ fn category_for_exe(stem: &str) -> AppCategory {
         "line",
         "viber",
         "imessage",
+        "discord",
     ];
     // Social composers (native desktop clients).
     const SOCIAL: &[&str] = &["x", "twitter", "tweetdeck"];
@@ -586,9 +656,45 @@ fn category_for_exe(stem: &str) -> AppCategory {
     const DOCS: &[&str] = &[
         "notion", "obsidian", "winword", "onenote", "evernote", "bear", "typora", "logseq",
     ];
-    // Browsers — kept broad so URL/site awareness is browser-agnostic. Covers
-    // Chromium forks and Gecko/Firefox forks; the URL reader itself works off the
-    // accessibility tree, not a per-browser rule.
+
+    // Short keys (≤3 chars, e.g. "wt", "zen", "arc", "tor", "min", "x") must match
+    // the stem EXACTLY — substring-matching them would misfire on ordinary words
+    // ("editor" contains "tor", "examine" contains "min"). Longer keys may match as
+    // a substring so channel variants ("code - insiders", "whatsappdesktop") resolve.
+    let hit = |set: &[&str]| {
+        set.iter()
+            .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
+    };
+    if hit(IDE) || hit(TERMINAL) {
+        AppCategory::Technical
+    } else if hit(EMAIL) {
+        AppCategory::Email
+    } else if hit(WORK_CHAT) || hit(DOCS) {
+        AppCategory::Work
+    } else if hit(PERSONAL_CHAT) || hit(SOCIAL) {
+        AppCategory::Casual
+    } else {
+        // Browsers land here too. A browser is not a profile — "the user is in
+        // Chrome" says nothing about whether they are writing an email or a
+        // shell command — so an unresolved site gets no instruction rather than
+        // a vague one. When the site IS resolved, `category_for_site` supplies
+        // the profile, which is the path that matters for most people.
+        AppCategory::Other
+    }
+}
+
+/// Whether this executable is a web browser.
+///
+/// Separate from [`category_for_exe`] because browser-ness is a *detection*
+/// fact, not a profile: it is what decides whether UI Automation is spun up to
+/// read the address bar. It used to be inferred from `category == Browser`, and
+/// deleting that variant without this would have silently switched off site
+/// detection for everyone — the site table, the pill's website icons, and every
+/// webmail user's Email profile all hang off this returning true.
+fn is_browser_exe(stem: &str) -> bool {
+    // Kept broad so URL/site awareness is browser-agnostic: Chromium forks and
+    // Gecko/Firefox forks alike. The URL reader works off the accessibility
+    // tree, not a per-browser rule.
     const BROWSER: &[&str] = &[
         "chrome",
         "msedge",
@@ -621,34 +727,9 @@ fn category_for_exe(stem: &str) -> AppCategory {
         "duckduckgo",
         "tor",
     ];
-
-    // Short keys (≤3 chars, e.g. "wt", "zen", "arc", "tor", "min", "x") must match
-    // the stem EXACTLY — substring-matching them would misfire on ordinary words
-    // ("editor" contains "tor", "examine" contains "min"). Longer keys may match as
-    // a substring so channel variants ("code - insiders", "whatsappdesktop") resolve.
-    let hit = |set: &[&str]| {
-        set.iter()
-            .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
-    };
-    if hit(IDE) {
-        AppCategory::Ide
-    } else if hit(TERMINAL) {
-        AppCategory::Terminal
-    } else if hit(EMAIL) {
-        AppCategory::Email
-    } else if hit(WORK_CHAT) {
-        AppCategory::WorkChat
-    } else if hit(PERSONAL_CHAT) {
-        AppCategory::PersonalChat
-    } else if hit(SOCIAL) {
-        AppCategory::Social
-    } else if hit(DOCS) {
-        AppCategory::Docs
-    } else if hit(BROWSER) {
-        AppCategory::Browser
-    } else {
-        AppCategory::Other
-    }
+    BROWSER
+        .iter()
+        .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
 }
 
 /// Cap on how many nearby terms we forward — keeps the prompt bounded and the
@@ -1062,7 +1143,11 @@ pub fn compose_prompt(
     } else {
         None
     };
-    let soft = ctx.and_then(|c| c.category.soft_line());
+    // The user's edited instruction when there is one, otherwise the shipped
+    // default. Read through `settings` rather than off the category so that what
+    // the settings UI shows and what the model receives are the same string —
+    // the whole point of surfacing these was that they stop being invisible.
+    let soft = ctx.and_then(|c| c.category.instruction(settings));
     let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
     // A one-line field gets one extra clause, because the pipeline's habit of
     // capitalizing and adding a full stop is wrong in a search box and the user
@@ -1312,7 +1397,7 @@ pub fn read_focused_text() -> Option<String> {
 
 #[cfg(windows)]
 mod windows_impl {
-    use super::{category_for_exe, ActiveContext, AppCategory, Confidence};
+    use super::{category_for_exe, is_browser_exe, ActiveContext, Confidence};
     use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
@@ -1368,7 +1453,7 @@ mod windows_impl {
             // UI Automation is only worth spinning up when we actually need it:
             // a browser (for the URL) or the nearby-terms opt-in. Everything here
             // is best-effort and SILENT — any failure just yields None/empty.
-            let is_browser = category == AppCategory::Browser;
+            let is_browser = is_browser_exe(&exe);
             let scan = if is_browser || read_nearby_terms || read_caret {
                 super::uia::read(hwnd, is_browser, read_nearby_terms, read_caret)
             } else {
@@ -2521,10 +2606,10 @@ mod site_table_tests {
     /// what makes shadowing possible — so pin both halves of it.
     #[test]
     fn a_pattern_covers_its_subdomains_but_not_a_lookalike_domain() {
-        assert_eq!(category_for_site("slack.com"), Some(AppCategory::WorkChat));
+        assert_eq!(category_for_site("slack.com"), Some(AppCategory::Work));
         assert_eq!(
             category_for_site("app.slack.com"),
-            Some(AppCategory::WorkChat),
+            Some(AppCategory::Work),
             "a subdomain must inherit its parent's row"
         );
         // The attack this guards: a domain that merely ENDS WITH a trusted one
@@ -2571,13 +2656,13 @@ mod tests {
 
     #[test]
     fn category_mapping_covers_common_apps() {
-        assert_eq!(category_for_exe("code"), AppCategory::Ide);
-        assert_eq!(category_for_exe("cursor"), AppCategory::Ide);
+        assert_eq!(category_for_exe("code"), AppCategory::Technical);
+        assert_eq!(category_for_exe("cursor"), AppCategory::Technical);
         assert_eq!(category_for_exe("outlook"), AppCategory::Email);
-        assert_eq!(category_for_exe("slack"), AppCategory::WorkChat);
-        assert_eq!(category_for_exe("whatsapp"), AppCategory::PersonalChat);
-        assert_eq!(category_for_exe("notion"), AppCategory::Docs);
-        assert_eq!(category_for_exe("chrome"), AppCategory::Browser);
+        assert_eq!(category_for_exe("slack"), AppCategory::Work);
+        assert_eq!(category_for_exe("whatsapp"), AppCategory::Casual);
+        assert_eq!(category_for_exe("notion"), AppCategory::Work);
+        assert_eq!(category_for_exe("chrome"), AppCategory::Other);
         assert_eq!(category_for_exe("some_unknown_app"), AppCategory::Other);
     }
 
@@ -2585,13 +2670,13 @@ mod tests {
     /// code, and the two soft lines say different things.
     #[test]
     fn terminals_split_from_ides() {
-        assert_eq!(category_for_exe("pwsh"), AppCategory::Terminal);
-        assert_eq!(category_for_exe("wt"), AppCategory::Terminal);
-        assert_eq!(category_for_exe("alacritty"), AppCategory::Terminal);
-        assert_eq!(category_for_exe("ghostty"), AppCategory::Terminal);
+        assert_eq!(category_for_exe("pwsh"), AppCategory::Technical);
+        assert_eq!(category_for_exe("wt"), AppCategory::Technical);
+        assert_eq!(category_for_exe("alacritty"), AppCategory::Technical);
+        assert_eq!(category_for_exe("ghostty"), AppCategory::Technical);
         // …and the editors stayed put.
-        assert_eq!(category_for_exe("code"), AppCategory::Ide);
-        assert_eq!(category_for_exe("nvim"), AppCategory::Ide);
+        assert_eq!(category_for_exe("code"), AppCategory::Technical);
+        assert_eq!(category_for_exe("nvim"), AppCategory::Technical);
     }
 
     /// The hole this phase exists to close: a browser tab now resolves to what
@@ -2599,12 +2684,12 @@ mod tests {
     #[test]
     fn site_table_resolves_webapps_to_real_categories() {
         assert_eq!(category_for_site("mail.google.com"), Some(AppCategory::Email));
-        assert_eq!(category_for_site("claude.ai"), Some(AppCategory::AiChat));
-        assert_eq!(category_for_site("github.com"), Some(AppCategory::CodeReview));
-        assert_eq!(category_for_site("linear.app"), Some(AppCategory::Ticket));
-        assert_eq!(category_for_site("app.slack.com"), Some(AppCategory::WorkChat));
-        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Docs));
-        assert_eq!(category_for_site("x.com"), Some(AppCategory::Social));
+        assert_eq!(category_for_site("claude.ai"), Some(AppCategory::Technical));
+        assert_eq!(category_for_site("github.com"), Some(AppCategory::Technical));
+        assert_eq!(category_for_site("linear.app"), Some(AppCategory::Work));
+        assert_eq!(category_for_site("app.slack.com"), Some(AppCategory::Work));
+        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Work));
+        assert_eq!(category_for_site("x.com"), Some(AppCategory::Casual));
         // Unknown sites resolve to nothing, so the caller keeps `Browser`.
         assert_eq!(category_for_site("example.com"), None);
     }
@@ -2612,9 +2697,9 @@ mod tests {
     /// Subdomains inherit, and `www.` is irrelevant.
     #[test]
     fn site_matching_accepts_subdomains_and_strips_www() {
-        assert_eq!(category_for_site("www.github.com"), Some(AppCategory::CodeReview));
-        assert_eq!(category_for_site("gist.github.com"), Some(AppCategory::CodeReview));
-        assert_eq!(category_for_site("acme.atlassian.net"), Some(AppCategory::Ticket));
+        assert_eq!(category_for_site("www.github.com"), Some(AppCategory::Technical));
+        assert_eq!(category_for_site("gist.github.com"), Some(AppCategory::Technical));
+        assert_eq!(category_for_site("acme.atlassian.net"), Some(AppCategory::Work));
     }
 
     /// The dot boundary is a security property, not a nicety: a bare
@@ -2632,8 +2717,8 @@ mod tests {
     /// that name themselves by product (`jira.acme.com`).
     #[test]
     fn site_matching_supports_selfhosted_prefixes() {
-        assert_eq!(category_for_site("jira.acme.com"), Some(AppCategory::Ticket));
-        assert_eq!(category_for_site("confluence.acme.com"), Some(AppCategory::Docs));
+        assert_eq!(category_for_site("jira.acme.com"), Some(AppCategory::Work));
+        assert_eq!(category_for_site("confluence.acme.com"), Some(AppCategory::Work));
         // A prefix wildcard must not match a longer first label.
         assert_eq!(category_for_site("myjira.acme.com"), None);
     }
@@ -2645,9 +2730,9 @@ mod tests {
     fn specific_sites_win_over_general_ones() {
         // chat.google.com is WorkChat even though docs.google.com is Docs —
         // neither may collapse into the other.
-        assert_eq!(category_for_site("chat.google.com"), Some(AppCategory::WorkChat));
-        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Docs));
-        assert_eq!(category_for_site("gemini.google.com"), Some(AppCategory::AiChat));
+        assert_eq!(category_for_site("chat.google.com"), Some(AppCategory::Work));
+        assert_eq!(category_for_site("docs.google.com"), Some(AppCategory::Work));
+        assert_eq!(category_for_site("gemini.google.com"), Some(AppCategory::Technical));
     }
 
     /// A single-line field must not get a trailing period bolted on. This is the
@@ -2656,7 +2741,7 @@ mod tests {
     fn single_line_field_suppresses_terminal_punctuation() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("chrome", AppCategory::Browser);
+        let mut c = ctx("chrome", AppCategory::Other);
         c.field = FieldKind::SingleLine;
         let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
         assert!(out.contains("SINGLE-LINE"));
@@ -2669,7 +2754,7 @@ mod tests {
     fn multiline_field_keeps_normal_punctuation() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("winword", AppCategory::Docs);
+        let mut c = ctx("winword", AppCategory::Work);
         c.field = FieldKind::MultiLine;
         let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
         assert!(!out.contains("SINGLE-LINE"));
@@ -2682,7 +2767,7 @@ mod tests {
     fn caret_context_supplies_the_seam_and_forbids_echoing_it() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("winword", AppCategory::Docs);
+        let mut c = ctx("winword", AppCategory::Work);
         c.caret = Some(CaretContext {
             before: "We agreed the release ".into(),
             after: " before the holidays.".into(),
@@ -2706,7 +2791,7 @@ mod tests {
     fn caret_excerpts_carry_no_xml_tags() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("winword", AppCategory::Docs);
+        let mut c = ctx("winword", AppCategory::Work);
         c.caret = Some(CaretContext {
             before: "Dear Rita,".into(),
             after: "Regards".into(),
@@ -2722,7 +2807,7 @@ mod tests {
     fn empty_caret_side_is_omitted() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("winword", AppCategory::Docs);
+        let mut c = ctx("winword", AppCategory::Work);
         c.caret = Some(CaretContext {
             before: "Dear Rita,".into(),
             after: String::new(),
@@ -2738,7 +2823,7 @@ mod tests {
     fn context_always_ends_with_the_output_constraint() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Ide)), None);
+        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
         assert!(out.trim_end().ends_with("no notes, no explanation."));
 
         // …and a prompt with NO context added stays byte-for-byte the base.
@@ -2761,7 +2846,7 @@ mod tests {
     fn spoken_instruction_still_outranks_caret_context() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let mut c = ctx("winword", AppCategory::Docs);
+        let mut c = ctx("winword", AppCategory::Work);
         c.caret = Some(CaretContext {
             before: "before".into(),
             after: "after".into(),
@@ -2807,42 +2892,48 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
 
-        let mut main = ctx("chrome", AppCategory::Docs);
+        let mut main = ctx("chrome", AppCategory::Work);
         main.region = Some("main".into());
         assert!(!compose_prompt("BASE", &s, Some(&main), None).contains("page region"));
 
-        let mut side = ctx("chrome", AppCategory::Docs);
+        let mut side = ctx("chrome", AppCategory::Work);
         side.region = Some("complementary".into());
         assert!(compose_prompt("BASE", &s, Some(&side), None).contains("page region: complementary"));
     }
 
-    /// The AI-prompt line has to say "do less" — smoothing a prompt's wording
-    /// away is the failure mode there, so guard the wording that prevents it.
+    /// Four profiles instead of eleven means each one now carries the guards
+    /// that used to be spread across several lines. These are the ones whose
+    /// loss is immediately visible in the output, so name them individually
+    /// rather than trusting a generic "has a negative word" check to catch it.
     #[test]
-    fn ai_chat_soft_line_forbids_polishing() {
-        let line = AppCategory::AiChat.soft_line().unwrap();
-        assert!(line.contains("instruction"));
-        assert!(line.contains("never soften"));
+    fn merging_the_profiles_did_not_drop_a_guard_that_was_load_bearing() {
+        let technical = AppCategory::Technical.default_instruction().unwrap();
+        // From the old AiChat line: a prompt is an instruction, not prose.
+        assert!(technical.contains("never soften"), "{technical}");
+        // From the old Terminal line: a command is not a sentence.
+        assert!(technical.contains("no trailing period"), "{technical}");
+
+        let work = AppCategory::Work.default_instruction().unwrap();
+        // From the old Docs line, which is the merge most at risk of being
+        // swallowed by chat-shaped advice.
+        assert!(work.contains("structure"), "{work}");
+        assert!(work.contains("unless dictated"), "{work}");
+
+        let casual = AppCategory::Casual.default_instruction().unwrap();
+        assert!(casual.contains("never formalize"), "{casual}");
     }
 
-    /// Every category that adds context must keep at least one negative guard;
-    /// that is what makes this layer SOFT rather than hard formatting.
+    /// Every profile that adds an instruction must keep at least one negative
+    /// guard; that is what makes this layer SOFT rather than hard formatting.
     #[test]
-    fn soft_lines_stay_soft_and_bounded() {
+    fn instructions_stay_soft_and_bounded() {
         for category in [
-            AppCategory::Ide,
-            AppCategory::Terminal,
             AppCategory::Email,
-            AppCategory::WorkChat,
-            AppCategory::PersonalChat,
-            AppCategory::Social,
-            AppCategory::Docs,
-            AppCategory::CodeReview,
-            AppCategory::AiChat,
-            AppCategory::Ticket,
-            AppCategory::Browser,
+            AppCategory::Work,
+            AppCategory::Casual,
+            AppCategory::Technical,
         ] {
-            let line = category.soft_line().expect("category adds context");
+            let line = category.default_instruction().expect("profile adds context");
             let lower = line.to_ascii_lowercase();
             assert!(
                 ["no ", "not ", "never", "unless dictated"]
@@ -2850,14 +2941,64 @@ mod tests {
                     .any(|guard| lower.contains(guard)),
                 "{category:?} lost its negative guard: {line}"
             );
-            // Rides on every dictation — keep it cheap (~4 bytes/token).
+            // Rides on every dictation — keep it cheap (~4 bytes/token). The
+            // ceiling rose with the merge: Technical now carries four surfaces'
+            // worth of rules, which is the price of one profile instead of four.
             assert!(
-                line.len() <= 260,
-                "{category:?} soft line is {} bytes, too costly per utterance",
+                line.len() <= 400,
+                "{category:?} instruction is {} bytes, too costly per utterance",
                 line.len()
             );
         }
-        assert!(AppCategory::Other.soft_line().is_none());
+        assert!(AppCategory::Other.default_instruction().is_none());
+    }
+
+    /// `Other` is the absence of a profile, so it must not be addressable as
+    /// one — otherwise a stored override could give browsers-on-unknown-sites an
+    /// instruction through the back door, which is the thing being removed.
+    #[test]
+    fn other_is_not_an_editable_profile() {
+        assert!(AppCategory::Other.profile_id().is_none());
+        assert!(AppCategory::from_profile_id("other").is_none());
+        assert!(AppCategory::from_profile_id("browser").is_none());
+        for id in PROFILE_IDS {
+            let category = AppCategory::from_profile_id(id).expect("id must round-trip");
+            assert_eq!(category.profile_id(), Some(id));
+        }
+    }
+
+    /// An edited profile must change what the model receives — the point of
+    /// surfacing these was that the shown text IS the sent text.
+    #[test]
+    fn an_edited_instruction_replaces_the_default_in_the_prompt() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_profile_instructions
+            .push(crate::settings::ContextProfileInstruction {
+                id: "email".into(),
+                instruction: "Write it like a pirate.".into(),
+            });
+        let c = ctx("outlook", AppCategory::Email);
+        let out = compose_prompt("BASE", &s, Some(&c), None);
+        assert!(out.contains("Write it like a pirate."));
+        assert!(!out.contains("An email composer."));
+        // An untouched profile is unaffected by its neighbour's edit.
+        let t = ctx("code", AppCategory::Technical);
+        assert!(compose_prompt("BASE", &s, Some(&t), None).contains("never soften"));
+    }
+
+    /// Clearing an instruction is a legitimate choice, not a broken override:
+    /// the profile then adds nothing, exactly like `Other`.
+    #[test]
+    fn an_instruction_emptied_by_the_user_adds_nothing() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_profile_instructions
+            .push(crate::settings::ContextProfileInstruction {
+                id: "casual".into(),
+                instruction: "   ".into(),
+            });
+        assert!(AppCategory::Casual.instruction(&s).is_none());
     }
 
     #[test]
@@ -2865,7 +3006,7 @@ mod tests {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE PROMPT ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide)), None),
+            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Technical)), None),
             base
         );
     }
@@ -2886,7 +3027,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
-        let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Ide)), None);
+        let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Technical)), None);
         assert!(out.starts_with("[Context awareness]"));
         assert!(out.contains("code editor"));
         // The base survives verbatim; the terminal output constraint follows it
@@ -2956,7 +3097,7 @@ mod tests {
         let out = compose_prompt(
             "BASE ${output}",
             &s,
-            Some(&ctx("code", AppCategory::Ide)),
+            Some(&ctx("code", AppCategory::Technical)),
             Some("translate it into French"),
         );
         // Order carries the authority: what the user just dictated for THIS
