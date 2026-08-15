@@ -1410,7 +1410,7 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
     Some(out)
 }
 
-/// Prompt Record artwork derived from `assets/icons8-ai-96.png`.
+/// Prompt Record artwork derived from `assets/icons8-ai-30.png`.
 /// The source's antialiased alpha was high-quality bicubic-downsampled offline;
 /// runtime only maps that 18² coverage to premultiplied white RGBA once in
 /// `App::new`, then blits it exactly like the foreground-application icon.
@@ -1418,22 +1418,22 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
 const PROMPT_RECORD_ICON_PX: u32 = 18;
 const PROMPT_RECORD_ICON_ALPHA: [u8; (PROMPT_RECORD_ICON_PX * PROMPT_RECORD_ICON_PX) as usize] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 24, 185, 23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 92, 255, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 39, 196, 255, 195, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    35, 212, 255, 255, 255, 255, 255, 213, 34, 0, 0, 81, 39, 0, 0, 0, 0, 0,
-    22, 146, 213, 255, 255, 255, 214, 147, 21, 0, 7, 253, 151, 0, 0, 0, 0, 0,
-    0, 0, 0, 166, 255, 164, 1, 0, 0, 0, 64, 255, 216, 2, 0, 0, 0, 0,
-    0, 0, 0, 73, 255, 71, 0, 0, 0, 0, 144, 255, 255, 44, 0, 0, 0, 0,
-    0, 0, 0, 12, 124, 10, 0, 0, 48, 124, 238, 255, 255, 198, 94, 27, 0, 0,
-    0, 0, 0, 0, 0, 0, 94, 221, 255, 255, 255, 255, 255, 255, 255, 252, 198, 31,
-    0, 0, 0, 69, 54, 0, 75, 190, 243, 255, 255, 255, 255, 255, 255, 225, 162, 24,
-    0, 0, 0, 229, 190, 0, 0, 0, 24, 90, 228, 255, 255, 175, 64, 6, 0, 0,
-    0, 15, 96, 255, 244, 76, 10, 0, 0, 0, 132, 255, 253, 33, 0, 0, 0, 0,
-    41, 243, 255, 255, 255, 255, 228, 20, 0, 0, 54, 255, 208, 0, 0, 0, 0, 0,
-    12, 95, 179, 255, 254, 165, 84, 5, 0, 0, 3, 242, 139, 0, 0, 0, 0, 0,
-    0, 0, 0, 248, 215, 0, 0, 0, 0, 0, 0, 55, 25, 0, 0, 0, 0, 0,
-    0, 0, 0, 139, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 109, 54, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 230, 135, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 58, 29, 0, 10, 92, 171, 255, 235, 135, 58, 0,
+    0, 0, 0, 0, 0, 0, 5, 224, 127, 0, 19, 173, 245, 255, 255, 229, 110, 0,
+    0, 0, 0, 0, 0, 0, 39, 251, 173, 0, 0, 0, 47, 247, 174, 9, 0, 0,
+    0, 0, 0, 0, 0, 0, 95, 255, 225, 14, 0, 0, 0, 172, 87, 0, 0, 0,
+    0, 0, 0, 0, 0, 21, 209, 255, 255, 133, 0, 0, 0, 18, 10, 0, 0, 0,
+    0, 0, 0, 4, 54, 194, 255, 255, 255, 250, 131, 19, 0, 0, 0, 0, 0, 0,
+    0, 71, 143, 194, 246, 255, 255, 255, 255, 255, 255, 225, 171, 127, 31, 0, 0, 0,
+    0, 134, 234, 255, 255, 255, 255, 255, 255, 255, 255, 255, 248, 223, 59, 0, 0, 0,
+    0, 0, 17, 62, 136, 246, 255, 255, 255, 255, 205, 94, 42, 3, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 78, 243, 255, 255, 193, 24, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 136, 255, 243, 46, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 56, 254, 192, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 16, 245, 149, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 134, 71, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
@@ -6474,7 +6474,7 @@ mod tests {
                 .iter()
                 .filter(|pixel| pixel.alpha() > 0)
                 .count(),
-            134
+            111
         );
         assert!(icon
             .pixels()
@@ -6482,9 +6482,26 @@ mod tests {
             .filter(|pixel| pixel.alpha() > 0)
             .all(|pixel| pixel.red() == pixel.green() && pixel.green() == pixel.blue()));
 
-        let source = Pixmap::decode_png(include_bytes!("../assets/icons8-ai-96.png"))
+        let painted: Vec<(u32, u32)> = icon
+            .pixels()
+            .iter()
+            .enumerate()
+            .filter(|(_, pixel)| pixel.alpha() > 0)
+            .map(|(index, _)| {
+                let index = index as u32;
+                (index % PROMPT_RECORD_ICON_PX, index / PROMPT_RECORD_ICON_PX)
+            })
+            .collect();
+        let min_x = painted.iter().map(|(x, _)| *x).min().unwrap();
+        let max_x = painted.iter().map(|(x, _)| *x).max().unwrap();
+        let min_y = painted.iter().map(|(_, y)| *y).min().unwrap();
+        let max_y = painted.iter().map(|(_, y)| *y).max().unwrap();
+        assert_eq!((min_x, max_x), (1, PROMPT_RECORD_ICON_PX - 2));
+        assert_eq!((min_y, max_y), (1, PROMPT_RECORD_ICON_PX - 2));
+
+        let source = Pixmap::decode_png(include_bytes!("../assets/icons8-ai-30.png"))
             .expect("tracked Prompt Record source is a PNG");
-        assert_eq!((source.width(), source.height()), (96, 96));
+        assert_eq!((source.width(), source.height()), (30, 30));
         assert!(source
             .pixels()
             .iter()
