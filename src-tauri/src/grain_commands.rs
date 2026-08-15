@@ -127,6 +127,31 @@ pub async fn site_icon(app: AppHandle, host: String) -> Option<String> {
     crate::pill_icon::site_icon_data_url(&app, &host).await
 }
 
+/// [GRAIN] Every application this user can launch, for the profile app picker.
+///
+/// Async and off the runtime's threads: this walks a Shell namespace and reads
+/// two properties per entry, which on a well-populated machine is a couple of
+/// hundred milliseconds. The picker asks once when it opens and filters the
+/// result locally, so a person typing never waits on this.
+#[tauri::command]
+#[specta::specta]
+pub async fn installed_apps() -> Vec<crate::app_catalog::InstalledApp> {
+    tauri::async_runtime::spawn_blocking(crate::app_catalog::installed_apps)
+        .await
+        .unwrap_or_default()
+}
+
+/// [GRAIN] An installed application's icon as a PNG data URL, or `None`.
+///
+/// One app per call for the same reason [`site_icon`] is: the list paints at
+/// once and each icon lands as it resolves, rather than the whole picker waiting
+/// on the slowest entry.
+#[tauri::command]
+#[specta::specta]
+pub async fn app_icon(app: AppHandle, id: String) -> Option<String> {
+    crate::pill_icon::app_icon_data_url(&app, id).await
+}
+
 /// [GRAIN] The user's own context profiles, as stored.
 ///
 /// Read back through a command rather than off the settings blob so the UI sees
@@ -181,8 +206,18 @@ pub fn update_context_custom_profiles(
 }
 
 /// `C:\Program Files\Figma\Figma.exe` / `Figma.exe` / `figma` → `figma`.
+///
+/// A packaged app's AppUserModelID is passed through untouched, because it is
+/// already the identity the matcher wants and stem extraction would destroy it:
+/// `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App` has dots in it, so `file_stem`
+/// would read the tail as an extension and hand back `Microsoft`. The `!` is
+/// what tells them apart — it separates package family from application id, and
+/// no executable path contains one.
 fn normalise_exe(raw: &str) -> String {
     let raw = raw.trim().trim_matches('"');
+    if raw.contains('!') {
+        return raw.to_string();
+    }
     std::path::Path::new(raw)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -230,14 +265,35 @@ mod custom_profile_target_tests {
         assert_eq!(normalise_exe("\"Code.exe\""), "code");
     }
 
+    /// A packaged app is named by its AppUserModelID, and stem extraction would
+    /// silently mangle it — `Microsoft.WindowsNotepad_…!App` would be stored as
+    /// `Microsoft`, matching nothing and colliding with everything.
+    #[test]
+    fn a_packaged_application_target_keeps_its_appusermodelid() {
+        for aumid in [
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+            "Claude_pzs8sxrjxfjjc!Claude",
+            "TelegramMessengerLLP.TelegramDesktop_t4vj0pshhgkwm!Telegram.TelegramDesktop.Store",
+        ] {
+            assert_eq!(normalise_exe(aumid), aumid);
+            assert_eq!(normalise_exe(&format!("  {aumid}  ")), aumid);
+        }
+    }
+
     /// Same for a website: a pasted URL and a typed host must reach the same
     /// bare host, since that is what an address bar yields.
     #[test]
     fn a_website_target_becomes_a_bare_host() {
-        assert_eq!(normalise_host("https://www.Figma.com/files?x=1"), "figma.com");
+        assert_eq!(
+            normalise_host("https://www.Figma.com/files?x=1"),
+            "figma.com"
+        );
         assert_eq!(normalise_host("figma.com"), "figma.com");
         assert_eq!(normalise_host("http://localhost:3000/app"), "");
-        assert_eq!(normalise_host("https://user:pw@app.figma.com/"), "app.figma.com");
+        assert_eq!(
+            normalise_host("https://user:pw@app.figma.com/"),
+            "app.figma.com"
+        );
         assert_eq!(normalise_host("figma.com:8443"), "figma.com");
     }
 

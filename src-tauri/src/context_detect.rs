@@ -234,15 +234,37 @@ pub(crate) fn custom_profile_for<'a>(
             return hit;
         }
     }
-    let exe = ctx.exe.trim();
-    if exe.is_empty() {
-        return None;
+    settings
+        .context_custom_profiles
+        .iter()
+        .find(|p| p.targets.iter().any(|t| app_target_matches(t, ctx)))
+}
+
+/// Whether an `application` target names the app in the foreground.
+///
+/// Compared against BOTH identities the window carries, because the picker
+/// stores whichever one is meaningful for that app: an executable stem for a
+/// desktop app, an AppUserModelID for a packaged one (which has no shortcut and
+/// therefore no exe to name). Testing both is one extra string compare and
+/// cannot confuse them — an exe stem never contains the `!` an AppUserModelID is
+/// built around, so no value can accidentally satisfy the wrong side.
+fn app_target_matches(
+    target: &grain_core::settings::ContextProfileTarget,
+    ctx: &ActiveContext,
+) -> bool {
+    if target.kind != "application" {
+        return false;
     }
-    settings.context_custom_profiles.iter().find(|p| {
-        p.targets
-            .iter()
-            .any(|t| t.kind == "application" && t.value.trim().eq_ignore_ascii_case(exe))
-    })
+    let value = target.value.trim();
+    if value.is_empty() {
+        return false;
+    }
+    if !ctx.exe.is_empty() && value.eq_ignore_ascii_case(&ctx.exe) {
+        return true;
+    }
+    ctx.aumid
+        .as_deref()
+        .is_some_and(|aumid| value.eq_ignore_ascii_case(aumid))
 }
 
 /// Up to `n` representative hosts for a profile, taken from [`SITE_TABLE`] in
@@ -1271,6 +1293,18 @@ pub struct ActiveContext {
     /// this is a *launchable* path — handed to extensions that need an app they
     /// can actually open. Empty when unavailable.
     pub exe_path: String,
+    /// The foreground process's AppUserModelID, for a packaged (MSIX / Store)
+    /// app. `None` for classic Win32, which is the common case and not a failure.
+    ///
+    /// Read here rather than by each consumer because it comes off the SAME
+    /// process handle `exe_path` does — so carrying it costs one extra query on
+    /// a handle already open, and saves the pill's icon path a second
+    /// `GetForegroundWindow`/`OpenProcess` round-trip of its own.
+    ///
+    /// It is the second half of app identity. A packaged app's `exe` is often a
+    /// stub or a name several Store apps share, and it is the AppUserModelID that
+    /// the Shell, the picker, and this all agree on.
+    pub aumid: Option<String>,
     pub category: AppCategory,
     /// Browser address-bar host, when the foreground app is a browser and UI
     /// Automation resolved it (e.g. `mail.google.com`). `None` otherwise.
@@ -1291,6 +1325,23 @@ pub struct ActiveContext {
     /// identifiers, library names) — an ADDITIVE bias hint, never raw text. Empty
     /// unless the nearby-terms opt-in is on and something was found.
     pub nearby_terms: Vec<String>,
+}
+
+impl ActiveContext {
+    /// Whether a browser is in front but no address was read out of it.
+    ///
+    /// This is "ask me again in a moment", not "there is no site here". A
+    /// browser builds its accessibility tree lazily, so the first read after a
+    /// window switch legitimately comes back empty — Gecko is the usual culprit
+    /// — and a moment later answers fine.
+    ///
+    /// The distinction matters because the two look identical from outside and
+    /// deserve opposite treatment: a browser sitting on an *unsupported* site
+    /// HAS a host, so it lands as `false` here and is left alone. Only the case
+    /// where the answer has not arrived yet is worth asking twice.
+    pub fn site_read_may_be_early(&self) -> bool {
+        self.url_host.is_none() && is_browser_exe(&self.exe)
+    }
 }
 
 /// Compose the final post-processing system prompt from up to four stages.
@@ -1576,7 +1627,8 @@ pub fn read_focused_text() -> Option<String> {
 #[cfg(windows)]
 mod windows_impl {
     use super::{category_for_exe, is_browser_exe, ActiveContext, Confidence};
-    use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, MAX_PATH};
+    use windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
     use windows::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
         PROCESS_QUERY_LIMITED_INFORMATION,
@@ -1604,7 +1656,7 @@ mod windows_impl {
                 return None;
             }
 
-            let Some(exe_path) = process_image_path(pid) else {
+            let Some((exe_path, aumid)) = process_identity(pid) else {
                 // Usually an elevated target: an unelevated Grain cannot open a
                 // handle to it. Worth naming, because the fix is a user action
                 // (run Grain as admin) rather than a bug.
@@ -1702,7 +1754,11 @@ mod windows_impl {
                 scan.caret
                     .as_ref()
                     .map(|c| format!("{}b/{}b", c.before.len(), c.after.len()))
-                    .unwrap_or_else(|| if read_caret { "none".into() } else { "off".into() }),
+                    .unwrap_or_else(|| if read_caret {
+                        "none".into()
+                    } else {
+                        "off".into()
+                    }),
                 if read_nearby_terms {
                     scan.terms.len().to_string()
                 } else {
@@ -1714,6 +1770,7 @@ mod windows_impl {
                 app_name,
                 exe,
                 exe_path,
+                aumid,
                 category,
                 url_host: scan.url_host,
                 field: scan.field,
@@ -1725,9 +1782,14 @@ mod windows_impl {
         }
     }
 
-    /// Full image path of `pid` via `QueryFullProcessImageNameW`, which works with
-    /// the limited-info access right (no elevation needed for most apps).
-    unsafe fn process_image_path(pid: u32) -> Option<String> {
+    /// Both identities of `pid`: its full image path, and its AppUserModelID when
+    /// it is a packaged app.
+    ///
+    /// One `OpenProcess` for the pair. They were read separately once — here and
+    /// again in the pill's icon path — and the handle, not either query, is the
+    /// expensive part. `PROCESS_QUERY_LIMITED_INFORMATION` is enough for both, so
+    /// no elevation is needed for most apps.
+    unsafe fn process_identity(pid: u32) -> Option<(String, Option<String>)> {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; MAX_PATH as usize];
         let mut len = buf.len() as u32;
@@ -1737,9 +1799,34 @@ mod windows_impl {
             windows::core::PWSTR(buf.as_mut_ptr()),
             &mut len,
         );
+        let aumid = packaged_aumid(handle);
         let _ = CloseHandle(handle);
         res.ok()?;
-        Some(String::from_utf16_lossy(&buf[..len as usize]))
+        Some((String::from_utf16_lossy(&buf[..len as usize]), aumid))
+    }
+
+    /// The AppUserModelID of a packaged (MSIX / Store) process, or `None`.
+    ///
+    /// `APPMODEL_ERROR_NO_APPLICATION` — a classic Win32 process — is the normal
+    /// answer and is reported as `None` rather than logged, because it says
+    /// nothing has gone wrong. Note that this is the *package* identity: a
+    /// desktop app that set an explicit AppUserModelID on itself is still `None`
+    /// here, which is exactly why the catalogue keys desktop apps on their exe.
+    unsafe fn packaged_aumid(handle: HANDLE) -> Option<String> {
+        // AppUserModelIDs are bounded well below this; the call reports the
+        // needed length, but one generous buffer avoids the two-call dance.
+        let mut len = 512u32;
+        let mut buf = vec![0u16; len as usize];
+        GetApplicationUserModelId(
+            handle,
+            &mut len,
+            Some(windows::core::PWSTR(buf.as_mut_ptr())),
+        )
+        .ok()
+        .ok()?;
+        let len = (len as usize).min(buf.len()).saturating_sub(1);
+        let s = String::from_utf16_lossy(&buf[..len]);
+        (!s.is_empty()).then_some(s)
     }
 
     /// The foreground window, or `None` when there isn't one. Shared with the
@@ -2822,6 +2909,7 @@ mod tests {
             app_name: exe.to_string(),
             exe: exe.to_string(),
             exe_path: String::new(),
+            aumid: None,
             category,
             url_host: None,
             field: FieldKind::Unknown,
@@ -3222,6 +3310,45 @@ mod tests {
         // `Other` normally adds nothing at all; the profile is what gives this
         // surface an instruction.
         assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Terse."));
+    }
+
+    /// A packaged (Store / MSIX) app is named by its AppUserModelID, because it
+    /// is the only identity it has — there is no shortcut behind it and so no
+    /// executable for the picker to offer. Matching has to accept that second
+    /// form or every packaged app a user picks would save fine and never fire.
+    #[test]
+    fn a_packaged_application_target_matches_on_its_appusermodelid() {
+        const NOTEPAD: &str = "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App";
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_custom_profiles
+            .push(custom("notes", "Plain text only.", "application", NOTEPAD));
+
+        let mut c = ctx("notepad", AppCategory::Other);
+        c.aumid = Some(NOTEPAD.to_string());
+        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Plain text only."));
+
+        // …and a different packaged app with the same-looking exe stem does not
+        // inherit it, which is the whole reason the AppUserModelID is stored.
+        let mut other = ctx("notepad", AppCategory::Other);
+        other.aumid = Some("SomeVendor.NotepadClone_abc123!App".to_string());
+        assert!(!compose_prompt("BASE", &s, Some(&other), None).contains("Plain text only."));
+    }
+
+    /// The two identities must not bleed into one another: a desktop app is
+    /// stored as an exe stem and a packaged one as an AppUserModelID, and
+    /// comparing a target against both is only safe while neither shape can
+    /// satisfy the wrong side.
+    #[test]
+    fn an_exe_target_never_matches_a_packaged_window_by_accident() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_custom_profiles
+            .push(custom("editor", "Syntax intact.", "application", "code"));
+
+        let mut c = ctx("someotherapp", AppCategory::Other);
+        c.aumid = Some("Contoso.Code_8wekyb3d8bbwe!App".to_string());
+        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("Syntax intact."));
     }
 
     /// A site claim beats an app claim, mirroring the built-in rule: "Chrome"

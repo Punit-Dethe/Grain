@@ -19,6 +19,7 @@ import {
   MessageCircle,
   MessagesSquare,
   Plus,
+  Search,
   Send,
   Shapes,
   Smartphone,
@@ -31,6 +32,7 @@ import {
   commands,
   type ContextProfileInfo,
   type CustomContextProfile,
+  type InstalledApp,
 } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
@@ -162,6 +164,73 @@ type CustomProfileDialogState =
  *  icons and starts reading as a smudge. */
 const ICON_STACK_MAX = 3;
 
+/** Most rows the app picker draws before it asks you to narrow the search.
+ *
+ *  Not a display limit for its own sake — every visible row resolves a real icon
+ *  through the Shell, and a few hundred at once on opening a picker is work
+ *  nobody asked for. Typing two letters cuts any machine's list below this. */
+const APP_PICKER_LIMIT = 50;
+
+/** The installed-application catalogue, fetched at most once per app run.
+ *
+ *  Module-level and promise-valued so that the picker and every profile card
+ *  asking for an app icon share ONE enumeration — it walks a shell namespace, so
+ *  a second one would be squarely the wrong kind of cheap. Nothing calls this
+ *  unless an application actually needs to be drawn or chosen, so a user with no
+ *  application targets never pays for it at all. */
+let installedAppsPromise: Promise<InstalledApp[]> | null = null;
+
+function loadInstalledApps(): Promise<InstalledApp[]> {
+  installedAppsPromise ??= commands.installedApps().catch(() => []);
+  return installedAppsPromise;
+}
+
+/** Resolved app icons by stored target. `null` means "asked, none to be had". */
+const appIconCache = new Map<string, string | null>();
+
+/** An installed application's real icon, falling back to a glyph.
+ *
+ *  Two hops rather than one, because a target is a MATCH key and not something
+ *  the Shell can draw: `code` identifies VS Code to the detector but names
+ *  nothing to the shell, whose id for it is `Microsoft.VisualStudioCode`. The
+ *  catalogue is what maps between them, which is also why a hand-typed
+ *  application quietly keeps the glyph — there is nothing to look it up in. */
+function AppIcon({
+  target,
+  fallback: Fallback = AppWindow,
+}: {
+  target: string;
+  fallback?: LucideIcon;
+}) {
+  const [src, setSrc] = useState<string | null>(
+    () => appIconCache.get(target) ?? null,
+  );
+
+  useEffect(() => {
+    if (appIconCache.has(target)) {
+      setSrc(appIconCache.get(target) ?? null);
+      return;
+    }
+    let live = true;
+    void (async () => {
+      const apps = await loadInstalledApps();
+      const match = apps.find((app) => app.target === target);
+      const data = match ? await commands.appIcon(match.icon_id) : null;
+      appIconCache.set(target, data);
+      if (live) setSrc(data);
+    })();
+    return () => {
+      live = false;
+    };
+  }, [target]);
+
+  return src ? (
+    <img src={src} alt="" width={18} height={18} />
+  ) : (
+    <Fallback size={15} strokeWidth={1.8} />
+  );
+}
+
 /** Resolved favicons by host, shared by every stack on the page.
  *
  *  Module-level rather than component state because the same host appears in
@@ -210,26 +279,17 @@ function SiteIcon({
   );
 }
 
-/** Overlapping stack of the real icons for what a profile covers.
- *
- *  Websites show their favicon; applications keep a glyph, since there is no
- *  icon to resolve until the app picker exists. */
+/** Overlapping stack of the real icons for what a profile covers — a website's
+ *  favicon or an application's own icon, whichever each target is. */
 function ProfileIconStack({
-  hosts,
-  apps = 0,
+  targets,
   fallback = Globe2,
 }: {
-  hosts: string[];
-  /** Application targets, which contribute a generic tile each. */
-  apps?: number;
+  targets: ReadonlyArray<CustomProfileTarget>;
   fallback?: LucideIcon;
 }) {
-  const shownHosts = hosts.slice(0, ICON_STACK_MAX);
-  const shownApps = Math.max(
-    0,
-    Math.min(apps, ICON_STACK_MAX - shownHosts.length),
-  );
-  if (!shownHosts.length && !shownApps) {
+  const shown = targets.slice(0, ICON_STACK_MAX);
+  if (!shown.length) {
     return (
       <div className="context-custom-profile-icons" aria-hidden="true">
         <span>
@@ -240,16 +300,149 @@ function ProfileIconStack({
   }
   return (
     <div className="context-custom-profile-icons" aria-hidden="true">
-      {shownHosts.map((host) => (
-        <span key={`site:${host}`} title={host}>
-          <SiteIcon host={host} fallback={fallback} />
+      {shown.map((target) => (
+        <span key={`${target.kind}:${target.value}`} title={target.value}>
+          {target.kind === "website" ? (
+            <SiteIcon host={target.value} fallback={fallback} />
+          ) : (
+            <AppIcon target={target.value} />
+          )}
         </span>
       ))}
-      {Array.from({ length: shownApps }, (_, index) => (
-        <span key={`app:${index}`}>
-          <AppWindow size={15} strokeWidth={1.8} />
-        </span>
-      ))}
+    </div>
+  );
+}
+
+/** Search the installed applications and pick one.
+ *
+ *  Chosen over asking someone to type an executable name, which is what this
+ *  replaced: the name of the binary is rarely the name of the app (Grain's own
+ *  is `handy.exe`), so typing it was a guess that failed silently — the profile
+ *  saved, looked right, and never fired.
+ *
+ *  Each row shows the executable underneath the name, because the Start menu is
+ *  not a list of distinct applications: a shortcut that opens a file in a
+ *  generic host resolves to that host, so an entry called "Icecast Config" is
+ *  really Notepad. Showing what it resolves to makes that visible rather than
+ *  misleading. */
+function AppPicker({
+  chosen,
+  onPick,
+  onCancel,
+}: {
+  /** Targets already on the profile, so they can be marked rather than offered
+   *  again as though picking one would do something. */
+  chosen: ReadonlySet<string>;
+  onPick: (value: string) => void;
+  onCancel: () => void;
+}) {
+  const [apps, setApps] = useState<InstalledApp[] | null>(null);
+  const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    void loadInstalledApps().then((rows) => {
+      if (live) setApps(rows);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const needle = query.trim().toLowerCase();
+  const matches = (apps ?? [])
+    .filter(
+      (app) =>
+        !needle ||
+        app.name.toLowerCase().includes(needle) ||
+        app.target.toLowerCase().includes(needle),
+    )
+    .slice(0, APP_PICKER_LIMIT);
+
+  return (
+    <div className="context-app-picker">
+      <div className="context-app-picker-search">
+        <Search size={14} aria-hidden="true" />
+        <input
+          autoFocus
+          className="dictionary-dialog-input"
+          value={query}
+          aria-label="Search applications"
+          placeholder="Search applications"
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+        />
+        <button
+          className="context-profile-target-cancel"
+          type="button"
+          aria-label="Cancel adding application"
+          onClick={onCancel}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="context-app-picker-list" role="listbox" tabIndex={-1}>
+        {apps === null && (
+          <p className="context-app-picker-empty">Reading your applications…</p>
+        )}
+        {apps !== null && matches.length === 0 && (
+          <p className="context-app-picker-empty">
+            {/* An app installed without a Start menu entry is invisible to
+                Windows' own app list too, so typing the name stays reachable
+                rather than being a dead end. */}
+            No match. Applications without a Start menu entry can be added by
+            executable name.
+          </p>
+        )}
+        {matches.map((app) => {
+          const already = chosen.has(app.target.toLocaleLowerCase());
+          return (
+            <button
+              key={app.target}
+              className="context-app-picker-row"
+              type="button"
+              role="option"
+              aria-selected={already}
+              disabled={already}
+              onClick={() => onPick(app.target)}
+            >
+              <span className="context-app-picker-icon" aria-hidden="true">
+                <AppIcon target={app.target} />
+              </span>
+              <span className="context-app-picker-name">
+                <strong>{app.name}</strong>
+                {/* A packaged app has no executable to show — its identity IS
+                    the name, so there is nothing to disambiguate. */}
+                {!app.target.includes("!") && <span>{app.target}.exe</span>}
+              </span>
+              {already && (
+                <span className="context-app-picker-added">Added</span>
+              )}
+            </button>
+          );
+        })}
+        {needle && (
+          <button
+            className="context-app-picker-row context-app-picker-manual"
+            type="button"
+            onClick={() => onPick(query.trim())}
+          >
+            <span className="context-app-picker-icon" aria-hidden="true">
+              <Plus size={14} />
+            </span>
+            <span className="context-app-picker-name">
+              <strong>Use “{query.trim()}”</strong>
+              <span>Add by name, for an app that is not listed</span>
+            </span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -314,20 +507,31 @@ function CustomProfileDialog({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const addTarget = () => {
-    const value = targetValue.trim();
-    if (!value || !targetKind) return;
+  const addTarget = (
+    kind: CustomProfileTarget["kind"] | null = targetKind,
+    raw = targetValue,
+  ) => {
+    const value = raw.trim();
+    if (!value || !kind) return;
     const duplicate = targets.some(
       (target) =>
-        target.kind === targetKind &&
+        target.kind === kind &&
         target.value.toLocaleLowerCase() === value.toLocaleLowerCase(),
     );
     if (!duplicate) {
-      setTargets((current) => [...current, { kind: targetKind, value }]);
+      setTargets((current) => [...current, { kind, value }]);
     }
     setTargetValue("");
     setTargetKind(null);
   };
+
+  /** Application targets already on the profile, lowercased for comparison —
+   *  the picker marks these rather than offering them a second time. */
+  const chosenApps = new Set(
+    targets
+      .filter((target) => target.kind === "application")
+      .map((target) => target.value.toLocaleLowerCase()),
+  );
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -414,7 +618,6 @@ function CustomProfileDialog({
               {targets.length > 0 && (
                 <div className="context-profile-target-list">
                   {targets.map((target) => {
-                    const Icon = target.kind === "website" ? Globe2 : AppWindow;
                     return (
                       <span
                         key={`${target.kind}:${target.value}`}
@@ -424,14 +627,14 @@ function CustomProfileDialog({
                           className="context-profile-target-icon"
                           aria-hidden="true"
                         >
+                          {/* Both resolve against the same cache the pill uses,
+                              so a target added here shows the very icon the pill
+                              will show while dictating into it — which is also
+                              the confirmation that Grain understood it. */}
                           {target.kind === "website" ? (
-                            // Resolves against the same cache the pill uses, so
-                            // a site added here shows the very favicon the pill
-                            // will show while dictating into it — which is also
-                            // the confirmation that the site is supported.
                             <SiteIcon host={target.value} fallback={Globe2} />
                           ) : (
-                            <Icon size={13} />
+                            <AppIcon target={target.value} />
                           )}
                         </span>
                         <span>{target.value}</span>
@@ -458,27 +661,21 @@ function CustomProfileDialog({
                 </div>
               )}
 
-              {targetKind ? (
+              {targetKind === "application" ? (
+                <AppPicker
+                  chosen={chosenApps}
+                  onPick={(value) => addTarget("application", value)}
+                  onCancel={() => setTargetKind(null)}
+                />
+              ) : targetKind === "website" ? (
                 <div className="context-profile-target-entry">
-                  {targetKind === "website" ? (
-                    <Globe2 size={15} aria-hidden="true" />
-                  ) : (
-                    <AppWindow size={15} aria-hidden="true" />
-                  )}
+                  <Globe2 size={15} aria-hidden="true" />
                   <input
                     autoFocus
                     className="dictionary-dialog-input"
                     value={targetValue}
-                    aria-label={
-                      targetKind === "website"
-                        ? "Website address"
-                        : "Application name"
-                    }
-                    placeholder={
-                      targetKind === "website"
-                        ? "example.com"
-                        : "Application name"
-                    }
+                    aria-label="Website address"
+                    placeholder="example.com"
                     onChange={(event) => setTargetValue(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter") {
@@ -491,7 +688,7 @@ function CustomProfileDialog({
                     className="context-profile-target-add"
                     type="button"
                     disabled={!targetValue.trim()}
-                    onClick={addTarget}
+                    onClick={() => addTarget()}
                   >
                     Add
                   </button>
@@ -868,7 +1065,9 @@ export const ContextAwareSection: React.FC = () => {
                   onClick={() => setActiveProfileId(profile.id)}
                 >
                   <ProfileIconStack
-                    hosts={profileInfo[profile.id]?.sample_sites ?? []}
+                    targets={(profileInfo[profile.id]?.sample_sites ?? []).map(
+                      (host) => ({ kind: "website", value: host }),
+                    )}
                     fallback={CardIcon}
                   />
                   <span className="context-custom-profile-create-copy">
@@ -917,13 +1116,9 @@ export const ContextAwareSection: React.FC = () => {
                 }
               >
                 <ProfileIconStack
-                  hosts={(profile.targets ?? [])
-                    .filter((target) => target.kind === "website")
-                    .map((target) => target.value)}
-                  apps={
-                    (profile.targets ?? []).filter(
-                      (target) => target.kind === "application",
-                    ).length
+                  targets={
+                    (profile.targets ??
+                      []) as ReadonlyArray<CustomProfileTarget>
                   }
                 />
                 <span className="context-custom-profile-create-copy">

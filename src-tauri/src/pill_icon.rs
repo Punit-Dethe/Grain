@@ -153,28 +153,46 @@ fn cache_write(app: &AppHandle, key: &IconKey, rgba: &[u8]) {
     }
 }
 
-/// Both identities the foreground window can carry: the app, and — when it is a
-/// browser sitting on a supported site — that site.
-///
-/// One detection round-trip serves both. The URL read is the expensive part (UI
-/// Automation), and `detect_active_context` already performs it for browsers, so
-/// asking separately would pay for it twice.
-fn foreground_keys(settings: &grain_core::AppSettings) -> (Option<IconKey>, Option<IconKey>) {
-    let ctx = crate::context_detect::detect_active_context(false, false);
-    let site = ctx
-        .as_ref()
-        .and_then(|c| c.url_host.as_deref())
-        .and_then(|host| site_key(host, settings));
+/// What one look at the foreground window found.
+struct Foreground {
+    /// The app itself: its packaged identity when it has one, else its binary.
+    app: Option<IconKey>,
+    /// The site, when a browser is showing one Grain supports.
+    site: Option<IconKey>,
+    /// A browser was in front but had not named its address yet — see
+    /// [`crate::context_detect::ActiveContext::site_read_may_be_early`].
+    early: bool,
+}
 
-    #[cfg(windows)]
-    if let Some(aumid) = windows_impl::foreground_aumid() {
-        return (Some(IconKey::Id(aumid)), site);
+/// Everything one detection round-trip tells the icon path.
+///
+/// One round-trip, because the URL read is the expensive part (UI Automation)
+/// and `detect_active_context` already performs it for browsers — asking
+/// separately would pay for it twice. The app's packaged identity now rides
+/// along on that same call for the same reason: it comes off a process handle
+/// detection already opens.
+fn foreground(settings: &grain_core::AppSettings) -> Foreground {
+    let Some(ctx) = crate::context_detect::detect_active_context(false, false) else {
+        return Foreground {
+            app: None,
+            site: None,
+            early: false,
+        };
+    };
+    Foreground {
+        // A packaged app first: its foreground `.exe` is often a stub with no
+        // usable icon resource, and the resource-level APIs cannot see the real
+        // asset at all.
+        app: match ctx.aumid.clone() {
+            Some(aumid) => Some(IconKey::Id(aumid)),
+            None => (!ctx.exe_path.is_empty()).then(|| IconKey::Path(PathBuf::from(&ctx.exe_path))),
+        },
+        site: ctx
+            .url_host
+            .as_deref()
+            .and_then(|host| site_key(host, settings)),
+        early: ctx.site_read_may_be_early(),
     }
-    let app = ctx
-        .as_ref()
-        .filter(|c| !c.exe_path.is_empty())
-        .map(|c| IconKey::Path(PathBuf::from(&c.exe_path)));
-    (app, site)
 }
 
 /// Resolve to `PILL_ICON_PX`² premultiplied RGBA. Slow (COM + shell + disk) —
@@ -214,8 +232,19 @@ static RESOLVE_GEN: AtomicU64 = AtomicU64::new(0);
 /// icon never leads into a new one.
 pub fn emit_for_session(app: &AppHandle) {
     *SHOWING.lock().unwrap() = None;
-    resolve_and_emit(app, true);
+    resolve_and_emit(app, true, true);
 }
+
+/// How long to wait before asking a browser again for an address it had not
+/// produced yet.
+///
+/// This replaces a much blunter instrument. Following the foreground used to
+/// wait five seconds before believing a WINDOW switch, partly so that a browser
+/// had time to build its accessibility tree — which meant every app switch,
+/// browser or not, paid for it. Retrying only the case that needs it lets the
+/// switch itself be as quick as a tab change, and covers tab changes too, which
+/// the old delay never did.
+const EARLY_RETRY: std::time::Duration = std::time::Duration::from_millis(900);
 
 /// Re-resolve mid-session, after the user settled on a different window or tab.
 ///
@@ -224,7 +253,7 @@ pub fn emit_for_session(app: &AppHandle) {
 /// and blanking the pill to a bare dot every time that happens reads as the
 /// feature being broken, when the previous icon was still perfectly correct.
 pub fn refresh(app: &AppHandle) {
-    resolve_and_emit(app, false);
+    resolve_and_emit(app, false, true);
 }
 
 /// Two rungs, best-first: a supported WEBSITE outranks the browser showing it,
@@ -236,7 +265,10 @@ pub fn refresh(app: &AppHandle) {
 /// if it succeeds. That also gives the stale-while-revalidate shape for free: on
 /// a site whose icon is not cached yet, the browser's own icon shows at once and
 /// is replaced the moment the site's arrives.
-fn resolve_and_emit(app: &AppHandle, clear_when_unknown: bool) {
+/// `may_retry` is spent by the one re-resolve a not-yet-readable browser earns,
+/// so a browser that never names an address costs exactly one extra look rather
+/// than a loop.
+fn resolve_and_emit(app: &AppHandle, clear_when_unknown: bool, may_retry: bool) {
     let settings = crate::settings::get_settings(app);
     if !settings.pill_show_app_icon {
         // Clear any icon a previous session left on the pill.
@@ -245,7 +277,25 @@ fn resolve_and_emit(app: &AppHandle, clear_when_unknown: bool) {
         return;
     }
     let generation = RESOLVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
-    let (app_key, site) = foreground_keys(&settings);
+    let Foreground {
+        app: app_key,
+        site,
+        early,
+    } = foreground(&settings);
+
+    if early && may_retry {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(EARLY_RETRY).await;
+            // Only if nothing has moved since: a newer resolve has already
+            // answered the question this retry was asked to answer.
+            if RESOLVE_GEN.load(Ordering::Relaxed) == generation {
+                // Never clears — this is a second opinion, and a second empty
+                // read is not evidence that the first icon was wrong.
+                resolve_and_emit(&app, false, false);
+            }
+        });
+    }
 
     // Each key's OWN cache, kept separate.
     //
@@ -426,6 +476,43 @@ pub async fn site_icon_data_url(app: &AppHandle, host: &str) -> Option<String> {
     png_data_url(&rgba)
 }
 
+/// [GRAIN] An installed application's icon as a PNG data URL, for the picker.
+///
+/// `id` is an [`crate::app_catalog::InstalledApp::icon_id`]: an executable path,
+/// or a packaged app's AppUserModelID. Told apart by shape, because the two go
+/// to different Shell namespaces and asking the wrong one yields nothing —
+/// an AppUserModelID is a bare identity with no path separator in it.
+///
+/// Shares the pill's cache, so an app whose icon was drawn in the picker is
+/// already warm the first time it is dictated into — and vice versa, since these
+/// are the very same keys the pill resolves.
+///
+/// Blocking (COM + shell + disk), so it is handed to a blocking task rather than
+/// awaited on the async runtime.
+pub async fn app_icon_data_url(app: &AppHandle, id: String) -> Option<String> {
+    let id = id.trim().to_string();
+    if id.is_empty() {
+        return None;
+    }
+    let key = if id.contains('\\') || id.contains('/') {
+        IconKey::Path(PathBuf::from(&id))
+    } else {
+        IconKey::Id(id)
+    };
+    if let Some(rgba) = cache_read(app, &key) {
+        return png_data_url(&rgba);
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let rgba = resolve(&key)?;
+        cache_write(&app, &key, &rgba);
+        png_data_url(&rgba)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Lowercase, `www.`-less, and shaped like a public domain — or `None`.
 ///
 /// The shape check is the safety boundary for [`site_icon_data_url`]: it keeps a
@@ -462,14 +549,23 @@ fn png_data_url(rgba: &[u8]) -> Option<String> {
     let mut straight = Vec::with_capacity(rgba.len());
     for px in rgba.chunks_exact(4) {
         let a = px[3];
-        let un = |c: u8| if a == 0 { 0 } else { ((c as u32 * 255) / a as u32).min(255) as u8 };
+        let un = |c: u8| {
+            if a == 0 {
+                0
+            } else {
+                ((c as u32 * 255) / a as u32).min(255) as u8
+            }
+        };
         straight.extend_from_slice(&[un(px[0]), un(px[1]), un(px[2]), a]);
     }
     let img: image::RgbaImage =
         image::ImageBuffer::from_raw(PILL_ICON_PX as u32, PILL_ICON_PX as u32, straight)?;
     let mut png = std::io::Cursor::new(Vec::new());
     img.write_to(&mut png, image::ImageFormat::Png).ok()?;
-    Some(format!("data:image/png;base64,{}", encode(&png.into_inner())))
+    Some(format!(
+        "data:image/png;base64,{}",
+        encode(&png.into_inner())
+    ))
 }
 
 fn emit(app: &AppHandle, rgba: Option<String>) {
@@ -1104,62 +1200,20 @@ mod site_fetch {
 mod windows_impl {
     use super::IconKey;
     use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::Foundation::{CloseHandle, HWND};
     use windows::Win32::Graphics::Gdi::{
         DeleteObject, GetDC, GetDIBits, GetObjectW, ReleaseDC, BITMAP, BITMAPINFO,
         BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
     };
-    use windows::Win32::Storage::Packaging::Appx::GetApplicationUserModelId;
     use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows::Win32::UI::Shell::{
         IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
 
     /// Ask the Shell for a bigger bitmap than we need and downscale ourselves.
     /// The Shell's own fit is a GDI stretch blit; at pill sizes the difference
     /// between that and a real filter is the whole look. (The docs explicitly
     /// suggest this pairing with SIIGBF_BIGGERSIZEOK.)
     const REQUEST_PX: i32 = 96;
-
-    /// The foreground process's AppUserModelID, when it is a packaged (MSIX /
-    /// Store) app. `None` for classic Win32 — which is the common case and not
-    /// an error.
-    ///
-    /// This rung matters more than it looks: a packaged app's foreground `.exe`
-    /// is often a stub with no usable icon resource, and the resource-level APIs
-    /// cannot see the real asset at all.
-    pub fn foreground_aumid() -> Option<String> {
-        unsafe {
-            let hwnd: HWND = GetForegroundWindow();
-            if hwnd.0.is_null() {
-                return None;
-            }
-            let mut pid = 0u32;
-            GetWindowThreadProcessId(hwnd, Some(&mut pid));
-            if pid == 0 {
-                return None;
-            }
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-            // AUMIDs are bounded well below this; the call reports the needed
-            // length, but one generous buffer avoids the two-call dance.
-            let mut len = 512u32;
-            let mut buf = vec![0u16; len as usize];
-            let rc = GetApplicationUserModelId(
-                handle,
-                &mut len,
-                Some(windows::core::PWSTR(buf.as_mut_ptr())),
-            );
-            let _ = CloseHandle(handle);
-            if rc.is_err() {
-                return None; // APPMODEL_ERROR_NO_APPLICATION → classic Win32
-            }
-            let len = (len as usize).min(buf.len()).saturating_sub(1);
-            let s = String::from_utf16_lossy(&buf[..len]);
-            (!s.is_empty()).then_some(s)
-        }
-    }
 
     pub fn resolve(key: &IconKey) -> Option<Vec<u8>> {
         // The parsing name is the ONLY difference between the two app kinds:

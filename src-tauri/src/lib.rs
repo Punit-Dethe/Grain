@@ -14,6 +14,7 @@
 #[path = "handy/actions.rs"]
 mod actions;
 mod agent; // [GRAIN] summoned voice-first AI window (Phase 7)
+mod app_catalog; // [GRAIN] installed-application catalogue behind the context-profile app picker
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[path = "handy/apple_intelligence.rs"]
 mod apple_intelligence;
@@ -855,6 +856,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::context_profiles,
             grain_commands::set_context_profile_instruction,
             grain_commands::site_icon,
+            grain_commands::installed_apps,
+            grain_commands::app_icon,
             grain_commands::context_custom_profiles,
             grain_commands::update_context_custom_profiles,
             shortcut::change_start_hidden_setting,

@@ -45,19 +45,24 @@ use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
-/// How long a WINDOW must stay in front before Grain believes you meant it.
+/// How long a surface must hold before Grain believes you meant it.
 ///
-/// Long enough to ignore passing through a window on the way to another; short
-/// enough that the icon confirms the target before a sentence ends. It also
-/// gives Gecko time to build its accessibility tree, which it does lazily — a
-/// browser that answers nothing on the first read often answers on this one.
-const WINDOW_SETTLE: Duration = Duration::from_secs(5);
-
-/// How long a change WITHIN the front window — a new tab, a different field —
-/// must hold. Much shorter, because it is a much safer signal: you are already
-/// working in this window, so there is no "passing through" case to guard
-/// against, and the full window delay just made switching tabs feel broken.
-const TAB_SETTLE: Duration = Duration::from_millis(1200);
+/// # Why windows and tabs wait the same
+///
+/// A window switch used to wait five seconds while a tab switch waited this, on
+/// the reasoning that alt-tabbing *past* a window should not rewrite the pill.
+/// But that case was already covered, and by this module's better half: every
+/// event restamps [`LAST_CHANGE_MS`], so passing through a window pushes the
+/// finish line out rather than settling on it. The long wait only ever fired for
+/// someone who stopped on a window for over a second — which is not passing
+/// through, it is arriving.
+///
+/// What the five seconds was quietly also buying was time for a browser to build
+/// its accessibility tree. That is a retry, not a delay: it is now handled where
+/// it belongs, by the one re-resolve `pill_icon` schedules when a browser has
+/// not named its address yet. Paying it here charged every app switch for a
+/// problem only browsers have, and still did nothing for tab switches.
+const SETTLE: Duration = Duration::from_millis(1200);
 
 /// Milliseconds (since `EPOCH`) of the most recent surface change. The settle
 /// task compares against this rather than owning a deadline, so a change that
@@ -68,10 +73,6 @@ static SETTLING: AtomicBool = AtomicBool::new(false);
 /// False between sessions; makes a settle in flight give up rather than repaint
 /// a pill that is no longer showing.
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-/// Whether the pending change included a WINDOW switch, which earns the longer
-/// settle. An app switch fires foreground AND focus, so this is what stops the
-/// focus half from quietly shortening the window case to the tab one.
-static SAW_WINDOW_CHANGE: AtomicBool = AtomicBool::new(false);
 
 /// Start of the monotonic clock these timestamps are measured against.
 static EPOCH: OnceLock<Instant> = OnceLock::new();
@@ -120,12 +121,9 @@ pub fn stop(app: &AppHandle) {
 /// Deliberately does almost nothing: this runs on the main thread's message
 /// pump, and a UI Automation read here would stall the UI of whatever app the
 /// user just switched to. Two atomics is the whole cost of an event.
-fn note_change(window_changed: bool) {
+fn note_change() {
     if !ACTIVE.load(Ordering::Relaxed) {
         return;
-    }
-    if window_changed {
-        SAW_WINDOW_CHANGE.store(true, Ordering::Relaxed);
     }
     LAST_CHANGE_MS.store(now_ms(), Ordering::Relaxed);
     // Already counting down — that task will pick up the new stamp.
@@ -138,22 +136,14 @@ fn note_change(window_changed: bool) {
     };
     tauri::async_runtime::spawn(async move {
         loop {
-            // Re-read each pass: a window switch arriving mid-wait upgrades the
-            // requirement, and must not be settled on the tab timing.
-            let needed = if SAW_WINDOW_CHANGE.load(Ordering::Relaxed) {
-                WINDOW_SETTLE
-            } else {
-                TAB_SETTLE
-            };
-            tokio::time::sleep(needed).await;
+            tokio::time::sleep(SETTLE).await;
             if !ACTIVE.load(Ordering::Relaxed) {
                 break;
             }
             let quiet_for = now_ms().saturating_sub(LAST_CHANGE_MS.load(Ordering::Relaxed));
-            if quiet_for + 1 >= needed.as_millis() as u64 {
+            if quiet_for + 1 >= SETTLE.as_millis() as u64 {
                 // Held long enough to mean it. Re-resolve, keeping the current
                 // icon if the surface cannot be named this time.
-                SAW_WINDOW_CHANGE.store(false, Ordering::Relaxed);
                 crate::pill_icon::refresh(&app);
                 break;
             }
@@ -231,7 +221,7 @@ mod windows_impl {
         _thread: u32,
         _time: u32,
     ) {
-        super::note_change(true);
+        super::note_change();
     }
 
     /// Focus, filtered to the window's own client area.
@@ -252,6 +242,6 @@ mod windows_impl {
         if id_object != OBJID_CLIENT.0 {
             return;
         }
-        super::note_change(false);
+        super::note_change();
     }
 }

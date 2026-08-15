@@ -117,17 +117,6 @@ async setContextProfileInstruction(id: string, instruction: string) : Promise<Re
 }
 },
 /**
- * [GRAIN] The user's own context profiles, as stored.
- * 
- * Read back through a command rather than off the settings blob so the UI sees
- * the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
- * showing what was typed instead of what was saved is how a user ends up
- * wondering why their profile never fires.
- */
-async contextCustomProfiles() : Promise<CustomContextProfile[]> {
-    return await TAURI_INVOKE("context_custom_profiles");
-},
-/**
  * [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
  * 
  * Async and one host per call, so the settings UI paints immediately and each
@@ -137,6 +126,38 @@ async contextCustomProfiles() : Promise<CustomContextProfile[]> {
  */
 async siteIcon(host: string) : Promise<string | null> {
     return await TAURI_INVOKE("site_icon", { host });
+},
+/**
+ * [GRAIN] Every application this user can launch, for the profile app picker.
+ * 
+ * Async and off the runtime's threads: this walks a Shell namespace and reads
+ * two properties per entry, which on a well-populated machine is a couple of
+ * hundred milliseconds. The picker asks once when it opens and filters the
+ * result locally, so a person typing never waits on this.
+ */
+async installedApps() : Promise<InstalledApp[]> {
+    return await TAURI_INVOKE("installed_apps");
+},
+/**
+ * [GRAIN] An installed application's icon as a PNG data URL, or `None`.
+ * 
+ * One app per call for the same reason [`site_icon`] is: the list paints at
+ * once and each icon lands as it resolves, rather than the whole picker waiting
+ * on the slowest entry.
+ */
+async appIcon(id: string) : Promise<string | null> {
+    return await TAURI_INVOKE("app_icon", { id });
+},
+/**
+ * [GRAIN] The user's own context profiles, as stored.
+ * 
+ * Read back through a command rather than off the settings blob so the UI sees
+ * the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
+ * showing what was typed instead of what was saved is how a user ends up
+ * wondering why their profile never fires.
+ */
+async contextCustomProfiles() : Promise<CustomContextProfile[]> {
+    return await TAURI_INVOKE("context_custom_profiles");
 },
 /**
  * [GRAIN] Replace the whole set of user-made context profiles.
@@ -3013,6 +3034,27 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+/**
+ * One launchable application.
+ */
+export type InstalledApp = { 
+/**
+ * What the Start menu calls it.
+ */
+name: string; 
+/**
+ * The identity a context profile stores: a lowercased executable stem for a
+ * desktop app (`code`), an AppUserModelID for a packaged one
+ * (`Claude_pzs8sxrjxfjjc!Claude`). Matched against the foreground window.
+ */
+target: string; 
+/**
+ * What to ask the Shell for a picture of: the executable's full path, or
+ * the AppUserModelID. Distinct from `target` because matching wants the
+ * least-specific form (a stem, so an app that moves still matches) and
+ * icons want the most specific one.
+ */
+icon_id: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
