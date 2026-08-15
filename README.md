@@ -176,6 +176,23 @@ It is to provide reusable primitives — **speech, context, AI, embeddings, stor
 
 What those primitives become is up to extension authors.
 
+### Developer experience
+
+Grain tries to keep extension development closer to building the useful part of an integration than building an entire desktop application.
+
+The extension tooling handles the surrounding workflow:
+
+* `grain-ext init` scaffolds a new extension.
+* `grain-ext dev` runs the development workflow with fast iteration and reloads.
+* `grain-ext doctor` validates the extension using the same kinds of checks expected before submission.
+* `grain-ext submit` prepares the extension for the registry submission workflow.
+
+Developers describe required permissions, settings, surfaces, and capabilities through the extension manifest, while Grain handles execution, isolation, lifecycle, storage boundaries, permissions, UI hosting, and resource cleanup.
+
+For most extensions, there is no need to build a separate installer, windowing system, background service, embedding infrastructure, AI integration, or update mechanism.
+
+The intention is simple: **an extension author should spend most of their time building what their extension actually does.**
+
 ### Publish it for others, with trust that can't be faked
 
 If you want to share an extension, publishing is deliberately different from a typical extension store:
