@@ -336,7 +336,7 @@ const STUDIO_BOTTOM_PAD: f32 = 5.0;
 /// [GRAIN] Width of the WAVE skin's bar row in the Studio control row. Fixed and
 /// centred rather than derived from the capsule edges, so the row does not
 /// reflow (and the bar count does not change) while the card grows.
-const STUDIO_WAVE_W: f32 = 140.0;
+const STUDIO_WAVE_W: f32 = 100.0;
 /// Fraction of the control row's half-height the bars may reach. Taller than the
 /// collapsed pill's `WAVE_FILL` because the control row is a band with room to
 /// spare, where the pill's capsule needs breathing space above and below.
@@ -3652,6 +3652,12 @@ impl App {
         let ms = mon.size();
         let mp = mon.position();
         let margin = (16.0 * SCALE) as i32;
+        // [GRAIN] The bottom anchor sits CLOSER to its edge than the top one.
+        // Written as its own constant rather than sharing `margin`, because
+        // "move the pill down" means a smaller gap at the bottom and a larger
+        // one at the top — one shared number silently moves one of them the
+        // wrong way. Applies to the collapsed pill and the Studio card alike.
+        let bottom_margin = (7.0 * SCALE) as i32;
         // [GRAIN] Horizontally center the CONTENT (`center_w`), not the full window.
         // The collapsed window is wider than the pill (transparent reserve to the
         // right for the sibling capsule); centering on the pill's own width keeps
@@ -3670,7 +3676,7 @@ impl App {
                 let bottom =
                     work_area_bottom(mp.x + (ms.width / 2) as i32, mp.y + (ms.height / 2) as i32)
                         .unwrap_or(screen_bottom);
-                bottom - h as i32 - margin
+                bottom - h as i32 - bottom_margin
             }
             // [GRAIN] Vertically centered on the monitor — the Studio Window's
             // natural home (a tall content box reads poorly hugging an edge).

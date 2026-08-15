@@ -548,6 +548,12 @@ mod site_fetch {
     use std::time::Duration;
 
     /// Enough for a `<head>`; icon links live near the top of the document.
+    ///
+    /// HTML is TRUNCATED at this, not rejected. Rejecting is what an oversized
+    /// icon deserves — half a PNG is garbage — but a real app shell can be far
+    /// larger than any reasonable cap and still declare its icons in the first
+    /// few KB. gemini.google.com serves ~820 KB of HTML, which failed outright
+    /// under a rejecting cap even though its `<head>` was well inside it.
     const HTML_CAP: usize = 192 * 1024;
     const ICON_CAP: usize = 1024 * 1024;
     const TIMEOUT: Duration = Duration::from_secs(6);
@@ -581,11 +587,10 @@ mod site_fetch {
     /// then the well-known path as a last resort.
     async fn candidates(client: &reqwest::Client, origin: &str) -> Vec<String> {
         let mut out = Vec::new();
-        if let Some(html) = get(client, &format!("{origin}/"), HTML_CAP)
-            .await
-            .and_then(|b| String::from_utf8(b).ok())
-        {
-            out = declared_icons(&html, origin);
+        if let Some(bytes) = get_truncating(client, &format!("{origin}/"), HTML_CAP).await {
+            // Lossy: a cut at the cap can land mid-character, and one mangled
+            // glyph in the tail is irrelevant to link tags in the head.
+            out = declared_icons(&String::from_utf8_lossy(&bytes), origin);
         }
         out.push(format!("{origin}/favicon.ico"));
         out
@@ -713,14 +718,33 @@ mod site_fetch {
         })
     }
 
-    /// GET with a hard byte ceiling. Streamed and counted rather than trusting
-    /// `Content-Length`, which a server is free to understate or omit.
+    /// GET with a hard byte ceiling, failing if the body exceeds it.
+    ///
+    /// For icons: a truncated image is garbage, so an oversized one is dropped.
+    /// Streamed and counted rather than trusting `Content-Length`, which a server
+    /// is free to understate or omit.
     async fn get(client: &reqwest::Client, url: &str, cap: usize) -> Option<Vec<u8>> {
+        read_capped(client, url, cap, false).await
+    }
+
+    /// GET that stops reading at the ceiling and keeps what it has. For HTML,
+    /// where the part we need is at the top and the rest is not worth refusing
+    /// the whole document over.
+    async fn get_truncating(client: &reqwest::Client, url: &str, cap: usize) -> Option<Vec<u8>> {
+        read_capped(client, url, cap, true).await
+    }
+
+    async fn read_capped(
+        client: &reqwest::Client,
+        url: &str,
+        cap: usize,
+        truncate: bool,
+    ) -> Option<Vec<u8>> {
         let resp = client.get(url).send().await.ok()?;
         if !resp.status().is_success() {
             return None;
         }
-        if resp.content_length().is_some_and(|n| n as usize > cap) {
+        if !truncate && resp.content_length().is_some_and(|n| n as usize > cap) {
             return None;
         }
         let mut buf = Vec::with_capacity(8 * 1024);
@@ -728,7 +752,13 @@ mod site_fetch {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.ok()?;
             if buf.len() + chunk.len() > cap {
-                return None; // oversized: drop it rather than truncate to garbage
+                if !truncate {
+                    return None;
+                }
+                // Take the head and stop pulling: dropping the connection here is
+                // the point, so a huge page costs us only the cap.
+                buf.extend_from_slice(&chunk[..cap - buf.len()]);
+                break;
             }
             buf.extend_from_slice(&chunk);
         }
