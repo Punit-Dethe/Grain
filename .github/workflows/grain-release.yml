@@ -120,6 +120,40 @@ jobs:
       - name: Install frontend dependencies
         run: bun install
 
+      - name: Prepare and verify updater signing key
+        shell: pwsh
+        env:
+          GRAIN_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          GRAIN_UPDATER_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:GRAIN_UPDATER_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is missing"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GRAIN_UPDATER_KEY_PASSWORD)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is missing"
+          }
+
+          $keyPath = Join-Path $env:RUNNER_TEMP "grain-updater.key"
+          $probePath = Join-Path $env:RUNNER_TEMP "grain-signing-probe.txt"
+          [IO.File]::WriteAllText($keyPath, $env:GRAIN_UPDATER_KEY.Trim(), [Text.UTF8Encoding]::new($false))
+
+          try {
+            [void][Convert]::FromBase64String($env:GRAIN_UPDATER_KEY.Trim())
+          } catch {
+            throw "TAURI_SIGNING_PRIVATE_KEY must contain the Base64 key-file value"
+          }
+
+          [IO.File]::WriteAllText($probePath, "Grain updater signing probe")
+          $env:TAURI_SIGNING_PRIVATE_KEY_PATH = $keyPath
+          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:GRAIN_UPDATER_KEY_PASSWORD
+          & bun tauri signer sign $probePath | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Updater signing key validation failed" }
+
+          Remove-Item -LiteralPath $probePath, "$probePath.sig" -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_SIGNING_PRIVATE_KEY_PATH=$keyPath"
+          Write-Host "Updater signing key validated"
+
       # Bundle the VC++ runtime app-local so Grain starts on machines without
       # a current Microsoft redistributable (upstream #1577 / issue #1527).
       # build.rs stages msvcp140/vcruntime140/vcomp140 from these dirs into
@@ -153,8 +187,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Minisign key for the updater (free). Public half lives in tauri.conf.json.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # CPU-compat: disable AVX/FMA/etc so CPUs lacking them don't SIGILL.
           # The Vulkan backend does the heavy compute, so the perf impact is negligible.
@@ -247,3 +279,12 @@ jobs:
             Thanks for using Grain.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
+
+      - name: Remove updater signing key
+        if: always()
+        shell: pwsh
+        run: |
+          $keyPath = Join-Path $env:RUNNER_TEMP "grain-updater.key"
+          if (Test-Path -LiteralPath $keyPath) {
+            Remove-Item -LiteralPath $keyPath -Force
+          }
