@@ -51,7 +51,15 @@ pub struct ContextProfileInfo {
     /// counts as edited — "this profile says nothing" is a deliberate choice,
     /// not an absent one.
     pub edited: bool,
+    /// A few real hosts this profile covers, for the card's icon stack. Derived
+    /// from the site table, so the card cannot claim a site the profile does
+    /// not actually apply to.
+    pub sample_sites: Vec<String>,
 }
+
+/// How many icons the card stacks. Beyond three the overlap stops reading as
+/// distinct icons and starts reading as a smudge.
+const SAMPLE_SITES: usize = 3;
 
 /// [GRAIN] The four editable profiles, in display order.
 #[tauri::command]
@@ -74,6 +82,7 @@ pub fn context_profiles(app: AppHandle) -> Vec<ContextProfileInfo> {
                     .context_profile_instructions
                     .iter()
                     .any(|o| o.id == *id),
+                sample_sites: crate::context_detect::sample_sites(category, SAMPLE_SITES),
             })
         })
         .collect()
@@ -104,6 +113,18 @@ pub fn set_context_profile_instruction(
     }
     settings::write_settings(&app, settings);
     Ok(())
+}
+
+/// [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
+///
+/// Async and one host per call, so the settings UI paints immediately and each
+/// icon appears as it resolves. A batch command would make the whole row wait
+/// for the slowest site — and these are cached after the first fetch, so the
+/// call is nearly free on every subsequent open.
+#[tauri::command]
+#[specta::specta]
+pub async fn site_icon(app: AppHandle, host: String) -> Option<String> {
+    crate::pill_icon::site_icon_data_url(&app, &host).await
 }
 
 /// [GRAIN] The user's own context profiles, as stored.

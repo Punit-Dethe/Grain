@@ -388,6 +388,90 @@ fn encode(rgba: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(rgba)
 }
 
+/// [GRAIN] A site's favicon as a PNG data URL, for the settings UI.
+///
+/// Shares the cache and the fetch ladder with the pill, which is the point: an
+/// icon fetched for a settings card is already warm when the pill needs it, and
+/// vice versa. A second path would drift and would fetch twice.
+///
+/// # Why this does NOT apply the registry gate
+///
+/// [`site_key`] refuses any host outside the registry, because there the host
+/// comes from *whatever window happens to be in front* — that gate is what stops
+/// the foreground app steering Grain's network requests, and it is unchanged.
+///
+/// The host here comes from the settings UI: either a row of the registry
+/// itself, or a domain the user just typed into the profile editor. Requiring
+/// it to be registered first would mean a website you add shows no icon until
+/// after you save — and the act of typing it IS the act that registers it. So
+/// the rule is the same one stated a level up: Grain fetches icons for hosts the
+/// USER or the table has named, never for one merely observed.
+///
+/// It still refuses anything that is not shaped like a public domain, so a typo
+/// cannot become a request to an intranet name or a bare IP.
+///
+/// Returns `None` when there is no icon to be had; the caller draws its fallback
+/// glyph and is not told why, because there is nothing it could do differently.
+pub async fn site_icon_data_url(app: &AppHandle, host: &str) -> Option<String> {
+    let host = normalise_site_host(host)?;
+    let key = IconKey::Site(host.clone());
+    let rgba = match cache_read(app, &key) {
+        Some(rgba) => rgba,
+        None => {
+            let rgba = site_fetch::resolve(&host).await?;
+            cache_write(app, &key, &rgba);
+            rgba
+        }
+    };
+    png_data_url(&rgba)
+}
+
+/// Lowercase, `www.`-less, and shaped like a public domain — or `None`.
+///
+/// The shape check is the safety boundary for [`site_icon_data_url`]: it keeps a
+/// mistyped target from becoming a request to `localhost`, an intranet
+/// hostname, or an IP literal.
+fn normalise_site_host(host: &str) -> Option<String> {
+    let host = host
+        .trim()
+        .trim_start_matches("www.")
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let (Some(label), true) = (host.rsplit('.').next(), host.contains('.')) else {
+        return None;
+    };
+    // A TLD is alphabetic, which rules out every IPv4 literal in one test.
+    let tld_ok = label.len() >= 2 && label.chars().all(|c| c.is_ascii_alphabetic());
+    let chars_ok = host
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+    let no_empty_labels = !host.starts_with('.') && !host.contains("..");
+    (tld_ok && chars_ok && no_empty_labels && host.len() <= 253).then_some(host)
+}
+
+/// `PILL_ICON_PX`² premultiplied RGBA → a `data:image/png;base64,…` URL.
+///
+/// Un-premultiplies on the way out. The pill blits onto a known background and
+/// wants premultiplied; a PNG in a webview is composited by the browser and
+/// wants straight alpha, so skipping this would darken every semi-transparent
+/// edge pixel — visible as a dirty halo on any rounded favicon.
+fn png_data_url(rgba: &[u8]) -> Option<String> {
+    if rgba.len() != ICON_BYTES {
+        return None;
+    }
+    let mut straight = Vec::with_capacity(rgba.len());
+    for px in rgba.chunks_exact(4) {
+        let a = px[3];
+        let un = |c: u8| if a == 0 { 0 } else { ((c as u32 * 255) / a as u32).min(255) as u8 };
+        straight.extend_from_slice(&[un(px[0]), un(px[1]), un(px[2]), a]);
+    }
+    let img: image::RgbaImage =
+        image::ImageBuffer::from_raw(PILL_ICON_PX as u32, PILL_ICON_PX as u32, straight)?;
+    let mut png = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png, image::ImageFormat::Png).ok()?;
+    Some(format!("data:image/png;base64,{}", encode(&png.into_inner())))
+}
+
 fn emit(app: &AppHandle, rgba: Option<String>) {
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::PillIcon { rgba });
@@ -863,6 +947,34 @@ mod site_fetch {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        /// The settings-side fetch drops the registry gate, so this shape check
+        /// is the only thing standing between a typo and a request to something
+        /// that is not a public website.
+        #[test]
+        fn the_settings_icon_fetch_refuses_anything_that_is_not_a_public_domain() {
+            use crate::pill_icon::normalise_site_host as n;
+            assert_eq!(n("Figma.com").as_deref(), Some("figma.com"));
+            assert_eq!(n("www.Figma.com.").as_deref(), Some("figma.com"));
+            assert_eq!(n("app.figma.com").as_deref(), Some("app.figma.com"));
+            // Nothing that resolves inside a network, and no IP literals.
+            for bad in [
+                "localhost",
+                "127.0.0.1",
+                "192.168.1.1",
+                "intranet",
+                "",
+                "   ",
+                "figma..com",
+                ".figma.com",
+                "figma.c",
+                "figma.com:8080",
+                "http://figma.com",
+                "figma.com/path",
+            ] {
+                assert_eq!(n(bad), None, "{bad:?} should be refused");
+            }
+        }
 
         #[test]
         fn a_bundled_host_decodes_to_a_usable_icon() {

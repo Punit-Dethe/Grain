@@ -8,6 +8,7 @@ import React, {
 } from "react";
 import {
   AppWindow,
+  ArrowLeft,
   AtSign,
   Bot,
   BriefcaseBusiness,
@@ -157,21 +158,98 @@ type CustomProfileDialogState =
   | { mode: "create" }
   | { mode: "edit"; profile: CustomContextProfile };
 
-function CustomProfileTargetStack({
-  targets,
+/** Most icons a stack shows. Past three the overlap stops reading as separate
+ *  icons and starts reading as a smudge. */
+const ICON_STACK_MAX = 3;
+
+/** Resolved favicons by host, shared by every stack on the page.
+ *
+ *  Module-level rather than component state because the same host appears in
+ *  several places (a profile card and its edit dialog), and a per-component
+ *  cache would fetch each one once per place it is drawn. `null` is a real
+ *  entry meaning "asked, and there is no icon" — without it an unsupported host
+ *  is re-requested on every render. */
+const siteIconCache = new Map<string, string | null>();
+
+/** A site's real favicon, falling back to a glyph until (or unless) it loads.
+ *
+ *  Fetched through the backend, which shares its cache with the pill — so the
+ *  first time a site's icon appears anywhere in Grain it is warm everywhere. */
+function SiteIcon({
+  host,
+  fallback: Fallback,
 }: {
-  targets: CustomProfileTarget[];
+  host: string;
+  fallback: LucideIcon;
 }) {
+  const [src, setSrc] = useState<string | null>(
+    () => siteIconCache.get(host) ?? null,
+  );
+
+  useEffect(() => {
+    if (siteIconCache.has(host)) {
+      setSrc(siteIconCache.get(host) ?? null);
+      return;
+    }
+    let live = true;
+    void commands.siteIcon(host).then((data) => {
+      siteIconCache.set(host, data);
+      // The card can be unmounted while a cold favicon is still being
+      // fetched — the cache above still keeps the result.
+      if (live) setSrc(data);
+    });
+    return () => {
+      live = false;
+    };
+  }, [host]);
+
+  return src ? (
+    <img src={src} alt="" width={18} height={18} />
+  ) : (
+    <Fallback size={15} strokeWidth={1.8} />
+  );
+}
+
+/** Overlapping stack of the real icons for what a profile covers.
+ *
+ *  Websites show their favicon; applications keep a glyph, since there is no
+ *  icon to resolve until the app picker exists. */
+function ProfileIconStack({
+  hosts,
+  apps = 0,
+  fallback = Globe2,
+}: {
+  hosts: string[];
+  /** Application targets, which contribute a generic tile each. */
+  apps?: number;
+  fallback?: LucideIcon;
+}) {
+  const shownHosts = hosts.slice(0, ICON_STACK_MAX);
+  const shownApps = Math.max(
+    0,
+    Math.min(apps, ICON_STACK_MAX - shownHosts.length),
+  );
+  if (!shownHosts.length && !shownApps) {
+    return (
+      <div className="context-custom-profile-icons" aria-hidden="true">
+        <span>
+          <AppWindow size={15} strokeWidth={1.8} />
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="context-custom-profile-icons" aria-hidden="true">
-      {targets.slice(0, 3).map((target) => {
-        const Icon = target.kind === "website" ? Globe2 : AppWindow;
-        return (
-          <span key={`${target.kind}:${target.value}`} title={target.value}>
-            <Icon size={15} strokeWidth={1.8} />
-          </span>
-        );
-      })}
+      {shownHosts.map((host) => (
+        <span key={`site:${host}`} title={host}>
+          <SiteIcon host={host} fallback={fallback} />
+        </span>
+      ))}
+      {Array.from({ length: shownApps }, (_, index) => (
+        <span key={`app:${index}`}>
+          <AppWindow size={15} strokeWidth={1.8} />
+        </span>
+      ))}
     </div>
   );
 }
@@ -342,7 +420,20 @@ function CustomProfileDialog({
                         key={`${target.kind}:${target.value}`}
                         className="context-profile-target"
                       >
-                        <Icon size={13} aria-hidden="true" />
+                        <span
+                          className="context-profile-target-icon"
+                          aria-hidden="true"
+                        >
+                          {target.kind === "website" ? (
+                            // Resolves against the same cache the pill uses, so
+                            // a site added here shows the very favicon the pill
+                            // will show while dictating into it — which is also
+                            // the confirmation that the site is supported.
+                            <SiteIcon host={target.value} fallback={Globe2} />
+                          ) : (
+                            <Icon size={13} />
+                          )}
+                        </span>
                         <span>{target.value}</span>
                         <button
                           type="button"
@@ -653,6 +744,21 @@ export const ContextAwareSection: React.FC = () => {
             role="region"
             aria-labelledby={`context-profile-tab-${activeProfile.id}`}
           >
+            {activeProfile.inOtherTab && (
+              <button
+                type="button"
+                className="context-profile-back"
+                aria-label="Back to Other"
+                onClick={() => {
+                  void persist(activeProfile.id, activeDraft);
+                  setActiveProfileId("other");
+                  setMode("read");
+                }}
+              >
+                <ArrowLeft size={14} strokeWidth={2} aria-hidden="true" />
+                <span>Back</span>
+              </button>
+            )}
             <div className="context-profile-card-header">
               <div className="context-profile-apps" aria-hidden="true">
                 {activeProfile.applications.map(({ name, icon: Icon }) => (
@@ -664,19 +770,6 @@ export const ContextAwareSection: React.FC = () => {
               <div className="context-profile-copy">
                 <strong>{activeProfile.summary}</strong>
                 <span>{activeProfile.detail}</span>
-                {activeProfile.inOtherTab && (
-                  <button
-                    type="button"
-                    className="context-profile-back"
-                    onClick={() => {
-                      void persist(activeProfile.id, activeDraft);
-                      setActiveProfileId("other");
-                      setMode("read");
-                    }}
-                  >
-                    Back to Other
-                  </button>
-                )}
               </div>
               <div
                 className="context-profile-mode"
@@ -774,14 +867,10 @@ export const ContextAwareSection: React.FC = () => {
                   aria-label={`Edit the ${profile.label} profile`}
                   onClick={() => setActiveProfileId(profile.id)}
                 >
-                  <div
-                    className="context-custom-profile-icons"
-                    aria-hidden="true"
-                  >
-                    <span>
-                      <CardIcon size={15} strokeWidth={1.8} />
-                    </span>
-                  </div>
+                  <ProfileIconStack
+                    hosts={profileInfo[profile.id]?.sample_sites ?? []}
+                    fallback={CardIcon}
+                  />
                   <span className="context-custom-profile-create-copy">
                     <strong>{profile.label}</strong>
                     <span className="context-custom-profile-instruction">
@@ -827,8 +916,15 @@ export const ContextAwareSection: React.FC = () => {
                   })
                 }
               >
-                <CustomProfileTargetStack
-                  targets={(profile.targets ?? []) as CustomProfileTarget[]}
+                <ProfileIconStack
+                  hosts={(profile.targets ?? [])
+                    .filter((target) => target.kind === "website")
+                    .map((target) => target.value)}
+                  apps={
+                    (profile.targets ?? []).filter(
+                      (target) => target.kind === "application",
+                    ).length
+                  }
                 />
                 <span className="context-custom-profile-create-copy">
                   <strong>{profile.title}</strong>

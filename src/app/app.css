@@ -4116,26 +4116,33 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   color: var(--text-1);
 }
 
-/* Returns from a profile that lives inside the Other tab (AI chat) to the
-   grid it was opened from. */
+/* Returns from a profile that lives inside the Other tab (AI chat) to the grid
+   it was opened from. Its own row above the card header, with the arrow doing
+   the explaining — so it reads as navigation rather than as part of the
+   profile's copy, which is where it sat before. */
 .context-profile-back {
-  align-self: flex-start;
-  margin-top: 6px;
-  padding: 0;
+  margin-bottom: 14px;
+  padding: 4px 8px 4px 4px;
   border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   background: none;
   color: var(--text-3);
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
   font-weight: 560;
-  text-decoration: underline;
-  text-underline-offset: 2px;
   cursor: pointer;
-  transition: color 120ms ease;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 
-.context-profile-back:hover {
+.context-profile-back:hover,
+.context-profile-back:focus-visible {
   color: var(--text-1);
+  background: var(--bg-2);
 }
 
 .context-profile-delete {
@@ -4214,8 +4221,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
 .context-custom-profile-card {
   min-width: 0;
-  min-height: 112px;
-  padding: 16px;
+  min-height: 84px;
+  padding: 12px 14px;
   border-radius: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -4291,9 +4298,14 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   line-height: 1.5;
 }
 
+/* Vertically stacked, overlapping tiles — the real favicons of what a profile
+   covers. 60% overlap: enough that three fit the card's height, still enough of
+   each tile showing to recognise it. Max three is enforced in the component;
+   past that the stack reads as a smudge rather than as icons. */
 .context-custom-profile-icons {
-  min-width: 38px;
-  min-height: 34px;
+  --icon-tile: 28px;
+  --icon-overlap: 0.6;
+  min-width: var(--icon-tile);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4301,16 +4313,38 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-icons > span {
-  width: 34px;
-  height: 34px;
+  width: var(--icon-tile);
+  height: var(--icon-tile);
   border-radius: 50%;
   display: grid;
   place-items: center;
+  overflow: hidden;
   color: var(--text-2);
   background: var(--bg-2);
   box-shadow:
     0 3px 10px rgba(0, 0, 0, 0.15),
     inset 0 0 0 1px var(--hairline);
+}
+
+/* Each tile after the first rides up over the one before. Later tiles sit on
+   top, so the stack reads front-to-back downward. */
+.context-custom-profile-icons > span + span {
+  margin-top: calc(var(--icon-tile) * var(--icon-overlap) * -1);
+}
+
+.context-custom-profile-icons > span:nth-child(2) {
+  z-index: 1;
+}
+
+.context-custom-profile-icons > span:nth-child(3) {
+  z-index: 2;
+}
+
+.context-custom-profile-icons img {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
 }
 
 .context-custom-profile-icons > span + span {
@@ -4382,6 +4416,24 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+/* A website chip shows the site's real favicon once it resolves, which is also
+   how the user knows the site was understood. Fixed box so the chip does not
+   reflow when the glyph is replaced by the image. */
+.context-profile-target-icon {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.context-profile-target-icon img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
 }
 
 .context-profile-target {

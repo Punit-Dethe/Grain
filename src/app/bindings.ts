@@ -128,6 +128,17 @@ async contextCustomProfiles() : Promise<CustomContextProfile[]> {
     return await TAURI_INVOKE("context_custom_profiles");
 },
 /**
+ * [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
+ * 
+ * Async and one host per call, so the settings UI paints immediately and each
+ * icon appears as it resolves. A batch command would make the whole row wait
+ * for the slowest site — and these are cached after the first fetch, so the
+ * call is nearly free on every subsequent open.
+ */
+async siteIcon(host: string) : Promise<string | null> {
+    return await TAURI_INVOKE("site_icon", { host });
+},
+/**
  * [GRAIN] Replace the whole set of user-made context profiles.
  * 
  * Whole-set rather than per-profile because the UI edits a list and the list is
@@ -2778,7 +2789,13 @@ default_instruction: string;
  * counts as edited — "this profile says nothing" is a deliberate choice,
  * not an absent one.
  */
-edited: boolean }
+edited: boolean; 
+/**
+ * A few real hosts this profile covers, for the card's icon stack. Derived
+ * from the site table, so the card cannot claim a site the profile does
+ * not actually apply to.
+ */
+sample_sites: string[] }
 /**
  * [GRAIN] A user's edit to one context-awareness profile's instruction.
  * 

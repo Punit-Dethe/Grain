@@ -245,6 +245,30 @@ pub(crate) fn custom_profile_for<'a>(
     })
 }
 
+/// Up to `n` representative hosts for a profile, taken from [`SITE_TABLE`] in
+/// table order.
+///
+/// DERIVED, never a second list. The settings card shows these sites' real
+/// favicons, and a hand-written list next to the table would be one more thing
+/// to forget when a site moves category — this way the card and the behaviour
+/// can never disagree.
+///
+/// Table order is "most specific first", which also happens to put the
+/// best-known site of each category near the front, so the first few are the
+/// ones a person recognises.
+pub(crate) fn sample_sites(category: AppCategory, n: usize) -> Vec<String> {
+    SITE_TABLE
+        .iter()
+        .filter(|(pattern, c)| {
+            // Prefix wildcards (`jira.`) name no real host, so they can never
+            // yield a favicon — skip them rather than show a broken tile.
+            *c == category && !pattern.ends_with('.')
+        })
+        .take(n)
+        .map(|(pattern, _)| (*pattern).to_string())
+        .collect()
+}
+
 /// Whether Grain treats this host as a site it knows — either because it is in
 /// [`SITE_TABLE`], or because the user named it in a custom profile.
 ///
@@ -319,10 +343,18 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("icloud.com", AppCategory::Email),
     ("roundcube.", AppCategory::Email),
     // -- AI assistants (prompt boxes) --
+    //
+    // The FIRST THREE of each section are what the settings card stacks as
+    // icons (`sample_sites`), so they are ordered to be three *visually
+    // distinct* services. `chat.openai.com` sits below Gemini for that reason
+    // alone: it is ChatGPT under an older name and resolves to the same icon,
+    // so leading with it would have made the card read Claude, ChatGPT,
+    // ChatGPT. Ordering within a section is otherwise free — `host_matches`
+    // only requires specific-before-general, and none of these contain another.
     ("claude.ai", AppCategory::AiChat),
     ("chatgpt.com", AppCategory::AiChat),
-    ("chat.openai.com", AppCategory::AiChat),
     ("gemini.google.com", AppCategory::AiChat),
+    ("chat.openai.com", AppCategory::AiChat),
     ("aistudio.google.com", AppCategory::AiChat),
     ("perplexity.ai", AppCategory::AiChat),
     ("poe.com", AppCategory::AiChat),
@@ -352,10 +384,18 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("codeberg.org", AppCategory::Technical),
     ("gerrit.", AppCategory::Technical),
     ("stackoverflow.com", AppCategory::Technical),
+    // -- Work: the three that lead are what the settings card stacks --
+    //
+    // Chat, tickets and docs — the three things this profile merges — and all
+    // three serve a real favicon on the first rung. Measured: `atlassian.net`
+    // answers /favicon.ico with an HTML page and `app.asana.com` 404s, so
+    // leading with those left the card showing fallback glyphs.
+    ("slack.com", AppCategory::Work),
+    ("linear.app", AppCategory::Work),
+    ("docs.google.com", AppCategory::Work),
     // -- Issue trackers --
     ("atlassian.net", AppCategory::Work),
     ("jira.", AppCategory::Work),
-    ("linear.app", AppCategory::Work),
     ("app.asana.com", AppCategory::Work),
     ("trello.com", AppCategory::Work),
     ("shortcut.com", AppCategory::Work),
@@ -363,7 +403,6 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("monday.com", AppCategory::Work),
     ("clickup.com", AppCategory::Work),
     // -- Work chat (formal register) --
-    ("slack.com", AppCategory::Work),
     ("teams.microsoft.com", AppCategory::Work),
     ("teams.live.com", AppCategory::Work),
     ("chat.google.com", AppCategory::Work),
@@ -399,7 +438,6 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("linkedin.com", AppCategory::Casual),
     ("news.ycombinator.com", AppCategory::Casual),
     // -- Docs / notes / long-form --
-    ("docs.google.com", AppCategory::Work),
     ("notion.so", AppCategory::Work),
     ("notion.site", AppCategory::Work),
     ("coda.io", AppCategory::Work),
@@ -3236,6 +3274,32 @@ mod tests {
         assert!(compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
         c.url_host = Some("notfigma.com".into());
         assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+    }
+
+    /// The card's icon stack is only as good as these: each must be a real
+    /// host that resolves back to the profile claiming it, or the card shows an
+    /// icon for a site the profile does not apply to.
+    #[test]
+    fn every_profile_offers_real_sample_hosts_of_its_own() {
+        for id in PROFILE_IDS {
+            let category = AppCategory::from_profile_id(id).unwrap();
+            let samples = sample_sites(category, 3);
+            assert!(
+                !samples.is_empty(),
+                "{id} has no sample site for its card icons"
+            );
+            for host in samples {
+                // A prefix wildcard names no fetchable host, so it must never
+                // reach the card.
+                assert!(!host.ends_with('.'), "{id}: {host} is a wildcard pattern");
+                assert!(host.contains('.'), "{id}: {host} is not a host");
+                assert_eq!(
+                    category_for_site(&host),
+                    Some(category),
+                    "{id}: {host} does not resolve back to this profile"
+                );
+            }
+        }
     }
 
     /// A site named in a profile becomes a supported site, so the pill can show
