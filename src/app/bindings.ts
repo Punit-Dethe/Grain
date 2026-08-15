@@ -1148,6 +1148,19 @@ async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, str
 }
 },
 /**
+ * [GRAIN] Toggle Paste Catch, the missed-text-field clipboard safety net.
+ * Turning it off also releases any active hold so the clipboard, temporary
+ * delivery shortcut, and native pill notice do not outlive the preference.
+ */
+async changePasteCatchEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_paste_catch_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Detect the foreground app right now. Returns `None` when nothing can be
  * resolved (unsupported platform, no foreground window). Silent — no UI.
  */

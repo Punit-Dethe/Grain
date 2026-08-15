@@ -173,6 +173,8 @@ const settingUpdaters: {
     commands.changeExternalScriptPathSetting(value as string | null),
   clipboard_handling: (value) =>
     commands.changeClipboardHandlingSetting(value as string),
+  paste_catch_enabled: (value) =>
+    commands.changePasteCatchEnabledSetting(value as boolean),
   auto_submit: (value) => commands.changeAutoSubmitSetting(value as boolean),
   auto_submit_key: (value) =>
     commands.changeAutoSubmitKeySetting(value as string),

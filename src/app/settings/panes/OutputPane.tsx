@@ -20,6 +20,7 @@ export function OutputPane() {
   const { t } = useTranslation();
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const scrapThat = getSetting("scrap_that_enabled") ?? false;
+  const pasteCatch = getSetting("paste_catch_enabled") ?? true;
 
   return (
     <div className="max-w-4xl w-full mx-auto space-y-7">
@@ -30,6 +31,15 @@ export function OutputPane() {
         <PasteMethodSetting descriptionMode="tooltip" grouped />
         <TypingToolSetting descriptionMode="tooltip" grouped />
         <ClipboardHandlingSetting descriptionMode="tooltip" grouped />
+        <ToggleSwitch
+          label={t("ui2.settings.pasteCatch.title")}
+          description={t("ui2.settings.pasteCatch.description")}
+          descriptionMode="tooltip"
+          grouped
+          checked={pasteCatch}
+          isUpdating={isUpdating("paste_catch_enabled")}
+          onChange={(value) => updateSetting("paste_catch_enabled", value)}
+        />
         <AutoSubmit descriptionMode="tooltip" grouped />
         <AppendTrailingSpace descriptionMode="tooltip" grouped />
       </SettingsGroup>

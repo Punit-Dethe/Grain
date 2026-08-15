@@ -940,6 +940,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_agent_input_type_to_expand_setting,
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,
+            grain_commands::change_paste_catch_enabled_setting,
             grain_commands::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,

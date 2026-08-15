@@ -351,6 +351,12 @@ pub fn verify(app: &AppHandle, text: &str) {
     let text = text.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(VERIFY_SETTLE_MS));
+        // The preference can change while this short-lived verifier sleeps.
+        // Re-read it before touching accessibility APIs or arming a hold so OFF
+        // has no delayed work and cannot surface a stale clipboard notice.
+        if !get_settings(&app).paste_catch_enabled {
+            return;
+        }
         if confirmed_miss(&app, &text) {
             info!("[paste-catch] the paste missed — holding the transcript");
             arm(&app, &text);
@@ -613,10 +619,14 @@ pub fn deliver(app: &AppHandle) {
         if delivered {
             info!("[paste-catch] delivered");
             hand_off(&app, held, "delivered");
-        } else {
+        } else if get_settings(&app).paste_catch_enabled {
             info!("[paste-catch] delivery missed as well — re-arming the hold");
             let Held { text, saved, .. } = held;
             arm_with(&app, text, saved);
+        } else {
+            // The setting changed while delivery was being verified. Restore
+            // the clipboard instead of resurrecting the disabled feature.
+            hand_off(&app, held, "disabled");
         }
     });
 }

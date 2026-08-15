@@ -42,6 +42,7 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "PasteError",
     "PasteMissed",
     "PasteMissedClear",
+    "PasteCatchDisabled",
     "OverlayConfig",
     "ThemeConfig",
     "AsrStreamText",
@@ -276,6 +277,10 @@ pub enum DaemonEvent {
     /// [GRAIN] Withdraw the Paste Catch offer: delivered, superseded by a new
     /// dictation, or the hold expired and the clipboard was handed back.
     PasteMissedClear,
+    /// [GRAIN] Paste Catch was turned off in settings. Unlike the ordinary hold
+    /// clear above, this also withdraws the pill's independent three-second
+    /// clipboard confirmation immediately.
+    PasteCatchDisabled,
 
     /// Where the single pill should anchor — and whether to show at all
     /// (`OverlayPosition::None` = never show). Emitted on session start and when
@@ -421,6 +426,7 @@ impl DaemonEvent {
             PasteError { .. } => "PasteError",
             PasteMissed { .. } => "PasteMissed",
             PasteMissedClear => "PasteMissedClear",
+            PasteCatchDisabled => "PasteCatchDisabled",
             OverlayConfig { .. } => "OverlayConfig",
             AsrStreamText { .. } => "AsrStreamText",
             AsrPartial { .. } => "AsrPartial",

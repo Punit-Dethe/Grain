@@ -2905,6 +2905,10 @@ struct Remote {
     /// Bumped whenever Paste Catch publishes a missed transcript to the
     /// clipboard. The pill owns the acknowledgement's short visual lifetime.
     clipboard_notice_seq: u64,
+    /// Bumped only when Paste Catch is disabled in settings, so the independent
+    /// three-second acknowledgement can withdraw without coupling it to the
+    /// ordinary clipboard-hold lifecycle.
+    clipboard_notice_clear_seq: u64,
     /// [GRAIN] Which surface to present. Starts `Collapsed` for EVERY session; a
     /// streaming session (see `streaming`) flips it to `Studio` only when the first
     /// transcript word arrives, so the pill visibly expands from the small capsule.
@@ -2973,6 +2977,7 @@ impl Default for Remote {
             prompt_name: String::new(),
             prompt_seq: 0,
             clipboard_notice_seq: 0,
+            clipboard_notice_clear_seq: 0,
             mode: PillMode::Collapsed,
             streaming: false,
             prompt_recording: false,
@@ -3076,6 +3081,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.streaming = false;
             r.clipboard_notice_seq = r.clipboard_notice_seq.wrapping_add(1);
             eprintln!("event: PasteMissed -> clipboard notice");
+        }
+        DaemonEvent::PasteCatchDisabled => {
+            r.clipboard_notice_clear_seq = r.clipboard_notice_clear_seq.wrapping_add(1);
+            eprintln!("event: PasteCatchDisabled -> clear clipboard notice");
         }
         // [GRAIN] Quick Agent: reveal the pill with the "ask follow-up" riser
         // until the core withdraws the offer (panel opened / expired / new
@@ -3481,6 +3490,7 @@ struct App {
     clipboard_notice: bool,
     clipboard_notice_until: Option<Instant>,
     last_clipboard_notice_seq: u64,
+    last_clipboard_notice_clear_seq: u64,
     // [GRAIN] Quick-Agent follow-up offer (mirrors `Remote::agent_offer`): while
     // set, the pill stays revealed with an "ASK FOLLOW-UP · <shortcut>" riser
     // and a click sends `PillAction::AgentFollowup` instead of Prompt Record.
@@ -3600,6 +3610,7 @@ impl App {
             clipboard_notice: false,
             clipboard_notice_until: None,
             last_clipboard_notice_seq: 0,
+            last_clipboard_notice_clear_seq: 0,
             agent_offer: None,
             last_agent_offer_seq: 0,
             session_owner: None,
@@ -5663,6 +5674,17 @@ impl ApplicationHandler<UserEvent> for App {
                 self.closing = false;
             }
 
+            // Disabling Paste Catch is the one lifecycle action that also owns
+            // this independent acknowledgement. Use the same contraction/fade
+            // path as its timeout so turning the setting off remains smooth.
+            if r.clipboard_notice_clear_seq != self.last_clipboard_notice_clear_seq {
+                self.last_clipboard_notice_clear_seq = r.clipboard_notice_clear_seq;
+                if self.clipboard_notice {
+                    self.clipboard_notice_until = Some(now);
+                    self.riser_hide_at = Some(now);
+                }
+            }
+
             // [GRAIN] Extension-owned session changed -> show a host-controlled,
             // non-interactive owner indicator for the full recording/processing
             // lifetime. The extension supplies neither this text nor its layout.
@@ -6031,6 +6053,13 @@ mod tests {
         assert_eq!(clipboard_capsule_width(1.0, pill_h), CLIPBOARD_SIB_W);
         let halfway = clipboard_capsule_width(0.5, pill_h);
         assert!(halfway > pill_h && halfway < CLIPBOARD_SIB_W);
+    }
+
+    #[test]
+    fn disabling_paste_catch_withdraws_the_clipboard_confirmation() {
+        let remote = Mutex::new(Remote::default());
+        apply_event(&remote, DaemonEvent::PasteCatchDisabled);
+        assert_eq!(remote.lock().unwrap().clipboard_notice_clear_seq, 1);
     }
 
     // ── Pill skins ──────────────────────────────────────────────────────────

@@ -1318,6 +1318,10 @@
       "scrapThat": {
         "title": "\"Scrap that\" voice reset",
         "description": "Say \"scrap that\" mid-dictation to discard everything before it and start the transcript fresh from that point. Works in every mode; in live streaming the expanded pill collapses back to the compact capsule until you speak again. Off costs nothing."
+      },
+      "pasteCatch": {
+        "title": "Recover missed text insertion",
+        "description": "If Grain cannot insert a transcript into the text field, keep it on the clipboard and briefly confirm the copy in the pill. Turn this off to disable both recovery and the confirmation."
       }
     },
     "appearance": {

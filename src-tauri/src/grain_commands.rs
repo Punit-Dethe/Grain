@@ -323,6 +323,22 @@ pub fn change_scrap_that_enabled_setting(app: AppHandle, enabled: bool) -> Resul
     Ok(())
 }
 
+/// [GRAIN] Toggle Paste Catch, the missed-text-field clipboard safety net.
+/// Turning it off also releases any active hold so the clipboard, temporary
+/// delivery shortcut, and native pill notice do not outlive the preference.
+#[tauri::command]
+#[specta::specta]
+pub fn change_paste_catch_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.paste_catch_enabled = enabled;
+    settings::write_settings(&app, settings);
+    if !enabled {
+        crate::paste_catch::supersede(&app);
+        crate::bridge::emit(&app, grain_sdk::DaemonEvent::PasteCatchDisabled);
+    }
+    Ok(())
+}
+
 /// [GRAIN] Toggle the silent nearby-term hints (reads focused-field unique tokens
 /// via UI Automation). Only effective when context awareness is also on.
 #[tauri::command]
