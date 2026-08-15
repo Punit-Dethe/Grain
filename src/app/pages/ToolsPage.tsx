@@ -445,7 +445,9 @@ function DictionaryTool() {
           <span className="sr-only">Search dictionary</span>
           <input
             className="tool-search-input"
-            type="search"
+            type="text"
+            inputMode="search"
+            role="searchbox"
             value={query}
             placeholder="Search"
             onChange={(event) => setQuery(event.target.value)}
@@ -744,7 +746,9 @@ function SnippetsTool() {
             <span className="sr-only">Search shortcuts</span>
             <input
               className="tool-search-input"
-              type="search"
+              type="text"
+              inputMode="search"
+              role="searchbox"
               value={query}
               placeholder="Search"
               onChange={(event) => setQuery(event.target.value)}
