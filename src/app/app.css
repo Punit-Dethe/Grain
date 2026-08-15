@@ -4728,7 +4728,8 @@ html[data-theme="light"] .context-profile-mode {
 }
 
 .dictionary-search input::-webkit-search-cancel-button {
-  opacity: 0.62;
+  display: none;
+  -webkit-appearance: none;
 }
 
 .dictionary-add-button,
