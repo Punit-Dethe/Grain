@@ -205,6 +205,10 @@ const BTN_SPAN: usize = 4;
 // layered window, so it costs nothing at rest.
 const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collapsed pill
 const RISER_HOLD: Duration = Duration::from_millis(1600);
+/// A missed paste has already been placed on the clipboard when its event
+/// arrives. Keep the acknowledgement long enough to read without tying its
+/// lifetime to the longer Paste Catch hold.
+const CLIPBOARD_NOTICE_HOLD: Duration = Duration::from_secs(3);
 /// Shared label/arrow type size for both prompt capsules.
 const PROMPT_LABEL_PX: f32 = 12.5;
 
@@ -212,6 +216,7 @@ const PROMPT_LABEL_PX: f32 = 12.5;
 // truncates with an ellipsis rather than resizing the capsule.
 const SIB_GAP: f32 = 12.0; // px between the pill's right edge and the sibling
 const SIB_W: f32 = 152.0; // prompt-switcher capsule width (fixed, arrows on both ends)
+const CLIPBOARD_SIB_W: f32 = 136.0; // shorter arrow-less clipboard confirmation
 const SIB_MAX_W: f32 = 250.0; // widest the sibling ever gets (the agent follow-up offer)
 const SIB_SLIDE: f32 = 16.0; // px the sibling travels in from the right
 const SIB_ARROW_INSET: f32 = 17.0; // ‹ › inset from each capsule end
@@ -2888,6 +2893,9 @@ struct Remote {
     /// and trigger the riser (+ a brief reveal when idle).
     prompt_name: String,
     prompt_seq: u64,
+    /// Bumped whenever Paste Catch publishes a missed transcript to the
+    /// clipboard. The pill owns the acknowledgement's short visual lifetime.
+    clipboard_notice_seq: u64,
     /// [GRAIN] Which surface to present. Starts `Collapsed` for EVERY session; a
     /// streaming session (see `streaming`) flips it to `Studio` only when the first
     /// transcript word arrives, so the pill visibly expands from the small capsule.
@@ -2955,6 +2963,7 @@ impl Default for Remote {
             anchor: OverlayPosition::Bottom,
             prompt_name: String::new(),
             prompt_seq: 0,
+            clipboard_notice_seq: 0,
             mode: PillMode::Collapsed,
             streaming: false,
             prompt_recording: false,
@@ -3049,6 +3058,15 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_name = name;
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
+        }
+        // [GRAIN] Paste Catch already wrote the transcript before emitting this
+        // event. Collapse any finished Studio surface and let the existing
+        // sibling riser acknowledge that copy; no clipboard behavior lives here.
+        DaemonEvent::PasteMissed { .. } => {
+            r.mode = PillMode::Collapsed;
+            r.streaming = false;
+            r.clipboard_notice_seq = r.clipboard_notice_seq.wrapping_add(1);
+            eprintln!("event: PasteMissed -> clipboard notice");
         }
         // [GRAIN] Quick Agent: reveal the pill with the "ask follow-up" riser
         // until the core withdraws the offer (panel opened / expired / new
@@ -3257,6 +3275,7 @@ fn spawn_event_client(
                                             // paints. Same for its withdrawal.
                                             | DaemonEvent::AgentFollowupOffer { .. }
                                             | DaemonEvent::AgentFollowupClear
+                                            | DaemonEvent::PasteMissed { .. }
                                             | DaemonEvent::PromptChanged { .. }
                                             | DaemonEvent::AgentInputShow { .. }
                                             | DaemonEvent::AgentInputHide
@@ -3448,6 +3467,11 @@ struct App {
     cached_label: Option<CachedText>,
     last_prompt_seq: u64,
     prompt_preview_until: Option<Instant>,
+    /// Short, renderer-owned acknowledgement for `PasteMissed`. It deliberately
+    /// has no core timer/thread and never changes Paste Catch's hold lifecycle.
+    clipboard_notice: bool,
+    clipboard_notice_until: Option<Instant>,
+    last_clipboard_notice_seq: u64,
     // [GRAIN] Quick-Agent follow-up offer (mirrors `Remote::agent_offer`): while
     // set, the pill stays revealed with an "ASK FOLLOW-UP · <shortcut>" riser
     // and a click sends `PillAction::AgentFollowup` instead of Prompt Record.
@@ -3564,6 +3588,9 @@ impl App {
             cached_label: None,
             last_prompt_seq: 0,
             prompt_preview_until: None,
+            clipboard_notice: false,
+            clipboard_notice_until: None,
+            last_clipboard_notice_seq: 0,
             agent_offer: None,
             last_agent_offer_seq: 0,
             session_owner: None,
@@ -3883,6 +3910,7 @@ impl App {
             _ if self.agent_offer.is_some() || self.session_owner.is_some() => {
                 (SIB_MAX_W - 4.0 * SIB_TEXT_PAD).max(0.0)
             }
+            _ if self.clipboard_notice => (CLIPBOARD_SIB_W - 2.0 * SIB_TEXT_PAD).max(0.0),
             _ => (SIB_W - 2.0 * SIB_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0),
         }
     }
@@ -4877,9 +4905,11 @@ impl App {
     fn draw_sibling_pill(&mut self, pixmap: &mut Pixmap, pill_right: f32, y_off: f32, pill_h: f32) {
         let p = self.riser_progress.clamp(0.0, 1.0);
         let is_offer = self.agent_offer.is_some();
-        let is_status = is_offer || self.session_owner.is_some();
+        let is_status = is_offer || self.session_owner.is_some() || self.clipboard_notice;
         // Fixed width for the switcher; status capsules hug their label.
-        let cap_w = if is_status {
+        let cap_w = if self.clipboard_notice {
+            CLIPBOARD_SIB_W
+        } else if is_status {
             let label_w = self.cached_label.as_ref().map_or(0.0, |c| c.total_width);
             (label_w + 4.0 * SIB_TEXT_PAD).clamp(SIB_W, SIB_MAX_W)
         } else {
@@ -5120,7 +5150,8 @@ impl App {
             let col = [236, 229, 218];
             // The `‹ ›` arrows belong to the SWITCHER; the follow-up offer is a
             // single clickable affordance, so it hides them.
-            if self.agent_offer.is_none() && self.session_owner.is_none() {
+            if self.agent_offer.is_none() && self.session_owner.is_none() && !self.clipboard_notice
+            {
                 let l = CachedText::new(font, "\u{2039}", PROMPT_LABEL_PX);
                 let r = CachedText::new(font, "\u{203a}", PROMPT_LABEL_PX);
                 draw_cached_text_centered(
@@ -5360,6 +5391,7 @@ impl ApplicationHandler<UserEvent> for App {
                 matches!(self.state, PillState::Recording | PillState::Processing)
                     && !matches!(prev_state, PillState::Recording | PillState::Processing)
                     && (self.prompt_preview_until.is_some()
+                        || self.clipboard_notice_until.is_some()
                         || self.agent_offer.is_some()
                         || self.riser_progress > 0.01);
             if session_started_from_overlay {
@@ -5371,6 +5403,8 @@ impl ApplicationHandler<UserEvent> for App {
                 self.riser_progress = 0.0;
                 self.riser_hide_at = None;
                 self.prompt_preview_until = None;
+                self.clipboard_notice = false;
+                self.clipboard_notice_until = None;
                 self.offer_fade_close = false;
             }
             self.prompt_recording = r.prompt_recording;
@@ -5549,6 +5583,21 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
 
+            // [GRAIN] A missed paste has already been copied by Paste Catch.
+            // Reuse the prompt-switch sibling for a three-second, arrow-less
+            // acknowledgement on the RIGHT of the main pill. This is display
+            // state only: PasteMissedClear and the hold timer stay backend-owned.
+            if r.clipboard_notice_seq != self.last_clipboard_notice_seq {
+                self.last_clipboard_notice_seq = r.clipboard_notice_seq;
+                self.clipboard_notice = true;
+                let until = now + CLIPBOARD_NOTICE_HOLD;
+                self.clipboard_notice_until = Some(until);
+                self.prompt_label = "Copied to clipboard".to_string();
+                self.riser_hide_at = Some(until);
+                self.prompt_preview_until = None;
+                self.update_cached_label();
+            }
+
             // [GRAIN] Extension-owned session changed -> show a host-controlled,
             // non-interactive owner indicator for the full recording/processing
             // lifetime. The extension supplies neither this text nor its layout.
@@ -5596,7 +5645,20 @@ impl ApplicationHandler<UserEvent> for App {
             let owner_live = self.session_owner.is_some();
             let input_live = self.agent_input.is_some();
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
-            let want_visible = r.visible || preview_visible || offer_live || input_live;
+            let clipboard_notice_visible = r.anchor != OverlayPosition::None
+                && self.clipboard_notice_until.is_some_and(|t| now < t);
+            if self.clipboard_notice_until.is_some() && !clipboard_notice_visible && !r.visible {
+                // A clipboard-only reveal hides immediately at its deadline, so
+                // clear its presentation mode here instead of waiting for an
+                // off-screen riser animation to settle.
+                self.clipboard_notice = false;
+                self.clipboard_notice_until = None;
+            }
+            let want_visible = r.visible
+                || preview_visible
+                || clipboard_notice_visible
+                || offer_live
+                || input_live;
             // [GRAIN] The Studio Window fades out instead of vanishing: while
             // `closing` is true we keep `self.visible` true (so rendering/mic
             // gating below behave as if still showing) and just ease
@@ -5723,6 +5785,8 @@ impl ApplicationHandler<UserEvent> for App {
                 if riser_target == 0.0 && self.riser_progress < 0.02 {
                     self.riser_progress = 0.0;
                     self.riser_hide_at = None;
+                    self.clipboard_notice = false;
+                    self.clipboard_notice_until = None;
                 }
                 // [GRAIN] Agent input per-frame motion: the wave/caret clock and
                 // the expand ease (≈ the reference's 300ms ease-out curve).
@@ -5855,6 +5919,33 @@ pub fn run_pill() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missed_paste_arms_the_short_clipboard_confirmation() {
+        let remote = Mutex::new(Remote {
+            mode: PillMode::Studio,
+            streaming: true,
+            ..Remote::default()
+        });
+        apply_event(
+            &remote,
+            DaemonEvent::PasteMissed {
+                shortcut: "Ctrl+Shift+V".to_string(),
+                chars: 42,
+            },
+        );
+        let state = remote.lock().unwrap();
+        assert_eq!(state.clipboard_notice_seq, 1);
+        assert!(matches!(state.mode, PillMode::Collapsed));
+        assert!(!state.streaming);
+        assert_eq!(CLIPBOARD_NOTICE_HOLD, Duration::from_secs(3));
+        let font = load_font().expect("the pill font is bundled");
+        assert!(
+            text_width(&font, "Copied to clipboard", PROMPT_LABEL_PX)
+                <= CLIPBOARD_SIB_W - 2.0 * SIB_TEXT_PAD,
+            "the confirmation must fit without truncation"
+        );
+    }
 
     // ── Pill skins ──────────────────────────────────────────────────────────
 
