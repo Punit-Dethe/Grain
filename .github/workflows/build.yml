@@ -142,22 +142,35 @@ jobs:
         if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
         uses: humbletim/install-vulkan-sdk@v1.2
         with:
-          version: 1.4.350.0
+          version: 1.4.309.0
           cache: true
 
-      - name: Verify Vulkan SDK CMake packages (Windows x64)
+      - name: Normalize Vulkan SDK CMake packages (Windows x64)
         if: contains(inputs.platform, 'windows') && !contains(inputs.target, 'aarch64')
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $spirvHeadersConfig = Join-Path $env:VULKAN_SDK "Lib\cmake\SPIRV-Headers\SPIRV-HeadersConfig.cmake"
+          $cmakeDir = Join-Path $env:VULKAN_SDK "Lib\cmake"
+          $packageDir = Join-Path $cmakeDir "SPIRV-Headers"
+          $spirvHeadersConfig = Join-Path $packageDir "SPIRV-HeadersConfig.cmake"
+
           if (-not (Test-Path -LiteralPath $spirvHeadersConfig)) {
-            throw "SPIRV-Headers CMake package not found: $spirvHeadersConfig"
+            $legacyConfig = Join-Path $cmakeDir "SPIRV-HeadersConfig.cmake"
+            $legacyVersion = Join-Path $cmakeDir "SPIRV-HeadersConfigVersion.cmake"
+            if (-not (Test-Path -LiteralPath $legacyConfig)) {
+              throw "SPIRV-Headers CMake package not found under: $cmakeDir"
+            }
+            New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+            Copy-Item -LiteralPath $legacyConfig -Destination $packageDir
+            if (Test-Path -LiteralPath $legacyVersion) {
+              Copy-Item -LiteralPath $legacyVersion -Destination $packageDir
+            }
           }
+
           $prefixPath = $env:VULKAN_SDK
           if ($env:CMAKE_PREFIX_PATH) { $prefixPath = "$prefixPath;$env:CMAKE_PREFIX_PATH" }
           Add-Content -Path $env:GITHUB_ENV -Value "CMAKE_PREFIX_PATH=$prefixPath"
-          Write-Host "Verified SPIRV-Headers package: $spirvHeadersConfig"
+          Write-Host "SPIRV-Headers package ready: $spirvHeadersConfig"
 
       # humbletim/install-vulkan-sdk@v1.2 cannot target Windows ARM64 yet.
       # Download prebuilt binaries (Bin) + build headers/libs from source.
