@@ -9,22 +9,15 @@ import React, {
 import {
   AppWindow,
   ArrowLeft,
-  AtSign,
   Bot,
   BriefcaseBusiness,
   Code2,
   Globe2,
-  ListChecks,
   Mail,
   MessageCircle,
-  MessagesSquare,
   Plus,
   Search,
-  Send,
   Shapes,
-  Smartphone,
-  SquareTerminal,
-  Users,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -50,10 +43,11 @@ const INSTRUCTION_EDITOR_MAX_HEIGHT = 184;
 type ContextProfile = {
   id: ContextProfileId;
   label: string;
+  /** Names the profile in the tab row, and stands in for a site's favicon until
+   *  (or unless) it resolves. */
   tabIcon: LucideIcon;
   summary: string;
   detail: string;
-  applications: ReadonlyArray<{ name: string; icon: LucideIcon }>;
   available: boolean;
   /** Lives under the Other tab rather than getting a tab of its own. Keeps the
    *  tab row to the four surfaces most people dictate into, while still being a
@@ -69,11 +63,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     tabIcon: Mail,
     summary: "This profile applies in email applications",
     detail: "Grain keeps dictated email polished without inventing structure.",
-    applications: [
-      { name: "Email", icon: Mail },
-      { name: "Webmail", icon: AtSign },
-      { name: "Mail composer", icon: Send },
-    ],
     available: true,
   },
   {
@@ -82,11 +71,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     tabIcon: BriefcaseBusiness,
     summary: "This profile applies in work applications",
     detail: "Grain stays concise across team chat, tickets, and tasks.",
-    applications: [
-      { name: "Work chat", icon: MessagesSquare },
-      { name: "Project workspace", icon: BriefcaseBusiness },
-      { name: "Issue tracker", icon: ListChecks },
-    ],
     available: true,
   },
   {
@@ -95,11 +79,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     tabIcon: MessageCircle,
     summary: "This profile applies in casual applications",
     detail: "Grain protects the phrasing and personality of everyday messages.",
-    applications: [
-      { name: "Messages", icon: MessageCircle },
-      { name: "Mobile messenger", icon: Smartphone },
-      { name: "Social conversation", icon: Users },
-    ],
     available: true,
   },
   {
@@ -108,11 +87,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     tabIcon: Code2,
     summary: "This profile applies in technical applications",
     detail: "Grain preserves exact syntax in editors, terminals, and AI tools.",
-    applications: [
-      { name: "Code editor", icon: Code2 },
-      { name: "Terminal", icon: SquareTerminal },
-      { name: "AI assistant", icon: Bot },
-    ],
     available: true,
   },
   {
@@ -122,11 +96,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     summary: "This profile applies in AI assistants",
     detail:
       "Grain writes your prompt into the box instead of answering it, and leaves your specifics alone.",
-    applications: [
-      { name: "AI assistant", icon: Bot },
-      { name: "Chat website", icon: Globe2 },
-      { name: "Prompt box", icon: MessageCircle },
-    ],
     available: true,
     inOtherTab: true,
   },
@@ -136,7 +105,6 @@ const CONTEXT_PROFILES: readonly ContextProfile[] = [
     tabIcon: Shapes,
     summary: "",
     detail: "",
-    applications: [],
     available: true,
   },
 ];
@@ -289,37 +257,53 @@ function SiteIcon({
 }
 
 /** Overlapping stack of the real icons for what a profile covers — a website's
- *  favicon or an application's own icon, whichever each target is. */
+ *  favicon or an application's own icon, whichever each target is.
+ *
+ *  `className` chooses the arrangement, because the two places this appears want
+ *  opposite ones: the wide panel header has room to fan them out sideways, while
+ *  a grid card has height to spare and no width, so its stack runs downward. The
+ *  tiles themselves are identical, which is the point of one component. */
 function ProfileIconStack({
   targets,
   fallback = Globe2,
+  className = "context-custom-profile-icons",
 }: {
   targets: ReadonlyArray<CustomProfileTarget>;
   fallback?: LucideIcon;
+  className?: string;
 }) {
   const shown = targets.slice(0, ICON_STACK_MAX);
-  if (!shown.length) {
-    return (
-      <div className="context-custom-profile-icons" aria-hidden="true">
+  return (
+    <div className={className} aria-hidden="true">
+      {shown.length === 0 ? (
         <span>
           <AppWindow size={15} strokeWidth={1.8} />
         </span>
-      </div>
-    );
-  }
-  return (
-    <div className="context-custom-profile-icons" aria-hidden="true">
-      {shown.map((target) => (
-        <span key={`${target.kind}:${target.value}`} title={target.value}>
-          {target.kind === "website" ? (
-            <SiteIcon host={target.value} fallback={fallback} />
-          ) : (
-            <AppIcon target={target.value} />
-          )}
-        </span>
-      ))}
+      ) : (
+        shown.map((target) => (
+          <span key={`${target.kind}:${target.value}`} title={target.value}>
+            {target.kind === "website" ? (
+              <SiteIcon host={target.value} fallback={fallback} />
+            ) : (
+              <AppIcon target={target.value} />
+            )}
+          </span>
+        ))
+      )}
     </div>
   );
+}
+
+/** A built-in profile's representative sites as icon-stack targets.
+ *
+ *  The hosts come from Rust, taken from the same table that routes a site to
+ *  this profile — so the faces on the card are, by construction, sites the
+ *  profile actually covers rather than a second list that can drift. */
+function sampleTargets(info?: ContextProfileInfo): CustomProfileTarget[] {
+  return (info?.sample_sites ?? []).map((host) => ({
+    kind: "website",
+    value: host,
+  }));
 }
 
 /** Search the installed applications and pick one.
@@ -946,10 +930,13 @@ export const ContextAwareSection: React.FC = () => {
         {activeProfile.available && activeProfile.id !== "other" && (
           <div
             id={`context-profile-panel-${activeProfile.id}`}
-            className="context-profile-card"
+            className="context-profile-panel"
             role="region"
             aria-labelledby={`context-profile-tab-${activeProfile.id}`}
           >
+            {/* Outside the card, not inside it: this leaves the card, so sitting
+                within its border read as part of the profile — and, with the
+                card's own padding not applying to it, sat flush in the corner. */}
             {activeProfile.inOtherTab && (
               <button
                 type="button"
@@ -965,94 +952,94 @@ export const ContextAwareSection: React.FC = () => {
                 <span>Back</span>
               </button>
             )}
-            <div className="context-profile-card-header">
-              <div className="context-profile-apps" aria-hidden="true">
-                {activeProfile.applications.map(({ name, icon: Icon }) => (
-                  <span key={name} title={name}>
-                    <Icon size={15} strokeWidth={1.8} />
-                  </span>
-                ))}
-              </div>
-              <div className="context-profile-copy">
-                <strong>{activeProfile.summary}</strong>
-                <span>{activeProfile.detail}</span>
-              </div>
-              <div
-                className="context-profile-mode"
-                role="group"
-                aria-label="Instruction mode"
-              >
-                <button
-                  type="button"
-                  className={mode === "read" ? "active" : undefined}
-                  aria-pressed={mode === "read"}
-                  onClick={() => {
-                    // Leaving the editor is a commit point: the textarea's blur
-                    // does not fire when the toggle steals focus first.
-                    void persist(activeProfile.id, activeDraft);
-                    setMode("read");
-                  }}
+            <div className="context-profile-card">
+              <div className="context-profile-card-header">
+                <ProfileIconStack
+                  className="context-profile-apps"
+                  targets={sampleTargets(profileInfo[activeProfile.id])}
+                  fallback={activeProfile.tabIcon}
+                />
+                <div className="context-profile-copy">
+                  <strong>{activeProfile.summary}</strong>
+                  <span>{activeProfile.detail}</span>
+                </div>
+                <div
+                  className="context-profile-mode"
+                  role="group"
+                  aria-label="Instruction mode"
                 >
-                  Read
-                </button>
-                <button
-                  type="button"
-                  className={mode === "write" ? "active" : undefined}
-                  aria-pressed={mode === "write"}
-                  onClick={() => setMode("write")}
-                >
-                  Write
-                </button>
-              </div>
-            </div>
-
-            <div className="context-profile-prompt">
-              <span
-                id={`context-profile-instruction-label-${activeProfile.id}`}
-                className="context-profile-prompt-label"
-              >
-                Instruction
-                {activeInfo?.edited && (
                   <button
                     type="button"
-                    className="context-profile-reset"
+                    className={mode === "read" ? "active" : undefined}
+                    aria-pressed={mode === "read"}
                     onClick={() => {
-                      const fallback = activeInfo.default_instruction;
-                      setDrafts((current) => ({
-                        ...current,
-                        [activeProfile.id]: fallback,
-                      }));
-                      void persist(activeProfile.id, fallback);
+                      // Leaving the editor is a commit point: the textarea's blur
+                      // does not fire when the toggle steals focus first.
+                      void persist(activeProfile.id, activeDraft);
+                      setMode("read");
                     }}
                   >
-                    Reset to default
+                    Read
                   </button>
-                )}
-              </span>
-              {mode === "read" ? (
-                <p
-                  id={`context-profile-prompt-${activeProfile.id}`}
-                  aria-labelledby={`context-profile-instruction-label-${activeProfile.id}`}
+                  <button
+                    type="button"
+                    className={mode === "write" ? "active" : undefined}
+                    aria-pressed={mode === "write"}
+                    onClick={() => setMode("write")}
+                  >
+                    Write
+                  </button>
+                </div>
+              </div>
+
+              <div className="context-profile-prompt">
+                <span
+                  id={`context-profile-instruction-label-${activeProfile.id}`}
+                  className="context-profile-prompt-label"
                 >
-                  {activeDraft}
-                </p>
-              ) : (
-                <textarea
-                  id={`context-profile-prompt-${activeProfile.id}`}
-                  ref={instructionEditorRef}
-                  autoFocus
-                  value={activeDraft}
-                  aria-labelledby={`context-profile-tab-${activeProfile.id} context-profile-instruction-label-${activeProfile.id}`}
-                  onChange={(event) => {
-                    const next = event.target.value;
-                    setDrafts((current) => ({
-                      ...current,
-                      [activeProfile.id]: next,
-                    }));
-                  }}
-                  onBlur={() => void persist(activeProfile.id, activeDraft)}
-                />
-              )}
+                  Instruction
+                  {activeInfo?.edited && (
+                    <button
+                      type="button"
+                      className="context-profile-reset"
+                      onClick={() => {
+                        const fallback = activeInfo.default_instruction;
+                        setDrafts((current) => ({
+                          ...current,
+                          [activeProfile.id]: fallback,
+                        }));
+                        void persist(activeProfile.id, fallback);
+                      }}
+                    >
+                      Reset to default
+                    </button>
+                  )}
+                </span>
+                {mode === "read" ? (
+                  <p
+                    id={`context-profile-prompt-${activeProfile.id}`}
+                    aria-labelledby={`context-profile-instruction-label-${activeProfile.id}`}
+                  >
+                    {activeDraft}
+                  </p>
+                ) : (
+                  <textarea
+                    id={`context-profile-prompt-${activeProfile.id}`}
+                    ref={instructionEditorRef}
+                    autoFocus
+                    value={activeDraft}
+                    aria-labelledby={`context-profile-tab-${activeProfile.id} context-profile-instruction-label-${activeProfile.id}`}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      setDrafts((current) => ({
+                        ...current,
+                        [activeProfile.id]: next,
+                      }));
+                    }}
+                    onBlur={() => void persist(activeProfile.id, activeDraft)}
+                  />
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -1074,9 +1061,7 @@ export const ContextAwareSection: React.FC = () => {
                   onClick={() => setActiveProfileId(profile.id)}
                 >
                   <ProfileIconStack
-                    targets={(profileInfo[profile.id]?.sample_sites ?? []).map(
-                      (host) => ({ kind: "website", value: host }),
-                    )}
+                    targets={sampleTargets(profileInfo[profile.id])}
                     fallback={CardIcon}
                   />
                   <span className="context-custom-profile-create-copy">

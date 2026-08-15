@@ -1001,6 +1001,14 @@ mod site_fetch {
 
     /// Icon URLs to try, best first: whatever the page declares (largest first),
     /// then the well-known path as a last resort.
+    ///
+    /// The declared list is truncated so that `/favicon.ico` always survives
+    /// into the try budget. It is the fallback for precisely the case where the
+    /// declared icons fail, so letting them fill [`MAX_TRIES`] defeats the
+    /// purpose of having it — and this is not hypothetical: gitlab.com declares
+    /// four icons that every one of them answers 403 to a plain HTTP client,
+    /// while its `/favicon.ico` returns a clean 373-byte PNG that was never
+    /// asked for. Same number of requests, one less way to come back empty.
     async fn candidates(client: &reqwest::Client, origin: &str) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(bytes) = get_truncating(client, &format!("{origin}/"), HTML_CAP).await {
@@ -1008,6 +1016,7 @@ mod site_fetch {
             // glyph in the tail is irrelevant to link tags in the head.
             out = declared_icons(&String::from_utf8_lossy(&bytes), origin);
         }
+        out.truncate(MAX_TRIES - 1);
         out.push(format!("{origin}/favicon.ico"));
         out
     }
@@ -1368,6 +1377,30 @@ mod site_fetch {
             // `data-href` must not satisfy a search for `href`.
             let tag = r#"<link rel="icon" data-href="/decoy.png" href="/real.png">"#;
             assert_eq!(attr(tag, tag, "href").as_deref(), Some("/real.png"));
+        }
+
+        /// The shipped bug, as a test. A site that declares a full budget's
+        /// worth of icons must not be able to starve the well-known path — that
+        /// rung exists for the case where its declarations do not work, which is
+        /// exactly when it gets crowded out.
+        #[test]
+        fn the_well_known_path_survives_a_page_that_declares_a_full_budget() {
+            let html: String = (0..8)
+                .map(|i| format!(r#"<link rel="icon" href="/i{i}.png" sizes="{}x{}">"#, 64 - i, 64 - i))
+                .collect();
+            let mut declared = declared_icons(&html, "https://x.test");
+            assert!(declared.len() > MAX_TRIES, "the setup must overflow the budget");
+
+            // What `candidates` does to the declared list before appending.
+            declared.truncate(MAX_TRIES - 1);
+            declared.push("https://x.test/favicon.ico".to_string());
+
+            assert_eq!(declared.len(), MAX_TRIES, "the request budget is unchanged");
+            assert_eq!(
+                declared.last().map(String::as_str),
+                Some("https://x.test/favicon.ico"),
+                "the last resort must still be reachable"
+            );
         }
 
         #[test]

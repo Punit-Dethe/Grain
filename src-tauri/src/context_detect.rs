@@ -362,16 +362,19 @@ fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option
 /// arrives with the focus-anchored resolver; this table is shaped so adding it
 /// is a second column, not a rewrite.
 static SITE_TABLE: &[(&str, AppCategory)] = &[
-    // -- Email (webmail) --
+    // -- Email (webmail). The first three are also the faces on the settings
+    //    card: the two everyone knows, then the one most people would name
+    //    third. All three verified to serve a real image on the fetch ladder.
     ("mail.google.com", AppCategory::Email),
+    // Bare `outlook.com` sits ahead of the specific Outlook hosts because it is
+    // the one a person recognises. Safe only because none of them is a
+    // subdomain of it — `outlook.office.com` does not end in `.outlook.com` —
+    // so ordering cannot steal a match here. Check that before adding another.
+    ("outlook.com", AppCategory::Email),
     ("mail.proton.me", AppCategory::Email),
     ("outlook.office.com", AppCategory::Email),
     ("outlook.office365.com", AppCategory::Email),
     ("outlook.live.com", AppCategory::Email),
-    // Bare `outlook.com` AFTER the three specific Outlook hosts above; none of
-    // them is a subdomain of it, but keeping the order obvious is what stops the
-    // next addition getting it wrong.
-    ("outlook.com", AppCategory::Email),
     ("mail.yahoo.com", AppCategory::Email),
     ("mail.zoho.com", AppCategory::Email),
     ("fastmail.com", AppCategory::Email),
@@ -420,21 +423,27 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("v0.app", AppCategory::AiChat),
     // -- Code review / repo hosts. Writing into a text box on these is almost
     //    always a PR body, an issue, or a review comment.
+    // The first three lead the settings card: the two names everyone in this
+    // world knows, then GitLab. GitLab is here only because the fetch ladder now
+    // keeps `/favicon.ico` reachable — it declares four icons that all refuse a
+    // plain HTTP client, so before that fix it could only ever show a glyph.
     ("github.com", AppCategory::Technical),
+    ("stackoverflow.com", AppCategory::Technical),
     ("gitlab.com", AppCategory::Technical),
     ("bitbucket.org", AppCategory::Technical),
     ("codeberg.org", AppCategory::Technical),
     ("gerrit.", AppCategory::Technical),
-    ("stackoverflow.com", AppCategory::Technical),
     // -- Work: the three that lead are what the settings card stacks --
     //
-    // Chat, tickets and docs — the three things this profile merges — and all
-    // three serve a real favicon on the first rung. Measured: `atlassian.net`
+    // Chat, notes and docs — three different kinds of work surface, which is
+    // also the clearest way to say what this profile merges — and all three are
+    // both widely recognised and verified to fetch. Measured: `atlassian.net`
     // answers /favicon.ico with an HTML page and `app.asana.com` 404s, so
     // leading with those left the card showing fallback glyphs.
     ("slack.com", AppCategory::Work),
-    ("linear.app", AppCategory::Work),
+    ("notion.so", AppCategory::Work),
     ("docs.google.com", AppCategory::Work),
+    ("linear.app", AppCategory::Work),
     // -- Issue trackers --
     ("atlassian.net", AppCategory::Work),
     ("jira.", AppCategory::Work),
@@ -479,8 +488,7 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("mastodon.social", AppCategory::Casual),
     ("linkedin.com", AppCategory::Casual),
     ("news.ycombinator.com", AppCategory::Casual),
-    // -- Docs / notes / long-form --
-    ("notion.so", AppCategory::Work),
+    // -- Docs / notes / long-form (bare `notion.so` leads the section above) --
     ("notion.site", AppCategory::Work),
     ("coda.io", AppCategory::Work),
     ("obsidian.md", AppCategory::Work),
@@ -2941,6 +2949,38 @@ mod tests {
         }
     }
 
+    /// A duplicate row is dead at best and misleading at worst: the first match
+    /// wins, so the copy further down can never fire, and anyone reading it
+    /// believes a category that is not in force. Promoting a site to lead its
+    /// section — which is how the settings card is curated — is exactly the edit
+    /// that leaves one behind.
+    #[test]
+    fn the_site_table_lists_every_host_once() {
+        let mut seen = std::collections::HashSet::new();
+        for (host, _) in SITE_TABLE {
+            assert!(seen.insert(*host), "{host} appears twice in SITE_TABLE");
+        }
+    }
+
+    /// Each profile card stacks the first three sites of its category, so those
+    /// three have to exist and be three DIFFERENT services — two rows for the
+    /// same product would draw the same logo twice.
+    #[test]
+    fn every_profile_card_can_fill_its_icon_stack() {
+        for category in [
+            AppCategory::Email,
+            AppCategory::Work,
+            AppCategory::Casual,
+            AppCategory::Technical,
+            AppCategory::AiChat,
+        ] {
+            let sites = sample_sites(category, 3);
+            assert_eq!(sites.len(), 3, "{category:?} cannot fill its card: {sites:?}");
+            let unique: std::collections::HashSet<_> = sites.iter().collect();
+            assert_eq!(unique.len(), 3, "{category:?} repeats a site: {sites:?}");
+        }
+    }
+
     #[test]
     fn category_mapping_covers_common_apps() {
         assert_eq!(category_for_exe("code"), AppCategory::Technical);
@@ -2971,6 +3011,7 @@ mod tests {
     #[test]
     fn site_table_resolves_webapps_to_real_categories() {
         assert_eq!(category_for_site("mail.google.com"), Some(AppCategory::Email));
+        assert_eq!(category_for_site("outlook.com"), Some(AppCategory::Email));
         assert_eq!(category_for_site("claude.ai"), Some(AppCategory::AiChat));
         assert_eq!(category_for_site("github.com"), Some(AppCategory::Technical));
         assert_eq!(category_for_site("linear.app"), Some(AppCategory::Work));

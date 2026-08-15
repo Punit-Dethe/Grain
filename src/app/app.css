@@ -3907,6 +3907,11 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-profile-settings {
+  /* One tile geometry for every icon stack in this section, so the faces on a
+     profile card and the faces in its opened panel are the same size and
+     weight. Only the direction differs, and that is set per stack. */
+  --profile-tile: 32px;
+  --profile-tile-img: 20px;
   display: grid;
   gap: 20px;
 }
@@ -3980,6 +3985,18 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   cursor: default;
 }
 
+/* Wraps the back row and the card, so navigation sits ABOVE the border rather
+   than inside it. */
+.context-profile-panel {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.context-profile-panel > .context-profile-card {
+  width: 100%;
+}
+
 .context-profile-card {
   overflow: hidden;
   border-radius: 14px;
@@ -3992,20 +4009,23 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   padding: 15px 16px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
 }
 
+/* Fanned sideways: the header is wide and short, so a horizontal stack reads
+   without stealing height from the copy beside it. */
 .context-profile-apps {
-  min-width: 82px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
 }
 
-.context-profile-apps span {
-  width: 32px;
-  height: 32px;
+.context-profile-apps > span {
+  width: var(--profile-tile);
+  height: var(--profile-tile);
   display: grid;
   place-items: center;
+  overflow: hidden;
   border-radius: 50%;
   color: var(--text-2);
   background: var(--bg-2);
@@ -4014,16 +4034,28 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     inset 0 0 0 1px var(--hairline);
 }
 
-.context-profile-apps span + span {
-  margin-left: -7px;
+/* Later tiles ride over earlier ones, so the stack reads front-to-back
+   left-to-right — the same order the eye takes them in. */
+.context-profile-apps > span + span {
+  margin-left: -8px;
 }
 
-.context-profile-apps span:nth-child(2) {
-  color: var(--sky);
+.context-profile-apps > span:nth-child(2) {
+  z-index: 1;
 }
 
-.context-profile-apps span:nth-child(3) {
-  color: var(--accent-strong);
+.context-profile-apps > span:nth-child(3) {
+  z-index: 2;
+}
+
+/* `contain`, never `cover`: these are real brand marks, and cropping one to
+   fill a circle is how a recognisable logo stops being recognisable. */
+.context-profile-apps img,
+.context-custom-profile-icons img {
+  width: var(--profile-tile-img);
+  height: var(--profile-tile-img);
+  border-radius: 5px;
+  object-fit: contain;
 }
 
 .context-profile-copy {
@@ -4117,12 +4149,17 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 /* Returns from a profile that lives inside the Other tab (AI chat) to the grid
-   it was opened from. Its own row above the card header, with the arrow doing
-   the explaining — so it reads as navigation rather than as part of the
-   profile's copy, which is where it sat before. */
+   it was opened from. Its own row ABOVE the card, with the arrow doing the
+   explaining — so it reads as navigation rather than as part of the profile's
+   copy, which is where it sat before.
+ *
+ * The negative inset pulls its label's optical left edge into line with the
+ * card below, since its padding is what gives the hover pill its shape rather
+ * than anything the eye should see. Spacing to the card comes from the panel
+ * grid's gap, not a margin here, so there is one number to change. */
 .context-profile-back {
-  margin-bottom: 14px;
-  padding: 4px 8px 4px 4px;
+  margin-left: -6px;
+  padding: 5px 9px 5px 6px;
   border: 0;
   border-radius: 8px;
   display: inline-flex;
@@ -4170,9 +4207,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   font: inherit;
   font-size: 12.5px;
   line-height: 1.62;
-}
-
-.context-profile-prompt textarea {
   min-height: 68px;
   max-height: 184px;
   padding: 0 0 5px;
@@ -4219,16 +4253,31 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   gap: 12px;
 }
 
+/* Every card in this grid is sized to ONE shape: a title of any length on one
+   line, and exactly two lines of description. Two lines is the design target
+   rather than an accident of content — a one-line description still reserves
+   the second, so a row of cards keeps a common baseline instead of each card
+   being as tall as whatever text it happened to get. The height below is that
+   shape plus padding, so nothing has to be measured to stay aligned. */
 .context-custom-profile-card {
+  --card-pad-y: 15px;
+  --card-title-size: 13px;
+  --card-desc-size: 12px;
+  --card-desc-leading: 1.5;
+  /* Reserved for the description, always: two lines at its own leading. */
+  --card-desc-block: calc(var(--card-desc-size) * var(--card-desc-leading) * 2);
   min-width: 0;
-  min-height: 84px;
-  padding: 12px 14px;
+  min-height: calc(
+    var(--card-pad-y) * 2 + var(--card-title-size) * 1.35 + 6px +
+      var(--card-desc-block)
+  );
+  padding: var(--card-pad-y) 15px;
   border-radius: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-content: center;
   align-items: center;
-  gap: 14px;
+  gap: 15px;
   overflow: hidden;
   color: var(--text-1);
   background: transparent;
@@ -4255,13 +4304,17 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   transform: scale(0.99);
 }
 
+/* Clamped to the two lines the card is built around, and reserving them even
+   when the text is shorter — that reservation is what keeps a one-line profile
+   the same height as its neighbours. */
 .context-custom-profile-instruction {
   width: 100%;
+  min-height: var(--card-desc-block);
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-2);
-  font-size: 12px;
-  line-height: 1.52;
+  font-size: var(--card-desc-size);
+  line-height: var(--card-desc-leading);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   white-space: pre-wrap;
@@ -4280,22 +4333,33 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .context-custom-profile-create-copy {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  align-content: center;
+  gap: 6px;
 }
 
+/* One line, ellipsised. A title is allowed to be long; it is not allowed to
+   change the card's height, which is what wrapping it would do. */
 .context-custom-profile-create-copy strong {
   width: 100%;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--card-title-size);
   font-weight: 620;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The Create card's own copy sits on the same two-line reservation as a real
+   profile's instruction, so the two never disagree about how tall a card is. */
 .context-custom-profile-create-copy > span {
+  min-height: var(--card-desc-block);
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: var(--card-desc-size);
+  line-height: var(--card-desc-leading);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 /* Vertically stacked, overlapping tiles — the real favicons of what a profile
@@ -4303,9 +4367,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
    each tile showing to recognise it. Max three is enforced in the component;
    past that the stack reads as a smudge rather than as icons. */
 .context-custom-profile-icons {
-  --icon-tile: 28px;
-  --icon-overlap: 0.6;
-  min-width: var(--icon-tile);
+  --icon-overlap: 0.58;
+  flex: 0 0 auto;
+  min-width: var(--profile-tile);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4313,8 +4377,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-icons > span {
-  width: var(--icon-tile);
-  height: var(--icon-tile);
+  width: var(--profile-tile);
+  height: var(--profile-tile);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -4327,9 +4391,12 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 /* Each tile after the first rides up over the one before. Later tiles sit on
-   top, so the stack reads front-to-back downward. */
+   top, so the stack reads front-to-back downward.
+ *
+ * A duplicate of this rule used to follow with a hard `-12px`, which won on
+ * source order and quietly held the overlap at 43% however this was set. */
 .context-custom-profile-icons > span + span {
-  margin-top: calc(var(--icon-tile) * var(--icon-overlap) * -1);
+  margin-top: calc(var(--profile-tile) * var(--icon-overlap) * -1);
 }
 
 .context-custom-profile-icons > span:nth-child(2) {
@@ -4340,28 +4407,14 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   z-index: 2;
 }
 
-.context-custom-profile-icons img {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  object-fit: contain;
-}
-
-.context-custom-profile-icons > span + span {
-  margin-top: -12px;
-}
-
-.context-custom-profile-icons > span:nth-child(2) {
-  color: var(--sky);
-}
-
-.context-custom-profile-icons > span:nth-child(3) {
-  color: var(--accent-strong);
-}
-
+/* Tall enough that opening the app picker does not push the whole dialog into a
+   scrollbar — the list inside it has its own, and two nested scroll regions is
+   the thing that felt broken. The bottom padding is trimmed for the same
+   reason: it was the last few pixels over the line. */
 .context-profile-editor-dialog {
   width: min(540px, 100%);
-  max-height: min(720px, calc(100vh - 48px));
+  max-height: min(788px, calc(100vh - 40px));
+  padding-bottom: 24px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--text-4) transparent;
@@ -4570,8 +4623,10 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   min-height: 34px !important;
 }
 
+/* Sized to show five rows and clip the sixth, so it is visibly a list you
+   scroll rather than one that looks complete at whatever fits. */
 .context-app-picker-list {
-  max-height: 232px;
+  max-height: 196px;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: grid;
