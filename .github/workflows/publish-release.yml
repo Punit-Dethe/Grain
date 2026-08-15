@@ -1,0 +1,145 @@
+name: "Publish Grain Release"
+
+# Promote an already-built, signed draft after its installer has been tested.
+# Push `publish-vX.Y.Z`, or run this workflow manually with the release tag.
+# This avoids rebuilding the app merely to make the updater feed public.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Draft release tag to publish (for example v0.0.2)"
+        required: true
+        type: string
+  push:
+    tags:
+      - "publish-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            tag="${GITHUB_REF_NAME#publish-}"
+          else
+            tag="$REQUESTED_TAG"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate signed updater release
+        id: validate
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          release_json="$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name == \"$RELEASE_TAG\")")"
+
+          if [[ -z "$release_json" ]]; then
+            echo "Release $RELEASE_TAG was not found" >&2
+            exit 1
+          fi
+          if [[ "$(jq -r '.draft' <<< "$release_json")" != "true" ]]; then
+            echo "Release $RELEASE_TAG is not a draft" >&2
+            exit 1
+          fi
+          if [[ "$(jq -r '.prerelease' <<< "$release_json")" != "false" ]]; then
+            echo "Release $RELEASE_TAG is marked as a prerelease" >&2
+            exit 1
+          fi
+
+          mapfile -t assets < <(jq -r '.assets[] | select(.state == "uploaded" and .size > 0) | .name' <<< "$release_json")
+          printf '%s\n' "${assets[@]}" | grep -Fxq 'latest.json' || {
+            echo "latest.json is missing or empty" >&2
+            exit 1
+          }
+          printf '%s\n' "${assets[@]}" | grep -Eq '\.exe$' || {
+            echo "NSIS installer is missing or empty" >&2
+            exit 1
+          }
+          printf '%s\n' "${assets[@]}" | grep -Eq '\.exe\.sig$' || {
+            echo "Updater signature is missing or empty" >&2
+            exit 1
+          }
+
+          metadata_dir="$RUNNER_TEMP/grain-release-metadata"
+          mkdir -p "$metadata_dir"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern latest.json --dir "$metadata_dir"
+          metadata="$metadata_dir/latest.json"
+
+          if [[ "$(jq -r '.version' "$metadata")" != "$RELEASE_VERSION" ]]; then
+            echo "latest.json version does not match $RELEASE_TAG" >&2
+            exit 1
+          fi
+          if [[ "$(jq -r '.platforms | length' "$metadata")" -lt 1 ]]; then
+            echo "latest.json contains no updater platforms" >&2
+            exit 1
+          fi
+          if ! jq -e --arg prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/" \
+            '.platforms | to_entries | all(.value.url | startswith($prefix))' "$metadata" >/dev/null; then
+            echo "latest.json contains an unexpected download URL" >&2
+            exit 1
+          fi
+          if ! jq -e '.platforms | to_entries | all(.value.signature | type == "string" and length > 0)' \
+            "$metadata" >/dev/null; then
+            echo "latest.json contains a missing updater signature" >&2
+            exit 1
+          fi
+
+          echo "release_id=$(jq -r '.id' <<< "$release_json")" >> "$GITHUB_OUTPUT"
+
+      - name: Publish as latest release
+        shell: bash
+        env:
+          RELEASE_ID: ${{ steps.validate.outputs.release_id }}
+        run: |
+          set -euo pipefail
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false \
+            -F prerelease=false \
+            -f make_latest=true \
+            --silent
+
+      - name: Verify public updater feed
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          feed="https://github.com/$GITHUB_REPOSITORY/releases/latest/download/latest.json"
+
+          for attempt in {1..12}; do
+            if version="$(curl --fail --silent --show-error --location "$feed" | jq -r '.version')" \
+              && [[ "$version" == "$RELEASE_VERSION" ]]; then
+              echo "Updater feed is live at version $version"
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Public updater feed did not resolve to $RELEASE_VERSION" >&2
+          exit 1

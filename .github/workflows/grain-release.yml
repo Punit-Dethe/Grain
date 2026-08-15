@@ -11,8 +11,9 @@ name: "Grain Release (Windows)"
 # The updater endpoint (tauri.conf.json) points at
 # `releases/latest/download/latest.json`. A DRAFT release is not "latest", so
 # updates only reach users once you PUBLISH the release — that publish step is
-# your final "ship to everyone" gate. Build locally first to verify, then run
-# this to produce the exact same artifact for distribution.
+# your final "ship to everyone" gate. After testing the draft installer, run
+# "Publish Grain Release" or push `publish-vX.Y.Z` to validate the updater
+# assets and make the release public without rebuilding it.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.grain-keys/grain.updater.key
@@ -22,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       draft:
-        description: "Create the GitHub release as a draft (publish manually to ship the update)"
+        description: "Create the GitHub release as a draft (publish after testing to ship the update)"
         type: boolean
         default: true
   push:
@@ -201,7 +202,7 @@ jobs:
         with:
           tagName: v${{ steps.version.outputs.version }}
           releaseName: v${{ steps.version.outputs.version }}
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
             # Grain v0.0.2 — Context, polish & reliability
