@@ -54,7 +54,7 @@ let onboardingResolution: ReturnType<
 > | null = null;
 
 const PROTOTYPE_COPY = {
-  quickPanel: "Quick panel",
+  quickPanel: "Quick Search",
   quickPanelShortcut: "Ctrl K",
   original: "Original",
   processed: "AI processed",
@@ -473,8 +473,8 @@ function Sidebar({
         className="quick-panel-button"
         type="button"
         onClick={onOpenQuickPanel}
-        aria-label="Open quick panel"
-        title="Quick panel"
+        aria-label="Open Quick Search"
+        title="Quick Search"
       >
         <Icon name="command" />
         <span>{PROTOTYPE_COPY.quickPanel}</span>
