@@ -46,10 +46,12 @@ All three modes get their own configurable shortcut, so switching is a keypress,
 - **Quick Agent.** The instant version of Agent: select some text, speak or type an instruction, and press the shortcut. The result replaces your selection immediately — no popup window, no extra step to accept it. _Highlight a clunky paragraph, say "make this sound more confident," and the rewrite drops in right where the paragraph was._
 - **Snippets.** Assign a spoken keyword to a piece of text you use often — a URL, an address, a block of boilerplate. Say the keyword, and Grain pastes the saved text in its place. _Say "my address" and your street address appears wherever your cursor is._
 - **Voice Actions.** Assign a spoken keyword to an action instead of text — opening an app, a file, or a website you've approved. One keyword can trigger several actions at once, so a single phrase can kick off a whole routine. _Say "start my day" and it opens your email, calendar, and Slack together._
-- **Context awareness.** Grain notices which app or website you're dictating into and adjusts tone and formatting to match, without you picking a prompt yourself — and can read everything already in the text field so the AI understands what you've written so far. _Dictate in Gmail and it sounds like an email; dictate in your IDE and it sounds like a code comment — no manual switching._
+- **Context awareness.** Grain notices which app or supported website you're dictating into and adjusts tone and formatting to match, even if you switch destinations mid-dictation. It can also use the text already in the field to understand what you've written so far. The built-in Work, Email, Technical, Casual, and AI Chat profiles are editable, while custom profiles can target one or more apps or sites and override the defaults. _Dictate in Gmail and it sounds like an email; switch to your IDE and it follows you with the right profile — no manual prompt switching._
+- **A pill that follows your context.** The default pill pairs a smooth, responsive waveform with the active app's icon or a supported site's favicon, and updates as your context changes. Prefer the previous pill? It remains available in Settings.
+- **Lost Text recovery.** If a transcription finishes without a usable text field, Grain copies the result to your clipboard and notifies you, so you can paste it when you're ready.
 - **"Scrap That" voice cancel.** A spoken undo. Say "scrap that" at any point mid-dictation and everything you said before that moment — audio and transcribed text alike — is discarded, while the recording keeps running so you can pick the thought back up. _You trail off mid-sentence, say "scrap that," and keep going without touching a key._
 - **Full history.** Grain keeps a record of both what you actually said (the raw transcript) and what the AI turned it into (the processed result) for every session, plus a dictionary of words you've taught it to transcribe correctly from now on. _You paste the AI-cleaned version, then realize you need your exact original wording — it's still there._
-- **Quick Panel.** One window that gathers the settings you're likely to touch day-to-day — shortcuts, models, providers, prompts, and history — instead of hunting across separate tabs. _Need to swap models before a call? One window, not four settings tabs._
+- **Quick Panel and model status.** A searchable command palette gathers the settings you're likely to touch day-to-day — shortcuts, models, providers, prompts, and history — while the main sidebar reports the active model, its load state, and whether it runs locally or in the cloud. _Need to swap models before a call? Search once instead of hunting across settings tabs._
 
 _See [docs/grain-features.md](docs/grain-features.md) for the full breakdown, including model routing and smart key rotation for cloud providers._
 
@@ -123,6 +125,8 @@ Details: [product vision](docs/Grain%20Space%202.0/Grain%20space%20files/PRODUCT
 - Disabled features and extensions unregister their shortcuts, close their windows, and release their memory — nothing idles in the background.
 
 ## Quick start
+
+First-run onboarding introduces Batch, Flow, and ASR, then guides you through model setup, a real transcription test, and shortcut setup.
 
 1. Download the latest build from [Releases](https://github.com/Punit-Dethe/Grain/releases).
 2. Grant microphone and accessibility/input permissions where your OS requires them.
