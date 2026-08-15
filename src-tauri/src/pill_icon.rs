@@ -27,7 +27,8 @@
 //!   SSRF surface simply does not exist here.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use grain_core::AppContext;
 use grain_sdk::{DaemonEvent, PILL_ICON_PX};
@@ -180,8 +181,39 @@ pub fn resolve(key: &IconKey) -> Option<Vec<u8>> {
     }
 }
 
-/// Announce the foreground surface's icon to the pill.
+/// The key whose pixels the pill is currently showing. Lets a re-resolve that
+/// lands on the same surface skip the emit entirely, which matters now that
+/// something as ordinary as a focus change can trigger one.
+static SHOWING: Mutex<Option<IconKey>> = Mutex::new(None);
+
+/// Bumped by every resolve. Async work captures the value it started under and
+/// drops its result if it no longer matches.
 ///
+/// Without this, a favicon fetch for a tab you have already left lands seconds
+/// later and repaints the pill with the wrong site — the slower the site, the
+/// more likely it wins. Comparing keys is not enough: a stale result has a
+/// *different* key, which is exactly why it would sail past that check.
+static RESOLVE_GEN: AtomicU64 = AtomicU64::new(0);
+
+/// Announce the foreground surface's icon to the pill, at session start.
+///
+/// Clears the pill when the surface cannot be named, so a previous session's
+/// icon never leads into a new one.
+pub fn emit_for_session(app: &AppHandle) {
+    *SHOWING.lock().unwrap() = None;
+    resolve_and_emit(app, true);
+}
+
+/// Re-resolve mid-session, after the user settled on a different window or tab.
+///
+/// Unlike session start this does NOT clear on failure. A UI Automation read can
+/// come back empty for a moment — Gecko rebuilding its tree is the common case —
+/// and blanking the pill to a bare dot every time that happens reads as the
+/// feature being broken, when the previous icon was still perfectly correct.
+pub fn refresh(app: &AppHandle) {
+    resolve_and_emit(app, false);
+}
+
 /// Two rungs, best-first: a supported WEBSITE outranks the browser showing it,
 /// because "Grain knows you are in Gmail" is a stronger claim than "Grain knows
 /// you are in Chrome".
@@ -191,54 +223,150 @@ pub fn resolve(key: &IconKey) -> Option<Vec<u8>> {
 /// if it succeeds. That also gives the stale-while-revalidate shape for free: on
 /// a site whose icon is not cached yet, the browser's own icon shows at once and
 /// is replaced the moment the site's arrives.
-pub fn emit_for_session(app: &AppHandle) {
+fn resolve_and_emit(app: &AppHandle, clear_when_unknown: bool) {
     if !crate::settings::get_settings(app).pill_show_app_icon {
         // Clear any icon a previous session left on the pill.
+        *SHOWING.lock().unwrap() = None;
         emit(app, None);
         return;
     }
+    let generation = RESOLVE_GEN.fetch_add(1, Ordering::Relaxed) + 1;
     let (app_key, site) = foreground_keys();
 
-    // Show the best thing already on disk, right now.
-    let cached = site
-        .as_ref()
-        .and_then(|k| cache_read(app, k))
-        .or_else(|| app_key.as_ref().and_then(|k| cache_read(app, k)));
-    let site_cached = cached.is_some() && site.is_some();
-    emit(app, cached.as_deref().map(encode));
+    // Each key's OWN cache, kept separate.
+    //
+    // These were once collapsed into a single "best cached thing", with the site
+    // fetch gated on it — which meant that once the BROWSER's icon was cached,
+    // every supported site looked cached too and its fetch never ran. Only the
+    // sites visited before the browser's own icon warmed up ever resolved. Keep
+    // them apart: the question "should I fetch this site?" may only ever be
+    // answered by that site's own cache.
+    let site_hit = site.as_ref().and_then(|k| cache_read(app, k));
+    let app_hit = app_key.as_ref().and_then(|k| cache_read(app, k));
 
-    // The app icon, when it is what the pill will end up showing. Skipped when a
-    // site is in play — that icon wins, and resolving this one would only risk
-    // landing after it and stealing the slot.
-    if site.is_none() {
-        if let Some(key) = app_key {
-            if cached.is_none() {
-                let app = app.clone();
-                // Its own thread: the Windows resolver initialises COM.
-                std::thread::spawn(move || {
-                    if let Some(rgba) = resolve(&key) {
-                        cache_write(&app, &key, &rgba);
-                        emit(&app, Some(encode(&rgba)));
-                    }
-                });
+    let plan = Plan::decide(
+        site.clone(),
+        site_hit.is_some(),
+        app_key.clone(),
+        app_hit.is_some(),
+    );
+
+    // Show the best thing already on disk, right now.
+    match &plan.show {
+        Some(key) => {
+            let bytes = if Some(key) == site.as_ref() {
+                site_hit.as_deref()
+            } else {
+                app_hit.as_deref()
+            };
+            if let Some(bytes) = bytes {
+                show(app, generation, key, bytes);
             }
         }
-        return;
+        // Nothing to show. At session start that means "clear"; mid-session it
+        // means "leave whatever is there", since the surface may simply have
+        // failed to resolve this once.
+        None if clear_when_unknown => {
+            *SHOWING.lock().unwrap() = None;
+            emit(app, None);
+        }
+        None => {}
     }
 
-    // A supported site with no cached icon: fetch it, then upgrade the pill.
-    if let (Some(IconKey::Site(host)), false) = (site.clone(), site_cached) {
-        let key = site.unwrap();
-        let app = app.clone();
-        // The async runtime rather than a thread — this rung is network-bound,
-        // and the app already runs a reactor.
-        tauri::async_runtime::spawn(async move {
-            if let Some(rgba) = site_fetch::resolve(&host).await {
-                cache_write(&app, &key, &rgba);
-                emit(&app, Some(encode(&rgba)));
-            }
-        });
+    match plan.fetch {
+        // A website: network-bound, so the async runtime rather than a thread.
+        Some(key @ IconKey::Site(_)) => {
+            let IconKey::Site(host) = key.clone() else {
+                return;
+            };
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(rgba) = site_fetch::resolve(&host).await {
+                    // Cached even if the user has moved on — the pixels are
+                    // still correct for that site, and the next visit is free.
+                    cache_write(&app, &key, &rgba);
+                    show(&app, generation, &key, &rgba);
+                }
+            });
+        }
+        // An app: its own thread, because the Windows resolver initialises COM.
+        Some(key) => {
+            let app = app.clone();
+            std::thread::spawn(move || {
+                if let Some(rgba) = resolve(&key) {
+                    cache_write(&app, &key, &rgba);
+                    show(&app, generation, &key, &rgba);
+                }
+            });
+        }
+        None => {}
     }
+}
+
+/// What one resolve decided: which cached icon to show now, and which key still
+/// needs resolving behind it.
+///
+/// Split out as a pure decision because the bug it now pins was invisible inside
+/// the effectful version: the site fetch was gated on "is anything cached?",
+/// which the BROWSER's icon satisfied — so once that warmed up, no further site
+/// ever fetched. Only sites visited before it did worked, which looks random
+/// from the outside. Every rule here is one line and one test.
+#[derive(Debug, PartialEq)]
+struct Plan {
+    /// Whose cached pixels to display immediately.
+    show: Option<IconKey>,
+    /// What to resolve in the background.
+    fetch: Option<IconKey>,
+}
+
+impl Plan {
+    fn decide(
+        site: Option<IconKey>,
+        site_cached: bool,
+        app: Option<IconKey>,
+        app_cached: bool,
+    ) -> Self {
+        Plan {
+            show: match (&site, site_cached, &app, app_cached) {
+                // The site wins whenever we already have it.
+                (Some(s), true, ..) => Some(s.clone()),
+                // Otherwise the app, including as a stand-in while a supported
+                // site's own icon is still being fetched — the browser's icon
+                // beats a bare dot.
+                (_, _, Some(a), true) => Some(a.clone()),
+                _ => None,
+            },
+            fetch: match (site, site_cached, app, app_cached) {
+                // A site's fetch is gated ONLY on that site's own cache.
+                (Some(s), false, ..) => Some(s),
+                // The app is resolved only when no site is in play: with one, the
+                // app icon is not what the pill ends up showing, and resolving it
+                // would just risk landing later and stealing the slot.
+                (None, _, Some(a), false) => Some(a),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// Emit `rgba` as the icon for `key`, unless this result is stale or redundant.
+///
+/// Two guards, and they catch different things:
+/// - `generation` — the surface moved on while this resolve was in flight, so
+///   these pixels are for a window or tab the user has already left.
+/// - `SHOWING` — the pill is already displaying exactly this, so emitting would
+///   make the pill decode a payload to arrive at the picture it is drawing.
+fn show(app: &AppHandle, generation: u64, key: &IconKey, rgba: &[u8]) {
+    if RESOLVE_GEN.load(Ordering::Relaxed) != generation {
+        return;
+    }
+    let mut showing = SHOWING.lock().unwrap();
+    if showing.as_ref() == Some(key) {
+        return;
+    }
+    *showing = Some(key.clone());
+    drop(showing);
+    emit(app, Some(encode(rgba)));
 }
 
 fn encode(rgba: &[u8]) -> String {
@@ -308,6 +436,96 @@ fn to_icon(src: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+
+    fn site() -> IconKey {
+        IconKey::Site("claude.ai".into())
+    }
+    fn browser() -> IconKey {
+        IconKey::Id("Chrome".into())
+    }
+
+    /// The shipped bug, as a test.
+    ///
+    /// Reported as "Gmail and GitHub work, but Claude, ChatGPT and Gemini never
+    /// do". Those first two were visited while the browser's own icon was still
+    /// cold; from then on every supported site looked cached because the BROWSER
+    /// was, and none of them ever fetched.
+    #[test]
+    fn a_cached_browser_icon_does_not_suppress_a_sites_own_fetch() {
+        let plan = Plan::decide(Some(site()), false, Some(browser()), true);
+        assert_eq!(
+            plan.fetch,
+            Some(site()),
+            "the site must fetch on its own cache miss, whatever the browser's state"
+        );
+        assert_eq!(
+            plan.show,
+            Some(browser()),
+            "and the browser's icon stands in meanwhile, rather than a bare dot"
+        );
+    }
+
+    #[test]
+    fn a_cached_site_is_shown_and_nothing_is_fetched() {
+        let plan = Plan::decide(Some(site()), true, Some(browser()), true);
+        assert_eq!(plan.show, Some(site()));
+        assert_eq!(plan.fetch, None);
+    }
+
+    #[test]
+    fn a_site_outranks_the_browser_even_before_the_browser_is_known() {
+        let plan = Plan::decide(Some(site()), true, None, false);
+        assert_eq!(plan.show, Some(site()));
+    }
+
+    /// An unsupported site is not a failure — it is the browser's own identity,
+    /// which is the correct answer. Reported as "it doesn't switch back to the
+    /// browser icon on an unknown website".
+    #[test]
+    fn an_unsupported_site_falls_back_to_the_browser() {
+        let plan = Plan::decide(None, false, Some(browser()), true);
+        assert_eq!(plan.show, Some(browser()));
+        assert_eq!(plan.fetch, None);
+    }
+
+    #[test]
+    fn an_unknown_browser_on_an_unsupported_site_resolves_the_browser() {
+        let plan = Plan::decide(None, false, Some(browser()), false);
+        assert_eq!(plan.show, None, "nothing cached to show yet");
+        assert_eq!(plan.fetch, Some(browser()));
+    }
+
+    /// With a site in play the app icon is not the destination, so resolving it
+    /// would only race the site's fetch for the same slot.
+    #[test]
+    fn the_app_is_never_resolved_while_a_site_is_in_play() {
+        for app_cached in [true, false] {
+            for site_cached in [true, false] {
+                let plan = Plan::decide(Some(site()), site_cached, Some(browser()), app_cached);
+                assert_ne!(
+                    plan.fetch,
+                    Some(browser()),
+                    "site_cached={site_cached} app_cached={app_cached}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn nothing_known_shows_and_fetches_nothing() {
+        assert_eq!(
+            Plan::decide(None, false, None, false),
+            Plan {
+                show: None,
+                fetch: None
+            }
+        );
+    }
 }
 
 // ── Websites ────────────────────────────────────────────────────────────────

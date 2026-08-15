@@ -13,22 +13,35 @@
 //!
 //! # Why there is no polling
 //!
-//! `EVENT_SYSTEM_FOREGROUND` is an OS hook: it fires when the foreground window
-//! actually changes and costs nothing at all in between. No timer, no thread, no
-//! "check every N ms". The hook lives only for the length of a session.
+//! These are OS hooks: they fire when something actually changes and cost
+//! nothing at all in between. No timer, no thread, no "check every N ms". They
+//! live only for the length of a session.
+//!
+//! # Why TWO hooks
+//!
+//! `EVENT_SYSTEM_FOREGROUND` fires when the foreground *window* changes — which
+//! a tab switch is not. Switching from GitHub to Gmail inside one browser window
+//! changes nothing about which window is in front, so that hook alone made app
+//! switching reliable and website switching almost never work. The cases that
+//! did work were the ones that happened to cross a window boundary.
+//!
+//! `EVENT_OBJECT_FOCUS` covers the rest: changing tab moves focus to the new
+//! tab's document. Together they answer the only question that matters — has
+//! the place my text is going to land changed?
 //!
 //! # Why there is no timer to cancel
 //!
-//! A switch must be *held* before it counts, or alt-tabbing past a window would
-//! rewrite the pill. Rather than track and cancel pending timers, each switch
-//! bumps a generation counter and spawns a task that sleeps and then checks
-//! whether it is still the newest. Switch five times quickly and four tasks die
-//! on a single atomic load. Nothing needs cleaning up, and there is no state
-//! machine to get wrong.
+//! A change must be *held* before it counts, or alt-tabbing past a window would
+//! rewrite the pill. Rather than track and cancel timers, every event just
+//! stamps the time; ONE settle task sleeps until the stamp is old enough. Focus
+//! events are far too frequent to spawn a task each — a busy second would leave
+//! dozens of them asleep — so the task is spawned only when none is already
+//! running, and re-sleeps instead of exiting if more events arrived while it
+//! waited.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tauri::AppHandle;
 
@@ -40,9 +53,22 @@ use tauri::AppHandle;
 /// browser that answers nothing on the first read often answers on this one.
 const SETTLE: Duration = Duration::from_secs(5);
 
-/// Bumped by every foreground change. A settle task adopts its switch only if it
-/// is still the newest one, so superseded switches need no cancellation.
-static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Milliseconds (since `EPOCH`) of the most recent surface change. The settle
+/// task compares against this rather than owning a deadline, so a change that
+/// arrives while it is asleep simply moves the finish line.
+static LAST_CHANGE_MS: AtomicU64 = AtomicU64::new(0);
+/// Whether a settle task is alive. Keeps event volume and task count unrelated.
+static SETTLING: AtomicBool = AtomicBool::new(false);
+/// False between sessions; makes a settle in flight give up rather than repaint
+/// a pill that is no longer showing.
+static ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// Start of the monotonic clock these timestamps are measured against.
+static EPOCH: OnceLock<Instant> = OnceLock::new();
+
+fn now_ms() -> u64 {
+    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
+}
 
 /// Set once, on the first session. The hook callback is a bare `extern "system"`
 /// function with nowhere to carry state, so the handle has to be reachable
@@ -52,10 +78,11 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 /// Begin following the foreground for this session.
 pub fn start(app: &AppHandle) {
     let _ = APP.set(app.clone());
+    ACTIVE.store(true, Ordering::Relaxed);
     #[cfg(windows)]
     {
-        // The hook must be installed from a thread with a message pump, which is
-        // the main thread; `WINEVENT_OUTOFCONTEXT` delivers through its queue.
+        // The hooks must be installed from a thread with a message pump, which
+        // is the main thread; `WINEVENT_OUTOFCONTEXT` delivers through its queue.
         let _ = app.run_on_main_thread(windows_impl::install);
     }
     #[cfg(not(windows))]
@@ -64,10 +91,10 @@ pub fn start(app: &AppHandle) {
     }
 }
 
-/// Stop following. Also invalidates any settle still in flight, so a switch made
+/// Stop following. Also stands down any settle still in flight, so a change made
 /// during the session's tail cannot repaint the pill after the session ended.
 pub fn stop(app: &AppHandle) {
-    GENERATION.fetch_add(1, Ordering::Relaxed);
+    ACTIVE.store(false, Ordering::Relaxed);
     #[cfg(windows)]
     {
         let _ = app.run_on_main_thread(windows_impl::remove);
@@ -78,26 +105,41 @@ pub fn stop(app: &AppHandle) {
     }
 }
 
-/// A foreground change arrived. Record it and check back once, later.
+/// The surface may have changed. Stamp the time; settle later.
 ///
-/// Deliberately does no work now: this runs on the main thread's message pump,
-/// and a UI Automation read there would stall the UI of whatever app the user
-/// just switched to.
-fn schedule_settle() {
+/// Deliberately does almost nothing: this runs on the main thread's message
+/// pump, and a UI Automation read here would stall the UI of whatever app the
+/// user just switched to. Two atomics is the whole cost of an event.
+fn note_change() {
+    if !ACTIVE.load(Ordering::Relaxed) {
+        return;
+    }
+    LAST_CHANGE_MS.store(now_ms(), Ordering::Relaxed);
+    // Already counting down — that task will pick up the new stamp.
+    if SETTLING.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let Some(app) = APP.get().cloned() else {
+        SETTLING.store(false, Ordering::Release);
         return;
     };
-    let mine = GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(SETTLE).await;
-        // Superseded by a later switch (or by the session ending) → this window
-        // was passed through, not settled on.
-        if GENERATION.load(Ordering::Relaxed) != mine {
-            return;
+        loop {
+            tokio::time::sleep(SETTLE).await;
+            if !ACTIVE.load(Ordering::Relaxed) {
+                break;
+            }
+            let quiet_for = now_ms().saturating_sub(LAST_CHANGE_MS.load(Ordering::Relaxed));
+            if quiet_for + 1 >= SETTLE.as_millis() as u64 {
+                // Held long enough to mean it. Re-resolve, keeping the current
+                // icon if the surface cannot be named this time.
+                crate::pill_icon::refresh(&app);
+                break;
+            }
+            // Something moved while we slept; wait out the remainder instead of
+            // spawning a second task for it.
         }
-        // Re-runs the same resolution session start does, so a site icon, a
-        // cache miss and the async fetch all behave identically here.
-        crate::pill_icon::emit_for_session(&app);
+        SETTLING.store(false, Ordering::Release);
     });
 }
 
@@ -108,49 +150,58 @@ mod windows_impl {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
     use windows::Win32::UI::WindowsAndMessaging::{
-        EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+        EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, OBJID_CLIENT, WINEVENT_OUTOFCONTEXT,
+        WINEVENT_SKIPOWNPROCESS,
     };
 
-    /// The live hook, or 0. Kept as a raw handle so install/remove are a pair of
-    /// atomics rather than another lock on the main thread's path.
-    static HOOK: AtomicIsize = AtomicIsize::new(0);
+    /// The live hooks, or 0. Raw handles so install/remove are a few atomics
+    /// rather than another lock on the main thread's path.
+    ///
+    /// Two, because the events are not adjacent: `EVENT_SYSTEM_FOREGROUND`
+    /// (0x0003) and `EVENT_OBJECT_FOCUS` (0x8005) are far apart, and one hook
+    /// spanning both would also deliver everything in between.
+    static FOREGROUND_HOOK: AtomicIsize = AtomicIsize::new(0);
+    static FOCUS_HOOK: AtomicIsize = AtomicIsize::new(0);
+
+    // SKIPOWNPROCESS: Grain's own windows coming forward is not the user
+    // choosing a paste target.
+    const FLAGS: u32 = WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS;
 
     pub fn install() {
-        if HOOK.load(Ordering::Relaxed) != 0 {
+        hook_one(&FOREGROUND_HOOK, EVENT_SYSTEM_FOREGROUND, Some(on_event));
+        hook_one(&FOCUS_HOOK, EVENT_OBJECT_FOCUS, Some(on_focus));
+    }
+
+    fn hook_one(
+        slot: &AtomicIsize,
+        event: u32,
+        proc: windows::Win32::UI::Accessibility::WINEVENTPROC,
+    ) {
+        if slot.load(Ordering::Relaxed) != 0 {
             return; // already following
         }
-        // SAFETY: a foreground-only range, no module (out-of-context hooks take
-        // a function pointer in this process), and no process/thread filter.
-        let hook = unsafe {
-            SetWinEventHook(
-                EVENT_SYSTEM_FOREGROUND,
-                EVENT_SYSTEM_FOREGROUND,
-                None,
-                Some(on_foreground),
-                0,
-                0,
-                // SKIPOWNPROCESS: Grain's own windows coming forward is not the
-                // user choosing a paste target.
-                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-            )
-        };
-        HOOK.store(hook.0 as isize, Ordering::Relaxed);
+        // SAFETY: a single-event range, no module (out-of-context hooks take a
+        // function pointer in this process), and no process/thread filter.
+        let hook = unsafe { SetWinEventHook(event, event, None, proc, 0, 0, FLAGS) };
+        slot.store(hook.0 as isize, Ordering::Relaxed);
     }
 
     pub fn remove() {
-        let raw = HOOK.swap(0, Ordering::Relaxed);
-        if raw == 0 {
-            return;
-        }
-        // SAFETY: `raw` is a handle this module installed and has not yet freed —
-        // the swap above guarantees exactly one caller sees a non-zero value.
-        unsafe {
-            let _ = UnhookWinEvent(HWINEVENTHOOK(raw as *mut std::ffi::c_void));
+        for slot in [&FOREGROUND_HOOK, &FOCUS_HOOK] {
+            let raw = slot.swap(0, Ordering::Relaxed);
+            if raw == 0 {
+                continue;
+            }
+            // SAFETY: a handle this module installed and has not yet freed — the
+            // swap guarantees exactly one caller sees a non-zero value.
+            unsafe {
+                let _ = UnhookWinEvent(HWINEVENTHOOK(raw as *mut std::ffi::c_void));
+            }
         }
     }
 
     /// Must return promptly: this runs on the main thread's message pump.
-    unsafe extern "system" fn on_foreground(
+    unsafe extern "system" fn on_event(
         _hook: HWINEVENTHOOK,
         _event: u32,
         _hwnd: HWND,
@@ -159,6 +210,27 @@ mod windows_impl {
         _thread: u32,
         _time: u32,
     ) {
-        super::schedule_settle();
+        super::note_change();
+    }
+
+    /// Focus, filtered to the window's own client area.
+    ///
+    /// Focus events also fire for carets, menu items and scrollbars; `OBJID_CLIENT`
+    /// keeps this to "something in the content took focus", which is what a tab
+    /// switch looks like, and drops a good deal of noise before it reaches the
+    /// settle logic.
+    unsafe extern "system" fn on_focus(
+        _hook: HWINEVENTHOOK,
+        _event: u32,
+        _hwnd: HWND,
+        id_object: i32,
+        _id_child: i32,
+        _thread: u32,
+        _time: u32,
+    ) {
+        if id_object != OBJID_CLIENT.0 {
+            return;
+        }
+        super::note_change();
     }
 }
