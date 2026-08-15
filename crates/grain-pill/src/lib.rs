@@ -207,7 +207,7 @@ const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collaps
 const RISER_HOLD: Duration = Duration::from_millis(1600);
 /// Keep the Prompt Record action available briefly after the cursor leaves its
 /// reveal surface, giving it time to cross the transparent gap.
-const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(2);
+const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(1);
 /// A missed paste has already been placed on the clipboard when its event
 /// arrives. Keep the acknowledgement long enough to read without tying its
 /// lifetime to the longer Paste Catch hold.
@@ -1410,30 +1410,30 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
     Some(out)
 }
 
-/// Prompt Record artwork derived from `assets/icons8-ai-100.png`.
+/// Prompt Record artwork derived from `assets/icons8-ai-96.png`.
 /// The source's antialiased alpha was high-quality bicubic-downsampled offline;
 /// runtime only maps that 18² coverage to premultiplied white RGBA once in
 /// `App::new`, then blits it exactly like the foreground-application icon.
 /// No image decoder, per-frame resampling, or additional dependency is involved.
 const PROMPT_RECORD_ICON_PX: u32 = 18;
 const PROMPT_RECORD_ICON_ALPHA: [u8; (PROMPT_RECORD_ICON_PX * PROMPT_RECORD_ICON_PX) as usize] = [
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 115, 97, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 99, 240, 228, 92, 6, 0, 0,
-    0, 0, 0, 0, 122, 31, 0, 0, 0, 0, 19, 170, 255, 255, 161, 11, 0, 0,
-    0, 0, 0, 0, 172, 44, 0, 0, 0, 0, 0, 0, 165, 143, 0, 0, 99, 4,
-    0, 0, 0, 0, 163, 43, 0, 0, 0, 0, 0, 0, 21, 17, 0, 118, 255, 144,
-    0, 3, 88, 0, 161, 38, 25, 14, 0, 0, 14, 27, 0, 0, 0, 33, 173, 50,
-    0, 8, 182, 2, 159, 23, 133, 78, 0, 0, 78, 138, 9, 72, 0, 0, 4, 0,
-    60, 4, 169, 2, 159, 23, 134, 70, 35, 35, 70, 133, 25, 175, 0, 0, 0, 61,
-    173, 0, 168, 2, 159, 23, 132, 56, 105, 105, 56, 132, 23, 161, 1, 108, 0, 175,
-    173, 0, 168, 2, 159, 23, 132, 56, 104, 104, 56, 132, 23, 159, 2, 180, 0, 173,
-    59, 4, 169, 2, 159, 23, 134, 70, 35, 35, 70, 134, 23, 159, 2, 169, 4, 59,
-    0, 8, 182, 2, 159, 23, 133, 78, 0, 0, 78, 133, 23, 159, 2, 182, 8, 0,
-    0, 3, 87, 0, 161, 38, 24, 14, 0, 0, 14, 24, 38, 161, 0, 87, 3, 0,
-    0, 0, 0, 0, 163, 43, 0, 0, 0, 0, 0, 0, 43, 163, 0, 0, 0, 0,
-    0, 0, 0, 0, 173, 45, 0, 0, 0, 0, 0, 0, 44, 173, 0, 0, 0, 0,
-    0, 0, 0, 0, 121, 31, 0, 0, 0, 0, 0, 0, 31, 121, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 24, 185, 23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 92, 255, 90, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 39, 196, 255, 195, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    35, 212, 255, 255, 255, 255, 255, 213, 34, 0, 0, 81, 39, 0, 0, 0, 0, 0,
+    22, 146, 213, 255, 255, 255, 214, 147, 21, 0, 7, 253, 151, 0, 0, 0, 0, 0,
+    0, 0, 0, 166, 255, 164, 1, 0, 0, 0, 64, 255, 216, 2, 0, 0, 0, 0,
+    0, 0, 0, 73, 255, 71, 0, 0, 0, 0, 144, 255, 255, 44, 0, 0, 0, 0,
+    0, 0, 0, 12, 124, 10, 0, 0, 48, 124, 238, 255, 255, 198, 94, 27, 0, 0,
+    0, 0, 0, 0, 0, 0, 94, 221, 255, 255, 255, 255, 255, 255, 255, 252, 198, 31,
+    0, 0, 0, 69, 54, 0, 75, 190, 243, 255, 255, 255, 255, 255, 255, 225, 162, 24,
+    0, 0, 0, 229, 190, 0, 0, 0, 24, 90, 228, 255, 255, 175, 64, 6, 0, 0,
+    0, 15, 96, 255, 244, 76, 10, 0, 0, 0, 132, 255, 253, 33, 0, 0, 0, 0,
+    41, 243, 255, 255, 255, 255, 228, 20, 0, 0, 54, 255, 208, 0, 0, 0, 0, 0,
+    12, 95, 179, 255, 254, 165, 84, 5, 0, 0, 3, 242, 139, 0, 0, 0, 0, 0,
+    0, 0, 0, 248, 215, 0, 0, 0, 0, 0, 0, 55, 25, 0, 0, 0, 0, 0,
+    0, 0, 0, 139, 111, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
@@ -6189,7 +6189,7 @@ impl ApplicationHandler<UserEvent> for App {
                         self.clipboard_notice_until = None;
                     }
                 }
-                // Prompt Record remains available for two seconds after hover
+                // Prompt Record remains available for one second after hover
                 // exit, which gives the cursor time to cross the transparent gap.
                 // A successful click clears that hold and starts the smooth exit
                 // immediately. The existing frame clock owns expiry and motion.
@@ -6439,7 +6439,7 @@ mod tests {
         assert_eq!(rect.3 - rect.1, pill_h);
 
         let now = Instant::now();
-        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(2));
+        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(1));
         let deadline = now + PROMPT_RECORD_HOLD;
         assert!(should_show_prompt_record(
             PillState::Recording,
@@ -6474,7 +6474,7 @@ mod tests {
                 .iter()
                 .filter(|pixel| pixel.alpha() > 0)
                 .count(),
-            155
+            134
         );
         assert!(icon
             .pixels()
@@ -6482,16 +6482,18 @@ mod tests {
             .filter(|pixel| pixel.alpha() > 0)
             .all(|pixel| pixel.red() == pixel.green() && pixel.green() == pixel.blue()));
 
-        let source = Pixmap::decode_png(include_bytes!(
-            "../assets/icons8-ai-100.png"
-        ))
-        .expect("tracked Prompt Record source is a PNG");
-        assert_eq!((source.width(), source.height()), (100, 100));
+        let source = Pixmap::decode_png(include_bytes!("../assets/icons8-ai-96.png"))
+            .expect("tracked Prompt Record source is a PNG");
+        assert_eq!((source.width(), source.height()), (96, 96));
         assert!(source
             .pixels()
             .iter()
             .filter(|pixel| pixel.alpha() > 0)
-            .all(|pixel| pixel.red() == 0 && pixel.green() == 0 && pixel.blue() == 0));
+            .all(|pixel| pixel.red() == pixel.green() && pixel.green() == pixel.blue()));
+        assert!(source
+            .pixels()
+            .iter()
+            .any(|pixel| pixel.alpha() == 255 && pixel.red() == 255));
     }
 
     // ── Pill skins ──────────────────────────────────────────────────────────
