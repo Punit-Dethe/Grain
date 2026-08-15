@@ -415,7 +415,6 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("kimi.com", AppCategory::AiChat),
     ("meta.ai", AppCategory::AiChat),
     ("lmarena.ai", AppCategory::AiChat),
-    ("huggingface.co", AppCategory::AiChat),
     // Prompt-driven builders. The box you type into is a prompt box, so the
     // AiChat profile is the right one even though the output is an app.
     ("bolt.new", AppCategory::AiChat),
@@ -433,6 +432,12 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("bitbucket.org", AppCategory::Technical),
     ("codeberg.org", AppCategory::Technical),
     ("gerrit.", AppCategory::Technical),
+    // A model and dataset hub, not a chat. It sat under AiChat because of
+    // HuggingChat, which lives at one path on it — but the text people dictate
+    // here is a model card, a discussion, or a PR body, and those want
+    // Technical's "treat unfamiliar jargon as correct" far more than they want
+    // AiChat's "answer nothing".
+    ("huggingface.co", AppCategory::Technical),
     // -- Work: the three that lead are what the settings card stacks --
     //
     // Chat, notes and docs — three different kinds of work surface, which is
@@ -461,6 +466,11 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("webex.com", AppCategory::Work),
     ("zoom.us", AppCategory::Work),
     ("mattermost.com", AppCategory::Work),
+    // The professional network, so Work rather than Casual — which is where it
+    // sat, next to Snapchat and Reddit. Casual's job is to PRESERVE slang and a
+    // casual register, which is the wrong promise for a post or a message to a
+    // colleague; Work keeps the user's wording too, just professionally.
+    ("linkedin.com", AppCategory::Work),
     ("rocket.chat", AppCategory::Work),
     ("chime.aws", AppCategory::Work),
     // -- Personal messengers (casual register) --
@@ -486,7 +496,6 @@ static SITE_TABLE: &[(&str, AppCategory)] = &[
     ("bsky.app", AppCategory::Casual),
     ("threads.net", AppCategory::Casual),
     ("mastodon.social", AppCategory::Casual),
-    ("linkedin.com", AppCategory::Casual),
     ("news.ycombinator.com", AppCategory::Casual),
     // -- Docs / notes / long-form (bare `notion.so` leads the section above) --
     ("notion.site", AppCategory::Work),
@@ -868,14 +877,30 @@ fn category_for_exe(stem: &str) -> AppCategory {
     const DOCS: &[&str] = &[
         "notion", "obsidian", "winword", "onenote", "evernote", "bear", "typora", "logseq",
     ];
+    // Work surfaces that are neither chat nor a document. Linear's desktop app
+    // is the one that matters: `linear.app` is already Work in the site table,
+    // and an app disagreeing with its own website is the bug the note on
+    // `discord` above warns about.
+    const WORK_APP: &[&str] = &["linear"];
+
+    // Keys that must match the stem EXACTLY, because as a substring they capture
+    // unrelated applications.
+    //
+    // Length is the usual proxy for this (≤3 chars below), and `line` is where
+    // the proxy fails: it is the messenger, and it is also inside `linear` —
+    // so Linear's desktop app resolved to Casual while `linear.app` resolved to
+    // Work, which is exactly the app/website disagreement this module tries not
+    // to have. Add a key here whenever it is a substring of a real app's name.
+    const EXACT_ONLY: &[&str] = &["line"];
 
     // Short keys (≤3 chars, e.g. "wt", "zen", "arc", "tor", "min", "x") must match
     // the stem EXACTLY — substring-matching them would misfire on ordinary words
     // ("editor" contains "tor", "examine" contains "min"). Longer keys may match as
     // a substring so channel variants ("code - insiders", "whatsappdesktop") resolve.
     let hit = |set: &[&str]| {
-        set.iter()
-            .any(|k| stem == *k || (k.len() >= 4 && stem.contains(k)))
+        set.iter().any(|k| {
+            stem == *k || (k.len() >= 4 && !EXACT_ONLY.contains(k) && stem.contains(k))
+        })
     };
     // Desktop AI assistants. Checked BEFORE the IDE list on purpose: "claude"
     // and "chatgpt" are prompt boxes wherever they run, and the editors that
@@ -897,7 +922,7 @@ fn category_for_exe(stem: &str) -> AppCategory {
         AppCategory::Technical
     } else if hit(EMAIL) {
         AppCategory::Email
-    } else if hit(WORK_CHAT) || hit(DOCS) {
+    } else if hit(WORK_CHAT) || hit(DOCS) || hit(WORK_APP) {
         AppCategory::Work
     } else if hit(PERSONAL_CHAT) || hit(SOCIAL) {
         AppCategory::Casual
@@ -2946,6 +2971,44 @@ mod tests {
             confidence: Confidence::Guess,
             caret: None,
             nearby_terms: Vec::new(),
+        }
+    }
+
+    /// The same service must not be one thing as an app and another as a site.
+    ///
+    /// This is the invariant the note on `discord` in [`category_for_exe`] is
+    /// about, and it was being broken silently: `line` (the messenger) matched
+    /// as a substring of `linear`, so Linear's desktop app was Casual while
+    /// `linear.app` was Work. `Other` is not a disagreement — it means the exe
+    /// list has no opinion, which is the safe default for anything unlisted.
+    #[test]
+    fn an_app_and_its_own_website_resolve_to_the_same_profile() {
+        for (exe, host) in [
+            ("discord", "discord.com"),
+            ("slack", "slack.com"),
+            ("linear", "linear.app"),
+            ("notion", "notion.so"),
+            ("obsidian", "obsidian.md"),
+            ("telegram", "web.telegram.org"),
+            ("whatsapp", "web.whatsapp.com"),
+            ("messenger", "messenger.com"),
+            ("signal", "signal.org"),
+            ("outlook", "outlook.com"),
+            ("teams", "teams.microsoft.com"),
+            ("webex", "webex.com"),
+            ("claude", "claude.ai"),
+            ("chatgpt", "chatgpt.com"),
+            ("perplexity", "perplexity.ai"),
+            ("x", "x.com"),
+            ("evernote", "evernote.com"),
+            ("onenote", "onenote.com"),
+        ] {
+            let from_exe = category_for_exe(exe);
+            let from_site = category_for_site(host).expect("{host} should be a known site");
+            assert!(
+                from_exe == from_site || from_exe == AppCategory::Other,
+                "{exe} is {from_exe:?} but {host} is {from_site:?}"
+            );
         }
     }
 
