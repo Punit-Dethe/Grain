@@ -134,24 +134,27 @@ jobs:
             throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is missing"
           }
 
-          $keyPath = Join-Path $env:RUNNER_TEMP "grain-updater.key"
+          $encodedKey = $env:GRAIN_UPDATER_KEY.Trim()
           $probePath = Join-Path $env:RUNNER_TEMP "grain-signing-probe.txt"
-          [IO.File]::WriteAllText($keyPath, $env:GRAIN_UPDATER_KEY.Trim(), [Text.UTF8Encoding]::new($false))
 
           try {
-            [void][Convert]::FromBase64String($env:GRAIN_UPDATER_KEY.Trim())
+            $keyBytes = [Convert]::FromBase64String($encodedKey)
           } catch {
             throw "TAURI_SIGNING_PRIVATE_KEY must contain the Base64 key-file value"
           }
+          $decodedKey = [Text.Encoding]::UTF8.GetString($keyBytes).Trim()
+          if (-not $decodedKey.StartsWith("untrusted comment:")) {
+            throw "Decoded updater key is not a minisign secret key"
+          }
 
           [IO.File]::WriteAllText($probePath, "Grain updater signing probe")
-          $env:TAURI_SIGNING_PRIVATE_KEY_PATH = $keyPath
+          $env:TAURI_SIGNING_PRIVATE_KEY = $encodedKey
           $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:GRAIN_UPDATER_KEY_PASSWORD
           & bun tauri signer sign $probePath | Out-Null
           if ($LASTEXITCODE -ne 0) { throw "Updater signing key validation failed" }
 
           Remove-Item -LiteralPath $probePath, "$probePath.sig" -Force
-          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_SIGNING_PRIVATE_KEY_PATH=$keyPath"
+          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_SIGNING_PRIVATE_KEY=$encodedKey"
           Write-Host "Updater signing key validated"
 
       # Bundle the VC++ runtime app-local so Grain starts on machines without
@@ -279,12 +282,3 @@ jobs:
             Thanks for using Grain.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
-
-      - name: Remove updater signing key
-        if: always()
-        shell: pwsh
-        run: |
-          $keyPath = Join-Path $env:RUNNER_TEMP "grain-updater.key"
-          if (Test-Path -LiteralPath $keyPath) {
-            Remove-Item -LiteralPath $keyPath -Force
-          }
