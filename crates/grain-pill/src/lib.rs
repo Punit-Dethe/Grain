@@ -205,6 +205,9 @@ const BTN_SPAN: usize = 4;
 // layered window, so it costs nothing at rest.
 const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collapsed pill
 const RISER_HOLD: Duration = Duration::from_millis(1600);
+/// Keep the Prompt Record action available after the cursor leaves its reveal
+/// surface, and keep it visible as confirmation after a successful click.
+const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(3);
 /// A missed paste has already been placed on the clipboard when its event
 /// arrives. Keep the acknowledgement long enough to read without tying its
 /// lifetime to the longer Paste Catch hold.
@@ -215,6 +218,7 @@ const PROMPT_LABEL_PX: f32 = 12.5;
 // Collapsed sibling capsule (to the right of the pill). Fixed width — the label
 // truncates with an ellipsis rather than resizing the capsule.
 const SIB_GAP: f32 = 12.0; // px between the pill's right edge and the sibling
+const PROMPT_RECORD_GAP: f32 = 6.0; // tighter gap for the small circular action
 const SIB_W: f32 = 152.0; // prompt-switcher capsule width (fixed, arrows on both ends)
 const CLIPBOARD_SIB_W: f32 = 136.0; // shorter arrow-less clipboard confirmation
 const SIB_MAX_W: f32 = 250.0; // widest the sibling ever gets (the agent follow-up offer)
@@ -238,7 +242,7 @@ fn eased_progress(progress: f32) -> f32 {
 
 /// The collapsed Prompt Record control is always a full circle, exactly as tall
 /// as the active pill skin. Motion is limited to a short, non-overlapping slide;
-/// the final `SIB_GAP` remains transparent so the two controls read separately.
+/// the final `PROMPT_RECORD_GAP` remains transparent so the controls stay separate.
 fn prompt_record_button_rect(
     pill_right: f32,
     y_off: f32,
@@ -246,7 +250,7 @@ fn prompt_record_button_rect(
     progress: f32,
 ) -> HitRect {
     let eased = eased_progress(progress);
-    let left = pill_right + SIB_GAP + SIB_SLIDE * (1.0 - eased);
+    let left = pill_right + PROMPT_RECORD_GAP + SIB_SLIDE * (1.0 - eased);
     (left, y_off, left + pill_h, y_off + pill_h)
 }
 
@@ -318,6 +322,16 @@ fn should_trigger_prompt_record(
         && !prompt_recording
         && !prompt_record_requested
         && action_rect.is_some_and(|rect| point_in_rect(cursor, rect))
+}
+
+fn should_show_prompt_record(
+    state: PillState,
+    hovered: bool,
+    hold_until: Option<Instant>,
+    now: Instant,
+) -> bool {
+    state == PillState::Recording
+        && (hovered || hold_until.is_some_and(|deadline| now < deadline))
 }
 
 // ── Agent input geometry (the native summon card, per the reference design) ──
@@ -3611,6 +3625,9 @@ struct App {
     /// Set as soon as the explicit action is clicked so repeated clicks cannot
     /// enqueue duplicate requests while the authoritative core echo is in flight.
     prompt_record_requested: bool,
+    /// Three-second crossing grace after hover exit and post-click confirmation.
+    /// Read by the existing frame clock; it owns no timer or background work.
+    prompt_record_hold_until: Option<Instant>,
     prompt_record_hover_progress: f32,
     prompt_record_rect: Option<(f32, f32, f32, f32)>,
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
@@ -3726,6 +3743,7 @@ impl App {
             cursor_pos: (0.0, 0.0),
             prompt_record_hover: false,
             prompt_record_requested: false,
+            prompt_record_hold_until: None,
             prompt_record_hover_progress: 0.0,
             prompt_record_rect: None,
             ctrl_down: false,
@@ -3797,6 +3815,16 @@ impl App {
         point_in_rect(self.cursor_pos, rect)
     }
 
+    fn set_prompt_record_hover(&mut self, hovered: bool) {
+        if hovered {
+            self.prompt_record_hover = true;
+            self.prompt_record_hold_until = None;
+        } else if self.prompt_record_hover {
+            self.prompt_record_hover = false;
+            self.prompt_record_hold_until = Some(Instant::now() + PROMPT_RECORD_HOLD);
+        }
+    }
+
     /// Re-evaluate the hover affordance from the current physical cursor
     /// position. Once open, the hit zone bridges the recording surface, gap, and
     /// separate action, so moving onto the button cannot collapse it mid-travel.
@@ -3841,7 +3869,7 @@ impl App {
                 }
                 PillMode::AgentInput => false,
             });
-        self.prompt_record_hover = primary || attached || bridge;
+        self.set_prompt_record_hover(primary || attached || bridge);
     }
 
     /// [GRAIN] Place the pill on the monitor under it (or primary) per the user's
@@ -5572,7 +5600,7 @@ impl ApplicationHandler<UserEvent> for App {
                 self.update_prompt_record_hover();
             }
             WindowEvent::CursorLeft { .. } => {
-                self.prompt_record_hover = false;
+                self.set_prompt_record_hover(false);
             }
             // [GRAIN] Prompt Record is deliberately NOT attached to the pill
             // body. Hover reveals an explicit action; only a click inside that
@@ -5613,6 +5641,7 @@ impl ApplicationHandler<UserEvent> for App {
                 ) {
                     self.prompt_record_hover = false;
                     self.prompt_record_requested = true;
+                    self.prompt_record_hold_until = Some(Instant::now() + PROMPT_RECORD_HOLD);
                     let _ = self.action_tx.send(PillAction::PromptRecord);
                     return;
                 }
@@ -5742,13 +5771,13 @@ impl ApplicationHandler<UserEvent> for App {
             self.prompt_recording = r.prompt_recording;
             if self.state != PillState::Recording {
                 self.prompt_record_requested = false;
+                self.prompt_record_hover = false;
+                self.prompt_record_hold_until = None;
             } else if prev_state != PillState::Recording {
                 self.prompt_record_requested = false;
-            }
-            if self.state != PillState::Recording
-                || self.prompt_recording
-                || self.prompt_record_requested
-            {
+                self.prompt_record_hover = false;
+                self.prompt_record_hold_until = None;
+            } else if self.prompt_recording || self.prompt_record_requested {
                 self.prompt_record_hover = false;
             }
             self.theme = r.theme.clone();
@@ -6168,18 +6197,22 @@ impl ApplicationHandler<UserEvent> for App {
                         self.clipboard_notice_until = None;
                     }
                 }
-                // Prompt Record fades/slides beside the recording surface on
-                // hover and withdraws faster on exit. This uses the pill's
-                // existing frame clock: no timer, worker, or idle resource.
-                let prompt_record_target = if self.prompt_record_hover
-                    && self.state == PillState::Recording
-                    && !self.prompt_recording
-                    && !self.prompt_record_requested
+                // Prompt Record remains available for three seconds after hover
+                // exit, which gives the cursor time to cross the transparent gap.
+                // A successful click re-arms the same hold as confirmation while
+                // the action is inert. The existing frame clock owns expiry.
+                let prompt_record_visible = should_show_prompt_record(
+                    self.state,
+                    self.prompt_record_hover,
+                    self.prompt_record_hold_until,
+                    now,
+                );
+                if !prompt_record_visible
+                    && self.prompt_record_hold_until.is_some_and(|deadline| now >= deadline)
                 {
-                    1.0
-                } else {
-                    0.0
-                };
+                    self.prompt_record_hold_until = None;
+                }
+                let prompt_record_target = if prompt_record_visible { 1.0 } else { 0.0 };
                 let prompt_record_rate = if prompt_record_target > self.prompt_record_hover_progress
                 {
                     0.18
@@ -6408,9 +6441,31 @@ mod tests {
         let pill_h = PillGeom::for_skin(PillSkin::Wave).body_h;
         let pill_right = 120.0;
         let rect = prompt_record_button_rect(pill_right, 20.0, pill_h, 1.0);
-        assert_eq!(rect.0 - pill_right, SIB_GAP);
+        assert_eq!(rect.0 - pill_right, PROMPT_RECORD_GAP);
+        assert!(PROMPT_RECORD_GAP < SIB_GAP);
         assert_eq!(rect.2 - rect.0, pill_h);
         assert_eq!(rect.3 - rect.1, pill_h);
+
+        let now = Instant::now();
+        let deadline = now + PROMPT_RECORD_HOLD;
+        assert!(should_show_prompt_record(
+            PillState::Recording,
+            false,
+            Some(deadline),
+            now
+        ));
+        assert!(!should_show_prompt_record(
+            PillState::Recording,
+            false,
+            Some(deadline),
+            deadline
+        ));
+        assert!(!should_show_prompt_record(
+            PillState::Processing,
+            true,
+            Some(deadline),
+            now
+        ));
 
         let icon = prompt_record_icon();
         assert_eq!(icon.width(), PROMPT_RECORD_ICON_PX);
