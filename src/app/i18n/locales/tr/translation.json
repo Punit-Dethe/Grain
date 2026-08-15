@@ -257,8 +257,8 @@
       },
       "acceleration": {
         "whisper": {
-          "title": "Whisper Hızlandırma",
-          "description": "Whisper modelleri için donanım hızlandırma. Otomatik mod, mevcutsa GPU kullanır (macOS'ta Metal, Windows/Linux'ta Vulkan)."
+          "title": "transcribe.cpp Hızlandırması",
+          "description": "transcribe.cpp (Whisper ailesi) modelleri için donanım hızlandırması. Otomatik mod, mevcutsa GPU kullanır (macOS'ta Metal, Windows/Linux'ta Vulkan)."
         },
         "ort": {
           "title": "ONNX Hızlandırma",
@@ -283,8 +283,8 @@
         "description": "Handy simgesini sistem tepsisinde göster."
       },
       "overlay": {
-        "title": "Overlay Konumu",
-        "description": "Kayıt ve transkripsiyon sırasında görsel geri bildirim kaplamasını gösterir. Linux'ta 'Yok' önerilir.",
+        "title": "Ekran Katmanı Konumu",
+        "description": "Ekran katmanının kayıt ve transkripsiyon sırasında nerede görüneceğini belirler. Linux'ta 'Yok' önerilir.",
         "options": {
           "none": "Yok",
           "bottom": "Alt",
@@ -536,9 +536,9 @@
       "acknowledgments": {
         "title": "Teşekkürler",
         "whisper": {
-          "title": "Whisper.cpp",
-          "description": "OpenAI'nin Whisper otomatik konuşma tanıma modelinin yüksek performanslı çıkarımı",
-          "details": "Handy, hızlı ve yerel konuşmadan metne dönüştürme için Whisper.cpp kullanır. Georgi Gerganov ve katkıda bulunanların harika çalışmaları için teşekkür ederiz."
+          "title": "ggml",
+          "description": "Cihaz üzerinde makine öğrenmesi çıkarımı için yüksek performanslı tensör kütüphanesi",
+          "details": "Grain'in yerel konuşmadan metne dönüştürme özelliği transcribe.cpp ve ggml üzerine kuruludur. Georgi Gerganov'a ve katkıda bulunanlara harika çalışmaları için teşekkür ederiz."
         }
       }
     },
