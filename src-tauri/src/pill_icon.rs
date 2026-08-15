@@ -171,6 +171,32 @@ struct Foreground {
 /// separately would pay for it twice. The app's packaged identity now rides
 /// along on that same call for the same reason: it comes off a process handle
 /// detection already opens.
+///
+/// # Two gates, and only one of them is shared
+///
+/// **Which hosts count is shared, deliberately**: [`site_key`] asks
+/// [`crate::context_detect::is_supported_site`], the same function that decides
+/// which sites get a post-processing profile. A site can never have one without
+/// the other. Neither reads `context_awareness_enabled` — the switch governs
+/// whether the PROMPT is shaped, never whether Grain will say where your words
+/// are going, so turning it off leaves every icon working.
+///
+/// **How sure we must be is NOT shared**, and this is the one asymmetry in the
+/// feature. Post-processing demands [`crate::context_detect::Confidence::Exact`]
+/// before a site may set the category; the icon accepts `Probable` too. That is
+/// intentional, because the two are making different claims. "Your text will be
+/// treated as email" needs the URL to have come off the focused element's own
+/// document — get it wrong and a code snippet is rewritten as prose. "You are
+/// looking at Gmail" is a weaker statement that the address bar answers
+/// perfectly well, and the fallback when it is wrong is the browser's own icon,
+/// which is still true. Requiring `Exact` here would cost Firefox users their
+/// site icons almost entirely, since Gecko builds its accessibility tree lazily
+/// and the structural rung is the one that misses.
+///
+/// The consequence to know about: on a `Probable` host the pill can show a site
+/// while post-processing treats the window as a plain browser. If that ever
+/// needs to be one rule, this is the line to change — and the log line in
+/// `detect` already names which rung answered, so the case is diagnosable.
 fn foreground(settings: &grain_core::AppSettings) -> Foreground {
     let Some(ctx) = crate::context_detect::detect_active_context(false, false) else {
         return Foreground {
@@ -478,7 +504,7 @@ pub async fn site_icon_data_url(app: &AppHandle, host: &str) -> Option<String> {
 
 /// [GRAIN] An installed application's icon as a PNG data URL, for the picker.
 ///
-/// `id` is an [`crate::app_catalog::InstalledApp::icon_id`]: an executable path,
+/// `id` is an [`crate::context_detect::app_catalog::InstalledApp::icon_id`]: an executable path,
 /// or a packaged app's AppUserModelID. Told apart by shape, because the two go
 /// to different Shell namespaces and asking the wrong one yields nothing —
 /// an AppUserModelID is a bare identity with no path separator in it.
@@ -490,15 +516,7 @@ pub async fn site_icon_data_url(app: &AppHandle, host: &str) -> Option<String> {
 /// Blocking (COM + shell + disk), so it is handed to a blocking task rather than
 /// awaited on the async runtime.
 pub async fn app_icon_data_url(app: &AppHandle, id: String) -> Option<String> {
-    let id = id.trim().to_string();
-    if id.is_empty() {
-        return None;
-    }
-    let key = if id.contains('\\') || id.contains('/') {
-        IconKey::Path(PathBuf::from(&id))
-    } else {
-        IconKey::Id(id)
-    };
+    let key = catalogue_icon_key(&id)?;
     if let Some(rgba) = cache_read(app, &key) {
         return png_data_url(&rgba);
     }
@@ -511,6 +529,46 @@ pub async fn app_icon_data_url(app: &AppHandle, id: String) -> Option<String> {
     .await
     .ok()
     .flatten()
+}
+
+/// A catalogue `icon_id` as an [`IconKey`], or `None` if it is not shaped like
+/// one the catalogue could have produced.
+///
+/// The two forms are told apart by a path separator, because they go to
+/// different Shell namespaces and asking the wrong one just yields nothing: an
+/// AppUserModelID is a bare identity and never contains one.
+///
+/// # Why the shape is checked at all
+///
+/// This is the same reasoning as [`normalise_site_host`], one layer over. The
+/// pill only ever resolves keys it built itself from the foreground window; this
+/// command takes a string across the process boundary, so "it came from the
+/// catalogue" is a claim rather than a fact, and the resolver behind it hands
+/// paths to the Shell.
+///
+/// A **UNC path is the one that actually matters**: `\\host\share\x.exe` would
+/// have the Shell open an SMB connection to a machine of the caller's choosing —
+/// the classic way a local file API becomes a network request and a credential
+/// leak. Refusing anything that is not a local absolute path closes that, and
+/// costs nothing, since every real `icon_id` is one.
+fn catalogue_icon_key(id: &str) -> Option<IconKey> {
+    let id = id.trim();
+    // Long enough for the longest real AppUserModelID or path, short enough that
+    // nothing pathological reaches the Shell.
+    if id.is_empty() || id.len() > 512 {
+        return None;
+    }
+    if !id.contains('\\') && !id.contains('/') {
+        return Some(IconKey::Id(id.to_string()));
+    }
+    // UNC, in both spellings the Shell accepts.
+    if id.starts_with("\\\\") || id.starts_with("//") {
+        return None;
+    }
+    let path = PathBuf::from(id);
+    // A relative path would resolve against Grain's working directory, which is
+    // not a place any application lives.
+    path.is_absolute().then_some(IconKey::Path(path))
 }
 
 /// Lowercase, `www.`-less, and shaped like a public domain — or `None`.
@@ -630,6 +688,98 @@ fn to_icon(src: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+/// The pill's website gate and post-processing's must stay one decision.
+#[cfg(test)]
+mod registry_gate_tests {
+    use super::*;
+    use grain_core::settings::{ContextProfileTarget, CustomContextProfile};
+    use grain_core::AppSettings;
+
+    fn with_site_profile(host: &str) -> AppSettings {
+        let mut s = AppSettings::default();
+        s.context_custom_profiles.push(CustomContextProfile {
+            id: "p".into(),
+            title: "Design".into(),
+            instruction: "Terse.".into(),
+            targets: vec![ContextProfileTarget {
+                kind: "website".into(),
+                value: host.into(),
+            }],
+        });
+        s
+    }
+
+    /// The whole promise of the registry: a site Grain knows gets its own icon,
+    /// and anything else leaves the BROWSER's icon standing rather than
+    /// producing a fetch for whatever host happened to be in the address bar.
+    #[test]
+    fn only_a_registered_site_ever_becomes_an_icon_key() {
+        let s = AppSettings::default();
+        for known in ["mail.google.com", "claude.ai", "github.com"] {
+            assert!(site_key(known, &s).is_some(), "{known} is a supported site");
+        }
+        for unknown in [
+            "en.wikipedia.org",
+            "amazon.com",
+            "bbc.co.uk",
+            // A lookalike must not inherit a registered site's icon.
+            "notgithub.com",
+            "github.com.evil.test",
+            "localhost",
+            "",
+        ] {
+            assert_eq!(site_key(unknown, &s), None, "{unknown} must fall back");
+        }
+    }
+
+    /// A site named in a user's own profile is a supported site — the pill and
+    /// post-processing extend together, from the same list.
+    #[test]
+    fn a_custom_profile_site_is_registered_for_the_pill_too() {
+        let s = with_site_profile("figma.com");
+        assert!(site_key("figma.com", &s).is_some());
+        // …with the registry's own host rule, so a row covers its subdomains
+        // and nothing that merely ends the same way.
+        assert!(site_key("app.figma.com", &s).is_some());
+        assert_eq!(site_key("notfigma.com", &s), None);
+    }
+
+    /// **Context awareness being off must not blank the pill.** Recognising the
+    /// surface and shaping the text for it are separate promises: the switch
+    /// governs whether the prompt is touched, never whether Grain will tell you
+    /// where your words are going. Asserted for a built-in row and a user's own,
+    /// because the custom path reads settings and could plausibly grow a check.
+    #[test]
+    fn the_icon_survives_context_awareness_being_switched_off() {
+        let mut s = with_site_profile("figma.com");
+        s.context_awareness_enabled = false;
+        assert!(site_key("mail.google.com", &s).is_some());
+        assert!(site_key("figma.com", &s).is_some());
+        assert_eq!(site_key("example.test", &s), None, "still gated, just not by the switch");
+    }
+
+    /// One decision, not two that agree today. If these ever diverge, a site can
+    /// get a post-processing profile with no icon — or an icon fetched for a
+    /// host that is not a supported site at all, which is the security property.
+    #[test]
+    fn the_pill_gate_is_the_same_gate_post_processing_uses() {
+        let s = with_site_profile("figma.com");
+        for host in [
+            "mail.google.com",
+            "figma.com",
+            "app.figma.com",
+            "news.ycombinator.com",
+            "notfigma.com",
+        ] {
+            assert_eq!(
+                site_key(host, &s).is_some(),
+                crate::context_detect::is_supported_site(host, &s),
+                "{host}: the pill and post-processing disagree about the registry"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1043,6 +1193,30 @@ mod site_fetch {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        /// A catalogue id crosses the process boundary, so its shape is the only
+        /// thing standing between the picker and the Shell opening an SMB
+        /// connection to a host of the caller's choosing.
+        #[test]
+        fn an_app_icon_id_must_be_a_local_path_or_a_bare_identity() {
+            use crate::pill_icon::{catalogue_icon_key as k, IconKey};
+            // The two real forms.
+            assert!(matches!(
+                k("Claude_pzs8sxrjxfjjc!Claude"),
+                Some(IconKey::Id(_))
+            ));
+            assert!(matches!(
+                k(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+                Some(IconKey::Path(_))
+            ));
+            // A UNC path would make an icon lookup into a network request.
+            assert_eq!(k(r"\\attacker.test\share\payload.exe"), None);
+            assert_eq!(k("//attacker.test/share/payload.exe"), None);
+            // …and nothing else that names no installed application.
+            for bad in ["", "   ", r"..\..\secret.exe", "relative/path.exe"] {
+                assert_eq!(k(bad), None, "{bad:?} should be refused");
+            }
+        }
 
         /// The settings-side fetch drops the registry gate, so this shape check
         /// is the only thing standing between a typo and a request to something

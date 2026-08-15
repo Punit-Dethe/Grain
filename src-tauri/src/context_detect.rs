@@ -24,6 +24,26 @@
 use grain_core::settings::CustomContextProfile;
 use grain_core::AppSettings;
 
+/// [GRAIN] The installed-application catalogue behind the context-profile app
+/// picker.
+///
+/// A submodule of this one, rather than a peer, for two reasons that point the
+/// same way.
+///
+/// The real one is cohesion: the catalogue decides what an application's
+/// identity IS — a lowercased exe stem, or an AppUserModelID for a packaged app
+/// — and [`app_target_matches`] is what compares that identity against a live
+/// window. Those two rules must agree exactly or a picked app saves fine and
+/// never fires, and keeping them in one module makes the agreement a matter of
+/// neighbouring code rather than of remembering.
+///
+/// The second is the Handy boundary: a peer module needs a line in `lib.rs`,
+/// which is Handy-derived and whose module block is a live merge-conflict
+/// surface (see `Upstream/UPSTREAM.md`). Declaring it here costs upstream
+/// nothing.
+#[path = "app_catalog.rs"]
+pub(crate) mod app_catalog;
+
 /// Coarse app category driving the automatic SOFT context line. Deliberately a
 /// small, robust bucket set (à la the incumbents' 4–8 categories) rather than a
 /// per-app rule table: unknown apps fall to [`AppCategory::Other`], which adds no
@@ -1817,13 +1837,14 @@ mod windows_impl {
         // needed length, but one generous buffer avoids the two-call dance.
         let mut len = 512u32;
         let mut buf = vec![0u16; len as usize];
-        GetApplicationUserModelId(
+        let rc = GetApplicationUserModelId(
             handle,
             &mut len,
             Some(windows::core::PWSTR(buf.as_mut_ptr())),
-        )
-        .ok()
-        .ok()?;
+        );
+        if rc.is_err() {
+            return None; // APPMODEL_ERROR_NO_APPLICATION → classic Win32
+        }
         let len = (len as usize).min(buf.len()).saturating_sub(1);
         let s = String::from_utf16_lossy(&buf[..len]);
         (!s.is_empty()).then_some(s)

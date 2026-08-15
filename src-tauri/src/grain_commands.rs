@@ -135,8 +135,8 @@ pub async fn site_icon(app: AppHandle, host: String) -> Option<String> {
 /// result locally, so a person typing never waits on this.
 #[tauri::command]
 #[specta::specta]
-pub async fn installed_apps() -> Vec<crate::app_catalog::InstalledApp> {
-    tauri::async_runtime::spawn_blocking(crate::app_catalog::installed_apps)
+pub async fn installed_apps() -> Vec<crate::context_detect::app_catalog::InstalledApp> {
+    tauri::async_runtime::spawn_blocking(crate::context_detect::app_catalog::installed_apps)
         .await
         .unwrap_or_default()
 }

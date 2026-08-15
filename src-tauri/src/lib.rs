@@ -14,7 +14,6 @@
 #[path = "handy/actions.rs"]
 mod actions;
 mod agent; // [GRAIN] summoned voice-first AI window (Phase 7)
-mod app_catalog; // [GRAIN] installed-application catalogue behind the context-profile app picker
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[path = "handy/apple_intelligence.rs"]
 mod apple_intelligence;

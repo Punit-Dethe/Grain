@@ -299,16 +299,34 @@ mod tests {
 #[cfg(windows)]
 mod windows_impl {
     use super::{classify, dedupe, InstalledApp};
-    use windows::core::{w, Interface, PWSTR};
-    use windows::Win32::Storage::EnhancedStorage::{
-        PKEY_AppUserModel_ID, PKEY_Link_TargetParsingPath,
-    };
+    use windows::core::{w, Interface, GUID, PWSTR};
+    use windows::Win32::Foundation::PROPERTYKEY;
     use windows::Win32::System::Com::{
         CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED,
     };
     use windows::Win32::UI::Shell::{
         BHID_EnumItems, IEnumShellItems, IShellItem, IShellItem2, SHCreateItemFromParsingName,
         SIGDN_NORMALDISPLAY,
+    };
+
+    /// The two shell properties this module reads, declared here rather than
+    /// imported.
+    ///
+    /// The `windows` crate files them under a feature (`Win32_Storage_EnhancedStorage`)
+    /// whose name has nothing to do with what they are, and turning it on — plus
+    /// `Win32_UI_Shell_PropertiesSystem` — meant five more lines in the
+    /// Handy-derived `Cargo.toml`, which is the one place Grain is trying not to
+    /// grow. Two constants cost less than two crate features, and a property key
+    /// is a published, frozen identifier: these are the values in the
+    /// `System.Link.TargetParsingPath` and `System.AppUserModel.ID` docs, and
+    /// they cannot change without breaking every shell client on Windows.
+    const PKEY_LINK_TARGET_PARSING_PATH: PROPERTYKEY = PROPERTYKEY {
+        fmtid: GUID::from_u128(0xb9b4b3fc_2b51_4a42_b5d8_324146afcf25),
+        pid: 2,
+    };
+    const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+        fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+        pid: 5,
     };
 
     /// Items per `Next` call. One COM round-trip per app would double the cost
@@ -378,12 +396,12 @@ mod windows_impl {
         // identity, a packaged app has no target — so a failure here is the
         // normal case and `classify` is what decides which combination is usable.
         let target = item2
-            .GetString(&PKEY_Link_TargetParsingPath)
+            .GetString(&PKEY_LINK_TARGET_PARSING_PATH)
             .ok()
             .and_then(|p| take(p))
             .unwrap_or_default();
         let aumid = item2
-            .GetString(&PKEY_AppUserModel_ID)
+            .GetString(&PKEY_APP_USER_MODEL_ID)
             .ok()
             .and_then(|p| take(p))
             .unwrap_or_default();

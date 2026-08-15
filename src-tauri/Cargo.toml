@@ -177,11 +177,6 @@ windows = { version = "0.61.3", features = [
   "Win32_UI_Shell_Common",
   # GetApplicationUserModelId — tells a packaged app from a classic Win32 one.
   "Win32_Storage_Packaging_Appx",
-  # [GRAIN] App catalogue: IShellItem2::GetString reads an AppsFolder entry's
-  # target executable and identity, which is what makes a picked app matchable.
-  # The PKEYs themselves are filed under EnhancedStorage in this crate.
-  "Win32_UI_Shell_PropertiesSystem",
-  "Win32_Storage_EnhancedStorage",
 ] }
 winreg = "0.55"
 
