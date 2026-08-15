@@ -205,9 +205,9 @@ const BTN_SPAN: usize = 4;
 // layered window, so it costs nothing at rest.
 const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collapsed pill
 const RISER_HOLD: Duration = Duration::from_millis(1600);
-/// Keep the Prompt Record action available after the cursor leaves its reveal
-/// surface, and keep it visible as confirmation after a successful click.
-const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(3);
+/// Keep the Prompt Record action available briefly after the cursor leaves its
+/// reveal surface, giving it time to cross the transparent gap.
+const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(2);
 /// A missed paste has already been placed on the clipboard when its event
 /// arrives. Keep the acknowledgement long enough to read without tying its
 /// lifetime to the longer Paste Catch hold.
@@ -1410,55 +1410,46 @@ fn scale_icon(rgba: &[u8]) -> Option<Pixmap> {
     Some(out)
 }
 
-/// Tiny four-point sparkle used for the explicit Prompt Record control. It is a
-/// static bitmap, materialized into a `Pixmap` once in `App::new`, then blitted
+/// Two restrained four-point sparkles: a clear AI mark that stays legible at the
+/// pill's tiny size. Authored once into a `Pixmap` in `App::new`, then blitted
 /// exactly like the foreground-application icon. No image decoder, font glyph,
 /// render-time allocation, or additional dependency is involved.
 const PROMPT_RECORD_ICON_PX: u32 = 18;
-const PROMPT_RECORD_ICON_MASK: [u32; PROMPT_RECORD_ICON_PX as usize] = [
-    0b000000001000000000,
-    0b000000001000000000,
-    0b000000001000001000,
-    0b000000001000011100,
-    0b000000011100001000,
-    0b000000011100000000,
-    0b000000111110000000,
-    0b000011111111100000,
-    0b111111111111111110,
-    0b000011111111100000,
-    0b000000111110000000,
-    0b000000011100000000,
-    0b001000001000000000,
-    0b011100001000000000,
-    0b001000001000000000,
-    0b000000001000000000,
-    0b000000001000000000,
-    0b000000000000000000,
-];
 
 fn prompt_record_icon() -> Pixmap {
-    let n = PROMPT_RECORD_ICON_PX as usize;
-    let mut rgba = vec![0; n * n * 4];
-    for (y, row) in PROMPT_RECORD_ICON_MASK.iter().copied().enumerate() {
-        for x in 0..n {
-            if row & (1 << (n - 1 - x)) == 0 {
-                continue;
-            }
-            let i = (y * n + x) * 4;
-            rgba[i..i + 4].copy_from_slice(&[
-                WAVE_INK_PROMPT[0],
-                WAVE_INK_PROMPT[1],
-                WAVE_INK_PROMPT[2],
-                255,
-            ]);
+    let mut icon = Pixmap::new(PROMPT_RECORD_ICON_PX, PROMPT_RECORD_ICON_PX)
+        .expect("non-zero Prompt Record icon size");
+    icon.fill(Color::TRANSPARENT);
+
+    let mut white = Paint {
+        anti_alias: true,
+        ..Default::default()
+    };
+    white.set_color(Color::from_rgba8(255, 255, 255, 255));
+
+    let sparkle = |cx: f32, cy: f32, rx: f32, ry: f32, inset: f32| {
+        let mut path = PathBuilder::new();
+        path.move_to(cx, cy - ry);
+        path.line_to(cx + inset, cy - inset);
+        path.line_to(cx + rx, cy);
+        path.line_to(cx + inset, cy + inset);
+        path.line_to(cx, cy + ry);
+        path.line_to(cx - inset, cy + inset);
+        path.line_to(cx - rx, cy);
+        path.line_to(cx - inset, cy - inset);
+        path.close();
+        path.finish()
+    };
+    for (cx, cy, rx, ry, inset) in [
+        (6.7, 10.1, 5.2, 6.5, 1.05),
+        (14.1, 4.3, 2.8, 3.5, 0.62),
+    ] {
+        if let Some(path) = sparkle(cx, cy, rx, ry, inset) {
+            icon.fill_path(&path, &white, FillRule::Winding, Transform::identity(), None);
         }
     }
-    Pixmap::from_vec(
-        rgba,
-        tiny_skia::IntSize::from_wh(PROMPT_RECORD_ICON_PX, PROMPT_RECORD_ICON_PX)
-            .expect("non-zero Prompt Record icon size"),
-    )
-    .expect("Prompt Record icon buffer matches its dimensions")
+
+    icon
 }
 
 /// The wave skin's voice field: one loudness follower plus a critically damped
@@ -3625,8 +3616,8 @@ struct App {
     /// Set as soon as the explicit action is clicked so repeated clicks cannot
     /// enqueue duplicate requests while the authoritative core echo is in flight.
     prompt_record_requested: bool,
-    /// Three-second crossing grace after hover exit and post-click confirmation.
-    /// Read by the existing frame clock; it owns no timer or background work.
+    /// Two-second crossing grace after hover exit. Read by the existing frame
+    /// clock; it owns no timer or background work.
     prompt_record_hold_until: Option<Instant>,
     prompt_record_hover_progress: f32,
     prompt_record_rect: Option<(f32, f32, f32, f32)>,
@@ -5641,7 +5632,9 @@ impl ApplicationHandler<UserEvent> for App {
                 ) {
                     self.prompt_record_hover = false;
                     self.prompt_record_requested = true;
-                    self.prompt_record_hold_until = Some(Instant::now() + PROMPT_RECORD_HOLD);
+                    // Successful click dismisses immediately through the existing
+                    // smooth exit; the hold exists only to reach the button.
+                    self.prompt_record_hold_until = None;
                     let _ = self.action_tx.send(PillAction::PromptRecord);
                     return;
                 }
@@ -6197,10 +6190,10 @@ impl ApplicationHandler<UserEvent> for App {
                         self.clipboard_notice_until = None;
                     }
                 }
-                // Prompt Record remains available for three seconds after hover
+                // Prompt Record remains available for two seconds after hover
                 // exit, which gives the cursor time to cross the transparent gap.
-                // A successful click re-arms the same hold as confirmation while
-                // the action is inert. The existing frame clock owns expiry.
+                // A successful click clears that hold and starts the smooth exit
+                // immediately. The existing frame clock owns expiry and motion.
                 let prompt_record_visible = should_show_prompt_record(
                     self.state,
                     self.prompt_record_hover,
@@ -6447,6 +6440,7 @@ mod tests {
         assert_eq!(rect.3 - rect.1, pill_h);
 
         let now = Instant::now();
+        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(2));
         let deadline = now + PROMPT_RECORD_HOLD;
         assert!(should_show_prompt_record(
             PillState::Recording,
@@ -6466,11 +6460,22 @@ mod tests {
             Some(deadline),
             now
         ));
+        assert!(!should_show_prompt_record(
+            PillState::Recording,
+            false,
+            None,
+            now
+        ));
 
         let icon = prompt_record_icon();
         assert_eq!(icon.width(), PROMPT_RECORD_ICON_PX);
         assert_eq!(icon.height(), PROMPT_RECORD_ICON_PX);
         assert!(icon.pixels().iter().any(|pixel| pixel.alpha() > 0));
+        assert!(icon
+            .pixels()
+            .iter()
+            .filter(|pixel| pixel.alpha() > 0)
+            .all(|pixel| pixel.red() == pixel.green() && pixel.green() == pixel.blue()));
     }
 
     // ── Pill skins ──────────────────────────────────────────────────────────
