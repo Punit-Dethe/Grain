@@ -3791,6 +3791,69 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   margin-bottom: 34px;
 }
 
+.tool-main-heading.has-toggle {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.tool-main-heading.has-toggle > div {
+  min-width: 0;
+}
+
+.tool-master-toggle {
+  flex: 0 0 auto;
+  padding: 3px 0;
+  cursor: pointer;
+}
+
+.tool-master-toggle input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.tool-master-toggle-track {
+  width: 40px;
+  height: 24px;
+  padding: 3px;
+  border-radius: 999px;
+  display: block;
+  background: var(--bg-4);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  transition: background 180ms ease;
+}
+
+.tool-master-toggle-track::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: block;
+  background: #fff;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
+  transition: transform 180ms var(--ease-out);
+}
+
+.tool-master-toggle input:checked + .tool-master-toggle-track {
+  background: #5269c7;
+}
+
+.tool-master-toggle input:checked + .tool-master-toggle-track::after {
+  transform: translateX(16px);
+}
+
+.tool-master-toggle input:focus-visible + .tool-master-toggle-track {
+  box-shadow: 0 0 0 3px var(--accent-focus);
+}
+
+.tool-master-toggle input:disabled + .tool-master-toggle-track {
+  opacity: 0.55;
+  cursor: default;
+}
+
 .tool-main-heading h1 {
   font-size: 25px;
   font-weight: 640;
@@ -3835,6 +3898,1165 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .tool-component-host > .max-w-4xl,
 .tool-component-host > .w-full {
   max-width: none;
+}
+
+.context-awareness-workspace {
+  margin-bottom: 34px;
+  display: grid;
+  gap: 26px;
+}
+
+.context-profile-settings {
+  display: grid;
+  gap: 20px;
+}
+
+.context-profile-tabs {
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  border-radius: 999px;
+  background: var(--bg-2);
+  scrollbar-width: none;
+}
+
+.context-profile-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.context-profile-tabs button {
+  min-height: 34px;
+  padding: 0 15px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--text-3);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 610;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.next-settings-content .context-profile-tabs,
+.next-settings-content .context-profile-tabs button,
+.next-settings-content .context-profile-mode,
+.next-settings-content .context-profile-mode button {
+  border-radius: 999px !important;
+}
+
+.context-profile-tabs button:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--hairline-soft);
+}
+
+.context-profile-tabs button.active {
+  color: var(--text-1);
+  background: var(--bg-3);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.12),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.context-profile-tabs button:focus-visible,
+.context-profile-mode button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.context-profile-tabs button:disabled {
+  color: var(--text-4);
+  opacity: 0.58;
+  cursor: default;
+}
+
+.context-profile-card {
+  overflow: hidden;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.context-profile-card-header {
+  min-height: 72px;
+  padding: 15px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.context-profile-apps {
+  min-width: 82px;
+  display: flex;
+  align-items: center;
+}
+
+.context-profile-apps span {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.18),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.context-profile-apps span + span {
+  margin-left: -7px;
+}
+
+.context-profile-apps span:nth-child(2) {
+  color: var(--sky);
+}
+
+.context-profile-apps span:nth-child(3) {
+  color: var(--accent-strong);
+}
+
+.context-profile-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.context-profile-copy strong {
+  color: var(--text-1);
+  font-size: 12.5px;
+  font-weight: 620;
+}
+
+.context-profile-copy span {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.context-profile-mode {
+  margin-left: auto;
+  padding: 3px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  border-radius: 999px;
+  background: var(--bg-2);
+}
+
+.context-profile-mode button {
+  min-width: 50px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 610;
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background 150ms ease;
+}
+
+.context-profile-mode button:hover {
+  color: var(--text-1);
+}
+
+.context-profile-mode button.active {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.context-profile-prompt {
+  min-height: 100px;
+  padding: 15px 16px 18px;
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.context-profile-prompt-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.context-profile-prompt p,
+.context-profile-prompt textarea {
+  width: 100%;
+  margin: 0;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.62;
+}
+
+.context-profile-prompt textarea {
+  min-height: 68px;
+  max-height: 184px;
+  padding: 0 0 5px;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  overflow-y: hidden;
+  resize: none !important;
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+  scrollbar-gutter: stable;
+  transition: box-shadow 150ms ease;
+}
+
+.context-profile-prompt textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-profile-prompt textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.context-profile-prompt textarea::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--text-4);
+  background-clip: padding-box;
+}
+
+.context-profile-prompt textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+  background-clip: padding-box;
+}
+
+.context-profile-prompt textarea:focus-visible {
+  box-shadow: inset 0 -1px 0 var(--accent);
+}
+
+.context-custom-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.context-custom-profile-card {
+  min-width: 0;
+  min-height: 112px;
+  padding: 16px;
+  border-radius: 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  gap: 14px;
+  overflow: hidden;
+  color: var(--text-1);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease,
+    transform 180ms var(--ease-out);
+}
+
+.next-settings-content .context-custom-profile-card {
+  border-radius: 16px !important;
+}
+
+.context-custom-profile-card:hover,
+.context-custom-profile-card:focus-visible {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
+}
+
+.context-custom-profile-card:active {
+  transform: scale(0.99);
+}
+
+.context-custom-profile-instruction {
+  width: 100%;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.52;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
+}
+
+.context-custom-profile-create-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.context-custom-profile-create-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.context-custom-profile-create-copy strong {
+  width: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-custom-profile-create-copy > span {
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.context-custom-profile-icons {
+  min-width: 38px;
+  min-height: 34px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.context-custom-profile-icons > span {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.15),
+    inset 0 0 0 1px var(--hairline);
+}
+
+.context-custom-profile-icons > span + span {
+  margin-top: -12px;
+}
+
+.context-custom-profile-icons > span:nth-child(2) {
+  color: var(--sky);
+}
+
+.context-custom-profile-icons > span:nth-child(3) {
+  color: var(--accent-strong);
+}
+
+.context-profile-editor-dialog {
+  width: min(540px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+}
+
+.context-profile-editor-dialog::-webkit-scrollbar,
+.context-profile-editor-instruction::-webkit-scrollbar {
+  width: 6px;
+}
+
+.context-profile-editor-dialog::-webkit-scrollbar-track,
+.context-profile-editor-instruction::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.context-profile-editor-dialog::-webkit-scrollbar-thumb,
+.context-profile-editor-instruction::-webkit-scrollbar-thumb {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--text-4);
+  background-clip: padding-box;
+}
+
+.context-profile-editor-fields {
+  display: grid;
+  gap: 16px;
+}
+
+.context-profile-editor-field {
+  display: grid;
+  gap: 7px;
+}
+
+.context-profile-editor-field > span:first-child {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.next-settings-content
+  .dictionary-dialog
+  textarea.context-profile-editor-instruction {
+  height: 112px;
+  min-height: 112px !important;
+  max-height: 180px;
+  resize: none !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+}
+
+.context-profile-target-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.context-profile-target {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 5px 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  font-size: 11.5px;
+}
+
+.context-profile-target > span {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-profile-target > button,
+.context-profile-target-cancel {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.next-settings-content .context-profile-target > button,
+.next-settings-content .context-profile-target-cancel {
+  border-radius: 50% !important;
+}
+
+.context-profile-target > button:hover,
+.context-profile-target-cancel:hover {
+  color: var(--text-1);
+  background: var(--hairline);
+}
+
+.context-profile-target-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.context-profile-target-actions button,
+.context-profile-target-add {
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.next-settings-content .context-profile-target-actions button,
+.next-settings-content .context-profile-target-add {
+  border-radius: 999px !important;
+}
+
+.context-profile-target-actions button:hover,
+.context-profile-target-add:hover:not(:disabled) {
+  color: var(--text-1);
+  background: var(--bg-3);
+}
+
+.context-profile-target-add:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.context-profile-target-entry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-profile-target-entry > svg {
+  color: var(--text-3);
+}
+
+.next-settings-content
+  .context-profile-target-entry
+  input.dictionary-dialog-input {
+  min-width: 0;
+  height: 38px;
+  min-height: 38px !important;
+}
+
+html[data-theme="light"] .context-custom-profile-card {
+  background: #ffffff;
+}
+
+.context-profile-options {
+  min-width: 0;
+}
+
+.next-settings-content .context-profile-options .setting-row {
+  padding-inline: 2px;
+}
+
+.next-settings-content
+  .context-profile-options
+  .setting-row
+  + .setting-row::before {
+  right: 2px;
+  left: 2px;
+}
+
+html[data-theme="light"] .context-profile-tabs {
+  background: #f0f0f2;
+}
+
+html[data-theme="light"] .context-profile-tabs button.active,
+html[data-theme="light"] .context-profile-mode button.active {
+  color: #202124;
+  background: #ffffff;
+}
+
+html[data-theme="light"] .context-profile-card {
+  background: #ffffff;
+}
+
+html[data-theme="light"] .context-profile-mode {
+  background: #f0f0f2;
+}
+
+@media (max-width: 700px) {
+  .context-profile-tabs {
+    width: 100%;
+  }
+
+  .context-profile-card-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .context-profile-copy {
+    width: calc(100% - 96px);
+  }
+
+  .context-profile-mode {
+    margin-left: 96px;
+  }
+
+  .context-custom-profile-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dictionary-workspace {
+  display: grid;
+  gap: 20px;
+}
+
+.dictionary-guide {
+  min-height: 150px;
+  padding: 20px 22px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.dictionary-guide-copy {
+  width: min(58%, 500px);
+  position: relative;
+  z-index: 1;
+}
+
+.dictionary-guide h2 {
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+}
+
+.dictionary-guide p {
+  max-width: 62ch;
+  margin: 6px 0 16px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dictionary-learn-more {
+  min-height: 30px;
+  padding: 0 13px;
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  font-size: 11.5px;
+  font-weight: 620;
+  cursor: default;
+}
+
+.next-settings-content .dictionary-learn-more {
+  border-radius: 999px !important;
+}
+
+.dictionary-guide-examples {
+  width: 41%;
+  position: absolute;
+  top: 12px;
+  right: 8px;
+  bottom: 10px;
+  opacity: 0.78;
+  pointer-events: none;
+}
+
+.dictionary-guide-examples::before {
+  content: "";
+  position: absolute;
+  inset: -24px -20px -24px -56px;
+  background: radial-gradient(
+    circle at 65% 50%,
+    var(--accent-soft),
+    transparent 68%
+  );
+}
+
+.dictionary-guide-examples span {
+  width: 78%;
+  height: 34px;
+  padding: 0 14px;
+  position: absolute;
+  right: 4%;
+  display: flex;
+  align-items: center;
+  border-radius: 9px;
+  color: var(--text-2);
+  background: var(--bg-3);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.16);
+  font-size: 11px;
+}
+
+.dictionary-guide-examples span:nth-child(1) {
+  top: 4px;
+  transform: rotate(5deg);
+}
+
+.dictionary-guide-examples span:nth-child(2) {
+  top: 48px;
+  right: 10%;
+  transform: rotate(-2deg);
+}
+
+.dictionary-guide-examples span:nth-child(3) {
+  top: 92px;
+  right: 1%;
+  transform: rotate(-7deg);
+}
+
+.dictionary-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dictionary-search {
+  width: min(320px, 52%);
+  height: 36px;
+  position: relative;
+  display: block;
+  color: var(--text-2);
+  background: transparent;
+}
+
+.dictionary-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 1;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.dictionary-search:focus-within {
+  color: var(--text-2);
+}
+
+.dictionary-search input {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  padding: 0 34px 0 38px;
+  border: 0;
+  outline: 0;
+  border-radius: 999px;
+  color: var(--text-1);
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  font-size: 12px;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.next-settings-content .tool-search input.tool-search-input {
+  min-height: 0 !important;
+  height: 100% !important;
+  padding: 0 34px 0 38px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  outline: 0 !important;
+  color: var(--text-1) !important;
+  background: var(--bg-2) !important;
+  box-shadow: inset 0 0 0 1px var(--hairline-soft) !important;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.next-settings-content .tool-search input.tool-search-input:focus {
+  background: var(--bg-3) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--accent),
+    0 0 0 3px var(--accent-focus) !important;
+}
+
+.dictionary-search input::placeholder {
+  color: var(--text-2);
+}
+
+.dictionary-search input::-webkit-search-cancel-button {
+  opacity: 0.62;
+}
+
+.dictionary-add-button,
+.dictionary-save-button {
+  min-height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #fff;
+  background: #5269c7;
+  font-size: 12px;
+  font-weight: 640;
+  cursor: pointer;
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.dictionary-add-button:hover,
+.dictionary-save-button:hover {
+  background: #6078d5;
+}
+
+.next-settings-content .dictionary-add-button,
+.next-settings-content .dictionary-save-button {
+  border-radius: 999px !important;
+  color: #fff !important;
+}
+
+.dictionary-add-button:active,
+.dictionary-save-button:active {
+  transform: scale(0.97);
+}
+
+.dictionary-save-button:disabled {
+  opacity: 0.48;
+  cursor: default;
+  transform: none;
+}
+
+.next-settings-content .dictionary-save-button:disabled {
+  opacity: 0.48 !important;
+}
+
+.dictionary-term-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dictionary-term-card,
+.snippet-card {
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.dictionary-term-card:hover,
+.dictionary-term-card:focus-within,
+.snippet-card:hover,
+.snippet-card:focus-within {
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-hover);
+}
+
+.dictionary-term {
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  padding: 0 44px 0 16px;
+  overflow: hidden;
+  color: var(--text-2);
+  background: transparent;
+  font-size: 12.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.dictionary-term-card:hover .dictionary-term,
+.dictionary-term:focus-visible {
+  color: var(--text-1);
+}
+
+.next-settings-content .dictionary-term,
+.next-settings-content .snippet-card-main {
+  border-radius: 16px !important;
+}
+
+.tool-card-delete {
+  width: 32px;
+  height: 32px;
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  z-index: 1;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: var(--bg-3);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scale(0.92);
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    opacity 140ms ease,
+    transform 180ms var(--ease-out);
+}
+
+.dictionary-term-card:hover .tool-card-delete,
+.dictionary-term-card:focus-within .tool-card-delete,
+.snippet-card:hover .tool-card-delete,
+.snippet-card:focus-within .tool-card-delete {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+}
+
+.tool-card-delete:hover {
+  color: var(--danger);
+}
+
+.next-settings-content .tool-card-delete {
+  border-radius: 10px !important;
+}
+
+.tool-card-delete:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dictionary-empty-state {
+  min-height: 124px;
+  display: grid;
+  place-content: center;
+  gap: 4px;
+  color: var(--text-2);
+  text-align: center;
+}
+
+.dictionary-empty-state strong {
+  color: var(--text-2);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dictionary-empty-state span {
+  font-size: 11.5px;
+}
+
+.dictionary-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 3, 5, 0.58);
+  animation: dictionary-backdrop-in 140ms var(--ease-out) both;
+}
+
+.dictionary-dialog {
+  width: min(448px, 100%);
+  padding: 28px 32px 30px;
+  position: relative;
+  border-radius: var(--radius-lg);
+  color: var(--text-1);
+  background: var(--bg-1);
+  box-shadow: var(--shadow-float);
+  animation: dictionary-dialog-in 190ms var(--ease-out) both;
+}
+
+.dictionary-dialog-close {
+  width: 28px;
+  height: 28px;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: var(--bg-3);
+  cursor: pointer;
+}
+
+.dictionary-dialog-close:hover {
+  color: var(--text-1);
+}
+
+.next-settings-content .dictionary-dialog-close {
+  border-radius: 50% !important;
+}
+
+.dictionary-dialog h2 {
+  padding-right: 34px;
+  font-size: 17px;
+  font-weight: 630;
+  letter-spacing: -0.02em;
+}
+
+.dictionary-dialog-header {
+  padding-right: 34px;
+  display: grid;
+  gap: 8px;
+}
+
+.dictionary-dialog-header p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.dictionary-dialog-form {
+  margin-top: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.dictionary-dialog-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.dictionary-dialog-fields label {
+  display: block;
+}
+
+.dictionary-dialog-input {
+  width: 100%;
+  height: 42px;
+  padding: 0 15px;
+  border: 0;
+  outline: 0;
+  border-radius: 12px;
+  color: var(--text-1);
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+  font-size: 12.5px;
+}
+
+.next-settings-content .dictionary-dialog input.dictionary-dialog-input,
+.next-settings-content .dictionary-dialog textarea.dictionary-dialog-input {
+  min-height: 44px !important;
+  border-radius: 14px !important;
+  color: var(--text-1) !important;
+  background: var(--bg-3) !important;
+  box-shadow: inset 0 0 0 1px var(--hairline-soft) !important;
+}
+
+.next-settings-content .dictionary-dialog textarea.dictionary-dialog-textarea {
+  height: 96px;
+  padding: 13px 15px;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.dictionary-dialog-input::placeholder {
+  color: var(--text-2);
+}
+
+.dictionary-dialog-input[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--danger);
+}
+
+.next-settings-content
+  .dictionary-dialog
+  :is(input, textarea).dictionary-dialog-input[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--danger) !important;
+}
+
+.dictionary-term-error {
+  display: block;
+  margin: 7px 3px 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+
+.dictionary-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+}
+
+.dictionary-dialog-actions .dictionary-save-button {
+  min-width: 104px;
+}
+
+.snippet-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.snippet-card {
+  min-height: 116px;
+}
+
+.snippet-card-main {
+  width: 100%;
+  min-height: 116px;
+  padding: 17px 52px 17px 18px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  color: var(--text-1);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.snippet-card-main strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snippet-card-replacement {
+  width: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.snippet-card-replacement > svg {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.snippet-card-replacement > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: pre-wrap;
+}
+
+@keyframes dictionary-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes dictionary-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+@media (max-width: 780px) {
+  .dictionary-guide-copy {
+    width: 68%;
+  }
+
+  .dictionary-guide-examples {
+    width: 34%;
+    opacity: 0.5;
+  }
+
+  .dictionary-term-grid {
+    gap: 8px;
+  }
+
+  .snippet-card-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 660px) {
+  .dictionary-term-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .extension-recommendations {
