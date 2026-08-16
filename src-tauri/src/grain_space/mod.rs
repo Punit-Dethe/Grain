@@ -13,11 +13,11 @@
 //!   skipped at registration (see `shortcut::tauri_impl` / `handy_keys`) and
 //!   every command below early-returns. Disabling never deletes data files.
 
+pub mod agent_tools;
 pub mod backend;
 pub mod capture;
 pub mod commands;
 pub mod embed;
-pub mod agent_tools;
 pub mod graph;
 pub mod note;
 pub mod recall;
@@ -83,8 +83,7 @@ pub fn take_focus_note() -> Option<String> {
 /// that. The tab is the only thing that knows, so the tab says so: `NotesTab`
 /// sets this on mount and clears it on unmount, which is the same unmount that
 /// flushes pending saves.
-static WORKSPACE_MOUNTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static WORKSPACE_MOUNTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Frontend → backend: the Notes tab mounted (`true`) or unmounted (`false`).
 pub fn set_workspace_mounted(app: &AppHandle, mounted: bool) {
@@ -327,7 +326,6 @@ fn data_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "app context unavailable".to_string())
 }
 
-
 /// Metadata an MCP client supplied with a note.
 ///
 /// Every field is optional and every one that is present WINS over anything
@@ -435,7 +433,6 @@ pub async fn append(app: &AppHandle, id: &str, text: &str) -> Result<(), String>
     Ok(())
 }
 
-
 // ── The extension-facing note surface ───────────────────────────────────────
 //
 // [GRAIN] What the `notes` capability reaches (NOTE-UI-EXTENSION-PLAN.md). The
@@ -528,7 +525,6 @@ pub async fn set_pinned(app: &AppHandle, id: &str, pinned: bool) -> Result<(), S
     emit_notes_changed(app);
     Ok(())
 }
-
 
 /// Arm or clear a note's reminder. `fire_at` is a unix timestamp in seconds;
 /// `None` dismisses whatever was set.

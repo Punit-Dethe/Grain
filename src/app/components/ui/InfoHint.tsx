@@ -8,7 +8,10 @@ interface InfoHintProps {
 
 // [GRAIN] A standalone info "i" that reveals a styled tooltip on hover — the same
 // affordance SettingContainer uses, extracted for use in custom headers.
-export const InfoHint: React.FC<InfoHintProps> = ({ text, position = "top" }) => {
+export const InfoHint: React.FC<InfoHintProps> = ({
+  text,
+  position = "top",
+}) => {
   const [show, setShow] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 

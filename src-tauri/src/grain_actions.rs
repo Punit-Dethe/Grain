@@ -61,6 +61,15 @@ fn emit_session_started_with_owner(
             position: get_settings(app).overlay_position,
         },
     );
+    // [GRAIN] Pill identity: the icon of whatever we are dictating into, before
+    // the pill is told to show itself, so a cached icon is already there on the
+    // first painted frame. A cold app emits nothing here and resolves behind the
+    // session — this call never blocks the start.
+    crate::pill_icon::emit_for_session(app);
+    // [GRAIN] …and keep following it: switching windows mid-dictation moves the
+    // paste target, and the pill should end up agreeing with post-processing
+    // (which resolves its context at paste time, after every switch).
+    crate::surface_watch::start(app);
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -92,6 +101,9 @@ pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
 /// [`emit_processing_complete`] reuses it.
 pub(crate) fn emit_recording_stopped(app: &AppHandle) -> u64 {
     let session_id = current_session_id();
+    // [GRAIN] Nothing left to follow — drop the hook rather than leave it live
+    // between sessions, and invalidate any settle still counting down.
+    crate::surface_watch::stop(app);
     crate::bridge::emit(app, DaemonEvent::RecordingStopped { session_id });
     session_id
 }
@@ -110,10 +122,8 @@ pub(crate) fn emit_processing_complete(app: &AppHandle, session_id: u64) {
 }
 
 /// Register the shortcuts that live only while a recording session is open:
-/// the master chords (Alt+1 Prompt Record / Alt+2 switcher) and — unless
-/// push-to-talk owns the key — send-to-AI. Both defer their actual registration
-/// internally, which is what keeps this safe to call from inside a
-/// `ShortcutAction`.
+/// the transient Alt+2 prompt switcher chord. Registration is deferred
+/// internally, which keeps this safe to call from inside a `ShortcutAction`.
 pub(crate) fn register_session_shortcuts(app: &AppHandle) {
     crate::master_key::register_chords(app);
     // [GRAIN] send-to-AI is no longer taken here. It is registered globally at
@@ -233,29 +243,6 @@ impl ShortcutAction for SwitcherArrowAction {
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
 }
 
-// Master chord Alt+1 — Prompt Record. Exactly the pill-click path: arm
-// the audio-mark split on the recording manager, then echo
-// `PromptRecordingChanged` so the pill turns blue only once the mark is real.
-// Arming is a no-op when not recording or already armed (one-way per session).
-struct MasterPromptRecordAction;
-
-impl ShortcutAction for MasterPromptRecordAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        let rm = app.state::<Arc<AudioRecordingManager>>();
-        if rm.arm_prompt_record() {
-            crate::bridge::emit(
-                app,
-                DaemonEvent::PromptRecordingChanged {
-                    session_id: current_session_id(),
-                    active: true,
-                },
-            );
-        }
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
 // Master chord Alt+2 — open the prompt switcher (capsule + arrow keys).
 struct MasterPromptSwitchAction;
 
@@ -307,6 +294,20 @@ struct AgentFollowupAction;
 impl ShortcutAction for AgentFollowupAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         crate::agent::open_followup(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+// Deliver a transcript whose paste missed the text field. Registered
+// transiently by paste_catch.rs while a hold is armed — never global. All work
+// (including releasing this very shortcut) happens off the input thread inside
+// `paste_catch::deliver`.
+struct PasteCatchDeliverAction;
+
+impl ShortcutAction for PasteCatchDeliverAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        crate::paste_catch::deliver(app);
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -526,7 +527,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
             let samples = rm
                 .stop_recording(&binding_id, cancel_generation)
                 .unwrap_or_default();
-            // Prompt Record mark (the pill-click / Alt+1 split point),
+            // Prompt Record mark (the explicit pill-control split point),
             // taken before draining the worker.
             let prompt_mark = rm.take_prompt_mark();
             // Drain the rolling worker → final assembled transcript. Always done,
@@ -823,7 +824,7 @@ impl ShortcutAction for NativeAsrAction {
             let samples = rm
                 .stop_recording(&binding_id, cancel_generation)
                 .unwrap_or_default();
-            // Prompt Record split mark (a pill click on the Studio waveform).
+            // Prompt Record split mark (the explicit Studio hover control).
             let prompt_mark = rm.take_prompt_mark();
 
             // `finalize_stream` blocks up to its internal timeout while the worker
@@ -954,12 +955,8 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "prompt_prev".to_string(),
         Arc::new(PromptSwitchAction { delta: -1 }) as Arc<dyn ShortcutAction>,
     );
-    // Master chords (transiently registered by `master_key` while a
+    // Master switch chord (transiently registered by `master_key` while a
     // recording session is live) + the switcher's transient arrow keys.
-    map.insert(
-        "master_prompt_record".to_string(),
-        Arc::new(MasterPromptRecordAction) as Arc<dyn ShortcutAction>,
-    );
     map.insert(
         "master_prompt_switch".to_string(),
         Arc::new(MasterPromptSwitchAction) as Arc<dyn ShortcutAction>,
@@ -988,6 +985,10 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "agent_followup".to_string(),
         Arc::new(AgentFollowupAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "paste_catch_deliver".to_string(),
+        Arc::new(PasteCatchDeliverAction) as Arc<dyn ShortcutAction>,
     );
     // Grain Space bindings. Quick add is the one the Agent's note tools cannot
     // replace: no UI, no model, no wait — and it now ships unbound, because a

@@ -11,8 +11,9 @@ name: "Grain Release (Windows)"
 # The updater endpoint (tauri.conf.json) points at
 # `releases/latest/download/latest.json`. A DRAFT release is not "latest", so
 # updates only reach users once you PUBLISH the release — that publish step is
-# your final "ship to everyone" gate. Build locally first to verify, then run
-# this to produce the exact same artifact for distribution.
+# your final "ship to everyone" gate. After testing the draft installer, run
+# "Publish Grain Release" or push `publish-vX.Y.Z` to validate the updater
+# assets and make the release public without rebuilding it.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
 #   TAURI_SIGNING_PRIVATE_KEY           contents of ~/.grain-keys/grain.updater.key
@@ -22,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       draft:
-        description: "Create the GitHub release as a draft (publish manually to ship the update)"
+        description: "Create the GitHub release as a draft (publish after testing to ship the update)"
         type: boolean
         default: true
   push:
@@ -81,6 +82,32 @@ jobs:
           version: 1.4.309.0
           cache: true
 
+      - name: Normalize Vulkan SDK CMake packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $cmakeDir = Join-Path $env:VULKAN_SDK "Lib\cmake"
+          $packageDir = Join-Path $cmakeDir "SPIRV-Headers"
+          $spirvHeadersConfig = Join-Path $packageDir "SPIRV-HeadersConfig.cmake"
+
+          if (-not (Test-Path -LiteralPath $spirvHeadersConfig)) {
+            $legacyConfig = Join-Path $cmakeDir "SPIRV-HeadersConfig.cmake"
+            $legacyVersion = Join-Path $cmakeDir "SPIRV-HeadersConfigVersion.cmake"
+            if (-not (Test-Path -LiteralPath $legacyConfig)) {
+              throw "SPIRV-Headers CMake package not found under: $cmakeDir"
+            }
+            New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+            Copy-Item -LiteralPath $legacyConfig -Destination $packageDir
+            if (Test-Path -LiteralPath $legacyVersion) {
+              Copy-Item -LiteralPath $legacyVersion -Destination $packageDir
+            }
+          }
+
+          $prefixPath = $env:VULKAN_SDK
+          if ($env:CMAKE_PREFIX_PATH) { $prefixPath = "$prefixPath;$env:CMAKE_PREFIX_PATH" }
+          Add-Content -Path $env:GITHUB_ENV -Value "CMAKE_PREFIX_PATH=$prefixPath"
+          Write-Host "SPIRV-Headers package ready: $spirvHeadersConfig"
+
       # whisper/ggml cmake builds create paths that exceed Windows MAX_PATH
       # (260 chars). Shorten the target dir to keep paths under the limit.
       - name: Shorten build path (Windows MAX_PATH)
@@ -93,6 +120,43 @@ jobs:
 
       - name: Install frontend dependencies
         run: bun install
+
+      - name: Prepare and verify updater signing key
+        shell: pwsh
+        env:
+          GRAIN_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          GRAIN_UPDATER_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:GRAIN_UPDATER_KEY)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY is missing"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GRAIN_UPDATER_KEY_PASSWORD)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY_PASSWORD is missing"
+          }
+
+          $encodedKey = $env:GRAIN_UPDATER_KEY.Trim()
+          $probePath = Join-Path $env:RUNNER_TEMP "grain-signing-probe.txt"
+
+          try {
+            $keyBytes = [Convert]::FromBase64String($encodedKey)
+          } catch {
+            throw "TAURI_SIGNING_PRIVATE_KEY must contain the Base64 key-file value"
+          }
+          $decodedKey = [Text.Encoding]::UTF8.GetString($keyBytes).Trim()
+          if (-not $decodedKey.StartsWith("untrusted comment:")) {
+            throw "Decoded updater key is not a minisign secret key"
+          }
+
+          [IO.File]::WriteAllText($probePath, "Grain updater signing probe")
+          $env:TAURI_SIGNING_PRIVATE_KEY = $encodedKey
+          $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = $env:GRAIN_UPDATER_KEY_PASSWORD
+          & bun tauri signer sign $probePath | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Updater signing key validation failed" }
+
+          Remove-Item -LiteralPath $probePath, "$probePath.sig" -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "TAURI_SIGNING_PRIVATE_KEY=$encodedKey"
+          Write-Host "Updater signing key validated"
 
       # Bundle the VC++ runtime app-local so Grain starts on machines without
       # a current Microsoft redistributable (upstream #1577 / issue #1527).
@@ -127,8 +191,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Minisign key for the updater (free). Public half lives in tauri.conf.json.
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # CPU-compat: disable AVX/FMA/etc so CPUs lacking them don't SIGILL.
           # The Vulkan backend does the heavy compute, so the perf impact is negligible.
@@ -140,12 +202,84 @@ jobs:
         with:
           tagName: v${{ steps.version.outputs.version }}
           releaseName: v${{ steps.version.outputs.version }}
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && inputs.draft || true }}
+          releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            Grain v${{ steps.version.outputs.version }} (Windows).
+            # Grain v0.0.2 — Context, polish & reliability
 
-            Download the `.exe` installer below. Existing installs update automatically
-            once this release is published.
+            Grain `v0.0.2` focuses on reliability, context awareness, and a more polished dictation experience.
+
+            ## What's new
+
+            ### Redesigned pill
+
+            Grain now ships with a new default pill design featuring a cleaner layout, smoother waveform, and improved state feedback.
+
+            The previous pill design remains available in Settings.
+
+            ### Context Awareness in the pill
+
+            The pill can now display the active application or supported website, including app icons and website favicons.
+
+            Context can also update while dictating, allowing Grain to adapt when you switch between applications or supported websites.
+
+            ### Lost Text recovery
+
+            If Grain finishes a transcription without an active text field, the result is automatically copied to the clipboard and surfaced through a notification.
+
+            ### Simplified capture modes
+
+            The three capture modes have been reorganized and presented more clearly, making it easier to understand and choose the right mode.
+
+            ### Improved onboarding
+
+            Onboarding has been rebuilt to properly introduce dictation and guide new users through all three capture modes.
+
+            ## Context Awareness
+
+            Context Awareness received a major update.
+
+            - Added built-in categories for **Work, Email, Technical, Casual, and AI Chat**
+            - Added editable category prompts
+            - Added custom categories for specific applications and websites
+            - Added support for assigning one or multiple applications/websites to a custom category
+            - Custom categories override Grain's built-in mappings
+            - Added live context switching during dictation
+
+            ## UI & workflow improvements
+
+            - Quick Search is now fully functional
+            - Added model status for selected model, load state, and local/cloud mode
+            - Redesigned Dictionary UI
+            - Redesigned Snippets UI
+            - Redesigned Context Awareness UI
+            - Improved Prompt Record interaction with a dedicated hover action
+            - Push-to-talk is now disabled by default
+            - General UI and interaction refinements throughout the application
+
+            ## Flow improvements
+
+            Flow received a reliability pass covering:
+
+            - Error handling
+            - Memory management
+            - Rolling-window stability
+            - General performance and edge-case handling
+
+            ## Fixes
+
+            - Fixed toggle behavior
+            - Improved transcription failure handling
+            - Improved resource cleanup and memory behavior
+            - General stability fixes
+
+            ## Maintenance
+
+            - Continued integration of upstream Handy changes
+            - Internal cleanup and reliability improvements
+
+            ---
+
+            Thanks for using Grain.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"

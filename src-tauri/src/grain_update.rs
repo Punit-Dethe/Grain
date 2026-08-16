@@ -18,16 +18,29 @@
 //!
 //! # Shape
 //!
-//! Two commands and one event, holding nothing between calls. [`install_update`]
-//! re-runs the check rather than caching the [`Update`] handle from
-//! [`check_for_update`]: a cached handle would be a live network resource kept
-//! alive across an arbitrary user pause, for the sake of one cheap request.
+//! Launch checks run in Rust so they still happen when the main WebView was
+//! never created (start-hidden) or was destroyed on close. Only the small,
+//! serializable [`UpdateInfo`] is cached; the updater's live [`Update`] handle is
+//! never retained across an arbitrary user pause.
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
-use tauri::AppHandle;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_updater::UpdaterExt;
 use tauri_specta::Event;
+
+const AUTOMATIC_CHECK_DELAY: Duration = Duration::from_secs(4);
+const SHOW_AFTER_UPDATE_MARKER: &str = ".show-after-update";
+
+/// `None` means no launch check has completed yet; `Some(None)` means the
+/// running build is current. The mutex also coalesces the backend launch check
+/// and the frontend's delayed check into one network request.
+#[derive(Default)]
+pub(crate) struct UpdateState {
+    checked: tokio::sync::Mutex<Option<Option<UpdateInfo>>>,
+}
 
 /// A release newer than the running build.
 #[derive(Clone, Debug, Serialize, Deserialize, Type)]
@@ -42,6 +55,13 @@ pub struct UpdateInfo {
     pub date: Option<String>,
 }
 
+/// A newly discovered release. The cache covers WebViews created after this
+/// event; the event updates an already-open sidebar (including manual checks).
+#[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
+pub struct UpdateAvailable {
+    pub update: UpdateInfo,
+}
+
 /// Download progress for an update, so a 100 MB installer is not a dead button.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, Event)]
 pub struct UpdateDownloadProgress {
@@ -53,6 +73,86 @@ pub struct UpdateDownloadProgress {
 
 fn current_version(app: &AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+fn marker_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(SHOW_AFTER_UPDATE_MARKER)
+}
+
+fn write_show_after_update_marker(app: &AppHandle, version: &str) -> Result<PathBuf, String> {
+    let path = marker_path(&crate::portable::app_data_dir(app).map_err(|e| e.to_string())?);
+    std::fs::write(&path, version).map_err(|e| {
+        format!(
+            "Could not prepare the post-update restart marker at {}: {e}",
+            path.display()
+        )
+    })?;
+    Ok(path)
+}
+
+fn take_marker(path: &Path) -> bool {
+    match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            // The marker exists (or could not be inspected reliably), so honour
+            // the visibility override. Leaving it in place is safer than losing
+            // the only route past a persisted/CLI start-hidden preference.
+            log::warn!(
+                "[GRAIN] could not consume post-update visibility marker {}: {error}",
+                path.display()
+            );
+            true
+        }
+    }
+}
+
+/// Consume the one-launch visibility override written immediately before an
+/// update is installed. This intentionally beats both the saved preference and
+/// a preserved `--start-hidden` updater argument.
+pub(crate) fn take_show_after_update(app: &AppHandle) -> bool {
+    match crate::portable::app_data_dir(app) {
+        Ok(data_dir) => take_marker(&marker_path(&data_dir)),
+        Err(error) => {
+            log::warn!("[GRAIN] could not resolve post-update visibility marker: {error}");
+            false
+        }
+    }
+}
+
+/// Perform exactly one delayed automatic check in the backend. The task and its
+/// `AppHandle` are both released as soon as the launch check completes.
+pub(crate) fn spawn_automatic_check(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(AUTOMATIC_CHECK_DELAY).await;
+        if let Err(error) = check_for_update(app, false).await {
+            // Automatic checks are intentionally quiet in the UI, but retain a
+            // diagnostic for support logs and the manual retry path.
+            log::warn!("[GRAIN] automatic update check failed: {error}");
+        }
+    });
+}
+
+/// Return already-discovered update metadata without touching the network.
+/// This lets a WebView created by the backend update check render the notice on
+/// its first frame instead of waiting through a second launch delay.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_cached_update(app: AppHandle) -> Option<UpdateInfo> {
+    app.state::<UpdateState>()
+        .checked
+        .lock()
+        .await
+        .as_ref()
+        .and_then(Clone::clone)
+}
+
+fn surface_update(app: &AppHandle, update: &UpdateInfo) {
+    let _ = UpdateAvailable {
+        update: update.clone(),
+    }
+    .emit(app);
+    crate::show_main_window(app);
 }
 
 /// Is there a newer release?
@@ -71,15 +171,38 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
         return Ok(None);
     }
 
+    let state = app.state::<UpdateState>();
+    let mut checked = state.checked.lock().await;
+
+    if !force {
+        if let Some(cached) = checked.as_ref() {
+            let cached = cached.clone();
+            drop(checked);
+            return Ok(cached);
+        }
+    }
+
     let updater = app.updater().map_err(|e| e.to_string())?;
     let found = updater.check().await.map_err(|e| e.to_string())?;
 
-    Ok(found.map(|update| UpdateInfo {
+    let info = found.map(|update| UpdateInfo {
         version: update.version.clone(),
         current_version: current_version(&app),
         notes: update.body.clone(),
         date: update.date.map(|d| d.to_string()),
-    }))
+    });
+
+    *checked = Some(info.clone());
+    drop(checked);
+
+    // Update discovery overrides start-hidden and recreates a destroyed WebView
+    // so the user always sees the install choice. No frontend must be alive for
+    // this path to run.
+    if let Some(update) = info.as_ref() {
+        surface_update(&app, update);
+    }
+
+    Ok(info)
 }
 
 /// Download and install the pending update, then restart into it.
@@ -99,8 +222,8 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
     let progress_app = app.clone();
     let mut downloaded: u64 = 0;
 
-    update
-        .download_and_install(
+    let bytes = update
+        .download(
             move |chunk, total| {
                 downloaded += chunk as u64;
                 let total = total.unwrap_or(0);
@@ -123,6 +246,49 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    // Windows' updater exits the process from inside `install`, so this marker
+    // must exist before installation starts. Writing it only after the signed
+    // package has downloaded avoids a false override for ordinary download
+    // failures. On platforms where `install` returns an error, clean it up.
+    let marker = write_show_after_update_marker(&app, &update.version)?;
+    if let Err(error) = update.install(bytes) {
+        if let Err(cleanup_error) = std::fs::remove_file(&marker) {
+            if cleanup_error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "[GRAIN] could not remove failed-update visibility marker {}: {cleanup_error}",
+                    marker.display()
+                );
+            }
+        }
+        return Err(error.to_string());
+    }
+
     log::info!("[GRAIN] update installed; restarting");
     app.restart();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{marker_path, take_marker, SHOW_AFTER_UPDATE_MARKER};
+    use std::path::PathBuf;
+
+    #[test]
+    fn post_update_marker_is_consumed_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = marker_path(dir.path());
+        std::fs::write(&marker, "1.2.3").unwrap();
+
+        assert!(take_marker(&marker));
+        assert!(!take_marker(&marker));
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn post_update_marker_stays_inside_app_data() {
+        let data_dir = PathBuf::from("app-data");
+        assert_eq!(
+            marker_path(&data_dir),
+            data_dir.join(SHOW_AFTER_UPDATE_MARKER)
+        );
+    }
 }

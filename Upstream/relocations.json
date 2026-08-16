@@ -21,7 +21,10 @@
   },
   "src-tauri/src/actions.rs": {
     "kind": "relocated",
-    "grain": ["src-tauri/src/grain_post_process.rs", "src-tauri/src/grain_actions.rs"],
+    "grain": [
+      "src-tauri/src/grain_post_process.rs",
+      "src-tauri/src/grain_actions.rs"
+    ],
     "why": "Merged in handy/ for its shape, BUT post_process_transcription is relocated to grain_post_process.rs and Grain's action variants live in grain_actions.rs. A fix to post-processing or the finish/guard flow may need porting there (e.g. #1846 trim_freed_memory in FinishGuard::drop did not auto-merge into the diverged actions.rs)."
   },
   "src-tauri/src/audio_toolkit/text.rs": {

@@ -800,7 +800,6 @@ pub(crate) async fn compose_note(
     (note, relations)
 }
 
-
 /// One structured merge call against the active post-process provider.
 async fn reconcile_call(
     app: &AppHandle,
@@ -992,9 +991,13 @@ mod tests {
         raw.push(ent("", "person"));
         let cleaned = clean_entities(raw);
         assert_eq!(cleaned.len(), MAX_ENTITIES, "hard cap on entity count");
-        assert!(cleaned.iter().all(|(n, _)| n.chars().count() <= MAX_ENTITY_NAME_CHARS));
+        assert!(cleaned
+            .iter()
+            .all(|(n, _)| n.chars().count() <= MAX_ENTITY_NAME_CHARS));
         assert!(
-            cleaned.iter().all(|(_, k)| ENTITY_KINDS.contains(&k.as_str())),
+            cleaned
+                .iter()
+                .all(|(_, k)| ENTITY_KINDS.contains(&k.as_str())),
             "an unknown kind collapses to a known one"
         );
 

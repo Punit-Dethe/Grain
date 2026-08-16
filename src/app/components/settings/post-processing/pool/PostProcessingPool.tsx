@@ -109,7 +109,9 @@ export const PostProcessingPool: React.FC = () => {
         onToggleRotation={handleToggleRotation}
         togglingRotation={togglingRotation}
         rotationLabel={t("settings.postProcessing.pool.smartRotation.label")}
-        rotationInfo={t("settings.postProcessing.pool.smartRotation.description")}
+        rotationInfo={t(
+          "settings.postProcessing.pool.smartRotation.description",
+        )}
       >
         {showAddForm && (
           <div className="p-3">

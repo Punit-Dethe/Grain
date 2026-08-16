@@ -76,7 +76,8 @@ fn token_file(dir: &std::path::Path, addr: SocketAddr) {
 #[tokio::test]
 async fn a_call_says_hello_first_then_reads_past_the_noise_for_its_answer() {
     let dir = tempfile::tempdir().unwrap();
-    let (addr, server) = stand_in(json!({ "ok": { "collections": ["Work", "Ideas"] } }), true).await;
+    let (addr, server) =
+        stand_in(json!({ "ok": { "collections": ["Work", "Ideas"] } }), true).await;
     token_file(dir.path(), addr);
 
     let link = grain_mcp::AppLink::for_token_file(dir.path().join("mcp-token.json"));
@@ -103,7 +104,10 @@ async fn an_error_from_the_app_reaches_the_caller_as_its_message() {
     token_file(dir.path(), addr);
 
     let link = grain_mcp::AppLink::for_token_file(dir.path().join("mcp-token.json"));
-    let err = link.call("space.get", json!({ "id": "x" })).await.unwrap_err();
+    let err = link
+        .call("space.get", json!({ "id": "x" }))
+        .await
+        .unwrap_err();
 
     server.await.unwrap();
     // The app's own sentence, not a generic failure — it is what the user reads.

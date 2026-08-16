@@ -35,9 +35,7 @@ export const PpAddProvider: React.FC<PpAddProviderProps> = ({
     [templates],
   );
 
-  const [templateId, setTemplateId] = useState<string>(
-    templates[0]?.id ?? "",
-  );
+  const [templateId, setTemplateId] = useState<string>(templates[0]?.id ?? "");
   const [name, setName] = useState("");
   const [customBaseUrl, setCustomBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -138,7 +136,9 @@ export const PpAddProvider: React.FC<PpAddProviderProps> = ({
             type="text"
             value={customBaseUrl}
             onChange={(e) => setCustomBaseUrl(e.target.value)}
-            placeholder={t("settings.postProcessing.pool.add.baseUrlPlaceholder")}
+            placeholder={t(
+              "settings.postProcessing.pool.add.baseUrlPlaceholder",
+            )}
             variant="compact"
           />
         </label>
@@ -153,7 +153,9 @@ export const PpAddProvider: React.FC<PpAddProviderProps> = ({
             type="password"
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={t("settings.postProcessing.pool.add.apiKeyPlaceholder")}
+            placeholder={t(
+              "settings.postProcessing.pool.add.apiKeyPlaceholder",
+            )}
             variant="compact"
           />
         </label>

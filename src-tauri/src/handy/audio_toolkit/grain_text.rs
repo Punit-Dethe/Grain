@@ -133,8 +133,17 @@ mod tests {
 
     #[test]
     fn test_finalize_empty_custom_words_is_just_filter() {
-        let result =
-            finalize_transcript("um hello world", &[], 0.5, "en", &None, true, false, &[], false);
+        let result = finalize_transcript(
+            "um hello world",
+            &[],
+            0.5,
+            "en",
+            &None,
+            true,
+            false,
+            &[],
+            false,
+        );
         assert_eq!(result, "hello world");
     }
 }

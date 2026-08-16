@@ -1,9 +1,9 @@
 //! [GRAIN] Prompt Record — split one recording into spoken CONTENT + a spoken AI
-//! INSTRUCTION at the pill-click mark, transcribing each independently.
+//! INSTRUCTION at the explicit pill-control mark, transcribing each independently.
 //!
 //! This is an inline helper, NOT an engine: it owns no state, spawns no threads,
 //! and does nothing when no mark was set. The per-session split mark lives on the
-//! `AudioRecordingManager` (set when the user clicks the pill); this consumes it
+//! `AudioRecordingManager` (set by the Prompt Record control); this consumes it
 //! once at stop.
 //!
 //! Why slice the audio rather than the transcript? The mark is a sample index, so
@@ -11,7 +11,7 @@
 //! word-level timestamps (which cloud STT providers give unreliably or not at
 //! all) and no ambiguity about which side a boundary word belongs to. It costs a
 //! second STT pass, but only when Prompt Record was actually used (a deliberate,
-//! occasional click) — the no-mark path is byte-for-byte today's single pass.
+//! occasional action) — the no-mark path is byte-for-byte today's single pass.
 
 use tauri::AppHandle;
 

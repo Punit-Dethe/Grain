@@ -1,6 +1,6 @@
 [package]
 name = "handy"
-version = "0.0.1"
+version = "0.0.2"
 description = "Grain"
 authors = ["cjpais"]
 edition = "2021"
@@ -93,7 +93,9 @@ zerocopy = "0.8"
 # an image). `image` downscales and encodes the grab; `base64` builds the data URI
 # the OpenAI-compatible vision wire format takes. Both are already in the tree as
 # transitive dependencies, so this only promotes them to direct use.
-image = { version = "0.25", default-features = false, features = ["png"] }
+# [GRAIN] `ico` is for website icons (pill identity): `/favicon.ico` is still the
+# last-resort rung and is an ICO container, which the PNG decoder cannot read.
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 base64 = "0.22"
 # Guaranteed clearing of the captured frame on drop. A plain write loop over a
 # buffer about to be freed is a dead store the optimizer may remove.
@@ -168,6 +170,13 @@ windows = { version = "0.61.3", features = [
   # reading; COM for the automation object.
   "Win32_UI_Accessibility",
   "Win32_System_Com",
+  # [GRAIN] Pill identity: IShellItemImageFactory for the foreground app's icon.
+  # The Shell (not the icon-resource APIs) because only it can see
+  # `shell:AppsFolder`, where every packaged/Store app's real asset lives.
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  # GetApplicationUserModelId — tells a packaged app from a classic Win32 one.
+  "Win32_Storage_Packaging_Appx",
 ] }
 winreg = "0.55"
 

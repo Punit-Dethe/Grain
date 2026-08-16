@@ -38,68 +38,72 @@ mod context_screen; // [GRAIN] foreground-window image capture — extension cap
 mod dev_extensions; // [GRAIN] validated load-unpacked project reader
 mod events_auth; // [GRAIN] token identity + capability filter for the events WS (SPEC 7.1)
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
-// [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
-// replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
-// disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
-// cleanly; port anything relevant into `crates/grain-core`. The alias keeps
-// every `crate::settings::` path working.
-mod grain_settings;
-pub(crate) use grain_settings as settings;
-mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
-mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
-mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
-mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
-mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
-mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
-mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
+mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
+mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
+mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
-// [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
-// single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
-// UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
-// the alias keeps every `crate::llm_client::` path working.
+mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
+mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
+                  // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
+                  // single-provider `llm_client.rs`. Upstream's file stays on disk untouched and
+                  // UN-COMPILED (no `mod llm_client;`) so upstream merges land conflict-free;
+                  // the alias keeps every `crate::llm_client::` path working.
 mod grain_llm_client;
-// [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
-// webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
-// keeps `crate::overlay::` paths (e.g. utils' re-export) working.
+mod grain_locale; // [GRAIN] locale-tag resolution, owned in Rust (was duplicated in TS)
+mod grain_onboarding; // [GRAIN] where a launching app lands: onboarding / permissions / app
+                      // [GRAIN] Native-pill mic-level fan-out — Grain's replacement for upstream's
+                      // webview `overlay.rs`, which likewise stays on disk un-compiled. The alias
+                      // keeps `crate::overlay::` paths (e.g. utils' re-export) working.
 mod grain_overlay;
+mod grain_post_process; // [GRAIN] multi-provider post-processing (rewrite of upstream's single-provider path)
 mod grain_space; // [GRAIN] Grain Space: zero-idle-RAM local notes (flat JSON + derived index)
-mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+                 // [GRAIN] Settings facade over grain-core's owned AppContext — Grain's
+                 // replacement for upstream's tauri-plugin-store `settings.rs`, which stays on
+                 // disk UN-COMPILED (no `mod settings;`) so upstream's settings changes merge
+                 // cleanly; port anything relevant into `crates/grain-core`. The alias keeps
+                 // every `crate::settings::` path working.
+mod grain_settings;
 mod grain_store; // [GRAIN] Phase 5A: signed-catalogue store client (verify, install, revoke)
-mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
-mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
-mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
-mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
+mod grain_theme; // [GRAIN] one resolved colour scheme for every surface (was localStorage)
+mod grain_update; // [GRAIN] in-app update check/install over the signed release feed
 #[path = "handy/helpers/mod.rs"]
 mod helpers;
+mod host_api; // [GRAIN] extension host API router (SPEC 1.3) — capability-checked worker calls
 #[path = "handy/input.rs"]
 mod input;
+mod paste_catch; // [GRAIN] safety net for a dictation paste that misses the text field
 pub(crate) use grain_llm_client as llm_client;
 pub(crate) use grain_overlay as overlay;
+pub(crate) use grain_settings as settings;
 #[path = "handy/managers/mod.rs"]
 mod managers;
-mod master_key; // [GRAIN] master-key chords (Alt+1/Alt+2) + transient prompt-switcher UI
+mod master_key; // [GRAIN] transient Alt+2 prompt-switcher chord + A/D navigation
 #[path = "handy/memory.rs"]
 mod memory; // upstream #1846 glibc allocator tuning; relocated into handy/ (upstream `mod overlay;` dropped — Grain aliases grain_overlay as overlay above)
+mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
 #[path = "handy/paste_tx/mod.rs"]
 mod paste_tx;
+mod pill_icon; // [GRAIN] pill identity — the foreground app's icon → pill
+mod pill_skin; // [GRAIN] pill skin delivery — the built-in look setting → pill
+mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 #[path = "handy/portable.rs"]
 pub mod portable;
-mod net_diag; // [GRAIN] shared reqwest transport-error diagnostics (upstream #1823, applied to both cloud clients)
-mod pill_theme; // [GRAIN] pill theme delivery (SPEC 9) — pill.theme slot occupant → pill
 mod post_process_router; // [GRAIN] post-process (LLM) dispatcher (single vs rotation)
-mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-click mark
+mod prompt_record; // [GRAIN] Prompt Record: split content vs spoken AI instruction at the pill-control mark
 mod rolling; // [GRAIN] real-time rolling-window transcription engine
 mod rotation_state; // [GRAIN] smart-rotation trackers (cooldowns + headroom), shared by both routers
 #[path = "handy/secure_input.rs"]
 mod secure_input;
 #[path = "handy/shortcut/mod.rs"]
 mod shortcut;
-mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
 #[path = "handy/signal_handle.rs"]
 mod signal_handle;
 mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI)
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
+mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
+mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
 #[path = "handy/tray.rs"]
@@ -403,6 +407,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] Agent: holds the selection captured at summon time until the window
     // reads it on mount. The window itself is created on demand and destroyed on close.
     app_handle.manage(agent::AgentState::default());
+    // [GRAIN] Paste Catch: empty at idle — it only holds anything between a
+    // confirmed missed paste and the moment the clipboard is handed back.
+    app_handle.manage(paste_catch::PasteCatchState::default());
 
     // [GRAIN] start the local WebSocket event transport + launch/supervise the pill.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
@@ -582,6 +589,10 @@ fn show_main_window_command(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn should_prevent_tray_exit(code: Option<i32>, no_tray: bool, intentional_quit: bool) -> bool {
+    code != Some(tauri::RESTART_EXIT_CODE) && !no_tray && !intentional_quit
+}
+
 /// Convert an unexpected panic on the headless worker into a normal CLI
 /// failure. Without this guard the Tauri event loop remains alive after the
 /// worker exits, leaving `--transcribe-file` hung indefinitely.
@@ -607,7 +618,7 @@ where
 
 #[cfg(test)]
 mod headless_guard_tests {
-    use super::run_headless_guarded;
+    use super::{run_headless_guarded, should_prevent_tray_exit};
 
     #[test]
     fn preserves_normal_exit_codes() {
@@ -617,6 +628,16 @@ mod headless_guard_tests {
     #[test]
     fn converts_worker_panics_to_runtime_failures() {
         assert_eq!(run_headless_guarded(|| panic!("simulated failure")), 1);
+    }
+
+    #[test]
+    fn updater_restart_bypasses_tray_keep_alive() {
+        assert!(!should_prevent_tray_exit(
+            Some(tauri::RESTART_EXIT_CODE),
+            false,
+            false
+        ));
+        assert!(should_prevent_tray_exit(None, false, false));
     }
 }
 
@@ -809,6 +830,19 @@ fn run_headless_transcription(app: &AppHandle, args: &CliArgs) -> i32 {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run(cli_args: CliArgs) {
+    // Avoid ggml-metal residency-set teardown assertions when a native engine
+    // outlives the Tauri shutdown sequence (#1902). This must happen before
+    // transcribe-cpp initializes its Metal device. Advanced users can restore
+    // upstream residency behavior with HANDY_METAL_RESIDENCY=1.
+    #[cfg(target_os = "macos")]
+    if std::env::var("HANDY_METAL_RESIDENCY").as_deref() == Ok("1") {
+        // ggml treats GGML_METAL_NO_RESIDENCY as presence-based, so remove an
+        // inherited value as well when explicitly opting back in.
+        std::env::remove_var("GGML_METAL_NO_RESIDENCY");
+    } else {
+        std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
+    }
+
     // Pin glibc's dynamic mmap threshold before the first large allocation,
     // so per-dictation transient buffers are returned to the OS on free
     // instead of accumulating in malloc arenas (#1792). No-op off Linux/glibc.
@@ -824,6 +858,7 @@ pub fn run(cli_args: CliArgs) {
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             grain_update::check_for_update,
+            grain_update::get_cached_update,
             grain_update::install_update,
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -832,11 +867,20 @@ pub fn run(cli_args: CliArgs) {
             shortcut::change_audio_feedback_volume_setting,
             shortcut::change_sound_theme_setting,
             grain_commands::change_default_panel_setting,
+            grain_commands::context_profiles,
+            grain_commands::set_context_profile_instruction,
+            grain_commands::site_icon,
+            grain_commands::installed_apps,
+            grain_commands::app_icon,
+            grain_commands::context_custom_profiles,
+            grain_commands::update_context_custom_profiles,
             shortcut::change_start_hidden_setting,
             shortcut::change_autostart_setting,
             shortcut::change_translate_to_english_setting,
             shortcut::change_selected_language_setting,
             shortcut::change_overlay_position_setting,
+            grain_commands::change_pill_skin_setting,
+            grain_commands::change_pill_show_app_icon_setting,
             shortcut::change_debug_mode_setting,
             shortcut::change_word_correction_threshold_setting,
             shortcut::change_extra_recording_buffer_setting,
@@ -914,8 +958,6 @@ pub fn run(cli_args: CliArgs) {
             shortcut::set_post_process_selected_prompt,
             shortcut::update_custom_words,
             grain_commands::update_snippets,
-            grain_commands::change_capture_mode_set_setting,
-            grain_commands::change_capture_primary_mode_setting,
             grain_commands::change_capture_ai_start_mode_setting,
             grain_commands::change_capture_end_with_ai_setting,
             grain_commands::change_capture_always_ai_setting,
@@ -928,6 +970,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_agent_input_type_to_expand_setting,
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,
+            grain_commands::change_paste_catch_enabled_setting,
             grain_commands::detect_active_app,
             shortcut::suspend_binding,
             shortcut::resume_binding,
@@ -1057,6 +1100,7 @@ pub fn run(cli_args: CliArgs) {
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
+            grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
             // The live-preview events MUST be registered even though Grain's
@@ -1191,6 +1235,7 @@ pub fn run(cli_args: CliArgs) {
             Some(vec![]),
         ))
         .manage(cli_args.clone())
+        .manage(grain_update::UpdateState::default())
         .manage(grain_onboarding::OnboardingMicrophoneTest::default())
         .manage(grain_onboarding::OnboardingTranscriptionTest::default())
         .setup(move |app| {
@@ -1285,7 +1330,9 @@ pub fn run(cli_args: CliArgs) {
                 // [GRAIN] Phase 5A: the store client — loads verified roots +
                 // revocations from cache-or-seed (small, resident); the parsed
                 // index stays out of memory until the store is opened.
-                app.manage(std::sync::Arc::new(grain_store::StoreState::init(&data_dir)));
+                app.manage(std::sync::Arc::new(grain_store::StoreState::init(
+                    &data_dir,
+                )));
                 // [GRAIN] Reconcile built-ins with what this build ships,
                 // now that AppContext + the registry are managed. Default off.
                 extension_host::reconcile_builtin_packs(&app.handle());
@@ -1335,6 +1382,12 @@ pub fn run(cli_args: CliArgs) {
             // the note above, and grain_overlay owns the overlay path.
             secure_input::init(&app_handle);
 
+            // [GRAIN] Update discovery is backend-owned so it still runs when
+            // start-hidden skips the WebView, or after close destroyed it to
+            // release WebView2 RAM. This is one delayed task, not a resident
+            // polling engine.
+            grain_update::spawn_automatic_check(app_handle.clone());
+
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
                 tray::set_tray_visibility(&app_handle, false);
@@ -1345,11 +1398,12 @@ pub fn run(cli_args: CliArgs) {
             // But if permission onboarding is required, always show the window.
             let should_hide = settings.start_hidden || cli_args.start_hidden;
             let should_force_show = should_force_show_permissions_window(&app_handle);
+            let should_show_after_update = grain_update::take_show_after_update(&app_handle);
 
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_force_show || !should_hide || !tray_available {
+            if should_show_after_update || should_force_show || !should_hide || !tray_available {
                 show_main_window(&app_handle);
             } else {
                 // [GRAIN] If we skip the frontend on startup, we must manually
@@ -1426,8 +1480,14 @@ pub fn run(cli_args: CliArgs) {
             // process alive in the tray so dictation/rolling/pill keep working —
             // unless launched with --no-tray, where closing is meant to quit. The
             // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                if !app.state::<CliArgs>().no_tray && !INTENTIONAL_QUIT.load(Ordering::Relaxed) {
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                // An updater restart must pass through even though ordinary
+                // window closure keeps the process alive in the tray.
+                if should_prevent_tray_exit(
+                    *code,
+                    app.state::<CliArgs>().no_tray,
+                    INTENTIONAL_QUIT.load(Ordering::Relaxed),
+                ) {
                     api.prevent_exit();
                 }
             }

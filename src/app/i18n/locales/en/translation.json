@@ -567,6 +567,18 @@
           "center": "Center"
         }
       },
+      "pillSkin": {
+        "title": "Pill Style",
+        "description": "How the pill visualizes your voice while recording.",
+        "options": {
+          "wave": "Waveform",
+          "matrix": "Dot Matrix"
+        }
+      },
+      "pillAppIcon": {
+        "label": "Show app icon in pill",
+        "description": "Show the icon of the app you're dictating into, in place of the pill's status dot."
+      },
       "pasteMethod": {
         "title": "Paste Method",
         "description": "Choose how text is inserted. Direct: simulates typing via system input. None: skips paste, only updates history/clipboard.",
@@ -1019,6 +1031,9 @@
       "snippets": {
         "title": "Snippets",
         "description": "Say a trigger phrase while dictating and Grain replaces it with your saved text — a link, an address, or a whole paragraph. Matching ignores case and punctuation.",
+        "triggerLabel": "When I say",
+        "replacementLabel": "Grain types",
+        "examplesLabel": "Start from",
         "triggerPlaceholder": "Trigger phrase (e.g. grain github repo)",
         "replacementPlaceholder": "Replacement text — a link, address, or paragraph",
         "add": "Add snippet",
@@ -1306,6 +1321,10 @@
       "scrapThat": {
         "title": "\"Scrap that\" voice reset",
         "description": "Say \"scrap that\" mid-dictation to discard everything before it and start the transcript fresh from that point. Works in every mode; in live streaming the expanded pill collapses back to the compact capsule until you speak again. Off costs nothing."
+      },
+      "pasteCatch": {
+        "title": "Recover missed text insertion",
+        "description": "If Grain cannot insert a transcript into the text field, keep it on the clipboard and briefly confirm the copy in the pill. Turn this off to disable both recovery and the confirmation."
       }
     },
     "appearance": {

@@ -44,10 +44,12 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
           disabled={disabled || isUpdating}
           onChange={(e) => onChange(e.target.checked)}
         />
-        {/* [GRAIN] Hardware toggle: fixed black track, clean white lever OFF → orange ON. */}
-        <div className="relative w-8 h-[18px] rounded-full transition-colors duration-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:shadow-[0_1px_3px_rgba(0,0,0,0.35)] after:transition-all after:duration-200 peer-checked:after:translate-x-[14px] peer-checked:after:bg-[var(--color-accent)] after:bg-[#f0ebe3] rtl:peer-checked:after:-translate-x-[14px]"
-          style={{ backgroundColor: "#0a0a0a" }}
-        ></div>
+        {/* [GRAIN] Single source of truth for the settings toggle. Geometry is a
+            matched set: 36×20 track, 16px white thumb inset 2px, travels 16px
+            (translate-x-4) → even 2px margins, slides cleanly, cannot overflow.
+            OFF track = --toggle-off (theme-aware); ON track = accent. To resize,
+            change track/thumb/travel together: travel = trackW − thumb − 2·inset. */}
+        <div className="relative w-9 h-5 rounded-full bg-[var(--toggle-off)] transition-colors duration-200 peer-checked:bg-[var(--color-accent)] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent-focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(0,0,0,0.28)] after:transition-transform after:duration-200 peer-checked:after:translate-x-4 rtl:peer-checked:after:-translate-x-4"></div>
       </label>
       {isUpdating && (
         <div className="absolute inset-0 flex items-center justify-center">

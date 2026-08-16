@@ -20,10 +20,7 @@ import { useOsType } from "@/hooks/useOsType";
 import { formatDateTime } from "@/utils/dateFormat";
 import { AudioPlayer, AudioPlayerGroup } from "../../ui/AudioPlayer";
 import { Button } from "../../ui/Button";
-import {
-  HistoryCard,
-  type HistoryViewMode,
-} from "@/history/HistoryCard";
+import { HistoryCard, type HistoryViewMode } from "@/history/HistoryCard";
 import {
   hasProcessedText,
   type HistoryController,

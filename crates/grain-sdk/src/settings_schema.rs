@@ -214,9 +214,7 @@ fn check(decl: &SettingDecl, value: &Value) -> Result<Accepted, String> {
             let rows = value.as_array().ok_or("expected a list of rows")?;
             let mut out = Vec::with_capacity(rows.len());
             for row in rows {
-                let obj = row
-                    .as_object()
-                    .ok_or("every list row must be an object")?;
+                let obj = row.as_object().ok_or("every list row must be an object")?;
                 let mut norm = serde_json::Map::new();
                 for f in fields {
                     let resolved = resolve(f, obj.get(&f.key));
@@ -230,9 +228,7 @@ fn check(decl: &SettingDecl, value: &Value) -> Result<Accepted, String> {
         // A custom card stores no value through the schema — the extension owns
         // its state via the settings/storage API under its own keys, not the
         // panel's key — so there is nothing here to coerce.
-        SettingKind::Panel { .. } => {
-            Err("a panel holds no stored value".into())
-        }
+        SettingKind::Panel { .. } => Err("a panel holds no stored value".into()),
         // Rejected on the way in, passed through on the way out (see `resolve`):
         // this build cannot know what a valid value for it looks like.
         SettingKind::Unsupported => {

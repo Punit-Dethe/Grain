@@ -110,6 +110,54 @@ fn default_snippet_enabled() -> bool {
     true
 }
 
+/// [GRAIN] A user's edit to one context-awareness profile's instruction.
+///
+/// **Overrides only.** A profile the user has never touched does not appear
+/// here at all, and keeps using the instruction compiled into the binary. That
+/// is the whole reason this is a sparse list rather than a full copy of the
+/// four texts: storing them all would freeze every user on whatever wording
+/// shipped the day they first opened the tab, and improvements to the defaults
+/// would then only ever reach people who had never looked at the feature.
+///
+/// `id` is [`AppCategory::profile_id`] — "email" / "work" / "casual" /
+/// "technical". An unknown id is ignored rather than rejected, so a settings
+/// file written by a newer build (or a profile that is later renamed) degrades
+/// to the default instead of failing to load.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ContextProfileInstruction {
+    pub id: String,
+    pub instruction: String,
+}
+
+/// [GRAIN] One app or website a custom context profile claims.
+///
+/// `value` is an executable stem for `application` (lowercased, no extension,
+/// e.g. `figma`) and a bare host for `website` (no scheme, no path, e.g.
+/// `figma.com`). Anything else is ignored at match time rather than rejected at
+/// write time — a target that names nothing simply never matches.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct ContextProfileTarget {
+    /// `application` or `website`.
+    pub kind: String,
+    pub value: String,
+}
+
+/// [GRAIN] A profile the user made, which OUTRANKS the built-in category for
+/// every app and site it claims.
+///
+/// The precedence is the whole point: naming a surface is a statement that the
+/// built-in guess is wrong for it. A profile is allowed exactly one target —
+/// that is how "this one app gets its own instruction" is expressed, and it
+/// needs no separate concept.
+#[derive(Serialize, Deserialize, Debug, Clone, Type)]
+pub struct CustomContextProfile {
+    pub id: String,
+    pub title: String,
+    pub instruction: String,
+    #[serde(default)]
+    pub targets: Vec<ContextProfileTarget>,
+}
+
 /// [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
 /// clipboard automatically as they arrive. `First` (default) mirrors the
 /// original behavior — only the first reply of a session is auto-copied.
@@ -308,6 +356,11 @@ fn default_stt_api_keys() -> SecretMap {
 // paths — and the generated bindings — are unchanged.
 pub use grain_sdk::OverlayPosition;
 
+// [GRAIN] PillSkin lives in grain-sdk (it crosses the wire in
+// DaemonEvent::PillSkin); re-exported here so it is a `settings::PillSkin` like
+// every other settings-visible enum, and so specta generates its binding.
+pub use grain_sdk::PillSkin;
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum DefaultPanel {
@@ -347,39 +400,10 @@ impl Default for ThemeMode {
     }
 }
 
-/// [GRAIN] How many capture modes are live at once.
-///
-/// Grain ships three ways to capture — Standard, Flow and Live — and used to
-/// register a global shortcut for each, plus a fourth to send a transcript to
-/// AI. Four keys to remember before you have said a word is the single biggest
-/// source of friction in the product, and most people only ever use one mode.
-///
-/// `Single` keeps exactly one capture shortcut registered. The other modes are
-/// not disabled or removed — they are one dropdown away, and their bindings
-/// stay in settings untouched — they simply stop occupying a global hotkey the
-/// user has to hold in their head.
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
-#[serde(rename_all = "snake_case")]
-pub enum CaptureModeSet {
-    /// One capture shortcut, chosen by `capture_primary_mode`.
-    Single,
-    /// All three capture shortcuts registered, as Grain has always done.
-    All,
-}
-
-impl Default for CaptureModeSet {
-    fn default() -> Self {
-        CaptureModeSet::Single
-    }
-}
-
 /// The three binding ids that start a capture. Order is the order they are
 /// offered in the UI: least to most machinery.
-pub const CAPTURE_MODE_IDS: [&str; 3] = [
-    "transcribe",
-    "transcribe_realtime",
-    "transcribe_native_asr",
-];
+pub const CAPTURE_MODE_IDS: [&str; 3] =
+    ["transcribe", "transcribe_realtime", "transcribe_native_asr"];
 
 pub fn default_capture_mode() -> String {
     "transcribe".to_string()
@@ -638,16 +662,9 @@ pub struct AppSettings {
     /// [GRAIN] Colour scheme preference for every Grain surface. See `ThemeMode`.
     #[serde(default)]
     pub theme: ThemeMode,
-    /// [GRAIN] How many capture shortcuts are registered. See `CaptureModeSet`.
-    #[serde(default)]
-    pub capture_mode_set: CaptureModeSet,
-    /// [GRAIN] The capture mode that owns the one shortcut under
-    /// `CaptureModeSet::Single`. One of `CAPTURE_MODE_IDS`.
-    #[serde(default = "default_capture_mode")]
-    pub capture_primary_mode: String,
-    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. Under
-    /// `Single` this follows `capture_primary_mode`; it is only independently
-    /// meaningful when all three modes are live.
+    /// [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
+    /// three capture modes are always live, so this is a free choice among
+    /// `CAPTURE_MODE_IDS`.
     #[serde(default = "default_capture_mode")]
     pub capture_ai_start_mode: String,
     /// [GRAIN] Whether the AI shortcut, pressed *during* a capture, ends it and
@@ -691,6 +708,16 @@ pub struct AppSettings {
     pub selected_language: String,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: OverlayPosition,
+    /// [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
+    /// see `PillSkin`). Defaults to the smooth waveform.
+    #[serde(default)]
+    pub pill_skin: PillSkin,
+    /// [GRAIN] Show the icon of the app being dictated into, in place of the
+    /// pill's state dot. ON while the behaviour is being developed; it will
+    /// later be folded into Context Awareness and shown only for surfaces Grain
+    /// actually differentiates.
+    #[serde(default = "default_pill_show_app_icon")]
+    pub pill_show_app_icon: bool,
     #[serde(default = "default_debug_mode")]
     pub debug_mode: bool,
     #[serde(default = "default_log_level")]
@@ -816,6 +843,17 @@ pub struct AppSettings {
     /// per-app formatting is the App Modes extension's job, not a setting here.
     #[serde(default)]
     pub context_awareness_enabled: bool,
+    /// [GRAIN] Per-profile instruction edits, stored SPARSELY — see
+    /// [`ContextProfileInstruction`]. Empty on a fresh install and for anyone
+    /// who never edits a profile, which is the common case, so this costs one
+    /// empty `Vec` in `AppSettings` and nothing on the prompt path.
+    #[serde(default)]
+    pub context_profile_instructions: Vec<ContextProfileInstruction>,
+    /// [GRAIN] User-made context profiles. These OUTRANK the built-in category
+    /// for any app or site they claim — see [`CustomContextProfile`]. Empty for
+    /// everyone who has not made one, which is the default.
+    #[serde(default)]
+    pub context_custom_profiles: Vec<CustomContextProfile>,
     /// [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
     /// switch. OFF by default for NEW installs; the one-time import in
     /// `load_settings` turns it on for existing users who already have snippets
@@ -829,6 +867,19 @@ pub struct AppSettings {
     /// available).
     #[serde(default)]
     pub agent_enabled: bool,
+    /// [GRAIN] Paste Catch: when a dictation paste provably misses the text
+    /// field, hold the transcript on the clipboard behind a visible offer
+    /// instead of letting the restore destroy it. ON by default — a missed
+    /// paste currently loses the transcript outright, and the detection only
+    /// fires on positive evidence, so the failure mode is "no offer shown".
+    #[serde(default = "default_paste_catch_enabled")]
+    pub paste_catch_enabled: bool,
+    /// [GRAIN] How long the caught transcript stays on the clipboard before the
+    /// clipboard is handed back exactly as Handy would have. Long enough to
+    /// notice the offer and reach a field; short enough that holding someone
+    /// else's clipboard stays defensible.
+    #[serde(default = "default_paste_catch_hold_ms")]
+    pub paste_catch_hold_ms: u64,
     /// [GRAIN] One-time marker for the extension-platform settings import above
     /// (SPEC §10.1 upgrade rule). False in files written before the platform;
     /// `load_settings` performs the import exactly once and sets it.
@@ -978,6 +1029,16 @@ fn default_audio_conditioning() -> bool {
 fn default_rolling_live_preview() -> bool {
     false
 }
+/// Paste Catch defaults ON: without it a paste that misses the field destroys
+/// the transcript, and the detection only ever acts on positive evidence.
+fn default_paste_catch_enabled() -> bool {
+    true
+}
+/// 20s. Below ~15s a user who has to find a window and click into a field runs
+/// out of time; much above 20s and Grain is squatting on someone's clipboard.
+fn default_paste_catch_hold_ms() -> u64 {
+    20_000
+}
 fn default_translate_to_english() -> bool {
     false
 }
@@ -998,6 +1059,9 @@ fn default_overlay_position() -> OverlayPosition {
     return OverlayPosition::None;
     #[cfg(not(target_os = "linux"))]
     return OverlayPosition::Bottom;
+}
+fn default_pill_show_app_icon() -> bool {
+    true
 }
 fn default_debug_mode() -> bool {
     false
@@ -1552,6 +1616,27 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    // [GRAIN] Paste Catch: deliver a transcript whose paste missed the text
+    // field. Like `agent_followup`, this is registered as a GLOBAL shortcut only
+    // while an offer is live — outside that window the keys belong to whatever
+    // else the user has bound them to.
+    #[cfg(target_os = "macos")]
+    let default_paste_catch_shortcut = "option+v";
+    #[cfg(not(target_os = "macos"))]
+    let default_paste_catch_shortcut = "alt+v";
+    bindings.insert(
+        "paste_catch_deliver".to_string(),
+        ShortcutBinding {
+            id: "paste_catch_deliver".to_string(),
+            name: "Paste Missed Transcript".to_string(),
+            description:
+                "Paste a transcript that missed the text field. Active only while Grain is holding one."
+                    .to_string(),
+            default_binding: default_paste_catch_shortcut.to_string(),
+            current_binding: default_paste_catch_shortcut.to_string(),
+        },
+    );
+
     #[cfg(target_os = "macos")]
     let default_send_to_ai_shortcut = "option+enter";
     #[cfg(not(target_os = "macos"))]
@@ -1637,8 +1722,6 @@ pub fn get_default_settings() -> AppSettings {
         sound_theme: default_sound_theme(),
         default_panel: DefaultPanel::default(),
         theme: ThemeMode::default(),
-        capture_mode_set: CaptureModeSet::default(),
-        capture_primary_mode: default_capture_mode(),
         capture_ai_start_mode: default_capture_mode(),
         capture_end_with_ai: default_capture_end_with_ai(),
         capture_always_ai: false,
@@ -1655,6 +1738,8 @@ pub fn get_default_settings() -> AppSettings {
         translate_to_english: false,
         selected_language: "auto".to_string(),
         overlay_position: default_overlay_position(),
+        pill_skin: PillSkin::default(),
+        pill_show_app_icon: default_pill_show_app_icon(),
         debug_mode: false,
         log_level: default_log_level(),
         custom_words: Vec::new(),
@@ -1700,10 +1785,14 @@ pub fn get_default_settings() -> AppSettings {
         audio_conditioning: default_audio_conditioning(),
         rolling_live_preview: default_rolling_live_preview(),
         context_awareness_enabled: false,
+        context_profile_instructions: Vec::new(),
+        context_custom_profiles: Vec::new(),
         // [GRAIN] Built-in extensions default OFF for new installs (SPEC §10.1);
         // the upgrade import in context.rs turns them on for existing users.
         snippets_enabled: false,
         agent_enabled: false,
+        paste_catch_enabled: default_paste_catch_enabled(),
+        paste_catch_hold_ms: default_paste_catch_hold_ms(),
         extensions_imported_v1: false,
         extension_developer_mode: false,
         context_nearby_terms: false,
@@ -1772,13 +1861,24 @@ mod binding_migration_tests {
         let mut settings = get_default_settings();
         let fresh = get_default_settings();
         // Never customised: current still equals the old default.
-        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "ctrl+alt+space");
+        stored_as(
+            &mut settings,
+            "transcribe_realtime",
+            "ctrl+alt+space",
+            "ctrl+alt+space",
+        );
 
         ensure_post_process_defaults(&mut settings);
 
         let moved = &settings.bindings["transcribe_realtime"];
-        assert_eq!(moved.current_binding, fresh.bindings["transcribe_realtime"].current_binding);
-        assert_eq!(moved.default_binding, fresh.bindings["transcribe_realtime"].default_binding);
+        assert_eq!(
+            moved.current_binding,
+            fresh.bindings["transcribe_realtime"].current_binding
+        );
+        assert_eq!(
+            moved.default_binding,
+            fresh.bindings["transcribe_realtime"].default_binding
+        );
     }
 
     #[test]
@@ -1792,18 +1892,28 @@ mod binding_migration_tests {
         let kept = &settings.bindings["transcribe_realtime"];
         assert_eq!(kept.current_binding, "f9", "the user's key must survive");
         // Reset should still offer the CURRENT default, not the retired one.
-        assert_eq!(kept.default_binding, fresh.bindings["transcribe_realtime"].default_binding);
+        assert_eq!(
+            kept.default_binding,
+            fresh.bindings["transcribe_realtime"].default_binding
+        );
     }
 
     #[test]
     fn a_repoint_never_steals_a_chord_the_user_chose() {
         let mut settings = get_default_settings();
         let fresh = get_default_settings();
-        let flow_target = fresh.bindings["transcribe_realtime"].current_binding.clone();
+        let flow_target = fresh.bindings["transcribe_realtime"]
+            .current_binding
+            .clone();
 
         // The user put Standard on exactly the chord Flow is about to adopt.
         stored_as(&mut settings, "transcribe", "ctrl+space", &flow_target);
-        stored_as(&mut settings, "transcribe_realtime", "ctrl+alt+space", "ctrl+alt+space");
+        stored_as(
+            &mut settings,
+            "transcribe_realtime",
+            "ctrl+alt+space",
+            "ctrl+alt+space",
+        );
 
         ensure_post_process_defaults(&mut settings);
 
@@ -1833,13 +1943,20 @@ mod binding_migration_tests {
 
         ensure_post_process_defaults(&mut settings);
 
-        assert!(!settings.bindings.contains_key("transcribe_with_post_process"));
+        assert!(!settings
+            .bindings
+            .contains_key("transcribe_with_post_process"));
     }
 
     #[test]
     fn migration_is_idempotent() {
         let mut settings = get_default_settings();
-        stored_as(&mut settings, "summon_agent", "ctrl+shift+a", "ctrl+shift+a");
+        stored_as(
+            &mut settings,
+            "summon_agent",
+            "ctrl+shift+a",
+            "ctrl+shift+a",
+        );
 
         let snapshot = |s: &AppSettings| {
             let mut rows: Vec<(String, String, String)> = s

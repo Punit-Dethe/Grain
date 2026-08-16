@@ -443,7 +443,8 @@ fn start_dictation(app: &AppHandle) {
     }
     // Agent dictation is a batch-style capture: offline VAD profile (VAD is
     // always on — grain-core settings have no `vad_enabled` toggle).
-    if let Err(e) = rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline) {
+    if let Err(e) = rm.try_start_recording(AGENT_BINDING, crate::audio_toolkit::VadPolicy::Offline)
+    {
         warn!("[GRAIN] agent: failed to start dictation: {e}");
     }
 }
@@ -1263,7 +1264,7 @@ fn register_followup_shortcut(app: &AppHandle) {
                 // suppress. [GRAIN] `transcribe_send_to_ai` left this list when
                 // it became a first-class shortcut; it is globally registered
                 // now, so a conflict with it is real and must be suppressed.
-                if id == AGENT_FOLLOWUP_BINDING || id == "cancel" {
+                if grain_core::capture::is_dynamic_binding(id) {
                     continue;
                 }
                 if b.current_binding.trim().eq_ignore_ascii_case(&accel)

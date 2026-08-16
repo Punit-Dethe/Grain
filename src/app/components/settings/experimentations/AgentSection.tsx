@@ -69,7 +69,11 @@ export const AgentSection: React.FC = () => {
       {/* 1. The key that summons it. It used to live with the capture keys,
           which is where you would look for it only if you already knew Agent
           existed — it is the first thing you want after switching Agent on. */}
-      <ShortcutInput shortcutId="summon_agent" grouped descriptionMode="tooltip" />
+      <ShortcutInput
+        shortcutId="summon_agent"
+        grouped
+        descriptionMode="tooltip"
+      />
 
       {/* 2. Where the reply appears. "Personalize" rather than "Position": one
           of the two options is a differently shaped surface, not the same card

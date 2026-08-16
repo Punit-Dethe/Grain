@@ -123,10 +123,18 @@ export const SnippetsSection: React.FC<{
 
   return (
     <SettingsGroup
-      title={untitled ? undefined : t("settings.experimentations.snippets.title")}
-      info={untitled ? undefined : t("settings.experimentations.snippets.description")}
+      title={
+        untitled ? undefined : t("settings.experimentations.snippets.title")
+      }
+      info={
+        untitled
+          ? undefined
+          : t("settings.experimentations.snippets.description")
+      }
       trailing={
-        untitled || snippets.length === 0 ? null : <CountChip n={snippets.length} />
+        untitled || snippets.length === 0 ? null : (
+          <CountChip n={snippets.length} />
+        )
       }
     >
       {/* Composer. Stacked, not side-by-side: the two fields are a MAPPING, and
@@ -135,7 +143,9 @@ export const SnippetsSection: React.FC<{
           them, the form reads as the sentence it is — say this, get that. */}
       <div className="p-5 space-y-4">
         <div className="space-y-2">
-          <FieldLabel htmlFor="snippet-trigger">When I say</FieldLabel>
+          <FieldLabel htmlFor="snippet-trigger">
+            {t("settings.experimentations.snippets.triggerLabel")}
+          </FieldLabel>
           <Input
             id="snippet-trigger"
             type="text"
@@ -156,7 +166,9 @@ export const SnippetsSection: React.FC<{
         </div>
 
         <div className="space-y-2">
-          <FieldLabel htmlFor="snippet-expansion">Grain types</FieldLabel>
+          <FieldLabel htmlFor="snippet-expansion">
+            {t("settings.experimentations.snippets.replacementLabel")}
+          </FieldLabel>
           <Textarea
             id="snippet-expansion"
             className="w-full"
@@ -179,7 +191,9 @@ export const SnippetsSection: React.FC<{
           trimmedTrigger.length === 0 &&
           replacement.length === 0 ? (
             <div className="flex flex-wrap items-center gap-2 min-w-0">
-              <span className="text-xs text-ink-soft shrink-0">Start from</span>
+              <span className="text-xs text-ink-soft shrink-0">
+                {t("settings.experimentations.snippets.examplesLabel")}
+              </span>
               {EXAMPLES.map((ex) => (
                 <button
                   key={ex.trigger}

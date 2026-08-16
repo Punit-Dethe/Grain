@@ -193,7 +193,10 @@ export function AgentPanel() {
         policy === "all" || (policy === "first" && !firstCopyDoneRef.current);
       firstCopyDoneRef.current = true;
       if (shouldCopy) {
-        commands.agentCopy(reply).then(flashCopied).catch(() => {});
+        commands
+          .agentCopy(reply)
+          .then(flashCopied)
+          .catch(() => {});
       }
     },
     [flashCopied],
@@ -329,7 +332,10 @@ export function AgentPanel() {
       ? lastReplyOf(messagesRef.current)
       : (versionsRef.current[versionIdxRef.current]?.text ?? "");
     if (!text) return;
-    commands.agentCopy(text).then(flashCopied).catch(() => {});
+    commands
+      .agentCopy(text)
+      .then(flashCopied)
+      .catch(() => {});
   }, [flashCopied]);
 
   /** Take the queued first instruction and run it — guarded so the mount-take
@@ -412,56 +418,66 @@ export function AgentPanel() {
   useEffect(() => {
     const uns: Array<() => void> = [];
     // The core queued the first instruction after we mounted → run it.
-    void win.listen("agent-instruction", () => {
-      void startFirstIfQueued();
-    }).then((fn) => uns.push(fn));
+    void win
+      .listen("agent-instruction", () => {
+        void startFirstIfQueued();
+      })
+      .then((fn) => uns.push(fn));
     // Reveal-in-loading handshake: the window was just shown; keep the loading
     // state until the first reply (or an error) lands.
-    void win.listen("agent-loading", () => {
-      if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
-    }).then((fn) => uns.push(fn));
+    void win
+      .listen("agent-loading", () => {
+        if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
+      })
+      .then((fn) => uns.push(fn));
     // A backend-side failure (STT/LLM) with no reply to show.
-    void win.listen<string>("agent-error", (e) => {
-      firstRunStartedRef.current = true;
-      setBusy(false);
-      setError(e.payload || t("agent.error"));
-    }).then((fn) => uns.push(fn));
+    void win
+      .listen<string>("agent-error", (e) => {
+        firstRunStartedRef.current = true;
+        setBusy(false);
+        setError(e.payload || t("agent.error"));
+      })
+      .then((fn) => uns.push(fn));
     // Follow-up offer opened the warm hidden panel → seed the conversation.
-    void win.listen("agent-followup-open", () => {
-      void openRetainedConversation();
-    }).then((fn) => uns.push(fn));
+    void win
+      .listen("agent-followup-open", () => {
+        void openRetainedConversation();
+      })
+      .then((fn) => uns.push(fn));
     // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
     // the expanded conversation was focused). Append the transcript to the
     // follow-up field instead of it being OS-pasted (which would paste the
     // auto-copied AI reply). Handled here, not by the OS clipboard.
-    void win.listen<string>("agent-panel-dictation", (e) => {
-      const dictated = (e.payload || "").trim();
-      if (!dictated || busyRef.current) return;
-      const append = (el: HTMLTextAreaElement | HTMLInputElement | null) => {
-        if (!el) return;
-        const sep = el.value && !el.value.endsWith(" ") ? " " : "";
-        el.value = el.value + sep + dictated;
-        if (el instanceof HTMLTextAreaElement) {
-          el.style.height = "auto";
-          el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+    void win
+      .listen<string>("agent-panel-dictation", (e) => {
+        const dictated = (e.payload || "").trim();
+        if (!dictated || busyRef.current) return;
+        const append = (el: HTMLTextAreaElement | HTMLInputElement | null) => {
+          if (!el) return;
+          const sep = el.value && !el.value.endsWith(" ") ? " " : "";
+          el.value = el.value + sep + dictated;
+          if (el instanceof HTMLTextAreaElement) {
+            el.style.height = "auto";
+            el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
+          }
+          el.focus();
+        };
+        if (positionRef.current !== "center") {
+          append(followupRef.current);
+          return;
         }
-        el.focus();
-      };
-      if (positionRef.current !== "center") {
-        append(followupRef.current);
-        return;
-      }
-      // CENTER: the field only exists once composing, but the backend has
-      // already suppressed the OS paste to route the transcript here — so a
-      // dictation while the quiet bar is showing would be dropped outright.
-      // Dictating IS the request to compose: open the field, then append.
-      if (composingRef.current) {
-        append(centerInputRef.current);
-        return;
-      }
-      startCompose();
-      requestAnimationFrame(() => append(centerInputRef.current));
-    }).then((fn) => uns.push(fn));
+        // CENTER: the field only exists once composing, but the backend has
+        // already suppressed the OS paste to route the transcript here — so a
+        // dictation while the quiet bar is showing would be dropped outright.
+        // Dictating IS the request to compose: open the field, then append.
+        if (composingRef.current) {
+          append(centerInputRef.current);
+          return;
+        }
+        startCompose();
+        requestAnimationFrame(() => append(centerInputRef.current));
+      })
+      .then((fn) => uns.push(fn));
     return () => uns.forEach((u) => u());
   }, [openRetainedConversation, startCompose, startFirstIfQueued, t, win]);
 
@@ -620,7 +636,10 @@ export function AgentPanel() {
       (typeof window !== "undefined" && window.screen?.availHeight) ||
       window.innerHeight ||
       800;
-    return Math.max(220, Math.round(avail - CENTER_TOP_OFFSET - CENTER_BOTTOM_GAP));
+    return Math.max(
+      220,
+      Math.round(avail - CENTER_TOP_OFFSET - CENTER_BOTTOM_GAP),
+    );
   }, []);
 
   /** Copy one specific answer (the per-reply copy affordance). Only the copied
@@ -686,7 +705,6 @@ export function AgentPanel() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [position, startCompose]);
-
 
   /** Open the notebook — on a specific note (source chip) or unfocused (the
    * not-found escape hatch). Brings Grain forward with the Notes tab selected;
@@ -866,7 +884,9 @@ export function AgentPanel() {
                     <div className="agc-c-user">{m.content}</div>
                   ) : (
                     <>
-                      <div className="agc-c-answer"><AgentMarkdown markdown={m.content} /></div>
+                      <div className="agc-c-answer">
+                        <AgentMarkdown markdown={m.content} />
+                      </div>
                       {renderEvidence(m.sources ?? [], m.notFound ?? false)}
                       {m.confirmDelete && renderConfirmDelete(m.confirmDelete)}
                       {expanded && (
@@ -1056,7 +1076,9 @@ export function AgentPanel() {
               <div className="agc-error">{error}</div>
             ) : (
               <>
-                <div className="agc-reply"><AgentMarkdown markdown={displayedReply} /></div>
+                <div className="agc-reply">
+                  <AgentMarkdown markdown={displayedReply} />
+                </div>
                 {renderEvidence(compactSources, compactNotFound)}
                 {compactConfirmDelete &&
                   renderConfirmDelete(compactConfirmDelete)}
@@ -1146,7 +1168,11 @@ export function AgentPanel() {
                 {m.role === "user" ? t("agent.you") : t("agent.grain")}
               </div>
               <div className={`agc-turn-body agc-turn-body--${m.role}`}>
-                {m.role === "assistant" ? <AgentMarkdown markdown={m.content} /> : m.content}
+                {m.role === "assistant" ? (
+                  <AgentMarkdown markdown={m.content} />
+                ) : (
+                  m.content
+                )}
               </div>
               {m.role === "assistant" &&
                 renderEvidence(m.sources ?? [], m.notFound ?? false)}

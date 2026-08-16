@@ -14,6 +14,9 @@ interface HandyKeysShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  /** Render only the keycap control (no label row) — for hosts that supply
+   * their own name/description, e.g. the capture-mode cards. */
+  bare?: boolean;
 }
 
 interface HandyKeysEvent {
@@ -28,6 +31,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   grouped = false,
   shortcutId,
   disabled = false,
+  bare = false,
 }) => {
   const { t } = useTranslation();
   const { getSetting, updateBinding, resetBinding, isUpdating, isLoading } =
@@ -198,6 +202,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   // If still loading, show loading state
   if (isLoading) {
+    if (bare) return null;
     return (
       <SettingContainer
         title={t("settings.general.shortcut.title")}
@@ -214,6 +219,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   // If no bindings are loaded, show empty state
   if (Object.keys(bindings).length === 0) {
+    if (bare) return null;
     return (
       <SettingContainer
         title={t("settings.general.shortcut.title")}
@@ -230,6 +236,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
 
   const binding = bindings[shortcutId];
   if (!binding) {
+    if (bare) return null;
     return (
       <SettingContainer
         title={t("settings.general.shortcut.title")}
@@ -254,6 +261,37 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
     binding.description,
   );
 
+  const control = (
+    <div className="flex items-center space-x-1">
+      {isRecording ? (
+        // Recording: a keycap lit in the accent tint, pulsing to show it's
+        // listening for the next keypress. Mirrors GlobalShortcutInput.
+        <div
+          ref={shortcutRef}
+          className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-[5.5px] animate-pulse tabular-nums"
+        >
+          {formatCurrentKeys()}
+        </div>
+      ) : (
+        // Idle: a physical keycap — raised paper surface, mono type, crisp
+        // border, a hairline shadow under it. Reads as a thing you press.
+        <div
+          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent"
+          style={{ boxShadow: "var(--shadow-hair)" }}
+          onClick={startRecording}
+        >
+          {formatKeyCombination(binding.current_binding, osType)}
+        </div>
+      )}
+      <ResetButton
+        onClick={() => resetBinding(shortcutId)}
+        disabled={isUpdating(`binding_${shortcutId}`)}
+      />
+    </div>
+  );
+
+  if (bare) return control;
+
   return (
     <SettingContainer
       title={translatedName}
@@ -263,32 +301,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       disabled={disabled}
       layout="horizontal"
     >
-      <div className="flex items-center space-x-1">
-        {isRecording ? (
-          // Recording: a keycap lit in the accent tint, pulsing to show it's
-          // listening for the next keypress. Mirrors GlobalShortcutInput.
-          <div
-            ref={shortcutRef}
-            className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-md animate-pulse tabular-nums"
-          >
-            {formatCurrentKeys()}
-          </div>
-        ) : (
-          // Idle: a physical keycap — raised paper surface, mono type, crisp
-          // border, a hairline shadow under it. Reads as a thing you press.
-          <div
-            className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-md cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent"
-            style={{ boxShadow: "var(--shadow-hair)" }}
-            onClick={startRecording}
-          >
-            {formatKeyCombination(binding.current_binding, osType)}
-          </div>
-        )}
-        <ResetButton
-          onClick={() => resetBinding(shortcutId)}
-          disabled={isUpdating(`binding_${shortcutId}`)}
-        />
-      </div>
+      {control}
     </SettingContainer>
   );
 };

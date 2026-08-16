@@ -22,9 +22,7 @@
 //! 4. One signature covers the whole catalogue (**mix-and-match**).
 
 use chrono::DateTime;
-use grain_sdk::distribution::{
-    Index, Revocations, Roots, EXPIRY_CLOCK_SKEW_SECS,
-};
+use grain_sdk::distribution::{Index, Revocations, Roots, EXPIRY_CLOCK_SKEW_SECS};
 use grain_sdk::DISTRIBUTION_SPEC;
 use minisign_verify::{PublicKey, Signature};
 use sha2::{Digest, Sha256};
@@ -93,7 +91,10 @@ impl std::fmt::Display for TrustError {
             }
             TrustError::BadExpiry(s) => write!(f, "unparseable expiry: {s}"),
             TrustError::HashMismatch { expected, actual } => {
-                write!(f, "artifact hash mismatch: expected {expected}, got {actual}")
+                write!(
+                    f,
+                    "artifact hash mismatch: expected {expected}, got {actual}"
+                )
             }
             TrustError::SpecTooNew { spec } => write!(f, "index spec {spec} needs a newer Grain"),
         }
@@ -118,7 +119,8 @@ pub enum IndexStatus {
 fn verify_with_key(pubkey_b64: &str, data: &[u8], sig_text: &str) -> Result<(), TrustError> {
     let pk = PublicKey::from_base64(pubkey_b64).map_err(|_| TrustError::BadKey)?;
     let sig = Signature::decode(sig_text).map_err(|_| TrustError::BadSignatureFormat)?;
-    pk.verify(data, &sig, false).map_err(|_| TrustError::BadSignature)
+    pk.verify(data, &sig, false)
+        .map_err(|_| TrustError::BadSignature)
 }
 
 /// **Step 1.** Verify and parse `roots.json` against *either* pinned root key.
@@ -249,15 +251,9 @@ mod tests {
     #[test]
     fn seed_index_verifies_and_is_fresh_as_seed() {
         let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
-        let (index, status) = verify_index(
-            &roots,
-            SEED_INDEX.as_bytes(),
-            SEED_INDEX_SIG,
-            None,
-            0,
-            true,
-        )
-        .expect("seed index verify");
+        let (index, status) =
+            verify_index(&roots, SEED_INDEX.as_bytes(), SEED_INDEX_SIG, None, 0, true)
+                .expect("seed index verify");
         assert_eq!(index.spec, 1);
         assert_eq!(status, IndexStatus::Fresh);
     }
@@ -296,9 +292,22 @@ mod tests {
     fn rollback_is_rejected() {
         let roots = verify_roots(SEED_ROOTS.as_bytes(), SEED_ROOTS_SIG).unwrap();
         // seed index version is 1; claim we have already accepted version 5.
-        let err = verify_index(&roots, SEED_INDEX.as_bytes(), SEED_INDEX_SIG, Some(5), 0, false)
-            .expect_err("rollback must be rejected");
-        assert_eq!(err, TrustError::Rollback { stored: 5, offered: 1 });
+        let err = verify_index(
+            &roots,
+            SEED_INDEX.as_bytes(),
+            SEED_INDEX_SIG,
+            Some(5),
+            0,
+            false,
+        )
+        .expect_err("rollback must be rejected");
+        assert_eq!(
+            err,
+            TrustError::Rollback {
+                stored: 5,
+                offered: 1
+            }
+        );
     }
 
     #[test]

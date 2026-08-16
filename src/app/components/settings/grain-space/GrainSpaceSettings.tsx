@@ -24,6 +24,7 @@ const NOTES_CHANGED_EVENT = "grain-space://notes-changed";
 const MODEL_PROGRESS_EVENT = "grain-space://embed-model-progress";
 const MODEL_COMPLETE_EVENT = "grain-space://embed-model-complete";
 const MODEL_ERROR_EVENT = "grain-space://embed-model-error";
+const GRAIN_SPACE_NAME = "Grain Space";
 
 type ModelFlow =
   | { state: "consent" }
@@ -296,7 +297,7 @@ export const GrainSpaceSettings: React.FC<{ embedded?: boolean }> = ({
         <div className="flex items-center justify-between gap-4 px-1">
           <div className="flex items-center gap-2">
             <h1 className="text-[1.7rem] font-semibold tracking-tight leading-none">
-              Grain Space
+              {GRAIN_SPACE_NAME}
             </h1>
             <InfoHint
               text="A local scratch space for spoken and captured notes. Everything stays on this machine as plain files, and the feature holds zero memory while its surfaces are closed. Turning it off unregisters its shortcuts and loads nothing — your notes stay on disk."

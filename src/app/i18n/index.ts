@@ -23,9 +23,10 @@ import {
 // fallback, so it must be in the main chunk either way, and listing it here too
 // would leave rollup warning that one module is both statically and dynamically
 // imported.
-const localeModules = import.meta.glob<{ default: Record<string, unknown> }>(
-  ["./locales/*/translation.json", "!./locales/en/translation.json"],
-);
+const localeModules = import.meta.glob<{ default: Record<string, unknown> }>([
+  "./locales/*/translation.json",
+  "!./locales/en/translation.json",
+]);
 
 const codeOf = (path: string) =>
   path.match(/\.\/locales\/(.+)\/translation\.json/)?.[1];
@@ -66,29 +67,27 @@ export const setLanguage = async (code: string): Promise<void> => {
 };
 
 // Build supported languages list from discovered locales + metadata
-export const SUPPORTED_LANGUAGES = AVAILABLE
-  .map((code) => {
-    const meta = LANGUAGE_METADATA[code];
-    if (!meta) {
-      console.warn(`Missing metadata for locale "${code}" in languages.ts`);
-      return { code, name: code, nativeName: code, priority: undefined };
-    }
-    return {
-      code,
-      name: meta.name,
-      nativeName: meta.nativeName,
-      priority: meta.priority,
-    };
-  })
-  .sort((a, b) => {
-    // Sort by priority first (lower = higher), then alphabetically
-    if (a.priority !== undefined && b.priority !== undefined) {
-      return a.priority - b.priority;
-    }
-    if (a.priority !== undefined) return -1;
-    if (b.priority !== undefined) return 1;
-    return a.name.localeCompare(b.name);
-  });
+export const SUPPORTED_LANGUAGES = AVAILABLE.map((code) => {
+  const meta = LANGUAGE_METADATA[code];
+  if (!meta) {
+    console.warn(`Missing metadata for locale "${code}" in languages.ts`);
+    return { code, name: code, nativeName: code, priority: undefined };
+  }
+  return {
+    code,
+    name: meta.name,
+    nativeName: meta.nativeName,
+    priority: meta.priority,
+  };
+}).sort((a, b) => {
+  // Sort by priority first (lower = higher), then alphabetically
+  if (a.priority !== undefined && b.priority !== undefined) {
+    return a.priority - b.priority;
+  }
+  if (a.priority !== undefined) return -1;
+  if (b.priority !== undefined) return 1;
+  return a.name.localeCompare(b.name);
+});
 
 export type SupportedLanguageCode = string;
 

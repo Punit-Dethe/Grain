@@ -61,7 +61,7 @@ pub(crate) async fn post_process_transcription(
     settings: &AppSettings,
     transcription: &str,
     // [GRAIN] Prompt Record: an instruction the user dictated mid-recording (by
-    // clicking the pill). Layered as the ABSOLUTE highest-priority stage in
+    // using its explicit pill control). Layered as the ABSOLUTE highest-priority stage in
     // `compose_prompt`, above any hard app mode.
     spoken_prompt: Option<&str>,
 ) -> Option<String> {

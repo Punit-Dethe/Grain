@@ -302,7 +302,12 @@ export function Sidebar({
   const openFolderMenu = (node: FolderNode) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setFolderMenu({ path: node.path, name: node.name, x: e.clientX, y: e.clientY });
+    setFolderMenu({
+      path: node.path,
+      name: node.name,
+      x: e.clientX,
+      y: e.clientY,
+    });
   };
 
   // Any click, scroll, or Escape dismisses the collection menu.

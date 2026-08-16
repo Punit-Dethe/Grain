@@ -85,7 +85,9 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
         className={`shrink-0 w-[1.1rem] h-[1.1rem] flex items-center justify-center border-2 transition-colors ${
           smartRotation ? "rounded-[4px]" : "rounded-full"
         } ${
-          selected ? "border-accent bg-accent" : "border-line hover:border-accent"
+          selected
+            ? "border-accent bg-accent"
+            : "border-line hover:border-accent"
         } ${busy ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
       >
         {selected &&

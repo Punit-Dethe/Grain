@@ -34,6 +34,23 @@ Upstream/**        merge=ours
 # locale resolution) that belongs in Rust, where we still merge everything.
 # merge=ours only wins conflicts, so the freeze is enforced by
 # Upstream/frontend_freeze.py, not by this line alone.
+#
+# WARNING — this line cannot tell an upstream merge from one of OUR OWN
+# branches, and it fires on both. Merging a Grain feature branch that edits a
+# file under src/ which main also edited will take main's copy and DISCARD the
+# branch's work, reporting a clean merge while doing it. That is exactly what
+# happened merging ui/grain-2.0 (2026-08-15): app.css lost 1222 lines of new
+# styling and the merge said "Auto-merging ... went well". Note only files
+# changed on BOTH sides are at risk — a merge driver never runs for a one-sided
+# change, so most of a branch comes across untouched, which is what makes the
+# loss easy to miss.
+#
+# For an INTRA-REPO merge, substitute a real three-way merge for this driver:
+#     git -c merge.ours.driver='git merge-file -L ours -L base -L theirs %A %O %B' \
+#         merge --no-ff <branch>
+# Then check the result by arithmetic, not by eye: `git diff HEAD@{1} --stat`
+# should show the branch's additions and `git diff <branch> --stat` should show
+# main's own edits. A file that comes back byte-identical to main is the tell.
 src/** merge=ours
 
 # App identity: com.grain.app, no auto-updater. Review upstream conf

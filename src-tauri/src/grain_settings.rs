@@ -107,6 +107,14 @@ mod tests {
     }
 
     #[test]
+    fn bundled_defaults_keep_push_to_talk_off() {
+        let bundled: serde_json::Value =
+            serde_json::from_str(include_str!("../resources/default_settings.json")).unwrap();
+        assert_eq!(bundled["push_to_talk"], false);
+        assert!(!get_default_settings().push_to_talk);
+    }
+
+    #[test]
     fn debug_output_redacts_api_keys() {
         let mut settings = get_default_settings();
         settings

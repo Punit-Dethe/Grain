@@ -7,7 +7,6 @@ import type {
   AgentPanelPosition,
   AppSettings as Settings,
   AudioDevice,
-  CaptureModeSet,
   GrainSpaceBackend,
   ModelUnloadTimeout,
   Snippet,
@@ -120,6 +119,9 @@ const settingUpdaters: {
     commands.changeSelectedLanguageSetting(value as string),
   overlay_position: (value) =>
     commands.changeOverlayPositionSetting(value as string),
+  pill_skin: (value) => commands.changePillSkinSetting(value as string),
+  pill_show_app_icon: (value) =>
+    commands.changePillShowAppIconSetting(value as boolean),
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
   snippets: (value) => commands.updateSnippets(value as Snippet[]),
@@ -133,14 +135,8 @@ const settingUpdaters: {
     commands.extensionSetEnabled("grain.snippets", value as boolean),
   agent_enabled: (value) =>
     commands.extensionSetEnabled("grain.agent", value as boolean),
-  // [GRAIN] Capture-mode policy. The schema + read-side logic shipped without
-  // persistence commands, so every one of these was a silent optimistic-only
-  // no-op that reverted on the next refetch. Mode-set/primary reconcile the live
-  // shortcuts backend-side; the rest are runtime-only flags.
-  capture_mode_set: (value) =>
-    commands.changeCaptureModeSetSetting(value as CaptureModeSet),
-  capture_primary_mode: (value) =>
-    commands.changeCapturePrimaryModeSetting(value as string),
+  // [GRAIN] The AI shortcut's idle start mode. Runtime-only — every capture
+  // mode is always registered, so this writes a flag without touching hotkeys.
   capture_ai_start_mode: (value) =>
     commands.changeCaptureAiStartModeSetting(value as string),
   capture_end_with_ai: (value) =>
@@ -177,6 +173,8 @@ const settingUpdaters: {
     commands.changeExternalScriptPathSetting(value as string | null),
   clipboard_handling: (value) =>
     commands.changeClipboardHandlingSetting(value as string),
+  paste_catch_enabled: (value) =>
+    commands.changePasteCatchEnabledSetting(value as boolean),
   auto_submit: (value) => commands.changeAutoSubmitSetting(value as boolean),
   auto_submit_key: (value) =>
     commands.changeAutoSubmitKeySetting(value as string),
@@ -375,7 +373,9 @@ export const useSettingsStore = create<SettingsStore>()(
           // before (agent/snippets/capture had no updater). Throw so the catch
           // below rolls the optimistic change back and the failure is visible,
           // rather than quietly pretending the setting was saved.
-          throw new Error(`No persistence handler for setting "${String(key)}"`);
+          throw new Error(
+            `No persistence handler for setting "${String(key)}"`,
+          );
         }
       } catch (error) {
         console.error(`Failed to update setting ${String(key)}:`, error);

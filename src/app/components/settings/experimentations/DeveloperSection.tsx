@@ -19,6 +19,11 @@ const EMPTY_MESSAGE =
   "Load an unpacked extension above to see its live diagnostics.";
 const LIVE_EXTENSION_LABEL = "Live extension";
 const EXTENSION_LABEL = "Extension";
+const LOAD_UNPACKED_LABEL = "Load unpacked";
+const LOAD_UNPACKED_DESCRIPTION =
+  "Local code has the same permission checks as installed extensions.";
+const CHOOSE_FOLDER_LABEL = "Choose folder\u2026";
+const DEV_LABEL = "dev";
 
 const FILTER_CHIPS: readonly LiveLogFilterChip[] = [
   { id: "all", label: "All" },
@@ -75,9 +80,11 @@ export const DeveloperSection: React.FC = () => {
     <div className="rounded-xl border border-line bg-paper-raised">
       <div className="flex items-center justify-between gap-3 px-4 py-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-ink">Load unpacked</div>
+          <div className="text-sm font-medium text-ink">
+            {LOAD_UNPACKED_LABEL}
+          </div>
           <div className="text-xs text-ink-faint">
-            Local code has the same permission checks as installed extensions.
+            {LOAD_UNPACKED_DESCRIPTION}
           </div>
         </div>
         <button
@@ -89,7 +96,7 @@ export const DeveloperSection: React.FC = () => {
           className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs text-ink hover:border-ink-faint disabled:opacity-50 cursor-pointer"
         >
           <FolderOpen width={13} height={13} />
-          Choose folder…
+          {CHOOSE_FOLDER_LABEL}
         </button>
       </div>
 
@@ -112,13 +119,15 @@ export const DeveloperSection: React.FC = () => {
                 </div>
               </div>
               <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                dev
+                {DEV_LABEL}
               </span>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() =>
-                  void run(() => invoke("extension_unload_dev", { id: entry.id }))
+                  void run(() =>
+                    invoke("extension_unload_dev", { id: entry.id }),
+                  )
                 }
                 className="text-ink-faint hover:text-ink disabled:opacity-50 cursor-pointer"
                 aria-label={`Unload ${entry.id}`}

@@ -129,8 +129,20 @@ mod tests {
     fn agrees_with_tray() {
         let codes = available();
         for tag in [
-            "zh-Hant-TW", "zh-Hant-HK", "zh-HK", "zh-MO", "ZH-TW", "zh_Hant_TW", "zh-Hans-HK",
-            "yue-Hant-HK", "yue", "zh-CN", "en-GB", "de-AT", "ja", "sw-KE",
+            "zh-Hant-TW",
+            "zh-Hant-HK",
+            "zh-HK",
+            "zh-MO",
+            "ZH-TW",
+            "zh_Hant_TW",
+            "zh-Hans-HK",
+            "yue-Hant-HK",
+            "yue",
+            "zh-CN",
+            "en-GB",
+            "de-AT",
+            "ja",
+            "sw-KE",
         ] {
             let ours = resolve(tag, &codes).unwrap_or_else(|| "en".to_string());
             let theirs = crate::tray_i18n::get_tray_translations(Some(tag.to_string()));

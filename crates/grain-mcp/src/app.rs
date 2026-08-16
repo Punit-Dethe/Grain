@@ -112,7 +112,9 @@ impl AppLink {
             let Ok(value) = serde_json::from_str::<Value>(&txt) else {
                 continue;
             };
-            let Some(res) = value.get("res") else { continue };
+            let Some(res) = value.get("res") else {
+                continue;
+            };
             if res.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }

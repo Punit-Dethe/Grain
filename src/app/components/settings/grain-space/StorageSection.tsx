@@ -172,7 +172,9 @@ const Choice: React.FC<{
     }`}
   >
     <div className="flex items-center gap-2">
-      <span className={selected ? "text-accent" : "text-ink-faint"}>{icon}</span>
+      <span className={selected ? "text-accent" : "text-ink-faint"}>
+        {icon}
+      </span>
       <span className="text-sm font-medium text-ink">{title}</span>
     </div>
     <p className="mt-1.5 text-xs text-ink-soft leading-relaxed">{blurb}</p>

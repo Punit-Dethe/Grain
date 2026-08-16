@@ -26,9 +26,11 @@ export const AppLanguageSelector: React.FC<AppLanguageSelectorProps> =
     // The stored preference is already a resolved code — the user picked it
     // from this very list — so this is a membership test, not a resolution.
     // Resolving a raw tag is the backend's job (i18n/index.ts: resolveLocale).
-    const currentLanguage = (isSupportedLanguage(settings?.app_language)
-      ? settings!.app_language!
-      : i18n.language) as SupportedLanguageCode;
+    const currentLanguage = (
+      isSupportedLanguage(settings?.app_language)
+        ? settings!.app_language!
+        : i18n.language
+    ) as SupportedLanguageCode;
 
     const languageOptions = SUPPORTED_LANGUAGES.map((lang) => ({
       value: lang.code,

@@ -487,6 +487,12 @@ async fn handle(stream: TcpStream, ctx: Arc<AppContext>, app: AppHandle) {
         if let Some(frame) = crate::pill_theme::welcome_frame(&app) {
             let _ = out_tx.send(Message::Text(frame.into()));
         }
+        // [GRAIN] …and with the built-in SKIN it should wear. Same reasoning as
+        // the theme above (the pill connects after any broadcast), but this one
+        // also decides the window's SIZE, so it must land before the first show.
+        if let Some(frame) = crate::pill_skin::welcome_frame(&app) {
+            let _ = out_tx.send(Message::Text(frame.into()));
+        }
         None
     } else {
         None

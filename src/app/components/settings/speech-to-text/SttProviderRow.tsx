@@ -64,9 +64,7 @@ export const SttProviderRow: React.FC<SttProviderRowProps> = ({
             {provider.name}
           </span>
           {!hasKey && (
-            <span
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-medium bg-status-error/15 text-status-error shrink-0"
-            >
+            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.65rem] font-medium bg-status-error/15 text-status-error shrink-0">
               <KeyRound className="w-3 h-3" />
               {t("settings.speechToText.noKey")}
             </span>
@@ -75,7 +73,9 @@ export const SttProviderRow: React.FC<SttProviderRowProps> = ({
             <span className="text-line font-medium shrink-0">|</span>
             <div className="flex items-center gap-1.5 text-xs text-ink-faint font-mono truncate">
               <span className="truncate">{provider.base_url}</span>
-              {provider.model ? <span className="shrink-0">· {provider.model}</span> : null}
+              {provider.model ? (
+                <span className="shrink-0">· {provider.model}</span>
+              ) : null}
             </div>
           </div>
         </div>

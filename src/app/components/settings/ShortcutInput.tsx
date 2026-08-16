@@ -8,6 +8,8 @@ interface ShortcutInputProps {
   grouped?: boolean;
   shortcutId: string;
   disabled?: boolean;
+  /** Render only the keycap control (no label row). */
+  bare?: boolean;
 }
 
 /**

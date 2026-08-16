@@ -171,7 +171,14 @@ def ui_sources(tree: str, include_contract_plumbing: bool = False) -> str:
             continue
         seen.add(path)
         source = read(path)
-        relative = os.path.relpath(path, os.path.join(ROOT, "src")).replace("\\", "/")
+        # Relative to the TREE, not to `src/`. The three names below are written
+        # tree-relative ("bindings.ts"), and when the frontend moved from `src/`
+        # to `src/app/` this started producing "app/bindings.ts" instead — so no
+        # exclusion ever matched and the generated bindings, which mention every
+        # AppSettings field, were admitted as evidence. That made this whole gate
+        # vacuous: every field looked reachable because its own type declaration
+        # was being counted as a UI control.
+        relative = os.path.relpath(path, tree_root).replace("\\", "/")
         is_generated_bindings = relative == "bindings.ts"
         is_contract_plumbing = (
             relative == "hooks/useSettings.ts"

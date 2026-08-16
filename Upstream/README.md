@@ -11,27 +11,27 @@ guards), and the procedures for the common case (reviewing the
 
 ## Documentation
 
-| File | Purpose |
-|---|---|
-| [UPSTREAM.md](UPSTREAM.md) | The runbook. Single source of truth for upstream syncs. |
-| [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) | Per-file map of deliberate Grain/Handy divergence; which side wins each conflict. |
-| [UPSTREAMABLE.md](UPSTREAMABLE.md) | Grain-architecture fixes that must NOT go upstream, plus candidate extension hooks. |
-| `merge-report.md` | CI-generated (gitignored): the next sync's conflict surface, written into the CI job summary. |
+| File                                             | Purpose                                                                                       |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| [UPSTREAM.md](UPSTREAM.md)                       | The runbook. Single source of truth for upstream syncs.                                       |
+| [UPSTREAM-DIVERGENCE.md](UPSTREAM-DIVERGENCE.md) | Per-file map of deliberate Grain/Handy divergence; which side wins each conflict.             |
+| [UPSTREAMABLE.md](UPSTREAMABLE.md)               | Grain-architecture fixes that must NOT go upstream, plus candidate extension hooks.           |
+| `merge-report.md`                                | CI-generated (gitignored): the next sync's conflict surface, written into the CI job summary. |
 
 ## Tooling
 
-| File | Purpose |
-|---|---|
-| `sync_upstream.py` | Rebuilds the commit ledger (`data.json`, verdict.py's input) and audits ancestry drift. |
-| `ratchet.py` | Divergence ratchet — enforces per-file line budgets vs the merge base. |
-| `port_audit.py` | Port audit — flags upstream commits that touched an inert/relocated/parallel file (per `relocations.json`), so a fix that merged into the wrong (upstream-shaped) file can't silently miss the Grain code that replaces it. The one check a diff structurally cannot be. |
-| `relocations.json` | Machine-readable map of upstream files → the Grain files that must carry their fixes. The audit's input; keep in step with `UPSTREAM-DIVERGENCE.md`. |
-| `frontend_freeze.py` | Frontend freeze guard — `src/` is Grain-owned; fails if upstream files land there. |
-| `frontend_allow.json` | The still-shared frontend files. May shrink, never grow. |
-| `verdict.py` | Records human verdicts (`Ignored`, cherry-picks, notes) on upstream commits. |
-| `rerere_cache.py` | Versions git's rerere cache through `rr-cache/` so resolutions replay everywhere. |
-| `budget.json` | Ratchet budgets for every Handy-derived file. |
-| `verdicts.json` | The one human-owned ledger input. |
+| File                  | Purpose                                                                                                                                                                                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sync_upstream.py`    | Rebuilds the commit ledger (`data.json`, verdict.py's input) and audits ancestry drift.                                                                                                                                                                                  |
+| `ratchet.py`          | Divergence ratchet — enforces per-file line budgets vs the merge base.                                                                                                                                                                                                   |
+| `port_audit.py`       | Port audit — flags upstream commits that touched an inert/relocated/parallel file (per `relocations.json`), so a fix that merged into the wrong (upstream-shaped) file can't silently miss the Grain code that replaces it. The one check a diff structurally cannot be. |
+| `relocations.json`    | Machine-readable map of upstream files → the Grain files that must carry their fixes. The audit's input; keep in step with `UPSTREAM-DIVERGENCE.md`.                                                                                                                     |
+| `frontend_freeze.py`  | Frontend freeze guard — `src/` is Grain-owned; fails if upstream files land there.                                                                                                                                                                                       |
+| `frontend_allow.json` | The still-shared frontend files. May shrink, never grow.                                                                                                                                                                                                                 |
+| `verdict.py`          | Records human verdicts (`Ignored`, cherry-picks, notes) on upstream commits.                                                                                                                                                                                             |
+| `rerere_cache.py`     | Versions git's rerere cache through `rr-cache/` so resolutions replay everywhere.                                                                                                                                                                                        |
+| `budget.json`         | Ratchet budgets for every Handy-derived file.                                                                                                                                                                                                                            |
+| `verdicts.json`       | The one human-owned ledger input.                                                                                                                                                                                                                                        |
 
 ## Generated (gitignored build products)
 

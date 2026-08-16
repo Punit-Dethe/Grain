@@ -140,7 +140,9 @@ const SURFACE_DESTINATIONS: Record<string, ExtensionDestination> = {
 };
 
 const ANCHOR_SURFACES = new Set(
-  Object.keys(SURFACE_DESTINATIONS).filter((surface) => surface.endsWith(".after")),
+  Object.keys(SURFACE_DESTINATIONS).filter((surface) =>
+    surface.endsWith(".after"),
+  ),
 );
 
 /** Every surface an installed extension extends: slots it claims, plus the
@@ -170,9 +172,7 @@ export function extensionDestination(
   card: Pick<ExtensionCard, "id" | "has_detail"> & { slots?: string[] },
   sections: ExtensionSettingsSection[],
 ): ExtensionDestination {
-  const destination = destinationForSurfaces(
-    installedSurfaces(card, sections),
-  );
+  const destination = destinationForSurfaces(installedSurfaces(card, sections));
   if (destination) return destination;
 
   // Rows that anchor nowhere are the extension's own settings, so it gets a

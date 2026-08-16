@@ -7,11 +7,11 @@
 export const commands = {
 /**
  * Is there a newer release?
- *
+ * 
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
- *
+ * 
  * Returns `Ok(None)` both when the app is current and when checks are off — to
  * every caller those are the same answer ("nothing to show"), and reporting a
  * disabled setting as an error would surface it as a failure in the UI.
@@ -23,6 +23,14 @@ async checkForUpdate(force: boolean) : Promise<Result<UpdateInfo | null, string>
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
+},
+/**
+ * Return already-discovered update metadata without touching the network.
+ * This lets a WebView created by the backend update check render the notice on
+ * its first frame instead of waiting through a second launch delay.
+ */
+async getCachedUpdate() : Promise<UpdateInfo | null> {
+    return await TAURI_INVOKE("get_cached_update");
 },
 /**
  * Download and install the pending update, then restart into it.
@@ -94,6 +102,89 @@ async changeDefaultPanelSetting(panel: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * [GRAIN] The four editable profiles, in display order.
+ */
+async contextProfiles() : Promise<ContextProfileInfo[]> {
+    return await TAURI_INVOKE("context_profiles");
+},
+/**
+ * [GRAIN] Set (or clear) one profile's instruction.
+ * 
+ * Passing text equal to the default CLEARS the override rather than storing a
+ * copy of it. That is what keeps an untouched-in-effect profile tracking the
+ * shipped wording as it improves, instead of being pinned by a user who opened
+ * the editor, changed their mind, and typed it back.
+ */
+async setContextProfileInstruction(id: string, instruction: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_context_profile_instruction", { id, instruction }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
+ * 
+ * Async and one host per call, so the settings UI paints immediately and each
+ * icon appears as it resolves. A batch command would make the whole row wait
+ * for the slowest site — and these are cached after the first fetch, so the
+ * call is nearly free on every subsequent open.
+ */
+async siteIcon(host: string) : Promise<string | null> {
+    return await TAURI_INVOKE("site_icon", { host });
+},
+/**
+ * [GRAIN] Every application this user can launch, for the profile app picker.
+ * 
+ * Async and off the runtime's threads: this walks a Shell namespace and reads
+ * two properties per entry, which on a well-populated machine is a couple of
+ * hundred milliseconds. The picker asks once when it opens and filters the
+ * result locally, so a person typing never waits on this.
+ */
+async installedApps() : Promise<InstalledApp[]> {
+    return await TAURI_INVOKE("installed_apps");
+},
+/**
+ * [GRAIN] An installed application's icon as a PNG data URL, or `None`.
+ * 
+ * One app per call for the same reason [`site_icon`] is: the list paints at
+ * once and each icon lands as it resolves, rather than the whole picker waiting
+ * on the slowest entry.
+ */
+async appIcon(id: string) : Promise<string | null> {
+    return await TAURI_INVOKE("app_icon", { id });
+},
+/**
+ * [GRAIN] The user's own context profiles, as stored.
+ * 
+ * Read back through a command rather than off the settings blob so the UI sees
+ * the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
+ * showing what was typed instead of what was saved is how a user ends up
+ * wondering why their profile never fires.
+ */
+async contextCustomProfiles() : Promise<CustomContextProfile[]> {
+    return await TAURI_INVOKE("context_custom_profiles");
+},
+/**
+ * [GRAIN] Replace the whole set of user-made context profiles.
+ * 
+ * Whole-set rather than per-profile because the UI edits a list and the list is
+ * small; a partial update API would only add ordering questions. Targets are
+ * normalised here rather than trusted, since precedence and icon eligibility
+ * both key off them: an application is matched against a lowercased exe stem,
+ * and a website against a bare host, so a user who types `Figma.exe` or
+ * `https://figma.com/files` gets what they meant.
+ */
+async updateContextCustomProfiles(profiles: CustomContextProfile[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("update_context_custom_profiles", { profiles }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async changeStartHiddenSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_start_hidden_setting", { enabled }) };
@@ -129,6 +220,33 @@ async changeSelectedLanguageSetting(language: string) : Promise<Result<null, str
 async changeOverlayPositionSetting(position: string) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_overlay_position_setting", { position }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
+ * (an extension's colours), a skin changes the pill's geometry — so the pill
+ * resizes its own window on receipt. An unknown name resolves to the default
+ * rather than erroring: the user must never end up with no pill.
+ */
+async changePillSkinSetting(skin: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pill_skin_setting", { skin }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Pill identity: show the icon of the app being dictated into in place
+ * of the pill's state dot. Takes effect on the next session — the icon is
+ * resolved at record-start, never held between sessions.
+ */
+async changePillShowAppIconSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_pill_show_app_icon_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -920,34 +1038,8 @@ async updateSnippets(snippets: Snippet[]) : Promise<Result<null, string>> {
 }
 },
 /**
- * [GRAIN] How many capture shortcuts are registered (Single vs All). The schema
- * and read-side policy shipped without a way to persist a change from the UI;
- * this is that writer. Reconciles the live hotkeys so the choice takes effect
- * without a restart.
- */
-async changeCaptureModeSetSetting(set: CaptureModeSet) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_capture_mode_set_setting", { set }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] The one capture mode that owns the shortcut under `Single`. Changing
- * it moves the live hotkey from the old primary to the new one.
- */
-async changeCapturePrimaryModeSetting(mode: string) : Promise<Result<null, string>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("change_capture_primary_mode_setting", { mode }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * [GRAIN] Which mode the AI shortcut starts from idle (only meaningful under
- * `All`). Runtime-only — no capture key is registered or dropped by this.
+ * [GRAIN] Which mode the AI shortcut starts from idle. Runtime-only — every
+ * capture mode is always registered, so no key is added or dropped by this.
  */
 async changeCaptureAiStartModeSetting(mode: string) : Promise<Result<null, string>> {
     try {
@@ -1079,6 +1171,19 @@ async changeAgentPanelPositionSetting(position: AgentPanelPosition) : Promise<Re
 async changeScrapThatEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_scrap_that_enabled_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Toggle Paste Catch, the missed-text-field clipboard safety net.
+ * Turning it off also releases any active hold so the clipboard, temporary
+ * delivery shortcut, and native pill notice do not outlive the preference.
+ */
+async changePasteCatchEnabledSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_paste_catch_enabled_setting", { enabled }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2307,6 +2412,7 @@ recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
+updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
 historyUpdatePayload: "history-update-payload",
@@ -2325,6 +2431,7 @@ recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
+updateAvailable: "update-available",
 updateDownloadProgress: "update-download-progress"
 })
 
@@ -2410,18 +2517,9 @@ default_panel?: DefaultPanel;
  */
 theme?: ThemeMode; 
 /**
- * [GRAIN] How many capture shortcuts are registered. See `CaptureModeSet`.
- */
-capture_mode_set?: CaptureModeSet; 
-/**
- * [GRAIN] The capture mode that owns the one shortcut under
- * `CaptureModeSet::Single`. One of `CAPTURE_MODE_IDS`.
- */
-capture_primary_mode?: string; 
-/**
- * [GRAIN] Which mode the AI shortcut starts when pressed from idle. Under
- * `Single` this follows `capture_primary_mode`; it is only independently
- * meaningful when all three modes are live.
+ * [GRAIN] Which mode the AI shortcut starts when pressed from idle. All
+ * three capture modes are always live, so this is a free choice among
+ * `CAPTURE_MODE_IDS`.
  */
 capture_ai_start_mode?: string; 
 /**
@@ -2446,7 +2544,19 @@ selected_asr_model?: string; always_on_microphone?: boolean; selected_microphone
  * Which input channel to use on the selected microphone device.
  * None means "average all channels" (original behavior).
  */
-selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
+selected_channel?: number | null; clamshell_microphone?: string | null; selected_output_device?: string | null; translate_to_english?: boolean; selected_language?: string; overlay_position?: OverlayPosition; 
+/**
+ * [GRAIN] Which built-in look the collapsed pill wears (form, not colour —
+ * see `PillSkin`). Defaults to the smooth waveform.
+ */
+pill_skin?: PillSkin; 
+/**
+ * [GRAIN] Show the icon of the app being dictated into, in place of the
+ * pill's state dot. ON while the behaviour is being developed; it will
+ * later be folded into Context Awareness and shown only for surfaces Grain
+ * actually differentiates.
+ */
+pill_show_app_icon?: boolean; debug_mode?: boolean; log_level?: LogLevel; custom_words?: string[]; 
 /**
  * [GRAIN] Voice snippets (Experimentations tab): trigger phrase → expansion.
  */
@@ -2520,6 +2630,19 @@ rolling_live_preview?: boolean;
  */
 context_awareness_enabled?: boolean; 
 /**
+ * [GRAIN] Per-profile instruction edits, stored SPARSELY — see
+ * [`ContextProfileInstruction`]. Empty on a fresh install and for anyone
+ * who never edits a profile, which is the common case, so this costs one
+ * empty `Vec` in `AppSettings` and nothing on the prompt path.
+ */
+context_profile_instructions?: ContextProfileInstruction[]; 
+/**
+ * [GRAIN] User-made context profiles. These OUTRANK the built-in category
+ * for any app or site they claim — see [`CustomContextProfile`]. Empty for
+ * everyone who has not made one, which is the default.
+ */
+context_custom_profiles?: CustomContextProfile[]; 
+/**
  * [GRAIN] Extension platform (SPEC §10.1): the Snippets built-in extension's
  * switch. OFF by default for NEW installs; the one-time import in
  * `load_settings` turns it on for existing users who already have snippets
@@ -2534,6 +2657,21 @@ snippets_enabled?: boolean;
  * available).
  */
 agent_enabled?: boolean; 
+/**
+ * [GRAIN] Paste Catch: when a dictation paste provably misses the text
+ * field, hold the transcript on the clipboard behind a visible offer
+ * instead of letting the restore destroy it. ON by default — a missed
+ * paste currently loses the transcript outright, and the detection only
+ * fires on positive evidence, so the failure mode is "no offer shown".
+ */
+paste_catch_enabled?: boolean; 
+/**
+ * [GRAIN] How long the caught transcript stays on the clipboard before the
+ * clipboard is handed back exactly as Handy would have. Long enough to
+ * notice the offer and reach a field; short enough that holding someone
+ * else's clipboard stays defensible.
+ */
+paste_catch_hold_ms?: number; 
 /**
  * [GRAIN] One-time marker for the extension-platform settings import above
  * (SPEC §10.1 upgrade rule). False in files written before the platform;
@@ -2667,29 +2805,80 @@ export type AudioDevice = { index: string; name: string; is_default: boolean }
 export type AutoSubmitKey = "enter" | "ctrl_enter" | "cmd_enter"
 export type AvailableAccelerators = { transcribe: string[]; gpu_devices: GpuDeviceOption[] }
 export type BindingResponse = { success: boolean; binding: ShortcutBinding | null; error: string | null }
-/**
- * [GRAIN] How many capture modes are live at once.
- * 
- * Grain ships three ways to capture — Standard, Flow and Live — and used to
- * register a global shortcut for each, plus a fourth to send a transcript to
- * AI. Four keys to remember before you have said a word is the single biggest
- * source of friction in the product, and most people only ever use one mode.
- * 
- * `Single` keeps exactly one capture shortcut registered. The other modes are
- * not disabled or removed — they are one dropdown away, and their bindings
- * stay in settings untouched — they simply stop occupying a global hotkey the
- * user has to hold in their head.
- */
-export type CaptureModeSet = 
-/**
- * One capture shortcut, chosen by `capture_primary_mode`.
- */
-"single" | 
-/**
- * All three capture shortcuts registered, as Grain has always done.
- */
-"all"
 export type ClipboardHandling = "dont_modify" | "copy_to_clipboard"
+/**
+ * [GRAIN] One context-awareness profile, as the settings UI needs it.
+ * 
+ * Carries BOTH texts on purpose. The UI has to be able to show the effective
+ * instruction, tell whether it has been edited, and put the shipped wording
+ * back — and deriving "edited" from a copy of the defaults kept in TypeScript
+ * is how the two drift apart. Rust ships the text; the frontend owns only the
+ * label and the icon.
+ */
+export type ContextProfileInfo = { 
+/**
+ * `email` / `work` / `casual` / `technical`.
+ */
+id: string; 
+/**
+ * What is sent to the model today: the user's edit, or the default.
+ */
+instruction: string; 
+/**
+ * The shipped wording, for "reset to default".
+ */
+default_instruction: string; 
+/**
+ * Whether the user has edited this profile. An override trimmed to empty
+ * counts as edited — "this profile says nothing" is a deliberate choice,
+ * not an absent one.
+ */
+edited: boolean; 
+/**
+ * A few real hosts this profile covers, for the card's icon stack. Derived
+ * from the site table, so the card cannot claim a site the profile does
+ * not actually apply to.
+ */
+sample_sites: string[] }
+/**
+ * [GRAIN] A user's edit to one context-awareness profile's instruction.
+ * 
+ * **Overrides only.** A profile the user has never touched does not appear
+ * here at all, and keeps using the instruction compiled into the binary. That
+ * is the whole reason this is a sparse list rather than a full copy of the
+ * four texts: storing them all would freeze every user on whatever wording
+ * shipped the day they first opened the tab, and improvements to the defaults
+ * would then only ever reach people who had never looked at the feature.
+ * 
+ * `id` is [`AppCategory::profile_id`] — "email" / "work" / "casual" /
+ * "technical". An unknown id is ignored rather than rejected, so a settings
+ * file written by a newer build (or a profile that is later renamed) degrades
+ * to the default instead of failing to load.
+ */
+export type ContextProfileInstruction = { id: string; instruction: string }
+/**
+ * [GRAIN] One app or website a custom context profile claims.
+ * 
+ * `value` is an executable stem for `application` (lowercased, no extension,
+ * e.g. `figma`) and a bare host for `website` (no scheme, no path, e.g.
+ * `figma.com`). Anything else is ignored at match time rather than rejected at
+ * write time — a target that names nothing simply never matches.
+ */
+export type ContextProfileTarget = { 
+/**
+ * `application` or `website`.
+ */
+kind: string; value: string }
+/**
+ * [GRAIN] A profile the user made, which OUTRANKS the built-in category for
+ * every app and site it claims.
+ * 
+ * The precedence is the whole point: naming a surface is a statement that the
+ * built-in guess is wrong for it. A profile is allowed exactly one target —
+ * that is how "this one app gets its own instruction" is expressed, and it
+ * needs no separate concept.
+ */
+export type CustomContextProfile = { id: string; title: string; instruction: string; targets?: ContextProfileTarget[] }
 export type CustomSounds = { start: boolean; stop: boolean }
 export type DefaultPanel = "settings" | "quick_panel"
 /**
@@ -2855,6 +3044,27 @@ export type ImplementationChangeResult = { success: boolean;
  * List of binding IDs that were reset to defaults due to incompatibility
  */
 reset_bindings: string[] }
+/**
+ * One launchable application.
+ */
+export type InstalledApp = { 
+/**
+ * What the Start menu calls it.
+ */
+name: string; 
+/**
+ * The identity a context profile stores: a lowercased executable stem for a
+ * desktop app (`code`), an AppUserModelID for a packaged one
+ * (`Claude_pzs8sxrjxfjjc!Claude`). Matched against the foreground window.
+ */
+target: string; 
+/**
+ * What to ask the Shell for a picture of: the executable's full path, or
+ * the AppUserModelID. Distinct from `target` because matching wants the
+ * least-specific form (a stem, so an app that moves still matches) and
+ * icons want the most specific one.
+ */
+icon_id: string }
 export type JsonValue = null | boolean | number | string | JsonValue[] | Partial<{ [key in string]: JsonValue }>
 export type KeyboardDiagnosticReport = { secure_input_enabled: boolean; culprit_pid: number | null; culprit_name: string | null; 
 /**
@@ -2988,7 +3198,7 @@ readonly: boolean }
 export type OnboardingMicrophoneLevel = { levels: number[]; rms_dbfs: number; peak_dbfs: number }
 /**
  * The single editorially "best" model in each onboarding family.
- *
+ * 
  * These are full registry IDs (repo + default quant filename), ready to pass
  * to the existing download/select commands. Keeping the pair behind a command
  * lets us update the defaults without teaching the frontend catalog internals.
@@ -3018,7 +3228,7 @@ export type OnboardingStep =
 /**
  * Short demonstration of Standard, Flow, and Streaming for a new user.
  */
-"modes" |
+"modes" | 
 /**
  * Model picker. Only ever reached by a genuinely new user, and only after
  * the capture-mode tour.
@@ -3027,11 +3237,11 @@ export type OnboardingStep =
 /**
  * Real capture against the models installed during onboarding.
  */
-"try" |
+"try" | 
 /**
  * Choose the everyday capture mode and configure its real global shortcut.
  */
-"shortcuts" |
+"shortcuts" | 
 /**
  * Nothing in the way; show the app.
  */
@@ -3057,6 +3267,21 @@ export type PaginatedHistory = { entries: HistoryEntry[]; has_more: boolean }
 export type PasteError = null
 export type PasteMethod = "ctrl_v" | "direct" | "none" | "shift_insert" | "ctrl_shift_v" | "external_script"
 export type PermissionAccess = "allowed" | "denied" | "unknown"
+/**
+ * The collapsed pill's body look. Adding a variant here is the ONLY thing a new
+ * pill look must touch in the protocol; the renderer owns everything else.
+ */
+export type PillSkin = 
+/**
+ * **Default.** A compact capsule with a smooth, centre-mirrored waveform —
+ * the quiet, professional look. 20% smaller than [`PillSkin::Matrix`].
+ */
+"wave" | 
+/**
+ * The original dot-matrix aura: an 25x8 grid of dots whose density tracks
+ * the voice. Kept as a selectable look, no longer the default.
+ */
+"matrix"
 export type PostProcessProvider = { id: string; label: string; base_url: string; allow_base_url_edit?: boolean; models_endpoint?: string | null; supports_structured_output?: boolean; 
 /**
  * [GRAIN] Included in smart rotation when true. Defaults true so existing
@@ -3368,6 +3593,11 @@ export type TodoTag = { text: string; done: boolean }
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * A newly discovered release. The cache covers WebViews created after this
+ * event; the event updates an already-open sidebar (including manual checks).
+ */
+export type UpdateAvailable = { update: UpdateInfo }
 /**
  * Download progress for an update, so a 100 MB installer is not a dead button.
  */

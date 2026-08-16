@@ -1597,7 +1597,9 @@ pub fn migrate_externalized_builtins(app: &AppHandle) {
     let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() else {
         return;
     };
-    let Some(rec) = reg.record(CENTER) else { return };
+    let Some(rec) = reg.record(CENTER) else {
+        return;
+    };
     if rec.dev.is_some() {
         return; // a dev project owns it — leave it alone
     }

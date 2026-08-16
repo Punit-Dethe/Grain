@@ -10,7 +10,7 @@
 //! path in `lib.rs`'s `collect_commands!` differs.
 
 use crate::settings;
-use crate::settings::DefaultPanel;
+use crate::settings::{DefaultPanel, PillSkin};
 use crate::shortcut::{register_shortcut, unregister_shortcut};
 use log::warn;
 use tauri::{AppHandle, Manager};
@@ -32,6 +32,281 @@ pub struct DetectedApp {
     pub url_host: Option<String>,
 }
 
+/// [GRAIN] One context-awareness profile, as the settings UI needs it.
+///
+/// Carries BOTH texts on purpose. The UI has to be able to show the effective
+/// instruction, tell whether it has been edited, and put the shipped wording
+/// back — and deriving "edited" from a copy of the defaults kept in TypeScript
+/// is how the two drift apart. Rust ships the text; the frontend owns only the
+/// label and the icon.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct ContextProfileInfo {
+    /// `email` / `work` / `casual` / `technical`.
+    pub id: String,
+    /// What is sent to the model today: the user's edit, or the default.
+    pub instruction: String,
+    /// The shipped wording, for "reset to default".
+    pub default_instruction: String,
+    /// Whether the user has edited this profile. An override trimmed to empty
+    /// counts as edited — "this profile says nothing" is a deliberate choice,
+    /// not an absent one.
+    pub edited: bool,
+    /// A few real hosts this profile covers, for the card's icon stack. Derived
+    /// from the site table, so the card cannot claim a site the profile does
+    /// not actually apply to.
+    pub sample_sites: Vec<String>,
+}
+
+/// How many icons the card stacks. Beyond three the overlap stops reading as
+/// distinct icons and starts reading as a smudge.
+const SAMPLE_SITES: usize = 3;
+
+/// [GRAIN] The four editable profiles, in display order.
+#[tauri::command]
+#[specta::specta]
+pub fn context_profiles(app: AppHandle) -> Vec<ContextProfileInfo> {
+    let settings = settings::get_settings(&app);
+    crate::context_detect::PROFILE_IDS
+        .iter()
+        .filter_map(|id| {
+            let category = crate::context_detect::AppCategory::from_profile_id(id)?;
+            let default_instruction = category.default_instruction().unwrap_or_default();
+            Some(ContextProfileInfo {
+                id: (*id).to_string(),
+                instruction: category
+                    .instruction(&settings)
+                    .unwrap_or_default()
+                    .to_string(),
+                default_instruction: default_instruction.to_string(),
+                edited: settings
+                    .context_profile_instructions
+                    .iter()
+                    .any(|o| o.id == *id),
+                sample_sites: crate::context_detect::sample_sites(category, SAMPLE_SITES),
+            })
+        })
+        .collect()
+}
+
+/// [GRAIN] Set (or clear) one profile's instruction.
+///
+/// Passing text equal to the default CLEARS the override rather than storing a
+/// copy of it. That is what keeps an untouched-in-effect profile tracking the
+/// shipped wording as it improves, instead of being pinned by a user who opened
+/// the editor, changed their mind, and typed it back.
+#[tauri::command]
+#[specta::specta]
+pub fn set_context_profile_instruction(
+    app: AppHandle,
+    id: String,
+    instruction: String,
+) -> Result<(), String> {
+    let Some(category) = crate::context_detect::AppCategory::from_profile_id(&id) else {
+        return Err(format!("unknown context profile '{id}'"));
+    };
+    let mut settings = settings::get_settings(&app);
+    settings.context_profile_instructions.retain(|o| o.id != id);
+    if instruction.trim() != category.default_instruction().unwrap_or_default().trim() {
+        settings
+            .context_profile_instructions
+            .push(settings::ContextProfileInstruction { id, instruction });
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] A supported site's favicon as a PNG data URL, or `None`.
+///
+/// Async and one host per call, so the settings UI paints immediately and each
+/// icon appears as it resolves. A batch command would make the whole row wait
+/// for the slowest site — and these are cached after the first fetch, so the
+/// call is nearly free on every subsequent open.
+#[tauri::command]
+#[specta::specta]
+pub async fn site_icon(app: AppHandle, host: String) -> Option<String> {
+    crate::pill_icon::site_icon_data_url(&app, &host).await
+}
+
+/// [GRAIN] Every application this user can launch, for the profile app picker.
+///
+/// Async and off the runtime's threads: this walks a Shell namespace and reads
+/// two properties per entry, which on a well-populated machine is a couple of
+/// hundred milliseconds. The picker asks once when it opens and filters the
+/// result locally, so a person typing never waits on this.
+#[tauri::command]
+#[specta::specta]
+pub async fn installed_apps() -> Vec<crate::context_detect::app_catalog::InstalledApp> {
+    tauri::async_runtime::spawn_blocking(crate::context_detect::app_catalog::installed_apps)
+        .await
+        .unwrap_or_default()
+}
+
+/// [GRAIN] An installed application's icon as a PNG data URL, or `None`.
+///
+/// One app per call for the same reason [`site_icon`] is: the list paints at
+/// once and each icon lands as it resolves, rather than the whole picker waiting
+/// on the slowest entry.
+#[tauri::command]
+#[specta::specta]
+pub async fn app_icon(app: AppHandle, id: String) -> Option<String> {
+    crate::pill_icon::app_icon_data_url(&app, id).await
+}
+
+/// [GRAIN] The user's own context profiles, as stored.
+///
+/// Read back through a command rather than off the settings blob so the UI sees
+/// the NORMALISED targets — a pasted URL is stored as a bare host, and an editor
+/// showing what was typed instead of what was saved is how a user ends up
+/// wondering why their profile never fires.
+#[tauri::command]
+#[specta::specta]
+pub fn context_custom_profiles(app: AppHandle) -> Vec<settings::CustomContextProfile> {
+    settings::get_settings(&app).context_custom_profiles
+}
+
+/// [GRAIN] Replace the whole set of user-made context profiles.
+///
+/// Whole-set rather than per-profile because the UI edits a list and the list is
+/// small; a partial update API would only add ordering questions. Targets are
+/// normalised here rather than trusted, since precedence and icon eligibility
+/// both key off them: an application is matched against a lowercased exe stem,
+/// and a website against a bare host, so a user who types `Figma.exe` or
+/// `https://figma.com/files` gets what they meant.
+#[tauri::command]
+#[specta::specta]
+pub fn update_context_custom_profiles(
+    app: AppHandle,
+    profiles: Vec<settings::CustomContextProfile>,
+) -> Result<(), String> {
+    let profiles: Vec<settings::CustomContextProfile> = profiles
+        .into_iter()
+        .filter(|p| !p.title.trim().is_empty())
+        .map(|mut p| {
+            p.title = p.title.trim().to_string();
+            p.instruction = p.instruction.trim().to_string();
+            p.targets = p
+                .targets
+                .into_iter()
+                .filter_map(|mut t| {
+                    t.value = match t.kind.as_str() {
+                        "application" => normalise_exe(&t.value),
+                        "website" => normalise_host(&t.value),
+                        _ => return None, // a kind we cannot match is not a target
+                    };
+                    (!t.value.is_empty()).then_some(t)
+                })
+                .collect();
+            p
+        })
+        .collect();
+    let mut settings = settings::get_settings(&app);
+    settings.context_custom_profiles = profiles;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// `C:\Program Files\Figma\Figma.exe` / `Figma.exe` / `figma` → `figma`.
+///
+/// A packaged app's AppUserModelID is passed through untouched, because it is
+/// already the identity the matcher wants and stem extraction would destroy it:
+/// `Microsoft.WindowsNotepad_8wekyb3d8bbwe!App` has dots in it, so `file_stem`
+/// would read the tail as an extension and hand back `Microsoft`. The `!` is
+/// what tells them apart — it separates package family from application id, and
+/// no executable path contains one.
+fn normalise_exe(raw: &str) -> String {
+    let raw = raw.trim().trim_matches('"');
+    if raw.contains('!') {
+        return raw.to_string();
+    }
+    std::path::Path::new(raw)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(raw)
+        .to_ascii_lowercase()
+}
+
+/// `https://www.Figma.com/files?x=1` → `figma.com`.
+///
+/// Hand-parsed rather than via a URL crate because the input is as likely to be
+/// a bare host someone typed as it is a pasted URL, and a parser strict enough
+/// to reject `figma.com` would be worse than useless here.
+fn normalise_host(raw: &str) -> String {
+    let raw = raw.trim().trim_matches('"');
+    let after_scheme = raw.split_once("://").map(|(_, rest)| rest).unwrap_or(raw);
+    let host = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .rsplit('@') // strip any user:pass@
+        .next()
+        .unwrap_or("");
+    // Drop a port, then `www.`, which the matcher also strips from live hosts.
+    let host = host.split(':').next().unwrap_or("");
+    let host = host.trim_start_matches("www.").to_ascii_lowercase();
+    // Must look like a domain, or it can never match a real address bar.
+    if host.contains('.') && !host.starts_with('.') && !host.ends_with('.') {
+        host
+    } else {
+        String::new()
+    }
+}
+
+#[cfg(test)]
+mod custom_profile_target_tests {
+    use super::{normalise_exe, normalise_host};
+
+    /// Whatever the user pastes has to end up as the lowercased stem the
+    /// detector compares against, or the profile silently never matches.
+    #[test]
+    fn an_application_target_becomes_an_exe_stem() {
+        assert_eq!(normalise_exe(r"C:\Program Files\Figma\Figma.exe"), "figma");
+        assert_eq!(normalise_exe("Figma.exe"), "figma");
+        assert_eq!(normalise_exe("  figma  "), "figma");
+        assert_eq!(normalise_exe("\"Code.exe\""), "code");
+    }
+
+    /// A packaged app is named by its AppUserModelID, and stem extraction would
+    /// silently mangle it — `Microsoft.WindowsNotepad_…!App` would be stored as
+    /// `Microsoft`, matching nothing and colliding with everything.
+    #[test]
+    fn a_packaged_application_target_keeps_its_appusermodelid() {
+        for aumid in [
+            "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+            "Claude_pzs8sxrjxfjjc!Claude",
+            "TelegramMessengerLLP.TelegramDesktop_t4vj0pshhgkwm!Telegram.TelegramDesktop.Store",
+        ] {
+            assert_eq!(normalise_exe(aumid), aumid);
+            assert_eq!(normalise_exe(&format!("  {aumid}  ")), aumid);
+        }
+    }
+
+    /// Same for a website: a pasted URL and a typed host must reach the same
+    /// bare host, since that is what an address bar yields.
+    #[test]
+    fn a_website_target_becomes_a_bare_host() {
+        assert_eq!(
+            normalise_host("https://www.Figma.com/files?x=1"),
+            "figma.com"
+        );
+        assert_eq!(normalise_host("figma.com"), "figma.com");
+        assert_eq!(normalise_host("http://localhost:3000/app"), "");
+        assert_eq!(
+            normalise_host("https://user:pw@app.figma.com/"),
+            "app.figma.com"
+        );
+        assert_eq!(normalise_host("figma.com:8443"), "figma.com");
+    }
+
+    /// Anything that could never match a real address bar is dropped rather
+    /// than stored, so a profile never carries a target that does nothing.
+    #[test]
+    fn a_target_that_can_never_match_is_rejected() {
+        for junk in ["", "   ", "not a host", "com", ".com", "figma."] {
+            assert_eq!(normalise_host(junk), "", "{junk:?} should not be a host");
+        }
+    }
+}
+
 #[tauri::command]
 #[specta::specta]
 pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Result<(), String> {
@@ -48,55 +323,8 @@ pub fn update_snippets(app: AppHandle, snippets: Vec<settings::Snippet>) -> Resu
     Ok(())
 }
 
-/// [GRAIN] Re-register the capture bindings so the live global hotkeys match the
-/// current capture-mode policy. Under `Single` only the primary mode holds a key;
-/// under `All` every capture mode does. Unregistering before a possible
-/// re-register keeps an already-live key from firing twice. Runs off the command
-/// thread (never inside a ShortcutAction), so synchronous (un)register is safe.
-fn reconcile_capture_shortcuts(app: &AppHandle) {
-    let settings = settings::get_settings(app);
-    for id in settings::CAPTURE_MODE_IDS {
-        let Some(binding) = settings.bindings.get(id).cloned() else {
-            continue;
-        };
-        let _ = unregister_shortcut(app, binding.clone());
-        if grain_core::capture::capture_binding_is_active(&settings, id) {
-            let _ = register_shortcut(app, binding);
-        }
-    }
-}
-
-/// [GRAIN] How many capture shortcuts are registered (Single vs All). The schema
-/// and read-side policy shipped without a way to persist a change from the UI;
-/// this is that writer. Reconciles the live hotkeys so the choice takes effect
-/// without a restart.
-#[tauri::command]
-#[specta::specta]
-pub fn change_capture_mode_set_setting(
-    app: AppHandle,
-    set: settings::CaptureModeSet,
-) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.capture_mode_set = set;
-    settings::write_settings(&app, settings);
-    reconcile_capture_shortcuts(&app);
-    Ok(())
-}
-
-/// [GRAIN] The one capture mode that owns the shortcut under `Single`. Changing
-/// it moves the live hotkey from the old primary to the new one.
-#[tauri::command]
-#[specta::specta]
-pub fn change_capture_primary_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
-    let mut settings = settings::get_settings(&app);
-    settings.capture_primary_mode = mode;
-    settings::write_settings(&app, settings);
-    reconcile_capture_shortcuts(&app);
-    Ok(())
-}
-
-/// [GRAIN] Which mode the AI shortcut starts from idle (only meaningful under
-/// `All`). Runtime-only — no capture key is registered or dropped by this.
+/// [GRAIN] Which mode the AI shortcut starts from idle. Runtime-only — every
+/// capture mode is always registered, so no key is added or dropped by this.
 #[tauri::command]
 #[specta::specta]
 pub fn change_capture_ai_start_mode_setting(app: AppHandle, mode: String) -> Result<(), String> {
@@ -148,6 +376,22 @@ pub fn change_scrap_that_enabled_setting(app: AppHandle, enabled: bool) -> Resul
     let mut settings = settings::get_settings(&app);
     settings.scrap_that_enabled = enabled;
     settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Toggle Paste Catch, the missed-text-field clipboard safety net.
+/// Turning it off also releases any active hold so the clipboard, temporary
+/// delivery shortcut, and native pill notice do not outlive the preference.
+#[tauri::command]
+#[specta::specta]
+pub fn change_paste_catch_enabled_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.paste_catch_enabled = enabled;
+    settings::write_settings(&app, settings);
+    if !enabled {
+        crate::paste_catch::supersede(&app);
+        crate::bridge::emit(&app, grain_sdk::DaemonEvent::PasteCatchDisabled);
+    }
     Ok(())
 }
 
@@ -310,6 +554,43 @@ pub fn change_default_panel_setting(app: AppHandle, panel: String) -> Result<(),
     Ok(())
 }
 
+/// [GRAIN] Which built-in look the collapsed pill wears. Unlike a pill *theme*
+/// (an extension's colours), a skin changes the pill's geometry — so the pill
+/// resizes its own window on receipt. An unknown name resolves to the default
+/// rather than erroring: the user must never end up with no pill.
+#[tauri::command]
+#[specta::specta]
+pub fn change_pill_skin_setting(app: AppHandle, skin: String) -> Result<(), String> {
+    let parsed = PillSkin::from_wire(&skin);
+    if parsed.as_wire() != skin {
+        warn!(
+            "Invalid pill skin '{}', defaulting to {}",
+            skin,
+            parsed.as_wire()
+        );
+    }
+    let mut settings = settings::get_settings(&app);
+    settings.pill_skin = parsed;
+    settings::write_settings(&app, settings);
+
+    // Drive the live pill: it re-sizes and re-centers on the next frame. An idle
+    // pill picks the skin up from its welcome frame on the next connect.
+    crate::pill_skin::broadcast(&app, parsed);
+    Ok(())
+}
+
+/// [GRAIN] Pill identity: show the icon of the app being dictated into in place
+/// of the pill's state dot. Takes effect on the next session — the icon is
+/// resolved at record-start, never held between sessions.
+#[tauri::command]
+#[specta::specta]
+pub fn change_pill_show_app_icon_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.pill_show_app_icon = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Master toggle for Grain Space. Registers/unregisters the feature's
 /// global shortcuts immediately so OFF is zero-overhead without a restart.
 /// Never touches on-disk note data.
@@ -377,7 +658,6 @@ pub fn change_grain_space_mcp_setting(app: AppHandle, enabled: bool) -> Result<(
     crate::grain_space::apply_mcp(&app, enabled);
     Ok(())
 }
-
 
 /// [GRAIN] Grain Space semantic-search toggle. Flips the setting; the model
 /// download (opt-in consent flow) is driven by the frontend before it turns
@@ -480,7 +760,6 @@ pub fn change_grain_space_auto_reminders_setting(
     settings::write_settings(&app, settings);
     Ok(())
 }
-
 
 /// [GRAIN] Toggle voice conditioning (85 Hz high-pass + boost-only AGC for quiet
 /// mics). Persists the setting and live-updates the open recorder so it applies
@@ -1056,9 +1335,15 @@ fn field_schema(decl: &grain_sdk::SettingDecl) -> ExtensionSettingField {
         K::AppPath => ("app_path", None, None, None, vec![], vec![], None),
         K::Url => ("url", None, None, None, vec![], vec![], None),
         K::Number { min, max } => ("number", *min, *max, None, vec![], vec![], None),
-        K::Slider { min, max, step } => {
-            ("slider", Some(*min), Some(*max), *step, vec![], vec![], None)
-        }
+        K::Slider { min, max, step } => (
+            "slider",
+            Some(*min),
+            Some(*max),
+            *step,
+            vec![],
+            vec![],
+            None,
+        ),
         K::Select { options } => (
             "select",
             None,
@@ -1467,9 +1752,12 @@ pub async fn extension_host_call(
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or_else(|| internal("extensions registry unavailable", ""))?;
-    let record = reg
-        .record(&id)
-        .ok_or_else(|| internal("unknown extension", "Reinstall the extension and try again."))?;
+    let record = reg.record(&id).ok_or_else(|| {
+        internal(
+            "unknown extension",
+            "Reinstall the extension and try again.",
+        )
+    })?;
     if !record.enabled {
         return Err(internal(
             "extension is disabled",

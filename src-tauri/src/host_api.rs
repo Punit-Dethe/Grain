@@ -121,15 +121,8 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         // [GRAIN] The same notebook, reached by an EXTENSION rather than by
         // Grain's own MCP proxy. Wider than `space.*` because a viewer edits:
         // the read methods are shared, and these add the writes a UI needs.
-        "notes.cards"
-        | "notes.search"
-        | "notes.get"
-        | "notes.save"
-        | "notes.update"
-        | "notes.delete"
-        | "notes.move"
-        | "notes.pin"
-        | "notes.reminder" => Some("notes"),
+        "notes.cards" | "notes.search" | "notes.get" | "notes.save" | "notes.update"
+        | "notes.delete" | "notes.move" | "notes.pin" | "notes.reminder" => Some("notes"),
         "open.url" => Some("open:url"),
         "open.app" | "open.pickApp" => Some("open:app"),
         _ => Some("__unknown__"), // unknown methods map to an ungrantable cap
@@ -1135,7 +1128,9 @@ pub async fn dispatch(
         // and they are reachable only from the `space` capability, which only
         // the MCP proxy's identity carries.
         "space.collections" => {
-            let names = crate::grain_space::collections(app).await.map_err(internal_error)?;
+            let names = crate::grain_space::collections(app)
+                .await
+                .map_err(internal_error)?;
             Ok(serde_json::json!({ "collections": names }))
         }
         "space.search" => {
@@ -1145,12 +1140,16 @@ pub async fn dispatch(
                 .and_then(|v| v.as_u64())
                 .unwrap_or(8)
                 .clamp(1, 50) as usize;
-            let hits = crate::grain_space::search(app, &query, limit).await.map_err(internal_error)?;
+            let hits = crate::grain_space::search(app, &query, limit)
+                .await
+                .map_err(internal_error)?;
             Ok(serde_json::json!({ "results": hits }))
         }
         "space.get" => {
             let id = param_nonempty_str(&params, "id")?;
-            let note = crate::grain_space::get(app, &id).await.map_err(internal_error)?;
+            let note = crate::grain_space::get(app, &id)
+                .await
+                .map_err(internal_error)?;
             serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
         }
         "space.save" => {
@@ -1198,7 +1197,9 @@ pub async fn dispatch(
         // the two capabilities are separately grantable and must stay separately
         // revocable, and collapsing them would make one imply the other.
         "notes.cards" => {
-            let cards = crate::grain_space::cards(app).await.map_err(internal_error)?;
+            let cards = crate::grain_space::cards(app)
+                .await
+                .map_err(internal_error)?;
             Ok(serde_json::json!({ "cards": cards }))
         }
         "notes.search" => {
@@ -1215,7 +1216,9 @@ pub async fn dispatch(
         }
         "notes.get" => {
             let id = param_nonempty_str(&params, "id")?;
-            let note = crate::grain_space::get(app, &id).await.map_err(internal_error)?;
+            let note = crate::grain_space::get(app, &id)
+                .await
+                .map_err(internal_error)?;
             serde_json::to_value(note).map_err(|e| internal_error(e.to_string()))
         }
         "notes.save" => {
@@ -1238,7 +1241,10 @@ pub async fn dispatch(
                 .get("title")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let body = params.get("body").and_then(Value::as_str).map(str::to_string);
+            let body = params
+                .get("body")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             crate::grain_space::update(app, &id, title, body)
                 .await
                 .map_err(internal_error)?;
@@ -1396,7 +1402,11 @@ fn is_app_approved(data_dir: &std::path::Path, ext_id: &str, path: &str) -> bool
         .any(|p| p == path)
 }
 
-pub(crate) fn approve_app(data_dir: &std::path::Path, ext_id: &str, path: &str) -> std::io::Result<()> {
+pub(crate) fn approve_app(
+    data_dir: &std::path::Path,
+    ext_id: &str,
+    path: &str,
+) -> std::io::Result<()> {
     let mut approved = read_approved_apps(data_dir, ext_id);
     if !approved.iter().any(|p| p == path) {
         approved.push(path.to_string());
@@ -1447,7 +1457,11 @@ mod tests {
             "example.com", // no scheme — must be explicit, never guessed
         ] {
             let err = validate_open_url(bad).unwrap_err();
-            assert_eq!(err.code, HostErrorCode::InvalidArgument, "{bad} must be refused");
+            assert_eq!(
+                err.code,
+                HostErrorCode::InvalidArgument,
+                "{bad} must be refused"
+            );
         }
         // Credentials are refused even on an allowed scheme.
         assert!(validate_open_url("https://user:pw@example.com").is_err());
@@ -1466,7 +1480,10 @@ mod tests {
         let good = "C:/Program Files/Editor/editor.exe";
         approve_app(data, id, good).unwrap();
         assert!(is_app_approved(data, id, good));
-        assert!(!is_app_approved(data, id, evil), "approval is per-path, exact");
+        assert!(
+            !is_app_approved(data, id, evil),
+            "approval is per-path, exact"
+        );
         assert!(
             !is_app_approved(data, "com.other.ext", good),
             "approval is per-extension"

@@ -13,7 +13,16 @@ src-tauri/target
 src-tauri/gen
 
 # Generated files
-src/bindings.ts
+#
+# tauri-specta rewrites this on every debug run, so formatting it produces churn
+# against the next regeneration. It also breaks `scripts/ui_parity.py`, which
+# reads command names out of it to decide whether a setting is reachable —
+# reformatted, the extraction misses and settings that ARE surfaced start
+# failing the gate.
+#
+# The path moved with the frontend (`src/` -> `src/app/`, 2026-08-02) and this
+# line did not, so `bun run format` had been reformatting it ever since.
+src/app/bindings.ts
 
 # Misc
 .DS_Store

@@ -95,8 +95,15 @@
   "4cd49950762b57e7e634f30d9a0cd6b0715fc4ed": {
     "notes": "#1738 ported: settings.rs(inert)->filler_word_removal_enabled added to grain-core AppSettings+Default; text.rs(relocated) new remove_filler_words/normalize/OutputLanguageEvidence API adopted in grain_text.rs; transcription.rs(parallel) batch resolves output-language evidence in the with_engine_session decode, rolling/cloud key filler removal on selected_language via finalize_transcript."
   },
+  "5276dd3cc75885c723ab7d09fdb3345e3968dca7": {
+    "notes": "Turkish semantic corrections manually ported to Grain-owned src/app locale schema, with Grain branding."
+  },
   "5464bfaa0826ec367a052514d87575f92e0113fc": {
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
+  },
+  "549cbde3ebb72459f7f7230783931a45222018a1": {
+    "status": "Ignored",
+    "notes": "Handy webview arming visualization is retired in Grain; recorder readiness API was not adopted across Grain-native capture paths."
   },
   "58760b22cd13e709384a617a6d86b7df506a65ae": {
     "notes": "Added `ne` translation."

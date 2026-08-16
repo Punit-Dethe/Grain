@@ -21,8 +21,8 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 use crate::settings::APPLE_INTELLIGENCE_DEFAULT_MODEL_ID;
 use crate::settings::{
-    self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation,
-    LLMPrompt, OverlayPosition, PasteMethod, ShortcutBinding, SoundTheme, TypingTool,
+    self, get_settings, AutoSubmitKey, ClipboardHandling, KeyboardImplementation, LLMPrompt,
+    OverlayPosition, PasteMethod, ShortcutBinding, SoundTheme, TypingTool,
     APPLE_INTELLIGENCE_PROVIDER_ID,
 };
 use crate::tray;
@@ -150,10 +150,11 @@ pub fn change_binding(
     };
 
     // If this is a dynamic binding, just update the settings and return
-    // It's managed dynamically, so we don't register/unregister here
-    // ("agent_followup" is registered transiently by agent.rs while an Agent
-    // surface is open — it must never be registered globally from here).
-    if id == "cancel" || id == "agent_followup" {
+    // It's managed dynamically, so we don't register/unregister here.
+    // [GRAIN] The list lives in `grain_core::capture` so every registration path
+    // shares one answer; a dynamic binding registered globally here would squat
+    // on the user's keys for a surface that is not on screen.
+    if grain_core::capture::is_dynamic_binding(&id) {
         if let Some(mut b) = settings.bindings.get(&id).cloned() {
             b.current_binding = binding;
             settings.bindings.insert(id.clone(), b.clone());

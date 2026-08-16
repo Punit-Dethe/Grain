@@ -15,20 +15,20 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src-tauri/**'
-      - 'src/**'
-      - 'Upstream/budget.json'
-      - 'Upstream/ratchet.py'
-      - 'Upstream/frontend_allow.json'
-      - 'Upstream/frontend_freeze.py'
+      - "src-tauri/**"
+      - "src/**"
+      - "Upstream/budget.json"
+      - "Upstream/ratchet.py"
+      - "Upstream/frontend_allow.json"
+      - "Upstream/frontend_freeze.py"
   pull_request:
     paths:
-      - 'src-tauri/**'
-      - 'src/**'
-      - 'Upstream/budget.json'
-      - 'Upstream/ratchet.py'
-      - 'Upstream/frontend_allow.json'
-      - 'Upstream/frontend_freeze.py'
+      - "src-tauri/**"
+      - "src/**"
+      - "Upstream/budget.json"
+      - "Upstream/ratchet.py"
+      - "Upstream/frontend_allow.json"
+      - "Upstream/frontend_freeze.py"
   workflow_dispatch:
 
 permissions:
@@ -46,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Fetch Upstream
         run: |
@@ -67,7 +67,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Fetch Upstream
         run: |

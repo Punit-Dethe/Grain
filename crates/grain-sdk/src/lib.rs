@@ -22,9 +22,10 @@
 pub mod authoring;
 pub mod distribution;
 pub mod error;
-pub mod flagged;
 pub mod event;
+pub mod flagged;
 pub mod manifest;
+pub mod pill_skin;
 pub mod pill_theme;
 pub mod protocol;
 pub mod settings_schema;
@@ -34,18 +35,18 @@ pub use distribution::{
     is_category, Index, IndexEntry, MediaRef, RevocationEntry, RevocationState, Revocations, Roots,
     Trust, CATEGORIES, DISTRIBUTION_SPEC, EXPIRY_CLOCK_SKEW_SECS,
 };
-pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use error::{HostError, HostErrorCode};
 pub use event::{
-    daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction, ResolvedTheme,
-    SessionMode,
-    DAEMON_EVENT_VARIANTS,
+    daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction,
+    ResolvedTheme, SessionMode, DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
 };
+pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use manifest::{
-    CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl,
-    PackPayloads, PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces,
-    Tier, WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS, SURFACE_PROMPTS,
+    CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads,
+    PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier,
+    WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS, SURFACE_PROMPTS,
 };
+pub use pill_skin::PillSkin;
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
 pub use protocol::{
     ClientHello, ClientRequest, DevControlFrame, DevReloadResult, HostCall, HostCallResult,

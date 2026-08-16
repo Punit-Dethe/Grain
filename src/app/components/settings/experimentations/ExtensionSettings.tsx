@@ -80,6 +80,14 @@ export type Anchor = (typeof ANCHORS)[number];
 
 const INPUT_CLASS =
   "px-2 py-1 rounded-lg bg-paper-sunken border border-line text-sm text-ink outline-none focus:border-accent/50 disabled:opacity-50";
+const SWITCH_TO_APP_LABEL = "Switch to your app\u2026";
+const CAPTURE_APP_LABEL = "Capture app";
+const BROWSE_LABEL = "Browse\u2026";
+const REMOVE_LABEL = "Remove";
+const CLEAR_LABEL = "Clear";
+const SHORTCUTS_LABEL = "Shortcuts";
+const emptyListLabel = (noun: string) => `No ${noun}s yet.`;
+const addListLabel = (noun: string) => `+ Add ${noun}`;
 
 /** Open the host's native file picker for `extId`; resolves to the chosen path
  * (also recorded as approved for open:app) or null. */
@@ -225,10 +233,16 @@ const PanelCard: React.FC<{ extId: string; uiSource: string }> = ({
   useEffect(() => {
     if (!mounted) return;
     const onMsg = (ev: MessageEvent) => {
-      const d = ev.data as
-        | { __grain?: number; __grainresize?: number; [k: string]: unknown }
-        | null;
-      if (!d || !frameRef.current || ev.source !== frameRef.current.contentWindow)
+      const d = ev.data as {
+        __grain?: number;
+        __grainresize?: number;
+        [k: string]: unknown;
+      } | null;
+      if (
+        !d ||
+        !frameRef.current ||
+        ev.source !== frameRef.current.contentWindow
+      )
         return;
       if (d.__grainresize === 1 && typeof d.height === "number") {
         setHeight(
@@ -315,7 +329,7 @@ const AppField: React.FC<{
   if (countdown != null) {
     return (
       <span className="text-xs text-accent tabular-nums whitespace-nowrap">
-        Switch to your app… {countdown}
+        {SWITCH_TO_APP_LABEL} {countdown}
       </span>
     );
   }
@@ -333,7 +347,7 @@ const AppField: React.FC<{
         onClick={capture}
         className="px-2 py-1 rounded-lg border border-line text-xs text-ink hover:border-ink-faint cursor-pointer shrink-0"
       >
-        Capture app
+        {CAPTURE_APP_LABEL}
       </button>
       <button
         type="button"
@@ -342,7 +356,7 @@ const AppField: React.FC<{
         title="Choose a file instead"
         className="text-ink-faint hover:text-ink cursor-pointer text-xs shrink-0"
       >
-        Browse…
+        {BROWSE_LABEL}
       </button>
     </div>
   );
@@ -397,7 +411,12 @@ const FieldInput: React.FC<{
       );
     case "app_path":
       return (
-        <AppField value={value} extId={extId} disabled={disabled} onChange={onChange} />
+        <AppField
+          value={value}
+          extId={extId}
+          disabled={disabled}
+          onChange={onChange}
+        />
       );
     case "number":
     case "slider":
@@ -496,7 +515,7 @@ const ListEditor: React.FC<{
       <div className="space-y-2 max-h-[22rem] overflow-y-auto">
         {value.length === 0 && (
           <div className="text-xs text-ink-soft italic px-1 py-2">
-            No {noun}s yet.
+            {emptyListLabel(noun)}
           </div>
         )}
         {value.map((row, i) => (
@@ -515,7 +534,7 @@ const ListEditor: React.FC<{
                 className="text-ink-soft hover:text-red-600 cursor-pointer text-xs font-medium"
                 aria-label={`Remove ${noun} ${i + 1}`}
               >
-                Remove
+                {REMOVE_LABEL}
               </button>
             </div>
             {field.fields.map((f) => (
@@ -556,7 +575,7 @@ const ListEditor: React.FC<{
         onClick={() => onChange([...value, blankRow()])}
         className="px-3 py-1.5 rounded-lg border border-dashed border-ink-faint/40 text-xs font-medium text-ink-soft hover:text-ink hover:border-ink-faint hover:bg-paper-sunken/50 cursor-pointer transition-colors"
       >
-        + Add {noun}
+        {addListLabel(noun)}
       </button>
     </div>
   );
@@ -697,7 +716,7 @@ const Control: React.FC<{
               onClick={() => onCommit("")}
               className="text-xs text-ink-faint hover:text-ink disabled:opacity-50 cursor-pointer"
             >
-              Clear
+              {CLEAR_LABEL}
             </button>
           )}
         </div>
@@ -815,7 +834,10 @@ export const ExtensionSettings: React.FC<{
     </div>
   );
 
-  const renderGroup = (group: { panel: boolean; rows: SettingRow[] }, i: number) =>
+  const renderGroup = (
+    group: { panel: boolean; rows: SettingRow[] },
+    i: number,
+  ) =>
     group.panel ? (
       renderPanel(group.rows[0])
     ) : (
@@ -936,7 +958,9 @@ export const ExtensionShortcuts: React.FC<{ id: string }> = ({ id }) => {
 
   return (
     <div className="space-y-2">
-      <h3 className="px-1 text-sm font-medium text-ink-soft">Shortcuts</h3>
+      <h3 className="px-1 text-sm font-medium text-ink-soft">
+        {SHORTCUTS_LABEL}
+      </h3>
       <div className="rounded-xl border border-line bg-paper-raised divide-y divide-line">
         {rows.map((row) => (
           <div key={row.id} className="flex items-center gap-3 px-4 py-3">

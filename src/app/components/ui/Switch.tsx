@@ -8,9 +8,9 @@ interface SwitchProps {
   ariaLabel?: string;
 }
 
-// [GRAIN] Bare mechanical toggle (no label/row) — the same hardware switch as
-// ToggleSwitch, for inline use in custom headers. Charcoal track; the lever turns
-// orange when ON.
+// [GRAIN] Bare toggle (no label/row) — the same switch as ToggleSwitch, for
+// inline use in custom headers. Same geometry and colors: --toggle-off track
+// OFF, accent track ON, white thumb that slides 16px.
 export const Switch: React.FC<SwitchProps> = ({
   checked,
   onChange,
@@ -33,7 +33,7 @@ export const Switch: React.FC<SwitchProps> = ({
         aria-label={ariaLabel}
         onChange={(e) => onChange(e.target.checked)}
       />
-      <div className="relative w-8 h-[18px] rounded-full bg-ink transition-colors duration-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-[var(--focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-[14px] after:w-[14px] after:rounded-full after:bg-[linear-gradient(180deg,#eeeeee,#bbbbbb)] after:shadow-[0_1px_2px_rgba(0,0,0,0.3)] after:transition-all after:duration-200 peer-checked:after:translate-x-[14px] peer-checked:after:bg-[linear-gradient(180deg,#ff5d1e,#d94a12)] rtl:peer-checked:after:-translate-x-[14px]" />
+      <div className="relative w-9 h-5 rounded-full bg-[var(--toggle-off)] transition-colors duration-200 peer-checked:bg-[var(--color-accent)] peer-focus-visible:outline-none peer-focus-visible:ring-2 peer-focus-visible:ring-[var(--accent-focus)] peer-disabled:opacity-50 after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(0,0,0,0.28)] after:transition-transform after:duration-200 peer-checked:after:translate-x-4 rtl:peer-checked:after:-translate-x-4" />
     </label>
   );
 };

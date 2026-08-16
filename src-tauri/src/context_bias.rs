@@ -116,7 +116,12 @@ impl BiasSet {
         let mut kept_rev: Vec<&str> = Vec::new();
         let mut bytes = 0usize;
         for term in normalized.iter().rev() {
-            let added = term.len() + if kept_rev.is_empty() { 0 } else { SEPARATOR.len() };
+            let added = term.len()
+                + if kept_rev.is_empty() {
+                    0
+                } else {
+                    SEPARATOR.len()
+                };
             if bytes + added > MAX_PROMPT_BYTES {
                 // A single term longer than the whole budget is unusable; skip
                 // it and keep trying shorter, lower-priority ones rather than
@@ -286,7 +291,9 @@ mod tests {
         assert!(BiasSet::new().render().is_none());
         assert!(from_custom_words(&[]).render().is_none());
         // Whitespace-only entries contribute nothing.
-        assert!(from_custom_words(&["   ".into(), "\n".into()]).render().is_none());
+        assert!(from_custom_words(&["   ".into(), "\n".into()])
+            .render()
+            .is_none());
     }
 
     #[test]
