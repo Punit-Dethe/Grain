@@ -143,7 +143,7 @@ pub(crate) async fn post_process_transcription(
     // Finding one means the post-processing round is a write-off, and `None` is
     // exactly how this function already says "use the raw transcript" — the user
     // loses the cleanup, never their words.
-    result.filter(|reply| {
+    let safe_result = result.filter(|reply| {
         let echoed = reply_contains_scaffolding(reply);
         if echoed {
             warn!(
@@ -152,7 +152,28 @@ pub(crate) async fn post_process_transcription(
             );
         }
         !echoed
-    })
+    });
+
+    // Cursor spacing is a deterministic concern, not an LLM concern. Apply the
+    // seam pass to successful cleanup and also to the raw transcript when the
+    // provider failed or echoed scaffolding. In the latter case return `Some`
+    // only if the local pass changed anything, preserving the established
+    // `None`-means-raw-fallback contract for the common path.
+    let caret = ctx
+        .as_ref()
+        .and_then(|context| context.caret.as_ref())
+        .filter(|caret| !caret.is_empty());
+    if let Some(caret) = caret {
+        let source = safe_result.as_deref().unwrap_or(transcription);
+        let fitted = crate::context_detect::fit_text_to_caret(source, caret);
+        if safe_result.is_some() || fitted != transcription {
+            Some(fitted)
+        } else {
+            None
+        }
+    } else {
+        safe_result
+    }
 }
 
 /// Fragments that can only have come from Grain's own prompt scaffolding.
@@ -169,6 +190,8 @@ const SCAFFOLDING_MARKERS: &[&str] = &[
     "immediately after:",
     "Reference only — the text already around the cursor",
     "Never output any part of them",
+    "[Cursor fit]",
+    "Use L/R only to make the transcript fit at the cursor",
     // Context-awareness block headers.
     "[Context awareness]",
     "[Spoken instruction",

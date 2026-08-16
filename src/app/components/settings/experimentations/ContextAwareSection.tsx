@@ -1130,7 +1130,7 @@ export const ContextAwareSection: React.FC = () => {
       <div className="context-profile-options" aria-label="Context sources">
         <ToggleSwitch
           label="Fit text to the cursor"
-          description="Read a short span of text either side of your cursor so dictation inserted mid-sentence flows: correct spacing, no stray capital, no repeated words. Sends that excerpt (up to ~320 characters each side) to your AI provider along with the transcript. Never stored, password fields skipped."
+          description="Read only the nearest useful sentence fragment around your cursor so mid-sentence dictation flows naturally. Sends at most 200 characters before and 80 after; when both sides are empty, no cursor hint is sent. Never stored, password fields skipped."
           descriptionMode="tooltip"
           grouped
           checked={caretText}

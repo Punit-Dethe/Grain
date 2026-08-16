@@ -714,26 +714,219 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
 /// model can only get that right if it can see what it is landing between.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CaretContext {
-    /// Text immediately before the caret (tail-most [`MAX_CARET_CHARS`]).
+    /// Relevant text immediately before the caret (at most
+    /// [`MAX_CARET_LEFT_CHARS`]).
     pub before: String,
-    /// Text immediately after the caret (head-most [`MAX_CARET_CHARS`]).
+    /// Relevant text immediately after the caret (at most
+    /// [`MAX_CARET_RIGHT_CHARS`]).
     pub after: String,
 }
 
 impl CaretContext {
-    fn is_empty(&self) -> bool {
-        self.before.is_empty() && self.after.is_empty()
+    pub(crate) fn is_empty(&self) -> bool {
+        self.before.trim().is_empty() && self.after.trim().is_empty()
+    }
+
+    /// Reduce a raw UIA neighbourhood to the nearest useful sentence fragments.
+    /// Completed sentences and other lines cannot affect the insertion seam, so
+    /// they are discarded instead of spending tokens and distracting the model.
+    fn from_surrounding(before: &str, after: &str) -> Option<Self> {
+        let mut context = Self {
+            before: relevant_left_fragment(before),
+            after: relevant_right_fragment(after),
+        };
+        if context.before.trim().is_empty() {
+            context.before.clear();
+        }
+        if context.after.trim().is_empty() {
+            context.after.clear();
+        }
+        (!context.is_empty()).then_some(context)
     }
 }
 
-/// How much text either side of the caret is worth sending.
-///
-/// Small on purpose. What the model needs is the *seam* — the few words it must
-/// join onto and the punctuation it must not duplicate — not the document. This
-/// is also the context-rot argument in miniature: surrounding prose is the most
-/// confusable possible distractor for a task whose output is also prose, so the
-/// budget stays at the joint.
-const MAX_CARET_CHARS: usize = 320;
+/// Maximum cursor-context budgets. The left side carries more grammatical state
+/// than the right, so the capture is deliberately asymmetric.
+const MAX_CARET_LEFT_CHARS: usize = 200;
+const MAX_CARET_RIGHT_CHARS: usize = 80;
+
+fn relevant_left_fragment(text: &str) -> String {
+    let capped = cap_tail_chars(text, MAX_CARET_LEFT_CHARS);
+    let mut start = 0;
+
+    for (index, ch) in capped.char_indices() {
+        let next = index + ch.len_utf8();
+        if matches!(ch, '\r' | '\n')
+            || (is_sentence_terminal(ch)
+                && (is_cjk_sentence_terminal(ch)
+                    || capped[next..]
+                        .chars()
+                        .next()
+                        .is_none_or(char::is_whitespace)))
+        {
+            start = next;
+        }
+    }
+
+    capped[start..]
+        .trim_start_matches(char::is_whitespace)
+        .to_string()
+}
+
+fn relevant_right_fragment(text: &str) -> String {
+    let capped = cap_head_chars(text, MAX_CARET_RIGHT_CHARS);
+
+    for (index, ch) in capped.char_indices() {
+        if matches!(ch, '\r' | '\n') {
+            return capped[..index].to_string();
+        }
+        if is_sentence_terminal(ch) {
+            let end = index + ch.len_utf8();
+            if is_cjk_sentence_terminal(ch)
+                || capped[end..].chars().next().is_none_or(char::is_whitespace)
+            {
+                return capped[..end].to_string();
+            }
+        }
+    }
+
+    capped
+}
+
+fn cap_tail_chars(text: &str, max_chars: usize) -> String {
+    let count = text.chars().count();
+    if count <= max_chars {
+        return text.to_string();
+    }
+    text.chars().skip(count - max_chars).collect()
+}
+
+fn cap_head_chars(text: &str, max_chars: usize) -> String {
+    text.chars().take(max_chars).collect()
+}
+
+fn is_sentence_terminal(ch: char) -> bool {
+    matches!(ch, '.' | '?' | '!' | '。' | '？' | '！' | '؟')
+}
+
+fn is_cjk_sentence_terminal(ch: char) -> bool {
+    matches!(ch, '。' | '？' | '！')
+}
+
+/// Repair only the mechanical seams around a cursor insertion. Linguistic
+/// decisions remain with the model; this never rewrites words or forces casing.
+pub(crate) fn fit_text_to_caret(text: &str, caret: &CaretContext) -> String {
+    let mut fitted = text.trim().to_string();
+    if fitted.is_empty() {
+        return fitted;
+    }
+
+    // Existing punctuation wins because it cannot be removed by the insertion.
+    while caret
+        .before
+        .chars()
+        .next_back()
+        .zip(fitted.chars().next())
+        .is_some_and(|(left, first)| punctuation_collides(left, first))
+    {
+        fitted.remove(0);
+    }
+    while fitted
+        .chars()
+        .next_back()
+        .zip(caret.after.chars().next())
+        .is_some_and(|(last, right)| punctuation_collides(last, right))
+    {
+        fitted.pop();
+    }
+
+    if fitted.is_empty() {
+        return fitted;
+    }
+
+    let leading_space = caret
+        .before
+        .chars()
+        .next_back()
+        .zip(fitted.chars().next())
+        .is_some_and(|(left, right)| needs_space_between(left, right));
+    let trailing_space = fitted
+        .chars()
+        .next_back()
+        .zip(caret.after.chars().next())
+        .is_some_and(|(left, right)| needs_space_between(left, right));
+
+    if leading_space {
+        fitted.insert(0, ' ');
+    }
+    if trailing_space {
+        fitted.push(' ');
+    }
+    fitted
+}
+
+fn punctuation_collides(left: char, right: char) -> bool {
+    is_join_punctuation(left) && is_join_punctuation(right)
+}
+
+fn is_join_punctuation(ch: char) -> bool {
+    matches!(
+        ch,
+        '.' | ',' | '?' | '!' | ';' | ':' | '。' | '，' | '？' | '！' | '；' | '：' | '،' | '؟'
+    )
+}
+
+fn needs_space_between(left: char, right: char) -> bool {
+    if left.is_whitespace() || right.is_whitespace() {
+        return false;
+    }
+    // Chinese, Japanese and Korean text does not separate adjacent glyphs with
+    // ASCII spaces. Either side is enough to suppress one at a mixed-script
+    // seam too, matching normal CJK typography.
+    if is_cjk(left) || is_cjk(right) {
+        return false;
+    }
+    if matches!(
+        right,
+        '.' | ','
+            | '?'
+            | '!'
+            | ';'
+            | ':'
+            | '%'
+            | ')'
+            | ']'
+            | '}'
+            | '。'
+            | '，'
+            | '？'
+            | '！'
+            | '；'
+            | '：'
+            | '،'
+            | '؟'
+    ) {
+        return false;
+    }
+    if matches!(
+        left,
+        '(' | '[' | '{' | '/' | '\\' | '@' | '#' | '-' | '—' | '\''
+    ) {
+        return false;
+    }
+    true
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3040..=0x30ff // Hiragana + Katakana
+            | 0x3400..=0x4dbf // CJK Extension A
+            | 0x4e00..=0x9fff // CJK Unified Ideographs
+            | 0xac00..=0xd7af // Hangul syllables
+            | 0xf900..=0xfaff // CJK compatibility ideographs
+    )
+}
 
 /// How much we trust the resolved surface.
 ///
@@ -1431,7 +1624,11 @@ pub fn compose_prompt(
     // capitalizing and adding a full stop is wrong in a search box and the user
     // has to delete it every time.
     let one_line = ctx.is_some_and(|c| c.field == FieldKind::SingleLine);
-    let caret = ctx.and_then(|c| c.caret.as_ref());
+    // Defence in depth: capture already drops an empty neighbourhood, but a
+    // synthetic/legacy context must not spend cursor-prompt tokens either.
+    let caret = ctx
+        .and_then(|c| c.caret.as_ref())
+        .filter(|caret| !caret.is_empty());
     let has_ctx = soft.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
     if spoken.is_none() && !has_ctx {
@@ -1503,40 +1700,25 @@ pub fn compose_prompt(
                  user dictated it that way.\n",
             );
         }
-        // The seam block. Two things had to change after it leaked verbatim into
-        // a user's email draft:
-        //
-        // 1. The excerpts are no longer wrapped in `<before_text>` /
-        //    `<after_text>`. XML-ish tags around a block of prose read as
-        //    "content to emit" to a model that is already being asked to return
-        //    text, and that is exactly what it did — tags included.
-        // 2. The prohibition now comes AFTER the excerpts as well as before. The
-        //    last thing read about the excerpts is that they are not the input.
-        //
-        // The output-format guard appended at the very end of the whole prompt
-        // (see below) is the third layer, and the only one that does not depend
-        // on the model choosing to comply with prose.
+        // Keep the cursor addition small. Mechanical spacing and punctuation
+        // collisions are repaired locally after the model returns; the model
+        // only resolves grammar, casing and linguistic continuity. Plain L/R
+        // labels work across arbitrary user-selected instruction models.
         if let Some(caret) = caret {
             pre.push_str(
-                "Reference only — the text already around the cursor, NOT input, NOT \
-                 to be repeated:\n",
+                "[Cursor fit]\nUse L/R only to make the transcript fit at the cursor \
+                 (grammar, casing, punctuation); never repeat L/R.\n",
             );
             if !caret.before.is_empty() {
-                pre.push_str("  …immediately before: ");
-                pre.push_str(caret.before.trim());
+                pre.push_str("L:");
+                pre.push_str(&caret.before);
                 pre.push('\n');
             }
             if !caret.after.is_empty() {
-                pre.push_str("  …immediately after: ");
-                pre.push_str(caret.after.trim());
+                pre.push_str("R:");
+                pre.push_str(&caret.after);
                 pre.push('\n');
             }
-            pre.push_str(
-                "Use those two ONLY to make the transcript join cleanly: correct \
-                 leading/trailing spacing, continue mid-sentence without \
-                 re-capitalizing, and do not repeat punctuation already there. Never \
-                 output any part of them.\n",
-            );
         }
         if !terms.is_empty() {
             // Additive, LOW authority: only fix a term to one of these spellings when
@@ -1910,7 +2092,7 @@ mod windows_impl {
 mod uia {
     use super::{
         extract_unique_terms, host_from_url, CaretContext, Confidence, ControlClass, FieldKind,
-        FocusFacts, FocusIdentity, FocusProbe, MAX_CARET_CHARS,
+        FocusFacts, FocusIdentity, FocusProbe, MAX_CARET_LEFT_CHARS, MAX_CARET_RIGHT_CHARS,
     };
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Com::{
@@ -2328,7 +2510,8 @@ mod uia {
         // No selection array at all means no caret to anchor on (some read-only
         // surfaces). Nothing to do; not an error.
         let caret = selection.GetElement(0).ok()?;
-        let span = MAX_CARET_CHARS as i32;
+        let left_span = MAX_CARET_LEFT_CHARS as i32;
+        let right_span = MAX_CARET_RIGHT_CHARS as i32;
 
         // Before: collapse to the leading edge, then extend backwards.
         let before = caret
@@ -2343,7 +2526,11 @@ mod uia {
                     )
                     .ok()?;
                 range
-                    .MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, -span)
+                    .MoveEndpointByUnit(
+                        TextPatternRangeEndpoint_Start,
+                        TextUnit_Character,
+                        -left_span,
+                    )
                     .ok()?;
                 range.GetText(-1).ok()
             })
@@ -2363,33 +2550,18 @@ mod uia {
                     )
                     .ok()?;
                 range
-                    .MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, span)
+                    .MoveEndpointByUnit(
+                        TextPatternRangeEndpoint_End,
+                        TextUnit_Character,
+                        right_span,
+                    )
                     .ok()?;
                 range.GetText(-1).ok()
             })
             .map(|s| s.to_string())
             .unwrap_or_default();
 
-        Some(CaretContext {
-            before: cap_tail(&before),
-            after: cap_head(&after),
-        })
-    }
-
-    /// Keep the LAST `MAX_CARET_CHARS` characters — the end of `before` is the
-    /// part adjacent to the caret, so that is the part that matters.
-    fn cap_tail(s: &str) -> String {
-        let count = s.chars().count();
-        if count <= MAX_CARET_CHARS {
-            return s.to_string();
-        }
-        s.chars().skip(count - MAX_CARET_CHARS).collect()
-    }
-
-    /// Keep the FIRST `MAX_CARET_CHARS` characters — the start of `after` is the
-    /// part adjacent to the caret.
-    fn cap_head(s: &str) -> String {
-        s.chars().take(MAX_CARET_CHARS).collect()
+        CaretContext::from_surrounding(&before, &after)
     }
 
     /// What shape of field the caret is in.
@@ -3176,9 +3348,8 @@ mod tests {
         assert!(!out.contains("SINGLE-LINE"));
     }
 
-    /// The seam contract must both supply the surroundings AND forbid the model
-    /// from treating them as input — a model handed context will otherwise
-    /// continue the sentence it can see instead of formatting the one it was given.
+    /// Cursor context supplies only compact L/R fragments and tells the model
+    /// they are reference-only.
     #[test]
     fn caret_context_supplies_the_seam_and_forbids_echoing_it() {
         let mut s = AppSettings::default();
@@ -3192,10 +3363,10 @@ mod tests {
 
         assert!(out.contains("We agreed the release"));
         assert!(out.contains("before the holidays."));
-        // The prohibition must bracket the excerpts — before AND after — and the
-        // whole prompt must end with the output constraint.
-        assert!(out.contains("NOT input, NOT \nto be repeated") || out.contains("NOT input"));
-        assert!(out.contains("Never output any part of them"));
+        assert!(out.contains("[Cursor fit]"));
+        assert!(out.contains("L:We agreed the release "));
+        assert!(out.contains("R: before the holidays."));
+        assert!(out.contains("never repeat L/R"));
         assert!(out.trim_end().ends_with("no notes, no explanation."));
         // The user's own prompt still survives verbatim inside.
         assert!(out.contains("BASE ${output}"));
@@ -3229,8 +3400,87 @@ mod tests {
             after: String::new(),
         });
         let out = compose_prompt("BASE", &s, Some(&c), None);
-        assert!(out.contains("immediately before:"));
-        assert!(!out.contains("immediately after:"));
+        assert!(out.contains("L:Dear Rita,"));
+        assert!(!out.contains("R:"));
+    }
+
+    /// The local capture owns the empty check: no surrounding text means no
+    /// cursor layer and therefore zero cursor-specific prompt tokens.
+    #[test]
+    fn empty_caret_capture_sends_no_cursor_prompt() {
+        assert_eq!(CaretContext::from_surrounding("", ""), None);
+        assert_eq!(CaretContext::from_surrounding("   ", "\r\n"), None);
+        assert_eq!(CaretContext::from_surrounding(" \t", "   "), None);
+
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("unknownapp", AppCategory::Other);
+        c.caret = Some(CaretContext::default());
+        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+
+        c.caret = Some(CaretContext {
+            before: "  ".into(),
+            after: "\t".into(),
+        });
+        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+    }
+
+    #[test]
+    fn caret_capture_keeps_only_the_nearest_sentence_fragments() {
+        let caret = CaretContext::from_surrounding(
+            "An unrelated sentence. I think we should ",
+            " before releasing this. Another sentence.",
+        )
+        .unwrap();
+        assert_eq!(caret.before, "I think we should ");
+        assert_eq!(caret.after, " before releasing this.");
+
+        // A completed left sentence at end-of-field needs no cursor prompt.
+        assert_eq!(CaretContext::from_surrounding("Hello there.", ""), None);
+    }
+
+    #[test]
+    fn caret_capture_enforces_asymmetric_character_budgets() {
+        let caret = CaretContext::from_surrounding(&"界".repeat(250), &"界".repeat(120)).unwrap();
+        assert_eq!(caret.before.chars().count(), MAX_CARET_LEFT_CHARS);
+        assert_eq!(caret.after.chars().count(), MAX_CARET_RIGHT_CHARS);
+    }
+
+    #[test]
+    fn deterministic_cursor_fit_repairs_spaces_and_punctuation() {
+        let tight = CaretContext {
+            before: "I think we should".into(),
+            after: "before release".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret(" probably test this ", &tight),
+            " probably test this "
+        );
+
+        let already_spaced = CaretContext {
+            before: "I think we should ".into(),
+            after: " before release".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret(" test this ", &already_spaced),
+            "test this"
+        );
+
+        let punctuation = CaretContext {
+            before: String::new(),
+            after: ". Next sentence".into(),
+        };
+        assert_eq!(fit_text_to_caret("ship.", &punctuation), "ship");
+
+        let cjk = CaretContext {
+            before: "我们应该".into(),
+            after: "再发布。".into(),
+        };
+        assert_eq!(fit_text_to_caret("先测试", &cjk), "先测试");
+        assert_eq!(
+            CaretContext::from_surrounding("旧句。我们应该", "再发布。下一句。").unwrap(),
+            cjk
+        );
     }
 
     /// Any applied context layer must be followed by the terminal output
@@ -3269,7 +3519,7 @@ mod tests {
         });
         let out = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
         let spoken = out.find("make it a haiku").unwrap();
-        let seam = out.find("immediately before:").unwrap();
+        let seam = out.find("L:before").unwrap();
         assert!(spoken < seam, "spoken instruction must precede the seam");
     }
 

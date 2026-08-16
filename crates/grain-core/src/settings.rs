@@ -898,10 +898,10 @@ pub struct AppSettings {
     /// field's content; password fields are always skipped.
     #[serde(default)]
     pub context_nearby_terms: bool,
-    /// [GRAIN] Seamless insertion: read a short span of text on either side of
-    /// the caret and give it to the post-processing LLM as `<before_text>` /
-    /// `<after_text>`, so dictating into the middle of a sentence produces text
-    /// that flows — correct leading space, no stray capital, no repeated words.
+    /// [GRAIN] Seamless insertion: read the nearest useful sentence fragment on
+    /// either side of the caret (maximum 200 left / 80 right) and give it to the
+    /// post-processing LLM as compact L/R context, so dictating into the middle
+    /// of a sentence flows. An empty neighbourhood adds no cursor prompt.
     ///
     /// **This is a SEPARATE opt-in from [`Self::context_nearby_terms`] on
     /// purpose.** That one promises to send unique tokens and explicitly never
