@@ -589,6 +589,10 @@ fn show_main_window_command(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn should_prevent_tray_exit(code: Option<i32>, no_tray: bool, intentional_quit: bool) -> bool {
+    code != Some(tauri::RESTART_EXIT_CODE) && !no_tray && !intentional_quit
+}
+
 /// Convert an unexpected panic on the headless worker into a normal CLI
 /// failure. Without this guard the Tauri event loop remains alive after the
 /// worker exits, leaving `--transcribe-file` hung indefinitely.
@@ -614,7 +618,7 @@ where
 
 #[cfg(test)]
 mod headless_guard_tests {
-    use super::run_headless_guarded;
+    use super::{run_headless_guarded, should_prevent_tray_exit};
 
     #[test]
     fn preserves_normal_exit_codes() {
@@ -624,6 +628,16 @@ mod headless_guard_tests {
     #[test]
     fn converts_worker_panics_to_runtime_failures() {
         assert_eq!(run_headless_guarded(|| panic!("simulated failure")), 1);
+    }
+
+    #[test]
+    fn updater_restart_bypasses_tray_keep_alive() {
+        assert!(!should_prevent_tray_exit(
+            Some(tauri::RESTART_EXIT_CODE),
+            false,
+            false
+        ));
+        assert!(should_prevent_tray_exit(None, false, false));
     }
 }
 
@@ -844,6 +858,7 @@ pub fn run(cli_args: CliArgs) {
     let specta_builder = Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             grain_update::check_for_update,
+            grain_update::get_cached_update,
             grain_update::install_update,
             shortcut::change_binding,
             shortcut::reset_binding,
@@ -1085,6 +1100,7 @@ pub fn run(cli_args: CliArgs) {
             helpers::clamshell::is_laptop,
         ])
         .events(collect_events![
+            grain_update::UpdateAvailable,
             grain_update::UpdateDownloadProgress,
             managers::history::HistoryUpdatePayload,
             // The live-preview events MUST be registered even though Grain's
@@ -1219,6 +1235,7 @@ pub fn run(cli_args: CliArgs) {
             Some(vec![]),
         ))
         .manage(cli_args.clone())
+        .manage(grain_update::UpdateState::default())
         .manage(grain_onboarding::OnboardingMicrophoneTest::default())
         .manage(grain_onboarding::OnboardingTranscriptionTest::default())
         .setup(move |app| {
@@ -1365,6 +1382,12 @@ pub fn run(cli_args: CliArgs) {
             // the note above, and grain_overlay owns the overlay path.
             secure_input::init(&app_handle);
 
+            // [GRAIN] Update discovery is backend-owned so it still runs when
+            // start-hidden skips the WebView, or after close destroyed it to
+            // release WebView2 RAM. This is one delayed task, not a resident
+            // polling engine.
+            grain_update::spawn_automatic_check(app_handle.clone());
+
             // Hide tray icon if --no-tray was passed
             if cli_args.no_tray {
                 tray::set_tray_visibility(&app_handle, false);
@@ -1375,11 +1398,12 @@ pub fn run(cli_args: CliArgs) {
             // But if permission onboarding is required, always show the window.
             let should_hide = settings.start_hidden || cli_args.start_hidden;
             let should_force_show = should_force_show_permissions_window(&app_handle);
+            let should_show_after_update = grain_update::take_show_after_update(&app_handle);
 
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_force_show || !should_hide || !tray_available {
+            if should_show_after_update || should_force_show || !should_hide || !tray_available {
                 show_main_window(&app_handle);
             } else {
                 // [GRAIN] If we skip the frontend on startup, we must manually
@@ -1456,8 +1480,14 @@ pub fn run(cli_args: CliArgs) {
             // process alive in the tray so dictation/rolling/pill keep working —
             // unless launched with --no-tray, where closing is meant to quit. The
             // tray "Quit" uses app.exit(0) alongside setting INTENTIONAL_QUIT, which bypasses this prevention.
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                if !app.state::<CliArgs>().no_tray && !INTENTIONAL_QUIT.load(Ordering::Relaxed) {
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = &event {
+                // An updater restart must pass through even though ordinary
+                // window closure keeps the process alive in the tray.
+                if should_prevent_tray_exit(
+                    *code,
+                    app.state::<CliArgs>().no_tray,
+                    INTENTIONAL_QUIT.load(Ordering::Relaxed),
+                ) {
                     api.prevent_exit();
                 }
             }

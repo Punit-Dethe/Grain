@@ -25,6 +25,14 @@ async checkForUpdate(force: boolean) : Promise<Result<UpdateInfo | null, string>
 }
 },
 /**
+ * Return already-discovered update metadata without touching the network.
+ * This lets a WebView created by the backend update check render the notice on
+ * its first frame instead of waiting through a second launch delay.
+ */
+async getCachedUpdate() : Promise<UpdateInfo | null> {
+    return await TAURI_INVOKE("get_cached_update");
+},
+/**
  * Download and install the pending update, then restart into it.
  * 
  * `restart()` does not return, so there is deliberately no success path: either
@@ -2404,6 +2412,7 @@ recordingError: RecordingError,
 streamPhaseEvent: StreamPhaseEvent,
 streamTextEvent: StreamTextEvent,
 themeChanged: ThemeChanged,
+updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
 historyUpdatePayload: "history-update-payload",
@@ -2422,6 +2431,7 @@ recordingError: "recording-error",
 streamPhaseEvent: "stream-phase-event",
 streamTextEvent: "stream-text-event",
 themeChanged: "theme-changed",
+updateAvailable: "update-available",
 updateDownloadProgress: "update-download-progress"
 })
 
@@ -3583,6 +3593,11 @@ export type TodoTag = { text: string; done: boolean }
  */
 export type TranscribeAcceleratorSetting = "auto" | "cpu" | "gpu"
 export type TypingTool = "auto" | "wtype" | "kwtype" | "dotool" | "ydotool" | "xdotool"
+/**
+ * A newly discovered release. The cache covers WebViews created after this
+ * event; the event updates an already-open sidebar (including manual checks).
+ */
+export type UpdateAvailable = { update: UpdateInfo }
 /**
  * Download progress for an update, so a 100 MB installer is not a dead button.
  */

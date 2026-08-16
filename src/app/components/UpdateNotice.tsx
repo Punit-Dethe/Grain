@@ -35,23 +35,46 @@ export function UpdateNotice() {
 
   useEffect(() => {
     alive.current = true;
-    // `force: false` — the backend honours `update_checks_enabled` and answers
-    // "nothing to show" when the user has turned checks off.
-    const timer = setTimeout(() => {
-      void commands
-        .checkForUpdate(false)
-        .then((result) => {
-          if (!alive.current || result.status !== "ok") return;
-          setUpdate(result.data);
-        })
-        .catch(() => {
-          // A failed check is not worth a message. The user did not ask.
-        });
-    }, CHECK_DELAY_MS);
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unlisten = events.updateAvailable.listen((event) => {
+      if (!disposed) setUpdate(event.payload.update);
+    });
+
+    const scheduleCheck = () => {
+      if (!alive.current) return;
+      // `force: false` — the backend honours `update_checks_enabled` and
+      // coalesces this with its tray-safe launch check.
+      timer = setTimeout(() => {
+        void commands
+          .checkForUpdate(false)
+          .then((result) => {
+            if (!alive.current || result.status !== "ok") return;
+            setUpdate(result.data);
+          })
+          .catch(() => {
+            // A failed check is not worth a message. The user did not ask.
+          });
+      }, CHECK_DELAY_MS);
+    };
+
+    // If Rust opened this WebView because it found an update while Grain lived
+    // only in the tray, hydrate the notice immediately from metadata already in
+    // memory. Otherwise retain the quiet four-second launch delay.
+    void commands
+      .getCachedUpdate()
+      .then((cached) => {
+        if (!alive.current) return;
+        if (cached) setUpdate(cached);
+        else scheduleCheck();
+      })
+      .catch(scheduleCheck);
 
     return () => {
       alive.current = false;
-      clearTimeout(timer);
+      disposed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      void unlisten.then((off) => off());
     };
   }, []);
 
