@@ -166,6 +166,9 @@ pub(crate) async fn post_process_transcription(
     if let Some(caret) = caret {
         let source = safe_result.as_deref().unwrap_or(transcription);
         let fitted = crate::context_detect::fit_text_to_caret(source, caret);
+        if fitted != source {
+            log::info!("[GRAIN] context: deterministic cursor seam adjusted output");
+        }
         if safe_result.is_some() || fitted != transcription {
             Some(fitted)
         } else {
@@ -191,7 +194,9 @@ const SCAFFOLDING_MARKERS: &[&str] = &[
     "Reference only — the text already around the cursor",
     "Never output any part of them",
     "[Cursor fit]",
+    "[Cursor fit — REQUIRED]",
     "Use L/R only to make the transcript fit at the cursor",
+    "Treat the transcript as an insertion between L and R",
     // Context-awareness block headers.
     "[Context awareness]",
     "[Spoken instruction",

@@ -813,10 +813,26 @@ fn is_cjk_sentence_terminal(ch: char) -> bool {
     matches!(ch, '。' | '？' | '！')
 }
 
-/// Repair only the mechanical seams around a cursor insertion. Linguistic
-/// decisions remain with the model; this never rewrites words or forces casing.
+/// Repair the boundary facts that are deterministic from the cursor itself.
+/// Linguistic decisions remain with the model; the only casing change is a
+/// conservative set of high-confidence function words, leaving content words
+/// and likely proper nouns untouched.
 pub(crate) fn fit_text_to_caret(text: &str, caret: &CaretContext) -> String {
     let mut fitted = text.trim().to_string();
+    if fitted.is_empty() {
+        return fitted;
+    }
+
+    // If both sides contain text, this output is an insertion inside an
+    // existing sentence, not a standalone sentence. Weak/local models often
+    // return the ASR's leading capital and automatic final period unchanged;
+    // those two artifacts are mechanically wrong at this seam and do not need
+    // another model decision.
+    if !caret.before.trim().is_empty() && !caret.after.trim().is_empty() {
+        strip_automatic_terminal_period(&mut fitted);
+        lowercase_ordinary_sentence_start(&mut fitted);
+    }
+
     if fitted.is_empty() {
         return fitted;
     }
@@ -863,6 +879,125 @@ pub(crate) fn fit_text_to_caret(text: &str, caret: &CaretContext) -> String {
         fitted.push(' ');
     }
     fitted
+}
+
+fn strip_automatic_terminal_period(text: &mut String) {
+    if text.ends_with('。') {
+        text.pop();
+        return;
+    }
+    if !text.ends_with('.') {
+        return;
+    }
+
+    let last = text.split_whitespace().next_back().unwrap_or_default();
+    let stem = last.trim_end_matches('.');
+    let dotted_abbreviation = stem.split('.').count() >= 2
+        && stem
+            .split('.')
+            .all(|part| part.chars().count() == 1 && part.chars().all(char::is_alphabetic));
+    let named_abbreviation = [
+        "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt", "inc", "ltd", "co",
+    ]
+    .iter()
+    .any(|abbreviation| stem.eq_ignore_ascii_case(abbreviation));
+
+    // Preserve deliberate ellipses and abbreviation punctuation. Everything
+    // else is the cleanup/ASR sentence terminator; this also turns `3.5.` into
+    // `3.5`, rather than mistaking the decimal point for an abbreviation.
+    if !last.ends_with("..") && !dotted_abbreviation && !named_abbreviation {
+        text.pop();
+    }
+}
+
+fn lowercase_ordinary_sentence_start(text: &mut String) {
+    let Some((start, _)) = text.char_indices().find(|(_, ch)| ch.is_alphabetic()) else {
+        return;
+    };
+    let end = text[start..]
+        .char_indices()
+        .find_map(|(offset, ch)| (!ch.is_alphabetic()).then_some(start + offset))
+        .unwrap_or(text.len());
+    let word = &text[start..end];
+
+    // A title-cased following word is evidence that the apparent function word
+    // starts a name/title (`The Hague`, `A Few Good Men`). All-uppercase words
+    // are not treated that way, so ordinary `A UI issue` still becomes `a UI`.
+    let next_word = text[end..]
+        .split(|ch: char| !ch.is_alphabetic())
+        .find(|part| !part.is_empty());
+    let next_is_title_case = next_word.is_some_and(|next| {
+        let mut chars = next.chars();
+        chars.next().is_some_and(char::is_uppercase) && chars.any(char::is_lowercase)
+    });
+    if next_is_title_case {
+        return;
+    }
+
+    // Closed-class words are safe to de-capitalize mid-sentence. Content words
+    // stay model-owned so `Sarah`, `Windows`, product names and acronyms survive.
+    if !matches!(
+        word,
+        "A" | "An"
+            | "The"
+            | "This"
+            | "That"
+            | "These"
+            | "Those"
+            | "And"
+            | "But"
+            | "Or"
+            | "So"
+            | "Because"
+            | "Before"
+            | "After"
+            | "If"
+            | "When"
+            | "While"
+            | "As"
+            | "For"
+            | "From"
+            | "To"
+            | "In"
+            | "On"
+            | "At"
+            | "Of"
+            | "With"
+            | "Without"
+            | "We"
+            | "You"
+            | "He"
+            | "She"
+            | "They"
+            | "It"
+            | "There"
+            | "Here"
+            | "Is"
+            | "Are"
+            | "Was"
+            | "Were"
+            | "Be"
+            | "Being"
+            | "Been"
+            | "Do"
+            | "Does"
+            | "Did"
+            | "Can"
+            | "Could"
+            | "Should"
+            | "Would"
+            | "Might"
+            | "Must"
+            | "Have"
+            | "Has"
+            | "Had"
+    ) {
+        return;
+    }
+
+    let first = text[start..].chars().next().expect("word is non-empty");
+    let lower = first.to_lowercase().collect::<String>();
+    text.replace_range(start..start + first.len_utf8(), &lower);
 }
 
 fn punctuation_collides(left: char, right: char) -> bool {
@@ -1594,9 +1729,10 @@ impl ActiveContext {
 /// off.
 ///
 /// Returns `base` unchanged when nothing applies (no spoken instruction, context
-/// off / no detection), so the common path is byte-for-byte today's behavior. Otherwise a compact preamble is prepended (NOT appended — so
-/// it precedes the transcript in both the structured and legacy `${output}`
-/// paths) framing the layers and their priority.
+/// off / no detection), so the common path is byte-for-byte today's behavior.
+/// Otherwise soft layers form a compact preamble, while the mandatory cursor
+/// seam sits after the base cleanup prompt so generic capitalization and
+/// punctuation rules cannot override it.
 pub fn compose_prompt(
     base: &str,
     settings: &AppSettings,
@@ -1700,26 +1836,6 @@ pub fn compose_prompt(
                  user dictated it that way.\n",
             );
         }
-        // Keep the cursor addition small. Mechanical spacing and punctuation
-        // collisions are repaired locally after the model returns; the model
-        // only resolves grammar, casing and linguistic continuity. Plain L/R
-        // labels work across arbitrary user-selected instruction models.
-        if let Some(caret) = caret {
-            pre.push_str(
-                "[Cursor fit]\nUse L/R only to make the transcript fit at the cursor \
-                 (grammar, casing, punctuation); never repeat L/R.\n",
-            );
-            if !caret.before.is_empty() {
-                pre.push_str("L:");
-                pre.push_str(&caret.before);
-                pre.push('\n');
-            }
-            if !caret.after.is_empty() {
-                pre.push_str("R:");
-                pre.push_str(&caret.after);
-                pre.push('\n');
-            }
-        }
         if !terms.is_empty() {
             // Additive, LOW authority: only fix a term to one of these spellings when
             // the transcript clearly meant it; otherwise ignore. Never insert them.
@@ -1760,6 +1876,49 @@ pub fn compose_prompt(
     if !terms.is_empty() {
         layers.push("terms");
     }
+    pre.push_str(base);
+
+    // Cursor rules sit AFTER the generic cleanup prompt. The reported failure
+    // that drove this ordering had captured L/R correctly, but a weak model
+    // followed the later base rule and returned the ASR's standalone capital +
+    // period unchanged. Keep this small and explicit, then enforce the two
+    // deterministic parts locally in `fit_text_to_caret` as a backstop.
+    if let Some(caret) = caret {
+        pre.push_str(
+            "\n\n[Cursor fit — REQUIRED]\nTreat the transcript as an insertion between L and R, \
+             not a standalone sentence. When both have text, lowercase an ordinary first \
+             word and do not end with a period. Never repeat L/R.\n",
+        );
+        if !caret.before.is_empty() {
+            pre.push_str("L:");
+            pre.push_str(&caret.before);
+            pre.push('\n');
+        }
+        if !caret.after.is_empty() {
+            pre.push_str("R:");
+            pre.push_str(&caret.after);
+            pre.push('\n');
+        }
+    }
+
+    // [GRAIN] Terminal output constraint, and the reason it is LAST.
+    //
+    // Everything this function adds is reference material — the app name, the
+    // site, the text around the cursor — and every piece of it is a thing a
+    // model can mistake for content to return. One did: a user's email draft
+    // received the surrounding text and the seam instructions verbatim.
+    //
+    // The generic reference framing sits near the top; cursor instructions now
+    // sit after the base prompt. This terminal constraint remains the final,
+    // most-attended instruction. It is added only when a context layer was
+    // applied, so plain dictation remains byte-for-byte unchanged.
+    if has_ctx {
+        pre.push_str(
+            "\n\nOutput ONLY the corrected transcript itself — no surrounding text, \
+             no labels, no notes, no explanation.",
+        );
+    }
+
     log::info!(
         "[GRAIN] context: prompt layers applied: {} (+{} bytes)",
         if layers.is_empty() {
@@ -1767,29 +1926,8 @@ pub fn compose_prompt(
         } else {
             layers.join("+")
         },
-        pre.len(),
+        pre.len().saturating_sub(base.len()),
     );
-
-    pre.push_str(base);
-
-    // [GRAIN] Terminal output constraint, and the reason it is LAST.
-    //
-    // Everything this function prepends is reference material — the app name,
-    // the site, the text around the cursor — and every piece of it is a thing a
-    // model can mistake for content to return. One did: a user's email draft
-    // received the surrounding text and the seam instructions verbatim.
-    //
-    // Prose telling the model not to do that sits at the TOP of the prompt,
-    // which is the least-attended position. This sits at the very end, after
-    // the user's own prompt, which is the most-attended one. It is added only
-    // when a context layer was actually applied, so a plain dictation with no
-    // context is byte-for-byte what it was before.
-    if has_ctx {
-        pre.push_str(
-            "\n\nOutput ONLY the corrected transcript itself — no surrounding text, \
-             no labels, no notes, no explanation.",
-        );
-    }
     pre
 }
 
@@ -3363,10 +3501,12 @@ mod tests {
 
         assert!(out.contains("We agreed the release"));
         assert!(out.contains("before the holidays."));
-        assert!(out.contains("[Cursor fit]"));
+        assert!(out.contains("[Cursor fit — REQUIRED]"));
         assert!(out.contains("L:We agreed the release "));
         assert!(out.contains("R: before the holidays."));
-        assert!(out.contains("never repeat L/R"));
+        assert!(out.contains("Never repeat L/R"));
+        assert!(out.contains("do not end with a period"));
+        assert!(out.find("BASE ${output}").unwrap() < out.find("[Cursor fit").unwrap());
         assert!(out.trim_end().ends_with("no notes, no explanation."));
         // The user's own prompt still survives verbatim inside.
         assert!(out.contains("BASE ${output}"));
@@ -3481,6 +3621,49 @@ mod tests {
             CaretContext::from_surrounding("旧句。我们应该", "再发布。下一句。").unwrap(),
             cjk
         );
+    }
+
+    /// Regression for the real failure reported from the ChatGPT composer. The
+    /// provider returned the raw ASR sentence unchanged even though it was being
+    /// inserted between two halves of an existing sentence.
+    #[test]
+    fn mid_sentence_insertion_does_not_keep_standalone_sentence_formatting() {
+        let caret = CaretContext {
+            before: "We should probably test this ".into(),
+            after: " before releasing it publicly.".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret("A few more times with the testers.", &caret),
+            "a few more times with the testers"
+        );
+    }
+
+    #[test]
+    fn mid_sentence_backstop_preserves_proper_nouns_and_real_punctuation() {
+        let caret = CaretContext {
+            before: "We talked to ".into(),
+            after: " yesterday.".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret("Sarah about this.", &caret),
+            "Sarah about this"
+        );
+        assert_eq!(fit_text_to_caret("U.S.", &caret), "U.S.");
+        assert_eq!(fit_text_to_caret("Dr.", &caret), "Dr.");
+        assert_eq!(fit_text_to_caret("dr.", &caret), "dr.");
+        assert_eq!(fit_text_to_caret("version 3.5.", &caret), "version 3.5");
+        assert_eq!(fit_text_to_caret("Are we ready?", &caret), "are we ready?");
+        assert_eq!(fit_text_to_caret("The Hague.", &caret), "The Hague");
+        assert_eq!(fit_text_to_caret("A UI issue.", &caret), "a UI issue");
+    }
+
+    #[test]
+    fn one_sided_cursor_context_keeps_standalone_formatting() {
+        let caret = CaretContext {
+            before: "Notes: ".into(),
+            after: String::new(),
+        };
+        assert_eq!(fit_text_to_caret("A new item.", &caret), "A new item.");
     }
 
     /// Any applied context layer must be followed by the terminal output
