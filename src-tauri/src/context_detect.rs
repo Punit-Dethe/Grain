@@ -813,6 +813,231 @@ fn is_cjk_sentence_terminal(ch: char) -> bool {
     matches!(ch, '。' | '？' | '！')
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CaretReply {
+    Clean(String),
+    Extracted(String),
+    Rejected,
+}
+
+#[derive(Debug)]
+struct WordSpan {
+    start: usize,
+    end: usize,
+    folded: String,
+}
+
+/// Keep cursor context as reference material even when a weak model ignores the
+/// prompt and returns it as content.
+///
+/// A reply containing both captured sides can be repaired unambiguously by
+/// taking only the text between them. Any partial/ambiguous echo, or a reply
+/// much larger than the dictation, is rejected so the caller falls back to the
+/// original transcript. This is intentionally fail-closed: losing one cleanup
+/// pass is safer than duplicating text already present in the target field.
+pub(crate) fn isolate_caret_reply(
+    reply: &str,
+    transcription: &str,
+    caret: &CaretContext,
+) -> CaretReply {
+    let reply = reply.trim();
+    if reply.is_empty() {
+        return CaretReply::Rejected;
+    }
+
+    let reply_words = word_spans(reply);
+    let left_words = word_spans(&caret.before);
+    let right_words = word_spans(&caret.after);
+
+    if !left_words.is_empty() && !right_words.is_empty() {
+        if let Some(middle) = extract_between_context(
+            reply,
+            &reply_words,
+            &left_words,
+            &right_words,
+            transcription,
+        ) {
+            return CaretReply::Extracted(middle);
+        }
+    }
+
+    if contains_context_anchor(&reply_words, &left_words, AnchorSide::Left)
+        || contains_context_anchor(&reply_words, &right_words, AnchorSide::Right)
+        || reply_expands_too_far(reply, transcription)
+    {
+        return CaretReply::Rejected;
+    }
+
+    CaretReply::Clean(reply.to_string())
+}
+
+#[derive(Clone, Copy)]
+enum AnchorSide {
+    Left,
+    Right,
+}
+
+fn word_spans(text: &str) -> Vec<WordSpan> {
+    let mut words = Vec::new();
+    let mut start = None;
+
+    for (index, ch) in text.char_indices() {
+        if ch.is_alphanumeric() {
+            start.get_or_insert(index);
+        } else if let Some(word_start) = start.take() {
+            words.push(WordSpan {
+                start: word_start,
+                end: index,
+                folded: text[word_start..index].to_lowercase(),
+            });
+        }
+    }
+
+    if let Some(word_start) = start {
+        words.push(WordSpan {
+            start: word_start,
+            end: text.len(),
+            folded: text[word_start..].to_lowercase(),
+        });
+    }
+
+    words
+}
+
+fn extract_between_context(
+    reply: &str,
+    reply_words: &[WordSpan],
+    left_words: &[WordSpan],
+    right_words: &[WordSpan],
+    transcription: &str,
+) -> Option<String> {
+    let left_max = left_words.len().min(6);
+    let right_max = right_words.len().min(6);
+
+    for left_len in (minimum_anchor_words(left_words)..=left_max).rev() {
+        let left_anchor = &left_words[left_words.len() - left_len..];
+        for right_len in (minimum_anchor_words(right_words)..=right_max).rev() {
+            let right_anchor = &right_words[..right_len];
+            for left_at in sequence_positions(reply_words, left_anchor) {
+                let middle_start = reply_words[left_at + left_len - 1].end;
+                for right_at in sequence_positions(reply_words, right_anchor) {
+                    if right_at < left_at + left_len {
+                        continue;
+                    }
+                    let middle_end = reply_words[right_at].start;
+                    let middle = reply[middle_start..middle_end].trim();
+                    if !middle.is_empty() && !reply_expands_too_far(middle, transcription) {
+                        return Some(middle.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn minimum_anchor_words(words: &[WordSpan]) -> usize {
+    if words.len() >= 2 {
+        2
+    } else {
+        1
+    }
+}
+
+fn sequence_positions(haystack: &[WordSpan], needle: &[WordSpan]) -> Vec<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return Vec::new();
+    }
+
+    haystack
+        .windows(needle.len())
+        .enumerate()
+        .filter_map(|(index, window)| {
+            window
+                .iter()
+                .zip(needle)
+                .all(|(left, right)| left.folded == right.folded)
+                .then_some(index)
+        })
+        .collect()
+}
+
+fn contains_context_anchor(
+    reply_words: &[WordSpan],
+    context_words: &[WordSpan],
+    side: AnchorSide,
+) -> bool {
+    let max = context_words.len().min(6);
+    let min = minimum_anchor_words(context_words);
+    if min > max {
+        return false;
+    }
+
+    // A single short word is too common to trust in the middle of a reply, but
+    // it is reliable at the boundary where that side of an echoed context must
+    // appear. This also closes the small-context case without rejecting every
+    // ordinary occurrence of words such as "I", "to", or "now".
+    if context_words.len() == 1 {
+        let positions = sequence_positions(reply_words, context_words);
+        return positions.into_iter().any(|position| match side {
+            AnchorSide::Left => position == 0,
+            AnchorSide::Right => position + 1 == reply_words.len(),
+        });
+    }
+
+    (min..=max).rev().any(|len| {
+        let anchor = match side {
+            AnchorSide::Left => &context_words[context_words.len() - len..],
+            AnchorSide::Right => &context_words[..len],
+        };
+        !sequence_positions(reply_words, anchor).is_empty()
+    })
+}
+
+fn reply_expands_too_far(reply: &str, transcription: &str) -> bool {
+    let reply_chars = reply.chars().count();
+    let transcription_chars = transcription.trim().chars().count();
+    let char_allowance = transcription_chars / 2;
+    let max_chars = transcription_chars.saturating_add(char_allowance.max(24));
+
+    let reply_words = word_spans(reply);
+    let transcription_words = word_spans(transcription);
+    let word_allowance = transcription_words.len() / 2;
+    let max_words = transcription_words
+        .len()
+        .saturating_add(word_allowance.max(4));
+
+    if reply_chars > max_chars || reply_words.len() > max_words {
+        return true;
+    }
+
+    // A short paraphrase of L/R can evade exact anchor matching. Cleanup may
+    // add an article or replace a misspelling, but a cursor reply should not add
+    // several words absent from the actual dictation. Match as a multiset so a
+    // repeated context word cannot borrow one occurrence from the transcript.
+    if transcription_words.is_empty() {
+        return false;
+    }
+    let mut matched_transcription = vec![false; transcription_words.len()];
+    let mut added_reply_words = 0;
+    for reply_word in &reply_words {
+        if let Some((index, _)) = transcription_words
+            .iter()
+            .enumerate()
+            .find(|(index, word)| {
+                !matched_transcription[*index] && word.folded == reply_word.folded
+            })
+        {
+            matched_transcription[index] = true;
+        } else {
+            added_reply_words += 1;
+        }
+    }
+
+    added_reply_words > (transcription_words.len() / 3).max(1)
+}
+
 /// Repair the boundary facts that are deterministic from the cursor itself.
 /// Linguistic decisions remain with the model; the only casing change is a
 /// conservative set of high-confidence function words, leaving content words
@@ -3664,6 +3889,96 @@ mod tests {
             after: String::new(),
         };
         assert_eq!(fit_text_to_caret("A new item.", &caret), "A new item.");
+    }
+
+    #[test]
+    fn cursor_reply_keeps_only_the_unambiguous_dictated_middle() {
+        let caret = CaretContext {
+            before: "Please send the revised ".into(),
+            after: " to the finance team tomorrow.".into(),
+        };
+        assert_eq!(
+            isolate_caret_reply(
+                "please send the revised budget forecast to the finance team tomorrow.",
+                "Budget forecast.",
+                &caret,
+            ),
+            CaretReply::Extracted("budget forecast".into())
+        );
+    }
+
+    #[test]
+    fn cursor_reply_rejects_partial_or_oversized_context_echoes() {
+        let caret = CaretContext {
+            before: "The deployment checklist says ".into(),
+            after: " before the maintenance window.".into(),
+        };
+
+        assert_eq!(
+            isolate_caret_reply(
+                "The deployment checklist says verify the backup.",
+                "Verify the backup.",
+                &caret,
+            ),
+            CaretReply::Rejected
+        );
+        assert_eq!(
+            isolate_caret_reply(
+                "A lengthy rewritten response containing several unrelated clauses that were never present in the short dictation.",
+                "Confirm access.",
+                &CaretContext {
+                    before: "It is important to ".into(),
+                    after: " before Monday.".into(),
+                },
+            ),
+            CaretReply::Rejected
+        );
+        assert_eq!(
+            isolate_caret_reply(
+                "Kindly authorize this now",
+                "Approve it.",
+                &CaretContext {
+                    before: "Please ".into(),
+                    after: " today.".into(),
+                },
+            ),
+            CaretReply::Rejected
+        );
+    }
+
+    #[test]
+    fn cursor_reply_allows_a_compact_cleanup_without_context_words() {
+        let caret = CaretContext {
+            before: "The next task is to ".into(),
+            after: " after lunch.".into(),
+        };
+        assert_eq!(
+            isolate_caret_reply("review the invoices", "Review invoices.", &caret),
+            CaretReply::Clean("review the invoices".into())
+        );
+    }
+
+    #[test]
+    fn cursor_reply_handles_short_context_on_both_sides() {
+        let caret = CaretContext {
+            before: "I ".into(),
+            after: " now.".into(),
+        };
+        assert_eq!(
+            isolate_caret_reply("I approve it now.", "Approve it.", &caret),
+            CaretReply::Extracted("approve it".into())
+        );
+        assert_eq!(
+            isolate_caret_reply(
+                "I approve it",
+                "Approve it.",
+                &CaretContext {
+                    before: "I ".into(),
+                    after: String::new(),
+                },
+            ),
+            CaretReply::Rejected
+        );
     }
 
     /// Any applied context layer must be followed by the terminal output
