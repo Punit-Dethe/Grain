@@ -799,56 +799,17 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   line-height: 1.55;
 }
 
-.update-version-track {
-  margin: 0 30px;
-  padding: 12px 14px;
-  border-radius: 11px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  color: var(--text-4);
-  background: var(--bg-1);
-}
-
-.update-version-track > div {
-  min-width: 0;
-  display: grid;
-  gap: 3px;
-}
-
-.update-version-track > div:last-child {
-  text-align: right;
-}
-
-.update-version-track span {
-  color: var(--text-4);
-  font-size: 9.5px;
-  font-weight: 620;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.update-version-track strong {
-  overflow: hidden;
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 560;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .update-release-section {
+  box-sizing: border-box;
+  height: 224px;
+  flex: 0 1 224px;
   min-height: 0;
-  margin-top: 24px;
   padding: 22px 30px;
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--text-4) transparent;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .update-release-heading {
@@ -872,7 +833,11 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 }
 
 .update-release-notes {
+  min-height: 0;
+  overflow-y: auto;
   color: var(--text-3);
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
 }
 
 .update-release-notes > p {
@@ -1047,10 +1012,6 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 
   .update-dialog-hero {
     padding: 24px 54px 20px 20px;
-  }
-
-  .update-version-track {
-    margin-inline: 20px;
   }
 
   .update-release-section {

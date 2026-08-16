@@ -97,7 +97,7 @@ fn preview_info(app: &AppHandle) -> Option<UpdateInfo> {
         version: "0.0.3".to_string(),
         current_version: current_version(app),
         notes: Some(
-            "- A calmer update experience with full release details.\n- Updates surface even when Grain starts in the tray.\n- A one-launch visibility override after installation.\n\nThis is preview data only. No files will be downloaded or changed."
+            "- A cleaner update notice in the sidebar.\n- Full release details before installation.\n- Automatic surfacing when an update is found.\n- Reliable checks while Grain lives in the tray.\n- A one-launch visibility override after installation.\n- Clear download and installation progress.\n- Keyboard-friendly update controls.\n- Safer recovery when installation fails.\n\nThis is preview data only. No files will be downloaded or changed."
                 .to_string(),
         ),
         date: Some("2026-08-16T00:00:00Z".to_string()),

@@ -5,14 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  ArrowRight,
-  Check,
-  ChevronRight,
-  Download,
-  ShieldCheck,
-  X,
-} from "lucide-react";
+import { Check, ChevronRight, Download, ShieldCheck, X } from "lucide-react";
 import { commands, events, type UpdateInfo } from "@/bindings";
 import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
@@ -36,8 +29,6 @@ const COPY = {
   dialogTitle: (version: string) => `Grain ${version} is ready`,
   dialogDescription:
     "Review what changed, then install the signed update when you are ready. Grain will restart once the installation finishes.",
-  installed: "Installed",
-  available: "Available",
   whatsNew: "What’s new",
   noNotes:
     "This release did not include notes. You can still install it securely from Grain.",
@@ -160,21 +151,6 @@ function UpdateDialog({
             <p id="update-dialog-description">{COPY.dialogDescription}</p>
           </div>
         </header>
-
-        <div
-          className="update-version-track"
-          aria-label={`Updating Grain from ${update.current_version} to ${update.version}`}
-        >
-          <div>
-            <span>{COPY.installed}</span>
-            <strong>{update.current_version}</strong>
-          </div>
-          <ArrowRight size={17} strokeWidth={1.7} aria-hidden="true" />
-          <div>
-            <span>{COPY.available}</span>
-            <strong>{update.version}</strong>
-          </div>
-        </div>
 
         <section
           className="update-release-section"
