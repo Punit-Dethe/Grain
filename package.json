@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "bun scripts/run-tauri.ts",
     "dev:asr": "bun scripts/run-tauri.ts dev",
+    "dev:update-preview": "bun scripts/run-tauri.ts dev --update-preview",
     "dev:onboarding": "bun scripts/run-tauri.ts dev --onboarding",
     "build:asr": "bun scripts/run-tauri.ts build",
     "lint": "eslint src",

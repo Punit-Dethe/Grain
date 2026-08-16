@@ -32,7 +32,11 @@ use tauri_plugin_updater::UpdaterExt;
 use tauri_specta::Event;
 
 const AUTOMATIC_CHECK_DELAY: Duration = Duration::from_secs(4);
+#[cfg(debug_assertions)]
+const PREVIEW_CHECK_DELAY: Duration = Duration::from_millis(550);
 const SHOW_AFTER_UPDATE_MARKER: &str = ".show-after-update";
+#[cfg(debug_assertions)]
+const UPDATE_PREVIEW_ENV: &str = "GRAIN_PREVIEW_UPDATE";
 
 /// `None` means no launch check has completed yet; `Some(None)` means the
 /// running build is current. The mutex also coalesces the backend launch check
@@ -53,6 +57,8 @@ pub struct UpdateInfo {
     pub notes: Option<String>,
     /// Publication date as the feed reported it.
     pub date: Option<String>,
+    /// Debug-only, non-installing preview launched by `dev:update-preview`.
+    pub preview: bool,
 }
 
 /// A newly discovered release. The cache covers WebViews created after this
@@ -73,6 +79,44 @@ pub struct UpdateDownloadProgress {
 
 fn current_version(app: &AppHandle) -> String {
     app.package_info().version.to_string()
+}
+
+#[cfg(debug_assertions)]
+fn preview_enabled() -> bool {
+    std::env::var_os(UPDATE_PREVIEW_ENV).is_some()
+}
+
+#[cfg(not(debug_assertions))]
+fn preview_enabled() -> bool {
+    false
+}
+
+#[cfg(debug_assertions)]
+fn preview_info(app: &AppHandle) -> Option<UpdateInfo> {
+    preview_enabled().then(|| UpdateInfo {
+        version: "0.0.3".to_string(),
+        current_version: current_version(app),
+        notes: Some(
+            "- A calmer update experience with full release details.\n- Updates surface even when Grain starts in the tray.\n- A one-launch visibility override after installation.\n\nThis is preview data only. No files will be downloaded or changed."
+                .to_string(),
+        ),
+        date: Some("2026-08-16T00:00:00Z".to_string()),
+        preview: true,
+    })
+}
+
+#[cfg(not(debug_assertions))]
+fn preview_info(_app: &AppHandle) -> Option<UpdateInfo> {
+    None
+}
+
+fn automatic_check_delay() -> Duration {
+    #[cfg(debug_assertions)]
+    if preview_enabled() {
+        return PREVIEW_CHECK_DELAY;
+    }
+
+    AUTOMATIC_CHECK_DELAY
 }
 
 fn marker_path(data_dir: &Path) -> PathBuf {
@@ -124,7 +168,7 @@ pub(crate) fn take_show_after_update(app: &AppHandle) -> bool {
 /// `AppHandle` are both released as soon as the launch check completes.
 pub(crate) fn spawn_automatic_check(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(AUTOMATIC_CHECK_DELAY).await;
+        tokio::time::sleep(automatic_check_delay()).await;
         if let Err(error) = check_for_update(app, false).await {
             // Automatic checks are intentionally quiet in the UI, but retain a
             // diagnostic for support logs and the manual retry path.
@@ -167,7 +211,8 @@ fn surface_update(app: &AppHandle, update: &UpdateInfo) {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
-    if !force && !crate::settings::get_settings(&app).update_checks_enabled {
+    let preview = preview_info(&app);
+    if preview.is_none() && !force && !crate::settings::get_settings(&app).update_checks_enabled {
         return Ok(None);
     }
 
@@ -182,15 +227,20 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
         }
     }
 
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let found = updater.check().await.map_err(|e| e.to_string())?;
+    let info = if preview.is_some() {
+        preview
+    } else {
+        let updater = app.updater().map_err(|e| e.to_string())?;
+        let found = updater.check().await.map_err(|e| e.to_string())?;
 
-    let info = found.map(|update| UpdateInfo {
-        version: update.version.clone(),
-        current_version: current_version(&app),
-        notes: update.body.clone(),
-        date: update.date.map(|d| d.to_string()),
-    });
+        found.map(|update| UpdateInfo {
+            version: update.version.clone(),
+            current_version: current_version(&app),
+            notes: update.body.clone(),
+            date: update.date.map(|d| d.to_string()),
+            preview: false,
+        })
+    };
 
     *checked = Some(info.clone());
     drop(checked);
@@ -212,6 +262,20 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
 #[tauri::command]
 #[specta::specta]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    if preview_enabled() {
+        for percentage in [8_u64, 24, 47, 71, 91, 100] {
+            let _ = UpdateDownloadProgress {
+                downloaded: percentage,
+                total: 100,
+                percentage: percentage as f64,
+            }
+            .emit(&app);
+            tokio::time::sleep(Duration::from_millis(170)).await;
+        }
+        log::info!("[GRAIN] update preview completed; no files changed");
+        return Ok(());
+    }
+
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()

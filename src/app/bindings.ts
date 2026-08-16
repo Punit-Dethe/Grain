@@ -3625,7 +3625,11 @@ notes: string | null;
 /**
  * Publication date as the feed reported it.
  */
-date: string | null }
+date: string | null;
+/**
+ * Debug-only, non-installing preview launched by `dev:update-preview`.
+ */
+preview: boolean }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/
