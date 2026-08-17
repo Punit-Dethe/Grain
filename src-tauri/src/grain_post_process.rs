@@ -139,11 +139,15 @@ pub(crate) async fn post_process_transcription(
     //
     // Prompt wording makes that rarer; it cannot make it impossible, and the
     // cost of the rare case is corrupted text in a document the user is about
-    // to send. So the reply is checked for fragments only we could have written.
-    // Finding one means the post-processing round is a write-off, and `None` is
-    // exactly how this function already says "use the raw transcript" — the user
-    // loses the cleanup, never their words.
-    result.filter(|reply| {
+    // to send. The first guard catches prompt scaffolding; the cursor guard then
+    // compares actual reply content with the captured sides. `None` is exactly
+    // how this function already says "use the raw transcript" — the user loses
+    // the cleanup, never their words.
+    let caret = ctx
+        .as_ref()
+        .and_then(|context| context.caret.as_ref())
+        .filter(|caret| !caret.is_empty());
+    let safe_result = result.filter(|reply| {
         let echoed = reply_contains_scaffolding(reply);
         if echoed {
             warn!(
@@ -152,7 +156,48 @@ pub(crate) async fn post_process_transcription(
             );
         }
         !echoed
-    })
+    });
+    let safe_result = match (safe_result, caret) {
+        (Some(reply), Some(caret)) => {
+            match crate::context_detect::isolate_caret_reply(&reply, transcription, caret) {
+                crate::context_detect::CaretReply::Clean(reply) => Some(reply),
+                crate::context_detect::CaretReply::Extracted(middle) => {
+                    log::info!(
+                        "[GRAIN] context: removed echoed left/right context from provider reply"
+                    );
+                    Some(middle)
+                }
+                crate::context_detect::CaretReply::Rejected => {
+                    warn!(
+                        "[GRAIN] context: provider reply may contain cursor context; \
+                     discarding it and using the raw transcript"
+                    );
+                    None
+                }
+            }
+        }
+        (result, _) => result,
+    };
+
+    // Cursor spacing is a deterministic concern, not an LLM concern. Apply the
+    // seam pass to successful cleanup and also to the raw transcript when the
+    // provider failed or echoed scaffolding. In the latter case return `Some`
+    // only if the local pass changed anything, preserving the established
+    // `None`-means-raw-fallback contract for the common path.
+    if let Some(caret) = caret {
+        let source = safe_result.as_deref().unwrap_or(transcription);
+        let fitted = crate::context_detect::fit_text_to_caret(source, caret);
+        if fitted != source {
+            log::info!("[GRAIN] context: deterministic cursor seam adjusted output");
+        }
+        if safe_result.is_some() || fitted != transcription {
+            Some(fitted)
+        } else {
+            None
+        }
+    } else {
+        safe_result
+    }
 }
 
 /// Fragments that can only have come from Grain's own prompt scaffolding.
@@ -169,6 +214,10 @@ const SCAFFOLDING_MARKERS: &[&str] = &[
     "immediately after:",
     "Reference only — the text already around the cursor",
     "Never output any part of them",
+    "[Cursor fit]",
+    "[Cursor fit — REQUIRED]",
+    "Use L/R only to make the transcript fit at the cursor",
+    "Treat the transcript as an insertion between L and R",
     // Context-awareness block headers.
     "[Context awareness]",
     "[Spoken instruction",
