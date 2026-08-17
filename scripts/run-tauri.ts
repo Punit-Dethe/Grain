@@ -55,15 +55,6 @@ if (onboardingFlagIndex !== -1) {
   );
 }
 
-const updatePreviewFlagIndex = tauriArgs.indexOf("--update-preview");
-if (updatePreviewFlagIndex !== -1) {
-  tauriArgs.splice(updatePreviewFlagIndex, 1);
-  process.env.GRAIN_PREVIEW_UPDATE = "1";
-  console.log(
-    "[run-tauri] previewing the update workflow — no download, install, or restart will occur.",
-  );
-}
-
 if (process.platform === "win32") {
   const target = configuredTargetDir()?.replace(/[/\\]+$/, "");
   // "Short" ⇒ the build root won't blow MAX_PATH on its own, so the junction is

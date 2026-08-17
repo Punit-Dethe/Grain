@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronRight, Download, ShieldCheck, X } from "lucide-react";
+import { ChevronRight, Download, ShieldCheck, X } from "lucide-react";
 import { commands, events, type UpdateInfo } from "@/bindings";
 import { Markdown } from "@/components/markdown/Markdown";
 import "@/components/markdown/markdown.css";
@@ -20,12 +20,9 @@ const COPY = {
   retry: "Try again",
   details: "View update details",
   installing: "Preparing update",
-  previewComplete: "Preview complete",
   closeDetails: "Close update details",
   updateProgress: "Update installation progress",
-  closePreview: "Close preview",
   notNow: "Not now",
-  previewInstall: "Preview install",
   dialogTitle: (version: string) => `Grain ${version} is ready`,
   dialogDescription:
     "Review what changed, then install the signed update when you are ready. Grain will restart once the installation finishes.",
@@ -33,12 +30,10 @@ const COPY = {
   noNotes:
     "This release did not include notes. You can still install it securely from Grain.",
   trust: "Signed release · installed in place · restart required",
-  previewFinished: "Preview finished",
-  previewBody: "No files changed, and Grain was not restarted.",
   installErrorTitle: "The update could not be installed.",
 } as const;
 
-type Phase = "idle" | "installing" | "complete";
+type Phase = "idle" | "installing";
 
 function releaseDate(value: string | null): string | null {
   if (!value) return null;
@@ -126,7 +121,6 @@ function UpdateDialog({
       <section
         ref={dialogRef}
         className="update-dialog"
-        data-phase={phase}
         role="dialog"
         aria-modal="true"
         aria-labelledby="update-dialog-title"
@@ -197,18 +191,6 @@ function UpdateDialog({
           </div>
         )}
 
-        {phase === "complete" && (
-          <div className="update-preview-success" role="status">
-            <span aria-hidden="true">
-              <Check size={15} strokeWidth={2} />
-            </span>
-            <div>
-              <strong>{COPY.previewFinished}</strong>
-              <p>{COPY.previewBody}</p>
-            </div>
-          </div>
-        )}
-
         {error && (
           <div className="update-dialog-error" role="alert">
             <strong>{COPY.installErrorTitle}</strong>
@@ -223,25 +205,21 @@ function UpdateDialog({
             disabled={busy}
             onClick={onClose}
           >
-            {phase === "complete" ? COPY.closePreview : COPY.notNow}
+            {COPY.notNow}
           </button>
-          {phase !== "complete" && (
-            <button
-              className="update-dialog-primary"
-              type="button"
-              data-update-initial-focus
-              disabled={busy}
-              onClick={onInstall}
-            >
-              {busy
-                ? `${COPY.installing}…`
-                : update.preview
-                  ? COPY.previewInstall
-                  : error
-                    ? COPY.retry
-                    : COPY.cardAction}
-            </button>
-          )}
+          <button
+            className="update-dialog-primary"
+            type="button"
+            data-update-initial-focus
+            disabled={busy}
+            onClick={onInstall}
+          >
+            {busy
+              ? `${COPY.installing}…`
+              : error
+                ? COPY.retry
+                : COPY.cardAction}
+          </button>
         </footer>
       </section>
     </div>
@@ -325,15 +303,11 @@ export function UpdateNotice() {
     setError(null);
     setPercent(0);
     void commands.installUpdate().then((result) => {
-      // A real success restarts the process and never returns. Preview mode is
-      // deliberately the sole successful return path.
+      // A successful production install restarts the process and never returns.
       if (!alive.current) return;
       if (result.status === "error") {
         setError(result.error);
         setPhase("idle");
-      } else if (update.preview) {
-        setPercent(100);
-        setPhase("complete");
       }
     });
   }, [update]);
@@ -342,7 +316,7 @@ export function UpdateNotice() {
 
   return (
     <>
-      <aside className="update-notice" data-phase={phase}>
+      <aside className="update-notice">
         <button
           className="update-notice-summary"
           type="button"
@@ -378,22 +352,9 @@ export function UpdateNotice() {
               />
             </div>
           </div>
-        ) : phase === "complete" ? (
-          <button
-            className="update-notice-complete"
-            type="button"
-            onClick={() => setDialogOpen(true)}
-          >
-            <Check size={13} strokeWidth={2} aria-hidden="true" />
-            {COPY.previewComplete}
-          </button>
         ) : (
           <button className="update-notice-cta" type="button" onClick={install}>
-            {error
-              ? COPY.retry
-              : update.preview
-                ? COPY.previewInstall
-                : COPY.cardAction}
+            {error ? COPY.retry : COPY.cardAction}
           </button>
         )}
       </aside>

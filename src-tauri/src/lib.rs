@@ -593,6 +593,15 @@ fn should_prevent_tray_exit(code: Option<i32>, no_tray: bool, intentional_quit: 
     code != Some(tauri::RESTART_EXIT_CODE) && !no_tray && !intentional_quit
 }
 
+fn should_show_main_window_on_launch(
+    show_after_update: bool,
+    force_show_permissions: bool,
+    start_hidden: bool,
+    tray_available: bool,
+) -> bool {
+    show_after_update || force_show_permissions || !start_hidden || !tray_available
+}
+
 /// Convert an unexpected panic on the headless worker into a normal CLI
 /// failure. Without this guard the Tauri event loop remains alive after the
 /// worker exits, leaving `--transcribe-file` hung indefinitely.
@@ -618,7 +627,9 @@ where
 
 #[cfg(test)]
 mod headless_guard_tests {
-    use super::{run_headless_guarded, should_prevent_tray_exit};
+    use super::{
+        run_headless_guarded, should_prevent_tray_exit, should_show_main_window_on_launch,
+    };
 
     #[test]
     fn preserves_normal_exit_codes() {
@@ -638,6 +649,13 @@ mod headless_guard_tests {
             false
         ));
         assert!(should_prevent_tray_exit(None, false, false));
+    }
+
+    #[test]
+    fn post_update_launch_overrides_start_hidden_once() {
+        assert!(should_show_main_window_on_launch(true, false, true, true));
+        assert!(!should_show_main_window_on_launch(false, false, true, true));
+        assert!(should_show_main_window_on_launch(false, false, true, false));
     }
 }
 
@@ -1403,7 +1421,12 @@ pub fn run(cli_args: CliArgs) {
             // If start_hidden but tray is disabled, we must show the window
             // anyway. Without a tray icon, the dock is the only way back in.
             let tray_available = settings.show_tray_icon && !cli_args.no_tray;
-            if should_show_after_update || should_force_show || !should_hide || !tray_available {
+            if should_show_main_window_on_launch(
+                should_show_after_update,
+                should_force_show,
+                should_hide,
+                tray_available,
+            ) {
                 show_main_window(&app_handle);
             } else {
                 // [GRAIN] If we skip the frontend on startup, we must manually

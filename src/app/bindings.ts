@@ -3613,23 +3613,15 @@ export type UpdateInfo = {
 /**
  * Version of the available release, e.g. `0.0.2`.
  */
-version: string; 
-/**
- * The version running right now, so the UI can say "0.0.1 → 0.0.2".
- */
-current_version: string; 
+version: string;
 /**
  * Release notes, when the release carried a body.
  */
-notes: string | null; 
+notes: string | null;
 /**
- * Publication date as the feed reported it.
+ * RFC 3339 publication date as `latest.json` reported it.
  */
-date: string | null;
-/**
- * Debug-only, non-installing preview launched by `dev:update-preview`.
- */
-preview: boolean }
+date: string | null }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

@@ -32,11 +32,7 @@ use tauri_plugin_updater::UpdaterExt;
 use tauri_specta::Event;
 
 const AUTOMATIC_CHECK_DELAY: Duration = Duration::from_secs(4);
-#[cfg(debug_assertions)]
-const PREVIEW_CHECK_DELAY: Duration = Duration::from_millis(550);
 const SHOW_AFTER_UPDATE_MARKER: &str = ".show-after-update";
-#[cfg(debug_assertions)]
-const UPDATE_PREVIEW_ENV: &str = "GRAIN_PREVIEW_UPDATE";
 
 /// `None` means no launch check has completed yet; `Some(None)` means the
 /// running build is current. The mutex also coalesces the backend launch check
@@ -51,14 +47,10 @@ pub(crate) struct UpdateState {
 pub struct UpdateInfo {
     /// Version of the available release, e.g. `0.0.2`.
     pub version: String,
-    /// The version running right now, so the UI can say "0.0.1 → 0.0.2".
-    pub current_version: String,
     /// Release notes, when the release carried a body.
     pub notes: Option<String>,
-    /// Publication date as the feed reported it.
+    /// RFC 3339 publication date as `latest.json` reported it.
     pub date: Option<String>,
-    /// Debug-only, non-installing preview launched by `dev:update-preview`.
-    pub preview: bool,
 }
 
 /// A newly discovered release. The cache covers WebViews created after this
@@ -77,46 +69,36 @@ pub struct UpdateDownloadProgress {
     pub percentage: f64,
 }
 
-fn current_version(app: &AppHandle) -> String {
-    app.package_info().version.to_string()
+fn update_info_from_release(update: &tauri_plugin_updater::Update) -> UpdateInfo {
+    update_info_from_metadata(
+        update.version.clone(),
+        update.body.clone(),
+        &update.raw_json,
+    )
 }
 
-#[cfg(debug_assertions)]
-fn preview_enabled() -> bool {
-    std::env::var_os(UPDATE_PREVIEW_ENV).is_some()
-}
-
-#[cfg(not(debug_assertions))]
-fn preview_enabled() -> bool {
-    false
-}
-
-#[cfg(debug_assertions)]
-fn preview_info(app: &AppHandle) -> Option<UpdateInfo> {
-    preview_enabled().then(|| UpdateInfo {
-        version: "0.0.3".to_string(),
-        current_version: current_version(app),
-        notes: Some(
-            "- A cleaner update notice in the sidebar.\n- Full release details before installation.\n- Automatic surfacing when an update is found.\n- Reliable checks while Grain lives in the tray.\n- A one-launch visibility override after installation.\n- Clear download and installation progress.\n- Keyboard-friendly update controls.\n- Safer recovery when installation fails.\n\nThis is preview data only. No files will be downloaded or changed."
-                .to_string(),
-        ),
-        date: Some("2026-08-16T00:00:00Z".to_string()),
-        preview: true,
-    })
-}
-
-#[cfg(not(debug_assertions))]
-fn preview_info(_app: &AppHandle) -> Option<UpdateInfo> {
-    None
-}
-
-fn automatic_check_delay() -> Duration {
-    #[cfg(debug_assertions)]
-    if preview_enabled() {
-        return PREVIEW_CHECK_DELAY;
+fn update_info_from_metadata(
+    version: String,
+    notes: Option<String>,
+    manifest: &serde_json::Value,
+) -> UpdateInfo {
+    UpdateInfo {
+        version,
+        notes,
+        // Preserve the exact RFC 3339 value from latest.json. OffsetDateTime's
+        // Display form is intended for humans and is not a stable web contract.
+        date: manifest
+            .get("pub_date")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
     }
+}
 
-    AUTOMATIC_CHECK_DELAY
+fn download_percentage(downloaded: u64, total: u64) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+    ((downloaded as f64 / total as f64) * 100.0).clamp(0.0, 100.0)
 }
 
 fn marker_path(data_dir: &Path) -> PathBuf {
@@ -168,7 +150,7 @@ pub(crate) fn take_show_after_update(app: &AppHandle) -> bool {
 /// `AppHandle` are both released as soon as the launch check completes.
 pub(crate) fn spawn_automatic_check(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(automatic_check_delay()).await;
+        tokio::time::sleep(AUTOMATIC_CHECK_DELAY).await;
         if let Err(error) = check_for_update(app, false).await {
             // Automatic checks are intentionally quiet in the UI, but retain a
             // diagnostic for support logs and the manual retry path.
@@ -211,8 +193,7 @@ fn surface_update(app: &AppHandle, update: &UpdateInfo) {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<UpdateInfo>, String> {
-    let preview = preview_info(&app);
-    if preview.is_none() && !force && !crate::settings::get_settings(&app).update_checks_enabled {
+    if !force && !crate::settings::get_settings(&app).update_checks_enabled {
         return Ok(None);
     }
 
@@ -227,20 +208,9 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
         }
     }
 
-    let info = if preview.is_some() {
-        preview
-    } else {
-        let updater = app.updater().map_err(|e| e.to_string())?;
-        let found = updater.check().await.map_err(|e| e.to_string())?;
-
-        found.map(|update| UpdateInfo {
-            version: update.version.clone(),
-            current_version: current_version(&app),
-            notes: update.body.clone(),
-            date: update.date.map(|d| d.to_string()),
-            preview: false,
-        })
-    };
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let found = updater.check().await.map_err(|e| e.to_string())?;
+    let info = found.as_ref().map(update_info_from_release);
 
     *checked = Some(info.clone());
     drop(checked);
@@ -262,20 +232,6 @@ pub async fn check_for_update(app: AppHandle, force: bool) -> Result<Option<Upda
 #[tauri::command]
 #[specta::specta]
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
-    if preview_enabled() {
-        for percentage in [8_u64, 24, 47, 71, 91, 100] {
-            let _ = UpdateDownloadProgress {
-                downloaded: percentage,
-                total: 100,
-                percentage: percentage as f64,
-            }
-            .emit(&app);
-            tokio::time::sleep(Duration::from_millis(170)).await;
-        }
-        log::info!("[GRAIN] update preview completed; no files changed");
-        return Ok(());
-    }
-
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()
@@ -291,11 +247,7 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
             move |chunk, total| {
                 downloaded += chunk as u64;
                 let total = total.unwrap_or(0);
-                let percentage = if total > 0 {
-                    (downloaded as f64 / total as f64) * 100.0
-                } else {
-                    0.0
-                };
+                let percentage = download_percentage(downloaded, total);
                 // A failed progress emit must not abort a download that is
                 // otherwise fine — the bar stalls, the install still lands.
                 let _ = UpdateDownloadProgress {
@@ -333,8 +285,47 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{marker_path, take_marker, SHOW_AFTER_UPDATE_MARKER};
+    use super::{
+        download_percentage, marker_path, take_marker, update_info_from_metadata,
+        SHOW_AFTER_UPDATE_MARKER,
+    };
     use std::path::PathBuf;
+
+    #[test]
+    fn update_info_wire_contract_carries_release_feed_metadata() {
+        let manifest = serde_json::json!({
+            "version": "0.0.2",
+            "notes": "# Grain v0.0.2\n\n## What's new",
+            "pub_date": "2026-08-15T17:16:57.704Z",
+            "platforms": {
+                "windows-x86_64-nsis": {
+                    "signature": "signed",
+                    "url": "https://example.invalid/Grain_0.0.2_x64-setup.exe"
+                }
+            }
+        });
+        let info = update_info_from_metadata(
+            manifest["version"].as_str().unwrap().to_string(),
+            manifest["notes"].as_str().map(str::to_owned),
+            &manifest,
+        );
+
+        assert_eq!(
+            serde_json::to_value(info).unwrap(),
+            serde_json::json!({
+                "version": "0.0.2",
+                "notes": "# Grain v0.0.2\n\n## What's new",
+                "date": "2026-08-15T17:16:57.704Z"
+            })
+        );
+    }
+
+    #[test]
+    fn download_progress_handles_known_unknown_and_inexact_totals() {
+        assert_eq!(download_percentage(50, 100), 50.0);
+        assert_eq!(download_percentage(50, 0), 0.0);
+        assert_eq!(download_percentage(101, 100), 100.0);
+    }
 
     #[test]
     fn post_update_marker_is_consumed_once() {
