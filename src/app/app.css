@@ -68,10 +68,6 @@
     0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
   --glass-fill: rgba(20, 24, 29, 0.62);
   --glass-highlight: rgba(255, 255, 255, 0.06);
-  /* Toggle OFF-track color. The only knob the settings switch needs from CSS;
-     everything else (geometry, thumb, ON-track = --color-accent) lives in the
-     ToggleSwitch/Switch components. */
-  --toggle-off: #444a52;
 }
 
 /* The extension seam (PLAN.md §2.1): these eight names are the public
@@ -128,7 +124,6 @@ html[data-theme="light"] {
   --text-4: #9aa0a9;
   --hairline: rgba(24, 29, 37, 0.1);
   --hairline-soft: rgba(24, 29, 37, 0.065);
-  --toggle-off: #cbd2dc;
   --accent: #637bd1;
   --accent-strong: #536bc2;
   --accent-hover: #536bc2;
@@ -562,67 +557,125 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   font-size: 11.5px;
 }
 
-/* Sits directly above the model card and borrows its geometry — same margins,
- * padding and radius — so the rail foot reads as one stack of app status. The
- * accent left edge is the only thing marking it as new. */
+/* Update discovery: a compact rail affordance plus a focused detail dialog.
+ * The card stays quiet until asked; the modal carries release notes and the
+ * protected install action. */
 .update-notice {
   margin: 10px 6px 0;
-  padding: 12px;
-  border-left: 2px solid var(--accent);
-  border-radius: 10px;
-  background: #151618;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg-3) 86%, var(--accent) 14%);
 }
 
-.update-notice-head {
+.update-notice-summary {
+  width: 100%;
+  min-height: 58px;
+  padding: 10px;
+  border: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 9px;
+  color: var(--text-1);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
 }
 
-.update-notice-head strong {
-  font-size: 13px;
-  font-weight: 600;
+.update-notice-summary:hover {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 
-.update-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--accent);
+.update-notice-summary:focus-visible,
+.update-notice-cta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
-.update-notice p {
-  margin: 5px 0 0;
+.update-notice-mark {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.update-notice-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.update-notice-copy strong {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 620;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-notice-copy > span {
+  overflow: hidden;
   color: var(--text-4);
-  font-size: 11.5px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-notice-chevron {
+  margin-left: auto;
+  flex: 0 0 auto;
+  color: var(--text-4);
 }
 
 .update-notice-cta {
-  width: 100%;
-  margin-top: 9px;
-  padding: 6px 8px;
+  width: calc(100% - 20px);
+  min-height: 29px;
+  margin: 0 10px 10px;
+  padding: 5px 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   color: var(--accent-ink);
   background: var(--accent);
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: 10.5px;
+  font-weight: 650;
   cursor: pointer;
-  transition: filter 0.15s ease;
+  transition: background 140ms ease;
 }
 
 .update-notice-cta:hover {
-  filter: brightness(1.06);
+  background: var(--accent-strong);
+}
+
+.update-notice-installing {
+  padding: 0 10px 11px;
+}
+
+.update-notice-installing > div:first-child {
+  margin-bottom: 7px;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+
+.update-notice-installing strong {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
 }
 
 .update-progress {
   height: 4px;
-  margin-top: 10px;
   overflow: hidden;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: color-mix(in srgb, var(--text-1) 10%, transparent);
 }
 
 .update-progress span {
@@ -630,15 +683,321 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
-  transition: width 0.2s linear;
 }
 
-.update-notice-error {
-  color: var(--danger, #e5484d) !important;
+.update-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  padding: 28px;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 5, 8, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: update-backdrop-in 150ms ease-out both;
 }
 
-html[data-theme="light"] .update-notice {
-  background: #f5f5f6;
+.update-dialog {
+  width: min(640px, 100%);
+  max-height: min(760px, calc(100vh - 56px));
+  overflow: hidden;
+  position: relative;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  color: var(--text-1);
+  background: var(--bg-2);
+  box-shadow: var(--shadow-float);
+  animation: update-dialog-in 220ms var(--ease-out) both;
+}
+
+.update-dialog-close {
+  width: 32px;
+  height: 32px;
+  position: absolute;
+  z-index: 1;
+  top: 14px;
+  right: 14px;
+  border: 0;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.update-dialog-close:hover:not(:disabled) {
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--text-1) 7%, transparent);
+}
+
+.update-dialog-close:focus-visible,
+.update-dialog-primary:focus-visible,
+.update-dialog-secondary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.update-dialog-close:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.update-dialog-hero {
+  padding: 30px 64px 24px 30px;
+  display: flex;
+  align-items: flex-start;
+  gap: 15px;
+}
+
+.update-dialog-mark {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+}
+
+.update-dialog-hero h2 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: clamp(21px, 2.2vw, 26px);
+  font-weight: 640;
+  line-height: 1.18;
+  letter-spacing: -0.025em;
+}
+
+.update-dialog-hero p {
+  max-width: 56ch;
+  margin: 8px 0 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.update-release-section {
+  box-sizing: border-box;
+  height: 224px;
+  flex: 0 1 224px;
+  min-height: 0;
+  padding: 22px 30px;
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.update-release-heading {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.update-release-heading h3 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 13px;
+  font-weight: 630;
+}
+
+.update-release-heading time {
+  color: var(--text-4);
+  font-size: 10.5px;
+}
+
+.update-release-notes {
+  min-height: 0;
+  overflow-y: auto;
+  color: var(--text-3);
+  scrollbar-width: thin;
+  scrollbar-color: var(--text-4) transparent;
+}
+
+.update-release-notes > p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.update-release-notes .gm-markdown {
+  color: var(--text-3);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.update-release-notes .gm-markdown h1,
+.update-release-notes .gm-markdown h2,
+.update-release-notes .gm-markdown h3,
+.update-release-notes .gm-markdown h4,
+.update-release-notes .gm-markdown h5,
+.update-release-notes .gm-markdown h6,
+.update-release-notes .gm-markdown strong {
+  color: var(--text-2);
+}
+
+.update-trust-row {
+  padding: 13px 30px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-4);
+  font-size: 10.5px;
+}
+
+.update-trust-row svg {
+  flex: 0 0 auto;
+  color: var(--sage);
+}
+
+.update-dialog-progress {
+  padding: 18px 30px 0;
+}
+
+.update-dialog-progress > div:first-child {
+  margin-bottom: 9px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.update-dialog-progress strong {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 620;
+}
+
+.update-dialog-error {
+  margin: 18px 30px 0;
+  padding: 11px 12px;
+  border-radius: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.update-dialog-error strong {
+  display: block;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 630;
+}
+
+.update-dialog-error {
+  display: grid;
+  gap: 4px;
+  color: color-mix(in srgb, var(--danger) 78%, var(--text-1));
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
+.update-dialog-error strong {
+  color: var(--danger);
+}
+
+.update-dialog-error span {
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.update-dialog-actions {
+  padding: 20px 30px 26px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.update-dialog-actions button {
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 620;
+  cursor: pointer;
+}
+
+.update-dialog-secondary {
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text-1) 6%, transparent);
+}
+
+.update-dialog-secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-1) 10%, transparent);
+}
+
+.update-dialog-primary {
+  min-width: 132px;
+  color: var(--accent-ink);
+  background: var(--accent);
+}
+
+.update-dialog-primary:hover:not(:disabled) {
+  background: var(--accent-strong);
+}
+
+.update-dialog-actions button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+@keyframes update-backdrop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes update-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+@media (max-width: 620px) {
+  .update-dialog-backdrop {
+    padding: 14px;
+  }
+
+  .update-dialog {
+    max-height: calc(100vh - 28px);
+  }
+
+  .update-dialog-hero {
+    padding: 24px 54px 20px 20px;
+  }
+
+  .update-release-section {
+    padding: 20px;
+  }
+
+  .update-trust-row,
+  .update-dialog-progress {
+    padding-inline: 20px;
+  }
+
+  .update-dialog-error {
+    margin-inline: 20px;
+  }
+
+  .update-dialog-actions {
+    padding: 18px 20px 22px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-dialog-backdrop,
+  .update-dialog {
+    animation: none;
+  }
 }
 
 /* Settings row: version, the manual check, and its answer. */
@@ -2164,26 +2523,58 @@ html[data-theme="light"] .model-role-tabs {
 .capture-mode-picker {
   display: grid;
   gap: 6px;
-  padding: 12px 14px;
+  padding: 4px 14px 12px;
 }
 
-/* All three capture modes are always live. Each is a static row — name and
-   description on the left, its shortcut keycap on the right edge. No selection
-   state: there is nothing to pick any more. */
 .capture-mode-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 11px;
   padding: 11px 12px;
   border-radius: 9px;
   color: inherit;
   background: rgba(255, 255, 255, 0.022);
   text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.capture-mode-option:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.capture-mode-option.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-focus);
+}
+
+.capture-mode-option:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-focus);
+}
+
+.capture-mode-mark {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--text-4);
+  transition:
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.capture-mode-option.selected .capture-mode-mark {
+  background: var(--accent);
+  box-shadow:
+    inset 0 0 0 1.5px var(--accent),
+    inset 0 0 0 4px var(--bg-1);
 }
 
 .capture-mode-copy {
-  flex: 1;
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -2201,13 +2592,16 @@ html[data-theme="light"] .model-role-tabs {
   line-height: 1.45;
 }
 
-/* The bare keycap control sits flush to the right edge and never shrinks. */
-.capture-mode-shortcut {
-  flex: none;
-}
-
 html[data-theme="light"] .capture-mode-option {
   background: rgba(24, 29, 37, 0.035);
+}
+
+html[data-theme="light"] .capture-mode-option:hover {
+  background: rgba(24, 29, 37, 0.055);
+}
+
+html[data-theme="light"] .capture-mode-option.selected {
+  background: var(--accent-soft);
 }
 
 /* About has no section rail of its own — it is one surface, not a set. */
@@ -2445,14 +2839,6 @@ html[data-theme="light"] .capture-mode-option {
   font-size: 13px !important;
 }
 
-/* The prompt-instruction editor is the main workspace for writing a prompt —
-   give it a tall default. Needs !important + extra specificity to clear the
-   36px floor the rule above forces on every settings textarea. Still resize-y,
-   so the user can drag it taller. */
-.next-settings-content textarea.prompt-instructions-input {
-  min-height: 240px !important;
-}
-
 .next-settings-content .app-select__value-container {
   padding-block: 0 !important;
 }
@@ -2462,11 +2848,45 @@ html[data-theme="light"] .capture-mode-option {
   border-radius: 8px;
 }
 
-/* The settings toggle is defined entirely by the ToggleSwitch/Switch
-   components (self-consistent geometry, accent track ON, --toggle-off track
-   OFF). No CSS override here — a prior `:has()` override forced `transform`
-   with `!important`, which clobbered the component's own thumb translate and
-   was the actual cause of the "thumb won't slide / overflows" bug. */
+.next-settings-content label:has(> input[type="checkbox"]) > div {
+  width: 38px !important;
+  height: 22px !important;
+  padding: 2px !important;
+  border-radius: 999px !important;
+  position: relative !important;
+  background: #444a52 !important;
+}
+
+.next-settings-content
+  label:has(> input[type="checkbox"])
+  > input:checked
+  + div {
+  background: var(--accent) !important;
+}
+
+/* [GRAIN] Settings toggle — iOS style (accent track, white thumb), defined
+   explicitly and completely here. It does NOT rely on the component's Tailwind
+   `peer-checked:after:translate-x` (that pseudo-element translate never fired
+   reliably, which is why the thumb sat still). The three numbers are a matched
+   set for the 32×18 track (w-8 h-[18px] on the component): a 14px thumb inset
+   2px travels 14px → even 2px margins, slides cleanly, never overflows. If you
+   ever resize it, change track width, thumb size, and travel together:
+   travel = trackWidth − thumb − 2·inset. */
+.next-settings-content label:has(> input[type="checkbox"]) > div::after {
+  width: 14px !important;
+  height: 14px !important;
+  top: 2px !important;
+  left: 2px !important;
+  border-radius: 50% !important;
+  background: #fff !important;
+  transform: translateX(0) !important;
+}
+.next-settings-content
+  label:has(> input[type="checkbox"])
+  > input:checked
+  + div::after {
+  transform: translateX(14px) !important;
+}
 
 .next-settings-loading {
   min-height: 160px;
@@ -2782,7 +3202,20 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   box-shadow: inset 0 0 0 1px #dcdcdf !important;
 }
 
-/* (light-theme toggle track handled by --toggle-off; no override needed) */
+html[data-theme="light"]
+  .next-settings-content
+  label:has(> input[type="checkbox"])
+  > div {
+  background: #cbd2dc !important;
+}
+
+html[data-theme="light"]
+  .next-settings-content
+  label:has(> input[type="checkbox"])
+  > input:checked
+  + div {
+  background: var(--accent) !important;
+}
 
 /* Notes: the real Grain Space engine hosted in the prototype workspace. */
 .notes-workspace-page {
@@ -3907,11 +4340,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-profile-settings {
-  /* One tile geometry for every icon stack in this section, so the faces on a
-     profile card and the faces in its opened panel are the same size and
-     weight. Only the direction differs, and that is set per stack. */
-  --profile-tile: 32px;
-  --profile-tile-img: 20px;
   display: grid;
   gap: 20px;
 }
@@ -3985,18 +4413,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   cursor: default;
 }
 
-/* Wraps the back row and the card, so navigation sits ABOVE the border rather
-   than inside it. */
-.context-profile-panel {
-  display: grid;
-  gap: 10px;
-  justify-items: start;
-}
-
-.context-profile-panel > .context-profile-card {
-  width: 100%;
-}
-
 .context-profile-card {
   overflow: hidden;
   border-radius: 14px;
@@ -4009,23 +4425,20 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   padding: 15px 16px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
 }
 
-/* Fanned sideways: the header is wide and short, so a horizontal stack reads
-   without stealing height from the copy beside it. */
 .context-profile-apps {
-  flex: 0 0 auto;
+  min-width: 82px;
   display: flex;
   align-items: center;
 }
 
-.context-profile-apps > span {
-  width: var(--profile-tile);
-  height: var(--profile-tile);
+.context-profile-apps span {
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
-  overflow: hidden;
   border-radius: 50%;
   color: var(--text-2);
   background: var(--bg-2);
@@ -4034,28 +4447,16 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     inset 0 0 0 1px var(--hairline);
 }
 
-/* Later tiles ride over earlier ones, so the stack reads front-to-back
-   left-to-right — the same order the eye takes them in. */
-.context-profile-apps > span + span {
-  margin-left: -8px;
+.context-profile-apps span + span {
+  margin-left: -7px;
 }
 
-.context-profile-apps > span:nth-child(2) {
-  z-index: 1;
+.context-profile-apps span:nth-child(2) {
+  color: var(--sky);
 }
 
-.context-profile-apps > span:nth-child(3) {
-  z-index: 2;
-}
-
-/* `contain`, never `cover`: these are real brand marks, and cropping one to
-   fill a circle is how a recognisable logo stops being recognisable. */
-.context-profile-apps img,
-.context-custom-profile-icons img {
-  width: var(--profile-tile-img);
-  height: var(--profile-tile-img);
-  border-radius: 5px;
-  object-fit: contain;
+.context-profile-apps span:nth-child(3) {
+  color: var(--accent-strong);
 }
 
 .context-profile-copy {
@@ -4119,84 +4520,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-profile-prompt-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 620;
-}
-
-/* Only rendered when a profile has actually been edited, so it doubles as the
-   indicator that this profile no longer tracks the shipped wording. */
-.context-profile-reset {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  font-size: 10.5px;
-  font-weight: 560;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  cursor: pointer;
-  transition: color 120ms ease;
-}
-
-.context-profile-reset:hover {
-  color: var(--text-1);
-}
-
-/* Returns from a profile that lives inside the Other tab (AI chat) to the grid
-   it was opened from. Its own row ABOVE the card, with the arrow doing the
-   explaining — so it reads as navigation rather than as part of the profile's
-   copy, which is where it sat before.
- *
- * The negative inset pulls its label's optical left edge into line with the
- * card below, since its padding is what gives the hover pill its shape rather
- * than anything the eye should see. Spacing to the card comes from the panel
- * grid's gap, not a margin here, so there is one number to change. */
-.context-profile-back {
-  margin-left: -6px;
-  padding: 5px 9px 5px 6px;
-  border: 0;
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: none;
-  color: var(--text-3);
-  font: inherit;
-  font-size: 11.5px;
-  font-weight: 560;
-  cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease;
-}
-
-.context-profile-back:hover,
-.context-profile-back:focus-visible {
-  color: var(--text-1);
-  background: var(--bg-2);
-}
-
-.context-profile-delete {
-  margin-right: auto;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--danger, #e5484d);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 560;
-  cursor: pointer;
-}
-
-.context-profile-delete:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .context-profile-prompt p,
@@ -4207,6 +4533,9 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   font: inherit;
   font-size: 12.5px;
   line-height: 1.62;
+}
+
+.context-profile-prompt textarea {
   min-height: 68px;
   max-height: 184px;
   padding: 0 0 5px;
@@ -4253,31 +4582,16 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   gap: 12px;
 }
 
-/* Every card in this grid is sized to ONE shape: a title of any length on one
-   line, and exactly two lines of description. Two lines is the design target
-   rather than an accident of content — a one-line description still reserves
-   the second, so a row of cards keeps a common baseline instead of each card
-   being as tall as whatever text it happened to get. The height below is that
-   shape plus padding, so nothing has to be measured to stay aligned. */
 .context-custom-profile-card {
-  --card-pad-y: 15px;
-  --card-title-size: 13px;
-  --card-desc-size: 12px;
-  --card-desc-leading: 1.5;
-  /* Reserved for the description, always: two lines at its own leading. */
-  --card-desc-block: calc(var(--card-desc-size) * var(--card-desc-leading) * 2);
   min-width: 0;
-  min-height: calc(
-    var(--card-pad-y) * 2 + var(--card-title-size) * 1.35 + 6px +
-      var(--card-desc-block)
-  );
-  padding: var(--card-pad-y) 15px;
+  min-height: 112px;
+  padding: 16px;
   border-radius: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-content: center;
   align-items: center;
-  gap: 15px;
+  gap: 14px;
   overflow: hidden;
   color: var(--text-1);
   background: transparent;
@@ -4304,17 +4618,13 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   transform: scale(0.99);
 }
 
-/* Clamped to the two lines the card is built around, and reserving them even
-   when the text is shorter — that reservation is what keeps a one-line profile
-   the same height as its neighbours. */
 .context-custom-profile-instruction {
   width: 100%;
-  min-height: var(--card-desc-block);
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-2);
-  font-size: var(--card-desc-size);
-  line-height: var(--card-desc-leading);
+  font-size: 12px;
+  line-height: 1.52;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   white-space: pre-wrap;
@@ -4333,43 +4643,27 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .context-custom-profile-create-copy {
   min-width: 0;
   display: grid;
-  align-content: center;
-  gap: 6px;
+  gap: 5px;
 }
 
-/* One line, ellipsised. A title is allowed to be long; it is not allowed to
-   change the card's height, which is what wrapping it would do. */
 .context-custom-profile-create-copy strong {
   width: 100%;
   overflow: hidden;
-  font-size: var(--card-title-size);
+  font-size: 13px;
   font-weight: 620;
-  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The Create card's own copy sits on the same two-line reservation as a real
-   profile's instruction, so the two never disagree about how tall a card is. */
 .context-custom-profile-create-copy > span {
-  min-height: var(--card-desc-block);
-  display: -webkit-box;
-  overflow: hidden;
   color: var(--text-3);
-  font-size: var(--card-desc-size);
-  line-height: var(--card-desc-leading);
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  font-size: 11.5px;
+  line-height: 1.5;
 }
 
-/* Vertically stacked, overlapping tiles — the real favicons of what a profile
-   covers. 60% overlap: enough that three fit the card's height, still enough of
-   each tile showing to recognise it. Max three is enforced in the component;
-   past that the stack reads as a smudge rather than as icons. */
 .context-custom-profile-icons {
-  --icon-overlap: 0.58;
-  flex: 0 0 auto;
-  min-width: var(--profile-tile);
+  min-width: 38px;
+  min-height: 34px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4377,12 +4671,11 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-icons > span {
-  width: var(--profile-tile);
-  height: var(--profile-tile);
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  overflow: hidden;
   color: var(--text-2);
   background: var(--bg-2);
   box-shadow:
@@ -4390,31 +4683,21 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     inset 0 0 0 1px var(--hairline);
 }
 
-/* Each tile after the first rides up over the one before. Later tiles sit on
-   top, so the stack reads front-to-back downward.
- *
- * A duplicate of this rule used to follow with a hard `-12px`, which won on
- * source order and quietly held the overlap at 43% however this was set. */
 .context-custom-profile-icons > span + span {
-  margin-top: calc(var(--profile-tile) * var(--icon-overlap) * -1);
+  margin-top: -12px;
 }
 
 .context-custom-profile-icons > span:nth-child(2) {
-  z-index: 1;
+  color: var(--sky);
 }
 
 .context-custom-profile-icons > span:nth-child(3) {
-  z-index: 2;
+  color: var(--accent-strong);
 }
 
-/* Tall enough that opening the app picker does not push the whole dialog into a
-   scrollbar — the list inside it has its own, and two nested scroll regions is
-   the thing that felt broken. The bottom padding is trimmed for the same
-   reason: it was the last few pixels over the line. */
 .context-profile-editor-dialog {
   width: min(540px, 100%);
-  max-height: min(788px, calc(100vh - 40px));
-  padding-bottom: 24px;
+  max-height: min(720px, calc(100vh - 48px));
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--text-4) transparent;
@@ -4469,24 +4752,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
-}
-
-/* A website chip shows the site's real favicon once it resolves, which is also
-   how the user knows the site was understood. Fixed box so the chip does not
-   reflow when the glyph is replaced by the image. */
-.context-profile-target-icon {
-  width: 14px;
-  height: 14px;
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-}
-
-.context-profile-target-icon img {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-  object-fit: contain;
 }
 
 .context-profile-target {
@@ -4589,126 +4854,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   min-width: 0;
   height: 38px;
   min-height: 38px !important;
-}
-
-/* [GRAIN] The installed-application picker. Sized so the list is obviously
-   scrollable rather than looking like it ends at the last visible row — the
-   catalogue is a few hundred entries and search is the intended way through
-   it. */
-.context-app-picker {
-  display: grid;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 12px;
-  background: var(--bg-2);
-  box-shadow: inset 0 0 0 1px var(--hairline-soft);
-}
-
-.context-app-picker-search {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-
-.context-app-picker-search > svg {
-  color: var(--text-3);
-}
-
-.next-settings-content
-  .context-app-picker-search
-  input.dictionary-dialog-input {
-  min-width: 0;
-  height: 34px;
-  min-height: 34px !important;
-}
-
-/* Sized to show five rows and clip the sixth, so it is visibly a list you
-   scroll rather than one that looks complete at whatever fits. */
-.context-app-picker-list {
-  max-height: 196px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  display: grid;
-  gap: 2px;
-}
-
-.context-app-picker-empty {
-  margin: 0;
-  padding: 14px 10px;
-  color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.5;
-}
-
-.context-app-picker-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-
-.next-settings-content .context-app-picker-row {
-  border-radius: 8px !important;
-}
-
-.context-app-picker-row:hover:not(:disabled) {
-  background: var(--bg-3);
-}
-
-.context-app-picker-row:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.context-app-picker-icon {
-  width: 24px;
-  height: 24px;
-  display: grid;
-  place-items: center;
-  color: var(--text-3);
-}
-
-.context-app-picker-icon img {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  object-fit: contain;
-}
-
-.context-app-picker-name {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
-}
-
-.context-app-picker-name strong {
-  color: var(--text-1);
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-app-picker-name span {
-  color: var(--text-3);
-  font-size: 10.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.context-app-picker-added {
-  color: var(--text-3);
-  font-size: 10.5px;
-  font-weight: 600;
 }
 
 html[data-theme="light"] .context-custom-profile-card {

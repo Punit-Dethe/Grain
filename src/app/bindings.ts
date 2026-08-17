@@ -2694,10 +2694,10 @@ extension_developer_mode?: boolean;
  */
 context_nearby_terms?: boolean; 
 /**
- * [GRAIN] Seamless insertion: read the nearest useful sentence fragment on
- * either side of the caret (maximum 200 left / 80 right) and give it to the
- * post-processing LLM as compact L/R context, so dictating into the middle
- * of a sentence flows. An empty neighbourhood adds no cursor prompt.
+ * [GRAIN] Seamless insertion: read a short span of text on either side of
+ * the caret and give it to the post-processing LLM as `<before_text>` /
+ * `<after_text>`, so dictating into the middle of a sentence produces text
+ * that flows — correct leading space, no stray capital, no repeated words.
  * 
  * **This is a SEPARATE opt-in from [`Self::context_nearby_terms`] on
  * purpose.** That one promises to send unique tokens and explicitly never
@@ -3613,17 +3613,13 @@ export type UpdateInfo = {
 /**
  * Version of the available release, e.g. `0.0.2`.
  */
-version: string; 
-/**
- * The version running right now, so the UI can say "0.0.1 → 0.0.2".
- */
-current_version: string; 
+version: string;
 /**
  * Release notes, when the release carried a body.
  */
-notes: string | null; 
+notes: string | null;
 /**
- * Publication date as the feed reported it.
+ * RFC 3339 publication date as `latest.json` reported it.
  */
 date: string | null }
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
