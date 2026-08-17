@@ -517,6 +517,13 @@ pub enum PillAction {
     /// [GRAIN] User clicked the pill's Quick-Agent follow-up offer — reopen the
     /// Agent expanded with the retained conversation.
     AgentFollowup,
+    /// [GRAIN] User clicked one of the switcher capsule's `‹`/`›` arrows.
+    /// `delta` is the step through the prompt list (`-1` previous, `1` next) —
+    /// the same cycle the switcher shortcut performs, so the core answers with
+    /// `PromptChanged` exactly as it would for the keyboard.
+    PromptCycle {
+        delta: i32,
+    },
     /// [GRAIN] User clicked the expanded (live transcription) card's cancel ×.
     /// Identical to pressing the Cancel shortcut: the core drops the recording,
     /// the transcript, and every session surface, then hides the pill.

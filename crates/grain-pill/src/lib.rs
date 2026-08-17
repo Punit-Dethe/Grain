@@ -274,11 +274,23 @@ const STUDIO_TOP_SPLIT_GAP: f32 = 8.0; // transparent gap between the two contro
 const STUDIO_TOP_RECORD_W: f32 = 100.0; // fixed — the label never changes
 const STUDIO_TOP_RECORD_ICON_GAP: f32 = 7.0; // sparkle → label gap
 const STUDIO_RECORD_LABEL: &str = "Record";
+/// How much of each capsule end is the `‹`/`›` target. Wider than the glyph so
+/// the arrows are comfortable to hit, still clear of the centered label.
+const STUDIO_TOP_ARROW_HIT_W: f32 = STUDIO_TOP_ARROW_INSET + 12.0;
+/// Where in the reveal the row hands over. The switcher finishes contracting at
+/// this point and Record only starts fading in after it — the two capsules must
+/// never occupy the same pixels, or their rims blend into a smear halfway
+/// through. Running out, the order reverses for free: Record leaves, then the
+/// switcher grows back into the space.
+const STUDIO_TOP_HANDOVER: f32 = 0.62;
 
-/// The switcher's width on the Studio surface: the card width less the Record
-/// action and the gap between them, so the band can never exceed the card.
-fn studio_top_switch_w() -> f32 {
-    (STUDIO_W - STUDIO_TOP_RECORD_W - STUDIO_TOP_SPLIT_GAP).max(0.0)
+/// The switcher's width on the Studio surface. It owns the WHOLE band while the
+/// Prompt Record capsule is absent — a plain prompt switch has no reason to
+/// leave a hole — and contracts to make room as that capsule is revealed.
+/// `record` is Record's eased reveal: 0 = absent (full width), 1 = fully out.
+fn studio_top_switch_w(record: f32) -> f32 {
+    let taken = (STUDIO_TOP_RECORD_W + STUDIO_TOP_SPLIT_GAP) * record.clamp(0.0, 1.0);
+    (STUDIO_W - taken).max(0.0)
 }
                                           // Present (and ease the riser/hover) at ~60 fps so motion is smooth; the dot
                                           // field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
@@ -3696,6 +3708,16 @@ struct App {
     /// session exactly as the Cancel shortcut does.
     cancel_rect: Option<HitRect>,
     cancel_hover: bool,
+    /// [GRAIN] The Studio switcher's `‹`/`›` targets (prev, next) as last drawn.
+    /// A click cycles the active prompt through the core — the same action the
+    /// switcher shortcut runs. `None` on every other surface.
+    prompt_cycle_rects: Option<(HitRect, HitRect)>,
+    /// Which arrow the cursor is on: `-1` previous, `1` next, `0` neither.
+    prompt_arrow_hover: i32,
+    /// Whether the cursor is over the window at all. `cursor_pos` keeps its last
+    /// value after the cursor leaves, so anything re-evaluated per frame (rather
+    /// than on `CursorMoved`) needs this to know that value is still live.
+    cursor_inside: bool,
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
     /// [GRAIN] Shift held — Capture submits the note on Shift/Ctrl+Enter (plain
@@ -3816,6 +3838,9 @@ impl App {
             prompt_record_rect: None,
             cancel_rect: None,
             cancel_hover: false,
+            prompt_cycle_rects: None,
+            prompt_arrow_hover: 0,
+            cursor_inside: false,
             ctrl_down: false,
             shift_down: false,
             fallback_font: None,
@@ -3885,6 +3910,16 @@ impl App {
         point_in_rect(self.cursor_pos, rect)
     }
 
+    /// Which switcher arrow the cursor is on: `-1` previous, `1` next, `0`
+    /// neither. Drives both the hover highlight and the click.
+    fn arrow_under_cursor(&self) -> i32 {
+        match self.prompt_cycle_rects {
+            Some((prev, _)) if self.cursor_in_rect(prev) => -1,
+            Some((_, next)) if self.cursor_in_rect(next) => 1,
+            _ => 0,
+        }
+    }
+
     fn set_prompt_record_hover(&mut self, hovered: bool) {
         if hovered {
             self.prompt_record_hover = true;
@@ -3917,6 +3952,20 @@ impl App {
                 let (w, h) = Self::win_size_for(PillMode::Studio, self.skin);
                 let card_h = self.studio_grown_h.clamp(studio_card_height(0), h as f32);
                 self.cursor_in_rect((0.0, h as f32 - card_h, w as f32, h as f32))
+                    // [GRAIN] The band's own controls are reveal surfaces in
+                    // their own right, not just things the reveal produced.
+                    // Reading a prompt name and stepping through the list takes
+                    // time, and the row must not withdraw from under the cursor
+                    // that is using it. Leaving them restarts the hold like
+                    // leaving the card does. This is also how a switcher that
+                    // came up alone (a plain prompt switch) offers Record: hover
+                    // it and the row makes room.
+                    || self
+                        .prompt_switch_rect
+                        .is_some_and(|rect| self.cursor_in_rect(rect))
+                    || self
+                        .prompt_record_rect
+                        .is_some_and(|rect| self.cursor_in_rect(rect))
             }
             PillMode::AgentInput => false,
         };
@@ -4175,11 +4224,14 @@ impl App {
     /// follow-up offer, within the arrow-less capsule).
     fn prompt_label_max(&self) -> f32 {
         match self.mode {
-            // Studio top capsule: the band's LEFT half (the Record action owns
-            // the right), arrows at a fixed inset.
-            PillMode::Studio => {
-                (studio_top_switch_w() - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0)
-            }
+            // Studio top capsule, measured at its CONTRACTED width (Record
+            // revealed). The capsule's width animates but the label is
+            // rasterized once — fitting it to the narrowest state is what keeps
+            // it from overflowing when the row makes room for Record.
+            PillMode::Studio => (studio_top_switch_w(1.0)
+                - 2.0 * STUDIO_TOP_ARROW_INSET
+                - 2.0 * SIB_TEXT_PAD)
+                .max(0.0),
             // Collapsed sibling: the arrow-less offer fills its max width; the
             // switcher fits between its arrows in the fixed-width capsule.
             _ if self.agent_offer.is_some() || self.session_owner.is_some() => {
@@ -4214,9 +4266,10 @@ impl App {
         // sure the single shared font is resident before we render a frame. It
         // loads once here (lazy) and is dropped again after a long idle.
         self.ensure_font();
-        // The cancel × belongs to the Studio card alone; clear it up front so no
-        // other surface can inherit a stale clickable rect.
+        // The cancel × and the switcher's arrows are Studio-card controls; clear
+        // them up front so no other surface inherits a stale clickable rect.
         self.cancel_rect = None;
+        self.prompt_cycle_rects = None;
         match self.mode {
             PillMode::Collapsed => self.render_collapsed(),
             PillMode::Studio => self.render_studio(),
@@ -4225,6 +4278,14 @@ impl App {
         if self.cancel_rect.is_none() {
             self.cancel_hover = false;
         }
+        // The arrows move while the row contracts, so a cursor that is holding
+        // still can end up highlighting an arrow that has slid out from under
+        // it. Re-read the targets each frame rather than only on cursor motion.
+        self.prompt_arrow_hover = if self.cursor_inside {
+            self.arrow_under_cursor()
+        } else {
+            0
+        };
     }
 
     /// Lazily load the bundled primary font (idempotent). Called before each
@@ -5107,14 +5168,22 @@ impl App {
             let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
             let card_top = hf - card_h;
             let top = card_top - (STUDIO_TOP_GAP + STUDIO_TOP_PILL_H) * band_p;
-            self.draw_studio_top_pill(&mut pixmap, top, band_p * fade);
-            if hover_p > 0.01 {
-                self.draw_studio_prompt_record(&mut pixmap, w as f32, top, hover_p * fade);
+            // One eased value drives both halves of the handover, split at
+            // STUDIO_TOP_HANDOVER so the space is cleared before it is filled.
+            let record = eased_progress(hover_p);
+            let contract = (record / STUDIO_TOP_HANDOVER).min(1.0);
+            let reveal =
+                ((record - STUDIO_TOP_HANDOVER) / (1.0 - STUDIO_TOP_HANDOVER)).clamp(0.0, 1.0);
+            self.draw_studio_top_pill(&mut pixmap, top, band_p * fade, contract);
+            if reveal > 0.01 {
+                self.draw_studio_prompt_record(&mut pixmap, w as f32, top, reveal * fade);
             } else {
+                // Never leave a rect for a button that has not appeared yet.
                 self.prompt_record_rect = None;
             }
         } else {
             self.prompt_switch_rect = None;
+            self.prompt_cycle_rects = None;
             self.prompt_record_rect = None;
         }
 
@@ -5542,12 +5611,14 @@ impl App {
         self.prompt_switch_rect = None;
     }
 
-    /// [GRAIN] The Studio band's LEFT control — the prompt switcher. It gets the
-    /// wider share of the row because it hosts an arbitrary prompt name; the
-    /// label truncates rather than resizing the capsule. `top` is the shared band
-    /// position; `alpha` its reveal (a mid-speech switch OR the hover).
-    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, top: f32, alpha: f32) {
-        let right = studio_top_switch_w();
+    /// [GRAIN] The Studio band's LEFT control — the prompt switcher. It hosts an
+    /// arbitrary prompt name, so it takes the whole row when Record is absent
+    /// and the wider share when it is not; the label truncates rather than
+    /// resizing the capsule. `top` is the shared band position, `alpha` its
+    /// reveal (a mid-speech switch OR the hover), `record` Record's eased
+    /// reveal, which is what it contracts against.
+    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, top: f32, alpha: f32, record: f32) {
+        let right = studio_top_switch_w(record);
         let bottom = top + STUDIO_TOP_PILL_H;
         self.draw_prompt_capsule(
             pixmap,
@@ -5558,11 +5629,19 @@ impl App {
             STUDIO_TOP_ARROW_INSET,
             alpha,
         );
-        self.prompt_switch_rect = if self.agent_offer.is_some() {
-            None
-        } else {
-            Some((0.0, top, right, bottom))
-        };
+        // The follow-up offer borrows this capsule as a single clickable
+        // affordance — it has no arrows, so it exposes no cycle targets either.
+        if self.agent_offer.is_some() {
+            self.prompt_switch_rect = None;
+            self.prompt_cycle_rects = None;
+            return;
+        }
+        self.prompt_switch_rect = Some((0.0, top, right, bottom));
+        let hit = STUDIO_TOP_ARROW_HIT_W.min(right / 2.0);
+        self.prompt_cycle_rects = Some((
+            (0.0, top, hit, bottom),
+            (right - hit, top, right, bottom),
+        ));
     }
 
     /// Draw a prompt capsule into `[px0,px1] × [top, top+ph]`: a near-black
@@ -5622,12 +5701,22 @@ impl App {
             {
                 let l = CachedText::new(font, "\u{2039}", PROMPT_LABEL_PX);
                 let r = CachedText::new(font, "\u{203a}", PROMPT_LABEL_PX);
+                // The arrows are clickable on the Studio band, so the one under
+                // the cursor lifts to full cream — the feedback that tells the
+                // user they are a control and not an ornament.
+                let arrow_col = |side: i32| {
+                    if self.prompt_arrow_hover == side {
+                        [255, 252, 246]
+                    } else {
+                        col
+                    }
+                };
                 draw_cached_text_centered(
                     pixmap,
                     &l,
                     (px0 + arrow_inset, cy),
                     PROMPT_LABEL_PX,
-                    col,
+                    arrow_col(-1),
                     content_alpha,
                 );
                 draw_cached_text_centered(
@@ -5635,7 +5724,7 @@ impl App {
                     &r,
                     (px1 - arrow_inset, cy),
                     PROMPT_LABEL_PX,
-                    col,
+                    arrow_col(1),
                     content_alpha,
                 );
             }
@@ -5706,6 +5795,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = (position.x as f32, position.y as f32);
+                self.cursor_inside = true;
                 if let Some(ui) = &mut self.agent_input {
                     let (x0, y0, x1, y1) = ui.confirm_rect;
                     ui.hover_confirm = ui.expanded
@@ -5718,10 +5808,14 @@ impl ApplicationHandler<UserEvent> for App {
                 self.cancel_hover = self
                     .cancel_rect
                     .is_some_and(|rect| self.cursor_in_rect(rect));
+                // `prompt_arrow_hover` is deliberately NOT set here — `render`
+                // owns it, so the moving arrows and the highlight stay in step.
             }
             WindowEvent::CursorLeft { .. } => {
+                self.cursor_inside = false;
                 self.set_prompt_record_hover(false);
                 self.cancel_hover = false;
+                self.prompt_arrow_hover = 0;
             }
             // [GRAIN] Prompt Record is deliberately NOT attached to the pill
             // body. Hover reveals an explicit action; only a click inside that
@@ -5780,9 +5874,17 @@ impl ApplicationHandler<UserEvent> for App {
                     let _ = self.action_tx.send(PillAction::PromptRecord);
                     return;
                 }
-                // [GRAIN] Ignore clicks that land on the prompt-SWITCHER capsule —
-                // it is a display-only indicator (cycled by the shortcut, not the
-                // mouse), so a click there must not fire a pill action.
+                // [GRAIN] The switcher's `‹`/`›` cycle the active prompt — the
+                // same core action the switcher shortcut runs, so mouse and
+                // keyboard land on one implementation. The core answers with
+                // `PromptChanged`, which re-arms the riser and keeps the row up.
+                let arrow = self.arrow_under_cursor();
+                if arrow != 0 {
+                    let _ = self.action_tx.send(PillAction::PromptCycle { delta: arrow });
+                    return;
+                }
+                // The rest of the capsule is a display-only indicator, so a click
+                // there must not fall through and fire some other pill action.
                 if let Some((rx0, ry0, rx1, ry1)) = self.prompt_switch_rect {
                     let (cx, cy) = self.cursor_pos;
                     if cx >= rx0 && cx <= rx1 && cy >= ry0 && cy <= ry1 {
@@ -6555,15 +6657,21 @@ mod tests {
     /// and the two must sit at the same height so the row reads as one strip.
     #[test]
     fn the_studio_top_band_fits_inside_the_card_width() {
-        let total = studio_top_switch_w() + STUDIO_TOP_SPLIT_GAP + STUDIO_TOP_RECORD_W;
+        let total = studio_top_switch_w(1.0) + STUDIO_TOP_SPLIT_GAP + STUDIO_TOP_RECORD_W;
         assert!(
             (total - STUDIO_W).abs() < 0.01,
             "the band ({total}) must span exactly the card ({STUDIO_W})"
         );
         assert!(
-            studio_top_switch_w() > 2.0 * STUDIO_TOP_RECORD_W,
+            studio_top_switch_w(1.0) > 2.0 * STUDIO_TOP_RECORD_W,
             "the switcher gets the room — it carries the prompt name"
         );
+
+        // With Record absent the switcher owns the whole row (no dead gap), and
+        // the handover between the two states is monotonic — no snap mid-slide.
+        assert!((studio_top_switch_w(0.0) - STUDIO_W).abs() < 0.01);
+        let mid = studio_top_switch_w(0.5);
+        assert!(mid < studio_top_switch_w(0.0) && mid > studio_top_switch_w(1.0));
 
         // The Record capsule's content (sparkle + word) must clear its rounded
         // ends: at least a full radius of padding on each side.
@@ -6578,11 +6686,41 @@ mod tests {
 
         // …and the switcher's label still has real room between its arrows.
         let label_max =
-            studio_top_switch_w() - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD;
+            studio_top_switch_w(1.0) - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD;
         assert!(
             label_max > 200.0,
             "the prompt name would truncate far too early ({label_max}px)"
         );
+
+        // The `‹`/`›` targets must cover their glyph and still leave the label
+        // its own space — an arrow zone that swallowed the middle would make the
+        // capsule cycle prompts wherever you clicked it.
+        assert!(STUDIO_TOP_ARROW_HIT_W > STUDIO_TOP_ARROW_INSET);
+        assert!(2.0 * STUDIO_TOP_ARROW_HIT_W < studio_top_switch_w(1.0) - label_max / 2.0);
+    }
+
+    /// [GRAIN] The row hands over in two phases on purpose. Sweep the whole
+    /// reveal and prove the switcher has always cleared Record's footprint by
+    /// the time Record is visible at all — overlapping capsules blend their
+    /// rims, which is exactly the smear the split exists to prevent.
+    #[test]
+    fn the_band_never_draws_its_two_capsules_over_each_other() {
+        let record_left = STUDIO_W - STUDIO_TOP_RECORD_W;
+        for step in 0..=100 {
+            let record = step as f32 / 100.0;
+            let contract = (record / STUDIO_TOP_HANDOVER).min(1.0);
+            let reveal =
+                ((record - STUDIO_TOP_HANDOVER) / (1.0 - STUDIO_TOP_HANDOVER)).clamp(0.0, 1.0);
+            if reveal > 0.0 {
+                let switch_right = studio_top_switch_w(contract);
+                assert!(
+                    switch_right <= record_left,
+                    "at reveal {record}: switcher reaches {switch_right}, Record starts at {record_left}"
+                );
+            }
+        }
+        // Fully hovered, the gap between them is exactly the designed one.
+        assert!((record_left - studio_top_switch_w(1.0) - STUDIO_TOP_SPLIT_GAP).abs() < 0.01);
     }
 
     /// [GRAIN] The cancel × became a real control. Its hit rect is derived from
