@@ -1143,6 +1143,18 @@ async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<nul
 }
 },
 /**
+ * [GRAIN] Agent screen vision: send a picture of the summoned-from window with
+ * the instruction. OFF by default; see `Settings::agent_screen_image`.
+ */
+async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_screen_image_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle "type to expand" on the native agent input.
  */
 async changeAgentInputTypeToExpandSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -2723,6 +2735,22 @@ agent_quick_enabled?: boolean;
  * capped raw text). OFF by default.
  */
 agent_context_mode?: AgentContextMode; 
+/**
+ * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
+ * the window you were in and sends that frame with your instruction, so it
+ * can answer about what is actually on screen — a chart, a diff, an error
+ * dialog, a page that has no accessibility text at all.
+ *
+ * Deliberately a separate switch from [`AgentContextMode::Screen`] rather
+ * than a fifth rung on it. That mode reads the window's accessibility TEXT;
+ * this one takes a picture. They cost different things, they fail in
+ * different ways, and a model that cannot see images still handles the text
+ * one — folding them together would make choosing "read my window" silently
+ * start uploading screenshots.
+ *
+ * OFF by default and off is free: no capture, no permission, no bytes.
+ */
+agent_screen_image?: boolean; 
 /**
  * [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
  * mid-dictation discards everything spoken before it — the transcript starts

@@ -39,8 +39,9 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use crate::context_screen::CapturedImage;
 use crate::input::EnigoState;
-use crate::llm_client::LlmError;
+use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::rotation_state::{CallOutcome, RotationTrackers};
@@ -126,6 +127,16 @@ pub struct AgentState {
     pub target_hwnd: Mutex<Option<isize>>,
     /// Focused-field context captured at summon (per `agent_context_mode`).
     pub field_context: Mutex<Option<FieldContext>>,
+    /// [GRAIN] Screen frame captured at summon (per `agent_screen_image`), held
+    /// for the life of ONE session so follow-up turns can still see the window
+    /// the user asked about — the request is stateless, so a frame that is not
+    /// re-sent is a frame the model no longer has.
+    ///
+    /// `None` whenever the setting is off, the mode is not Assist, or the
+    /// capture failed. Overwritten on every summon and dropped when the session
+    /// ends ("destroy if not in use"); [`CapturedImage`] zeroes its buffer on the
+    /// way out, so ending a session actually erases the picture.
+    pub screen_image: Mutex<Option<CapturedImage>>,
     /// Quick-Agent conversation retained so "ask follow-up" can reopen the panel
     /// with history. Cleared on fresh summon and consumed by the panel on mount.
     pub conversation: Mutex<Vec<AgentMessage>>,
@@ -136,6 +147,10 @@ pub struct AgentState {
     pub followup_offer_active: AtomicBool,
     /// Bumped per offer so a stale TTL expiry never clears a newer offer.
     pub followup_offer_gen: AtomicU64,
+    /// [GRAIN] Bumped on every summon. Work that finishes AFTER the summon
+    /// returns (the screen capture) compares against it before writing, so a
+    /// slow capture can never land in the session that superseded it.
+    pub summon_gen: AtomicU64,
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
@@ -312,6 +327,10 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             None
         };
         let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
+        // Identifies THIS summon. The screen frame is taken at the end (below),
+        // after the user already has their listening card, so it needs a way to
+        // know whether the session it belongs to is still the current one.
+        let mut summon_gen = 0u64;
         if let Some(state) = app.try_state::<AgentState>() {
             if let Ok(mut g) = state.context.lock() {
                 *g = c;
@@ -322,6 +341,13 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             if let Ok(mut g) = state.field_context.lock() {
                 *g = fc;
             }
+            // Unconditional: the previous session's frame is erased here, before
+            // this one has taken (or declined to take) its own. A summon that
+            // photographs nothing must never inherit an older picture.
+            if let Ok(mut g) = state.screen_image.lock() {
+                *g = None;
+            }
+            summon_gen = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
             if let Ok(mut g) = state.conversation.lock() {
                 g.clear();
             }
@@ -373,6 +399,32 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
                     warn!("[GRAIN] agent: failed to pre-create panel: {e}");
                 }
             });
+        }
+
+        // [GRAIN] The screen frame comes LAST, and deliberately so. `PrintWindow`
+        // plus a downscale and a PNG encode is a few hundred milliseconds on a
+        // large window — spent ahead of `start_dictation` it would push back the
+        // moment the card says "listening", which is the one piece of latency in
+        // this whole path the user can feel. Nothing needs the frame until they
+        // submit, which is a sentence away.
+        //
+        // Taking it late is safe because it is taken by HANDLE: our own card
+        // being in front by now changes nothing about which window is
+        // photographed, and `capture_window` renders that window regardless of
+        // z-order or focus.
+        if assist {
+            if let Some(image) = capture_screen_image(&app, hwnd) {
+                if let Some(state) = app.try_state::<AgentState>() {
+                    // A newer summon may have started while this was encoding;
+                    // its (cleared) state wins. Storing here would hand the next
+                    // question a picture of the last question's screen.
+                    if state.summon_gen.load(Ordering::SeqCst) == summon_gen {
+                        if let Ok(mut g) = state.screen_image.lock() {
+                            *g = Some(image);
+                        }
+                    }
+                }
+            }
         }
     });
 }
@@ -581,10 +633,33 @@ fn build_window(
     // and keep hijacking Enter/Escape system-wide ("destroy if not in use").
     {
         let app = app.clone();
+        // The session this surface belongs to. A teardown can land well after a
+        // NEWER summon has begun (closing the old panel is dispatched to the main
+        // thread), and the cleanup below must then leave the new session alone.
+        let built_for = app
+            .try_state::<AgentState>()
+            .map(|s| s.summon_gen.load(Ordering::SeqCst))
+            .unwrap_or(0);
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if app.get_webview_window(PANEL_LABEL).is_none() {
                     unregister_transient_shortcuts_deferred(&app);
+                    // [GRAIN] The session's screen frame dies with its last
+                    // surface — unless the pill is still offering "ask
+                    // follow-up", which reopens THIS conversation and would
+                    // otherwise reopen it blind.
+                    let state = app.try_state::<AgentState>();
+                    let offered = state
+                        .as_ref()
+                        .map(|s| s.followup_offer_active.load(Ordering::SeqCst))
+                        .unwrap_or(false);
+                    let still_ours = state
+                        .as_ref()
+                        .map(|s| s.summon_gen.load(Ordering::SeqCst) == built_for)
+                        .unwrap_or(false);
+                    if !offered && still_ours {
+                        clear_screen_image(&app);
+                    }
                 }
                 // A Recall session may have spawned the embedding engine; drop
                 // it unless the overlay browser is still using it (RECALL-PLAN
@@ -818,6 +893,81 @@ fn capture_field_context(mode: AgentContextMode) -> Option<FieldContext> {
                 full: true,
                 text: trimmed.chars().take(FIELD_CONTEXT_MAX_CHARS).collect(),
             })
+        }
+    }
+}
+
+/// [GRAIN] Agent screen vision: photograph the window the user summoned from.
+///
+/// Opt-in (`agent_screen_image`, off by default) and read fresh at every summon,
+/// so switching it off stops the very next capture — there is no cached decision
+/// anywhere. Best-effort and silent, exactly like the field read: any failure
+/// (unsupported platform, the window went away, a protected surface that renders
+/// black) yields `None` and the turn proceeds as pure text.
+///
+/// `hwnd` is the paste-target snapshot taken moments earlier. Photographing that
+/// handle rather than re-asking for the foreground window closes the race with
+/// our own UI — see [`crate::context_screen::capture_window`].
+fn capture_screen_image(app: &AppHandle, hwnd: Option<isize>) -> Option<CapturedImage> {
+    if !get_settings(app).agent_screen_image {
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let image = match hwnd {
+        Some(raw) => crate::context_screen::capture_window(raw),
+        None => crate::context_screen::capture_foreground_window(),
+    };
+    match &image {
+        // Shape only — `CapturedImage`'s Debug never prints pixels, and neither
+        // may we.
+        Some(img) => info!(
+            "[GRAIN] agent: screen frame captured ({}x{}, {} KB, {} ms)",
+            img.width,
+            img.height,
+            img.bytes.len() / 1024,
+            started.elapsed().as_millis()
+        ),
+        None => info!("[GRAIN] agent: screen vision is on but no frame was available"),
+    }
+    image
+}
+
+/// Encoded ceiling for one attachment. A 1280px PNG of a window is typically
+/// 200–600 KB, so this only ever catches the pathological case (a photographic
+/// wallpaper behind a transparent window), where base64 would push a single
+/// request past 6 MB. Dropping the frame there costs the user a picture; sending
+/// it costs them a timeout, a bill, or a 413 — and the reply either way.
+const SCREEN_IMAGE_MAX_BYTES: usize = 3 * 1024 * 1024;
+
+/// The summon frame, encoded for the wire — or `None` when this session has no
+/// picture to send.
+///
+/// Base64 happens HERE, once per turn, rather than being kept alongside the PNG:
+/// holding both would keep a second, 33%-larger copy of the screenshot resident
+/// for the whole session, and this is a low-RAM app.
+fn screen_attachment(app: &AppHandle) -> Option<ImageAttachment> {
+    let state = app.try_state::<AgentState>()?;
+    let guard = state.screen_image.lock().ok()?;
+    let image = guard.as_ref()?;
+    if image.bytes.len() > SCREEN_IMAGE_MAX_BYTES {
+        warn!(
+            "[GRAIN] agent: screen frame is {} KB (cap {} KB) — sending text only",
+            image.bytes.len() / 1024,
+            SCREEN_IMAGE_MAX_BYTES / 1024
+        );
+        return None;
+    }
+    Some(ImageAttachment::new(image.mime, image.to_base64()))
+}
+
+/// Drop the session's screen frame. Called from every path that ends a session,
+/// because a picture of the user's screen must not outlive the question it was
+/// taken to answer.
+fn clear_screen_image(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AgentState>() {
+        if let Ok(mut g) = state.screen_image.lock() {
+            // `CapturedImage::drop` zeroes the buffer.
+            *g = None;
         }
     }
 }
@@ -1090,6 +1240,14 @@ fn input_cancel_cleanup(app: &AppHandle) {
     // The Destroyed handler also triggers this, but a failed pre-create means
     // no window (and no Destroyed) — release explicitly either way.
     unregister_transient_shortcuts_deferred(app);
+    // Bump BEFORE clearing: a screen capture started by this summon may still be
+    // encoding, and would otherwise store its frame into the session the user
+    // just cancelled — leaving a picture of their screen resident with no
+    // conversation left to end it.
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.summon_gen.fetch_add(1, Ordering::SeqCst);
+    }
+    clear_screen_image(app);
 }
 
 /// Pill → core: typing started (`true` → drop the voice capture) or the user
@@ -1617,6 +1775,8 @@ fn offer_followup(app: &AppHandle) {
             if app2.get_webview_window(PANEL_LABEL).is_none() {
                 unregister_followup_shortcut(&app2);
                 let _ = crate::shortcut::unregister_shortcut(&app2, close_binding());
+                // The offer was the last thing keeping the frame alive.
+                clear_screen_image(&app2);
             }
         }
     });
@@ -1743,7 +1903,10 @@ pub async fn agent_run(
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
     let full = build_messages(&messages, context.as_deref(), field.as_ref());
-    run_with_note_tools(&app, full).await
+    // Only Assist reaches here (Recall returned above, Capture never opens a
+    // panel), so the frame — if this session has one — belongs to this turn.
+    let image = screen_attachment(&app);
+    run_with_note_tools(&app, full, image.as_ref()).await
 }
 
 /// How many tool hops one turn may take before it is made to answer. Small on
@@ -1769,12 +1932,13 @@ const MAX_NOTE_TOOL_HOPS: usize = 4;
 async fn run_with_note_tools(
     app: &AppHandle,
     full: Vec<(String, String)>,
+    image: Option<&ImageAttachment>,
 ) -> Result<AgentReply, String> {
     use crate::llm_client::ChatEntry;
 
     let tools = crate::grain_space::agent_tools::specs(app);
     if tools.is_empty() {
-        return Ok(AgentReply::plain(run_messages(app, full).await?));
+        return Ok(AgentReply::plain(run_messages(app, full, image).await?));
     }
 
     let mut entries: Vec<ChatEntry> = full
@@ -1787,7 +1951,8 @@ async fn run_with_note_tools(
         .collect();
 
     let mut log = crate::grain_space::agent_tools::TurnLog::default();
-    let mut reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools)).await?;
+    let mut reply =
+        run_messages_with_tools(app, entries.clone(), tools_cloned(&tools), image).await?;
 
     let mut hops = 0usize;
     while !reply.tool_calls.is_empty() && hops < MAX_NOTE_TOOL_HOPS {
@@ -1800,7 +1965,11 @@ async fn run_with_note_tools(
                 content,
             });
         }
-        reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools)).await?;
+        // The frame rides every hop, not just the first. The hop that produces
+        // the ANSWER is the one that needs to see the screen, and an OpenAI-shaped
+        // request is stateless — dropping the image after hop 1 would leave the
+        // model answering a screen question from a note lookup alone.
+        reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools), image).await?;
     }
 
     // Still asking for tools at the cap. `entries` ends on a tool result, so this
@@ -1811,7 +1980,9 @@ async fn run_with_note_tools(
         entries.push(ChatEntry::User(
             "Answer now, using what you already have.".to_string(),
         ));
-        reply = run_messages_with_tools(app, entries, Vec::new()).await?;
+        // No image on the forcing turn: it appends a new last USER entry, so the
+        // frame would move onto "Answer now" and away from the actual question.
+        reply = run_messages_with_tools(app, entries, Vec::new(), None).await?;
     }
 
     let sources: Vec<AgentSource> = log
@@ -1854,21 +2025,29 @@ pub async fn run_conversation(
         }
     );
     let full = build_messages(messages, context, field);
-    run_messages(app, full).await
+    // Quick Agent answers the same question from the same summon, so it sees the
+    // same screen the panel path would.
+    let image = screen_attachment(app);
+    run_messages(app, full, image.as_ref()).await
 }
 
 /// Run an ALREADY-BUILT `(role, content)` message list through the configured
 /// AI (single provider or the smart-rotation pool). Shared by the assistant
 /// (`run_conversation`, which prepends its selection/field framing) and Grain
 /// Recall (`recall.rs`, which builds its own system prompt + memories block).
+///
+/// `image`, when present, rides the last user turn and degrades to a text-only
+/// retry on a model that cannot take it (`llm_client::send_chat_with_image`).
+/// `None` is the ordinary text path, unchanged.
 pub(crate) async fn run_messages(
     app: &AppHandle,
     full: Vec<(String, String)>,
+    image: Option<&ImageAttachment>,
 ) -> Result<String, String> {
     let settings = get_settings(app);
 
     if settings.post_process_smart_rotation {
-        return agent_run_rotated(app, &full).await;
+        return agent_run_rotated(app, &full, image).await;
     }
 
     let provider = settings
@@ -1897,7 +2076,7 @@ pub(crate) async fn run_messages(
         .map(|s| s.inner().clone())
         .ok_or("Agent: shared HTTP client unavailable")?;
 
-    match run_agent_once(&http_client, &provider, model, api_key, &full).await {
+    match run_agent_once(&http_client, &provider, model, api_key, &full, image).await {
         CallOutcome::Ok { text, .. } => Ok(text),
         CallOutcome::RateLimited { .. } => Err(format!(
             "{} is rate-limited right now — try again shortly.",
@@ -1966,7 +2145,11 @@ fn build_messages(
 /// Smart-rotation path: health-ordered failover across eligible post-process
 /// providers (those enabled, under daily quota, and with a model configured),
 /// recording quota usage on success — exactly the post-processing strategy.
-async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result<String, String> {
+async fn agent_run_rotated(
+    app: &AppHandle,
+    full: &[(String, String)],
+    image: Option<&ImageAttachment>,
+) -> Result<String, String> {
     crate::post_process_router::reset_quota_if_new_day(app);
     let settings = get_settings(app); // re-read so quotas reflect any reset
 
@@ -2031,7 +2214,7 @@ async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result
                     .get(&provider.id)
                     .cloned()
                     .unwrap_or_default();
-                run_agent_once(&http_client, provider, model, api_key, full).await
+                run_agent_once(&http_client, provider, model, api_key, full, image).await
             }
         },
         |id| {
@@ -2052,6 +2235,7 @@ async fn run_agent_once(
     model: String,
     api_key: String,
     messages: &[(String, String)],
+    image: Option<&ImageAttachment>,
 ) -> CallOutcome {
     // Disable reasoning where it adds latency without helping (mirrors the
     // post-process path): custom servers + OpenRouter.
@@ -2095,19 +2279,42 @@ async fn run_agent_once(
         }
     }
 
-    let response = tokio::time::timeout(
-        AGENT_LLM_TIMEOUT,
-        crate::llm_client::send_chat(
-            client,
-            provider,
-            api_key,
-            &model,
-            messages.to_vec(),
-            reasoning_effort,
-            reasoning,
-        ),
-    )
-    .await;
+    // One timeout budget either way. `send_chat_with_image` may spend it on two
+    // requests (image, then the text-only degrade), which is the correct
+    // trade — a reply inside the budget beats a picture that never lands.
+    let response = match image {
+        Some(image) => {
+            tokio::time::timeout(
+                AGENT_LLM_TIMEOUT,
+                crate::llm_client::send_chat_with_image(
+                    client,
+                    provider,
+                    api_key,
+                    &model,
+                    messages.to_vec(),
+                    image,
+                    reasoning_effort,
+                    reasoning,
+                ),
+            )
+            .await
+        }
+        None => {
+            tokio::time::timeout(
+                AGENT_LLM_TIMEOUT,
+                crate::llm_client::send_chat(
+                    client,
+                    provider,
+                    api_key,
+                    &model,
+                    messages.to_vec(),
+                    reasoning_effort,
+                    reasoning,
+                ),
+            )
+            .await
+        }
+    };
 
     match response {
         Err(_) => {
@@ -2159,10 +2366,14 @@ pub(crate) struct LlmToolReply {
 /// injected into the conversation. That silent degrade is intentional: native
 /// tools are a refinement, never a hard dependency (RECALL retrieval always
 /// pre-injects a strong first pass).
+///
+/// `image` behaves exactly as in [`run_messages`], so a notebook-enabled Agent
+/// sees precisely what a notebook-less one would; Recall passes `None`.
 pub(crate) async fn run_messages_with_tools(
     app: &AppHandle,
     entries: Vec<crate::llm_client::ChatEntry>,
     tools: Vec<crate::llm_client::ToolSpec>,
+    image: Option<&ImageAttachment>,
 ) -> Result<LlmToolReply, String> {
     let settings = get_settings(app);
 
@@ -2172,7 +2383,7 @@ pub(crate) async fn run_messages_with_tools(
         .ok_or("Agent: shared HTTP client unavailable")?;
 
     if settings.post_process_smart_rotation {
-        return agent_run_rotated_tools(app, &http_client, entries, tools).await;
+        return agent_run_rotated_tools(app, &http_client, entries, tools, image).await;
     }
 
     let provider = settings
@@ -2196,8 +2407,16 @@ pub(crate) async fn run_messages_with_tools(
         .cloned()
         .unwrap_or_default();
 
-    let (outcome, reply) =
-        run_agent_once_tools(&http_client, &provider, model, api_key, &entries, &tools).await;
+    let (outcome, reply) = run_agent_once_tools(
+        &http_client,
+        &provider,
+        model,
+        api_key,
+        &entries,
+        &tools,
+        image,
+    )
+    .await;
     match outcome {
         CallOutcome::Ok { .. } => Ok(reply),
         CallOutcome::RateLimited { .. } => Err(format!(
@@ -2217,6 +2436,7 @@ async fn agent_run_rotated_tools(
     http_client: &reqwest::Client,
     entries: Vec<crate::llm_client::ChatEntry>,
     tools: Vec<crate::llm_client::ToolSpec>,
+    image: Option<&ImageAttachment>,
 ) -> Result<LlmToolReply, String> {
     crate::post_process_router::reset_quota_if_new_day(app);
     let settings = get_settings(app);
@@ -2287,9 +2507,16 @@ async fn agent_run_rotated_tools(
                     .get(&provider.id)
                     .cloned()
                     .unwrap_or_default();
-                let (outcome, reply) =
-                    run_agent_once_tools(&http_client, provider, model, api_key, entries, tools)
-                        .await;
+                let (outcome, reply) = run_agent_once_tools(
+                    &http_client,
+                    provider,
+                    model,
+                    api_key,
+                    entries,
+                    tools,
+                    image,
+                )
+                .await;
                 if matches!(outcome, CallOutcome::Ok { .. }) {
                     if let Ok(mut g) = captured.lock() {
                         *g = Some(reply);
@@ -2315,6 +2542,7 @@ async fn agent_run_rotated_tools(
 /// Run ONE tool-enabled provider call with already-resolved model/key. Returns
 /// a [`CallOutcome`] for the rotation tracker plus the structured reply. A
 /// response that carries ONLY tool calls (empty content) is still a success.
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_once_tools(
     client: &reqwest::Client,
     provider: &PostProcessProvider,
@@ -2322,6 +2550,7 @@ async fn run_agent_once_tools(
     api_key: String,
     entries: &[crate::llm_client::ChatEntry],
     tools: &[crate::llm_client::ToolSpec],
+    image: Option<&ImageAttachment>,
 ) -> (CallOutcome, LlmToolReply) {
     let empty_reply = || LlmToolReply {
         content: String::new(),
@@ -2386,6 +2615,7 @@ async fn run_agent_once_tools(
             &model,
             entries.to_vec(),
             tools_cloned(tools),
+            image,
             reasoning_effort,
             reasoning,
         ),

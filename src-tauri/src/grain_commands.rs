@@ -455,6 +455,17 @@ pub fn change_agent_context_mode_setting(
     Ok(())
 }
 
+/// [GRAIN] Agent screen vision: send a picture of the summoned-from window with
+/// the instruction. OFF by default; see `Settings::agent_screen_image`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_screen_image = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Toggle "type to expand" on the native agent input.
 #[tauri::command]
 #[specta::specta]

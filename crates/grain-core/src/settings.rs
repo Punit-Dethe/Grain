@@ -924,6 +924,21 @@ pub struct AppSettings {
     /// capped raw text). OFF by default.
     #[serde(default)]
     pub agent_context_mode: AgentContextMode,
+    /// [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
+    /// the window you were in and sends that frame with your instruction, so it
+    /// can answer about what is actually on screen — a chart, a diff, an error
+    /// dialog, a page that has no accessibility text at all.
+    ///
+    /// Deliberately a separate switch from [`AgentContextMode::Screen`] rather
+    /// than a fifth rung on it. That mode reads the window's accessibility TEXT;
+    /// this one takes a picture. They cost different things, they fail in
+    /// different ways, and a model that cannot see images still handles the text
+    /// one — folding them together would make choosing "read my window" silently
+    /// start uploading screenshots.
+    ///
+    /// OFF by default and off is free: no capture, no permission, no bytes.
+    #[serde(default)]
+    pub agent_screen_image: bool,
     /// [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
     /// mid-dictation discards everything spoken before it — the transcript starts
     /// fresh from that point. Reuses the snippet matcher (no new engine), so OFF
@@ -1800,6 +1815,7 @@ pub fn get_default_settings() -> AppSettings {
         agent_autocopy: AgentAutocopy::default(),
         agent_quick_enabled: false,
         agent_context_mode: AgentContextMode::default(),
+        agent_screen_image: false,
         scrap_that_enabled: false,
         agent_input_type_to_expand: true,
         agent_panel_position: AgentPanelPosition::default(),

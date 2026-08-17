@@ -1,21 +1,28 @@
 //! [GRAIN] Screen-image capture — a **platform capability, not a feature**.
 //!
-//! # Why nothing in core calls this
+//! # Who is allowed to call this
 //!
 //! An image of what someone is looking at is the most sensitive thing Grain can
 //! produce. It cannot be filtered the way text can: a screenshot carries whatever
 //! happened to be on the window — a password manager mid-reveal, someone else's
 //! message, a medical record — and unlike the accessibility tree there is no
-//! per-element flag to skip. Grain's own code therefore never captures one, never
-//! decides to send one, and has no setting that turns that on.
+//! per-element flag to skip. So a caller has to *earn* a frame, and there are
+//! exactly two that have:
 //!
-//! What exists instead is the *possibility*. An extension the user deliberately
-//! installed and deliberately granted `capture:screen-image` can take a frame and
-//! hand it to a model. That keeps the decision, the blast radius and the
-//! responsibility with a component the user opted into, rather than with the
-//! dictation app they leave running all day. If this ever becomes a built-in, it
-//! should arrive through an experimentation flag with its own consent surface —
-//! not by quietly gaining a caller in here.
+//! - **An extension** the user deliberately installed and deliberately granted
+//!   `capture:screen-image` (`host_api`). The decision, the blast radius and the
+//!   responsibility sit with a component the user opted into.
+//! - **The Agent**, and only under `agent_screen_image` — a setting that is OFF
+//!   by default, lives inside the Agent's own experimentation panel, and is read
+//!   at the moment of capture rather than cached anywhere. This is the
+//!   "experimentation flag with its own consent surface" this module always said
+//!   a built-in would have to arrive through. Nothing captures on a schedule,
+//!   nothing captures in the background: a frame exists only because the user
+//!   pressed the summon key themselves, and it is dropped when that session ends.
+//!
+//! Both paths photograph ONE window and hand the bytes straight to the model the
+//! user configured. Nothing else in core may call in here — a new caller is a new
+//! consent surface, not a convenience.
 //!
 //! # What the capture is bounded to
 //!
@@ -103,10 +110,32 @@ const MAX_SOURCE_EDGE: i32 = 16_384;
 pub fn capture_foreground_window() -> Option<CapturedImage> {
     #[cfg(windows)]
     {
-        windows_impl::capture()
+        windows_impl::capture(None)
     }
     #[cfg(not(windows))]
     {
+        None
+    }
+}
+
+/// [GRAIN] Capture ONE named window, by the raw handle a caller already holds.
+///
+/// Same bounds as [`capture_foreground_window`] — one window, downscaled, never
+/// written to disk. It exists because a caller that snapshotted the foreground
+/// window a moment ago (the Agent's paste target) must photograph *that* window,
+/// not whatever happens to be in front by the time it asks. Re-reading the
+/// foreground there would race its own UI: any surface that steals focus in
+/// between silently becomes the picture the model is shown.
+///
+/// `None` off Windows, where `raw` cannot mean anything.
+pub fn capture_window(raw: isize) -> Option<CapturedImage> {
+    #[cfg(windows)]
+    {
+        windows_impl::capture(Some(raw))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = raw;
         None
     }
 }
@@ -165,7 +194,7 @@ mod windows_impl {
     // `PrintWindow` lives under Storage::Xps in the windows crate — that is
     // where the SDK's header association puts it, not where its purpose suggests.
     use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
-    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect};
+    use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowRect, IsWindow};
 
     /// `PW_RENDERFULLCONTENT`. Without it, hardware-composited windows — which
     /// today means every browser and every Electron app — come back blank.
@@ -207,10 +236,15 @@ mod windows_impl {
         }
     }
 
-    pub(super) fn capture() -> Option<CapturedImage> {
+    /// `target`: a specific window handle, or `None` for whatever is foreground
+    /// at this instant.
+    pub(super) fn capture(target: Option<isize>) -> Option<CapturedImage> {
         unsafe {
-            let window = GetForegroundWindow();
-            if window.0.is_null() {
+            let window = match target {
+                Some(raw) => HWND(raw as _),
+                None => GetForegroundWindow(),
+            };
+            if window.0.is_null() || !IsWindow(Some(window)).as_bool() {
                 return None;
             }
 
@@ -323,5 +357,14 @@ mod tests {
     #[test]
     fn capture_is_infallible_in_the_absence_of_a_window() {
         let _ = capture_foreground_window();
+    }
+
+    /// Nor with a handle that is stale, hostile, or simply nonsense — the Agent
+    /// hands one that was foreground several seconds earlier, so "that window is
+    /// gone" is an ordinary Tuesday, not an error path.
+    #[test]
+    fn capture_by_handle_survives_a_dead_window() {
+        assert!(capture_window(0).is_none());
+        let _ = capture_window(0xDEAD_BEEF);
     }
 }

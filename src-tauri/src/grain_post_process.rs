@@ -664,8 +664,7 @@ pub(crate) async fn complete_for_extension_with_image(
         api_key,
         &model,
         vec![("user".to_string(), prompt.to_string())],
-        image_mime,
-        image_base64,
+        &crate::llm_client::ImageAttachment::new(image_mime, image_base64),
         None,
         None,
     )

@@ -157,6 +157,8 @@ const settingUpdaters: {
     commands.changeAgentQuickEnabledSetting(value as boolean),
   agent_context_mode: (value) =>
     commands.changeAgentContextModeSetting(value as AgentContextMode),
+  agent_screen_image: (value) =>
+    commands.changeAgentScreenImageSetting(value as boolean),
   agent_input_type_to_expand: (value) =>
     commands.changeAgentInputTypeToExpandSetting(value as boolean),
   agent_panel_position: (value) =>
