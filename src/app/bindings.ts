@@ -2740,14 +2740,14 @@ agent_context_mode?: AgentContextMode;
  * the window you were in and sends that frame with your instruction, so it
  * can answer about what is actually on screen — a chart, a diff, an error
  * dialog, a page that has no accessibility text at all.
- *
+ * 
  * Deliberately a separate switch from [`AgentContextMode::Screen`] rather
  * than a fifth rung on it. That mode reads the window's accessibility TEXT;
  * this one takes a picture. They cost different things, they fail in
  * different ways, and a model that cannot see images still handles the text
  * one — folding them together would make choosing "read my window" silently
  * start uploading screenshots.
- *
+ * 
  * OFF by default and off is free: no capture, no permission, no bytes.
  */
 agent_screen_image?: boolean; 
@@ -3641,11 +3641,11 @@ export type UpdateInfo = {
 /**
  * Version of the available release, e.g. `0.0.2`.
  */
-version: string;
+version: string; 
 /**
  * Release notes, when the release carried a body.
  */
-notes: string | null;
+notes: string | null; 
 /**
  * RFC 3339 publication date as `latest.json` reported it.
  */

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { Check, Pencil, Trash2 } from "lucide-react";
 import type { PostProcessProvider } from "@/bindings";
-import { BUILTIN_PP_IDS } from "./usePpPool";
+import { isBuiltinPpId } from "./usePpPool";
 
 interface PpProviderRowProps {
   provider: PostProcessProvider;
@@ -37,7 +37,7 @@ export const PpProviderRow: React.FC<PpProviderRowProps> = ({
   const enabled = provider.enabled ?? true;
   const quotaUsed = provider.quota_used_today ?? 0;
   const quotaLimit = provider.quota_limit ?? null;
-  const removable = !BUILTIN_PP_IDS.has(provider.id);
+  const removable = !isBuiltinPpId(provider.id);
   // The single control: checkbox in rotation mode, radio in single mode.
   const selected = smartRotation ? enabled : isActive;
 

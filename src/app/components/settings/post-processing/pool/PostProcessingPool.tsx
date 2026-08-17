@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert } from "../../../ui/Alert";
 import type { PostProcessProvider } from "@/bindings";
-import { usePpPool, BUILTIN_PP_IDS } from "./usePpPool";
+import { usePpPool, isBuiltinPpId } from "./usePpPool";
 import { PpProviderRow } from "./PpProviderRow";
 import { PpProviderForm } from "./PpProviderForm";
 import { PpAddProvider } from "./PpAddProvider";
@@ -31,7 +31,12 @@ export const PostProcessingPool: React.FC = () => {
 
   // Templates for the add picker = the seeded built-ins. The list only shows
   // providers the user has actually configured (have a key).
-  const templates = providers.filter((p) => BUILTIN_PP_IDS.has(p.id));
+  // "Custom" pinned last. The backend appends providers it has newly seeded to
+  // the END of an existing user's stored list, so a provider added after they
+  // first ran Grain (Gemini) would otherwise sit below the catch-all.
+  const templates = providers
+    .filter((p) => isBuiltinPpId(p.id))
+    .sort((a, b) => Number(a.id === "custom") - Number(b.id === "custom"));
   const configured = providers.filter((p) => providersWithKeys.has(p.id));
 
   const anyEnabledWithKey = configured.some((p) => p.enabled ?? true);

@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { RefreshCcw } from "lucide-react";
 import { Input } from "../../../ui/Input";
 import { Button } from "../../../ui/Button";
-import { BUILTIN_PP_IDS } from "./usePpPool";
+import { isBuiltinPpId } from "./usePpPool";
 import type { PostProcessProvider } from "@/bindings";
 
 interface PpProviderFormProps {
@@ -38,7 +38,7 @@ export const PpProviderForm: React.FC<PpProviderFormProps> = ({
   // Built-in providers keep their fixed endpoint unless they explicitly allow edits.
   const baseUrlLocked =
     isEdit &&
-    BUILTIN_PP_IDS.has(existing!.id) &&
+    isBuiltinPpId(existing!.id) &&
     !(existing!.allow_base_url_edit ?? false);
 
   const [label, setLabel] = useState(existing?.label ?? "");
