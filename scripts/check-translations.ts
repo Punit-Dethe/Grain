@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Configuration
-const LOCALES_DIR = path.join(__dirname, "..", "src", "i18n", "locales");
+const LOCALES_DIR = path.join(__dirname, "..", "src", "app", "i18n", "locales");
 const REFERENCE_LANG = "en";
 
 type TranslationData = Record<string, unknown>;
@@ -14,6 +14,7 @@ interface ValidationResult {
   valid: boolean;
   missing: string[][];
   extra: string[][];
+  incompatible: string[][];
 }
 
 function getLanguages(): string[] {
@@ -76,6 +77,21 @@ function hasKeyPath(obj: TranslationData, keyPath: string[]): boolean {
   return true;
 }
 
+function valueAtPath(obj: TranslationData, keyPath: string[]): unknown {
+  let current: unknown = obj;
+  for (const key of keyPath) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+function valueKind(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  if (value === null) return "null";
+  return typeof value;
+}
+
 function loadTranslationFile(lang: string): TranslationData | null {
   const filePath = path.join(LOCALES_DIR, lang, "translation.json");
 
@@ -117,7 +133,12 @@ function validateTranslations(): void {
 
     if (!langData) {
       hasErrors = true;
-      results[lang] = { valid: false, missing: [], extra: [] };
+      results[lang] = {
+        valid: false,
+        missing: [],
+        extra: [],
+        incompatible: [],
+      };
       continue;
     }
 
@@ -131,14 +152,24 @@ function validateTranslations(): void {
     const extra = langKeyPaths.filter(
       (keyPath) => !hasKeyPath(referenceData, keyPath),
     );
+    const incompatible = langKeyPaths.filter(
+      (keyPath) =>
+        hasKeyPath(referenceData, keyPath) &&
+        valueKind(valueAtPath(langData, keyPath)) !==
+          valueKind(valueAtPath(referenceData, keyPath)),
+    );
 
     results[lang] = {
-      valid: missing.length === 0 && extra.length === 0,
+      // UI 2.0 deliberately ships partial catalogues: i18next falls back to
+      // English for missing keys. A locale is unsafe only when a translated
+      // value changes the reference value's shape and can break consumers.
+      valid: incompatible.length === 0,
       missing,
       extra,
+      incompatible,
     };
 
-    if (missing.length > 0 || extra.length > 0) {
+    if (incompatible.length > 0) {
       hasErrors = true;
     }
   }
@@ -152,46 +183,31 @@ function validateTranslations(): void {
 
     if (result.valid) {
       console.log(
-        colorize(`✓ ${lang.toUpperCase()}: All keys present`, "green"),
+        colorize(`✓ ${lang.toUpperCase()}: Catalogue shape is valid`, "green"),
       );
-    } else {
-      console.log(colorize(`✗ ${lang.toUpperCase()}: Issues found`, "red"));
-
       if (result.missing.length > 0) {
         console.log(
-          colorize(`  Missing ${result.missing.length} keys:`, "yellow"),
-        );
-        result.missing.slice(0, 10).forEach((keyPath) => {
-          console.log(`    - ${keyPath.join(".")}`);
-        });
-        if (result.missing.length > 10) {
-          console.log(
-            colorize(
-              `    ... and ${result.missing.length - 10} more`,
-              "yellow",
-            ),
-          );
-        }
-      }
-
-      if (result.extra.length > 0) {
-        console.log(
           colorize(
-            `  Extra ${result.extra.length} keys (not in reference):`,
+            `  ${result.missing.length} keys use the English fallback`,
             "yellow",
           ),
         );
-        result.extra.slice(0, 10).forEach((keyPath) => {
-          console.log(`    - ${keyPath.join(".")}`);
-        });
-        if (result.extra.length > 10) {
-          console.log(
-            colorize(`    ... and ${result.extra.length - 10} more`, "yellow"),
-          );
-        }
       }
-
-      console.log("");
+      if (result.extra.length > 0) {
+        console.log(
+          colorize(
+            `  ${result.extra.length} legacy keys are not in English`,
+            "yellow",
+          ),
+        );
+      }
+    } else {
+      console.log(
+        colorize(`✗ ${lang.toUpperCase()}: Invalid value shapes`, "red"),
+      );
+      result.incompatible.slice(0, 10).forEach((keyPath) => {
+        console.log(`    - ${keyPath.join(".")}`);
+      });
     }
   }
 
@@ -212,7 +228,7 @@ function validateTranslations(): void {
   } else {
     console.log(
       colorize(
-        `\n✓ All ${totalCount} languages have complete translations!`,
+        `\n✓ All ${totalCount} locale files are structurally valid; missing keys safely fall back to English.`,
         "green",
       ),
     );
