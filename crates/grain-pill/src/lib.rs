@@ -264,6 +264,21 @@ const STUDIO_TOP_PILL_H: f32 = 30.0;
 const STUDIO_TOP_GAP: f32 = 9.0; // gap between the top capsule and the card
 const STUDIO_TOP_RESERVE: f32 = STUDIO_TOP_PILL_H + STUDIO_TOP_GAP + 6.0; // canvas above the card
 const STUDIO_TOP_ARROW_INSET: f32 = 22.0; // ‹ › inset from each capsule end
+// [GRAIN] The Studio top band is ONE row shared by two controls that together
+// span exactly the card width — never more: the prompt SWITCHER on the left
+// (wider, it carries an arbitrary prompt name) and the Prompt RECORD action on
+// the right (sparkle + a fixed one-word label). Both are `STUDIO_TOP_PILL_H`
+// tall so the row reads as a single strip rather than two unrelated chips.
+const STUDIO_TOP_SPLIT_GAP: f32 = 8.0; // transparent gap between the two controls
+const STUDIO_TOP_RECORD_W: f32 = 100.0; // fixed — the label never changes
+const STUDIO_TOP_RECORD_ICON_GAP: f32 = 7.0; // sparkle → label gap
+const STUDIO_RECORD_LABEL: &str = "Record";
+
+/// The switcher's width on the Studio surface: the card width less the Record
+/// action and the gap between them, so the band can never exceed the card.
+fn studio_top_switch_w() -> f32 {
+    (STUDIO_W - STUDIO_TOP_RECORD_W - STUDIO_TOP_SPLIT_GAP).max(0.0)
+}
                                           // Present (and ease the riser/hover) at ~60 fps so motion is smooth; the dot
                                           // field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
                                           // instead of turning into 60 fps static.
@@ -391,6 +406,11 @@ const STUDIO_FADE_PX: f32 = 22.0;
 // cancel X (right). Its height matches the small pill's dot field (ROWS·CELL) so
 // the collapsed capsule can grow into it without the matrix changing size.
 const STUDIO_CTRL_H: f32 = 26.0; // holds the 22px cancel disc + the trimmed matrix
+/// Radius of the card's cancel (×) disc — shared by the painter and the hit rect.
+const X_BUTTON_R: f32 = 11.0;
+/// A hair of forgiveness around the 22px disc so the click doesn't demand
+/// pixel precision. Small enough that it cannot reach the waveform beside it.
+const X_HIT_SLOP: f32 = 3.0;
                                  // [GRAIN] A breathing gap BELOW the control row so the dot-matrix never touches
                                  // the capsule's bottom edge (per the unified-pill spec — the pill "grows a little
                                  // bit down" past the matrix).
@@ -2291,6 +2311,28 @@ fn studio_card_height(n: usize) -> f32 {
     top_gap + n as f32 * STUDIO_LINE_HEIGHT + STUDIO_CTRL_H + STUDIO_BOTTOM_PAD
 }
 
+/// [GRAIN] Hit rect of the Studio card's cancel (×) control, derived from the
+/// SAME geometry `paint_studio_card`/`draw_control_row` draw it with, so the
+/// visible disc and the clickable area can never drift apart. `None` until the
+/// card has opened far enough for the side controls to have faded in — the
+/// button must not be clickable while it is still invisible.
+fn studio_cancel_rect(card_h: f32, expand: f32) -> Option<HitRect> {
+    let expand = expand.clamp(0.0, 1.0);
+    if expand < STUDIO_TEXT_GATE {
+        return None;
+    }
+    let (w, h) = studio_pixel_size();
+    let (wf, hf) = (w as f32, h as f32);
+    let card_h = card_h.clamp(studio_card_height(0), hf);
+    let card_top = hf - card_h;
+    let cap_w = STUDIO_MIN_W + (wf - STUDIO_MIN_W) * expand;
+    let cap_right = (wf - cap_w) / 2.0 + cap_w;
+    let cx = cap_right - STUDIO_PAD - X_BUTTON_R;
+    let cy = card_top + card_h - STUDIO_CTRL_H - STUDIO_BOTTOM_PAD + STUDIO_CTRL_H / 2.0;
+    let r = X_BUTTON_R + X_HIT_SLOP;
+    Some((cx - r, cy - r, cx + r, cy + r))
+}
+
 /// How many lines the current transcript wraps to at the Studio width (before
 /// the cap) — this drives the card's grow height. `1` when empty so a fresh
 /// session opens at its smallest size rather than flashing tall.
@@ -2505,9 +2547,11 @@ fn draw_control_row(
         _ => draw_spinner(pixmap, left_cx, cy, phase, side),
     }
 
-    // RIGHT — cancel glyph (display-only), 22px circle inset from the edge.
-    let x_cx = cap_right - STUDIO_PAD - 11.0;
-    draw_x_button(pixmap, x_cx, cy, side);
+    // RIGHT — cancel button, a 22px circle inset from the edge. Its hit rect is
+    // `studio_cancel_rect`, derived from this same geometry; the hovered pass is
+    // overdrawn by the caller (which owns the cursor).
+    let x_cx = cap_right - STUDIO_PAD - X_BUTTON_R;
+    draw_x_button(pixmap, x_cx, cy, side, false);
 
     // CENTER — the active skin's voice visualisation, centred on the card.
     let (w, _) = studio_pixel_size();
@@ -2631,20 +2675,28 @@ fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
 /// The circular cancel affordance — a subtle hairline disc with a muted ✗
 /// (Handy's `.sx`). Display-only: it is drawn for visual parity but the pill has
 /// no back-channel to trigger a cancel yet.
-fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32) {
+fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32, hover: bool) {
     let mut bg = Paint {
         anti_alias: true,
         ..Default::default()
     };
-    bg.set_color(Color::from_rgba8(255, 255, 255, (16.0 * fade) as u8));
-    if let Some(c) = PathBuilder::from_circle(cx, cy, 11.0) {
+    // [GRAIN] Hovered, the disc lifts and the glyph goes to full cream — the
+    // only feedback the control needs, drawn over the resting one at identical
+    // geometry (a more opaque pass, so nothing shows through).
+    let (bg_a, ink, ink_a) = if hover {
+        (40.0, [236, 229, 218], 255.0)
+    } else {
+        (16.0, [168, 168, 168], 235.0)
+    };
+    bg.set_color(Color::from_rgba8(255, 255, 255, (bg_a * fade) as u8));
+    if let Some(c) = PathBuilder::from_circle(cx, cy, X_BUTTON_R) {
         pixmap.fill_path(&c, &bg, FillRule::Winding, Transform::identity(), None);
     }
     let mut stroke_paint = Paint {
         anti_alias: true,
         ..Default::default()
     };
-    stroke_paint.set_color(Color::from_rgba8(168, 168, 168, (fade * 235.0) as u8));
+    stroke_paint.set_color(Color::from_rgba8(ink[0], ink[1], ink[2], (fade * ink_a) as u8));
     let d = 3.8;
     let mut pb = PathBuilder::new();
     pb.move_to(cx - d, cy - d);
@@ -3582,6 +3634,9 @@ struct App {
     // [GRAIN] WS-driven riser label + change detection + transient idle reveal.
     prompt_label: String,
     cached_label: Option<CachedText>,
+    /// The Prompt Record capsule's fixed label, rasterized once (see
+    /// `ensure_record_label`). Dropped with the font on the idle-free.
+    cached_record_label: Option<CachedText>,
     last_prompt_seq: u64,
     prompt_preview_until: Option<Instant>,
     /// Short, renderer-owned acknowledgement for `PasteMissed`. It deliberately
@@ -3621,6 +3676,11 @@ struct App {
     prompt_record_hold_until: Option<Instant>,
     prompt_record_hover_progress: f32,
     prompt_record_rect: Option<(f32, f32, f32, f32)>,
+    /// [GRAIN] The Studio card's cancel (×) rect as last drawn, or `None` on any
+    /// other surface / before the card is open. A click inside it cancels the
+    /// session exactly as the Cancel shortcut does.
+    cancel_rect: Option<HitRect>,
+    cancel_hover: bool,
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
     /// [GRAIN] Shift held — Capture submits the note on Shift/Ctrl+Enter (plain
@@ -3716,6 +3776,7 @@ impl App {
             prompt_idx: 0,
             prompt_label: String::new(),
             cached_label: None,
+            cached_record_label: None,
             last_prompt_seq: 0,
             prompt_preview_until: None,
             clipboard_notice: false,
@@ -3737,6 +3798,8 @@ impl App {
             prompt_record_hold_until: None,
             prompt_record_hover_progress: 0.0,
             prompt_record_rect: None,
+            cancel_rect: None,
+            cancel_hover: false,
             ctrl_down: false,
             shift_down: false,
             fallback_font: None,
@@ -4096,9 +4159,10 @@ impl App {
     /// follow-up offer, within the arrow-less capsule).
     fn prompt_label_max(&self) -> f32 {
         match self.mode {
-            // Studio top capsule: full card width, arrows at a fixed inset.
+            // Studio top capsule: the band's LEFT half (the Record action owns
+            // the right), arrows at a fixed inset.
             PillMode::Studio => {
-                (STUDIO_W - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0)
+                (studio_top_switch_w() - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0)
             }
             // Collapsed sibling: the arrow-less offer fills its max width; the
             // switcher fits between its arrows in the fixed-width capsule.
@@ -4134,10 +4198,16 @@ impl App {
         // sure the single shared font is resident before we render a frame. It
         // loads once here (lazy) and is dropped again after a long idle.
         self.ensure_font();
+        // The cancel × belongs to the Studio card alone; clear it up front so no
+        // other surface can inherit a stale clickable rect.
+        self.cancel_rect = None;
         match self.mode {
             PillMode::Collapsed => self.render_collapsed(),
             PillMode::Studio => self.render_studio(),
             PillMode::AgentInput => self.render_agent_input(),
+        }
+        if self.cancel_rect.is_none() {
+            self.cancel_hover = false;
         }
     }
 
@@ -5007,26 +5077,39 @@ impl App {
             self.icon.as_ref(),
         );
 
-        // [GRAIN] Prompt switcher — the same mid-speech switch as the collapsed
-        // pill, here a full-width capsule that slides UP into the reserved band
-        // above the transcript card. Drawn AFTER the card; the two share the same
-        // near-black fill, so the capsule's lower edge tucking behind the card
-        // during the slide is seamless (identical color over identical color).
-        if self.prompt_record_hover_progress > 0.01 {
+        // [GRAIN] The top band — ONE row above the transcript card carrying the
+        // prompt switcher (left, wider) and the Prompt Record action (right).
+        // Together they span exactly the card width. Both slide up out of the
+        // card on the SHARED progress so the row moves as one piece, but each
+        // fades on its own trigger: a mid-speech prompt switch reveals only the
+        // switcher, a hover reveals both. Drawn AFTER the card — the two share
+        // its near-black fill, so the slide out from behind its edge is seamless.
+        let hover_p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
+        let band_p = hover_p.max(self.riser_progress.clamp(0.0, 1.0));
+        if band_p > 0.01 {
             let hf = h as f32;
             let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
             let card_top = hf - card_h;
-            self.draw_studio_prompt_record(&mut pixmap, w as f32, card_top, fade);
-            self.prompt_switch_rect = None;
-        } else if self.riser_progress > 0.01 {
-            let hf = h as f32;
-            let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
-            let card_top = hf - card_h;
-            self.draw_studio_top_pill(&mut pixmap, w as f32, card_top, fade);
-            self.prompt_record_rect = None;
+            let top = card_top - (STUDIO_TOP_GAP + STUDIO_TOP_PILL_H) * band_p;
+            self.draw_studio_top_pill(&mut pixmap, top, band_p * fade);
+            if hover_p > 0.01 {
+                self.draw_studio_prompt_record(&mut pixmap, w as f32, top, hover_p * fade);
+            } else {
+                self.prompt_record_rect = None;
+            }
         } else {
             self.prompt_switch_rect = None;
             self.prompt_record_rect = None;
+        }
+
+        // [GRAIN] The cancel × is a real control, not decoration: remember the
+        // rect the control row drew it at so a click can fire the same teardown
+        // as the Cancel shortcut, and brighten it in place while hovered.
+        self.cancel_rect = studio_cancel_rect(self.studio_grown_h, self.studio_expand);
+        if self.cancel_hover {
+            if let Some((x0, y0, x1, y1)) = self.cancel_rect {
+                draw_x_button(&mut pixmap, (x0 + x1) / 2.0, (y0 + y1) / 2.0, fade, true);
+            }
         }
 
         if let Some(presenter) = &self.presenter {
@@ -5114,22 +5197,27 @@ impl App {
             .map_or(WAVE_DOT_R * 2.0, |i| i.width() as f32)
     }
 
-    /// Draw the explicit Prompt Record action as a full-round, icon-only button.
-    /// Its sparkle is a prebuilt pixmap and takes the same straight-blit path as
-    /// the foreground application icon.
+    /// Draw the explicit Prompt Record action into `w × h` at `(left, top)`.
+    /// With `label = None` it is the collapsed pill's round, icon-only button
+    /// (`w == h`); with a label it is the Studio band's capsule — sparkle on the
+    /// LEFT, word on the right, the pair centered as one group. The sparkle is a
+    /// prebuilt pixmap and takes the same straight-blit path as the foreground
+    /// application icon; the label is pre-rasterized once (`CachedText`).
     fn draw_prompt_record_button(
         &self,
         pixmap: &mut Pixmap,
         left: f32,
         top: f32,
-        diameter: f32,
+        w: f32,
+        h: f32,
         alpha: f32,
+        label: Option<&CachedText>,
     ) {
         let alpha = alpha.clamp(0.0, 1.0);
-        if alpha < 0.01 || diameter <= 0.0 {
+        if alpha < 0.01 || w <= 0.0 || h <= 0.0 {
             return;
         }
-        let radius = diameter / 2.0;
+        let radius = (h / 2.0).min(w / 2.0);
         let mut fill = Paint {
             anti_alias: true,
             ..Default::default()
@@ -5140,13 +5228,20 @@ impl App {
             GRAIN_SURFACE[2],
             (alpha * GRAIN_CARD_A) as u8,
         ));
-        if let Some(path) = PathBuilder::from_circle(left + radius, top + radius, radius) {
+        if let Some(path) = rounded_rect_path(left, top, w, h, radius) {
             pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
-        stroke_grain_rim(pixmap, left, top, diameter, diameter, radius, alpha);
+        stroke_grain_rim(pixmap, left, top, w, h, radius, alpha);
 
-        let ix = (left + (diameter - self.prompt_record_icon.width() as f32) / 2.0).round() as i32;
-        let iy = (top + (diameter - self.prompt_record_icon.height() as f32) / 2.0).round() as i32;
+        // Icon (+ label) laid out as one centered group, so the capsule's optical
+        // centre holds whichever form is drawn.
+        let icon_w = self.prompt_record_icon.width() as f32;
+        let group_w = label.map_or(icon_w, |l| {
+            icon_w + STUDIO_TOP_RECORD_ICON_GAP + l.total_width
+        });
+        let icon_left = left + (w - group_w) / 2.0;
+        let ix = icon_left.round() as i32;
+        let iy = (top + (h - self.prompt_record_icon.height() as f32) / 2.0).round() as i32;
         pixmap.draw_pixmap(
             ix,
             iy,
@@ -5159,6 +5254,32 @@ impl App {
             Transform::identity(),
             None,
         );
+        if let Some(label) = label {
+            let text_cx = icon_left + icon_w + STUDIO_TOP_RECORD_ICON_GAP + label.total_width / 2.0;
+            draw_cached_text_centered(
+                pixmap,
+                label,
+                (text_cx, top + h / 2.0),
+                PROMPT_LABEL_PX,
+                [236, 229, 218],
+                alpha,
+            );
+        }
+    }
+
+    /// Rasterize the Prompt Record capsule's fixed label once. Rebuilt only
+    /// after the idle-free drops the shared font — never measured per frame.
+    fn ensure_record_label(&mut self) {
+        if self.cached_record_label.is_some() {
+            return;
+        }
+        if let Some(font) = self.font.as_ref() {
+            self.cached_record_label = Some(CachedText::new(
+                font,
+                STUDIO_RECORD_LABEL,
+                PROMPT_LABEL_PX,
+            ));
+        }
     }
 
     fn draw_collapsed_prompt_record(
@@ -5171,25 +5292,33 @@ impl App {
         let p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
         let eased = eased_progress(p);
         let rect = prompt_record_button_rect(pill_right, y_off, pill_h, p);
-        self.draw_prompt_record_button(pixmap, rect.0, rect.1, pill_h, eased);
+        self.draw_prompt_record_button(pixmap, rect.0, rect.1, pill_h, pill_h, eased, None);
         self.prompt_record_rect = Some(rect);
     }
 
-    fn draw_studio_prompt_record(
-        &mut self,
-        pixmap: &mut Pixmap,
-        width: f32,
-        card_top: f32,
-        fade: f32,
-    ) {
-        let p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
-        let eased = eased_progress(p);
-        let diameter = STUDIO_TOP_PILL_H;
-        let left = width - diameter;
-        let final_top = card_top - STUDIO_TOP_GAP - diameter;
-        let top = final_top - SIB_SLIDE * (1.0 - eased);
-        self.draw_prompt_record_button(pixmap, left, top, diameter, eased * fade.clamp(0.0, 1.0));
-        self.prompt_record_rect = Some((left, top, left + diameter, top + diameter));
+    /// [GRAIN] The Studio band's RIGHT control — the Prompt Record action as a
+    /// labelled capsule ("✦ Record"), right-aligned to the card edge and exactly
+    /// as tall as the switcher beside it. `top` is the shared band position (the
+    /// two slide together); `alpha` is this control's own reveal.
+    fn draw_studio_prompt_record(&mut self, pixmap: &mut Pixmap, width: f32, top: f32, alpha: f32) {
+        self.ensure_record_label();
+        let left = width - STUDIO_TOP_RECORD_W;
+        let label = self.cached_record_label.as_ref();
+        self.draw_prompt_record_button(
+            pixmap,
+            left,
+            top,
+            STUDIO_TOP_RECORD_W,
+            STUDIO_TOP_PILL_H,
+            alpha,
+            label,
+        );
+        self.prompt_record_rect = Some((
+            left,
+            top,
+            left + STUDIO_TOP_RECORD_W,
+            top + STUDIO_TOP_PILL_H,
+        ));
     }
 
     /// [GRAIN] The collapsed pill's SIBLING prompt capsule — a fixed-width pill
@@ -5397,28 +5526,26 @@ impl App {
         self.prompt_switch_rect = None;
     }
 
-    /// [GRAIN] The Studio surface's prompt capsule — a full-width pill (matching
-    /// the transcript card's width) that slides UP into the reserved band above
-    /// the card (`card_top`). Fixed size; the label truncates rather than resizing
-    /// it. `riser_progress` drives the slide; `fade` is the whole-window opacity.
-    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, wf: f32, card_top: f32, fade: f32) {
-        let p = self.riser_progress.clamp(0.0, 1.0);
-        let travel = STUDIO_TOP_GAP + STUDIO_TOP_PILL_H;
-        let top = card_top - travel * p;
+    /// [GRAIN] The Studio band's LEFT control — the prompt switcher. It gets the
+    /// wider share of the row because it hosts an arbitrary prompt name; the
+    /// label truncates rather than resizing the capsule. `top` is the shared band
+    /// position; `alpha` its reveal (a mid-speech switch OR the hover).
+    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, top: f32, alpha: f32) {
+        let right = studio_top_switch_w();
         let bottom = top + STUDIO_TOP_PILL_H;
         self.draw_prompt_capsule(
             pixmap,
             0.0,
-            wf,
+            right,
             top,
             STUDIO_TOP_PILL_H,
             STUDIO_TOP_ARROW_INSET,
-            p * fade.clamp(0.0, 1.0),
+            alpha,
         );
         self.prompt_switch_rect = if self.agent_offer.is_some() {
             None
         } else {
-            Some((0.0, top, wf, bottom))
+            Some((0.0, top, right, bottom))
         };
     }
 
@@ -5572,9 +5699,13 @@ impl ApplicationHandler<UserEvent> for App {
                         && self.cursor_pos.1 <= y1;
                 }
                 self.update_prompt_record_hover();
+                self.cancel_hover = self
+                    .cancel_rect
+                    .is_some_and(|rect| self.cursor_in_rect(rect));
             }
             WindowEvent::CursorLeft { .. } => {
                 self.set_prompt_record_hover(false);
+                self.cancel_hover = false;
             }
             // [GRAIN] Prompt Record is deliberately NOT attached to the pill
             // body. Hover reveals an explicit action; only a click inside that
@@ -5604,6 +5735,18 @@ impl ApplicationHandler<UserEvent> for App {
                             .action_tx
                             .send(PillAction::AgentInputTyping { active: true });
                     }
+                    return;
+                }
+                // [GRAIN] Cancel × on the Studio card — the mouse equivalent of
+                // the Cancel shortcut (Esc). The core owns the teardown; the pill
+                // just reports the click and waits to be hidden like any other
+                // cancel, so both routes end a session identically.
+                if self
+                    .cancel_rect
+                    .is_some_and(|rect| point_in_rect(self.cursor_pos, rect))
+                {
+                    self.cancel_hover = false;
+                    let _ = self.action_tx.send(PillAction::CancelSession);
                     return;
                 }
                 if should_trigger_prompt_record(
@@ -6293,6 +6436,7 @@ impl ApplicationHandler<UserEvent> for App {
                         self.fallback_tried = false;
                         self.pixmap = None;
                         self.cached_label = None;
+                        self.cached_record_label = None;
                         self.free_idle_at = None;
                         event_loop.set_control_flow(ControlFlow::Wait);
                     }
@@ -6365,6 +6509,73 @@ mod tests {
         assert_eq!(clipboard_capsule_width(1.0, pill_h), CLIPBOARD_SIB_W);
         let halfway = clipboard_capsule_width(0.5, pill_h);
         assert!(halfway > pill_h && halfway < CLIPBOARD_SIB_W);
+    }
+
+    /// [GRAIN] The Studio top band holds BOTH controls — switcher + Record —
+    /// inside the card's own width. It may never be wider than the card, the
+    /// switcher must keep the larger share (it hosts arbitrary prompt names),
+    /// and the two must sit at the same height so the row reads as one strip.
+    #[test]
+    fn the_studio_top_band_fits_inside_the_card_width() {
+        let total = studio_top_switch_w() + STUDIO_TOP_SPLIT_GAP + STUDIO_TOP_RECORD_W;
+        assert!(
+            (total - STUDIO_W).abs() < 0.01,
+            "the band ({total}) must span exactly the card ({STUDIO_W})"
+        );
+        assert!(
+            studio_top_switch_w() > 2.0 * STUDIO_TOP_RECORD_W,
+            "the switcher gets the room — it carries the prompt name"
+        );
+
+        // The Record capsule's content (sparkle + word) must clear its rounded
+        // ends: at least a full radius of padding on each side.
+        let font = font();
+        let label = CachedText::new(&font, STUDIO_RECORD_LABEL, PROMPT_LABEL_PX);
+        let group =
+            PROMPT_RECORD_ICON_PX as f32 + STUDIO_TOP_RECORD_ICON_GAP + label.total_width;
+        assert!(
+            group + STUDIO_TOP_PILL_H <= STUDIO_TOP_RECORD_W,
+            "sparkle + \"{STUDIO_RECORD_LABEL}\" ({group}px) does not clear the capsule ends"
+        );
+
+        // …and the switcher's label still has real room between its arrows.
+        let label_max =
+            studio_top_switch_w() - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD;
+        assert!(
+            label_max > 200.0,
+            "the prompt name would truncate far too early ({label_max}px)"
+        );
+    }
+
+    /// [GRAIN] The cancel × became a real control. Its hit rect is derived from
+    /// the same geometry the control row paints the disc with, so the two can
+    /// never drift; and it stays unclickable while the card is still opening.
+    #[test]
+    fn the_cancel_hit_rect_tracks_the_drawn_disc() {
+        assert!(
+            studio_cancel_rect(studio_card_height(1), 0.5).is_none(),
+            "a half-open card has no visible ×, so nothing to click"
+        );
+
+        let card_h = studio_card_height(2);
+        let rect = studio_cancel_rect(card_h, 1.0).expect("an open card exposes the ×");
+        let (w, h) = studio_pixel_size();
+        let (wf, hf) = (w as f32, h as f32);
+
+        // Same centre `draw_control_row` uses at full expansion (cap_right = wf).
+        let card_top = hf - card_h;
+        let ctrl_top = card_top + card_h - STUDIO_CTRL_H - STUDIO_BOTTOM_PAD;
+        let cx = wf - STUDIO_PAD - X_BUTTON_R;
+        let cy = ctrl_top + STUDIO_CTRL_H / 2.0;
+        assert!(((rect.0 + rect.2) / 2.0 - cx).abs() < 0.01);
+        assert!(((rect.1 + rect.3) / 2.0 - cy).abs() < 0.01);
+
+        // Inside the card, and clear of the centred waveform beside it.
+        assert!(rect.2 <= wf && rect.3 <= hf);
+        assert!(
+            rect.0 > (wf + STUDIO_WAVE_W) / 2.0,
+            "the × hit zone must not reach the waveform"
+        );
     }
 
     #[test]

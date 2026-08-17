@@ -507,6 +507,10 @@ pub enum PillAction {
     /// [GRAIN] User clicked the pill's Quick-Agent follow-up offer — reopen the
     /// Agent expanded with the retained conversation.
     AgentFollowup,
+    /// [GRAIN] User clicked the expanded (live transcription) card's cancel ×.
+    /// Identical to pressing the Cancel shortcut: the core drops the recording,
+    /// the transcript, and every session surface, then hides the pill.
+    CancelSession,
     /// [GRAIN] Agent input: the user submitted TYPED text (expanded card).
     /// `title` is the optional Grain Space note title (Capture only; empty
     /// otherwise). `quick` = the user held Shift → Quick Agent (paste in place)
