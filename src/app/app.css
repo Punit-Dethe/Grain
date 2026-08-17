@@ -4627,6 +4627,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   line-height: 1.52;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   white-space: pre-wrap;
 }
 
@@ -5447,6 +5448,7 @@ html[data-theme="light"] .context-profile-mode {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   white-space: pre-wrap;
 }
 

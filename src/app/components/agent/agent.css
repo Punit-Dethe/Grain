@@ -357,6 +357,7 @@
 .agc-quote:not(.is-open) .agc-quote-text {
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -849,11 +850,13 @@
   cursor: pointer;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 .agc-c-prompt.is-open {
   -webkit-line-clamp: unset;
+  line-clamp: unset;
   overflow: visible;
 }
 
