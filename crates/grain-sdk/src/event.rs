@@ -31,6 +31,7 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "ModelDownloadProgress",
     "AudioLevel",
     "PromptChanged",
+    "PromptActive",
     "AgentFollowupOffer",
     "AgentFollowupClear",
     "AgentInputShow",
@@ -219,6 +220,14 @@ pub enum DaemonEvent {
     },
     /// Active prompt changed mid-speech → pill riser (← name →).
     PromptChanged {
+        name: String,
+    },
+    /// [GRAIN] The active prompt's name, announced WITHOUT a switch — emitted at
+    /// session start so the pill's switcher can render the current title the
+    /// moment it is revealed by hover. Deliberately distinct from
+    /// [`DaemonEvent::PromptChanged`]: this one must never arm the riser or
+    /// reveal an idle pill, it only refreshes the label.
+    PromptActive {
         name: String,
     },
     /// [GRAIN] Quick Agent: a reply was just auto-pasted at the cursor. The pill
@@ -415,6 +424,7 @@ impl DaemonEvent {
             ThemeConfig { .. } => "ThemeConfig",
             AudioLevel { .. } => "AudioLevel",
             PromptChanged { .. } => "PromptChanged",
+            PromptActive { .. } => "PromptActive",
             AgentFollowupOffer { .. } => "AgentFollowupOffer",
             AgentFollowupClear => "AgentFollowupClear",
             AgentInputShow { .. } => "AgentInputShow",

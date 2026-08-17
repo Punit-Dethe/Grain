@@ -205,9 +205,10 @@ const BTN_SPAN: usize = 4;
 // layered window, so it costs nothing at rest.
 const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collapsed pill
 const RISER_HOLD: Duration = Duration::from_millis(1600);
-/// Keep the Prompt Record action available briefly after the cursor leaves its
-/// reveal surface, giving it time to cross the transparent gap.
-const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(1);
+/// Keep the Prompt Record action (and, on Studio, the switcher beside it)
+/// available after the cursor leaves its reveal surface, giving it time to
+/// cross the transparent gap — and time to read the row before it withdraws.
+const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(2);
 /// A missed paste has already been placed on the clipboard when its event
 /// arrives. Keep the acknowledgement long enough to read without tying its
 /// lifetime to the longer Paste Catch hold.
@@ -3050,6 +3051,11 @@ struct Remote {
     /// and trigger the riser (+ a brief reveal when idle).
     prompt_name: String,
     prompt_seq: u64,
+    /// [GRAIN] Bumped by `PromptActive` — the SAME `prompt_name`, announced
+    /// without a switch (session start). It refreshes the switcher's label so a
+    /// hover-revealed capsule reads the current title, and must never arm the
+    /// riser or reveal an idle pill the way `prompt_seq` does.
+    prompt_active_seq: u64,
     /// Bumped whenever Paste Catch publishes a missed transcript to the
     /// clipboard. The pill owns the acknowledgement's short visual lifetime.
     clipboard_notice_seq: u64,
@@ -3124,6 +3130,7 @@ impl Default for Remote {
             anchor: OverlayPosition::Bottom,
             prompt_name: String::new(),
             prompt_seq: 0,
+            prompt_active_seq: 0,
             clipboard_notice_seq: 0,
             clipboard_notice_clear_seq: 0,
             mode: PillMode::Collapsed,
@@ -3220,6 +3227,13 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_name = name;
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
+        }
+        // [GRAIN] The active prompt, announced without a switch (session start).
+        // Only the label is refreshed — no riser, no reveal — so the switcher
+        // already carries the right title whenever a hover brings it up.
+        DaemonEvent::PromptActive { name } => {
+            r.prompt_name = name;
+            r.prompt_active_seq = r.prompt_active_seq.wrapping_add(1);
         }
         // [GRAIN] Paste Catch already wrote the transcript before emitting this
         // event. Collapse any finished Studio surface and let the existing
@@ -3638,6 +3652,7 @@ struct App {
     /// `ensure_record_label`). Dropped with the font on the idle-free.
     cached_record_label: Option<CachedText>,
     last_prompt_seq: u64,
+    last_prompt_active_seq: u64,
     prompt_preview_until: Option<Instant>,
     /// Short, renderer-owned acknowledgement for `PasteMissed`. It deliberately
     /// has no core timer/thread and never changes Paste Catch's hold lifecycle.
@@ -3778,6 +3793,7 @@ impl App {
             cached_label: None,
             cached_record_label: None,
             last_prompt_seq: 0,
+            last_prompt_active_seq: 0,
             prompt_preview_until: None,
             clipboard_notice: false,
             clipboard_notice_until: None,
@@ -6009,6 +6025,11 @@ impl ApplicationHandler<UserEvent> for App {
                     && desired_mode == PillMode::Studio
                     && (self.visible || self.closing);
                 self.mode = desired_mode;
+                // [GRAIN] The prompt label is ellipsis-truncated to the capsule
+                // width of the CURRENT surface, and the Studio band is far wider
+                // than the collapsed sibling. Re-truncate on the swap or a title
+                // measured for one surface stays clipped on the other.
+                self.update_cached_label();
                 if let Some(window) = &self.window {
                     let (w, h) = Self::win_size_for(self.mode, self.skin);
                     // [GRAIN] winit 0.30 renamed this `request_inner_size` (the
@@ -6075,6 +6096,23 @@ impl ApplicationHandler<UserEvent> for App {
                     self.prompt_label = r.prompt_name.clone();
                     self.riser_hide_at = Some(now + RISER_HOLD);
                     self.prompt_preview_until = Some(now + RISER_HOLD);
+                    self.update_cached_label();
+                }
+            }
+
+            // [GRAIN] …and the SILENT announcement (session start): adopt the
+            // title only. Without this the switcher renders its arrows around an
+            // empty label until the user actually switches a prompt. It must not
+            // touch `riser_hide_at`/`prompt_preview_until` (that would flash the
+            // capsule on every recording), and it yields to whatever transient
+            // status currently owns the shared label slot.
+            if r.prompt_active_seq != self.last_prompt_active_seq {
+                self.last_prompt_active_seq = r.prompt_active_seq;
+                let slot_taken = self.session_owner.is_some()
+                    || self.agent_offer.is_some()
+                    || self.clipboard_notice;
+                if !slot_taken && self.prompt_label != r.prompt_name {
+                    self.prompt_label = r.prompt_name.clone();
                     self.update_cached_label();
                 }
             }
@@ -6578,6 +6616,40 @@ mod tests {
         );
     }
 
+    /// [GRAIN] The switcher is revealed by hover now, not only by a switch — so
+    /// the core announces the active prompt at session start. That announcement
+    /// must carry the title WITHOUT looking like a switch, or every recording
+    /// would flash the capsule.
+    #[test]
+    fn the_active_prompt_arrives_without_arming_the_riser() {
+        let remote = Mutex::new(Remote::default());
+        apply_event(
+            &remote,
+            DaemonEvent::PromptActive {
+                name: "Meeting Notes".to_string(),
+            },
+        );
+        {
+            let state = remote.lock().unwrap();
+            assert_eq!(state.prompt_name, "Meeting Notes");
+            assert_eq!(state.prompt_active_seq, 1);
+            assert_eq!(state.prompt_seq, 0, "a silent announcement is not a switch");
+            assert!(!state.visible, "…and it must never reveal an idle pill");
+        }
+
+        // A real switch still drives the riser through its own sequence.
+        apply_event(
+            &remote,
+            DaemonEvent::PromptChanged {
+                name: "Email Format".to_string(),
+            },
+        );
+        let state = remote.lock().unwrap();
+        assert_eq!(state.prompt_name, "Email Format");
+        assert_eq!(state.prompt_seq, 1);
+        assert_eq!(state.prompt_active_seq, 1);
+    }
+
     #[test]
     fn disabling_paste_catch_withdraws_the_clipboard_confirmation() {
         let remote = Mutex::new(Remote::default());
@@ -6633,7 +6705,7 @@ mod tests {
         assert_eq!(rect.3 - rect.1, pill_h);
 
         let now = Instant::now();
-        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(1));
+        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(2));
         let deadline = now + PROMPT_RECORD_HOLD;
         assert!(should_show_prompt_record(
             PillState::Recording,

@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use tauri::AppHandle;
 
-use crate::settings::{get_settings, ShortcutBinding};
+use crate::settings::ShortcutBinding;
 
 /// How long the switcher stays open (and A/D stay grabbed) after the last
 /// interaction before it auto-closes.
@@ -95,7 +95,7 @@ static GEN: AtomicU64 = AtomicU64::new(0);
 pub fn open_switcher(app: &AppHandle) {
     // Reveal the capsule immediately by (re)emitting the current prompt name —
     // instant visual feedback even while the key grabs are still in flight.
-    if let Some(name) = current_prompt_name(app) {
+    if let Some(name) = crate::grain_actions::current_prompt_name(app) {
         crate::bridge::emit(app, grain_core::DaemonEvent::PromptChanged { name });
     }
 
@@ -184,13 +184,3 @@ fn deferred_unregister(app: &AppHandle, id: &str, key: &str) {
     });
 }
 
-/// The display name of the currently-selected post-processing prompt, if any.
-fn current_prompt_name(app: &AppHandle) -> Option<String> {
-    let settings = get_settings(app);
-    let id = settings.post_process_selected_prompt_id.as_deref()?;
-    settings
-        .post_process_prompts
-        .iter()
-        .find(|p| p.id == id)
-        .map(|p| p.name.clone())
-}

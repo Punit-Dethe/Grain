@@ -70,6 +70,14 @@ fn emit_session_started_with_owner(
     // paste target, and the pill should end up agreeing with post-processing
     // (which resolves its context at paste time, after every switch).
     crate::surface_watch::start(app);
+    // [GRAIN] Tell the pill which prompt is active BEFORE it shows. The switcher
+    // capsule is revealed by hover on the expanded card, not only by a switch,
+    // so without this it would open with empty space between its arrows until
+    // the user happened to cycle a prompt. Silent by contract — `PromptActive`
+    // never arms the riser (see `DaemonEvent::PromptActive`).
+    if let Some(name) = current_prompt_name(app) {
+        crate::bridge::emit(app, DaemonEvent::PromptActive { name });
+    }
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -185,6 +193,23 @@ pub(crate) fn cancel_session(app: &AppHandle) {
 // the new title in the pill. A tap shortcut: the switch happens on press.
 struct PromptSwitchAction {
     delta: i32,
+}
+
+/// The active post-processing prompt's display name, or `None` only when there
+/// are no prompts at all. With none explicitly selected this falls back to the
+/// FIRST prompt — the same index [`cycle_prompt`] treats as current — so the
+/// switcher capsule never shows empty arrows over a prompt the keys would
+/// actually cycle away from. Single lookup shared by the switcher and the
+/// session-start announcement, so the two can never disagree.
+pub(crate) fn current_prompt_name(app: &AppHandle) -> Option<String> {
+    let settings = get_settings(app);
+    let selected = settings
+        .post_process_selected_prompt_id
+        .as_deref()
+        .and_then(|id| settings.post_process_prompts.iter().find(|p| p.id == id));
+    selected
+        .or_else(|| settings.post_process_prompts.first())
+        .map(|p| p.name.clone())
 }
 
 /// Cycle the active post-processing prompt by `delta` (wrapping) and show
