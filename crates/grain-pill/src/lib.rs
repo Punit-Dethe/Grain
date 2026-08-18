@@ -8,7 +8,7 @@
 //! Visual language:
 //! - RECORDING: lit-dot *density* tracks mic amplitude (random placement,
 //!   grey/near-white tiers, flicker) across the WHOLE grid.
-//! - PROCESSING: orange "static" sparkle across the whole grid.
+//! - PROCESSING: a neutral grey "static" sparkle across the whole grid.
 //! - IDLE: a calm soft sweep/breathing shimmer (fills the grid, no gap).
 //! - HOVER: the right (non-voice-reactive) section smoothly turns off and
 //!   expands leftward to reveal lit-pixel glyphs — ✓ + ✗ while recording, ✓
@@ -71,6 +71,61 @@ const SKIN_SHRINK: f32 = 0.85;
 /// see `cy` in `paint_wave_body`.
 const WAVE_H_BOOST: f32 = 1.12;
 
+// ── Opening the collapsed pill ──────────────────────────────────────────────
+//
+// [GRAIN] The pill used to APPEAR: one frame it isn't there, the next it is at
+// full width with every element already drawn. It now opens — the capsule grows
+// out of a dot at its own centre and its contents are uncovered by the moving
+// edge, waveform first (it lives in the middle) and the app icon last (it sits
+// at the far left, where the edge arrives last).
+//
+// The reveal is a per-element GATE on x, not a clip mask: nothing is allocated
+// per frame, nothing is scaled — the icon in particular is blitted at its one
+// prepared size, exactly as before, and only its opacity moves. Once `open`
+// settles at 1.0 every gate is a no-op and the draw is byte-identical to the
+// pill that shipped.
+
+/// How long the capsule takes to open. Long enough to read as motion, short
+/// enough to be over before the first syllable lands — an invocation animation
+/// that makes the user wait is worse than no animation at all.
+const OPEN_DUR: Duration = Duration::from_millis(220);
+/// Fraction of `OPEN_DUR` the whole surface takes to fade up. Deliberately far
+/// shorter than the grow: the pill must be unmistakably PRESENT almost at once,
+/// and only its shape is still arriving.
+const OPEN_FADE: f32 = 0.35;
+/// The capsule's starting width, as a multiple of its height — exactly 1 is a
+/// circle. It never starts from zero: a sub-pixel sliver reads as a glitch, a
+/// dot reads as a pill that is about to open.
+const OPEN_SEED: f32 = 1.0;
+/// How far past its final width the capsule swings before settling, as a
+/// fraction of the "back" easing's own scale. Small on purpose — this is a
+/// settle, not a bounce, and the overshoot has to stay inside the window's
+/// `inset` margin so it can never clip.
+const OPEN_BACK: f32 = 0.7;
+/// Softness (px) of the edge that uncovers the contents. An element fades in
+/// over the last `OPEN_SOFT` px of the edge's approach, so nothing pops.
+const OPEN_SOFT: f32 = 9.0;
+
+/// Ease-out with a small overshoot (the standard "back" curve): fast away from
+/// 0, passing just above 1 before settling exactly on it at `t = 1`.
+fn ease_out_back(t: f32) -> f32 {
+    let u = t.clamp(0.0, 1.0) - 1.0;
+    1.0 + (OPEN_BACK + 1.0) * u * u * u + OPEN_BACK * u * u
+}
+
+/// Plain cubic ease-out, for the parts of the reveal that must not overshoot
+/// (opacity — an alpha above 1 is just a wasted clamp).
+fn ease_out_cubic(t: f32) -> f32 {
+    let u = 1.0 - t.clamp(0.0, 1.0);
+    1.0 - u * u * u
+}
+
+/// How lit an element is, given how far `inside` the opening capsule it already
+/// sits (px). Negative — still outside the capsule — is fully hidden.
+fn open_gate(inside: f32) -> f32 {
+    (inside / OPEN_SOFT).clamp(0.0, 1.0)
+}
+
 /// Runtime geometry of the COLLAPSED pill for one skin. Pure and copy-cheap —
 /// recomputed wherever it's needed instead of cached, so a skin change can never
 /// leave a stale size behind in some corner of the app.
@@ -116,6 +171,24 @@ impl PillGeom {
     /// Left/right edges of the painted capsule within the window.
     fn body_x(self) -> (f32, f32) {
         (self.inset, self.core_w - self.inset)
+    }
+
+    /// [GRAIN] The capsule's edges partway through the opening animation.
+    /// `open` is the EASED width factor: 0 leaves a body-height dot at the
+    /// capsule's centre, 1 is the full body (exactly — the arithmetic is an
+    /// identity there, so a settled pill is pixel-for-pixel the old one), and
+    /// slightly above 1 is the overshoot on its way back down.
+    ///
+    /// Every part of the opening pill — fill, rim, and each content gate —
+    /// reads its edges from here, so they cannot disagree about where the
+    /// capsule currently ends.
+    fn body_x_open(self, open: f32) -> (f32, f32) {
+        let (x0, x1) = self.body_x();
+        let full = x1 - x0;
+        let seed = (self.body_h * OPEN_SEED).min(full);
+        let w = seed + (full - seed) * open;
+        let cx = (x0 + x1) / 2.0;
+        (cx - w / 2.0, cx + w / 2.0)
     }
 
     fn win_h(self) -> u32 {
@@ -913,8 +986,8 @@ impl Aura {
         }
     }
 
-    /// [GRAIN] Roll the PROCESSING state's studio field: orange sparkle across
-    /// the 2-row strip, matching the collapsed pill's orange processing but
+    /// [GRAIN] Roll the PROCESSING state's studio field: a neutral sparkle across
+    /// the 2-row strip, matching the collapsed pill's processing grey but
     /// constrained to the studio rows only. Unlit = fully black.
     fn roll_studio_processing(&mut self) {
         self.phase += 1.0;
@@ -929,12 +1002,15 @@ impl Aura {
                     continue;
                 }
                 let shade = self.rng.f32();
+                // The same three-step ladder the orange sparkle had, moved onto
+                // the neutral ramp: `WAVE_INK_PROCESSING` is the middle rung, so
+                // both skins process in exactly the same grey.
                 let (rr, gg, bb) = if shade < 0.40 {
-                    (255, 93, 30) // deep orange
+                    (96, 101, 112) // deep
                 } else if shade < 0.72 {
-                    (255, 145, 70) // mid orange
+                    (120, 126, 138) // mid — WAVE_INK_PROCESSING
                 } else {
-                    (255, 185, 110) // light orange
+                    (148, 155, 168) // light
                 };
                 let a = if self.rng.f32() < 0.30 {
                     0.60 + self.rng.f32() * 0.40
@@ -1168,12 +1244,13 @@ impl Aura {
                     continue;
                 }
                 let shade = self.rng.f32();
+                // See `roll_studio_processing` — the neutral processing ladder.
                 let (rr, gg, bb) = if shade < 0.40 {
-                    (255, 93, 30)
+                    (96, 101, 112)
                 } else if shade < 0.72 {
-                    (255, 145, 70)
+                    (120, 126, 138)
                 } else {
-                    (255, 185, 110)
+                    (148, 155, 168)
                 };
                 let a = if self.rng.f32() < 0.25 {
                     0.60 + self.rng.f32() * 0.40
@@ -1402,6 +1479,15 @@ fn wave_bar_count(w: f32) -> usize {
 /// point is that it reads as calm at a glance.
 const WAVE_INK: [u8; 3] = [236, 239, 245];
 const WAVE_INK_IDLE: [u8; 3] = [138, 146, 163];
+/// [GRAIN] PROCESSING's ink. This used to be `ACCENT` — the recording orange —
+/// which read as an alarm rather than as work: nothing else on the pill is warm,
+/// so the state looked bolted on to the interface around it. It is now one step
+/// DOWN the same neutral ladder the rest of the waveform already lives on:
+/// evidently darker than the resting line, so "something is happening" still
+/// reads at a glance, but nowhere near the near-black body — that would read as
+/// the pill going dead rather than thinking. This single const is the dial for
+/// how loud the state is.
+const WAVE_INK_PROCESSING: [u8; 3] = [120, 126, 138];
 /// Prompt Record keeps the established light-blue signal (see `Aura`).
 const WAVE_INK_PROMPT: [u8; 3] = [150, 194, 255];
 
@@ -1660,6 +1746,13 @@ impl WaveField {
 /// pixels that ship, instead of a copy of this that can quietly drift from it.
 /// `themed_dot` is an extension theme's colour, which still wins over the
 /// state's own ink — a theme keeps working across a skin change.
+///
+/// [GRAIN] `open` is the capsule's eased opening factor (1.0 = fully open, the
+/// only value that ever reaches a settled pill). Below 1 the layout does NOT
+/// move: every element keeps its final position and is simply gated by how far
+/// inside the still-growing capsule it already is, so the wave (centre) lights
+/// up first and the left mark (far left) arrives last.
+#[allow(clippy::too_many_arguments)]
 fn paint_wave_body(
     pixmap: &mut Pixmap,
     geom: PillGeom,
@@ -1668,14 +1761,22 @@ fn paint_wave_body(
     themed_dot: Option<[u8; 3]>,
     icon: Option<&Pixmap>,
     wave: &WaveField,
+    open: f32,
 ) {
     let (x0, x1) = geom.body_x();
+    let opening = open < 1.0;
+    // The edges the reveal is measured against. At rest these ARE `body_x`.
+    let (bx0, bx1) = if opening {
+        geom.body_x_open(open)
+    } else {
+        (x0, x1)
+    };
     let cy = geom.y_off + geom.body_h / 2.0;
 
     let ink = themed_dot.unwrap_or(match state {
         PillState::Recording if prompt_recording => WAVE_INK_PROMPT,
         PillState::Recording => WAVE_INK,
-        PillState::Processing => ACCENT,
+        PillState::Processing => WAVE_INK_PROCESSING,
         PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
     });
 
@@ -1700,9 +1801,21 @@ fn paint_wave_body(
         PillState::Processing => 0.75 + 0.25 * (wave.clock * 3.6).sin(),
         PillState::Idle | PillState::Fallback => 0.55,
     }
-    .clamp(0.0, 1.0);
+    .clamp(0.0, 1.0)
+        // [GRAIN] The left mark is the LAST thing the opening capsule uncovers:
+        // it only starts fading up once the growing left edge has reached its
+        // slot. Scaling opacity, never geometry — the icon is never resampled.
+        * if opening {
+            open_gate(slot_x - bx0)
+        } else {
+            1.0
+        };
 
     match icon {
+        // Below a quarter of a percent the mark is not on screen in any
+        // meaningful sense; skipping it keeps the earliest opening frames to
+        // the capsule and its waveform alone.
+        _ if mark_a <= 0.004 => {}
         Some(icon) => {
             // Already scaled to its draw size, so this is a straight blit. Round
             // the origin so it lands on whole pixels — a half-pixel offset on
@@ -1755,6 +1868,7 @@ fn paint_wave_body(
         wave,
         ink,
         1.0,
+        opening.then_some((bx0, bx1)),
     );
 }
 
@@ -1765,6 +1879,13 @@ fn paint_wave_body(
 /// half-sine taper softens the edges so the row tapers toward the tips rather
 /// than chopping off square.
 #[allow(clippy::too_many_arguments)]
+///
+/// [GRAIN] `reveal` is the opening capsule's current interior (`None` once the
+/// pill is open — the settled path, which pays nothing for this). While it is
+/// `Some`, each bar is lit by how far inside those edges it sits, so the row
+/// unfurls from the middle outward as the capsule grows around it. The bars
+/// themselves never move: the row is laid out at its final width throughout, so
+/// the physics keeps the same bar count and no spring is ever re-indexed.
 fn draw_wave_bars(
     pixmap: &mut Pixmap,
     x: f32,
@@ -1774,6 +1895,7 @@ fn draw_wave_bars(
     field: &WaveField,
     color: [u8; 3],
     alpha: f32,
+    reveal: Option<(f32, f32)>,
 ) {
     let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
     if w <= 0.5 || a == 0 {
@@ -1808,6 +1930,20 @@ fn draw_wave_bars(
         let h = WAVE_BAR_MIN_H + field.bar(i) * reach;
         let bx = x0 + i as f32 * pitch;
         let by = cy - h / 2.0;
+        if let Some((rx0, rx1)) = reveal {
+            // Whichever edge is nearer decides: a bar is lit only once BOTH are
+            // clear of it, which is what makes the row grow outward evenly.
+            let gate = open_gate((bx - rx0).min(rx1 - (bx + WAVE_BAR_W)));
+            if gate <= 0.004 {
+                continue;
+            }
+            paint.set_color(Color::from_rgba8(
+                color[0],
+                color[1],
+                color[2],
+                (gate * a as f32) as u8,
+            ));
+        }
         if let Some(path) = rounded_rect_path(bx, by, WAVE_BAR_W, h, r) {
             pixmap.fill_path(
                 &path,
@@ -2574,7 +2710,7 @@ fn draw_control_row(
             // expanding the pill does not change the waveform's language.
             let ink = match state {
                 PillState::Recording => WAVE_INK,
-                PillState::Processing => ACCENT,
+                PillState::Processing => WAVE_INK_PROCESSING,
                 PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
             };
             draw_wave_bars(
@@ -2586,6 +2722,9 @@ fn draw_control_row(
                 wave,
                 ink,
                 fade,
+                // The card has its own grow (`studio_expand`); the collapsed
+                // pill's reveal does not follow it in here.
+                None,
             );
         }
         PillSkin::Matrix => {
@@ -2664,6 +2803,9 @@ fn draw_rec_dot(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
 }
 
 /// A rotating dot-ring spinner (the finalizing indicator, Handy's `.sspinner`).
+/// It wears `WAVE_INK_PROCESSING`, not the record accent: the record dot beside
+/// it is the only thing on the pill allowed to be warm, and the spinner means
+/// the opposite of recording.
 fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
     let mut p = Paint {
         anti_alias: true,
@@ -2679,7 +2821,12 @@ fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
         let dx = cx + ang.cos() * r;
         let dy = cy + ang.sin() * r;
         if let Some(c) = PathBuilder::from_circle(dx, dy, 1.4) {
-            p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], a));
+            p.set_color(Color::from_rgba8(
+                WAVE_INK_PROCESSING[0],
+                WAVE_INK_PROCESSING[1],
+                WAVE_INK_PROCESSING[2],
+                a,
+            ));
             pixmap.fill_path(&c, &p, FillRule::Winding, Transform::identity(), None);
         }
     }
@@ -3771,6 +3918,14 @@ struct App {
     /// [GRAIN] First-seen time per transcript word (global order) — drives the
     /// per-word fade-in. Grows as words are decoded; cleared each new session.
     reveal_since: Vec<Instant>,
+    /// [GRAIN] When the collapsed capsule started opening. Cleared the moment the
+    /// animation completes, so a pill that is simply on screen carries no
+    /// per-frame animation state at all.
+    open_at: Option<Instant>,
+    /// LINEAR 0..1 progress of that open, recomputed once per frame from
+    /// `open_at`; the easing lives in the draw. `1.0` = fully open, which is what
+    /// every surface other than the collapsed pill always sees.
+    open_t: f32,
 }
 
 impl App {
@@ -3864,6 +4019,8 @@ impl App {
             studio_grown_h: 0.0,
             studio_expand: 0.0,
             reveal_since: Vec::new(),
+            open_at: None,
+            open_t: 1.0,
         }
     }
 
@@ -4950,6 +5107,21 @@ impl App {
         let r = geom.radius();
         let (x0, x1) = geom.body_x();
 
+        // [GRAIN] The opening capsule. `open` drives WIDTH (with a small settle
+        // past its final size) and `open_a` the surface's fade — the fade runs
+        // over the first third only, so the pill reads as present immediately
+        // and it is just its shape that is still arriving. Both are exactly 1.0
+        // once the animation finishes, and from then on every branch below is
+        // the code that shipped.
+        let open = ease_out_back(self.open_t);
+        let open_a = ease_out_cubic((self.open_t / OPEN_FADE).min(1.0));
+        let opening = self.open_t < 1.0;
+        let (bx0, bx1) = if opening {
+            geom.body_x_open(open)
+        } else {
+            (x0, x1)
+        };
+
         // [GRAIN] Centered overlay-only: the pill is visible ONLY to show a
         // transient capsule (idle prompt-switch preview or agent follow-up
         // offer), no session. Drop the body + dot aura and render the capsule
@@ -4993,7 +5165,7 @@ impl App {
             // now that `rounded_rect_path` is cubic it traces the same shape, and
             // sharing it with the rim below guarantees the two cannot disagree
             // about where the edge is.
-            if let Some(path) = rounded_rect_path(x0, y_off, x1 - x0, pill_h, r) {
+            if let Some(path) = rounded_rect_path(bx0, y_off, bx1 - bx0, pill_h, r) {
                 pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
             }
             // …and its hairline rim, so the capsule keeps its edge against a
@@ -5003,13 +5175,13 @@ impl App {
                 .and_then(|t| t.background)
                 .is_none()
             {
-                stroke_grain_rim(&mut pixmap, x0, y_off, x1 - x0, pill_h, r, 1.0);
+                stroke_grain_rim(&mut pixmap, bx0, y_off, bx1 - bx0, pill_h, r, 1.0);
             }
 
             // 2) The voice visualisation — whichever the active skin defines.
             match self.skin {
-                PillSkin::Matrix => self.draw_matrix_body(&mut pixmap, y_off),
-                PillSkin::Wave => self.draw_wave_body(&mut pixmap, geom),
+                PillSkin::Matrix => self.draw_matrix_body(&mut pixmap, y_off, opening, bx0, bx1),
+                PillSkin::Wave => self.draw_wave_body(&mut pixmap, geom, open),
             }
         }
 
@@ -5040,8 +5212,11 @@ impl App {
         // withdrawal). The pixmap is premultiplied RGBA, so scaling every byte
         // uniformly preserves the premultiplication invariant. No-op at full
         // opacity; the pixmap is tiny, so the pass is negligible.
-        if self.studio_alpha < 0.995 {
-            let f = self.studio_alpha.clamp(0.0, 1.0);
+        // [GRAIN] The open's own fade rides the same pass — one multiply for
+        // both, so opening costs nothing extra here.
+        let surface_a = self.studio_alpha.min(open_a);
+        if surface_a < 0.995 {
+            let f = surface_a.clamp(0.0, 1.0);
             for b in pixmap.data_mut() {
                 *b = (*b as f32 * f) as u8;
             }
@@ -5205,7 +5380,11 @@ impl App {
 
     /// [GRAIN] `PillSkin::Matrix` body — the original dot-matrix aura. Unchanged
     /// from when it was the default; it simply no longer is one.
-    fn draw_matrix_body(&self, pixmap: &mut Pixmap, y_off: f32) {
+    ///
+    /// While `opening`, a dot is lit only once the growing capsule (`bx0`..`bx1`)
+    /// has uncovered its column — the same centre-outward reveal the wave skin
+    /// gets, expressed in the grid's own terms.
+    fn draw_matrix_body(&self, pixmap: &mut Pixmap, y_off: f32, opening: bool, bx0: f32, bx1: f32) {
         let cell_px = Self::cell_px();
         let dots = &self.aura.dots;
         let radius = DOT_D * SCALE / 2.0;
@@ -5224,8 +5403,21 @@ impl App {
                 }
                 let dx = col as f32 * cell_px + cell_px / 2.0;
                 let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
+                let gate = if opening {
+                    open_gate((dx - bx0).min(bx1 - dx))
+                } else {
+                    1.0
+                };
+                if gate <= 0.004 {
+                    continue;
+                }
                 if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
-                    paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
+                    paint.set_color(Color::from_rgba8(
+                        c[0],
+                        c[1],
+                        c[2],
+                        (c[3] as f32 * gate) as u8,
+                    ));
                     pixmap.fill_path(
                         &circle,
                         &paint,
@@ -5244,7 +5436,7 @@ impl App {
     /// First-pass proportions; the `WAVE_*` consts are the dial board for the
     /// final visual spec. A theme's `dot` colour still wins over the state ink,
     /// so an extension theme keeps working across a skin change.
-    fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom) {
+    fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom, open: f32) {
         paint_wave_body(
             pixmap,
             geom,
@@ -5253,6 +5445,7 @@ impl App {
             theme_for_state(self.theme.as_ref(), self.state).and_then(|t| t.dot),
             self.icon.as_ref(),
             &self.wave,
+            open,
         );
     }
 
@@ -6004,6 +6197,11 @@ impl ApplicationHandler<UserEvent> for App {
                 self.clipboard_notice = false;
                 self.clipboard_notice_until = None;
                 self.offer_fade_close = false;
+                // The pill was already on screen, but only as a capsule — the
+                // BODY is new, so give it the same open a cold show gets rather
+                // than letting it blink into place beside the fading capsule.
+                self.open_at = Some(now);
+                self.open_t = 0.0;
             }
             self.prompt_recording = r.prompt_recording;
             if self.state != PillState::Recording {
@@ -6331,6 +6529,12 @@ impl ApplicationHandler<UserEvent> for App {
             if becoming_visible {
                 self.visible = true;
                 self.closing = false;
+                // [GRAIN] Every show opens: the capsule grows out of a dot and
+                // uncovers its own contents. Armed here — before the first frame
+                // is drawn — so the window is revealed already mid-animation
+                // rather than one frame late.
+                self.open_at = Some(now);
+                self.open_t = 0.0;
             } else if starting_close {
                 // Studio always fades; the collapsed capsule fades only when the
                 // hide is an offer withdrawal — session ends keep the instant hide.
@@ -6392,6 +6596,24 @@ impl ApplicationHandler<UserEvent> for App {
             }
 
             if self.visible {
+                // [GRAIN] Advance the open. Driven by the WALL CLOCK, not by a
+                // per-frame ease: a dropped frame must shorten the animation,
+                // never stretch it — the pill has to be open by the time the
+                // user has finished reacting to their own shortcut. Clearing
+                // `open_at` at the end takes the whole thing back to zero cost.
+                self.open_t = match self.open_at {
+                    Some(started) => {
+                        let p = now.saturating_duration_since(started).as_secs_f32()
+                            / OPEN_DUR.as_secs_f32();
+                        if p >= 1.0 {
+                            self.open_at = None;
+                            1.0
+                        } else {
+                            p
+                        }
+                    }
+                    None => 1.0,
+                };
                 // [GRAIN] The WAVE skin advances every frame, not on the dot
                 // field's slow cadence — its whole character is a continuously
                 // scrolling line, and an 80ms step would read as a stutter. The
@@ -6416,7 +6638,7 @@ impl ApplicationHandler<UserEvent> for App {
                 if now >= self.next_roll && !wave_live {
                     let amp = self.current_amp();
                     // The expanded pill uses the 2-column field: center-outward
-                    // waveform while recording, orange sparkle while processing,
+                    // waveform while recording, grey sparkle while processing,
                     // calm breathing for idle/fallback. Collapsed pill unchanged.
                     // [GRAIN] Feed the Prompt Record tint into the dot field: the
                     // collapsed recording field turns grey/light-blue, the Studio
@@ -7217,6 +7439,99 @@ mod tests {
     }
 
     #[test]
+    fn processing_is_a_neutral_grey_clearly_below_the_resting_line() {
+        // The state used to wear the record accent, which read as an alarm. It
+        // now sits on the SAME neutral ramp as the rest of the waveform —
+        // evidently darker than the idle baseline (so the change is legible at a
+        // glance) but far enough above the body that it never reads as dead.
+        let [r, g, b] = WAVE_INK_PROCESSING;
+        let spread = r.max(g).max(b) - r.min(g).min(b);
+        assert!(spread < 30, "processing must stay neutral, not tinted");
+        let lum = |c: [u8; 3]| c[0] as f32 * 0.299 + c[1] as f32 * 0.587 + c[2] as f32 * 0.114;
+        assert!(
+            lum([r, g, b]) < lum(WAVE_INK_IDLE) - 10.0,
+            "processing must be evidently darker than the resting line"
+        );
+        assert!(
+            lum([r, g, b]) > lum(GRAIN_SURFACE) * 2.5,
+            "…but nowhere near the body, which would read as the pill going dead"
+        );
+    }
+
+    #[test]
+    fn the_open_starts_as_a_dot_and_lands_exactly_on_the_full_body() {
+        for skin in [PillSkin::Wave, PillSkin::Matrix] {
+            let g = PillGeom::for_skin(skin);
+            let (x0, x1) = g.body_x();
+            let (s0, s1) = g.body_x_open(0.0);
+            assert!(
+                (s1 - s0 - g.body_h).abs() < 0.01,
+                "the pill opens out of a dot the height of its own body"
+            );
+            assert!(
+                ((s0 + s1) / 2.0 - (x0 + x1) / 2.0).abs() < 0.01,
+                "…centred on where the capsule will end up"
+            );
+            // The settled pill must be the pill that shipped, to the pixel.
+            let (o0, o1) = g.body_x_open(1.0);
+            assert!((o0 - x0).abs() < 0.001 && (o1 - x1).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn the_opens_overshoot_stays_inside_the_window_margin() {
+        // `ease_out_back` swings past 1 before settling. That swing widens the
+        // capsule symmetrically, so it must not push the left edge out of the
+        // window — there is only `inset` px of margin there.
+        let peak = (0..=200)
+            .map(|i| ease_out_back(i as f32 / 200.0))
+            .fold(f32::MIN, f32::max);
+        assert!(peak > 1.0, "the settle needs an actual overshoot");
+        for skin in [PillSkin::Wave, PillSkin::Matrix] {
+            let g = PillGeom::for_skin(skin);
+            let (bx0, _) = g.body_x_open(peak);
+            assert!(
+                bx0 > 0.0,
+                "{skin:?}: the overshoot must stay inside the window"
+            );
+        }
+        assert!(ease_out_back(0.0).abs() < 1e-5);
+        assert!((ease_out_back(1.0) - 1.0).abs() < 1e-5);
+        assert!(ease_out_cubic(0.0).abs() < 1e-5);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_opening_pill_shows_the_waveform_before_the_left_mark() {
+        // The staging the reveal is FOR: the row lives in the middle, so the
+        // growing capsule uncovers it first; the mark sits at the far left, where
+        // the edge arrives last. Anything else and the pill's identity mark
+        // floats outside its own body mid-animation.
+        let g = PillGeom::for_skin(PillSkin::Wave);
+        let (x0, x1) = g.body_x();
+        let centre = (x0 + x1) / 2.0;
+        let slot_x = x0 + WAVE_PAD_X;
+        let mut wave_lit_at = None;
+        let mut mark_lit_at = None;
+        for i in 0..=100 {
+            let t = i as f32 / 100.0;
+            let (bx0, bx1) = g.body_x_open(ease_out_back(t));
+            if wave_lit_at.is_none() && open_gate((centre - bx0).min(bx1 - centre)) > 0.5 {
+                wave_lit_at = Some(t);
+            }
+            if mark_lit_at.is_none() && open_gate(slot_x - bx0) > 0.5 {
+                mark_lit_at = Some(t);
+            }
+        }
+        let wave = wave_lit_at.expect("the waveform must light during the open");
+        let mark = mark_lit_at.expect("the left mark must light during the open");
+        assert!(
+            wave < mark,
+            "waveform ({wave}) must lead the left mark ({mark})"
+        );
+    }
+
+    #[test]
     fn trimming_a_bar_keeps_the_row_centred() {
         // WAVE_BAR_TRIM removes a bar; the leftover slack must be split evenly or
         // the row would visibly hug one side of the capsule.
@@ -7360,6 +7675,7 @@ mod tests {
             &f,
             WAVE_INK,
             1.0,
+            None,
         );
 
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
@@ -7494,7 +7810,7 @@ mod tests {
                 (_, Some(_)) => &f_icon,
                 (_, None) => &f_dot,
             };
-            paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave);
+            paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave, 1.0);
 
             // Composite over a neutral desktop grey and magnify (nearest, so the
             // actual pixels are what you inspect).
@@ -7543,7 +7859,17 @@ mod tests {
         let mut pixmap = Pixmap::new(160, 40).unwrap();
         pixmap.fill(Color::TRANSPARENT);
         let f = WaveField::new();
-        draw_wave_bars(&mut pixmap, 10.0, 20.0, 140.0, 12.0, &f, WAVE_INK_IDLE, 1.0);
+        draw_wave_bars(
+            &mut pixmap,
+            10.0,
+            20.0,
+            140.0,
+            12.0,
+            &f,
+            WAVE_INK_IDLE,
+            1.0,
+            None,
+        );
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
         assert!(painted > 40, "the resting row vanished ({painted}px)");
 
@@ -7922,6 +8248,7 @@ mod tests {
                 &f,
                 WAVE_INK,
                 1.0,
+                None,
             );
             let y_base = row as u32 * band * ZOOM;
             for y in 0..band {
