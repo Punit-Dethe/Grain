@@ -89,6 +89,11 @@ const PANEL_MARGIN: f64 = 8.0;
 /// Transparent shadow gutter the side card reserves on every edge — must match
 /// the `.agent-panel-root.is-side` padding in `agent.css`.
 const PANEL_SIDE_GUTTER: f64 = 12.0;
+/// Grace between handing the panel its reveal event and actually showing the
+/// window — a couple of frames, enough for the webview to paint the armed
+/// (fully transparent) first frame of its opening animation. Must stay well
+/// under the animation duration in `agent.css`.
+const PANEL_ARM_DELAY: Duration = Duration::from_millis(45);
 
 /// [GRAIN] CENTER-TOP panel geometry (logical px). The center variant is a
 /// single sleek surface anchored near the top-centre of the work area. Its width
@@ -507,6 +512,22 @@ fn start_dictation(app: &AppHandle) {
     {
         warn!("[GRAIN] agent: failed to start dictation: {e}");
     }
+}
+
+/// Show a panel that has just been handed its reveal event, giving the webview
+/// this long to paint the armed first frame of its opening animation.
+///
+/// Showing in the same breath as the emit paints the card at rest for a frame
+/// or two before the event lands — the animation then starts from a card the
+/// user has already seen, which reads as a flash rather than an entrance. The
+/// wait is off the main thread; only the `show` hops back onto it.
+fn show_after_arming(win: &tauri::WebviewWindow) {
+    let app = win.app_handle().clone();
+    let win = win.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(PANEL_ARM_DELAY);
+        let _ = app.run_on_main_thread(move || show_and_focus(&win));
+    });
 }
 
 /// Show + reliably grab keyboard focus. A hotkey-summoned, always-on-top, frameless
@@ -1339,7 +1360,7 @@ fn reveal_panel_loading(app: &AppHandle) {
             },
         };
         let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
-        show_and_focus(&win);
+        show_after_arming(&win);
     });
 }
 
@@ -1363,14 +1384,17 @@ fn deliver_agent_error(app: &AppHandle, message: &str) {
                 }
             }
         }
-        if let Some(w) = app.get_webview_window(PANEL_LABEL) {
-            show_and_focus(&w);
-        }
+        // Hand the panel its message BEFORE showing it, same as every other
+        // reveal path — a freshly built webview needs the longer grace just to
+        // mount its listener.
         let delay = if existed { 30 } else { 400 };
         let app_for_emit = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(delay));
             let _ = app_for_emit.emit_to(PANEL_LABEL, "agent-error", message);
+            if let Some(w) = app_for_emit.get_webview_window(PANEL_LABEL) {
+                show_after_arming(&w);
+            }
         });
     });
 }
@@ -1568,7 +1592,7 @@ pub fn open_followup(app: &AppHandle) {
         // The panel is already mounted: it re-checks the retained conversation
         // on this event (take is consuming, so double delivery is harmless).
         let _ = app.emit_to(PANEL_LABEL, "agent-followup-open", ());
-        show_and_focus(&panel);
+        show_after_arming(&panel);
         return;
     }
 

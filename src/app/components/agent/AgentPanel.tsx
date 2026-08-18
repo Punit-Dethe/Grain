@@ -27,6 +27,10 @@ import "./agent.css";
 const CENTER_TOP_OFFSET = 76;
 const CENTER_BOTTOM_GAP = 52;
 
+/** Duration of the card's opening rise — must match `agc-rise` in `agent.css`,
+ * and must stay above the backend's pre-show arming delay (`PANEL_ARM_MS`). */
+const REVEAL_MS = 400;
+
 type Role = "user" | "assistant";
 interface ChatMessage {
   id: string;
@@ -106,7 +110,13 @@ function keycapLabel(part: string): string {
  */
 export function AgentPanel() {
   const { t } = useTranslation();
-  const win = getCurrentWindow();
+  // ONE handle for the component's life. `getCurrentWindow()` mints a fresh
+  // object on every call, so calling it inline made `win` a new identity each
+  // render — every effect that depends on it tore down and re-subscribed
+  // constantly, and `listen()` is async, so any subscription still in flight
+  // when its own cleanup ran survived forever. Those orphans stacked up and
+  // each one handled the same event again (one dictation pasted N times).
+  const win = useMemo(() => getCurrentWindow(), []);
 
   // Conversation (expanded stage). In the compact stage this holds only the
   // first user turn; the assistant replies live in `versions`.
@@ -304,6 +314,11 @@ export function AgentPanel() {
     }
     setMessages(seed);
     setExpanded(true);
+    // The window jumps to the taller footprint in one step (resizing it in
+    // stages risks the tauri#3990 freeze). Replaying the rise on the expanded
+    // card is what carries that jump — the conversation lifts into the new
+    // height instead of the layout snapping.
+    setAppearNonce((n) => n + 1);
     void commands.agentSetPanelMode(true).catch(() => {});
     window.setTimeout(() => followupRef.current?.focus(), 60);
   }, []);
@@ -420,13 +435,19 @@ export function AgentPanel() {
 
   // Backend → panel signals for the pre-created (warm) window lifecycle.
   useEffect(() => {
+    // `listen()` resolves asynchronously, so a subscription can land AFTER this
+    // effect has been torn down. Retiring it on arrival is what guarantees no
+    // orphan outlives the effect — "destroy if not in use", and the reason a
+    // single event can never be handled twice.
+    let dead = false;
     const uns: Array<() => void> = [];
+    const track = (un: () => void) => (dead ? un() : uns.push(un));
     // The core queued the first instruction after we mounted → run it.
     void win
       .listen("agent-instruction", () => {
         void startFirstIfQueued();
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // Reveal-in-loading handshake: the window was just shown; keep the loading
     // state until the first reply (or an error) lands.
     void win
@@ -434,7 +455,7 @@ export function AgentPanel() {
         if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
         setAppearNonce((n) => n + 1);
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // A backend-side failure (STT/LLM) with no reply to show.
     void win
       .listen<string>("agent-error", (e) => {
@@ -443,14 +464,14 @@ export function AgentPanel() {
         setError(e.payload || t("agent.error"));
         setAppearNonce((n) => n + 1);
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // Follow-up offer opened the warm hidden panel → seed the conversation.
     void win
       .listen("agent-followup-open", () => {
         void openRetainedConversation();
         setAppearNonce((n) => n + 1);
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
     // the expanded conversation was focused). Append the transcript to the
     // follow-up field instead of it being OS-pasted (which would paste the
@@ -484,8 +505,11 @@ export function AgentPanel() {
         startCompose();
         requestAnimationFrame(() => append(centerInputRef.current));
       })
-      .then((fn) => uns.push(fn));
-    return () => uns.forEach((u) => u());
+      .then(track);
+    return () => {
+      dead = true;
+      uns.forEach((u) => u());
+    };
   }, [openRetainedConversation, startCompose, startFirstIfQueued, t, win]);
 
   // Replay the opening animation on each reveal. Restarted imperatively rather
@@ -498,11 +522,11 @@ export function AgentPanel() {
     el.classList.remove("is-appearing");
     void el.offsetWidth; // force reflow so the animation restarts
     el.classList.add("is-appearing");
-    // Drop the class once it has played out, so content that mounts later (a
-    // new turn, the compose field) is not caught by the staggered child rule.
+    // Drop the class once it has played out so `will-change` is not left
+    // pinned on the card for the rest of the session.
     const timer = window.setTimeout(
       () => el.classList.remove("is-appearing"),
-      420,
+      REVEAL_MS + 60,
     );
     return () => window.clearTimeout(timer);
   }, [appearNonce]);
@@ -522,15 +546,15 @@ export function AgentPanel() {
   // Backend bridges: the transient global Enter (compact → confirm) and the
   // follow-up shortcut / pill click (→ expand).
   useEffect(() => {
-    let unEnter: (() => void) | undefined;
-    let unFollow: (() => void) | undefined;
+    // Same late-resolve guard as the lifecycle listeners above.
+    let dead = false;
+    const uns: Array<() => void> = [];
+    const track = (un: () => void) => (dead ? un() : uns.push(un));
     void win
       .listen("agent-global-enter", () => {
         if (!expandedRef.current) confirm();
       })
-      .then((fn) => {
-        unEnter = fn;
-      });
+      .then(track);
     void win
       .listen("agent-followup", () => {
         // CENTER: the continuation shortcut opens (and focuses) the follow-up
@@ -541,12 +565,10 @@ export function AgentPanel() {
           expand();
         }
       })
-      .then((fn) => {
-        unFollow = fn;
-      });
+      .then(track);
     return () => {
-      unEnter?.();
-      unFollow?.();
+      dead = true;
+      uns.forEach((u) => u());
     };
   }, [confirm, expand, startCompose, win]);
 
@@ -1169,8 +1191,9 @@ export function AgentPanel() {
   return (
     <div className="agent-panel-root is-side">
       <div className="agc-card agc-card--expanded" ref={cardRef}>
-        {/* Header (draggable) — close only; shape carries the rest. */}
+        {/* Header (draggable): a quiet wordmark balances the close button. */}
         <div className="agc-head agc-head--expanded" data-tauri-drag-region>
+          <span className="agc-title">{t("agent.brand")}</span>
           <span className="agc-spacer" />
           <button
             type="button"

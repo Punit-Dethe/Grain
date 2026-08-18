@@ -269,44 +269,42 @@
 /* ── Reveal ────────────────────────────────────────────────────────────────
  * The panel window is pre-created HIDDEN and shown on summon, so a plain mount
  * animation would already be over by the time the user sees anything. The card
- * is re-armed on each reveal signal (`is-appearing`, restarted imperatively).
- * It rises from its anchored edge — bottom for the side card, top for the
- * center panel, which is where each one is pinned. */
+ * is re-armed on each reveal signal (`is-appearing`, restarted imperatively);
+ * the backend holds the window back a beat so the first painted frame is the
+ * armed one, never the resting card.
+ *
+ * Deliberately ONLY opacity and translate. An earlier pass scaled the card,
+ * which re-rasterises every glyph inside it on each frame — that shimmer was
+ * the "flicker". Both properties here are composited, so the rise is smooth at
+ * any size. It travels from the edge the surface is pinned to: up from the
+ * bottom for the side card, down from the top for the center panel. */
 @keyframes agc-rise {
   from {
     opacity: 0;
-    transform: translateY(18px) scale(0.965);
+    transform: translate3d(0, 26px, 0);
   }
   to {
     opacity: 1;
-    transform: none;
+    transform: translate3d(0, 0, 0);
   }
 }
-@keyframes agc-settle {
+@keyframes agc-descend {
   from {
     opacity: 0;
-    transform: translateY(5px);
+    transform: translate3d(0, -22px, 0);
   }
   to {
     opacity: 1;
-    transform: none;
+    transform: translate3d(0, 0, 0);
   }
 }
 .agc-card.is-appearing {
-  transform-origin: 50% 100%;
-  animation: agc-rise 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: agc-rise 400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 .agc-card.agc-center.is-appearing {
-  transform-origin: 50% 0;
-}
-/* The contents follow a beat later, so the card reads as opening rather than
- * being pasted on screen whole. */
-.agc-card.is-appearing > * {
-  animation: agc-settle 220ms cubic-bezier(0.16, 1, 0.3, 1) 70ms both;
-}
-.agc-card.is-appearing > .agc-c-fade,
-.agc-card.is-appearing > .agc-c-x {
-  animation: none;
+  animation-name: agc-descend;
 }
 
 .agc-spacer {
@@ -705,6 +703,18 @@
 }
 .agc-head--expanded {
   height: 28px;
+}
+/* Quiet wordmark, weighted to sit level with the close button opposite it —
+ * present, not announced. */
+.agc-title {
+  padding-left: 2px;
+  font-family: var(--agc-body-font);
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: 0.005em;
+  color: rgba(255, 255, 255, 0.42);
+  white-space: nowrap;
+  user-select: none;
 }
 .agc-scroll {
   flex: 1 1 auto;
@@ -1267,8 +1277,7 @@
 @media (prefers-reduced-motion: reduce) {
   .agent-typing span,
   .agent-wave-dot,
-  .agc-card.is-appearing,
-  .agc-card.is-appearing > * {
+  .agc-card.is-appearing {
     animation: none !important;
   }
 }
