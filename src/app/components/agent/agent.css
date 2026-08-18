@@ -14,13 +14,6 @@
   -webkit-font-smoothing: antialiased;
 }
 
-/* The SIDE card floats: the window is transparent, so a gutter around the card
- * is what gives the drop shadow somewhere to fall. The window footprint in
- * `agent.rs` already accounts for this gutter on both axes. */
-.agent-panel-root.is-side {
-  padding: 12px;
-}
-
 .agent-card {
   --surface: #e8e1d4;
   --recess: #ddd5c8;
@@ -259,13 +252,6 @@
 .agc-card *::after {
   box-sizing: border-box;
 }
-.agent-panel-root.is-side .agc-card {
-  box-shadow:
-    0 20px 48px rgba(0, 0, 0, 0.55),
-    0 6px 16px rgba(0, 0, 0, 0.36),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.035);
-}
-
 /* ── Reveal ────────────────────────────────────────────────────────────────
  * The panel window is pre-created HIDDEN and shown on summon, so a plain mount
  * animation would already be over by the time the user sees anything. The card
@@ -273,15 +259,18 @@
  * the backend holds the window back a beat so the first painted frame is the
  * armed one, never the resting card.
  *
- * Deliberately ONLY opacity and translate. An earlier pass scaled the card,
- * which re-rasterises every glyph inside it on each frame — that shimmer was
- * the "flicker". Both properties here are composited, so the rise is smooth at
- * any size. It travels from the edge the surface is pinned to: up from the
- * bottom for the side card, down from the top for the center panel. */
+ * Deliberately ONLY opacity and translate, and only ever TWO keyframes. An
+ * earlier pass scaled the card, which re-rasterises every glyph inside it on
+ * each frame — that shimmer was the "flicker". Intermediate keyframes are
+ * avoided too: the timing function restarts at every stop, which is what turns
+ * one movement into a visible stutter. Both properties here are composited, so
+ * one long curve stays smooth across a surface this large. It travels from the
+ * edge the surface is pinned to: up from the bottom for the side card, down
+ * from the top for the center panel. */
 @keyframes agc-rise {
   from {
     opacity: 0;
-    transform: translate3d(0, 26px, 0);
+    transform: translate3d(0, 34px, 0);
   }
   to {
     opacity: 1;
@@ -291,7 +280,7 @@
 @keyframes agc-descend {
   from {
     opacity: 0;
-    transform: translate3d(0, -22px, 0);
+    transform: translate3d(0, -28px, 0);
   }
   to {
     opacity: 1;
@@ -299,12 +288,18 @@
   }
 }
 .agc-card.is-appearing {
-  animation: agc-rise 400ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: agc-rise 520ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
 .agc-card.agc-center.is-appearing {
   animation-name: agc-descend;
+}
+/* Held: the layout is mounted but must not be seen yet, because the window it
+ * belongs in has not finished resizing. Painting here and animating anyway is
+ * what made expanding look like it opened twice. */
+.agc-card.is-held {
+  opacity: 0;
 }
 
 .agc-spacer {

@@ -78,17 +78,12 @@ const FIELD_CONTEXT_MAX_CHARS: usize = 6000;
 /// corner (the reference design); the EXPANDED conversation keeps the old
 /// sidebar footprint but stays anchored bottom-right.
 ///
-/// These are WINDOW sizes, and the side layout paints a transparent
-/// [`PANEL_SIDE_GUTTER`] inset so the card can cast a real drop shadow — the
-/// visible card is that much smaller, and the visible margin from the screen
-/// edge is `PANEL_MARGIN + PANEL_SIDE_GUTTER`.
-const PANEL_W: f64 = 524.0;
-const PANEL_COMPACT_W: f64 = 456.0;
-const PANEL_COMPACT_H: f64 = 512.0;
-const PANEL_MARGIN: f64 = 8.0;
-/// Transparent shadow gutter the side card reserves on every edge — must match
-/// the `.agent-panel-root.is-side` padding in `agent.css`.
-const PANEL_SIDE_GUTTER: f64 = 12.0;
+/// The card fills its window exactly — it casts no drop shadow, so there is no
+/// transparent gutter to budget for and these are the visible sizes.
+const PANEL_W: f64 = 500.0;
+const PANEL_COMPACT_W: f64 = 432.0;
+const PANEL_COMPACT_H: f64 = 488.0;
+const PANEL_MARGIN: f64 = 20.0;
 /// Grace between handing the panel its reveal event and actually showing the
 /// window — a couple of frames, enough for the webview to paint the armed
 /// (fully transparent) first frame of its opening animation. Must stay well
@@ -775,10 +770,7 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
         let (w, h) = if expanded {
-            // The clamp sizes the visible CARD; the window carries the shadow
-            // gutter on top of it so the card keeps its intended height.
-            let card_h = (sh - 110.0).clamp(360.0, 880.0);
-            (PANEL_W, card_h + 2.0 * PANEL_SIDE_GUTTER)
+            (PANEL_W, (sh - 110.0).clamp(360.0, 880.0))
         } else {
             (
                 PANEL_COMPACT_W,
