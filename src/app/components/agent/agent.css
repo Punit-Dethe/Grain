@@ -6,11 +6,19 @@
 
 .agent-palette,
 .agent-panel-root {
+  box-sizing: border-box;
   width: 100vw;
   height: 100vh;
   background: transparent;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+}
+
+/* The SIDE card floats: the window is transparent, so a gutter around the card
+ * is what gives the drop shadow somewhere to fall. The window footprint in
+ * `agent.rs` already accounts for this gutter on both axes. */
+.agent-panel-root.is-side {
+  padding: 12px;
 }
 
 .agent-card {
@@ -217,11 +225,13 @@
  * retry · Confirm ⏎. The expanded stage reuses the same surface as a
  * conversation. Class prefix `agc-` (agent card). */
 .agc-card {
-  --agc-bg: #1c1c1e;
-  --agc-recess: #2a2a2c;
-  --agc-ink: #f2f2f2;
-  --agc-muted: #98989d;
-  --agc-line: rgba(255, 255, 255, 0.09);
+  --agc-bg: #1e1e20;
+  --agc-recess: #292a2d;
+  --agc-ink: #ececee;
+  /* Two levels of quiet: `dim` still reads as content, `muted` is chrome. */
+  --agc-dim: rgba(255, 255, 255, 0.68);
+  --agc-muted: rgba(255, 255, 255, 0.46);
+  --agc-line: rgba(255, 255, 255, 0.07);
   --orange: #ff5d1e;
   --green: #10b981;
   --agc-mono:
@@ -233,12 +243,12 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px 14px 12px;
+  gap: 12px;
+  padding: 13px 15px 11px;
   background: var(--agc-bg);
-  border-radius: 18px;
+  border-radius: 20px;
   border: 1px solid var(--agc-line);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.035);
   color: var(--agc-ink);
   font-family: var(--agc-body-font);
   overflow: hidden;
@@ -248,6 +258,55 @@
 .agc-card *::before,
 .agc-card *::after {
   box-sizing: border-box;
+}
+.agent-panel-root.is-side .agc-card {
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.55),
+    0 6px 16px rgba(0, 0, 0, 0.36),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.035);
+}
+
+/* ── Reveal ────────────────────────────────────────────────────────────────
+ * The panel window is pre-created HIDDEN and shown on summon, so a plain mount
+ * animation would already be over by the time the user sees anything. The card
+ * is re-armed on each reveal signal (`is-appearing`, restarted imperatively).
+ * It rises from its anchored edge — bottom for the side card, top for the
+ * center panel, which is where each one is pinned. */
+@keyframes agc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.965);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes agc-settle {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.agc-card.is-appearing {
+  transform-origin: 50% 100%;
+  animation: agc-rise 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.agc-card.agc-center.is-appearing {
+  transform-origin: 50% 0;
+}
+/* The contents follow a beat later, so the card reads as opening rather than
+ * being pasted on screen whole. */
+.agc-card.is-appearing > * {
+  animation: agc-settle 220ms cubic-bezier(0.16, 1, 0.3, 1) 70ms both;
+}
+.agc-card.is-appearing > .agc-c-fade,
+.agc-card.is-appearing > .agc-c-x {
+  animation: none;
 }
 
 .agc-spacer {
@@ -260,94 +319,88 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 26px;
+  height: 30px;
   flex: none;
-}
-.agc-brand {
-  font-family: var(--agc-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.6px;
-  color: var(--agc-muted);
-  white-space: nowrap;
 }
 .agc-pager {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
-  height: 24px;
-  padding: 0 4px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
+  gap: 1px;
+  height: 30px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.055);
 }
 .agc-pager-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: none;
   border-radius: 50%;
   background: transparent;
   color: var(--agc-muted);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background 0.14s ease,
+    color 0.14s ease;
 }
 .agc-pager-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.09);
   color: var(--agc-ink);
 }
 .agc-pager-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: default;
 }
 .agc-pager-count {
   font-family: var(--agc-mono);
-  font-size: 10px;
-  color: var(--agc-ink);
-  padding: 0 3px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.8);
+  padding: 0 5px;
   white-space: nowrap;
 }
 .agc-close {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex: none;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.05);
   color: var(--agc-muted);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background 0.14s ease,
+    color 0.14s ease;
 }
 .agc-close:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.11);
   color: var(--agc-ink);
 }
 
 /* Quoted source text (the captured selection / instruction) */
 .agc-quote {
   flex: none;
-  max-height: 56px;
+  max-height: 72px;
   overflow: hidden;
-  padding: 7px 10px;
-  border-radius: 11px;
+  padding: 11px 13px;
+  border-radius: 14px;
   background: var(--agc-recess);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--agc-muted);
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--agc-dim);
   cursor: pointer;
   position: relative;
 }
 .agc-quote.is-open {
-  max-height: 150px;
+  max-height: 168px;
   overflow-y: auto;
 }
 .agc-quote-text {
@@ -363,15 +416,16 @@
 }
 .agc-quote-more {
   position: absolute;
-  right: 8px;
-  bottom: 6px;
-  padding-left: 14px;
+  right: 11px;
+  bottom: 9px;
+  padding-left: 18px;
   background: linear-gradient(90deg, transparent, var(--agc-recess) 40%);
-  color: var(--agc-ink);
-  font-size: 10px;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
 }
 
-/* Reply body */
+/* Reply body — the hero. Bigger type and an airy line box so a multi-line
+ * answer reads as prose, not as a dense log line. */
 .agc-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -379,16 +433,17 @@
   padding-right: 4px;
 }
 .agc-reply {
-  font-size: 12px;
-  line-height: 1.55;
+  font-size: 13.5px;
+  line-height: 1.72;
+  letter-spacing: 0.002em;
   color: var(--agc-ink);
   white-space: pre-wrap;
   word-break: break-word;
 }
 .agc-error {
-  font-family: var(--agc-mono);
-  font-size: 10px;
-  color: #ff6b5e;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #ff7a6d;
   white-space: pre-wrap;
 }
 
@@ -509,7 +564,7 @@
 .agc-foot {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 34px;
   flex: none;
 }
@@ -519,23 +574,23 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  height: 30px;
+  padding: 0 8px 0 12px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
   border-radius: 999px;
-  /* Slightly lighter than --agc-bg (#1c1c1e). */
-  background: #26262a;
-  color: var(--agc-muted);
+  /* Slightly lighter than --agc-bg (#1e1e20). */
+  background: #27272a;
+  color: rgba(255, 255, 255, 0.6);
   font-family: var(--agc-body-font);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background 0.14s ease,
+    color 0.14s ease;
 }
 .agc-followup-btn:hover:not(:disabled) {
-  background: #2f2f34;
+  background: #313136;
   color: var(--agc-ink);
 }
 .agc-followup-btn:disabled {
@@ -546,84 +601,110 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.09);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  min-width: 19px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.09);
   font-family: var(--agc-mono);
-  font-size: 7.5px;
-  letter-spacing: 0.3px;
-  color: var(--agc-muted);
+  font-size: 9px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.58);
 }
 .agc-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   flex: none;
   border: none;
-  border-radius: 8px;
+  border-radius: 9px;
   background: transparent;
   color: var(--agc-muted);
   cursor: pointer;
   transition:
-    background 0.12s ease,
-    color 0.12s ease;
+    background 0.14s ease,
+    color 0.14s ease;
 }
 .agc-icon-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.075);
   color: var(--agc-ink);
 }
 .agc-icon-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: default;
 }
 .agc-icon-btn.is-flash {
   color: var(--green);
 }
+/* Confirm is the one committing action on the card, so it is the one solid
+ * element — a light pill against the near-black surface. */
 .agc-confirm {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  height: 27px;
-  padding: 0 12px;
+  gap: 7px;
+  height: 30px;
+  padding: 0 13px;
   flex: none;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--agc-ink);
+  border: 1px solid transparent;
+  background: #e9e9ec;
+  color: #17171a;
   font-family: var(--agc-body-font);
-  font-size: 11.5px;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.12s ease;
+  transition:
+    background 0.14s ease,
+    color 0.14s ease;
 }
 .agc-confirm:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.17);
+  background: #fbfbfd;
 }
 .agc-confirm:disabled {
-  opacity: 0.4;
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.34);
   cursor: default;
 }
 .agc-confirm-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.09);
   font-size: 11px;
-  color: var(--agc-muted);
+  line-height: 1;
+  color: rgba(23, 23, 26, 0.6);
+}
+.agc-confirm:disabled .agc-confirm-glyph {
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.3);
 }
 .agc-cue {
   flex: none;
   font-family: var(--agc-mono);
-  font-size: 8px;
-  letter-spacing: 1px;
-  color: rgba(255, 255, 255, 0.3);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: rgba(255, 255, 255, 0.28);
   white-space: nowrap;
+  padding-left: 3px;
 }
 
-/* Expanded conversation stage */
+/* ── Expanded conversation stage ───────────────────────────────────────────
+ * Same grammar as the compact card, just taller: no brand chrome, no coloured
+ * speaker labels. Who said what is carried by shape alone — the user's turns
+ * are quiet right-aligned bubbles, the answers are plain full-ink prose. */
 .agc-card--expanded {
-  padding: 14px 16px;
+  padding: 11px 16px 12px;
+  gap: 10px;
+}
+.agc-head--expanded {
+  height: 28px;
 }
 .agc-scroll {
   flex: 1 1 auto;
@@ -631,42 +712,34 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 20px;
   padding-right: 4px;
 }
 .agc-turn {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-.agc-turn-label {
-  font-family: var(--agc-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 1.4px;
-}
-.agc-turn-label.is-user {
-  color: rgba(255, 255, 255, 0.4);
-}
-.agc-turn-label.is-grain {
-  color: var(--orange);
 }
 .agc-turn-body {
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 13.5px;
+  line-height: 1.72;
+  letter-spacing: 0.002em;
   color: var(--agc-ink);
   white-space: pre-wrap;
   word-break: break-word;
 }
 .agc-turn-body--user {
-  background: var(--agc-recess);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  padding: 12px;
+  align-self: flex-end;
+  max-width: 84%;
+  padding: 9px 14px;
+  border-radius: 16px 16px 5px 16px;
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.84);
 }
 .agc-turn-body--assistant {
   background: transparent;
-  padding: 2px 0;
+  padding: 0;
 }
 
 /* Follow-up input (expanded) */
@@ -674,16 +747,19 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 42px;
-  padding: 0 8px 0 12px;
-  border-radius: 12px;
+  height: 44px;
+  padding: 0 7px 0 14px;
+  border-radius: 14px;
   background: var(--agc-recess);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.055);
   flex: none;
-  transition: border-color 0.12s ease;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease;
 }
 .agc-input:focus-within {
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: #2f3034;
 }
 .agc-input-field {
   flex: 1 1 auto;
@@ -693,52 +769,38 @@
   outline: none;
   background: transparent;
   font-family: var(--agc-body-font);
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--agc-ink);
 }
 .agc-input-field::placeholder {
   color: rgba(255, 255, 255, 0.3);
 }
 .agc-send {
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   flex: none;
   border: none;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
   color: var(--agc-ink);
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.14s ease;
 }
 .agc-send:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.18);
 }
 .agc-send:disabled {
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.045);
+  color: rgba(255, 255, 255, 0.22);
   cursor: default;
 }
 .agc-foot--expanded {
-  height: 30px;
+  height: 32px;
 }
 
 /* Shared bits reused inside the dark card */
-.agent-dot-status {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
-.agent-dot-status.is-ready {
-  background: var(--green, #10b981);
-}
-.agent-dot-status.is-busy {
-  background: var(--orange, #ff5d1e);
-  animation: agent-pulse 0.84s ease-in-out infinite;
-}
-
 .agent-typing {
   display: inline-flex;
   align-items: center;
@@ -786,7 +848,7 @@
   max-height: 680px; /* overridden inline per screen; enables internal scroll */
   gap: 0;
   padding: 0;
-  background: #0e0e11;
+  background: var(--agc-bg);
   border-radius: 20px;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
@@ -801,7 +863,7 @@
   z-index: 4;
   pointer-events: none;
   border-radius: 20px 20px 0 0;
-  background: linear-gradient(180deg, #0e0e11 28%, rgba(14, 14, 17, 0) 100%);
+  background: linear-gradient(180deg, #1e1e20 28%, rgba(30, 30, 32, 0) 100%);
 }
 
 /* Visible close control, kept subtle against the dark panel. */
@@ -1114,6 +1176,8 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   white-space: nowrap;
 }
+/* Same light pill as the side card's Confirm — one committing action, one
+ * solid element. */
 .agc-c-insert {
   display: inline-flex;
   align-items: center;
@@ -1121,23 +1185,24 @@
   padding: 0 15px;
   flex: none;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--agc-ink);
+  border: 1px solid transparent;
+  background: #e9e9ec;
+  color: #17171a;
   font-family: var(--agc-body-font);
   font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+    background 0.14s ease,
+    color 0.14s ease;
 }
 .agc-c-insert:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.17);
-  border-color: rgba(255, 255, 255, 0.22);
+  background: #fbfbfd;
 }
 .agc-c-insert:disabled {
-  opacity: 0.4;
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.34);
   cursor: default;
 }
 
@@ -1187,15 +1252,6 @@
   border-radius: 999px;
 }
 
-@keyframes agent-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.25;
-  }
-}
 @keyframes agent-bounce {
   0%,
   60%,
@@ -1209,9 +1265,10 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .agent-dot-status.is-busy,
   .agent-typing span,
-  .agent-wave-dot {
+  .agent-wave-dot,
+  .agc-card.is-appearing,
+  .agc-card.is-appearing > * {
     animation: none !important;
   }
 }

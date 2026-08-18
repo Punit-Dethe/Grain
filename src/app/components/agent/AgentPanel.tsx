@@ -125,6 +125,9 @@ export function AgentPanel() {
   // CENTER: which reply's copy icon is currently flashing (per-turn, not global).
   const [flashedId, setFlashedId] = useState<string | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
+  // Bumped on every reveal signal so the card replays its opening animation.
+  // The window is warm and pre-created, so mounting is NOT the reveal.
+  const [appearNonce, setAppearNonce] = useState(0);
   const [followupShortcut, setFollowupShortcut] = useState<string>("");
   // Which reply surface this session is rendering — loaded at mount. `side` is
   // the original bottom-right card; `center` is the sleek center-top panel.
@@ -148,8 +151,9 @@ export function AgentPanel() {
   const expandedRef = useRef(false);
   const busyRef = useRef(false);
   const followupRef = useRef<HTMLInputElement>(null);
-  // CENTER layout: the auto-growing follow-up textarea + the card whose height
-  // the webview reports to the backend so the window hugs its content.
+  // CENTER layout: the auto-growing follow-up textarea. `cardRef` is the card
+  // itself — every layout uses it for the reveal animation, and CENTER also
+  // reports its height to the backend so the window hugs its content.
   const centerInputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const lastReportedH = useRef(0);
@@ -428,6 +432,7 @@ export function AgentPanel() {
     void win
       .listen("agent-loading", () => {
         if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
+        setAppearNonce((n) => n + 1);
       })
       .then((fn) => uns.push(fn));
     // A backend-side failure (STT/LLM) with no reply to show.
@@ -436,12 +441,14 @@ export function AgentPanel() {
         firstRunStartedRef.current = true;
         setBusy(false);
         setError(e.payload || t("agent.error"));
+        setAppearNonce((n) => n + 1);
       })
       .then((fn) => uns.push(fn));
     // Follow-up offer opened the warm hidden panel → seed the conversation.
     void win
       .listen("agent-followup-open", () => {
         void openRetainedConversation();
+        setAppearNonce((n) => n + 1);
       })
       .then((fn) => uns.push(fn));
     // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
@@ -480,6 +487,25 @@ export function AgentPanel() {
       .then((fn) => uns.push(fn));
     return () => uns.forEach((u) => u());
   }, [openRetainedConversation, startCompose, startFirstIfQueued, t, win]);
+
+  // Replay the opening animation on each reveal. Restarted imperatively rather
+  // than by remounting: the card carries refs (height reporting, scroll) that
+  // must survive, and re-adding the class after a reflow is what re-arms a CSS
+  // animation on an element that is already in the tree.
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || appearNonce === 0) return;
+    el.classList.remove("is-appearing");
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add("is-appearing");
+    // Drop the class once it has played out, so content that mounts later (a
+    // new turn, the compose field) is not caught by the staggered child rule.
+    const timer = window.setTimeout(
+      () => el.classList.remove("is-appearing"),
+      420,
+    );
+    return () => window.clearTimeout(timer);
+  }, [appearNonce]);
 
   // Esc closes — global so it works even when no field is focused.
   useEffect(() => {
@@ -589,11 +615,13 @@ export function AgentPanel() {
 
   /** Report the card's natural height to the backend so the window hugs it. The
    * CSS max-height caps the measurement, so the window stops growing and the
-   * thread scrolls internally past that point. */
+   * thread scrolls internally past that point. `offsetHeight` (not the bounding
+   * rect) so the reveal animation's transform never leaks into the size the
+   * window is driven to. */
   const reportHeight = useCallback(() => {
     const el = cardRef.current;
     if (!el) return;
-    const h = Math.ceil(el.getBoundingClientRect().height);
+    const h = el.offsetHeight;
     if (h > 0 && Math.abs(h - lastReportedH.current) >= 2) {
       lastReportedH.current = h;
       void commands.agentResizePanel(h).catch(() => {});
@@ -1008,8 +1036,8 @@ export function AgentPanel() {
   // ── COMPACT: the reference reply card ─────────────────────────────────────
   if (!expanded) {
     return (
-      <div className="agent-panel-root">
-        <div className="agc-card">
+      <div className="agent-panel-root is-side">
+        <div className="agc-card" ref={cardRef}>
           {/* Header: version pager (left) · close (right). Draggable. */}
           <div className="agc-head" data-tauri-drag-region>
             <div className="agc-pager">
@@ -1057,7 +1085,7 @@ export function AgentPanel() {
               role="button"
               tabIndex={-1}
             >
-              <span className="agc-quote-text">“{quoteText}</span>
+              <span className="agc-quote-text">{quoteText}</span>
               {!quoteOpen && quoteText.length > 120 && (
                 <span className="agc-quote-more">…{t("agent.more")}</span>
               )}
@@ -1139,14 +1167,10 @@ export function AgentPanel() {
 
   // ── EXPANDED: the conversation ─────────────────────────────────────────────
   return (
-    <div className="agent-panel-root">
-      <div className="agc-card agc-card--expanded">
-        {/* Header (draggable) */}
-        <div className="agc-head" data-tauri-drag-region>
-          <span
-            className={`agent-dot-status ${busy ? "is-busy" : "is-ready"}`}
-          />
-          <span className="agc-brand">{t("agent.brand")}</span>
+    <div className="agent-panel-root is-side">
+      <div className="agc-card agc-card--expanded" ref={cardRef}>
+        {/* Header (draggable) — close only; shape carries the rest. */}
+        <div className="agc-head agc-head--expanded" data-tauri-drag-region>
           <span className="agc-spacer" />
           <button
             type="button"
@@ -1158,15 +1182,10 @@ export function AgentPanel() {
           </button>
         </div>
 
-        {/* Conversation */}
+        {/* Conversation — the user's turns are bubbles, answers are prose. */}
         <div className="agc-scroll">
           {messages.map((m) => (
             <div key={m.id} className="agc-turn">
-              <div
-                className={`agc-turn-label ${m.role === "user" ? "is-user" : "is-grain"}`}
-              >
-                {m.role === "user" ? t("agent.you") : t("agent.grain")}
-              </div>
               <div className={`agc-turn-body agc-turn-body--${m.role}`}>
                 {m.role === "assistant" ? (
                   <AgentMarkdown markdown={m.content} />
@@ -1184,7 +1203,6 @@ export function AgentPanel() {
 
           {busy && (
             <div className="agc-turn">
-              <div className="agc-turn-label is-grain">{t("agent.grain")}</div>
               <div className="agent-typing" aria-hidden="true">
                 <span />
                 <span />
