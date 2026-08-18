@@ -34,10 +34,12 @@ import "./agent.css";
 const CENTER_TOP_OFFSET = 76;
 const CENTER_BOTTOM_GAP = 52;
 
-/** Duration of the card's opening rise — must match `agc-rise` in `agent.css`,
- * and must stay above the backend's pre-show arming delay
+/** Duration of the card's opening growth — must match `agc-expand` in
+ * `agent.css`, and must stay above the backend's pre-show arming delay
  * (`PANEL_ARM_DELAY` in `agent.rs`). */
-const REVEAL_MS = 520;
+const REVEAL_MS = 440;
+/** Shared opening curve. Decelerating, no overshoot. */
+const EXPAND_EASE = "cubic-bezier(0.16, 0.84, 0.3, 1)";
 
 type Role = "user" | "assistant";
 interface ChatMessage {
@@ -146,10 +148,11 @@ export function AgentPanel() {
   // Bumped on every reveal signal so the card replays its opening animation.
   // The window is warm and pre-created, so mounting is NOT the reveal.
   const [appearNonce, setAppearNonce] = useState(0);
-  // True while a layout is mounted but must stay unseen because the window it
-  // belongs in is still being resized. Cleared the moment the resize lands.
-  const [held, setHeld] = useState(false);
   const revealingRef = useRef(false);
+  // Set by `expand()` to the box the card occupied BEFORE the window grew. Its
+  // presence tells the reveal effect to animate the card's box open from there
+  // instead of playing the plain opening growth. Consumed once.
+  const growFromRef = useRef<{ w: number; h: number } | null>(null);
   const [followupShortcut, setFollowupShortcut] = useState<string>("");
   // Which reply surface this session is rendering — loaded at mount. `side` is
   // the original bottom-right card; `center` is the sleek center-top panel.
@@ -324,27 +327,34 @@ export function AgentPanel() {
         confirmDelete: reply.confirm_delete,
       });
     }
-    setMessages(seed);
-    setExpanded(true);
-    // `agent_set_panel_mode` is async — deliberately, since resizing a visible
-    // window from a sync command deadlocks (tauri#3990). So the conversation
-    // would otherwise paint into the OLD compact footprint and the window would
-    // grow underneath it a few frames later: one open, then a second, glitchy
-    // one. Hold the new layout unseen until the resize has actually landed,
-    // then let it rise into the footprint it belongs in.
-    setHeld(true);
+    // ONE window, growing. The native resize is a single instant step that
+    // cannot be animated (staging it risks the tauri#3990 freeze), so instead
+    // it is made invisible: pin the card to the box it has right now, let the
+    // window grow around it — the added area is transparent, so nothing on
+    // screen changes — and only then swap in the conversation and animate the
+    // card's own box open. Nothing blanks, and nothing jumps.
+    const from = { w: window.innerWidth, h: window.innerHeight };
+    const card = cardRef.current;
+    if (card) {
+      card.style.width = `${from.w}px`;
+      card.style.height = `${from.h}px`;
+    }
     void commands
       .agentSetPanelMode(true)
       .catch(() => {})
       .finally(() => {
-        // One frame past the resize so the window is painted at its new size
-        // before the card starts moving inside it.
+        // One frame past the command so the webview has taken the new viewport
+        // metrics — reading them too early measures the OLD window and there is
+        // nothing to grow into. The card is still pinned, so this frame shows
+        // no change.
         requestAnimationFrame(() => {
-          setHeld(false);
+          growFromRef.current = from;
+          setMessages(seed);
+          setExpanded(true);
           setAppearNonce((n) => n + 1);
+          window.setTimeout(() => followupRef.current?.focus(), 60);
         });
       });
-    window.setTimeout(() => followupRef.current?.focus(), 60);
   }, []);
 
   /** Open the CENTER follow-up field (button click or the continuation
@@ -541,24 +551,54 @@ export function AgentPanel() {
   // must survive, and re-adding the class after a reflow is what re-arms a CSS
   // animation on an element that is already in the tree.
   //
-  // LAYOUT effect, not a passive one: the render that clears `held` rewrites
-  // `className` and would wipe the class off the DOM node. Re-adding it before
-  // the browser paints is what keeps the held card from flashing at rest for a
-  // frame between the resize landing and the animation starting.
+  // LAYOUT effect, not a passive one: on expand the conversation card mounts in
+  // the same commit that arms the animation, and a passive effect would let it
+  // paint once at full size first — a visible pop before the growth begins.
   useLayoutEffect(() => {
     const el = cardRef.current;
     if (!el || appearNonce === 0) return;
-    el.classList.remove("is-appearing");
-    void el.offsetWidth; // force reflow so the animation restarts
-    el.classList.add("is-appearing");
     revealingRef.current = true;
-    // Drop the class once it has played out so `will-change` is not left
-    // pinned on the card for the rest of the session.
-    const timer = window.setTimeout(() => {
+    const from = growFromRef.current;
+    growFromRef.current = null;
+
+    const to = { w: window.innerWidth, h: window.innerHeight };
+    let anim: Animation | undefined;
+    if (from && (to.w > from.w || to.h > from.h)) {
+      // Expanding: the window has ALREADY grown around the card. Animate the
+      // card's own box open from the one it had before that.
+      //
+      // The inline size is the TARGET, and the animation fills BACKWARDS: it
+      // renders its first keyframe from the moment it is created, and once it
+      // finishes the element falls back to the inline target rather than to a
+      // stale start value — which would snap the card shut for a frame.
+      el.classList.add("is-growing");
+      el.style.width = `${to.w}px`;
+      el.style.height = `${to.h}px`;
+      anim = el.animate(
+        [
+          { width: `${from.w}px`, height: `${from.h}px` },
+          { width: `${to.w}px`, height: `${to.h}px` },
+        ],
+        { duration: REVEAL_MS, easing: EXPAND_EASE, fill: "backwards" },
+      );
+    } else {
       el.classList.remove("is-appearing");
+      void el.offsetWidth; // force reflow so the animation restarts
+      el.classList.add("is-appearing");
+    }
+
+    // Hand the card back to the stylesheet once it has played out, so nothing
+    // (a pinned box, `will-change`) outlives the animation that needed it.
+    const timer = window.setTimeout(() => {
+      el.classList.remove("is-appearing", "is-growing");
+      el.style.width = "";
+      el.style.height = "";
       revealingRef.current = false;
     }, REVEAL_MS + 60);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      anim?.cancel();
+    };
   }, [appearNonce]);
 
   // Esc closes — global so it works even when no field is focused.
@@ -929,7 +969,7 @@ export function AgentPanel() {
       <div className="agent-panel-root">
         <div
           ref={cardRef}
-          className={`agc-card agc-center ${held ? "is-held" : ""}`}
+          className="agc-card agc-center"
           style={{ maxHeight: centerMax }}
         >
           {/* Top edge: a fade to black so content dissolves under the rim. */}
@@ -1096,7 +1136,7 @@ export function AgentPanel() {
   if (!expanded) {
     return (
       <div className="agent-panel-root">
-        <div className={`agc-card ${held ? "is-held" : ""}`} ref={cardRef}>
+        <div className="agc-card" ref={cardRef}>
           {/* Header: version pager (left) · close (right). Draggable. */}
           <div className="agc-head" data-tauri-drag-region>
             <div className="agc-pager">
@@ -1227,10 +1267,7 @@ export function AgentPanel() {
   // ── EXPANDED: the conversation ─────────────────────────────────────────────
   return (
     <div className="agent-panel-root">
-      <div
-        className={`agc-card agc-card--expanded ${held ? "is-held" : ""}`}
-        ref={cardRef}
-      >
+      <div className="agc-card agc-card--expanded" ref={cardRef}>
         {/* Header (draggable): a quiet wordmark balances the close button. */}
         <div className="agc-head agc-head--expanded" data-tauri-drag-region>
           <span className="agc-title">{t("agent.brand")}</span>

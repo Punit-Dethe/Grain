@@ -259,47 +259,69 @@
  * the backend holds the window back a beat so the first painted frame is the
  * armed one, never the resting card.
  *
- * Deliberately ONLY opacity and translate, and only ever TWO keyframes. An
- * earlier pass scaled the card, which re-rasterises every glyph inside it on
- * each frame — that shimmer was the "flicker". Intermediate keyframes are
- * avoided too: the timing function restarts at every stop, which is what turns
- * one movement into a visible stutter. Both properties here are composited, so
- * one long curve stays smooth across a surface this large. It travels from the
- * edge the surface is pinned to: up from the bottom for the side card, down
- * from the top for the center panel. */
-@keyframes agc-rise {
+ * The card GROWS from the corner its window is anchored to. That corner is the
+ * one point a resize never moves — the side panel is pinned bottom-right, so
+ * the window only ever extends up and to the left, which is exactly the region
+ * the card has not covered yet early in the animation. Expanding from there
+ * therefore hides the resize instead of racing it, and it is also what makes
+ * the motion read as one surface opening out rather than a card sliding in.
+ *
+ * Two keyframes only: the timing function restarts at every stop, so an
+ * intermediate keyframe splices two curves together and renders as a stutter.
+ * Scale and opacity are both composited, and `will-change` gets the card its
+ * own layer, so the growth stays smooth across a surface this large. */
+@keyframes agc-expand {
   from {
     opacity: 0;
-    transform: translate3d(0, 34px, 0);
+    transform: scale(0.86);
   }
   to {
     opacity: 1;
-    transform: translate3d(0, 0, 0);
-  }
-}
-@keyframes agc-descend {
-  from {
-    opacity: 0;
-    transform: translate3d(0, -28px, 0);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0);
+    transform: scale(1);
   }
 }
 .agc-card.is-appearing {
-  animation: agc-rise 520ms cubic-bezier(0.16, 0.84, 0.28, 1) both;
+  /* Bottom-right: the anchored corner of the side panel. */
+  transform-origin: 100% 100%;
+  animation: agc-expand 440ms cubic-bezier(0.16, 0.84, 0.3, 1) both;
   will-change: transform, opacity;
   backface-visibility: hidden;
 }
+/* The center panel is pinned top-centre, so it opens downward and outward. */
 .agc-card.agc-center.is-appearing {
-  animation-name: agc-descend;
+  transform-origin: 50% 0;
 }
-/* Held: the layout is mounted but must not be seen yet, because the window it
- * belongs in has not finished resizing. Painting here and animating anyway is
- * what made expanding look like it opened twice. */
-.agc-card.is-held {
-  opacity: 0;
+
+/* ── Growing (compact → conversation) ──────────────────────────────────────
+ * The window resize itself cannot be animated: it is one native step, and
+ * doing it in stages risks the tauri#3990 freeze. So the card is detached from
+ * the window for the transition — pinned to its own box at the anchored
+ * corner, which makes the resize underneath it a no-op on screen — and then
+ * its box is animated to the new footprint. It genuinely grows up and to the
+ * left, in the one window, with nothing blanking in between.
+ *
+ * The size is animated via the Web Animations API rather than CSS, because the
+ * start and end boxes are only known at runtime. */
+.agent-panel-root {
+  position: relative;
+}
+.agc-card:not(.agc-center) {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+}
+/* The conversation is a different layout to the card it replaces, so it fades
+ * up as the box grows instead of cutting straight in. */
+@keyframes agc-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.agc-card.is-growing > * {
+  animation: agc-fade-in 300ms ease both;
 }
 
 .agc-spacer {
@@ -1272,7 +1294,8 @@
 @media (prefers-reduced-motion: reduce) {
   .agent-typing span,
   .agent-wave-dot,
-  .agc-card.is-appearing {
+  .agc-card.is-appearing,
+  .agc-card.is-growing > * {
     animation: none !important;
   }
 }
