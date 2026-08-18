@@ -52,6 +52,11 @@ const ROWS: usize = 8;
 const DOT_D: f32 = 3.0;
 const CELL: f32 = 5.0;
 const SCALE: f32 = 1.0; // px per grid unit — small pill (native QML size)
+/// Gap between the collapsed pill and the work-area bottom edge. The pill's
+/// body ends flush with its window bottom (`win_h`), so this is also the gap
+/// under the pill as drawn — which makes it the reference every other
+/// bottom-anchored overlay surface lines up against.
+const PILL_BOTTOM_MARGIN: f32 = 7.0;
 
 // ── Pill skin geometry ──────────────────────────────────────────────────────
 //
@@ -437,8 +442,19 @@ fn should_show_prompt_record(
 // pixels are click-through, so the unused canvas area doesn't eat clicks).
 const AIN_WIN_W: u32 = 580;
 const AIN_WIN_H: u32 = 170;
-/// Margin between the card and the work-area edge it anchors to.
-const AIN_EDGE_MARGIN: i32 = 40;
+/// Inset between the card and the canvas edge it hugs (see `card_y`).
+const AIN_CARD_INSET: f32 = 1.0;
+/// Margin between the agent input CANVAS and the work-area top edge, for the
+/// Top overlay anchor.
+const AIN_TOP_MARGIN: i32 = 40;
+/// Margin between the agent input CANVAS and the work-area bottom edge.
+///
+/// Derived so the card's own bottom edge lands on exactly the same line as the
+/// collapsed dictation pill's: the pill's body ends flush with its window
+/// bottom, while the card is inset from its canvas bottom, so the canvas has to
+/// sit that much lower. Both agent input states hug the same canvas edge, so
+/// this places the compact and expanded cards alike.
+const AIN_BOTTOM_MARGIN: i32 = (PILL_BOTTOM_MARGIN * SCALE - AIN_CARD_INSET) as i32;
 /// Expanded card: 520px content + 2×10px horizontal padding (the reference).
 const AIN_EXPANDED_W: f32 = 540.0;
 const AIN_EXPANDED_H: f32 = 136.0;
@@ -4164,7 +4180,7 @@ impl App {
         // "move the pill down" means a smaller gap at the bottom and a larger
         // one at the top — one shared number silently moves one of them the
         // wrong way. Applies to the collapsed pill and the Studio card alike.
-        let bottom_margin = (7.0 * SCALE) as i32;
+        let bottom_margin = (PILL_BOTTOM_MARGIN * SCALE) as i32;
         // [GRAIN] Horizontally center the CONTENT (`center_w`), not the full window.
         // The collapsed window is wider than the pill (transparent reserve to the
         // right for the sibling capsule); centering on the pill's own width keeps
@@ -4209,10 +4225,10 @@ impl App {
         let x = mp.x + ((ms.width.saturating_sub(w)) / 2) as i32;
         let (cx, cy) = (mp.x + (ms.width / 2) as i32, mp.y + (ms.height / 2) as i32);
         let y = match anchor {
-            OverlayPosition::Top => work_area_top(cx, cy).unwrap_or(mp.y) + AIN_EDGE_MARGIN,
+            OverlayPosition::Top => work_area_top(cx, cy).unwrap_or(mp.y) + AIN_TOP_MARGIN,
             _ => {
                 let bottom = work_area_bottom(cx, cy).unwrap_or(mp.y + ms.height as i32);
-                bottom - h as i32 - AIN_EDGE_MARGIN
+                bottom - h as i32 - AIN_BOTTOM_MARGIN
             }
         };
         window.set_outer_position(PhysicalPosition::new(x, y));
@@ -4566,9 +4582,9 @@ impl App {
         // Anchored to the canvas edge nearest the screen edge, so the card
         // grows AWAY from it (upward at the bottom, downward at the top).
         let card_y = if anchored_top {
-            1.0
+            AIN_CARD_INSET
         } else {
-            h as f32 - card_h - 1.0
+            h as f32 - card_h - AIN_CARD_INSET
         };
         ui.card_rect = (card_x, card_y, card_x + card_w, card_y + card_h);
 

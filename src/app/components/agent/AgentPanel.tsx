@@ -567,20 +567,33 @@ export function AgentPanel() {
       // Expanding: the window has ALREADY grown around the card. Animate the
       // card's own box open from the one it had before that.
       //
-      // The inline size is the TARGET, and the animation fills BACKWARDS: it
-      // renders its first keyframe from the moment it is created, and once it
-      // finishes the element falls back to the inline target rather than to a
-      // stale start value — which would snap the card shut for a frame.
+      // The inline size is the START box, so the first painted frame is right
+      // by construction — never dependent on when the animation's own first
+      // keyframe lands. Setting it to the TARGET and leaning on `fill:
+      // backwards` instead is what flashed the full-size card for one frame at
+      // the start of the growth. `fill: forwards` then holds the end box until
+      // the finish handler hands the card back to the stylesheet.
       el.classList.add("is-growing");
-      el.style.width = `${to.w}px`;
-      el.style.height = `${to.h}px`;
+      el.style.width = `${from.w}px`;
+      el.style.height = `${from.h}px`;
       anim = el.animate(
         [
           { width: `${from.w}px`, height: `${from.h}px` },
           { width: `${to.w}px`, height: `${to.h}px` },
         ],
-        { duration: REVEAL_MS, easing: EXPAND_EASE, fill: "backwards" },
+        { duration: REVEAL_MS, easing: EXPAND_EASE, fill: "forwards" },
       );
+      const done = anim;
+      void done.finished
+        .then(() => {
+          // Clear the pin FIRST (the stylesheet's 100%/100% is the same box the
+          // fill is holding), then release the fill — so no frame falls between
+          // the two and snaps the card shut.
+          el.style.width = "";
+          el.style.height = "";
+          done.cancel();
+        })
+        .catch(() => {});
     } else {
       el.classList.remove("is-appearing");
       void el.offsetWidth; // force reflow so the animation restarts
