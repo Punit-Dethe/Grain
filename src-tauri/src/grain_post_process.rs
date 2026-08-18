@@ -222,7 +222,13 @@ const SCAFFOLDING_MARKERS: &[&str] = &[
     "[Context awareness]",
     "[Spoken instruction",
     "Soft context (tone",
+    // The user-authored half of the same layer. A custom profile is the user's
+    // own rule for an app they named, so it is delivered with their authority
+    // rather than as a soft nudge — but it is still our scaffolding, and a
+    // header that is not listed here is one the leak guard cannot see.
+    "Your rule for this app",
     "Nearby terms the user may be referring to",
+    "Priority when instructions conflict",
     // Rolling seam layer, current and retired forms.
     "[Live dictation]",
     "This text was joined from speech segments",
@@ -261,6 +267,25 @@ mod scaffolding_tests {
             assert!(
                 reply_contains_scaffolding(&reply),
                 "marker not caught: {marker}"
+            );
+        }
+    }
+
+    /// The standing rule from the leak, made structural.
+    ///
+    /// Every header the prompt stack can emit must be visible to this guard.
+    /// Before the stack existed this was a comment asking whoever added a layer
+    /// to remember; now the headers are enumerable, so forgetting is a failing
+    /// test instead of a corrupted document three releases later.
+    #[test]
+    fn every_prompt_header_is_a_scaffolding_marker() {
+        let stack = crate::context_detect::prompt_stack::PromptStack::every_layer_for_test();
+        for layer in stack.layers() {
+            let Some(header) = layer.header else { continue };
+            assert!(
+                reply_contains_scaffolding(header),
+                "prompt header has no scaffolding marker, so a leak of it would go \
+                 undetected: {header:?}"
             );
         }
     }

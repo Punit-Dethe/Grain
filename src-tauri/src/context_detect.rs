@@ -1,11 +1,22 @@
 //! [GRAIN] Context awareness — detect the foreground app/site and compose the
 //! layered post-processing system prompt.
 //!
-//! # The layers
-//! 1. **BASE** — the user's selected post-processing prompt (General/Email/Coding
-//!    or a custom one). Always present; unchanged behavior.
-//! 2. **CONTEXT (soft)** — an automatic, ≤2-line nudge derived from the detected
-//!    app *category* (tone + vocabulary). Never restructures or hard-formats.
+//! This module answers **which layers apply** to a dictation. What each layer
+//! says, how much authority it carries and how the whole thing renders belongs
+//! to [`prompt_stack`]; the ladder and the reasoning behind it are written down
+//! in `docs/Prompt Priority/PLAN.md`.
+//!
+//! # The layers this module can contribute
+//! - **BASE** — the user's selected post-processing prompt (General/Email/Coding
+//!   or a custom one). Always present; unchanged behavior.
+//! - **RULE** — the profile instruction that claims this surface. A *custom*
+//!   profile is the user naming an app or site, so it carries their authority;
+//!   a *built-in* category profile applies because Grain guessed, and stays a
+//!   soft tone nudge that never restructures.
+//! - **SURFACE** — the single-line-field rule and the cursor-fit rule, both
+//!   detected rather than asserted.
+//! - **EVIDENCE** — the app/site fact line and nearby terms. Reference material
+//!   with no authority at all.
 //!
 //! HARD per-app formatting is no longer built in: it is what the App Modes
 //! extension does, in its own transform hook and its own storage, so Grain
@@ -23,6 +34,20 @@
 
 use grain_core::settings::CustomContextProfile;
 use grain_core::AppSettings;
+use std::fmt::Write as _;
+
+/// [GRAIN] The prompt as an ordered, attributable structure — tiers, sources,
+/// and the one place allowed to write a layer header.
+///
+/// A submodule for the same reason [`app_catalog`] is one: a peer module needs a
+/// line in the Handy-derived `lib.rs`, whose module block is a live
+/// merge-conflict surface (see `Upstream/UPSTREAM.md`). It also happens to be
+/// the honest structure — composing the prompt is the second half of this
+/// module's job, and the two must agree about what a layer is.
+#[path = "prompt_stack.rs"]
+pub(crate) mod prompt_stack;
+
+use prompt_stack::PromptStack;
 
 /// [GRAIN] The installed-application catalogue behind the context-profile app
 /// picker.
@@ -336,15 +361,23 @@ pub(crate) fn is_supported_site(host: &str, settings: &AppSettings) -> bool {
 /// Resolved HERE rather than during detection so that `detect_active_context`
 /// keeps its signature and its callers — the pill's icon path calls it too, and
 /// does not want to read settings to find out what an app is called.
-fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option<&'a str> {
+/// Returns the instruction and whether the USER chose the surface it applies to
+/// — which is what decides its authority tier, not who typed the words.
+///
+/// A custom profile is the user naming an app or a site and saying "here, do
+/// this", so it goes out as one of their own rules. A built-in category profile
+/// applies because *Grain guessed* the surface, and stays soft even when the
+/// user has edited its wording — a tier that flipped when someone fixed a typo
+/// would be invisible and surprising. See [`prompt_stack::Tier`].
+fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option<(&'a str, bool)> {
     if let Some(profile) = custom_profile_for(ctx, settings) {
         let text = profile.instruction.trim();
         // An empty custom instruction still WINS — it means "say nothing here",
         // which is a real thing to want for one noisy app, and falling back to
         // the built-in would quietly ignore the profile the user made.
-        return (!text.is_empty()).then_some(text);
+        return (!text.is_empty()).then_some((text, true));
     }
-    ctx.category.instruction(settings)
+    ctx.category.instruction(settings).map(|text| (text, false))
 }
 
 /// Address-bar host → category. **This is the table that makes context awareness
@@ -1946,18 +1979,27 @@ impl ActiveContext {
     }
 }
 
-/// Compose the final post-processing system prompt from up to four stages.
+/// Compose the final post-processing system prompt.
+///
+/// This function decides WHICH layers apply to this dictation; [`PromptStack`]
+/// owns what each one says, what authority it carries, and how the whole thing
+/// renders. The split matters: the prose used to live inline here, which is how
+/// the hand-written precedence sentence ended up naming three layers out of six
+/// and promising a spoken instruction on prompts that had none.
 ///
 /// `spoken_instruction` is the **Prompt Record** layer: an instruction the user
-/// dictated mid-recording (through Prompt Record), aimed at THIS transcript. It is
-/// the absolute highest authority, and is applied even when context awareness is
+/// dictated mid-recording, aimed at THIS transcript. It is the highest
+/// instruction authority there is, and applies even when context awareness is
 /// off.
 ///
 /// Returns `base` unchanged when nothing applies (no spoken instruction, context
-/// off / no detection), so the common path is byte-for-byte today's behavior.
+/// off / no detection), so the common path is byte-for-byte the old behavior.
 /// Otherwise soft layers form a compact preamble, while the mandatory cursor
 /// seam sits after the base cleanup prompt so generic capitalization and
 /// punctuation rules cannot override it.
+///
+/// See `docs/Prompt Priority/PLAN.md` for the tier ladder and the rule that
+/// nothing a third party contributes may outrank what the user typed or spoke.
 pub fn compose_prompt(
     base: &str,
     settings: &AppSettings,
@@ -1979,7 +2021,7 @@ pub fn compose_prompt(
     // default. Read through `settings` rather than off the category so that what
     // the settings UI shows and what the model receives are the same string —
     // the whole point of surfacing these was that they stop being invisible.
-    let soft = ctx.and_then(|c| instruction_for(c, settings));
+    let rule = ctx.and_then(|c| instruction_for(c, settings));
     let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
     // A one-line field gets one extra clause, because the pipeline's habit of
     // capitalizing and adding a full stop is wrong in a search box and the user
@@ -1990,7 +2032,7 @@ pub fn compose_prompt(
     let caret = ctx
         .and_then(|c| c.caret.as_ref())
         .filter(|caret| !caret.is_empty());
-    let has_ctx = soft.is_some() || !terms.is_empty() || one_line || caret.is_some();
+    let has_ctx = rule.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
     if spoken.is_none() && !has_ctx {
         // The quiet case that most looks like a bug: the feature is on,
@@ -2003,31 +2045,17 @@ pub fn compose_prompt(
         return base.to_string();
     }
 
-    let mut pre = String::with_capacity(base.len() + 640);
+    let mut stack = PromptStack::new();
 
-    // 1) Spoken instruction — ABSOLUTE highest priority. The user just dictated it
-    // for this exact transcript, so it outranks every rule below. It is an
-    // instruction ABOUT the transcript, never content to emit.
+    // Rendered FIRST to catch primacy, and the highest instruction authority
+    // there is: the user dictated it seconds ago, about this exact transcript.
     if let Some(instr) = spoken {
-        pre.push_str("[Spoken instruction — HIGHEST PRIORITY]\n");
-        pre.push_str(
-            "The user just dictated this instruction for how to transform the \
-             transcript. Treat it as the top authority, above every rule below \
-             (including any app-specific formatting). Apply it to the transcript; \
-             never output the instruction text itself:\n",
-        );
-        pre.push_str(instr);
-        pre.push_str("\n\n");
+        stack.push_spoken(instr);
     }
 
-    // 2) Context-awareness block (soft context / nearby terms).
     if has_ctx {
         if let Some(c) = ctx {
-            pre.push_str("[Context awareness]\n");
-            pre.push_str(&format!(
-                "The user is dictating into \"{}\".",
-                c.app_name.trim()
-            ));
+            let mut facts = format!("The user is dictating into \"{}\".", c.app_name.trim());
             // Only assert the site when the URL came structurally off the
             // focused element's own Document ancestor. A `Probable` host was
             // found by scanning the window for something URL-shaped, which on a
@@ -2040,120 +2068,53 @@ pub fn compose_prompt(
                 .as_deref()
                 .filter(|_| c.confidence == Confidence::Exact)
             {
-                pre.push_str(&format!(" (website: {host})"));
+                let _ = write!(facts, " (website: {host})");
             }
             // Only worth a few tokens when it actually disambiguates: "main"
             // says nothing a prompt can act on, but a sidebar or a dialog does.
             if let Some(region) = c.region.as_deref().filter(|r| *r != "main") {
-                pre.push_str(&format!(" (page region: {region})"));
+                let _ = write!(facts, " (page region: {region})");
             }
-            pre.push('\n');
+            stack.push_surface_facts(facts);
         }
-        if let Some(line) = soft {
-            pre.push_str("Soft context (tone/vocabulary only, never restructure): ");
-            pre.push_str(line);
-            pre.push('\n');
+        if let Some((line, user_authored)) = rule {
+            stack.push_rule(line, user_authored);
         }
         if one_line {
-            pre.push_str(
-                "The target is a SINGLE-LINE field (a search or entry box): output one \
-                 line, and do not add a trailing period or sentence-case it unless the \
-                 user dictated it that way.\n",
-            );
+            stack.push_one_line();
         }
         if !terms.is_empty() {
-            // Additive, LOW authority: only fix a term to one of these spellings when
-            // the transcript clearly meant it; otherwise ignore. Never insert them.
-            pre.push_str(
-                "Nearby terms the user may be referring to — use ONLY to correct the \
-                 spelling of a word already in the transcript (proper nouns, code \
-                 identifiers, library names); do NOT insert any that were not spoken: ",
-            );
-            pre.push_str(&terms.join(", "));
-            pre.push('\n');
+            stack.push_terms(terms);
         }
-        pre.push_str(
-            "Apply the above as guidance over the cleanup rules below. Priority when \
-             instructions conflict: the spoken instruction first, then the base cleanup \
-             rules, then soft context. Keep edits minimal, preserve meaning, and never \
-             invent content that was not dictated.\n\n",
-        );
     }
+
+    stack.push_base(base);
+
+    if let Some(caret) = caret {
+        stack.push_caret_fit(&caret.before, &caret.after);
+    }
+
+    // Added only when a context layer was applied, so plain dictation remains
+    // byte-for-byte unchanged.
+    if has_ctx {
+        stack.push_contract();
+    }
+
+    let out = stack.render();
 
     // [GRAIN] What actually reached the model. Detection succeeding and the
     // prompt changing are different questions — context awareness can be off,
     // or the category can be `Other`, and detection will still have logged a
     // confident-looking result while the prompt went out untouched. This is the
-    // line that closes that gap. Layer names only; no prompt text.
-    let mut layers: Vec<&str> = Vec::new();
-    if spoken.is_some() {
-        layers.push("spoken");
-    }
-    if soft.is_some() {
-        layers.push("soft");
-    }
-    if one_line {
-        layers.push("one-line");
-    }
-    if caret.is_some() {
-        layers.push("caret");
-    }
-    if !terms.is_empty() {
-        layers.push("terms");
-    }
-    pre.push_str(base);
-
-    // Cursor rules sit AFTER the generic cleanup prompt. The reported failure
-    // that drove this ordering had captured L/R correctly, but a weak model
-    // followed the later base rule and returned the ASR's standalone capital +
-    // period unchanged. Keep this small and explicit, then enforce the two
-    // deterministic parts locally in `fit_text_to_caret` as a backstop.
-    if let Some(caret) = caret {
-        pre.push_str(
-            "\n\n[Cursor fit — REQUIRED]\nTreat the transcript as an insertion between L and R, \
-             not a standalone sentence. When both have text, lowercase an ordinary first \
-             word and do not end with a period. Never repeat L/R.\n",
-        );
-        if !caret.before.is_empty() {
-            pre.push_str("L:");
-            pre.push_str(&caret.before);
-            pre.push('\n');
-        }
-        if !caret.after.is_empty() {
-            pre.push_str("R:");
-            pre.push_str(&caret.after);
-            pre.push('\n');
-        }
-    }
-
-    // [GRAIN] Terminal output constraint, and the reason it is LAST.
-    //
-    // Everything this function adds is reference material — the app name, the
-    // site, the text around the cursor — and every piece of it is a thing a
-    // model can mistake for content to return. One did: a user's email draft
-    // received the surrounding text and the seam instructions verbatim.
-    //
-    // The generic reference framing sits near the top; cursor instructions now
-    // sit after the base prompt. This terminal constraint remains the final,
-    // most-attended instruction. It is added only when a context layer was
-    // applied, so plain dictation remains byte-for-byte unchanged.
-    if has_ctx {
-        pre.push_str(
-            "\n\nOutput ONLY the corrected transcript itself — no surrounding text, \
-             no labels, no notes, no explanation.",
-        );
-    }
-
+    // line that closes that gap. Layer names only; no prompt text — and it now
+    // reads out of the stack rather than being maintained beside it, which is
+    // how the old hand-kept list fell behind the layers it was describing.
     log::info!(
         "[GRAIN] context: prompt layers applied: {} (+{} bytes)",
-        if layers.is_empty() {
-            "none".to_string()
-        } else {
-            layers.join("+")
-        },
-        pre.len().saturating_sub(base.len()),
+        stack.applied().join("+"),
+        out.len().saturating_sub(base.len()),
     );
-    pre
+    out
 }
 
 /// Detect the foreground app/site. `None` on unsupported platforms or on any
@@ -4215,6 +4176,68 @@ mod tests {
         // `Other` normally adds nothing at all; the profile is what gives this
         // surface an instruction.
         assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Terse."));
+    }
+
+    /// The authority fix.
+    ///
+    /// A custom profile is the user naming an app and writing a rule for it, so
+    /// it goes out as one of THEIR rules and outranks the base prompt they
+    /// merely picked from a list. Until this landed it was labelled
+    /// "tone/vocabulary only, never restructure" and told the model, in so many
+    /// words, that the base cleanup rules beat it.
+    #[test]
+    fn a_custom_profile_is_delivered_as_the_users_own_rule() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_custom_profiles
+            .push(custom("solo", "Bullet points only.", "application", "figma"));
+        let out = compose_prompt("BASE", &s, Some(&ctx("figma", AppCategory::Other)), None);
+
+        assert!(out.contains("Your rule for this app"));
+        assert!(!out.contains("Soft context (tone"));
+        assert!(out.contains(
+            "Priority when instructions conflict: your own rules first, then the base cleanup \
+             rules."
+        ));
+    }
+
+    /// The same surface, claimed by a built-in category instead, stays soft —
+    /// that profile applies because Grain GUESSED, and a guess does not get to
+    /// restructure the user's writing.
+    #[test]
+    fn a_builtin_profile_stays_soft_context() {
+        let s = AppSettings {
+            context_awareness_enabled: true,
+            ..Default::default()
+        };
+        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
+
+        assert!(out.contains("Soft context (tone"));
+        assert!(!out.contains("Your rule for this app"));
+        assert!(out.contains(
+            "Priority when instructions conflict: the base cleanup rules first, then soft context."
+        ));
+    }
+
+    /// The precedence sentence is generated from the layers that are actually
+    /// present. It used to be one literal that promised a spoken instruction on
+    /// every prompt, including the overwhelming majority that have none.
+    #[test]
+    fn the_precedence_sentence_never_names_an_absent_layer() {
+        let s = AppSettings {
+            context_awareness_enabled: true,
+            ..Default::default()
+        };
+        let c = ctx("code", AppCategory::Technical);
+
+        let without = compose_prompt("BASE", &s, Some(&c), None);
+        assert!(!without.contains("the spoken instruction"));
+
+        let with = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
+        assert!(with.contains(
+            "Priority when instructions conflict: the spoken instruction first, then the base \
+             cleanup rules, then soft context."
+        ));
     }
 
     /// A packaged (Store / MSIX) app is named by its AppUserModelID, because it
