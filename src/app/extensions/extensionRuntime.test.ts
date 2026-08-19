@@ -30,6 +30,7 @@ const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
   capabilities: [],
   has_detail: false,
   slots: [],
+  prompt_layers: [],
   ...overrides,
 });
 

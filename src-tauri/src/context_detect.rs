@@ -47,7 +47,7 @@ use std::fmt::Write as _;
 #[path = "prompt_stack.rs"]
 pub(crate) mod prompt_stack;
 
-use prompt_stack::{ContributedLayer, PromptStack};
+use prompt_stack::{ContributedLayer, Contributions, PromptStack};
 
 /// [GRAIN] The installed-application catalogue behind the context-profile app
 /// picker.
@@ -2093,7 +2093,7 @@ pub fn compose_prompt(
     settings: &AppSettings,
     ctx: Option<&ActiveContext>,
     spoken_instruction: Option<&str>,
-    contributed: &[ContributedLayer],
+    contributed: &Contributions,
 ) -> String {
     let spoken = spoken_instruction
         .map(|s| s.trim())
@@ -2110,7 +2110,14 @@ pub fn compose_prompt(
     // default. Read through `settings` rather than off the category so that what
     // the settings UI shows and what the model receives are the same string —
     // the whole point of surfacing these was that they stop being invisible.
-    let rule = ctx.and_then(|c| instruction_for(c, settings));
+    let rule = ctx
+        .and_then(|c| instruction_for(c, settings))
+        // The `prompt.context` slot. Its holder has taken responsibility for
+        // saying how to write for this surface, so Grain says nothing — but
+        // only about ITS OWN guess. A custom profile is the user naming this
+        // app and writing a rule for it, which outranks any extension and is
+        // exactly what the ladder exists to protect.
+        .filter(|(_, user_authored)| *user_authored || contributed.context_owner.is_none());
     let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
     // A one-line field gets one extra clause, because the pipeline's habit of
     // capitalizing and adding a full stop is wrong in a search box and the user
@@ -2123,7 +2130,7 @@ pub fn compose_prompt(
         .filter(|caret| !caret.is_empty());
     let has_ctx = rule.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
-    if spoken.is_none() && !has_ctx && contributed.is_empty() {
+    if spoken.is_none() && !has_ctx && contributed.layers.is_empty() {
         // The quiet case that most looks like a bug: the feature is on,
         // detection may even have succeeded, and the prompt still goes out
         // untouched — because the app resolved to `Other`, which adds nothing by
@@ -2188,7 +2195,7 @@ pub fn compose_prompt(
     // never dependent on which extension happened to load first.
     let mut spent = 0usize;
     let mut used = 0usize;
-    for layer in contributed {
+    for layer in &contributed.layers {
         if used >= prompt_stack::MAX_CONTRIBUTED_LAYERS {
             log::warn!(
                 "[GRAIN] prompt: dropped layer from {} — at the {} layer ceiling",
@@ -3582,7 +3589,26 @@ mod tests {
         ctx: Option<&ActiveContext>,
         spoken: Option<&str>,
     ) -> String {
-        compose_prompt(base, settings, ctx, spoken, &[])
+        compose_prompt(base, settings, ctx, spoken, &Contributions::default())
+    }
+
+    /// `compose_prompt` with contributed layers and no slot claim.
+    fn compose_with(
+        base: &str,
+        settings: &AppSettings,
+        ctx: Option<&ActiveContext>,
+        layers: Vec<ContributedLayer>,
+    ) -> String {
+        compose_prompt(
+            base,
+            settings,
+            ctx,
+            None,
+            &Contributions {
+                layers,
+                context_owner: None,
+            },
+        )
     }
 
     use grain_core::AppSettings;
@@ -4453,7 +4479,7 @@ mod tests {
                 text: format!("Rule number {i}."),
             })
             .collect();
-        let out = compose_prompt("BASE", &s, None, None, &many);
+        let out = compose_with("BASE", &s, None, many);
         let applied = out.matches("(com.acme.p").count();
         assert_eq!(
             applied,
@@ -4471,12 +4497,87 @@ mod tests {
                 text: "Prefer British spelling.".into(),
             },
         ];
-        let out = compose_prompt("BASE", &s, None, None, &fat);
+        let out = compose_with("BASE", &s, None, fat);
         assert!(out.contains("(com.acme.big)"));
         assert!(
             !out.contains("(com.acme.small)"),
             "the byte ceiling drops the overflow"
         );
+    }
+
+    /// Door 2. The slot governs Grain's OPINION about the surface and nothing
+    /// else — claiming it is taking responsibility for that one line.
+    #[test]
+    fn the_context_slot_replaces_grains_guess_only() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("code", AppCategory::Technical);
+        c.field = FieldKind::SingleLine;
+
+        let held = Contributions {
+            layers: vec![ContributedLayer {
+                ext_id: "com.acme.ctx".into(),
+                text: "Match the file's existing style.".into(),
+            }],
+            context_owner: Some("com.acme.ctx".into()),
+        };
+        let out = compose_prompt("BASE", &s, Some(&c), None, &held);
+
+        assert!(
+            !out.contains("Soft context (tone"),
+            "the claimant speaks for the surface now"
+        );
+        assert!(out.contains("(com.acme.ctx) Match the file's existing style."));
+        // Structural facts are not opinions, so there is nothing to hand over.
+        assert!(out.contains("SINGLE-LINE field"));
+        assert!(out.contains("Output ONLY the corrected transcript"));
+    }
+
+    #[test]
+    fn the_context_slot_never_touches_the_users_own_rule() {
+        // The invariant, at the one place an extension gets closest to it.
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_custom_profiles
+            .push(custom("mine", "Bullet points only.", "application", "figma"));
+
+        let held = Contributions {
+            layers: vec![],
+            context_owner: Some("com.acme.ctx".into()),
+        };
+        let out = compose_prompt(
+            "BASE",
+            &s,
+            Some(&ctx("figma", AppCategory::Other)),
+            None,
+            &held,
+        );
+        assert!(out.contains("Your rule for this app"));
+        assert!(out.contains("Bullet points only."));
+    }
+
+    #[test]
+    fn a_claimant_that_says_nothing_leaves_the_surface_silent() {
+        // Taking the slot and contributing no matching layer is legal, and the
+        // result is no soft context at all rather than a fallback to Grain's —
+        // a fallback would mean the takeover was never real.
+        let s = AppSettings {
+            context_awareness_enabled: true,
+            ..Default::default()
+        };
+        let held = Contributions {
+            layers: vec![],
+            context_owner: Some("com.acme.ctx".into()),
+        };
+        let out = compose_prompt(
+            "BASE",
+            &s,
+            Some(&ctx("code", AppCategory::Technical)),
+            None,
+            &held,
+        );
+        assert!(!out.contains("Soft context (tone"));
+        assert!(!out.contains("[Extension rules]"));
     }
 
     #[test]
@@ -4486,12 +4587,11 @@ mod tests {
         // reference material must still be followed by the output contract.
         let s = AppSettings::default();
         assert!(!s.context_awareness_enabled);
-        let out = compose_prompt(
+        let out = compose_with(
             "BASE",
             &s,
             None,
-            None,
-            &[ContributedLayer {
+            vec![ContributedLayer {
                 ext_id: "com.acme.jira".into(),
                 text: "Write in imperative mood.".into(),
             }],

@@ -120,7 +120,7 @@ pub(crate) async fn post_process_transcription(
     // Contributed layers are resolved HERE, where the context already exists,
     // and matched by the host — the extension is never told what surface the
     // user is on, nor whether its layer fired. See `context_detect::layer_matches`.
-    let contributed = crate::extension_host::matching_prompt_layers(app, ctx.as_ref());
+    let contributed = crate::extension_host::prompt_contributions(app, ctx.as_ref());
     let prompt = crate::context_detect::compose_prompt(
         &prompt,
         settings,

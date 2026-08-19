@@ -839,6 +839,45 @@ pub struct ExtensionCard {
     /// — so this is what lets the UI open the place it actually affects
     /// instead of dead-ending on a preview.
     pub slots: Vec<String>,
+    /// [GRAIN] Prompt layers this pack contributes.
+    ///
+    /// Carried on the card because **attribution is not optional for this
+    /// contribution**: a prompt layer changes what the model does to the user's
+    /// own words, and unlike a capability it is invisible once approved. The
+    /// approval sheet is where the user first reads it; this is where they can
+    /// go back and read it again without uninstalling anything.
+    pub prompt_layers: Vec<PromptLayerInfo>,
+}
+
+/// [GRAIN] One contributed prompt layer, as every surface that shows one needs
+/// it: the approval sheet, the extension card, and the prompt-stack view.
+///
+/// One type for all three deliberately. The sheet's copy and the card's copy
+/// drifting apart would mean the user approved one wording and can later only
+/// review another.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct PromptLayerInfo {
+    pub id: String,
+    /// The instruction, verbatim. Never summarised anywhere it is displayed.
+    pub text: String,
+    /// No conditions at all — it applies to every dictation.
+    pub everywhere: bool,
+    pub app: Vec<String>,
+    pub website: Vec<String>,
+    pub category: Vec<String>,
+}
+
+impl PromptLayerInfo {
+    fn from_decl(decl: &grain_sdk::manifest::PromptLayerDecl) -> Self {
+        Self {
+            id: decl.id.clone(),
+            text: decl.text.clone(),
+            everywhere: decl.when.is_unconditional(),
+            app: decl.when.app.clone(),
+            website: decl.when.website.clone(),
+            category: decl.when.category.clone(),
+        }
+    }
 }
 
 /// The Overview tab's data: every extension, enabled and disabled alike.
@@ -862,11 +901,22 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.
     for rec in reg.records() {
-        let (name, description, repository, capabilities, has_detail, tier) =
+        let (name, description, repository, capabilities, has_detail, tier, prompt_layers) =
             match load_pack(&app, &rec.id) {
                 Ok(p) => {
+                    // A pack with prompt layers has something worth opening even
+                    // with no settings or shortcuts of its own — the text it puts
+                    // in front of the model is the whole reason to look.
+                    let prompt_layers: Vec<PromptLayerInfo> = p
+                        .manifest
+                        .contributes
+                        .prompt_layers
+                        .iter()
+                        .map(PromptLayerInfo::from_decl)
+                        .collect();
                     let has_detail = !p.manifest.contributes.settings.is_empty()
-                        || !p.manifest.contributes.shortcuts.is_empty();
+                        || !p.manifest.contributes.shortcuts.is_empty()
+                        || !prompt_layers.is_empty();
                     let tier = match p.manifest.tier {
                         grain_sdk::Tier::Pack => "pack",
                         grain_sdk::Tier::Scripted => "scripted",
@@ -879,6 +929,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                         p.manifest.permissions,
                         has_detail,
                         tier,
+                        prompt_layers,
                     )
                 }
                 // SPEC §6 last row: a broken/missing pack file renders an error
@@ -890,6 +941,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     Vec::new(),
                     false,
                     "pack",
+                    Vec::new(),
                 ),
             };
         cards.push(ExtensionCard {
@@ -923,6 +975,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
             capabilities,
+            prompt_layers,
             has_detail,
             slots: rec
                 .slots
@@ -1049,20 +1102,8 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     approved != ext::prompt_layers_fingerprint(declared)
                 };
                 if !missing.is_empty() || unapproved {
-                    let layers: Vec<serde_json::Value> = if unapproved {
-                        declared
-                            .iter()
-                            .map(|l| {
-                                serde_json::json!({
-                                    "id": l.id,
-                                    "text": l.text,
-                                    "everywhere": l.when.is_unconditional(),
-                                    "app": l.when.app,
-                                    "website": l.when.website,
-                                    "category": l.when.category,
-                                })
-                            })
-                            .collect()
+                    let layers: Vec<PromptLayerInfo> = if unapproved {
+                        declared.iter().map(PromptLayerInfo::from_decl).collect()
                     } else {
                         Vec::new()
                     };

@@ -416,6 +416,10 @@ static HAS_TRANSFORMS: AtomicBool = AtomicBool::new(false);
 /// Same guard for prompt layers: with none installed, a dictation pays one
 /// relaxed atomic load and never takes the index lock.
 static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
+/// And for the `prompt.context` slot, which changes the prompt by SUBTRACTION —
+/// an extension can hold it while contributing no layer at all, so it needs its
+/// own guard or that case would read as "nothing installed".
+static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
 
 struct HostState {
     app: AppHandle,
@@ -501,6 +505,12 @@ pub fn refresh_index(app: &AppHandle) {
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
     HAS_PROMPT_LAYERS.store(!prompt_layers.is_empty(), Ordering::Relaxed);
+    HAS_CONTEXT_SLOT.store(
+        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
+            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
+        Ordering::Relaxed,
+    );
     log::debug!(
         "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s), {} prompt layer(s)",
         by_event.len(),
@@ -583,35 +593,53 @@ fn collect_prompt_layers(
     }
 }
 
-/// The contributed layers that apply to this surface, in toggle order.
+/// What installed extensions bring to this dictation: the layers that match the
+/// surface, in toggle order, and whether one of them holds `prompt.context`.
 ///
-/// Called once per finalized transcript, off the paste path. With no prompt
-/// layers installed — the overwhelmingly common case — this is one relaxed
-/// atomic load and an empty vector: no lock, no disk, no clone of the registry.
-pub fn matching_prompt_layers(
+/// Called once per finalized transcript, off the paste path. With nothing
+/// installed — the overwhelmingly common case — this is one relaxed atomic load
+/// and an empty struct: no lock, no disk, no clone of the registry.
+pub fn prompt_contributions(
     app: &AppHandle,
     ctx: Option<&crate::context_detect::ActiveContext>,
-) -> Vec<crate::context_detect::prompt_stack::ContributedLayer> {
-    let _ = app;
-    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed) {
-        return Vec::new();
+) -> crate::context_detect::prompt_stack::Contributions {
+    use crate::context_detect::prompt_stack::{ContributedLayer, Contributions};
+
+    // The slot is checked behind the same guard: an extension cannot hold
+    // `prompt.context` without being enabled, and an enabled extension with no
+    // prompt layers has taken over a line it then never writes — legal, but it
+    // still has to be an extension, and every path that claims a slot also
+    // rebuilds this index.
+    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed) && !HAS_CONTEXT_SLOT.load(Ordering::Relaxed) {
+        return Contributions::default();
     }
     let Some(host) = HOST.get() else {
-        return Vec::new();
+        return Contributions::default();
     };
+    let context_owner = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
+        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
+    if let Some(owner) = &context_owner {
+        log::info!("[ext:{owner}] holds prompt.context — Grain's soft context is suppressed");
+    }
     let index = host.index.read().unwrap();
-    index
+    let layers = index
         .prompt_layers
         .iter()
         .filter(|l| crate::context_detect::layer_matches(&l.when, ctx))
         .map(|l| {
             log::info!("[ext:{}] prompt layer '{}' applies", l.ext_id, l.layer_id);
-            crate::context_detect::prompt_stack::ContributedLayer {
+            ContributedLayer {
                 ext_id: l.ext_id.clone(),
                 text: l.text.clone(),
             }
         })
-        .collect()
+        .collect();
+    Contributions {
+        layers,
+        context_owner,
+    }
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.

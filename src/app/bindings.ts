@@ -2992,7 +2992,17 @@ has_detail: boolean;
  * — so this is what lets the UI open the place it actually affects
  * instead of dead-ending on a preview.
  */
-slots: string[] }
+slots: string[]; 
+/**
+ * [GRAIN] Prompt layers this pack contributes.
+ * 
+ * Carried on the card because **attribution is not optional for this
+ * contribution**: a prompt layer changes what the model does to the user's
+ * own words, and unlike a capability it is invisible once approved. The
+ * approval sheet is where the user first reads it; this is where they can
+ * go back and read it again without uninstalling anything.
+ */
+prompt_layers: PromptLayerInfo[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
@@ -3334,6 +3344,23 @@ quota_limit?: number | null; quota_used_today?: number }
  * model map (model names are not secret).
  */
 export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvider[]; selected_provider_id: string; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+/**
+ * [GRAIN] One contributed prompt layer, as every surface that shows one needs
+ * it: the approval sheet, the extension card, and the prompt-stack view.
+ * 
+ * One type for all three deliberately. The sheet's copy and the card's copy
+ * drifting apart would mean the user approved one wording and can later only
+ * review another.
+ */
+export type PromptLayerInfo = { id: string; 
+/**
+ * The instruction, verbatim. Never summarised anywhere it is displayed.
+ */
+text: string; 
+/**
+ * No conditions at all — it applies to every dictation.
+ */
+everywhere: boolean; app: string[]; website: string[]; category: string[] }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.

@@ -282,6 +282,24 @@ pub struct ContributedLayer {
     pub text: String,
 }
 
+/// Everything installed extensions bring to one dictation.
+///
+/// A struct rather than two parameters because the two answers are read
+/// together and are meaningless apart: the layers are what an extension *says*,
+/// and the slot is whether it has taken over what Grain would otherwise say.
+#[derive(Debug, Default, Clone)]
+pub struct Contributions {
+    /// Layers that matched this surface, in toggle order.
+    pub layers: Vec<ContributedLayer>,
+    /// The extension holding the `prompt.context` slot, when it is not Grain.
+    ///
+    /// Its presence suppresses Grain's own detected soft-context line. Nothing
+    /// else: the user's custom profile for this app outranks any extension and
+    /// stays, and the structural rules (single-line, cursor fit) are facts
+    /// rather than opinions, so there is nothing there to hand over.
+    pub context_owner: Option<String>,
+}
+
 /// How many contributed layers may reach the model at once, across ALL
 /// extensions.
 ///

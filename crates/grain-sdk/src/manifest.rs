@@ -541,7 +541,26 @@ pub const KNOWN_SLOTS: &[&str] = &[
     "pill.theme",
     "agent.reply-surface",
     "output.destination",
+    PROMPT_CONTEXT_SLOT,
 ];
+
+/// The soft-context line in the dictation prompt: **Grain's opinion about how to
+/// write for the surface it detected**.
+///
+/// Claimable because it is a guess, and an extension may guess better. The three
+/// layers around it are not:
+///
+/// - the user's own prompt and their custom profiles are theirs, and an
+///   extension replacing them is the one thing the ladder exists to prevent;
+/// - a spoken instruction is the user's voice about this transcript;
+/// - the single-line rule, the cursor fit and nearby terms are structural facts
+///   about the field, not opinions about writing, so there is nothing there to
+///   disagree with.
+///
+/// Claiming it means taking responsibility for it: Grain then says nothing about
+/// the surface, and if the claimant contributes no matching layer, no soft
+/// context is sent at all.
+pub const PROMPT_CONTEXT_SLOT: &str = "prompt.context";
 
 /// Capabilities a scripted pack may request in API 1.0. Anything outside this
 /// set is rejected at import (R1: grant narrowly, widen with each consumer).
@@ -1021,6 +1040,20 @@ mod tests {
                 r#"[{"id":"jira","when":{"website":["jira."]},
                      "text":"Write in imperative mood."}]"#
             ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_inert_pack_may_claim_the_context_slot() {
+        // Door 2: replacing Grain's guess about a surface needs no runtime —
+        // a pack that ships better wording for the same job is the point.
+        assert_eq!(
+            pack(&format!(
+                r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                    "slots":["{PROMPT_CONTEXT_SLOT}"],
+                    "contributes":{{"promptLayers":[{{"id":"a","text":"Be terse."}}]}}}}}}"#
+            )),
             Ok(())
         );
     }

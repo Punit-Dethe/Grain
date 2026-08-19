@@ -1,6 +1,7 @@
 import type {
   ExtensionCard,
   ExtensionSettingsSection,
+  PromptLayerInfo,
   Result,
   StoreEntry,
 } from "@/bindings";
@@ -32,6 +33,7 @@ const SLOT_LABELS: Record<string, string> = {
   "pill.theme": "the pill's look",
   "agent.reply-surface": "the Agent's reply panel",
   "output.destination": "where your text is sent",
+  "prompt.context": "what Grain tells the AI about the app you are typing in",
 };
 
 export interface SlotConflict {
@@ -71,20 +73,9 @@ export function slotLabel(slot: string): string {
   );
 }
 
-/** One prompt layer, as the approval sheet needs to describe it. */
-export interface PromptLayerAsk {
-  id: string;
-  text: string;
-  /** No conditions — it applies to every dictation. Said loudly on purpose. */
-  everywhere: boolean;
-  app: string[];
-  website: string[];
-  category: string[];
-}
-
 export interface ApprovalRequest {
   permissions: string[];
-  promptLayers: PromptLayerAsk[];
+  promptLayers: PromptLayerInfo[];
 }
 
 /**
@@ -104,7 +95,7 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       ? (parsed.needsPermissions as string[])
       : [];
     const promptLayers = Array.isArray(parsed.needsPromptLayers)
-      ? (parsed.needsPromptLayers as PromptLayerAsk[])
+      ? (parsed.needsPromptLayers as PromptLayerInfo[])
       : [];
     if (!permissions.length && !promptLayers.length) return null;
     return { permissions, promptLayers };
@@ -114,7 +105,7 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
 }
 
 /** Plain-language description of when a contributed layer applies. */
-export function promptLayerScope(layer: PromptLayerAsk): string {
+export function promptLayerScope(layer: PromptLayerInfo): string {
   if (layer.everywhere) return "Every dictation";
   const parts: string[] = [];
   if (layer.website.length) parts.push(layer.website.join(", "));
