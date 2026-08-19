@@ -49,11 +49,13 @@ import {
   extensionDestination,
   filterExtensions,
   nextMediaIndex,
-  parseNeedsPermissions,
+  parseApprovalRequest,
   parseSlotConflict,
+  promptLayerScope,
   slotLabel,
   sortExtensionCards,
   unwrapResult,
+  type ApprovalRequest,
   type SlotConflict,
 } from "../extensions/extensionRuntime";
 
@@ -117,10 +119,9 @@ function useInstalledExtensions(): InstalledController {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const [pending, setPending] = useState<{
-    card: ExtensionCard;
-    permissions: string[];
-  } | null>(null);
+  const [pending, setPending] = useState<
+    ({ card: ExtensionCard } & ApprovalRequest) | null
+  >(null);
   const [contested, setContested] = useState<{
     card: ExtensionCard;
     conflict: SlotConflict;
@@ -177,9 +178,9 @@ function useInstalledExtensions(): InstalledController {
       } catch (reason) {
         const message =
           reason instanceof Error ? reason.message : String(reason);
-        const permissions = parseNeedsPermissions(message);
+        const approval = parseApprovalRequest(message);
         const conflict = parseSlotConflict(message);
-        if (permissions) setPending({ card, permissions });
+        if (approval) setPending({ card, ...approval });
         else if (conflict) setContested({ card, conflict });
         else setError(message);
       } finally {
@@ -276,12 +277,42 @@ function useInstalledExtensions(): InstalledController {
           <ShieldCheck size={17} />
           <h2 id="permission-title">Allow “{pending.card.name}”?</h2>
         </div>
-        <p>This extension runs code on your device and is asking to:</p>
-        <ul>
-          {pending.permissions.map((permission) => (
-            <li key={permission}>{capabilityLabel(permission)}</li>
-          ))}
-        </ul>
+        {pending.permissions.length > 0 && (
+          <>
+            <p>This extension runs code on your device and is asking to:</p>
+            <ul>
+              {pending.permissions.map((permission) => (
+                <li key={permission}>{capabilityLabel(permission)}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {pending.promptLayers.length > 0 && (
+          <>
+            {/*
+              The exact wording, verbatim, never a summary. This text goes to
+              the model in front of what the user dictates, so paraphrasing it
+              here would mean approving something other than what was read —
+              and the reason it is asked at all is that a later update can
+              change it, which is how approved extensions have turned hostile
+              elsewhere.
+            */}
+            <p>
+              It adds these instructions to what Grain sends the AI when you
+              dictate. They rank below your own prompt.
+            </p>
+            <ul className="extension-prompt-layers">
+              {pending.promptLayers.map((layer) => (
+                <li key={layer.id}>
+                  <span className="extension-prompt-layer-scope">
+                    {promptLayerScope(layer)}
+                  </span>
+                  <q>{layer.text}</q>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
         <div className="extension-confirm-actions">
           <button
             className="button"

@@ -6576,6 +6576,41 @@ html[data-theme="light"] .installed-extension-actions {
   margin: 0 0 14px 18px;
   list-style: disc;
 }
+
+/* Contributed prompt text is quoted, not bulleted: the user is reading the
+   exact words that will be sent to the model, so it needs to look like a
+   quotation rather than like our own copy. Scrolls rather than growing, so a
+   pack with several rules cannot push the Cancel button off screen. */
+.extension-confirm ul.extension-prompt-layers {
+  margin-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.extension-prompt-layers li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+}
+
+.extension-prompt-layer-scope {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-4, var(--text-3));
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.extension-prompt-layers q {
+  color: var(--text-2);
+  font-style: italic;
+}
 .extension-confirm-actions {
   justify-content: flex-end;
 }

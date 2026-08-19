@@ -1013,42 +1013,44 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             // that code cannot start running on capabilities nobody approved.
             // The frontend catches this structured error, shows the permission
             // sheet, calls `extension_grant`, and retries.
-            if enabled && pack.has_runtime() {
-                let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
-                let missing: Vec<String> = pack
-                    .manifest
-                    .permissions
-                    .iter()
-                    .filter(|p| !granted.contains(p))
-                    .cloned()
-                    .collect();
-                if !missing.is_empty() {
-                    return Err(serde_json::json!({ "needsPermissions": missing }).to_string());
-                }
-            }
-            // [GRAIN] The same Chrome model, applied to contributed prompt text.
             //
-            // A prompt layer needs no capability — that is what makes it the
-            // safe way to contribute — so nothing above would catch a pack that
-            // ships harmless wording, gets approved, and changes it in an
-            // update. That is the rug pull (CVE-2025-54136), and the answer is
-            // that the TEXT is part of what was approved: if it no longer
-            // matches, the extension is held and the user reads the new wording
-            // before it can shape a single dictation.
+            // [GRAIN] Prompt layers are asked for in the SAME sheet, because a
+            // prompt layer needs no capability — which is what makes it the safe
+            // way to contribute, and also what would let a pack ship harmless
+            // wording, get approved, and change it in an update with nothing
+            // asking again. That is the rug pull (CVE-2025-54136). The TEXT is
+            // part of what was approved, so when it no longer matches, the
+            // extension is held and the user reads the new wording before it can
+            // shape a single dictation.
             //
-            // Applies to inert packs too, deliberately — a tier-A pack with a
-            // prompt layer is exactly the case the permission sheet would
-            // otherwise never see.
+            // Both are gathered before either is returned: two sheets in a row
+            // for one enable is how a user learns to click Approve without
+            // reading, which defeats the point of asking at all.
             if enabled {
+                let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
+                let missing: Vec<String> = if pack.has_runtime() {
+                    pack.manifest
+                        .permissions
+                        .iter()
+                        .filter(|p| !granted.contains(p))
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                // Inert packs included, deliberately: a tier-A pack with a
+                // prompt layer is exactly the case the sheet would never see.
                 let declared = &pack.manifest.contributes.prompt_layers;
-                if !declared.is_empty() {
-                    let fingerprint = ext::prompt_layers_fingerprint(declared);
+                let unapproved = !declared.is_empty() && {
                     let approved = reg
                         .record(pack_id)
                         .and_then(|r| r.prompt_layers_approved)
                         .unwrap_or_default();
-                    if approved != fingerprint {
-                        let layers: Vec<serde_json::Value> = declared
+                    approved != ext::prompt_layers_fingerprint(declared)
+                };
+                if !missing.is_empty() || unapproved {
+                    let layers: Vec<serde_json::Value> = if unapproved {
+                        declared
                             .iter()
                             .map(|l| {
                                 serde_json::json!({
@@ -1060,11 +1062,15 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                                     "category": l.when.category,
                                 })
                             })
-                            .collect();
-                        return Err(
-                            serde_json::json!({ "needsPromptLayers": layers }).to_string()
-                        );
-                    }
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    return Err(serde_json::json!({
+                        "needsPermissions": missing,
+                        "needsPromptLayers": layers,
+                    })
+                    .to_string());
                 }
             }
             // [GRAIN] SPEC §3.2: at most one enabled occupant per slot, and a

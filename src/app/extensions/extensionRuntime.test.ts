@@ -10,7 +10,8 @@ import {
   filterExtensions,
   matchToolRecommendations,
   nextMediaIndex,
-  parseNeedsPermissions,
+  parseApprovalRequest,
+  promptLayerScope,
   parseSlotConflict,
 } from "./extensionRuntime";
 
@@ -182,13 +183,53 @@ describe("extension collection helpers", () => {
 
   it("parses permission and slot holds", () => {
     expect(
-      parseNeedsPermissions('{"needsPermissions":["storage","open:url"]}'),
-    ).toEqual(["storage", "open:url"]);
+      parseApprovalRequest('{"needsPermissions":["storage","open:url"]}'),
+    ).toEqual({ permissions: ["storage", "open:url"], promptLayers: [] });
     expect(
       parseSlotConflict(
         '{"slotConflict":{"slot":"pill.theme","currentOccupant":"old"}}',
       ),
     ).toEqual({ slot: "pill.theme", currentOccupant: "old" });
+  });
+
+  it("parses an approval that is only about prompt text", () => {
+    // An inert pack asks for no capability at all, so a parser keyed on
+    // permissions alone would read this as "nothing to approve" and the enable
+    // would fail with a raw JSON string.
+    expect(
+      parseApprovalRequest(
+        '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
+      ),
+    ).toEqual({
+      permissions: [],
+      promptLayers: [
+        {
+          id: "jira",
+          text: "Be terse.",
+          everywhere: false,
+          app: [],
+          website: ["jira."],
+          category: [],
+        },
+      ],
+    });
+    expect(parseApprovalRequest('{"needsPermissions":[]}')).toBeNull();
+    expect(parseApprovalRequest("not json")).toBeNull();
+  });
+
+  it("describes when a contributed layer applies", () => {
+    const layer = {
+      id: "a",
+      text: "Be terse.",
+      everywhere: false,
+      app: ["code"],
+      website: [],
+      category: [],
+    };
+    expect(promptLayerScope(layer)).toBe("In code");
+    expect(promptLayerScope({ ...layer, everywhere: true })).toBe(
+      "Every dictation",
+    );
   });
 });
 

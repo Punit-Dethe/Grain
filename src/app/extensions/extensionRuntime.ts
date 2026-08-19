@@ -71,15 +71,56 @@ export function slotLabel(slot: string): string {
   );
 }
 
-export function parseNeedsPermissions(error: unknown): string[] | null {
+/** One prompt layer, as the approval sheet needs to describe it. */
+export interface PromptLayerAsk {
+  id: string;
+  text: string;
+  /** No conditions — it applies to every dictation. Said loudly on purpose. */
+  everywhere: boolean;
+  app: string[];
+  website: string[];
+  category: string[];
+}
+
+export interface ApprovalRequest {
+  permissions: string[];
+  promptLayers: PromptLayerAsk[];
+}
+
+/**
+ * The single structured error an enable can be refused with.
+ *
+ * Capabilities and prompt layers arrive together and are shown in one sheet:
+ * two sheets in a row for one enable is how a user learns to click Approve
+ * without reading, which defeats the point of asking.
+ */
+export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   try {
-    const parsed = JSON.parse(String(error)) as { needsPermissions?: unknown };
-    return Array.isArray(parsed.needsPermissions)
+    const parsed = JSON.parse(String(error)) as {
+      needsPermissions?: unknown;
+      needsPromptLayers?: unknown;
+    };
+    const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
-      : null;
+      : [];
+    const promptLayers = Array.isArray(parsed.needsPromptLayers)
+      ? (parsed.needsPromptLayers as PromptLayerAsk[])
+      : [];
+    if (!permissions.length && !promptLayers.length) return null;
+    return { permissions, promptLayers };
   } catch {
     return null;
   }
+}
+
+/** Plain-language description of when a contributed layer applies. */
+export function promptLayerScope(layer: PromptLayerAsk): string {
+  if (layer.everywhere) return "Every dictation";
+  const parts: string[] = [];
+  if (layer.website.length) parts.push(layer.website.join(", "));
+  if (layer.app.length) parts.push(layer.app.join(", "));
+  if (layer.category.length) parts.push(layer.category.join(", "));
+  return parts.length ? `In ${parts.join(" · ")}` : "Every dictation";
 }
 
 export function parseSlotConflict(error: unknown): SlotConflict | null {
