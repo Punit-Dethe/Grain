@@ -184,6 +184,43 @@ impl Workers {
         Some(w.last_activity.clone())
     }
 
+    /// Whether a worker has a live connection, which is what [`call`] needs —
+    /// stricter than "spawned", because a spawned webview takes a moment to
+    /// connect back.
+    fn is_connected(&self, ext_id: &str) -> bool {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .is_some_and(|w| w.conn.is_some())
+    }
+
+    /// Wait, bounded, for a just-spawned worker to connect.
+    ///
+    /// Without this an action on a cold extension fails instantly with "worker
+    /// not connected" — and cold is the **normal** case, because a routed
+    /// action is usually the only reason to wake that extension at all. The
+    /// transform path can skip a cold worker (it has a 150 ms budget and text
+    /// to pass through unchanged); an action has neither.
+    ///
+    /// Polling rather than a notify: this runs once per cold action, the
+    /// interval is short enough to be invisible next to the spawn it is waiting
+    /// on, and a condvar threaded through the connection path would be more
+    /// machinery than the problem deserves.
+    async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
+        const POLL: Duration = Duration::from_millis(20);
+        let started = Instant::now();
+        loop {
+            if self.is_connected(ext_id) {
+                return true;
+            }
+            if started.elapsed() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
     /// Issue a `HostCall` to a connected worker and await its answer under
     /// `deadline`. Never holds the registry lock across the await.
     async fn call(
@@ -1649,6 +1686,14 @@ pub async fn run_session_stage(
 /// decides in milliseconds and the pill says what is happening.
 const ACTION_DEADLINE: Duration = Duration::from_secs(20);
 
+/// How long to wait for a cold worker to connect before giving up.
+///
+/// The plan budgets ~300 ms for a cold wake; this is deliberately several times
+/// that, because the cost of being wrong is a failed action the user has to
+/// repeat, while the cost of waiting is a pill that says "working" for another
+/// moment.
+const ACTION_WAKE_DEADLINE: Duration = Duration::from_secs(3);
+
 /// What performing an action produced.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ActionOutcome {
@@ -1744,6 +1789,13 @@ pub async fn perform_action(
         .is_some_and(|record| record.enabled);
     if !enabled {
         return ActionOutcome::Failed("that extension is no longer enabled".into());
+    }
+    // The winner was almost certainly cold — a routed action is usually the only
+    // reason to wake it. Give the spawn a bounded moment to connect rather than
+    // failing instantly.
+    if !host.workers.wait_connected(ext_id, ACTION_WAKE_DEADLINE).await {
+        log::warn!("[ext:{ext_id}] action '{action_id}' — worker did not start in time");
+        return ActionOutcome::Failed("that extension did not start in time".into());
     }
     match host
         .workers

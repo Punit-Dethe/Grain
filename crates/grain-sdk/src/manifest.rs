@@ -824,9 +824,7 @@ fn validate_action_utterances(
         }
         let normalised = trimmed.to_lowercase();
         if !seen.insert(normalised) {
-            return Err(format!(
-                "action '{id}' repeats the utterance \"{trimmed}\""
-            ));
+            return Err(format!("action '{id}' repeats the utterance \"{trimmed}\""));
         }
         let parts = parse_utterance(trimmed).map_err(|e| format!("action '{id}': {e}"))?;
         let mut has_literal = false;
@@ -1855,6 +1853,27 @@ mod tests {
                  "utterances":["next"],"when":{"category":["nope"]}}]"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn the_shipped_voice_actions_declaration_validates() {
+        // The first real consumer, pinned. It is also the case the risk rule was
+        // written for and the one easiest to get backwards: this extension holds
+        // `open:url` and `open:app`, so a free-text span would be "open whatever
+        // Grain mishears" — but `target` is a RESOLVED entity, matched against
+        // the user's own configured shortcuts before anything launches, so
+        // `safe` is correct here.
+        assert_eq!(
+            pack_with_actions(
+                r#"["transform:transcript","open:url","open:app","capture:app","settings"]"#,
+                r#"[{"id":"open","title":"Open an app or site you set up","domain":"system",
+                     "risk":"safe",
+                     "utterances":["open {target}","launch {target}","go to {target}",
+                                   "start up {target}","bring up {target}"],
+                     "params":[{"name":"target","kind":"entity","resolve":true}]}]"#
+            ),
+            Ok(())
+        );
     }
 
     #[test]
