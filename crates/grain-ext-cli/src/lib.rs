@@ -272,6 +272,10 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
                     default_binding: Some("Ctrl+Alt+Shift+G".into()),
                 }],
                 session_mode: None,
+                // The scaffold declares neither. Both are approval-bearing
+                // surfaces, so a starter template that pre-fills them would
+                // teach authors to ship a consent prompt they never chose.
+                ..Default::default()
             },
             companion: None,
         },

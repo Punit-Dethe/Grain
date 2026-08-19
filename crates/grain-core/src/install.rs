@@ -1,15 +1,15 @@
-//! Phase 5A install / update / remove transaction (DISTRIBUTION-PLAN §5.2,
-//! correction C-9) and **the trust invariant** (§3.2).
+﻿//! Phase 5A install / update / remove transaction (DISTRIBUTION-PLAN Â§5.2,
+//! correction C-9) and **the trust invariant** (Â§3.2).
 //!
 //! This module is the *only* place a record may be born `verified` or `core`.
-//! Everything else — manual `.grainpack` import, dev load — leaves the record
+//! Everything else â€” manual `.grainpack` import, dev load â€” leaves the record
 //! at [`Trust::UNTRUSTED_DEFAULT`]. That single-caller property is what makes
 //! the anti-forgery guarantee hold: an author who controls their repo, build,
 //! pack, site and domain still cannot make any client show their extension as
 //! trusted, because trust is read from the signature-verified index here and
 //! nowhere else.
 //!
-//! The on-disk transaction (staging → path-safe extraction → atomic rename)
+//! The on-disk transaction (staging â†’ path-safe extraction â†’ atomic rename)
 //! lives in [`stage_artifact`]; the registry side (record with trust, held
 //! disabled on a new-permission update, previous version retained) lives in
 //! [`plan_record`] / [`install_from_verified_entry`].
@@ -48,7 +48,7 @@ impl std::error::Error for InstallError {}
 /// Where an extension's versioned payload lives on disk:
 /// `<root>/<id>/<version>/`. The previous version's directory survives until
 /// the new one is in place, so a bad update is one directory away from rollback
-/// (DISTRIBUTION-PLAN §5.2).
+/// (DISTRIBUTION-PLAN Â§5.2).
 pub fn version_dir(root: &Path, id: &str, version: &str) -> PathBuf {
     root.join(id).join(version)
 }
@@ -108,7 +108,7 @@ pub fn stage_artifact(
 }
 
 /// Build the registry record for a verified index entry. **This is the sole
-/// function that copies trust off an index entry into a record** — the single
+/// function that copies trust off an index entry into a record** â€” the single
 /// caller the invariant depends on. It carries no filesystem side effects so it
 /// is trivially unit-testable.
 ///
@@ -123,20 +123,28 @@ pub fn plan_record(
     slots: Vec<String>,
     variant_slots: Vec<String>,
     prompt_layers: Option<String>,
+    actions: Option<String>,
 ) -> ExtensionRecord {
     let prior_enabled = prior.map(|r| r.enabled).unwrap_or(false);
     // Update with NEW permissions installs but stays disabled until the diff is
-    // approved (SPEC §6). A fresh install is disabled anyway (enable is the
+    // approved (SPEC Â§6). A fresh install is disabled anyway (enable is the
     // user's explicit second step).
     let adds_permissions = entry.capabilities.iter().any(|cap| !granted.contains(cap));
     // Changed prompt-layer text is the same event, and needs saying separately
     // because it widens nothing a capability list can express: the pack asks for
     // no new permission, it just changes the words it puts in front of the model
     // when the user dictates. Approval that does not survive an update is
-    // approval of a version nobody is running — CVE-2025-54136's exact lesson.
+    // approval of a version nobody is running â€” CVE-2025-54136's exact lesson.
     let approved = prior.and_then(|r| r.prompt_layers_approved.clone());
     let changes_prompt_layers = prompt_layers.is_some() && prompt_layers != approved;
-    let enabled = prior_enabled && !adds_permissions && !changes_prompt_layers;
+    // Changed actions are the same event again, and the sharpest of the three:
+    // what an update can quietly alter here is not a permission or a sentence
+    // but what pressing the key DOES â€” a `confirm` that became `safe`, a scope
+    // that widened, a phrase that now captures a request it never used to.
+    let approved_actions = prior.and_then(|r| r.actions_approved.clone());
+    let changes_actions = actions.is_some() && actions != approved_actions;
+    let enabled =
+        prior_enabled && !adds_permissions && !changes_prompt_layers && !changes_actions;
 
     ExtensionRecord {
         id: entry.id.clone(),
@@ -144,9 +152,9 @@ pub fn plan_record(
         toggle_seq: prior.map(|r| r.toggle_seq).unwrap_or(0),
         installed_version: entry.version.clone(),
         granted,
-        // Slots come from the pack manifest we just installed — not the prior
-        // record — so an update that changes them is reflected, and a fresh
-        // store install actually claims what it declares (SPEC §3.2, §10.2).
+        // Slots come from the pack manifest we just installed â€” not the prior
+        // record â€” so an update that changes them is reflected, and a fresh
+        // store install actually claims what it declares (SPEC Â§3.2, Â§10.2).
         slots,
         variant_slots,
         // The PRIOR approval is carried forward untouched. Installing is not
@@ -154,6 +162,7 @@ pub fn plan_record(
         // declaration, the layers stay inert, and the enable path shows the user
         // the new wording.
         prompt_layers_approved: approved,
+        actions_approved: approved_actions,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
         // this exact (id, version, sha256): a verified 1.0 confers nothing on
@@ -179,6 +188,7 @@ pub fn install_from_verified_entry(
         .unwrap_or_default();
     let (slots, variant_slots) = manifest_slots(bytes);
     let prompt_layers = manifest_prompt_layers(bytes);
+    let actions = manifest_actions(bytes);
     let record = plan_record(
         entry,
         granted,
@@ -186,6 +196,7 @@ pub fn install_from_verified_entry(
         slots,
         variant_slots,
         prompt_layers,
+        actions,
     );
     reg.install(record)
         .map_err(|e| InstallError::Io(e.to_string()))?;
@@ -203,7 +214,7 @@ fn manifest_slots(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
             .map(|p| (p.manifest.slots, p.manifest.variant_slots))
             .unwrap_or_default(),
         PackShape::Zip => {
-            // The manifest.json entry — read it out of the archive in-memory.
+            // The manifest.json entry â€” read it out of the archive in-memory.
             let mut archive = match zip_manifest_json(bytes) {
                 Some(m) => m,
                 None => return (Vec::new(), Vec::new()),
@@ -222,7 +233,7 @@ fn manifest_slots(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
 /// Read the same best-effort way as the slots above, and for the same reason:
 /// the artifact already passed hash and extraction, so an unreadable manifest is
 /// a pack that will fail later and louder. Note that unreadable yields `None`,
-/// which reads as "declares no layers" — and a record whose approved value does
+/// which reads as "declares no layers" â€” and a record whose approved value does
 /// not match a declaration contributes nothing, so the degraded direction is the
 /// safe one.
 fn manifest_prompt_layers(bytes: &[u8]) -> Option<String> {
@@ -240,6 +251,27 @@ fn manifest_prompt_layers(bytes: &[u8]) -> Option<String> {
         PackShape::Unknown => None,
     }?;
     (!layers.is_empty()).then(|| crate::extensions::prompt_layers_fingerprint(&layers))
+}
+
+/// The fingerprint of the actions a pack declares, or `None` when it declares
+/// none. Read exactly like [`manifest_prompt_layers`], and degrades the same
+/// safe direction: unreadable reads as "declares no actions", and a record whose
+/// approved value does not match a declaration contributes nothing.
+fn manifest_actions(bytes: &[u8]) -> Option<String> {
+    use grain_sdk::{ExtensionManifest, GrainPack};
+    let actions = match pack::detect_shape(bytes) {
+        PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
+            .ok()
+            .map(|p| p.manifest.contributes.actions),
+        PackShape::Zip => {
+            let mut archive = zip_manifest_json(bytes)?;
+            let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
+            archive.clear();
+            m.ok().map(|m| m.contributes.actions)
+        }
+        PackShape::Unknown => None,
+    }?;
+    (!actions.is_empty()).then(|| crate::extensions::actions_fingerprint(&actions))
 }
 
 /// Extract just the `manifest.json` bytes from a ZIP pack, in memory.
@@ -289,19 +321,19 @@ mod tests {
         tempfile::tempdir().unwrap()
     }
 
-    // ── Anti-forgery guarantee, DISTRIBUTION-PLAN §3.2 ──────────────────────
+    // â”€â”€ Anti-forgery guarantee, DISTRIBUTION-PLAN Â§3.2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn a_pack_claiming_trust_installs_untrusted() {
         // Property 1: a manifest/pack has no authority over trust. A pack whose
         // JSON contains "trust":"verified" is imported through the manual path,
-        // which never touches `plan_record` — so the record is untrusted.
+        // which never touches `plan_record` â€” so the record is untrusted.
         // Here we prove the manual import default directly: a record built
         // WITHOUT a verified entry is `UNTRUSTED_DEFAULT`, whatever the bytes say.
         let dir = tmp();
         let reg = ExtensionsRegistry::load(dir.path(), false).unwrap();
         // Simulate the manual import path: construct a record the way
-        // grain_commands::extension_import does — no entry, untrusted default.
+        // grain_commands::extension_import does â€” no entry, untrusted default.
         let rec = ExtensionRecord {
             id: "com.evil.fake".into(),
             enabled: false,
@@ -309,6 +341,7 @@ mod tests {
             installed_version: "1.0.0".into(),
             granted: vec![],
             prompt_layers_approved: None,
+            actions_approved: None,
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -324,7 +357,7 @@ mod tests {
         // Property 2: trust flows from a verified entry through plan_record.
         let bytes = b"{\"id\":\"com.example.ok\"}";
         let e = entry("com.example.ok", "1.0.0", Trust::Verified, &[], bytes);
-        let record = plan_record(&e, vec![], None, vec![], vec![], None);
+        let record = plan_record(&e, vec![], None, vec![], vec![], None, None);
         assert_eq!(record.trust, Trust::Verified);
         assert_eq!(record.installed_version, "1.0.0");
     }
@@ -336,12 +369,12 @@ mod tests {
         // record is untrusted even though the prior 1.0 was verified.
         let prior_bytes = b"{\"v\":\"1.0\"}";
         let prior_entry = entry("com.example.x", "1.0.0", Trust::Verified, &[], prior_bytes);
-        let prior = plan_record(&prior_entry, vec![], None, vec![], vec![], None);
+        let prior = plan_record(&prior_entry, vec![], None, vec![], vec![], None, None);
         assert_eq!(prior.trust, Trust::Verified);
 
         let new_bytes = b"{\"v\":\"1.1\"}";
         let new_entry = entry("com.example.x", "1.1.0", Trust::Dev, &[], new_bytes);
-        let updated = plan_record(&new_entry, vec![], Some(&prior), vec![], vec![], None);
+        let updated = plan_record(&new_entry, vec![], Some(&prior), vec![], vec![], None, None);
         assert_eq!(
             updated.trust,
             Trust::Dev,
@@ -349,7 +382,7 @@ mod tests {
         );
     }
 
-    // ── Install transaction, DISTRIBUTION-PLAN §5.2 ─────────────────────────
+    // â”€â”€ Install transaction, DISTRIBUTION-PLAN Â§5.2 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     #[test]
     fn hash_mismatch_refuses_before_unpacking() {
@@ -390,7 +423,7 @@ mod tests {
         reg.set_enabled("com.example.x", true).unwrap();
         assert!(reg.is_enabled("com.example.x"));
 
-        // 1.1 adds a capability → held disabled until the diff is approved.
+        // 1.1 adds a capability â†’ held disabled until the diff is approved.
         let b2 = b"{\"v\":2}";
         let e2 = entry(
             "com.example.x",
@@ -408,9 +441,9 @@ mod tests {
         );
     }
 
-    /// The rug pull (PLAN §T1 / CVE-2025-54136). A pack whose prompt layer text
+    /// The rug pull (PLAN Â§T1 / CVE-2025-54136). A pack whose prompt layer text
     /// changes asks for no new capability, so nothing in the permission diff
-    /// would notice — and the layer is the part that decides what the model does
+    /// would notice â€” and the layer is the part that decides what the model does
     /// to the user's own words.
     #[test]
     fn update_with_changed_prompt_layers_holds_disabled() {
@@ -421,6 +454,7 @@ mod tests {
             installed_version: "1.0.0".into(),
             granted: vec![],
             prompt_layers_approved: Some("fingerprint-of-1.0".into()),
+            actions_approved: None,
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -435,6 +469,7 @@ mod tests {
             vec![],
             vec![],
             Some("fingerprint-of-1.0".into()),
+            None,
         );
         assert!(
             unchanged.enabled,
@@ -448,6 +483,7 @@ mod tests {
             vec![],
             vec![],
             Some("fingerprint-of-1.1".into()),
+            None,
         );
         assert!(
             !changed.enabled,
@@ -456,7 +492,98 @@ mod tests {
         assert_eq!(
             changed.prompt_layers_approved.as_deref(),
             Some("fingerprint-of-1.0"),
+            "installing is not approving â€” the prior approval is carried, not overwritten"
+        );
+    }
+
+    /// The same rug pull, one step sharper: what an update changes here is not
+    /// wording but **what happens**. A `confirm` that quietly became `safe` asks
+    /// for no new capability and changes no sentence the user would notice.
+    #[test]
+    fn update_with_changed_actions_holds_disabled() {
+        let approved = ExtensionRecord {
+            id: "com.example.x".into(),
+            enabled: true,
+            toggle_seq: 1,
+            installed_version: "1.0.0".into(),
+            granted: vec![],
+            prompt_layers_approved: None,
+            actions_approved: Some("actions-of-1.0".into()),
+            slots: vec![],
+            variant_slots: vec![],
+            dev: None,
+            trust: Trust::Verified,
+        };
+        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
+
+        let unchanged = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            None,
+            Some("actions-of-1.0".into()),
+        );
+        assert!(
+            unchanged.enabled,
+            "an update that leaves the actions alone stays enabled"
+        );
+
+        let changed = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            None,
+            Some("actions-of-1.1".into()),
+        );
+        assert!(
+            !changed.enabled,
+            "changed actions must hold the update until the user reads them"
+        );
+        assert_eq!(
+            changed.actions_approved.as_deref(),
+            Some("actions-of-1.0"),
             "installing is not approving — the prior approval is carried, not overwritten"
+        );
+    }
+
+    /// The two approvals are independent on purpose: re-asking about what an
+    /// extension can DO because it reworded a prompt layer is how a user learns
+    /// to click through both.
+    #[test]
+    fn the_two_approvals_do_not_drag_each_other() {
+        let approved = ExtensionRecord {
+            id: "com.example.x".into(),
+            enabled: true,
+            toggle_seq: 1,
+            installed_version: "1.0.0".into(),
+            granted: vec![],
+            prompt_layers_approved: Some("layers-of-1.0".into()),
+            actions_approved: Some("actions-of-1.0".into()),
+            slots: vec![],
+            variant_slots: vec![],
+            dev: None,
+            trust: Trust::Verified,
+        };
+        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
+
+        let reworded = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            Some("layers-of-1.1".into()),
+            Some("actions-of-1.0".into()),
+        );
+        assert!(!reworded.enabled);
+        assert_eq!(
+            reworded.actions_approved.as_deref(),
+            Some("actions-of-1.0"),
+            "the untouched approval is preserved, not reset by its neighbour"
         );
     }
 
