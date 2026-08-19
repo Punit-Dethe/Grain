@@ -1472,12 +1472,20 @@ async extensionUnloadDev(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Record the user's approval of a scripted extension's capabilities (SPEC §6).
- * Called by the permission sheet on Approve; the caller then retries enable.
+ * Record the user's approval of what an extension asked for (SPEC §6) —
+ * capabilities, and the prompt layers it contributes. Called by the permission
+ * sheet on Approve; the caller then retries enable.
  * 
  * Grants are clamped to what the manifest actually requests, so neither a
  * compromised frontend nor a stale sheet can widen an extension's reach beyond
  * what the user was shown.
+ * 
+ * **Prompt layers are approved here too**, by the same act and with no
+ * parameter of their own: the approved value is recomputed from the pack on
+ * disk, so what gets recorded is necessarily the text the sheet just rendered
+ * and never something the caller supplies. An inert pack whose only ask is a
+ * prompt layer therefore approves through `extension_grant(id, [])` — one
+ * approval act rather than a second command that could drift from this one.
  */
 async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, string>> {
     try {

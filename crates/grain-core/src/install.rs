@@ -122,13 +122,21 @@ pub fn plan_record(
     prior: Option<&ExtensionRecord>,
     slots: Vec<String>,
     variant_slots: Vec<String>,
+    prompt_layers: Option<String>,
 ) -> ExtensionRecord {
     let prior_enabled = prior.map(|r| r.enabled).unwrap_or(false);
     // Update with NEW permissions installs but stays disabled until the diff is
     // approved (SPEC §6). A fresh install is disabled anyway (enable is the
     // user's explicit second step).
     let adds_permissions = entry.capabilities.iter().any(|cap| !granted.contains(cap));
-    let enabled = prior_enabled && !adds_permissions;
+    // Changed prompt-layer text is the same event, and needs saying separately
+    // because it widens nothing a capability list can express: the pack asks for
+    // no new permission, it just changes the words it puts in front of the model
+    // when the user dictates. Approval that does not survive an update is
+    // approval of a version nobody is running — CVE-2025-54136's exact lesson.
+    let approved = prior.and_then(|r| r.prompt_layers_approved.clone());
+    let changes_prompt_layers = prompt_layers.is_some() && prompt_layers != approved;
+    let enabled = prior_enabled && !adds_permissions && !changes_prompt_layers;
 
     ExtensionRecord {
         id: entry.id.clone(),
@@ -141,6 +149,11 @@ pub fn plan_record(
         // store install actually claims what it declares (SPEC §3.2, §10.2).
         slots,
         variant_slots,
+        // The PRIOR approval is carried forward untouched. Installing is not
+        // approving: if the text changed, this no longer matches the
+        // declaration, the layers stay inert, and the enable path shows the user
+        // the new wording.
+        prompt_layers_approved: approved,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
         // this exact (id, version, sha256): a verified 1.0 confers nothing on
@@ -165,7 +178,15 @@ pub fn install_from_verified_entry(
         .map(|r| r.granted.clone())
         .unwrap_or_default();
     let (slots, variant_slots) = manifest_slots(bytes);
-    let record = plan_record(entry, granted, prior.as_ref(), slots, variant_slots);
+    let prompt_layers = manifest_prompt_layers(bytes);
+    let record = plan_record(
+        entry,
+        granted,
+        prior.as_ref(),
+        slots,
+        variant_slots,
+        prompt_layers,
+    );
     reg.install(record)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
@@ -193,6 +214,32 @@ fn manifest_slots(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
         }
         PackShape::Unknown => (Vec::new(), Vec::new()),
     }
+}
+
+/// The fingerprint of the prompt layers a pack declares, or `None` when it
+/// declares none.
+///
+/// Read the same best-effort way as the slots above, and for the same reason:
+/// the artifact already passed hash and extraction, so an unreadable manifest is
+/// a pack that will fail later and louder. Note that unreadable yields `None`,
+/// which reads as "declares no layers" — and a record whose approved value does
+/// not match a declaration contributes nothing, so the degraded direction is the
+/// safe one.
+fn manifest_prompt_layers(bytes: &[u8]) -> Option<String> {
+    use grain_sdk::{ExtensionManifest, GrainPack};
+    let layers = match pack::detect_shape(bytes) {
+        PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
+            .ok()
+            .map(|p| p.manifest.contributes.prompt_layers),
+        PackShape::Zip => {
+            let mut archive = zip_manifest_json(bytes)?;
+            let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
+            archive.clear();
+            m.ok().map(|m| m.contributes.prompt_layers)
+        }
+        PackShape::Unknown => None,
+    }?;
+    (!layers.is_empty()).then(|| crate::extensions::prompt_layers_fingerprint(&layers))
 }
 
 /// Extract just the `manifest.json` bytes from a ZIP pack, in memory.
@@ -261,6 +308,7 @@ mod tests {
             toggle_seq: 0,
             installed_version: "1.0.0".into(),
             granted: vec![],
+            prompt_layers_approved: None,
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -276,7 +324,7 @@ mod tests {
         // Property 2: trust flows from a verified entry through plan_record.
         let bytes = b"{\"id\":\"com.example.ok\"}";
         let e = entry("com.example.ok", "1.0.0", Trust::Verified, &[], bytes);
-        let record = plan_record(&e, vec![], None, vec![], vec![]);
+        let record = plan_record(&e, vec![], None, vec![], vec![], None);
         assert_eq!(record.trust, Trust::Verified);
         assert_eq!(record.installed_version, "1.0.0");
     }
@@ -288,12 +336,12 @@ mod tests {
         // record is untrusted even though the prior 1.0 was verified.
         let prior_bytes = b"{\"v\":\"1.0\"}";
         let prior_entry = entry("com.example.x", "1.0.0", Trust::Verified, &[], prior_bytes);
-        let prior = plan_record(&prior_entry, vec![], None, vec![], vec![]);
+        let prior = plan_record(&prior_entry, vec![], None, vec![], vec![], None);
         assert_eq!(prior.trust, Trust::Verified);
 
         let new_bytes = b"{\"v\":\"1.1\"}";
         let new_entry = entry("com.example.x", "1.1.0", Trust::Dev, &[], new_bytes);
-        let updated = plan_record(&new_entry, vec![], Some(&prior), vec![], vec![]);
+        let updated = plan_record(&new_entry, vec![], Some(&prior), vec![], vec![], None);
         assert_eq!(
             updated.trust,
             Trust::Dev,
@@ -357,6 +405,58 @@ mod tests {
         assert!(
             !rec.enabled,
             "new permissions must hold the update disabled"
+        );
+    }
+
+    /// The rug pull (PLAN §T1 / CVE-2025-54136). A pack whose prompt layer text
+    /// changes asks for no new capability, so nothing in the permission diff
+    /// would notice — and the layer is the part that decides what the model does
+    /// to the user's own words.
+    #[test]
+    fn update_with_changed_prompt_layers_holds_disabled() {
+        let approved = ExtensionRecord {
+            id: "com.example.x".into(),
+            enabled: true,
+            toggle_seq: 1,
+            installed_version: "1.0.0".into(),
+            granted: vec![],
+            prompt_layers_approved: Some("fingerprint-of-1.0".into()),
+            slots: vec![],
+            variant_slots: vec![],
+            dev: None,
+            trust: Trust::Verified,
+        };
+        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
+
+        let unchanged = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            Some("fingerprint-of-1.0".into()),
+        );
+        assert!(
+            unchanged.enabled,
+            "an update that leaves the wording alone stays enabled"
+        );
+
+        let changed = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            Some("fingerprint-of-1.1".into()),
+        );
+        assert!(
+            !changed.enabled,
+            "changed prompt text must hold the update until the user reads it"
+        );
+        assert_eq!(
+            changed.prompt_layers_approved.as_deref(),
+            Some("fingerprint-of-1.0"),
+            "installing is not approving — the prior approval is carried, not overwritten"
         );
     }
 

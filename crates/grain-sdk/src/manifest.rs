@@ -181,6 +181,184 @@ pub struct Contributes {
         skip_serializing_if = "Option::is_none"
     )]
     pub session_mode: Option<SessionModeDecl>,
+    /// [GRAIN] Lines added to the dictation prompt when a surface matches.
+    ///
+    /// Declared as an ARRAY even though most packs ship one: the motivating
+    /// case is per-app rules (STRESS-TEST §4b, "App Modes as an extension"),
+    /// which is many narrow layers rather than one broad one. Accepts the
+    /// singular `promptLayer` spelling from the SPEC example as an alias.
+    #[serde(
+        default,
+        rename = "promptLayers",
+        alias = "promptLayer",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub prompt_layers: Vec<PromptLayerDecl>,
+}
+
+/// One contributed prompt layer (SPEC §4, STRESS-TEST GAP-4).
+///
+/// # Why this shape and not a callback
+///
+/// The text is **static and lives in the manifest**. That is the entire
+/// security argument for letting an inert pack contribute to the prompt at all:
+///
+/// - It is reviewable. A store reviewer, and the user in the permission sheet,
+///   read the exact string the model will receive.
+/// - It cannot carry anything fetched. Text an extension pulls off a web page or
+///   an API is evidence, never an instruction — see `docs/Prompt Priority/PLAN.md`
+///   §T4. A static declaration makes that structural rather than a promise.
+/// - Matching is done by the HOST against context it already has, so the
+///   extension is never told what application the user is in, and is never told
+///   whether it matched (§T7). Contributing a layer is strictly weaker than the
+///   `context:app` capability, and must stay that way.
+///
+/// The text is also part of the **permission surface**: changing it in an update
+/// holds the extension until the user approves the new wording, because approval
+/// that does not survive an update is approval of a version nobody runs (§T1,
+/// CVE-2025-54136).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PromptLayerDecl {
+    /// Stable id, unique within the extension. Appears in logs and in the
+    /// user-visible stack, so it should read as a name.
+    pub id: String,
+    /// The surfaces this layer applies to. An EMPTY match applies everywhere —
+    /// allowed, and deliberately the loudest thing in the permission sheet.
+    #[serde(default)]
+    pub when: LayerWhen,
+    /// The instruction, verbatim. Never framed by the extension: the host writes
+    /// every header and every scoping sentence around it.
+    pub text: String,
+}
+
+/// Host-evaluated match conditions. Every field is a set; a layer applies when
+/// EVERY non-empty field has a member that matches, so fields intersect and
+/// members alternate.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct LayerWhen {
+    /// Executable stems (`code`) or AppUserModelIDs, matched the same way the
+    /// user's own context profiles match an application.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app: Vec<String>,
+    /// Address-bar hosts. `jira.` is a prefix wildcard, exactly as in Grain's
+    /// own site table, and matching is dot-bounded so `notgithub.com` cannot
+    /// inherit `github.com`'s layer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub website: Vec<String>,
+    /// Detected profile names: `email`, `work`, `casual`, `technical`,
+    /// `ai_chat`, `other`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub category: Vec<String>,
+    /// `single_line` or `multi_line`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+impl LayerWhen {
+    pub fn is_unconditional(&self) -> bool {
+        self.app.is_empty()
+            && self.website.is_empty()
+            && self.category.is_empty()
+            && self.field.is_none()
+    }
+}
+
+/// Hard ceiling on one layer's text, in bytes.
+///
+/// Not a suggestion and not per-extension configurable. Instruction-following
+/// degrades with length well before any context limit, and these ride on every
+/// matching dictation in front of models Grain deliberately keeps small. The
+/// number is the same order as Grain's own profile instructions (~340 bytes),
+/// with room for a rule that genuinely needs two sentences.
+pub const PROMPT_LAYER_MAX_BYTES: usize = 600;
+
+/// Hard ceiling on how many layers ONE extension may declare.
+///
+/// Bounds the review surface, not just the prompt: a pack with forty rules is
+/// one nobody reads before approving.
+pub const PROMPT_LAYERS_MAX_PER_EXTENSION: usize = 12;
+
+/// The detected profiles a `when.category` may name. Mirrors `AppCategory` in
+/// the host; kept as strings because the sdk is the dependency leaf and must not
+/// learn about context detection.
+const LAYER_CATEGORIES: &[&str] = &["email", "work", "casual", "technical", "ai_chat", "other"];
+
+/// Structural validation of contributed prompt layers.
+///
+/// Structural ONLY. Whether the text tries to talk its way up the ladder is a
+/// question about Grain's prompt, so it is asked by the host next to the prompt
+/// code (`prompt_stack::screen_contributed_text`) rather than duplicated here
+/// against a copy of the header list that would drift.
+fn validate_prompt_layers(layers: &[PromptLayerDecl]) -> Result<(), String> {
+    if layers.len() > PROMPT_LAYERS_MAX_PER_EXTENSION {
+        return Err(format!(
+            "an extension may declare at most {PROMPT_LAYERS_MAX_PER_EXTENSION} prompt layers"
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for layer in layers {
+        let id = layer.id.trim();
+        if id.is_empty() {
+            return Err("a prompt layer is missing its id".into());
+        }
+        // `:` is the namespacing separator everywhere else in the contract, so
+        // allowing it here would make a layer's qualified name ambiguous.
+        if id.contains(':') {
+            return Err(format!("prompt layer id '{id}' must not contain ':'"));
+        }
+        if !seen.insert(id) {
+            return Err(format!("duplicate prompt layer id '{id}'"));
+        }
+        let text = layer.text.trim();
+        if text.is_empty() {
+            return Err(format!("prompt layer '{id}' has no text"));
+        }
+        if text.len() > PROMPT_LAYER_MAX_BYTES {
+            return Err(format!(
+                "prompt layer '{id}' is {} bytes; the limit is {PROMPT_LAYER_MAX_BYTES}",
+                text.len()
+            ));
+        }
+        // What the reviewer read must be what the model receives. Bidi overrides
+        // and zero-width characters break that equivalence, and no legitimate
+        // instruction needs them.
+        if let Some(bad) = text.chars().find(|c| is_deceptive_char(*c)) {
+            return Err(format!(
+                "prompt layer '{id}' contains a control or direction-override character (U+{:04X})",
+                bad as u32
+            ));
+        }
+        for category in &layer.when.category {
+            if !LAYER_CATEGORIES.contains(&category.as_str()) {
+                return Err(format!(
+                    "prompt layer '{id}' names unknown category '{category}'"
+                ));
+            }
+        }
+        if let Some(field) = &layer.when.field {
+            if field != "single_line" && field != "multi_line" {
+                return Err(format!(
+                    "prompt layer '{id}' field must be 'single_line' or 'multi_line'"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Characters that let reviewed text render as one thing and tokenize as
+/// another: C0/C1 controls (bar the ordinary whitespace an instruction may
+/// legitimately contain), bidi overrides, and zero-width joiners/spaces.
+fn is_deceptive_char(c: char) -> bool {
+    if c == '\n' || c == '\t' || c == '\r' {
+        return false;
+    }
+    c.is_control()
+        || matches!(c,
+            '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}')
 }
 
 /// A recording mode contributed by one extension (SPEC §1.3, §3.1).
@@ -648,7 +826,15 @@ impl GrainPack {
             }
         }
 
+        validate_prompt_layers(&m.contributes.prompt_layers)?;
+
         // Surfaces and code-backed contributions need code to back them.
+        //
+        // Prompt layers are deliberately NOT in this list: static text plus a
+        // host-evaluated match is exactly the kind of contribution an inert pack
+        // should be able to make, and requiring a runtime for it would push
+        // authors toward code they do not need — which is the more dangerous
+        // outcome, not the safer one.
         let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
@@ -815,6 +1001,86 @@ mod tests {
 
     fn extends_of(json: &str) -> Vec<String> {
         serde_json::from_str::<GrainPack>(json).unwrap().extends()
+    }
+
+    /// A pack declaring `promptLayers`, with the given layer array spliced in.
+    fn pack_with_layers(layers: &str) -> Result<(), String> {
+        pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                "contributes":{{"promptLayers":{layers}}}}}}}"#
+        ))
+    }
+
+    #[test]
+    fn an_inert_pack_may_contribute_a_prompt_layer() {
+        // Static text plus a host-evaluated match is exactly what a tier-A pack
+        // should be able to do. Requiring a runtime for it would push authors
+        // toward code they do not need, which is the more dangerous outcome.
+        assert_eq!(
+            pack_with_layers(
+                r#"[{"id":"jira","when":{"website":["jira."]},
+                     "text":"Write in imperative mood."}]"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_singular_spelling_from_the_spec_still_parses() {
+        assert_eq!(
+            pack(
+                r#"{"manifest":{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                    "contributes":{"promptLayer":[{"id":"a","text":"Be terse."}]}}}"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn prompt_layers_are_bounded_in_count_and_size() {
+        let many: Vec<String> = (0..PROMPT_LAYERS_MAX_PER_EXTENSION + 1)
+            .map(|i| format!(r#"{{"id":"l{i}","text":"Be terse."}}"#))
+            .collect();
+        assert!(pack_with_layers(&format!("[{}]", many.join(","))).is_err());
+
+        let fat = "x".repeat(PROMPT_LAYER_MAX_BYTES + 1);
+        assert!(pack_with_layers(&format!(r#"[{{"id":"a","text":"{fat}"}}]"#)).is_err());
+    }
+
+    #[test]
+    fn prompt_layer_text_may_not_hide_what_a_reviewer_read() {
+        // A right-to-left override can make approved text render as one thing
+        // and tokenize as another; no legitimate instruction needs one. Written
+        // as JSON escapes because rustc refuses the raw codepoints in a source
+        // literal — the same defence, one layer down.
+        let bidi = format!(r#"[{{"id":"a","text":"Be terse.{}evil"}}]"#, '\u{202E}');
+        assert!(pack_with_layers(&bidi).is_err());
+        let zero_width = format!(r#"[{{"id":"a","text":"Be{}terse."}}]"#, '\u{200B}');
+        assert!(pack_with_layers(&zero_width).is_err());
+        // Ordinary line breaks are fine — an instruction may be two sentences.
+        assert_eq!(
+            pack_with_layers(r#"[{"id":"a","text":"Be terse.\nUse British spelling."}]"#),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn prompt_layer_ids_and_match_values_are_checked() {
+        assert!(pack_with_layers(r#"[{"id":"","text":"Be terse."}]"#).is_err());
+        assert!(pack_with_layers(r#"[{"id":"a:b","text":"Be terse."}]"#).is_err());
+        assert!(pack_with_layers(r#"[{"id":"a","text":"  "}]"#).is_err());
+        assert!(pack_with_layers(
+            r#"[{"id":"a","text":"Be terse."},{"id":"a","text":"Be brief."}]"#
+        )
+        .is_err());
+        assert!(
+            pack_with_layers(r#"[{"id":"a","when":{"category":["nope"]},"text":"Be terse."}]"#)
+                .is_err()
+        );
+        assert!(
+            pack_with_layers(r#"[{"id":"a","when":{"field":"sideways"},"text":"Be terse."}]"#)
+                .is_err()
+        );
     }
 
     #[test]

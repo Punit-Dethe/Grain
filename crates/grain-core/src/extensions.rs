@@ -72,6 +72,22 @@ pub struct ExtensionRecord {
     /// Granted capability names (empty for A-inert packs, which need none).
     #[serde(default)]
     pub granted: Vec<String>,
+    /// Fingerprint of the prompt layers the user approved, from
+    /// [`prompt_layers_fingerprint`].
+    ///
+    /// **A prompt layer's text is part of the permission surface.** It changes
+    /// what the model does to the user's own words, and unlike a capability it
+    /// is granted implicitly by installing — so without this, an approved pack
+    /// could change its wording in a routine update and nothing would ask again.
+    /// That is CVE-2025-54136's exact shape ("approval did not survive later
+    /// changes"), and the VS Code marketplace's 2025 incidents were mostly
+    /// ordinary version bumps.
+    ///
+    /// `None` means "never approved" — which is what a registry written before
+    /// this field reads back as, so old records re-prompt rather than
+    /// grandfathering text nobody ever saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_layers_approved: Option<String>,
     /// Exclusive positions this pack's manifest *declares* (SPEC §3.2). Copied
     /// from the manifest at install so occupancy is answerable from memory —
     /// no pack file is ever read to decide who owns a slot.
@@ -106,6 +122,117 @@ pub struct ExtensionRecord {
     /// before 5A reads back as untrusted, never accidentally verified.
     #[serde(default = "default_trust")]
     pub trust: Trust,
+}
+
+/// Fingerprint the declared prompt layers, for the approval check on
+/// [`ExtensionRecord::prompt_layers_approved`].
+///
+/// SHA-256 rather than a cheap hash, because the input is attacker-controlled:
+/// the whole point is to detect a *deliberate* change, so a function whose
+/// collisions can be constructed would let an update carry new wording under the
+/// old approval.
+///
+/// Covers every field that reaches the model or decides when it does — id, text
+/// and the whole match — with length-prefixed framing so two layers cannot be
+/// re-cut into one another and hash the same.
+pub fn prompt_layers_fingerprint(layers: &[grain_sdk::manifest::PromptLayerDecl]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let field = |h: &mut Sha256, s: &str| {
+        h.update((s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    };
+    hasher.update((layers.len() as u64).to_le_bytes());
+    for layer in layers {
+        field(&mut hasher, layer.id.trim());
+        field(&mut hasher, layer.text.trim());
+        // Each list is framed by its own length and closed with a separator, so
+        // moving a value from `app` to `website` — which changes which surfaces
+        // the layer fires on — changes the digest.
+        for list in [
+            &layer.when.app,
+            &layer.when.website,
+            &layer.when.category,
+        ] {
+            hasher.update((list.len() as u64).to_le_bytes());
+            for value in list {
+                field(&mut hasher, value);
+            }
+            hasher.update([0xfeu8]);
+        }
+        field(&mut hasher, layer.when.field.as_deref().unwrap_or(""));
+        hasher.update([0xffu8]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod prompt_layer_fingerprint_tests {
+    use grain_sdk::manifest::{LayerWhen, PromptLayerDecl};
+
+    fn layer(id: &str, text: &str, when: LayerWhen) -> PromptLayerDecl {
+        PromptLayerDecl {
+            id: id.into(),
+            when,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn the_fingerprint_tracks_every_field_that_reaches_the_model() {
+        let base = vec![layer("a", "Write tersely.", LayerWhen::default())];
+        let fp = super::prompt_layers_fingerprint(&base);
+
+        // Same declaration, same digest — an update that changes nothing must
+        // not nag the user.
+        assert_eq!(fp, super::prompt_layers_fingerprint(&base));
+
+        for changed in [
+            vec![layer("a", "Write at length.", LayerWhen::default())],
+            vec![layer("b", "Write tersely.", LayerWhen::default())],
+            vec![layer(
+                "a",
+                "Write tersely.",
+                LayerWhen {
+                    app: vec!["code".into()],
+                    ..Default::default()
+                },
+            )],
+            vec![
+                layer("a", "Write tersely.", LayerWhen::default()),
+                layer("b", "And politely.", LayerWhen::default()),
+            ],
+        ] {
+            assert_ne!(fp, super::prompt_layers_fingerprint(&changed));
+        }
+    }
+
+    #[test]
+    fn moving_a_target_between_lists_changes_the_fingerprint() {
+        // `app: ["acme.com"]` and `website: ["acme.com"]` fire on different
+        // surfaces, so they must not share a digest — the length-prefixed
+        // per-list framing is what makes that true.
+        let as_app = vec![layer(
+            "a",
+            "Write tersely.",
+            LayerWhen {
+                app: vec!["acme.com".into()],
+                ..Default::default()
+            },
+        )];
+        let as_site = vec![layer(
+            "a",
+            "Write tersely.",
+            LayerWhen {
+                website: vec!["acme.com".into()],
+                ..Default::default()
+            },
+        )];
+        assert_ne!(
+            super::prompt_layers_fingerprint(&as_app),
+            super::prompt_layers_fingerprint(&as_site)
+        );
+    }
 }
 
 /// A record's trust when it did not come from a verified index entry. This is
@@ -704,6 +831,7 @@ mod tests {
             toggle_seq: 0,
             installed_version: "1".into(),
             granted: vec![],
+            prompt_layers_approved: None,
             slots: slots.iter().map(|s| s.to_string()).collect(),
             variant_slots: vec![],
             dev: None,

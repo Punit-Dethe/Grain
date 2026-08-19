@@ -47,7 +47,7 @@ use std::fmt::Write as _;
 #[path = "prompt_stack.rs"]
 pub(crate) mod prompt_stack;
 
-use prompt_stack::PromptStack;
+use prompt_stack::{ContributedLayer, PromptStack};
 
 /// [GRAIN] The installed-application catalogue behind the context-profile app
 /// picker.
@@ -378,6 +378,94 @@ fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option
         return (!text.is_empty()).then_some((text, true));
     }
     ctx.category.instruction(settings).map(|text| (text, false))
+}
+
+/// Whether a contributed prompt layer's conditions hold for this surface.
+///
+/// # Why the HOST evaluates this
+///
+/// The obvious alternative — hand the extension the context and let it decide —
+/// would make "add a line to my prompt" a way to read the user's foreground
+/// application and browsing history. Evaluating here means an inert pack can
+/// target Jira without ever being told the user opened Jira, and **the extension
+/// is never informed whether it matched**: no callback, no event, no return
+/// value. Contributing a layer stays strictly weaker than `context:app`, which
+/// is a separate grant with its own permission line.
+///
+/// # Semantics
+///
+/// Fields intersect, members alternate: every non-empty field must have one
+/// member that matches. An empty `when` matches everything, which is legitimate
+/// (a pack whose rule is genuinely universal) and is why the permission sheet
+/// says so loudly.
+///
+/// A conditional layer with **no context at all** does not match. Detection only
+/// runs when context awareness is on, so a targeted layer is inert while that
+/// setting is off — stated here because "my layer never fires" is otherwise a
+/// mystery, and answering it in the UI is a later, separate job.
+pub fn layer_matches(when: &grain_sdk::manifest::LayerWhen, ctx: Option<&ActiveContext>) -> bool {
+    if when.is_unconditional() {
+        return true;
+    }
+    let Some(ctx) = ctx else {
+        return false;
+    };
+    if !when.app.is_empty() {
+        let hit = when.app.iter().any(|target| {
+            let target = target.trim();
+            !target.is_empty()
+                && ((!ctx.exe.is_empty() && target.eq_ignore_ascii_case(&ctx.exe))
+                    || ctx
+                        .aumid
+                        .as_deref()
+                        .is_some_and(|aumid| target.eq_ignore_ascii_case(aumid)))
+        });
+        if !hit {
+            return false;
+        }
+    }
+    if !when.website.is_empty() {
+        // The same confidence bar the user's own site profiles clear. A
+        // `Probable` host was found by scanning the window and can belong to a
+        // tab the user is not typing into — and a layer firing on the wrong
+        // site is worse than one that stays quiet.
+        let host = ctx
+            .url_host
+            .as_deref()
+            .filter(|_| ctx.confidence.allows_site_category());
+        let Some(host) = host else {
+            return false;
+        };
+        let host = host.trim().trim_start_matches("www.");
+        if !when
+            .website
+            .iter()
+            .any(|pattern| host_matches(host, pattern.trim()))
+        {
+            return false;
+        }
+    }
+    if !when.category.is_empty() {
+        let Some(id) = ctx.category.profile_id() else {
+            // `Other` has no profile id, so naming it is the way to target
+            // "a surface Grain has no opinion about".
+            return when.category.iter().any(|c| c == "other");
+        };
+        if !when.category.iter().any(|c| c == id) {
+            return false;
+        }
+    }
+    if let Some(field) = when.field.as_deref() {
+        let want = match field {
+            "single_line" => FieldKind::SingleLine,
+            "multi_line" => FieldKind::MultiLine,
+            _ => return false,
+        };
+        if ctx.field != want {
+            return false;
+        }
+    }
+    true
 }
 
 /// Address-bar host → category. **This is the table that makes context awareness
@@ -2005,6 +2093,7 @@ pub fn compose_prompt(
     settings: &AppSettings,
     ctx: Option<&ActiveContext>,
     spoken_instruction: Option<&str>,
+    contributed: &[ContributedLayer],
 ) -> String {
     let spoken = spoken_instruction
         .map(|s| s.trim())
@@ -2034,7 +2123,7 @@ pub fn compose_prompt(
         .filter(|caret| !caret.is_empty());
     let has_ctx = rule.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
-    if spoken.is_none() && !has_ctx {
+    if spoken.is_none() && !has_ctx && contributed.is_empty() {
         // The quiet case that most looks like a bug: the feature is on,
         // detection may even have succeeded, and the prompt still goes out
         // untouched — because the app resolved to `Other`, which adds nothing by
@@ -2088,15 +2177,55 @@ pub fn compose_prompt(
         }
     }
 
+    // Contributed layers, in the order the caller resolved them (toggle order),
+    // under two ceilings.
+    //
+    // The COUNT ceiling comes first and is the one that matters: multi-
+    // constraint benchmarks show instruction-following falling off past roughly
+    // fifteen constraints, and Grain aims at small local models, so four
+    // third-party rules is already generous next to the two or three Grain adds
+    // itself. Overflow is dropped deterministically and loudly — never silently,
+    // never dependent on which extension happened to load first.
+    let mut spent = 0usize;
+    let mut used = 0usize;
+    for layer in contributed {
+        if used >= prompt_stack::MAX_CONTRIBUTED_LAYERS {
+            log::warn!(
+                "[GRAIN] prompt: dropped layer from {} — at the {} layer ceiling",
+                layer.ext_id,
+                prompt_stack::MAX_CONTRIBUTED_LAYERS
+            );
+            continue;
+        }
+        if spent + layer.text.len() > prompt_stack::MAX_CONTRIBUTED_BYTES {
+            log::warn!(
+                "[GRAIN] prompt: dropped layer from {} — at the {}-byte ceiling",
+                layer.ext_id,
+                prompt_stack::MAX_CONTRIBUTED_BYTES
+            );
+            continue;
+        }
+        if stack.push_extension_layer(&layer.ext_id, &layer.text) {
+            spent += layer.text.len();
+            used += 1;
+        } else {
+            log::warn!(
+                "[GRAIN] prompt: refused layer from {} — text failed the contribution screen",
+                layer.ext_id
+            );
+        }
+    }
+
     stack.push_base(base);
 
     if let Some(caret) = caret {
         stack.push_caret_fit(&caret.before, &caret.after);
     }
 
-    // Added only when a context layer was applied, so plain dictation remains
-    // byte-for-byte unchanged.
-    if has_ctx {
+    // Added whenever anything was layered in front of the base prompt, so plain
+    // dictation remains byte-for-byte unchanged and anything that added
+    // reference material is followed by the constraint that stops it leaking.
+    if has_ctx || used > 0 {
         stack.push_contract();
     }
 
@@ -3443,6 +3572,19 @@ mod site_table_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `compose_prompt` with no contributed layers — the shape almost every
+    /// test here wants, kept as a helper so adding a parameter to the real
+    /// function does not mean editing forty call sites.
+    fn compose(
+        base: &str,
+        settings: &AppSettings,
+        ctx: Option<&ActiveContext>,
+        spoken: Option<&str>,
+    ) -> String {
+        compose_prompt(base, settings, ctx, spoken, &[])
+    }
+
     use grain_core::AppSettings;
 
     fn ctx(exe: &str, category: AppCategory) -> ActiveContext {
@@ -3655,7 +3797,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("chrome", AppCategory::Other);
         c.field = FieldKind::SingleLine;
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
         assert!(out.contains("SINGLE-LINE"));
         assert!(out.contains("do not add a trailing period"));
     }
@@ -3668,7 +3810,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("winword", AppCategory::Work);
         c.field = FieldKind::MultiLine;
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
         assert!(!out.contains("SINGLE-LINE"));
     }
 
@@ -3683,7 +3825,7 @@ mod tests {
             before: "We agreed the release ".into(),
             after: " before the holidays.".into(),
         });
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
 
         assert!(out.contains("We agreed the release"));
         assert!(out.contains("before the holidays."));
@@ -3709,7 +3851,7 @@ mod tests {
             before: "Dear Rita,".into(),
             after: "Regards".into(),
         });
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(!out.contains("<before_text>"));
         assert!(!out.contains("<after_text>"));
     }
@@ -3725,7 +3867,7 @@ mod tests {
             before: "Dear Rita,".into(),
             after: String::new(),
         });
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(out.contains("L:Dear Rita,"));
         assert!(!out.contains("R:"));
     }
@@ -3742,13 +3884,13 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("unknownapp", AppCategory::Other);
         c.caret = Some(CaretContext::default());
-        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&c), None), "BASE");
 
         c.caret = Some(CaretContext {
             before: "  ".into(),
             after: "\t".into(),
         });
-        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&c), None), "BASE");
     }
 
     #[test]
@@ -3948,12 +4090,12 @@ mod tests {
     fn context_always_ends_with_the_output_constraint() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
+        let out = compose("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
         assert!(out.trim_end().ends_with("no notes, no explanation."));
 
         // …and a prompt with NO context added stays byte-for-byte the base.
         let bare = ctx("unknownapp", AppCategory::Other);
-        assert_eq!(compose_prompt("BASE", &s, Some(&bare), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&bare), None), "BASE");
     }
 
     /// Off means off: with the opt-in disabled nothing is captured, so no caret
@@ -3963,7 +4105,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let c = ctx("unknownapp", AppCategory::Other); // no soft line, no terms
-        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&c), None), "BASE");
     }
 
     /// The spoken instruction still outranks the seam, same as every other layer.
@@ -3976,7 +4118,7 @@ mod tests {
             before: "before".into(),
             after: "after".into(),
         });
-        let out = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
+        let out = compose("BASE", &s, Some(&c), Some("make it a haiku"));
         let spoken = out.find("make it a haiku").unwrap();
         let seam = out.find("L:before").unwrap();
         assert!(spoken < seam, "spoken instruction must precede the seam");
@@ -3992,14 +4134,14 @@ mod tests {
         let mut exact = ctx("chrome", AppCategory::Email);
         exact.url_host = Some("mail.google.com".into());
         exact.confidence = Confidence::Exact;
-        let out = compose_prompt("BASE", &s, Some(&exact), None);
+        let out = compose("BASE", &s, Some(&exact), None);
         assert!(out.contains("website: mail.google.com"));
 
         // Same host, weaker evidence: it may have come from another tab, so the
         // prompt must not claim it.
         let mut probable = exact.clone();
         probable.confidence = Confidence::Probable;
-        let out = compose_prompt("BASE", &s, Some(&probable), None);
+        let out = compose("BASE", &s, Some(&probable), None);
         assert!(!out.contains("website:"));
     }
 
@@ -4019,12 +4161,12 @@ mod tests {
 
         let mut main = ctx("chrome", AppCategory::Work);
         main.region = Some("main".into());
-        assert!(!compose_prompt("BASE", &s, Some(&main), None).contains("page region"));
+        assert!(!compose("BASE", &s, Some(&main), None).contains("page region"));
 
         let mut side = ctx("chrome", AppCategory::Work);
         side.region = Some("complementary".into());
         assert!(
-            compose_prompt("BASE", &s, Some(&side), None).contains("page region: complementary")
+            compose("BASE", &s, Some(&side), None).contains("page region: complementary")
         );
     }
 
@@ -4121,12 +4263,12 @@ mod tests {
                 instruction: "Write it like a pirate.".into(),
             });
         let c = ctx("outlook", AppCategory::Email);
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(out.contains("Write it like a pirate."));
         assert!(!out.contains("An email composer."));
         // An untouched profile is unaffected by its neighbour's edit.
         let t = ctx("code", AppCategory::Technical);
-        assert!(compose_prompt("BASE", &s, Some(&t), None).contains("exactly as spoken"));
+        assert!(compose("BASE", &s, Some(&t), None).contains("exactly as spoken"));
     }
 
     fn custom(id: &str, instruction: &str, kind: &str, value: &str) -> CustomContextProfile {
@@ -4151,7 +4293,7 @@ mod tests {
             .push(custom("p1", "Speak only in haiku.", "application", "code"));
 
         let claimed = ctx("code", AppCategory::Technical);
-        let out = compose_prompt("BASE", &s, Some(&claimed), None);
+        let out = compose("BASE", &s, Some(&claimed), None);
         assert!(out.contains("Speak only in haiku."));
         assert!(
             !out.contains("exactly as spoken"),
@@ -4160,7 +4302,7 @@ mod tests {
 
         // A different app in the same built-in category is untouched.
         let other = ctx("nvim", AppCategory::Technical);
-        assert!(compose_prompt("BASE", &s, Some(&other), None).contains("exactly as spoken"));
+        assert!(compose("BASE", &s, Some(&other), None).contains("exactly as spoken"));
     }
 
     /// A profile with exactly one target is how "this app gets its own
@@ -4175,7 +4317,7 @@ mod tests {
         let c = ctx("figma", AppCategory::Other);
         // `Other` normally adds nothing at all; the profile is what gives this
         // surface an instruction.
-        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Terse."));
+        assert!(compose("BASE", &s, Some(&c), None).contains("Terse."));
     }
 
     /// The authority fix.
@@ -4191,7 +4333,7 @@ mod tests {
         s.context_awareness_enabled = true;
         s.context_custom_profiles
             .push(custom("solo", "Bullet points only.", "application", "figma"));
-        let out = compose_prompt("BASE", &s, Some(&ctx("figma", AppCategory::Other)), None);
+        let out = compose("BASE", &s, Some(&ctx("figma", AppCategory::Other)), None);
 
         assert!(out.contains("Your rule for this app"));
         assert!(!out.contains("Soft context (tone"));
@@ -4210,7 +4352,7 @@ mod tests {
             context_awareness_enabled: true,
             ..Default::default()
         };
-        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
+        let out = compose("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
 
         assert!(out.contains("Soft context (tone"));
         assert!(!out.contains("Your rule for this app"));
@@ -4230,14 +4372,132 @@ mod tests {
         };
         let c = ctx("code", AppCategory::Technical);
 
-        let without = compose_prompt("BASE", &s, Some(&c), None);
+        let without = compose("BASE", &s, Some(&c), None);
         assert!(!without.contains("the spoken instruction"));
 
-        let with = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
+        let with = compose("BASE", &s, Some(&c), Some("make it a haiku"));
         assert!(with.contains(
             "Priority when instructions conflict: the spoken instruction first, then the base \
              cleanup rules, then soft context."
         ));
+    }
+
+    fn when(json: &str) -> grain_sdk::manifest::LayerWhen {
+        serde_json::from_str(json).expect("valid when clause")
+    }
+
+    #[test]
+    fn an_unconditional_layer_matches_even_with_no_context() {
+        assert!(layer_matches(&when("{}"), None));
+    }
+
+    #[test]
+    fn a_targeted_layer_needs_a_context_to_match() {
+        // Detection only runs when context awareness is on, so a targeted layer
+        // is inert while that setting is off. Asserted rather than assumed:
+        // "my layer never fires" is otherwise a mystery.
+        assert!(!layer_matches(&when(r#"{"app":["code"]}"#), None));
+    }
+
+    #[test]
+    fn layer_fields_intersect_and_members_alternate() {
+        let mut c = ctx("code", AppCategory::Technical);
+        c.field = FieldKind::MultiLine;
+
+        assert!(layer_matches(&when(r#"{"app":["nvim","code"]}"#), Some(&c)));
+        assert!(!layer_matches(&when(r#"{"app":["nvim"]}"#), Some(&c)));
+        // Both fields must hold, not either.
+        assert!(layer_matches(
+            &when(r#"{"app":["code"],"category":["technical"]}"#),
+            Some(&c)
+        ));
+        assert!(!layer_matches(
+            &when(r#"{"app":["code"],"category":["email"]}"#),
+            Some(&c)
+        ));
+        assert!(layer_matches(&when(r#"{"field":"multi_line"}"#), Some(&c)));
+        assert!(!layer_matches(&when(r#"{"field":"single_line"}"#), Some(&c)));
+    }
+
+    #[test]
+    fn a_layer_site_match_is_dot_bounded_and_needs_exact_confidence() {
+        let mut c = ctx("chrome", AppCategory::Other);
+        c.url_host = Some("jira.acme.com".into());
+        c.confidence = Confidence::Exact;
+
+        assert!(layer_matches(&when(r#"{"website":["jira."]}"#), Some(&c)));
+        assert!(layer_matches(
+            &when(r#"{"website":["acme.com"]}"#),
+            Some(&c)
+        ));
+        // The attack the dot boundary exists for.
+        c.url_host = Some("notacme.com".into());
+        assert!(!layer_matches(
+            &when(r#"{"website":["acme.com"]}"#),
+            Some(&c)
+        ));
+
+        // A host found by scanning the window can belong to a tab the user is
+        // not typing into, so it may not fire a third party's layer.
+        c.url_host = Some("jira.acme.com".into());
+        c.confidence = Confidence::Probable;
+        assert!(!layer_matches(&when(r#"{"website":["jira."]}"#), Some(&c)));
+    }
+
+    #[test]
+    fn contributed_layers_are_capped_by_count_then_bytes() {
+        let s = AppSettings::default();
+        let many: Vec<ContributedLayer> = (0..8)
+            .map(|i| ContributedLayer {
+                ext_id: format!("com.acme.p{i}"),
+                text: format!("Rule number {i}."),
+            })
+            .collect();
+        let out = compose_prompt("BASE", &s, None, None, &many);
+        let applied = out.matches("(com.acme.p").count();
+        assert_eq!(
+            applied,
+            prompt_stack::MAX_CONTRIBUTED_LAYERS,
+            "the count ceiling is what protects instruction-following"
+        );
+
+        let fat = vec![
+            ContributedLayer {
+                ext_id: "com.acme.big".into(),
+                text: "x".repeat(prompt_stack::MAX_CONTRIBUTED_BYTES),
+            },
+            ContributedLayer {
+                ext_id: "com.acme.small".into(),
+                text: "Prefer British spelling.".into(),
+            },
+        ];
+        let out = compose_prompt("BASE", &s, None, None, &fat);
+        assert!(out.contains("(com.acme.big)"));
+        assert!(
+            !out.contains("(com.acme.small)"),
+            "the byte ceiling drops the overflow"
+        );
+    }
+
+    #[test]
+    fn contributed_layers_apply_without_context_awareness() {
+        // An unconditional layer is its own feature, not part of context
+        // awareness, so it must not be gated on that toggle — and whatever adds
+        // reference material must still be followed by the output contract.
+        let s = AppSettings::default();
+        assert!(!s.context_awareness_enabled);
+        let out = compose_prompt(
+            "BASE",
+            &s,
+            None,
+            None,
+            &[ContributedLayer {
+                ext_id: "com.acme.jira".into(),
+                text: "Write in imperative mood.".into(),
+            }],
+        );
+        assert!(out.contains("(com.acme.jira) Write in imperative mood."));
+        assert!(out.contains("Output ONLY the corrected transcript"));
     }
 
     /// A packaged (Store / MSIX) app is named by its AppUserModelID, because it
@@ -4254,13 +4514,13 @@ mod tests {
 
         let mut c = ctx("notepad", AppCategory::Other);
         c.aumid = Some(NOTEPAD.to_string());
-        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Plain text only."));
+        assert!(compose("BASE", &s, Some(&c), None).contains("Plain text only."));
 
         // …and a different packaged app with the same-looking exe stem does not
         // inherit it, which is the whole reason the AppUserModelID is stored.
         let mut other = ctx("notepad", AppCategory::Other);
         other.aumid = Some("SomeVendor.NotepadClone_abc123!App".to_string());
-        assert!(!compose_prompt("BASE", &s, Some(&other), None).contains("Plain text only."));
+        assert!(!compose("BASE", &s, Some(&other), None).contains("Plain text only."));
     }
 
     /// The two identities must not bleed into one another: a desktop app is
@@ -4276,7 +4536,7 @@ mod tests {
 
         let mut c = ctx("someotherapp", AppCategory::Other);
         c.aumid = Some("Contoso.Code_8wekyb3d8bbwe!App".to_string());
-        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("Syntax intact."));
+        assert!(!compose("BASE", &s, Some(&c), None).contains("Syntax intact."));
     }
 
     /// A site claim beats an app claim, mirroring the built-in rule: "Chrome"
@@ -4294,7 +4554,7 @@ mod tests {
         let mut c = ctx("chrome", AppCategory::Other);
         c.url_host = Some("figma.com".into());
         c.confidence = Confidence::Exact;
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(out.contains("SITE RULE"));
         assert!(!out.contains("APP RULE"));
     }
@@ -4311,7 +4571,7 @@ mod tests {
         let mut c = ctx("chrome", AppCategory::Other);
         c.url_host = Some("figma.com".into());
         c.confidence = Confidence::Probable;
-        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+        assert!(!compose("BASE", &s, Some(&c), None).contains("SITE RULE"));
     }
 
     /// Subdomains inherit, so claiming `figma.com` covers the app subdomain —
@@ -4326,9 +4586,9 @@ mod tests {
         c.confidence = Confidence::Exact;
 
         c.url_host = Some("www.figma.com".into());
-        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+        assert!(compose("BASE", &s, Some(&c), None).contains("SITE RULE"));
         c.url_host = Some("notfigma.com".into());
-        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+        assert!(!compose("BASE", &s, Some(&c), None).contains("SITE RULE"));
     }
 
     /// The card's icon stack is only as good as these: each must be a real
@@ -4383,7 +4643,7 @@ mod tests {
         s.context_custom_profiles
             .push(custom("mute", "  ", "application", "code"));
         let c = ctx("code", AppCategory::Technical);
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(!out.contains("exactly as spoken"));
     }
 
@@ -4406,7 +4666,7 @@ mod tests {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE PROMPT ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Technical)), None),
+            compose(base, &s, Some(&ctx("code", AppCategory::Technical)), None),
             base
         );
     }
@@ -4417,7 +4677,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("unknownapp", AppCategory::Other)), None),
+            compose(base, &s, Some(&ctx("unknownapp", AppCategory::Other)), None),
             base
         );
     }
@@ -4427,7 +4687,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
-        let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Technical)), None);
+        let out = compose(base, &s, Some(&ctx("code", AppCategory::Technical)), None);
         assert!(out.starts_with("[Context awareness]"));
         assert!(out.contains("code editor"));
         // The base survives verbatim; the terminal output constraint follows it
@@ -4466,7 +4726,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("unknownapp", AppCategory::Other);
         c.nearby_terms = vec!["Rita".into(), "PyTorch".into()];
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
         assert!(out.contains("Nearby terms"));
         assert!(out.contains("Rita, PyTorch"));
     }
@@ -4475,7 +4735,7 @@ mod tests {
     fn spoken_instruction_added_even_with_context_off() {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE ${output}";
-        let out = compose_prompt(base, &s, None, Some("  make it a haiku  "));
+        let out = compose(base, &s, None, Some("  make it a haiku  "));
         assert!(out.starts_with("[Spoken instruction"));
         assert!(out.contains("HIGHEST PRIORITY"));
         assert!(out.contains("make it a haiku")); // trimmed, present
@@ -4486,15 +4746,15 @@ mod tests {
     fn blank_spoken_instruction_is_ignored() {
         let s = AppSettings::default();
         let base = "BASE";
-        assert_eq!(compose_prompt(base, &s, None, Some("   ")), base);
-        assert_eq!(compose_prompt(base, &s, None, None), base);
+        assert_eq!(compose(base, &s, None, Some("   ")), base);
+        assert_eq!(compose(base, &s, None, None), base);
     }
 
     #[test]
     fn spoken_instruction_outranks_soft_context() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let out = compose_prompt(
+        let out = compose(
             "BASE ${output}",
             &s,
             Some(&ctx("code", AppCategory::Technical)),

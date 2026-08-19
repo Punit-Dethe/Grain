@@ -391,6 +391,20 @@ struct Index {
     by_event: HashMap<String, Vec<String>>,
     /// `onTransform` extensions, already sorted into toggle order.
     transforms: Vec<String>,
+    /// Contributed prompt layers, already sorted into toggle order and already
+    /// screened. Held here rather than read from the manifest at dictation time
+    /// for the usual reason — the post-process path must not touch the disk —
+    /// and screened here rather than at render time so a pack whose text was
+    /// edited on disk after import never reaches the prompt at all.
+    prompt_layers: Vec<CompiledPromptLayer>,
+}
+
+/// An enabled extension's prompt layer, compiled for matching.
+struct CompiledPromptLayer {
+    ext_id: String,
+    layer_id: String,
+    when: grain_sdk::manifest::LayerWhen,
+    text: String,
 }
 
 /// Guards so the common case — no scripted extension enabled — costs exactly
@@ -399,6 +413,9 @@ struct Index {
 /// `OnceLock` deref.
 static HAS_ACTIVATIONS: AtomicBool = AtomicBool::new(false);
 static HAS_TRANSFORMS: AtomicBool = AtomicBool::new(false);
+/// Same guard for prompt layers: with none installed, a dictation pays one
+/// relaxed atomic load and never takes the index lock.
+static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
 
 struct HostState {
     app: AppHandle,
@@ -419,6 +436,7 @@ pub fn refresh_index(app: &AppHandle) {
     };
     let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
     let mut transforms: Vec<(String, u64)> = Vec::new();
+    let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
     let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -426,10 +444,17 @@ pub fn refresh_index(app: &AppHandle) {
             if !rec.enabled {
                 continue;
             }
-            let pack = match load_manifest(app, &rec.id) {
-                Some(p) if p.has_runtime() => p,
-                _ => continue,
+            let Some(pack) = load_manifest(app, &rec.id) else {
+                continue;
             };
+            // Prompt layers are collected BEFORE the runtime filter: an inert
+            // tier-A pack contributing static text is the shape this feature
+            // exists for, and requiring a runtime for it would push authors
+            // toward code they do not need.
+            collect_prompt_layers(&rec, &pack, &mut prompt_layers);
+            if !pack.has_runtime() {
+                continue;
+            }
             let mut granted_variants = Vec::new();
             for variant in declared_event_variants(&pack.manifest.activation) {
                 let Some(capability) = daemon_event_capability(&variant) else {
@@ -467,17 +492,25 @@ pub fn refresh_index(app: &AppHandle) {
     }
     transforms.sort_by_key(|(_, seq)| *seq);
     let transforms: Vec<String> = transforms.into_iter().map(|(id, _)| id).collect();
+    // Toggle order (SPEC §4.4) is the ordering everywhere else contributions
+    // compete, and it is the only one the user can actually change.
+    prompt_layers.sort_by_key(|(_, seq)| *seq);
+    let prompt_layers: Vec<CompiledPromptLayer> =
+        prompt_layers.into_iter().map(|(l, _)| l).collect();
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
+    HAS_PROMPT_LAYERS.store(!prompt_layers.is_empty(), Ordering::Relaxed);
     log::debug!(
-        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s)",
+        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s), {} prompt layer(s)",
         by_event.len(),
-        transforms.len()
+        transforms.len(),
+        prompt_layers.len()
     );
     *host.index.write().unwrap() = Index {
         by_event,
         transforms,
+        prompt_layers,
     };
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
@@ -496,6 +529,89 @@ pub fn refresh_index(app: &AppHandle) {
             spawn_worker(app, &id, &pack, granted, None);
         }
     }
+}
+
+/// Compile one enabled extension's declared prompt layers into the index.
+///
+/// Two gates, both of which must hold every rebuild rather than once at import:
+///
+/// 1. **The approved text is the text.** A layer whose wording no longer matches
+///    what the user approved is skipped entirely. This is the rug pull —
+///    CVE-2025-54136 is exactly "approval of a definition did not survive a
+///    later change to it", and the VS Code marketplace shipped the same shape
+///    repeatedly through routine version bumps. Grain already holds an extension
+///    for a widened *capability*; a prompt layer changes what the model does to
+///    the user's words, so it belongs to the same permission surface.
+/// 2. **The screen runs again here.** It ran at import too, but import and
+///    dictation are different moments and a pack file can be edited in between.
+///
+/// Both failures are logged and skipped, never repaired: text that has drifted
+/// from what the user agreed to is not something to sanitise and use anyway.
+fn collect_prompt_layers(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    out: &mut Vec<(CompiledPromptLayer, u64)>,
+) {
+    let declared = &pack.manifest.contributes.prompt_layers;
+    if declared.is_empty() {
+        return;
+    }
+    let approved = grain_core::extensions::prompt_layers_fingerprint(declared);
+    if rec.prompt_layers_approved.as_deref() != Some(approved.as_str()) {
+        log::warn!(
+            "[ext:{}] prompt layers not applied — the declared text differs from what was \
+             approved; the user must review it again",
+            rec.id
+        );
+        return;
+    }
+    for layer in declared {
+        let text = layer.text.trim();
+        if let Err(why) = crate::context_detect::prompt_stack::screen_contributed_text(text) {
+            log::warn!("[ext:{}] prompt layer '{}' refused: {why}", rec.id, layer.id);
+            continue;
+        }
+        out.push((
+            CompiledPromptLayer {
+                ext_id: rec.id.clone(),
+                layer_id: layer.id.clone(),
+                when: layer.when.clone(),
+                text: text.to_string(),
+            },
+            rec.toggle_seq,
+        ));
+    }
+}
+
+/// The contributed layers that apply to this surface, in toggle order.
+///
+/// Called once per finalized transcript, off the paste path. With no prompt
+/// layers installed — the overwhelmingly common case — this is one relaxed
+/// atomic load and an empty vector: no lock, no disk, no clone of the registry.
+pub fn matching_prompt_layers(
+    app: &AppHandle,
+    ctx: Option<&crate::context_detect::ActiveContext>,
+) -> Vec<crate::context_detect::prompt_stack::ContributedLayer> {
+    let _ = app;
+    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let index = host.index.read().unwrap();
+    index
+        .prompt_layers
+        .iter()
+        .filter(|l| crate::context_detect::layer_matches(&l.when, ctx))
+        .map(|l| {
+            log::info!("[ext:{}] prompt layer '{}' applies", l.ext_id, l.layer_id);
+            crate::context_detect::prompt_stack::ContributedLayer {
+                ext_id: l.ext_id.clone(),
+                text: l.text.clone(),
+            }
+        })
+        .collect()
 }
 
 /// Supervisor → worker: create a Web Worker for this extension.
@@ -1510,6 +1626,16 @@ pub fn reload_dev_extension(
         granted: granted.clone(),
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: prior.variant_slots,
+        // A hot reload re-approves, for the same reason the initial dev load
+        // does: this is the author's own project on their own disk, and the
+        // prompt text is the thing they are iterating on.
+        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
+            || {
+                grain_core::extensions::prompt_layers_fingerprint(
+                    &loaded.pack.manifest.contributes.prompt_layers,
+                )
+            },
+        ),
         dev: prior.dev,
         // A dev hot-reload preserves the record's rung (a load-unpacked project
         // is `dev`); trust is never changed by a reload.

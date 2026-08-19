@@ -117,8 +117,17 @@ pub(crate) async fn post_process_transcription(
     } else {
         None
     };
-    let prompt =
-        crate::context_detect::compose_prompt(&prompt, settings, ctx.as_ref(), spoken_prompt);
+    // Contributed layers are resolved HERE, where the context already exists,
+    // and matched by the host — the extension is never told what surface the
+    // user is on, nor whether its layer fired. See `context_detect::layer_matches`.
+    let contributed = crate::extension_host::matching_prompt_layers(app, ctx.as_ref());
+    let prompt = crate::context_detect::compose_prompt(
+        &prompt,
+        settings,
+        ctx.as_ref(),
+        spoken_prompt,
+        &contributed,
+    );
 
     // [GRAIN] Smart rotation: fan out across ENABLED post-process providers
     // (round-robin + per-provider daily quota + failover). Independent of STT —
@@ -214,13 +223,18 @@ const SCAFFOLDING_MARKERS: &[&str] = &[
     "immediately after:",
     "Reference only — the text already around the cursor",
     "Never output any part of them",
-    "[Cursor fit]",
-    "[Cursor fit — REQUIRED]",
+    // The PREFIX, not the two exact spellings that used to be listed here:
+    // `[Cursor fit]` and `[Cursor fit — REQUIRED]` were both enumerated, so a
+    // third wording would have leaked undetected until someone remembered to
+    // add it. Caught by `every_prompt_header_is_a_scaffolding_marker`.
+    "[Cursor fit",
     "Use L/R only to make the transcript fit at the cursor",
     "Treat the transcript as an insertion between L and R",
     // Context-awareness block headers.
     "[Context awareness]",
     "[Spoken instruction",
+    "[Extension rules]",
+    "Rules contributed by installed extensions",
     "Soft context (tone",
     // The user-authored half of the same layer. A custom profile is the user's
     // own rule for an app they named, so it is delivered with their authority
@@ -229,6 +243,11 @@ const SCAFFOLDING_MARKERS: &[&str] = &[
     "Your rule for this app",
     "Nearby terms the user may be referring to",
     "Priority when instructions conflict",
+    // The framing paragraph that closes the context/extension blocks. It is
+    // prose in front of a model asked to return prose, which is exactly the
+    // shape that leaked into a draft once — and it was missing here until the
+    // header/marker cross-check went in.
+    "Apply the above as guidance over the cleanup rules below",
     // Rolling seam layer, current and retired forms.
     "[Live dictation]",
     "This text was joined from speech segments",
@@ -279,13 +298,24 @@ mod scaffolding_tests {
     /// test instead of a corrupted document three releases later.
     #[test]
     fn every_prompt_header_is_a_scaffolding_marker() {
-        let stack = crate::context_detect::prompt_stack::PromptStack::every_layer_for_test();
-        for layer in stack.layers() {
+        use crate::context_detect::prompt_stack;
+        for layer in prompt_stack::PromptStack::every_layer_for_test().layers() {
             let Some(header) = layer.header else { continue };
             assert!(
                 reply_contains_scaffolding(header),
                 "prompt header has no scaffolding marker, so a leak of it would go \
                  undetected: {header:?}"
+            );
+        }
+        // The block headers the renderer writes are not on any layer, so they
+        // are covered through the list that a contributed layer is forbidden to
+        // imitate. The two lists answer opposite directions of the same
+        // question — what may not go IN, and what must be caught coming OUT —
+        // and every entry belongs in both.
+        for marker in prompt_stack::HOST_MARKERS {
+            assert!(
+                reply_contains_scaffolding(marker),
+                "host marker has no scaffolding marker: {marker:?}"
             );
         }
     }

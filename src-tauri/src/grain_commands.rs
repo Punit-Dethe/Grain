@@ -1026,6 +1026,47 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     return Err(serde_json::json!({ "needsPermissions": missing }).to_string());
                 }
             }
+            // [GRAIN] The same Chrome model, applied to contributed prompt text.
+            //
+            // A prompt layer needs no capability — that is what makes it the
+            // safe way to contribute — so nothing above would catch a pack that
+            // ships harmless wording, gets approved, and changes it in an
+            // update. That is the rug pull (CVE-2025-54136), and the answer is
+            // that the TEXT is part of what was approved: if it no longer
+            // matches, the extension is held and the user reads the new wording
+            // before it can shape a single dictation.
+            //
+            // Applies to inert packs too, deliberately — a tier-A pack with a
+            // prompt layer is exactly the case the permission sheet would
+            // otherwise never see.
+            if enabled {
+                let declared = &pack.manifest.contributes.prompt_layers;
+                if !declared.is_empty() {
+                    let fingerprint = ext::prompt_layers_fingerprint(declared);
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|r| r.prompt_layers_approved)
+                        .unwrap_or_default();
+                    if approved != fingerprint {
+                        let layers: Vec<serde_json::Value> = declared
+                            .iter()
+                            .map(|l| {
+                                serde_json::json!({
+                                    "id": l.id,
+                                    "text": l.text,
+                                    "everywhere": l.when.is_unconditional(),
+                                    "app": l.when.app,
+                                    "website": l.when.website,
+                                    "category": l.when.category,
+                                })
+                            })
+                            .collect();
+                        return Err(
+                            serde_json::json!({ "needsPromptLayers": layers }).to_string()
+                        );
+                    }
+                }
+            }
             // [GRAIN] SPEC §3.2: at most one enabled occupant per slot, and a
             // contested claim reaches the user as an explicit takeover — never
             // a silent steal, never load-order dependent. Same structured-error
@@ -1222,6 +1263,15 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         granted,
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: Vec::new(),
+        // Dev records approve their own prompt layers. The user pointed Grain
+        // at a folder on their own disk, which is the same act as approving it,
+        // and the alternative is a permission sheet on every iteration of a
+        // sentence the author is actively writing. Store and manual-import
+        // packs get no such shortcut — see `extension_import_pack`.
+        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
+            .then(|| {
+                ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers)
+            }),
         dev: None,
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
@@ -1665,6 +1715,12 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
             .map(|r| r.granted.clone())
             .unwrap_or_default(),
         slots: pack.manifest.slots.clone(),
+        // A manually imported pack is a third-party file, so its prompt text is
+        // NOT approved by importing it: the prior approval is carried forward
+        // and a re-import with changed wording therefore stops matching, holds
+        // the enable, and shows the user what changed. This is the update path
+        // the rug-pull incidents of 2025 walked through.
+        prompt_layers_approved: prior.as_ref().and_then(|r| r.prompt_layers_approved.clone()),
         // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
         // that they are externalised — the Agent centre layout ships as a real
         // pack rather than a host-synthesised record.
@@ -1789,12 +1845,20 @@ pub async fn extension_host_call(
         })
 }
 
-/// Record the user's approval of a scripted extension's capabilities (SPEC §6).
-/// Called by the permission sheet on Approve; the caller then retries enable.
+/// Record the user's approval of what an extension asked for (SPEC §6) —
+/// capabilities, and the prompt layers it contributes. Called by the permission
+/// sheet on Approve; the caller then retries enable.
 ///
 /// Grants are clamped to what the manifest actually requests, so neither a
 /// compromised frontend nor a stale sheet can widen an extension's reach beyond
 /// what the user was shown.
+///
+/// **Prompt layers are approved here too**, by the same act and with no
+/// parameter of their own: the approved value is recomputed from the pack on
+/// disk, so what gets recorded is necessarily the text the sheet just rendered
+/// and never something the caller supplies. An inert pack whose only ask is a
+/// prompt layer therefore approves through `extension_grant(id, [])` — one
+/// approval act rather than a second command that could drift from this one.
 #[tauri::command]
 #[specta::specta]
 pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> Result<(), String> {
@@ -1805,8 +1869,11 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     let mut rec = reg
         .record(&id)
         .ok_or_else(|| format!("'{id}' is not installed"))?;
-    let requested = load_pack(&app, &id)?.manifest.permissions;
-    if let Some(extra) = permissions.iter().find(|p| !requested.contains(p)) {
+    let manifest = load_pack(&app, &id)?.manifest;
+    if let Some(extra) = permissions
+        .iter()
+        .find(|p| !manifest.permissions.contains(p))
+    {
         return Err(format!("'{extra}' is not requested by this extension"));
     }
     for p in permissions {
@@ -1814,6 +1881,8 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
             rec.granted.push(p);
         }
     }
+    rec.prompt_layers_approved = (!manifest.contributes.prompt_layers.is_empty())
+        .then(|| ext::prompt_layers_fingerprint(&manifest.contributes.prompt_layers));
     reg.install(rec).map_err(|e| e.to_string())
 }
 
