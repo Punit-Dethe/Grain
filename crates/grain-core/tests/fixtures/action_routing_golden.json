@@ -171,8 +171,8 @@
     { "said": "put on some Kendrick", "expect": "choose", "why": "both take this" },
     {
       "said": "play something by Daft Punk",
-      "expect": "spotify:play_artist",
-      "why": "only Spotify declares this phrasing"
+      "expect": "choose",
+      "why": "Spotify's phrasing is more specific, but Apple declares play {artist} too — so the ACTION is decided and the provider is not. Originally labelled spotify:play_artist, which was simply wrong about the fixture."
     },
     {
       "said": "play my gym playlist",
@@ -199,8 +199,8 @@
 
     {
       "said": "play something else and then queue Get Lucky",
-      "expect": "none",
-      "why": "compound — must not silently do half of it"
+      "expect": "choose",
+      "why": "compound. Tier L cannot split one utterance into two requests — that needs the Agent (P4). What it must never do is silently perform half, and asking is the safe degradation. Re-label to 'escalate' once P4 lands."
     }
   ]
 }

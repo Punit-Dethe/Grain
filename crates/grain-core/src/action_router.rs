@@ -20,7 +20,7 @@
 //! session, and execution. Those are P1, and keeping them out means this file
 //! can be measured before any of it exists.
 
-use grain_sdk::manifest::{parse_utterance, ActionDecl, UtterancePart};
+use grain_sdk::manifest::{parse_utterance, ActionDecl, ActionRisk, UtterancePart};
 use std::collections::HashMap;
 
 /// One installed action, flattened out of its extension for ranking.
@@ -34,6 +34,16 @@ pub struct IndexedAction {
     pub extension_id: String,
     pub action_id: String,
     pub domain: String,
+    /// The permission-sheet line, carried so the chooser and the read-back can
+    /// name the action without going back to the manifest on the felt path.
+    pub title: String,
+    /// Whether performing this needs a read-back. Carried here so the decision
+    /// layer never has to look it up — an action that reaches `Execute` with the
+    /// wrong risk is the one bug in this feature with no recovery.
+    pub risk: ActionRisk,
+    /// Names of parameters that must be filled before this can run. An empty
+    /// span for one of these is the chooser's business, not a guess.
+    pub required_params: Vec<String>,
     /// Pre-parsed templates, in declaration order. Parsed once at index build:
     /// the router must never parse a template on the felt path.
     pub templates: Vec<Vec<UtterancePart>>,
@@ -49,6 +59,14 @@ impl IndexedAction {
             extension_id: extension_id.to_string(),
             action_id: decl.id.trim().to_string(),
             domain: decl.domain.trim().to_string(),
+            title: decl.title.trim().to_string(),
+            risk: decl.risk,
+            required_params: decl
+                .params
+                .iter()
+                .filter(|p| p.required)
+                .map(|p| p.name.trim().to_string())
+                .collect(),
             templates: decl
                 .utterances
                 .iter()
@@ -114,6 +132,65 @@ pub fn normalise(text: &str) -> String {
 
 fn tokens(text: &str) -> Vec<&str> {
     text.split(' ').filter(|t| !t.is_empty()).collect()
+}
+
+/// Do two tokens count as the same word, allowing for what the acoustic model
+/// does to short common words?
+///
+/// ASR substitutes rather than omits — "skip" arrives as "skit", "next" as
+/// "nex" — and those substitutions pass every grammar check, which is what makes
+/// them dangerous. Exact token equality throws the whole utterance away for one
+/// mangled character; production voice systems all sit somewhere on this
+/// spectrum, with Apple's phonetically-augmented rescoring at the far end.
+///
+/// This is the cheap end deliberately: bounded edit distance, no phonetic table,
+/// no dependency. It is a **recall** aid only — the risk it adds is absorbed by
+/// the conformal decision layer, which is why that had to exist first. Phonetic
+/// keying (Double Metaphone) is the next rung and is named, not built.
+fn same_word(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    // Short words are where a one-character edit changes the meaning entirely
+    // ("on"/"in", "to"/"do"), so they get no tolerance at all.
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    if short.len() < 4 || long.len() - short.len() > 1 {
+        return false;
+    }
+    edit_distance_at_most_one(short, long)
+}
+
+/// True when `a` becomes `b` with at most one insertion, deletion or
+/// substitution. Bounded at one on purpose — two edits on a four-letter word is
+/// a different word.
+fn edit_distance_at_most_one(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() == b.len() {
+        let mut differences = 0;
+        for i in 0..a.len() {
+            if a[i] != b[i] {
+                differences += 1;
+                if differences > 1 {
+                    return false;
+                }
+            }
+        }
+        return differences == 1;
+    }
+    // Exactly one insertion: walk both, allowing a single skip in the longer.
+    let (mut i, mut j, mut skipped) = (0usize, 0usize, false);
+    while i < a.len() && j < b.len() {
+        if a[i] == b[j] {
+            i += 1;
+            j += 1;
+        } else if skipped {
+            return false;
+        } else {
+            skipped = true;
+            j += 1;
+        }
+    }
+    true
 }
 
 /// Score one utterance against one action, returning the best template's result.
@@ -183,6 +260,8 @@ fn score_template(
     let mut cursor = 0usize;
     let mut matched_literal_tokens = 0usize;
     let mut pending: Option<&str> = None;
+    let starts_with_literal = matches!(template.first(), Some(UtterancePart::Literal(_)));
+    let mut leading_junk = false;
 
     for part in template {
         match part {
@@ -193,6 +272,13 @@ fn score_template(
                 }
                 let found = find_token_aligned(&query[cursor..], &needle)?;
                 let absolute = cursor + found;
+                // A template that begins with a literal expects the utterance to
+                // begin there too. Anything in front is unexplained by both the
+                // literals and the spans, which is weaker evidence than a clean
+                // match — "I was going to tell Jack that…" is not the command.
+                if starts_with_literal && matched_literal_tokens == 0 && absolute > 0 {
+                    leading_junk = true;
+                }
                 if let Some(name) = pending.take() {
                     let span = query[cursor..absolute].trim();
                     // A placeholder with nothing in front of the next literal
@@ -226,14 +312,39 @@ fn score_template(
     if matched_literal_tokens == 0 {
         return None;
     }
-    // The literals are the evidence; the spans are the payload. Scoring by the
-    // fraction of the query that the literals explain means "play radiohead"
-    // and "play some very long album title" are not scored differently for the
-    // length of the thing being asked for.
-    let literal_ratio = matched_literal_tokens as f32 / query_tokens.len().max(1) as f32;
-    let score = 0.6 + 0.4 * literal_ratio.min(1.0);
+    // The literals are the evidence; the spans are the payload — so the score
+    // must not depend on how long the payload is.
+    //
+    // The first version divided matched literals by the QUERY length, which made
+    // "tell Jack that I'm running late" score lower than "tell Jack that hi" for
+    // no reason except that the message was longer. Worse, calibration examples
+    // have short fillers, so real requests scored systematically below the bar
+    // they were measured against and got refused.
+    //
+    // Score on the template's own specificity instead: more literal tokens
+    // confirmed, in order, is stronger evidence, regardless of what sat between
+    // them. Capped below an exact match, which is always the stronger claim.
+    let specificity = (matched_literal_tokens as f32 / SPECIFICITY_SATURATION).min(1.0);
+    let mut score = TEMPLATE_FLOOR + (TEMPLATE_CEILING - TEMPLATE_FLOOR) * specificity;
+    if leading_junk {
+        score -= LEADING_JUNK_PENALTY;
+    }
+    let _ = query_tokens;
     Some((score, MatchKind::Template, spans))
 }
+
+/// Literal tokens at which a template counts as fully specific. Three is where
+/// "play my {x} playlist" sits and "play {x}" does not, which is the distinction
+/// that matters.
+const SPECIFICITY_SATURATION: f32 = 3.0;
+/// A one-literal template ("play {artist}") — real evidence, weak evidence.
+const TEMPLATE_FLOOR: f32 = 0.65;
+/// A fully specific template. Below 1.0 on purpose: an exact declared phrase is
+/// always the stronger claim.
+const TEMPLATE_CEILING: f32 = 0.95;
+/// Charged when a template that begins with a literal did not begin the
+/// utterance.
+const LEADING_JUNK_PENALTY: f32 = 0.15;
 
 /// Find `needle` in `haystack` at token boundaries, so "on" does not match
 /// inside "song".
@@ -264,7 +375,7 @@ fn token_overlap(query_tokens: &[&str], phrase: &str) -> f32 {
     }
     let hits = phrase_tokens
         .iter()
-        .filter(|t| query_tokens.contains(t))
+        .filter(|t| query_tokens.iter().any(|q| same_word(q, t)))
         .count();
     let recall = hits as f32 / phrase_tokens.len() as f32;
     let precision = hits as f32 / query_tokens.len().max(1) as f32;
@@ -330,85 +441,106 @@ impl EquivalenceMap {
 }
 
 /// How much of two actions' declared language must coincide before they are
-/// treated as the same request. The cost of failing to group is a chooser on
-/// every invocation; the cost of grouping wrongly is worse, because grouping is
-/// transitive and one bad link drags a whole domain into one class.
+/// treated as the same request.
 const EQUIVALENCE_THRESHOLD: f32 = 0.5;
 
 /// How closely two individual phrases must match to count as the same phrasing.
-///
-/// Much higher than [`EQUIVALENCE_THRESHOLD`], and the golden set is why: with
-/// this at 0.5, `"play"` (Apple's `play_artist`) matched `"play my playlist"`
-/// (Spotify's `play_playlist`) at exactly 0.5, which linked two unrelated
-/// actions and then — through the union — pulled Spotify's own `play_artist`
-/// in behind them. "Play my gym playlist" became a provider chooser.
-///
-/// A short generic phrase overlapping a longer specific one is not evidence
-/// that the two actions do the same thing.
+/// Higher than the set threshold: a short generic phrase overlapping a longer
+/// specific one is not evidence that two actions do the same thing.
 const PHRASE_MATCH_THRESHOLD: f32 = 0.8;
 
-/// Build equivalence classes over the installed set.
+/// Build equivalence classes over the installed set — **constrained
+/// complete-linkage agglomerative clustering**.
 ///
-/// Only actions in the **same domain from different extensions** are ever
-/// compared: two actions within one extension are that author's own vocabulary
-/// to keep distinct, and cross-domain lookalikes ("next slide" / "next track")
-/// are precisely what should stay separate.
+/// # Why not union-find
+///
+/// The first implementation linked any two actions above the threshold and
+/// unioned them, which is *single-linkage* clustering. Single linkage has a
+/// textbook failure mode — the **chaining effect**: two well-separated clusters
+/// joined by one bridging pair are merged into a long thin cluster whose ends
+/// have nothing to do with each other. Both bugs the golden set found were that
+/// one failure wearing different hats:
+///
+/// - Apple's `"play"` bridged Spotify's `"play my playlist"` and Spotify's
+///   `play_artist`, so "play my gym playlist" became a provider chooser;
+/// - `A(ext1) ~ B(ext2) ~ C(ext1)` collapsed one author's own two actions
+///   through a third party, silently making one unreachable.
+///
+/// Complete linkage merges two clusters only when **every** cross-pair is
+/// similar enough, so a single bridging pair can never chain, and both bugs are
+/// structurally impossible rather than patched. It is also the standard fix for
+/// exactly this, and the sizes involved here (hundreds of actions, once per
+/// index rebuild) make the extra comparisons free.
+///
+/// # The constraint
+///
+/// Two actions of the **same extension** carry a hard cannot-link: an author's
+/// own vocabulary is theirs to keep distinct, and merging two of their actions
+/// makes one permanently unreachable. Under complete linkage a cannot-link pair
+/// blocks any merge that would co-locate them, so the constraint holds
+/// transitively for free — which is the property the previous version had to
+/// enforce by hand.
+///
+/// Actions in different domains are never compared: "next slide" and "next
+/// track" are precisely what must stay apart.
 pub fn equivalence_classes(actions: &[IndexedAction]) -> EquivalenceMap {
-    let mut parent: Vec<usize> = (0..actions.len()).collect();
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
+    let n = actions.len();
+    let phrases: Vec<Vec<String>> = actions.iter().map(literal_phrases).collect();
+
+    // Pairwise similarity, with `None` for a cannot-link pair. Complete linkage
+    // reads a cannot-link as "-infinity", which blocks the merge outright.
+    let mut similarity = vec![vec![None::<f32>; n]; n];
+    for a in 0..n {
+        for b in (a + 1)..n {
+            let comparable = actions[a].domain == actions[b].domain
+                && actions[a].extension_id != actions[b].extension_id;
+            let value = comparable.then(|| phrase_set_similarity(&phrases[a], &phrases[b]));
+            similarity[a][b] = value;
+            similarity[b][a] = value;
         }
-        i
     }
 
-    let mut members: HashMap<usize, Vec<usize>> =
-        (0..actions.len()).map(|i| (i, vec![i])).collect();
-    let phrases: Vec<Vec<String>> = actions.iter().map(literal_phrases).collect();
-    for a in 0..actions.len() {
-        for b in (a + 1)..actions.len() {
-            if actions[a].domain != actions[b].domain
-                || actions[a].extension_id == actions[b].extension_id
-            {
-                continue;
+    let mut clusters: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
+    loop {
+        // Complete linkage between two clusters = their WEAKEST cross-pair.
+        let mut best: Option<(usize, usize, f32)> = None;
+        for i in 0..clusters.len() {
+            for j in (i + 1)..clusters.len() {
+                let mut weakest = f32::INFINITY;
+                let mut blocked = false;
+                for a in &clusters[i] {
+                    for b in &clusters[j] {
+                        match similarity[*a][*b] {
+                            // A single cannot-link anywhere across the two
+                            // clusters vetoes the whole merge.
+                            None => blocked = true,
+                            Some(value) => weakest = weakest.min(value),
+                        }
+                    }
+                }
+                if blocked || weakest < EQUIVALENCE_THRESHOLD {
+                    continue;
+                }
+                if best.is_none_or(|(_, _, current)| weakest > current) {
+                    best = Some((i, j, weakest));
+                }
             }
-            if phrase_set_similarity(&phrases[a], &phrases[b]) < EQUIVALENCE_THRESHOLD {
-                continue;
-            }
-            let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-            if ra == rb {
-                continue;
-            }
-            // Grouping is transitive, so a merge can collapse two of ONE
-            // extension's actions through a third party even though they were
-            // never compared. That would silently make one of the author's own
-            // actions unreachable, which is the thing the same-extension rule
-            // above exists to prevent — so refuse the union instead.
-            let shares_extension = members[&ra].iter().any(|i| {
-                members[&rb]
-                    .iter()
-                    .any(|j| actions[*i].extension_id == actions[*j].extension_id)
-            });
-            if shares_extension {
-                continue;
-            }
-            let moved = members.remove(&ra).unwrap_or_default();
-            members.entry(rb).or_default().extend(moved);
-            parent[ra] = rb;
         }
+        let Some((i, j, _)) = best else { break };
+        let merged = clusters.remove(j);
+        clusters[i].extend(merged);
     }
 
     let mut of = HashMap::new();
-    let mut seen: HashMap<usize, usize> = HashMap::new();
-    for (i, action) in actions.iter().enumerate() {
-        let root = find(&mut parent, i);
-        let next = seen.len();
-        let class = *seen.entry(root).or_insert(next);
-        of.insert(action.qualified(), class);
+    for (class, members) in clusters.iter().enumerate() {
+        for member in members {
+            of.insert(actions[*member].qualified(), class);
+        }
     }
-    let count = seen.len();
-    EquivalenceMap { of, count }
+    EquivalenceMap {
+        of,
+        count: clusters.len(),
+    }
 }
 
 /// The literal (non-placeholder) text of each template, normalised. Placeholders
@@ -630,6 +762,95 @@ mod tests {
         // chooser's business, not something to guess here.
         let hit = score_action("play", &play);
         assert!(hit.is_none() || !hit.unwrap().spans.contains_key("artist"));
+    }
+
+    #[test]
+    fn a_score_does_not_depend_on_how_long_the_span_is() {
+        // The bug this replaced: dividing matched literals by the QUERY length
+        // made a long message score lower than a short one for no reason except
+        // its length — and since calibration examples use a one-word filler,
+        // real requests scored below the bar they were measured against and got
+        // refused outright.
+        let tell = with_params(
+            "slack",
+            "send_dm",
+            "messaging",
+            &["tell {who} that {message}"],
+            &["who", "message"],
+        );
+        let short = score_action("tell Jack that hi", &tell).unwrap();
+        let long = score_action(
+            "tell Jack that I am running about twenty minutes late for the review",
+            &tell,
+        )
+        .unwrap();
+        assert_eq!(short.score, long.score);
+    }
+
+    #[test]
+    fn a_more_specific_template_outscores_a_generic_one() {
+        // "play my {x} playlist" confirms three literal tokens; "play {x}"
+        // confirms one. The gap is what lets the decision layer act on the
+        // first without asking about the second.
+        let playlist = with_params(
+            "spotify",
+            "play_playlist",
+            "media",
+            &["play my {playlist} playlist"],
+            &["playlist"],
+        );
+        let artist = with_params(
+            "spotify",
+            "play_artist",
+            "media",
+            &["play {artist}"],
+            &["artist"],
+        );
+        let said = "play my gym playlist";
+        let specific = score_action(said, &playlist).unwrap().score;
+        let generic = score_action(said, &artist).unwrap().score;
+        assert!(
+            specific - generic >= 0.15,
+            "the gap has to stay wider than the calibrated slack, or the decision \
+             layer goes back to asking about every playlist ({specific} vs {generic})"
+        );
+    }
+
+    #[test]
+    fn a_command_survives_one_mangled_character() {
+        // ASR substitutes rather than omits, and a single bad character used to
+        // throw the whole utterance away.
+        let next = indexed("spotify", "next", "media", &["skip this", "next song"]);
+        assert!(score_action("skit this", &next).is_some());
+        assert!(score_action("next song", &next).is_some());
+    }
+
+    #[test]
+    fn short_words_get_no_spelling_tolerance() {
+        // One edit turns "on" into "in" and "to" into "do" — different words,
+        // not misheard ones. Tolerance there would be a false-execution source.
+        assert!(!same_word("on", "in"));
+        assert!(!same_word("to", "do"));
+        assert!(same_word("skip", "skit"));
+        assert!(same_word("playlist", "playlst"));
+        // Two edits is a different word even when it is long.
+        assert!(!same_word("playlist", "plarlsst"));
+    }
+
+    #[test]
+    fn a_template_that_starts_late_scores_below_one_that_starts_clean() {
+        // "I was going to tell Jack that…" is talking about the command, not
+        // issuing it.
+        let tell = with_params(
+            "slack",
+            "send_dm",
+            "messaging",
+            &["tell {who} that {message}"],
+            &["who", "message"],
+        );
+        let clean = score_action("tell Jack that hi", &tell).unwrap();
+        let late = score_action("I was going to tell Jack that hi", &tell).unwrap();
+        assert!(late.score < clean.score);
     }
 
     #[test]
