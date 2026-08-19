@@ -29,7 +29,6 @@ import {
 } from "@/bindings";
 import { useSettings } from "../../../hooks/useSettings";
 import { ToggleSwitch } from "../../ui/ToggleSwitch";
-import { PromptStackPanel } from "./PromptStackPanel";
 
 type ContextProfileId =
   | "email"
@@ -759,14 +758,6 @@ export const ContextAwareSection: React.FC = () => {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const nearbyTerms = getSetting("context_nearby_terms") ?? false;
   const caretText = getSetting("context_caret_text") ?? false;
-  const contextEnabled = getSetting("context_awareness_enabled") ?? false;
-  // Named, not just counted: "your prompt" is a different sentence depending on
-  // whether it is General or something the user wrote themselves.
-  const selectedPromptId = getSetting("post_process_selected_prompt_id") ?? null;
-  const basePromptName =
-    (getSetting("post_process_prompts") ?? []).find(
-      (prompt) => prompt.id === selectedPromptId,
-    )?.name ?? null;
   const [activeProfileId, setActiveProfileId] =
     useState<ContextProfileId>("email");
   const [mode, setMode] = useState<"read" | "write">("read");
@@ -1138,8 +1129,8 @@ export const ContextAwareSection: React.FC = () => {
 
       <div className="context-profile-options" aria-label="Context sources">
         <ToggleSwitch
-          label="Fit text to the cursor"
-          description="Read only the nearest useful sentence fragment around your cursor so mid-sentence dictation flows naturally. Sends at most 200 characters before and 80 after; when both sides are empty, no cursor hint is sent. Never stored, password fields skipped."
+          label="Cursor-aware formatting"
+          description="Look at the words either side of your cursor so dictation dropped into the middle of a sentence comes out with the right spacing, capitalisation and punctuation. Reads at most 200 characters before and 80 after, only the nearest sentence fragment. Never stored, password fields skipped."
           descriptionMode="tooltip"
           grouped
           checked={caretText}
@@ -1158,12 +1149,6 @@ export const ContextAwareSection: React.FC = () => {
           onChange={(v) => updateSetting("context_nearby_terms", v)}
         />
       </div>
-
-      <PromptStackPanel
-        contextAwarenessEnabled={contextEnabled}
-        customProfileCount={customProfiles.length}
-        basePromptName={basePromptName}
-      />
 
       {customProfileDialog && (
         <CustomProfileDialog

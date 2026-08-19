@@ -1169,14 +1169,32 @@ pub(crate) fn fit_text_to_caret(text: &str, caret: &CaretContext) -> String {
         return fitted;
     }
 
-    // If both sides contain text, this output is an insertion inside an
-    // existing sentence, not a standalone sentence. Weak/local models often
-    // return the ASR's leading capital and automatic final period unchanged;
-    // those two artifacts are mechanically wrong at this seam and do not need
-    // another model decision.
+    // Both sides having text is NOT on its own enough to call this an insertion
+    // inside an existing sentence — it also has to be true that the left does
+    // not end a sentence and the right does not begin one.
+    //
+    // Today `relevant_left_fragment` cuts everything up to the last sentence
+    // terminator and `relevant_right_fragment` stops at the first, so a capture
+    // that reaches here already satisfies both. That is a property of a
+    // different function, though, and this one writes into the user's document:
+    // widen either fragment and dictating a whole sentence between two others
+    // would come out lowercased with its full stop removed
+    // ("I went home. it was late Then I slept."). Checking it here costs two
+    // character comparisons and makes the function correct on its own terms
+    // rather than correct by coincidence.
+    let left_continues = !ends_sentence(&caret.before);
+    let right_continues = !begins_sentence(&caret.after);
     if !caret.before.trim().is_empty() && !caret.after.trim().is_empty() {
-        strip_automatic_terminal_period(&mut fitted);
-        lowercase_ordinary_sentence_start(&mut fitted);
+        // The final period belongs to the dictation whenever what follows is a
+        // new sentence rather than the rest of this one.
+        if right_continues {
+            strip_automatic_terminal_period(&mut fitted);
+        }
+        // The leading capital is an artifact only when the insertion lands
+        // mid-sentence; after a full stop it is correct.
+        if left_continues {
+            lowercase_ordinary_sentence_start(&mut fitted);
+        }
     }
 
     if fitted.is_empty() {
@@ -1254,6 +1272,39 @@ fn strip_automatic_terminal_period(text: &mut String) {
     if !last.ends_with("..") && !dotted_abbreviation && !named_abbreviation {
         text.pop();
     }
+}
+
+/// Whether the text to the left of the cursor closes a sentence.
+///
+/// Trailing closing quotes and brackets are stepped over, so `he said "fine."`
+/// counts as ended.
+fn ends_sentence(before: &str) -> bool {
+    before
+        .trim_end()
+        .trim_end_matches(['"', '\'', ')', ']', '}', '»', '”', '’'])
+        .chars()
+        .next_back()
+        .is_some_and(is_sentence_terminal)
+}
+
+/// Whether the text to the right of the cursor opens a new sentence rather than
+/// continuing this one.
+///
+/// A capital after whitespace is the signal. Deliberately conservative: when in
+/// doubt this returns `false`, which keeps the existing behaviour of removing a
+/// final period mid-sentence — the common case, and the one users complained
+/// about.
+fn begins_sentence(after: &str) -> bool {
+    let trimmed = after.trim_start();
+    // No gap means the insertion is being welded onto a word, which cannot be
+    // the start of a following sentence.
+    if trimmed.len() == after.len() && !after.is_empty() {
+        return false;
+    }
+    trimmed
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_uppercase() || is_sentence_terminal(ch))
 }
 
 fn lowercase_ordinary_sentence_start(text: &mut String) {
@@ -3989,6 +4040,50 @@ mod tests {
         assert_eq!(
             fit_text_to_caret("A few more times with the testers.", &caret),
             "a few more times with the testers"
+        );
+    }
+
+    /// The seam repair is only correct when the insertion really is landing
+    /// mid-sentence. Both sides having text does not establish that on its own.
+    ///
+    /// The capture never produces these shapes today — `relevant_left_fragment`
+    /// cuts at the last sentence terminator — so this guards a coupling rather
+    /// than a live bug. It is worth a test because the failure is silent and
+    /// lands in the user's document: "I went home. it was late Then I slept."
+    #[test]
+    fn a_whole_sentence_between_two_others_keeps_its_capital_and_full_stop() {
+        let between = CaretContext {
+            before: "I went home. ".into(),
+            after: " Then I slept.".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret("It was late.", &between),
+            "It was late."
+        );
+    }
+
+    #[test]
+    fn a_sentence_start_keeps_its_capital_even_when_the_rest_continues() {
+        // Left ends a sentence, right continues one: the capital is correct,
+        // the trailing period is still the ASR's and goes.
+        let caret = CaretContext {
+            before: "We shipped it. ".into(),
+            after: " went out on Friday.".into(),
+        };
+        assert_eq!(fit_text_to_caret("The release.", &caret), "The release");
+    }
+
+    #[test]
+    fn a_mid_sentence_insertion_before_a_new_sentence_keeps_its_period() {
+        // Left continues, right starts a new sentence: lowercase the first
+        // word, but the dictation still needs its own terminator.
+        let caret = CaretContext {
+            before: "We agreed that ".into(),
+            after: " The team was told.".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret("It would ship on Friday.", &caret),
+            "it would ship on Friday."
         );
     }
 
