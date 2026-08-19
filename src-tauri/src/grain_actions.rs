@@ -25,6 +25,23 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// [GRAIN] The action log (`docs/Action Routing/PLAN.md` §8.3).
+///
+/// A submodule for the same reason `context_detect::prompt_stack` is one: a peer
+/// module needs a line in the Handy-derived `lib.rs`, whose module block is a
+/// live merge-conflict surface (see `Upstream/UPSTREAM.md`). It also sits
+/// honestly here — this module owns Grain's own invocations, and the log is the
+/// record of what one of them did.
+#[path = "grain_action_log.rs"]
+pub(crate) mod action_log;
+
+/// [GRAIN] The action session (`docs/Action Routing/PLAN.md` §3.2) — a
+/// host-owned sibling of `extension_session` that routes raw ASR instead of
+/// pasting post-processed text. A submodule for the same divergence reason as
+/// [`action_log`].
+#[path = "grain_action_session.rs"]
+pub(crate) mod action_session;
+
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
 

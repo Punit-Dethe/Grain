@@ -880,6 +880,58 @@ impl PromptLayerInfo {
     }
 }
 
+/// [GRAIN] Start or stop listening for an action
+/// (`docs/Action Routing/PLAN.md` §3).
+///
+/// The extension surface's own trigger calls this; **Grain registers no
+/// shortcut for it here**. What the design depends on is only that the user's
+/// intent was unambiguous by the time audio started, and the trigger mechanism
+/// is decided separately.
+///
+/// One command for all three transitions rather than three, because the
+/// invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
+/// merge-conflict surface.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String> {
+    use crate::grain_actions::action_session;
+    match phase.as_str() {
+        "start" => match action_session::start(&app) {
+            Ok(()) => Ok(true),
+            // Not an error the user needs shown: something else already owns the
+            // microphone, or nothing is installed that could answer.
+            Err(action_session::StartError::Busy)
+            | Err(action_session::StartError::NothingInstalled) => Ok(false),
+            Err(action_session::StartError::Unavailable(why)) => Err(why),
+        },
+        "stop" => {
+            action_session::stop(&app);
+            Ok(true)
+        }
+        "cancel" => Ok(action_session::cancel(&app)),
+        other => Err(format!("unknown action phase '{other}'")),
+    }
+}
+
+/// [GRAIN] Read the action log, optionally clearing it first
+/// (`docs/Action Routing/PLAN.md` §8.3).
+///
+/// The "why did that happen" surface. It holds what was heard, so it is capped,
+/// lives only in memory, and clearing it is one call with no confirmation
+/// dance — this is the user's own speech and asking twice before letting them
+/// delete it is the wrong default.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_action_log(
+    clear: bool,
+) -> Result<Vec<crate::grain_actions::action_log::ActionLogEntry>, String> {
+    if clear {
+        crate::grain_actions::action_log::clear();
+        return Ok(Vec::new());
+    }
+    Ok(crate::grain_actions::action_log::entries())
+}
+
 /// [GRAIN] One declared action, as the approval sheet and the extension card
 /// need it (`docs/Action Routing/PLAN.md` §5).
 ///

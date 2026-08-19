@@ -1021,6 +1021,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_capture_app,
             grain_commands::extension_host_call,
             grain_commands::extension_shortcuts_status,
+            grain_commands::grain_action_listen,
+            grain_commands::grain_action_log,
             grain_commands::extension_setting_set,
             grain_commands::extension_surface_init,
             grain_commands::extension_surface_ui_ready,

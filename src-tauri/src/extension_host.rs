@@ -729,6 +729,63 @@ pub fn route_action(
     ))
 }
 
+/// Every preference domain the installed actions use.
+///
+/// Needed when an utterance names a provider outright ("…on Spotify"): that
+/// rung outranks every stored default, and pinning each domain to the named
+/// extension applies it *through* the ladder rather than around it, so there is
+/// only one place provider selection can be decided.
+pub fn action_domains() -> Vec<String> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let mut domains: Vec<String> = host
+        .index
+        .read()
+        .unwrap()
+        .actions
+        .actions()
+        .iter()
+        .map(|a| a.domain.clone())
+        .collect();
+    domains.sort();
+    domains.dedup();
+    domains
+}
+
+/// Every literal word the installed actions declare, for ASR biasing.
+///
+/// Deduplicated and unordered — the bias set has its own budget and ordering
+/// rules. Placeholders contribute nothing: `{artist}` is the part Grain cannot
+/// predict, and that is exactly the part the extension resolves.
+pub fn action_vocabulary() -> Vec<String> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let mut terms: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for action in host.index.read().unwrap().actions.actions() {
+        for template in &action.templates {
+            for part in template {
+                if let grain_sdk::manifest::UtterancePart::Literal(literal) = part {
+                    for word in literal.split_whitespace() {
+                        if word.len() > 2 && seen.insert(word.to_lowercase()) {
+                            terms.push(word.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    terms
+}
+
 /// The names an utterance may end with to name a provider ("…on Spotify"),
 /// paired with the extension id they resolve to.
 ///
@@ -1582,6 +1639,136 @@ pub async fn run_session_stage(
             .notify(ext_id, "session.cancel", json!({ "reason": "timeout" }));
     }
     parse_session_stage_output(result?)
+}
+
+/// How long an action may take before the host gives up.
+///
+/// Generous compared with the transform budget, and deliberately so: an action
+/// is expected to leave the machine (a Spotify call, a Slack post), where the
+/// network grant already allows 15 s. The felt path is not this — routing
+/// decides in milliseconds and the pill says what is happening.
+const ACTION_DEADLINE: Duration = Duration::from_secs(20);
+
+/// What performing an action produced.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ActionOutcome {
+    /// It ran. The optional line is what the pill says instead of the title.
+    Done(Option<String>),
+    /// The extension resolved a span to several candidates and wants the user
+    /// to pick. Not a failure — the chooser's third use.
+    Ambiguous { param: String, options: Vec<String> },
+    /// It could not run, with a reason worth showing.
+    Failed(String),
+    /// The deadline passed after the call was already in flight.
+    ///
+    /// **Distinct from `Failed` on purpose.** For anything that leaves the
+    /// machine, a timeout does not mean it did not happen — the message may
+    /// well have been sent. Reporting that as failure is a lie, and the one a
+    /// user is least able to recover from.
+    Unknown,
+}
+
+fn parse_action_outcome(value: Value) -> ActionOutcome {
+    if let Some(options) = value.get("options").and_then(Value::as_array) {
+        let param = value
+            .get("param")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let options: Vec<String> = options
+            .iter()
+            .filter_map(|o| o.as_str().map(str::to_string))
+            .collect();
+        if !param.is_empty() && !options.is_empty() {
+            return ActionOutcome::Ambiguous { param, options };
+        }
+    }
+    if let Some(error) = value.get("error").and_then(Value::as_str) {
+        return ActionOutcome::Failed(error.to_string());
+    }
+    ActionOutcome::Done(
+        value
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+/// Wake the extension that won a route, if it is cold.
+///
+/// Only the winner. Warming every action-bearing extension when the key goes
+/// down is the tempting alternative and it violates destroy-if-not-in-use at
+/// exactly the scale this feature is built for — twenty installed extensions
+/// would mean twenty worker spawns per press.
+pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
+    if is_running(ext_id) {
+        return;
+    }
+    let Some(pack) = load_manifest(app, ext_id) else {
+        return;
+    };
+    let granted = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .map(|record| record.granted)
+        .unwrap_or_default();
+    spawn_worker(
+        app,
+        ext_id,
+        &pack,
+        granted,
+        Some(json!({ "Action": { "action": action_id } })),
+    );
+}
+
+/// Perform one routed action.
+///
+/// The extension receives **only the extracted spans**, never the raw
+/// utterance. Losing the route means learning nothing; winning it means learning
+/// the parameters and no more.
+pub async fn perform_action(
+    app: &AppHandle,
+    ext_id: &str,
+    action_id: &str,
+    spans: &std::collections::BTreeMap<String, String>,
+) -> ActionOutcome {
+    let Some(host) = HOST.get() else {
+        return ActionOutcome::Failed("extension host unavailable".into());
+    };
+    // Re-check enablement at execute, not only at route. A user can disable an
+    // extension while the confirmation sheet is open, and the read-back they
+    // agreed to would then run against something they just turned off.
+    let enabled = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .is_some_and(|record| record.enabled);
+    if !enabled {
+        return ActionOutcome::Failed("that extension is no longer enabled".into());
+    }
+    match host
+        .workers
+        .call(
+            ext_id,
+            "action",
+            json!({ "action": action_id, "params": spans }),
+            ACTION_DEADLINE,
+        )
+        .await
+    {
+        Ok(value) => {
+            clear_strikes(ext_id);
+            parse_action_outcome(value)
+        }
+        Err(error) if error == "deadline exceeded" => {
+            record_strike(app, ext_id);
+            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {ACTION_DEADLINE:?}");
+            ActionOutcome::Unknown
+        }
+        Err(error) => {
+            record_strike(app, ext_id);
+            ActionOutcome::Failed(error)
+        }
+    }
 }
 
 /// User cancellation is immediate: notify the handler's AbortSignal and drop
