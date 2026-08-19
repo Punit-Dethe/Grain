@@ -193,8 +193,100 @@ fn edit_distance_at_most_one(a: &str, b: &str) -> bool {
     true
 }
 
-/// Score one utterance against one action, returning the best template's result.
-pub fn score_action(spoken: &str, action: &IndexedAction) -> Option<Candidate> {
+/// The installed set, plus the corpus statistics scoring depends on.
+///
+/// Built once per index rebuild. Nothing in here is recomputed on the felt path.
+#[derive(Clone, Debug, Default)]
+pub struct ActionIndex {
+    actions: Vec<IndexedAction>,
+    /// How much evidence one literal token carries, by how rare it is across
+    /// every declared utterance in the installed set.
+    idf: HashMap<String, f32>,
+}
+
+impl ActionIndex {
+    pub fn build(actions: Vec<IndexedAction>) -> Self {
+        // Each declared utterance is a document; a literal token's document
+        // frequency is how many of them contain it.
+        let mut document_frequency: HashMap<String, usize> = HashMap::new();
+        let mut documents = 0usize;
+        for action in &actions {
+            for template in &action.templates {
+                documents += 1;
+                let mut seen = std::collections::HashSet::new();
+                for part in template {
+                    let UtterancePart::Literal(literal) = part else {
+                        continue;
+                    };
+                    for token in tokens(&normalise(literal)) {
+                        if seen.insert(token.to_string()) {
+                            *document_frequency.entry(token.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let n = documents as f32;
+        let idf = document_frequency
+            .into_iter()
+            .map(|(token, df)| {
+                // BM25's IDF. The shape matters more than the constant: rarity
+                // decays logarithmically, because a token in half as many
+                // utterances is not twice as diagnostic.
+                let df = df as f32;
+                let value = ((n - df + 0.5) / (df + 0.5) + 1.0).ln();
+                (token, value.max(0.0))
+            })
+            .collect();
+        ActionIndex { actions, idf }
+    }
+
+    pub fn actions(&self) -> &[IndexedAction] {
+        &self.actions
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
+
+    /// Evidence carried by a literal token. Unknown tokens cannot occur (the
+    /// index built the table from these very templates), but a neutral default
+    /// keeps this total.
+    fn evidence(&self, token: &str) -> f32 {
+        self.idf.get(token).copied().unwrap_or(1.0)
+    }
+
+    /// Score every indexed action, best first.
+    pub fn rank(&self, spoken: &str) -> Vec<Candidate> {
+        let mut out: Vec<Candidate> = self
+            .actions
+            .iter()
+            .filter_map(|action| self.score_action(spoken, action))
+            .collect();
+        out.sort_by(|a, b| {
+            b.kind
+                .cmp(&a.kind)
+                .then(b.score.total_cmp(&a.score))
+                // Stable, and independent of registry order: two candidates that
+                // tie on evidence must not depend on install order for which one
+                // the chooser lists first.
+                .then(a.extension_id.cmp(&b.extension_id))
+                .then(a.action_id.cmp(&b.action_id))
+        });
+        out
+    }
+
+    /// Score one utterance against one action, returning its best template.
+    pub fn score_action(&self, spoken: &str, action: &IndexedAction) -> Option<Candidate> {
+        score_action_with(self, spoken, action)
+    }
+}
+
+fn score_action_with(
+    index: &ActionIndex,
+    spoken: &str,
+    action: &IndexedAction,
+) -> Option<Candidate> {
     let query = normalise(spoken);
     if query.is_empty() {
         return None;
@@ -203,7 +295,7 @@ pub fn score_action(spoken: &str, action: &IndexedAction) -> Option<Candidate> {
     let mut best: Option<(f32, MatchKind, HashMap<String, String>)> = None;
 
     for template in &action.templates {
-        let scored = score_template(&query, &query_tokens, template);
+        let scored = score_template(index, &query, &query_tokens, template);
         if let Some(candidate) = scored {
             let better = best
                 .as_ref()
@@ -228,6 +320,7 @@ pub fn score_action(spoken: &str, action: &IndexedAction) -> Option<Candidate> {
 /// Match one template. Literals must appear **in order**; whatever falls between
 /// two literals is the span for the placeholder between them.
 fn score_template(
+    index: &ActionIndex,
     query: &str,
     query_tokens: &[&str],
     template: &[UtterancePart],
@@ -255,10 +348,21 @@ fn score_template(
         return (overlap >= 0.5).then(|| (overlap, MatchKind::Overlap, HashMap::new()));
     }
 
-    // With placeholders: walk the template, consuming the query left to right.
+    // With placeholders: walk the template over the query's TOKENS, left to
+    // right.
+    //
+    // Tokens rather than byte offsets, and that is not a tidiness choice. The
+    // first version searched for each literal as a substring, so the spelling
+    // tolerance below never applied to templates at all — only to whole-phrase
+    // matches. One mangled character in "playlist" made
+    // `play my {x} playlist` fail outright while `play {artist}` still matched,
+    // which put an enormous tail in the calibration margins and forced a slack
+    // so wide it swallowed every real distinction. The matcher and the
+    // corruption model have to agree about what a mishearing is.
     let mut spans: HashMap<String, String> = HashMap::new();
     let mut cursor = 0usize;
     let mut matched_literal_tokens = 0usize;
+    let mut evidence = 0.0f32;
     let mut pending: Option<&str> = None;
     let starts_with_literal = matches!(template.first(), Some(UtterancePart::Literal(_)));
     let mut leading_junk = false;
@@ -266,30 +370,38 @@ fn score_template(
     for part in template {
         match part {
             UtterancePart::Literal(literal) => {
-                let needle = normalise(literal);
+                let normalised = normalise(literal);
+                let needle = tokens(&normalised);
                 if needle.is_empty() {
                     continue;
                 }
-                let found = find_token_aligned(&query[cursor..], &needle)?;
-                let absolute = cursor + found;
+                let found = find_tokens(query_tokens, cursor, &needle)?;
                 // A template that begins with a literal expects the utterance to
                 // begin there too. Anything in front is unexplained by both the
                 // literals and the spans, which is weaker evidence than a clean
                 // match — "I was going to tell Jack that…" is not the command.
-                if starts_with_literal && matched_literal_tokens == 0 && absolute > 0 {
+                if starts_with_literal && matched_literal_tokens == 0 && found.start > 0 {
                     leading_junk = true;
                 }
                 if let Some(name) = pending.take() {
-                    let span = query[cursor..absolute].trim();
                     // A placeholder with nothing in front of the next literal
                     // has no value; a required one sends this to the chooser
                     // rather than being invented here.
+                    let span = query_tokens[cursor..found.start].join(" ");
                     if !span.is_empty() {
-                        spans.insert(name.to_string(), span.to_string());
+                        spans.insert(name.to_string(), span);
                     }
                 }
-                matched_literal_tokens += tokens(&needle).len();
-                cursor = absolute + needle.len();
+                for i in &found.matched {
+                    matched_literal_tokens += 1;
+                    // Evidence comes from the DECLARED token, not the possibly
+                    // misheard one: what the author wrote is what the corpus
+                    // statistics were built from. A token that never arrived
+                    // contributes nothing, so a match missing a word is worth
+                    // strictly less than one that is complete.
+                    evidence += index.evidence(needle[*i]);
+                }
+                cursor = found.end;
             }
             UtterancePart::Param(name) => {
                 // Two placeholders in a row cannot be split without a literal
@@ -303,9 +415,9 @@ fn score_template(
         }
     }
     if let Some(name) = pending {
-        let span = query[cursor..].trim();
+        let span = query_tokens[cursor..].join(" ");
         if !span.is_empty() {
-            spans.insert(name.to_string(), span.to_string());
+            spans.insert(name.to_string(), span);
         }
     }
 
@@ -321,10 +433,14 @@ fn score_template(
     // have short fillers, so real requests scored systematically below the bar
     // they were measured against and got refused.
     //
-    // Score on the template's own specificity instead: more literal tokens
-    // confirmed, in order, is stronger evidence, regardless of what sat between
-    // them. Capped below an exact match, which is always the stronger claim.
-    let specificity = (matched_literal_tokens as f32 / SPECIFICITY_SATURATION).min(1.0);
+    // Score on the template's own specificity instead — but specificity is
+    // **rarity, not count**. Counting tokens credits three generic words
+    // ("play the one") as heavily as one diagnostic one ("playlist"), which is
+    // backwards. BM25's insight applies directly: a token in half as many
+    // utterances is not twice as diagnostic, so evidence is IDF-weighted and
+    // saturates logarithmically rather than climbing linearly to a cliff at
+    // some hand-picked count.
+    let specificity = evidence / (evidence + EVIDENCE_KNEE);
     let mut score = TEMPLATE_FLOOR + (TEMPLATE_CEILING - TEMPLATE_FLOOR) * specificity;
     if leading_junk {
         score -= LEADING_JUNK_PENALTY;
@@ -333,12 +449,19 @@ fn score_template(
     Some((score, MatchKind::Template, spans))
 }
 
-/// Literal tokens at which a template counts as fully specific. Three is where
-/// "play my {x} playlist" sits and "play {x}" does not, which is the distinction
-/// that matters.
-const SPECIFICITY_SATURATION: f32 = 3.0;
-/// A one-literal template ("play {artist}") — real evidence, weak evidence.
-const TEMPLATE_FLOOR: f32 = 0.65;
+/// Where accumulated IDF evidence is worth half of the available range. Sets the
+/// knee of the saturation curve, not a cutoff — there is no count at which a
+/// template abruptly becomes "specific".
+const EVIDENCE_KNEE: f32 = 3.0;
+/// A template whose literals carry almost no evidence ("play {artist}", where
+/// "play" appears in half the installed vocabulary) — a real match, weak
+/// evidence.
+///
+/// Lower than it was when specificity counted tokens. IDF saturation is flat in
+/// the region these templates live in, so the same difference in specificity
+/// produces a smaller difference in score; widening the range restores the
+/// separation the decision layer needs to act rather than ask.
+const TEMPLATE_FLOOR: f32 = 0.45;
 /// A fully specific template. Below 1.0 on purpose: an exact declared phrase is
 /// always the stronger claim.
 const TEMPLATE_CEILING: f32 = 0.95;
@@ -346,24 +469,78 @@ const TEMPLATE_CEILING: f32 = 0.95;
 /// utterance.
 const LEADING_JUNK_PENALTY: f32 = 0.15;
 
-/// Find `needle` in `haystack` at token boundaries, so "on" does not match
-/// inside "song".
-fn find_token_aligned(haystack: &str, needle: &str) -> Option<usize> {
-    let mut from = 0usize;
-    while let Some(offset) = haystack[from..].find(needle) {
-        let start = from + offset;
-        let end = start + needle.len();
-        let left_ok = start == 0 || haystack.as_bytes()[start - 1] == b' ';
-        let right_ok = end == haystack.len() || haystack.as_bytes()[end] == b' ';
-        if left_ok && right_ok {
-            return Some(start);
+/// Where a literal was found, and which of its tokens actually appeared.
+struct LiteralMatch {
+    /// Token index in the query where the literal starts.
+    start: usize,
+    /// Token index just past where it ends.
+    end: usize,
+    /// Indices into the needle that were confirmed. A token the channel
+    /// swallowed is absent here, so it contributes no evidence — the match
+    /// survives, and it is honestly worth less.
+    matched: Vec<usize>,
+}
+
+/// Find `needle`'s tokens in `haystack` at or after `from`.
+///
+/// Token-wise by construction, so "on" can never match inside "song". Two
+/// tolerances, and both exist because the corruption model in
+/// `action_decision::corrupt` says the channel does exactly these things:
+///
+/// - each token gets the spelling tolerance of [`same_word`] (substitution);
+/// - **at most one** needle token may be missing entirely (deletion of an
+///   unstressed function word — "send Jack a message" arriving as "send Jack
+///   message").
+///
+/// Matcher and corruption model have to agree. When they did not, calibration
+/// saw the true action score zero on inputs the model claimed were routine, and
+/// the resulting slack was wide enough to swallow every real distinction.
+fn find_tokens(haystack: &[&str], from: usize, needle: &[&str]) -> Option<LiteralMatch> {
+    if needle.is_empty() || from > haystack.len() {
+        return None;
+    }
+    let mut best: Option<LiteralMatch> = None;
+    for start in from..haystack.len() {
+        let mut matched = Vec::with_capacity(needle.len());
+        let mut skipped = false;
+        let mut j = start;
+        let mut ok = true;
+        for (i, want) in needle.iter().enumerate() {
+            if j < haystack.len() && same_word(haystack[j], want) {
+                matched.push(i);
+                j += 1;
+            } else if !skipped {
+                skipped = true;
+            } else {
+                ok = false;
+                break;
+            }
         }
-        from = start + 1;
-        if from >= haystack.len() {
-            break;
+        // A literal that matched nothing has not been found — otherwise a
+        // one-token literal would "match" by skipping itself, and every
+        // template would fire on every utterance.
+        if !ok || matched.is_empty() {
+            continue;
+        }
+        let candidate = LiteralMatch {
+            start,
+            end: j,
+            matched,
+        };
+        // Prefer the earliest position, and at a given position the alignment
+        // that confirmed the most tokens.
+        if best
+            .as_ref()
+            .is_none_or(|b| candidate.matched.len() > b.matched.len() && candidate.start == b.start)
+        {
+            let complete = candidate.matched.len() == needle.len();
+            best = Some(candidate);
+            if complete {
+                break;
+            }
         }
     }
-    None
+    best
 }
 
 /// Fraction of the phrase's tokens present in the query, penalised by how much
@@ -386,25 +563,6 @@ fn token_overlap(query_tokens: &[&str], phrase: &str) -> f32 {
     } else {
         2.0 * recall * precision / (recall + precision)
     }
-}
-
-/// Score every indexed action, best first.
-pub fn rank(spoken: &str, actions: &[IndexedAction]) -> Vec<Candidate> {
-    let mut out: Vec<Candidate> = actions
-        .iter()
-        .filter_map(|action| score_action(spoken, action))
-        .collect();
-    out.sort_by(|a, b| {
-        b.kind
-            .cmp(&a.kind)
-            .then(b.score.total_cmp(&a.score))
-            // Stable, and independent of registry order: two candidates that
-            // tie on evidence must not depend on install order for which one
-            // the chooser lists first.
-            .then(a.extension_id.cmp(&b.extension_id))
-            .then(a.action_id.cmp(&b.action_id))
-    });
-    out
 }
 
 // ── Equivalence classes (REVIEW-PASS2 D1) ───────────────────────────────────
@@ -654,6 +812,17 @@ mod tests {
         IndexedAction::from_decl(ext, &decl(id, domain, utterances, &[]))
     }
 
+    /// Score one action in isolation. Corpus statistics come from that action's
+    /// own utterances, which is the right baseline for tests about matching
+    /// mechanics; tests about *competition* build a shared index instead.
+    fn score_action(said: &str, action: &IndexedAction) -> Option<Candidate> {
+        ActionIndex::build(vec![action.clone()]).score_action(said, action)
+    }
+
+    fn rank(said: &str, actions: &[IndexedAction]) -> Vec<Candidate> {
+        ActionIndex::build(actions.to_vec()).rank(said)
+    }
+
     fn with_params(
         ext: &str,
         id: &str,
@@ -806,13 +975,20 @@ mod tests {
             &["play {artist}"],
             &["artist"],
         );
-        let said = "play my gym playlist";
-        let specific = score_action(said, &playlist).unwrap().score;
-        let generic = score_action(said, &artist).unwrap().score;
+        // One shared index: specificity is measured in IDF over the whole
+        // installed set, so scoring these separately would compare two different
+        // corpora and prove nothing.
+        let index = ActionIndex::build(vec![playlist, artist]);
+        let ranked = index.rank("play my gym playlist");
+        assert_eq!(ranked[0].action_id, "play_playlist");
+        let gap = ranked[0].score - ranked[1].score;
+        // Only two utterances in this index, so IDF is at its most compressed —
+        // a realistic installed set separates these further. The bar is set for
+        // the worst case on purpose.
         assert!(
-            specific - generic >= 0.15,
+            gap >= 0.10,
             "the gap has to stay wider than the calibrated slack, or the decision \
-             layer goes back to asking about every playlist ({specific} vs {generic})"
+             layer goes back to asking about every playlist (gap {gap})"
         );
     }
 

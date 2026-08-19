@@ -16,7 +16,7 @@
 use grain_core::action_decision::{
     calibrate, decide, Outcome, Preferences, RefuseReason, DEFAULT_ALPHA,
 };
-use grain_core::action_router::{equivalence_classes, IndexedAction};
+use grain_core::action_router::{equivalence_classes, ActionIndex, IndexedAction};
 use grain_sdk::manifest::ActionDecl;
 use serde::Deserialize;
 
@@ -61,7 +61,7 @@ fn shape(outcome: &Outcome) -> Shape {
 }
 
 struct Fixture {
-    actions: Vec<IndexedAction>,
+    index: ActionIndex,
     classes: grain_core::action_router::EquivalenceMap,
     calibration: grain_core::action_decision::Calibration,
     cases: Vec<Case>,
@@ -77,9 +77,10 @@ fn load() -> Fixture {
         }
     }
     let classes = equivalence_classes(&actions);
-    let calibration = calibrate(&actions, DEFAULT_ALPHA);
+    let index = ActionIndex::build(actions);
+    let calibration = calibrate(&index, DEFAULT_ALPHA);
     Fixture {
-        actions,
+        index,
         classes,
         calibration,
         cases: golden.cases,
@@ -92,7 +93,7 @@ impl Fixture {
         // every provider ambiguity has to be asked about rather than resolved.
         decide(
             said,
-            &self.actions,
+            &self.index,
             &self.classes,
             &self.calibration,
             &Preferences {
@@ -228,7 +229,7 @@ fn a_default_provider_turns_a_chooser_into_an_execution() {
     };
     match decide(
         "skip this",
-        &fixture.actions,
+        &fixture.index,
         &fixture.classes,
         &fixture.calibration,
         &preferences,
@@ -271,13 +272,16 @@ fn report() {
     println!(
         "\naction routing — Tier L, no embedder, no user defaults\
          \n  cases            {}\n  top-1            {:.1}%\n  false executions {}\
-         \n  missed           {}\n  alpha            {}\n  calibration      {} samples\n",
+         \n  missed           {}\n  alpha            {}\n  calibration      {} samples\
+         \n  floor            {:.3}\n  slack            {:.3}\n",
         scores.total,
         scores.correct as f32 / scores.total as f32 * 100.0,
         scores.false_executions.len(),
         scores.missed.len(),
         fixture.calibration.alpha,
         fixture.calibration.samples,
+        fixture.calibration.pooled_floor(),
+        fixture.calibration.slack(),
     );
     for miss in &scores.missed {
         println!("  missed: {miss}");

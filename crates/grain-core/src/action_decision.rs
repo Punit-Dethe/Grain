@@ -48,7 +48,19 @@
 //! Two quantiles come out of one calibration run, answering different questions:
 //! an absolute **floor** (is anything here at all?) and a relative **slack**
 //! (given the leader, who else is plausible?). The floor alone builds sets far
-//! too generous to act on.
+//! too generous to act on; the slack alone cannot reject at all, because every
+//! utterance has a leader and a leader is always within zero of itself — an
+//! utterance matching nothing would still produce a set of size one and execute
+//! it.
+//!
+//! In the nonconformity taxonomy those are **Hinge** and **Margin**. Combining
+//! them is unusual and deliberate: open-set rejection and set membership are
+//! genuinely different questions here. APS/RAPS are the better single scores in
+//! general, and both need a probability distribution over classes — which a
+//! lexical matcher does not produce and should not fake.
+//!
+//! Because the set is the **intersection** of two conditions, the error budget
+//! is split between them (Bonferroni) — see [`calibrate`].
 //!
 //! Per-class (Mondrian) floors are used wherever an action supplies enough
 //! samples to support the requested α; the rest fall back to the pooled floor.
@@ -56,7 +68,9 @@
 //! and clamping instead of admitting that is how a calibrated system quietly
 //! stops being calibrated.
 
-use crate::action_router::{equivalence_classes, rank, Candidate, EquivalenceMap, IndexedAction};
+use crate::action_router::{
+    equivalence_classes, ActionIndex, Candidate, EquivalenceMap, IndexedAction,
+};
 use grain_sdk::manifest::ActionRisk;
 use std::collections::{BTreeMap, HashMap};
 
@@ -193,6 +207,17 @@ pub struct Calibration {
 }
 
 impl Calibration {
+    /// The pooled score floor. Exposed so the operating point can be reported
+    /// rather than inferred — PLAN §12 asks for it per phase.
+    pub fn pooled_floor(&self) -> f32 {
+        self.pooled
+    }
+
+    /// How far behind the leader a candidate may sit and still be in the set.
+    pub fn slack(&self) -> f32 {
+        self.slack
+    }
+
     fn floor(&self, class: Option<usize>) -> f32 {
         class
             .and_then(|c| self.by_class.get(&c).copied())
@@ -246,21 +271,21 @@ pub const DEFAULT_ALPHA: f32 = 0.05;
 /// exactly this distribution, so the coverage claim is approximate — but the
 /// corruption model is written down and can be argued with, which a hand-picked
 /// constant cannot.
-pub fn calibrate(actions: &[IndexedAction], alpha: f32) -> Calibration {
-    let classes = equivalence_classes(actions);
+pub fn calibrate(index: &ActionIndex, alpha: f32) -> Calibration {
+    let classes = equivalence_classes(index.actions());
     let mut per_class: HashMap<usize, Vec<f32>> = HashMap::new();
     let mut all = Vec::new();
 
     let mut margins = Vec::new();
 
-    for action in actions {
+    for action in index.actions() {
         let class = classes.class_of(&action.extension_id, &action.action_id);
         for template in &action.templates {
             let Some(clean) = render_template(template) else {
                 continue;
             };
             for spoken in corrupt(&clean) {
-                let ranked = rank(&spoken, actions);
+                let ranked = index.rank(&spoken);
                 let score = ranked
                     .iter()
                     .find(|c| classes.class_of(&c.extension_id, &c.action_id) == class)
@@ -278,12 +303,24 @@ pub fn calibrate(actions: &[IndexedAction], alpha: f32) -> Calibration {
         }
     }
 
-    let pooled = conformal_floor(&mut all, alpha).unwrap_or(UNCALIBRATED_FLOOR);
-    let slack = conformal_slack(&mut margins, alpha).unwrap_or(UNCALIBRATED_SLACK);
+    // **Split the error budget.** The prediction set is the intersection of two
+    // conditions, so the true class is lost if EITHER fails, and by the union
+    // bound the miscoverage is at most their sum. Calibrating both at alpha
+    // would claim 1-alpha coverage while delivering 1-2*alpha: a wrong claim
+    // rather than a wrong behaviour, which is the more dangerous kind.
+    //
+    // Bonferroni: alpha/2 to each. Known to be conservative — it over-covers,
+    // producing slightly larger sets than strictly necessary, because it splits
+    // the budget evenly regardless of which condition is doing the work. That is
+    // the right default with no evidence about their relative difficulty, and an
+    // unequal split is a later refinement that needs data to justify.
+    let half = alpha / 2.0;
+    let pooled = conformal_floor(&mut all, half).unwrap_or(UNCALIBRATED_FLOOR);
+    let slack = conformal_slack(&mut margins, half).unwrap_or(UNCALIBRATED_SLACK);
     let by_class = per_class
         .into_iter()
         .filter_map(|(class, mut scores)| {
-            conformal_floor(&mut scores, alpha).map(|floor| (class, floor))
+            conformal_floor(&mut scores, half).map(|floor| (class, floor))
         })
         .collect();
 
@@ -358,11 +395,20 @@ fn corrupt(clean: &str) -> Vec<String> {
     out.push(format!("okay {clean}"));
     out.push(format!("{clean} please"));
 
-    // A dropped token — the commonest thing a noisy channel does to a short
-    // command.
+    // A dropped SHORT word. The channel swallows "my", "the", "a", "to" — the
+    // unstressed function words — and it does not silently delete content
+    // words, it substitutes them (below). Modelling arbitrary deletion was
+    // tried and is wrong twice over: it is not what ASR does, and covering it
+    // demands a slack so wide that "play my gym playlist" and "play {artist}"
+    // become indistinguishable, which is the exact discrimination the decision
+    // layer exists to make.
+    //
+    // The cutoff is the same four characters `same_word` uses, and for the
+    // mirror-image reason: words too short to spell-correct safely are exactly
+    // the ones the channel drops.
     for skip in 0..words.len() {
-        if words.len() == 1 {
-            break;
+        if words.len() == 1 || words[skip].len() >= 4 {
+            continue;
         }
         let dropped: Vec<&str> = words
             .iter()
@@ -371,6 +417,17 @@ fn corrupt(clean: &str) -> Vec<String> {
             .map(|(_, w)| *w)
             .collect();
         out.push(dropped.join(" "));
+    }
+
+    // A spurious word inserted mid-utterance — a hesitation or a hallucinated
+    // token. The matcher absorbs one between literals and cannot absorb one
+    // *inside* a multi-token literal, which is exactly the point: without a
+    // corruption the matcher genuinely struggles with, every margin is zero and
+    // the slack quantile stops carrying information.
+    for at in 1..words.len() {
+        let mut variant: Vec<String> = words.iter().map(|w| (*w).to_string()).collect();
+        variant.insert(at, "um".into());
+        out.push(variant.join(" "));
     }
 
     // A one-character substitution in a word long enough for the matcher to
@@ -468,7 +525,7 @@ pub fn split_named_provider(spoken: &str, known: &[(String, String)]) -> (String
 /// Decide what to do with one spoken request.
 pub fn decide(
     spoken: &str,
-    actions: &[IndexedAction],
+    index: &ActionIndex,
     classes: &EquivalenceMap,
     calibration: &Calibration,
     preferences: &Preferences,
@@ -476,8 +533,9 @@ pub fn decide(
     if crate::action_router::normalise(spoken).is_empty() {
         return Outcome::Refuse(RefuseReason::NothingHeard);
     }
-    let ranked = rank(spoken, actions);
-    let lookup: HashMap<String, &IndexedAction> = actions
+    let ranked = index.rank(spoken);
+    let lookup: HashMap<String, &IndexedAction> = index
+        .actions()
         .iter()
         .map(|action| (action.qualified(), action))
         .collect();
@@ -527,7 +585,7 @@ pub fn decide(
 
     match set.len() {
         0 => Outcome::Refuse(RefuseReason::NothingInstalledCanDoThat),
-        1 => resolve_single(set.remove(0), spoken, actions, classes, preferences),
+        1 => resolve_single(set.remove(0), spoken, index, classes, preferences),
         n if n <= MAX_CLARIFY => Outcome::Choose {
             options: set,
             reason: ChooseReason::WhichAction,
@@ -547,7 +605,7 @@ pub fn decide(
 fn resolve_single(
     winner: Selection,
     spoken: &str,
-    actions: &[IndexedAction],
+    index: &ActionIndex,
     classes: &EquivalenceMap,
     preferences: &Preferences,
 ) -> Outcome {
@@ -562,11 +620,13 @@ fn resolve_single(
     };
 
     // Everyone in the winning class who actually matched this utterance.
-    let mut providers: Vec<Selection> = rank(spoken, actions)
+    let mut providers: Vec<Selection> = index
+        .rank(spoken)
         .iter()
         .filter(|c| classes.class_of(&c.extension_id, &c.action_id) == Some(class))
         .filter_map(|c| {
-            actions
+            index
+                .actions()
                 .iter()
                 .find(|a| a.extension_id == c.extension_id && a.action_id == c.action_id)
                 .map(|a| Selection::from(c, a))
@@ -675,11 +735,15 @@ mod tests {
         ]
     }
 
-    fn fixture() -> (Vec<IndexedAction>, EquivalenceMap, Calibration) {
-        let actions = media_set();
+    fn build(actions: Vec<IndexedAction>) -> (ActionIndex, EquivalenceMap, Calibration) {
         let classes = equivalence_classes(&actions);
-        let calibration = calibrate(&actions, DEFAULT_ALPHA);
-        (actions, classes, calibration)
+        let index = ActionIndex::build(actions);
+        let calibration = calibrate(&index, DEFAULT_ALPHA);
+        (index, classes, calibration)
+    }
+
+    fn fixture() -> (ActionIndex, EquivalenceMap, Calibration) {
+        build(media_set())
     }
 
     #[test]
@@ -824,11 +888,10 @@ mod tests {
             &["play {artist}", "put on some {artist}", "put on {artist}"],
             &["artist"],
         ));
-        let classes = equivalence_classes(&actions);
-        let calibration = calibrate(&actions, DEFAULT_ALPHA);
+        let (index, classes, calibration) = build(actions);
         match decide(
             "play",
-            &actions,
+            &index,
             &classes,
             &calibration,
             &Preferences::default(),
@@ -859,15 +922,74 @@ mod tests {
         //
         // If this monotonicity ever breaks, the quantile has stopped being a
         // quantile and every number downstream is decoration.
-        let actions = media_set();
-        let strict = calibrate(&actions, 0.01);
-        let loose = calibrate(&actions, 0.30);
+        let index = ActionIndex::build(media_set());
+        // Both budgets must be SUPPORTED by the sample count, or the comparison
+        // is between a quantile and the uncalibrated fallback — which is not a
+        // monotonicity failure, it is the small-n refusal working. (α = 0.01 is
+        // genuinely unsupported at this fixture's size, and that is checked
+        // separately below.)
+        let strict = calibrate(&index, 0.05);
+        let loose = calibrate(&index, 0.30);
         assert!(
             strict.pooled <= loose.pooled,
             "tighter coverage must not raise the bar ({} vs {})",
             strict.pooled,
             loose.pooled
         );
+        // And the refusal itself: a budget this fixture cannot support falls
+        // back rather than pretending.
+        assert_eq!(calibrate(&index, 0.001).pooled, super::UNCALIBRATED_FLOOR);
+    }
+
+    #[test]
+    fn a_confusable_installed_set_asks_instead_of_picking() {
+        // On a well-separated set the slack calibrates to **zero**, and that is
+        // the mechanism working rather than failing: under the corruption model
+        // the right action always leads, so no slack is needed to cover it.
+        //
+        // It would be easy to read that as "the margin test is inert" and reach
+        // for a hand-picked minimum. It is not inert — genuinely confusable
+        // actions are *ties*, not near-misses, and a tie is inside any slack
+        // including zero. The property worth asserting is the outcome, not the
+        // number: three different actions that all legitimately answer to
+        // "skip this" must produce a question rather than whichever one sorted
+        // first.
+        assert_eq!(
+            calibrate(&ActionIndex::build(media_set()), DEFAULT_ALPHA).slack(),
+            0.0
+        );
+
+        let mut confusable = media_set();
+        confusable.push(action(
+            "deck",
+            "next_slide",
+            "system",
+            ActionRisk::Safe,
+            &["next slide", "next one", "skip this", "move on"],
+            &[],
+        ));
+        confusable.push(action(
+            "reader",
+            "next_page",
+            "files",
+            ActionRisk::Safe,
+            &["next page", "next one", "skip this", "move on"],
+            &[],
+        ));
+        let (index, classes, calibration) = build(confusable);
+        match decide(
+            "skip this",
+            &index,
+            &classes,
+            &calibration,
+            &Preferences::default(),
+        ) {
+            Outcome::Choose { options, .. } => assert!(
+                options.len() >= 3,
+                "every action that answers to this phrase has to be on the ballot"
+            ),
+            other => panic!("a three-way collision must never just run: {other:?}"),
+        }
     }
 
     #[test]
@@ -898,11 +1020,10 @@ mod tests {
             ],
             &["playlist"],
         ));
-        let classes = equivalence_classes(&actions);
-        let calibration = calibrate(&actions, DEFAULT_ALPHA);
+        let (index, classes, calibration) = build(actions);
         match decide(
             "play my gym playlist",
-            &actions,
+            &index,
             &classes,
             &calibration,
             &Preferences::default(),
@@ -920,19 +1041,31 @@ mod tests {
 
     #[test]
     fn calibration_is_measured_against_speech_not_against_synonyms() {
-        // The corruption model is the assumption the guarantee rests on, so its
-        // three cases are pinned: a filler, a dropped token, one mangled
-        // character. If someone widens this to make a number look better, this
-        // test is where they have to say so out loud.
-        let variants = super::corrupt("next song please");
-        assert!(variants.contains(&"next song please".to_string()));
+        // The corruption model is the assumption the guarantee rests on, so
+        // every case is pinned. If someone widens or narrows this to make a
+        // number look better, this test is where they have to say so out loud.
+        let variants = super::corrupt("play my gym playlist");
+        // The clean phrase belongs in the distribution — people do say the
+        // exact thing, and omitting it would bias the floor upward.
+        assert!(variants.contains(&"play my gym playlist".to_string()));
+        // Filler, front and back.
         assert!(variants.iter().any(|v| v.starts_with("okay ")));
-        assert!(variants.iter().any(|v| v == "song please"));
+        assert!(variants.iter().any(|v| v.ends_with(" please")));
+        // A dropped SHORT word — and only a short one. The channel swallows
+        // "my"; it substitutes content words rather than deleting them.
+        assert!(variants.iter().any(|v| v == "play gym playlist"));
+        assert!(
+            !variants.iter().any(|v| v == "my gym playlist"),
+            "dropping a content word is not what ASR does, and modelling it \
+             forces a slack wide enough to swallow every real distinction"
+        );
+        // An inserted hesitation.
+        assert!(variants.iter().any(|v| v.contains(" um ")));
         // One mangled character: same shape, one word spelled wrong.
         assert!(
             variants.iter().any(|v| {
                 let words: Vec<&str> = v.split(' ').collect();
-                words.len() == 3 && v != "next song please" && !v.starts_with("okay")
+                words.len() == 4 && v != "play my gym playlist" && !v.contains("um")
             }),
             "the substitution case is missing: {variants:?}"
         );
