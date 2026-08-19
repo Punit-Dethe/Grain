@@ -1,4 +1,5 @@
 import type {
+  ActionInfo,
   ExtensionCard,
   ExtensionSettingsSection,
   PromptLayerInfo,
@@ -76,20 +77,22 @@ export function slotLabel(slot: string): string {
 export interface ApprovalRequest {
   permissions: string[];
   promptLayers: PromptLayerInfo[];
+  actions: ActionInfo[];
 }
 
 /**
  * The single structured error an enable can be refused with.
  *
- * Capabilities and prompt layers arrive together and are shown in one sheet:
- * two sheets in a row for one enable is how a user learns to click Approve
- * without reading, which defeats the point of asking.
+ * Capabilities, prompt layers and actions arrive together and are shown in one
+ * sheet: two sheets in a row for one enable is how a user learns to click
+ * Approve without reading, which defeats the point of asking.
  */
 export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   try {
     const parsed = JSON.parse(String(error)) as {
       needsPermissions?: unknown;
       needsPromptLayers?: unknown;
+      needsActions?: unknown;
     };
     const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
@@ -97,11 +100,35 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
     const promptLayers = Array.isArray(parsed.needsPromptLayers)
       ? (parsed.needsPromptLayers as PromptLayerInfo[])
       : [];
-    if (!permissions.length && !promptLayers.length) return null;
-    return { permissions, promptLayers };
+    const actions = Array.isArray(parsed.needsActions)
+      ? (parsed.needsActions as ActionInfo[])
+      : [];
+    if (!permissions.length && !promptLayers.length && !actions.length)
+      return null;
+    return { permissions, promptLayers, actions };
   } catch {
     return null;
   }
+}
+
+/**
+ * Actions grouped by their preference domain, which is how the sheet reads
+ * them: "Media — play, pause, skip" rather than one row per action.
+ */
+export function actionsByDomain(
+  actions: ActionInfo[],
+): { domain: string; titles: string[]; confirms: boolean }[] {
+  const groups = new Map<string, { titles: string[]; confirms: boolean }>();
+  for (const action of actions) {
+    const group = groups.get(action.domain) ?? { titles: [], confirms: false };
+    group.titles.push(action.title);
+    group.confirms = group.confirms || action.confirms;
+    groups.set(action.domain, group);
+  }
+  return [...groups.entries()].map(([domain, group]) => ({
+    domain,
+    ...group,
+  }));
 }
 
 /** Plain-language description of when a contributed layer applies. */

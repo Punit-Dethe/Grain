@@ -45,6 +45,7 @@ import {
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ExtensionViewId } from "../navigation";
 import {
+  actionsByDomain,
   capabilityLabel,
   extensionDestination,
   filterExtensions,
@@ -308,6 +309,34 @@ function useInstalledExtensions(): InstalledController {
                     {promptLayerScope(layer)}
                   </span>
                   <q>{layer.text}</q>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+        {pending.actions.length > 0 && (
+          <>
+            {/*
+              Grouped by domain and listed by title — never by the phrases the
+              extension listens for. What the user is deciding is what this can
+              do, and a wall of utterances is the fastest way to train someone
+              to scroll past the part that matters.
+            */}
+            <p>It can do these things when you ask out loud:</p>
+            <ul className="extension-actions">
+              {actionsByDomain(pending.actions).map((group) => (
+                <li key={group.domain}>
+                  <span className="extension-action-domain">
+                    {group.domain}
+                  </span>
+                  <span className="extension-action-titles">
+                    {group.titles.join(", ")}
+                  </span>
+                  {group.confirms && (
+                    <span className="extension-action-confirms">
+                      asks you first
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>

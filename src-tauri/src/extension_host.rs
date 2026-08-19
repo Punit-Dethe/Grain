@@ -397,6 +397,15 @@ struct Index {
     /// and screened here rather than at render time so a pack whose text was
     /// edited on disk after import never reaches the prompt at all.
     prompt_layers: Vec<CompiledPromptLayer>,
+    /// Declared actions, compiled for routing (`docs/Action Routing/PLAN.md`).
+    /// Same reasoning as the layers above: built here so the route never reads a
+    /// manifest, and gated by the approval digest on every rebuild rather than
+    /// once at import.
+    actions: grain_core::action_router::ActionIndex,
+    /// Which declared actions are the same request from different extensions.
+    /// Derived from the index, cached because it is quadratic in the action
+    /// count and completely static between rebuilds.
+    action_classes: grain_core::action_router::EquivalenceMap,
 }
 
 /// An enabled extension's prompt layer, compiled for matching.
@@ -420,6 +429,31 @@ static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
 /// an extension can hold it while contributing no layer at all, so it needs its
 /// own guard or that case would read as "nothing installed".
 static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
+/// And for declared actions, so a user with none pays one relaxed load.
+static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
+
+/// Conformal thresholds for action routing.
+///
+/// Held **outside** [`Index`] and behind its own lock because it is the one
+/// piece that cannot be computed on the rebuild path: calibrating a large
+/// installed set takes seconds, and `refresh_index` runs when the user flips a
+/// switch. So the index is rebuilt synchronously, this stays at
+/// [`Calibration::conservative`], and a background task swaps in the real
+/// thresholds when they are ready.
+///
+/// Routing in the meantime is safe rather than absent — a conservative
+/// calibration only lets a near-exact match execute.
+static ACTION_CALIBRATION: OnceLock<RwLock<grain_core::action_decision::Calibration>> =
+    OnceLock::new();
+
+/// Generation counter so a calibration that finishes after a newer rebuild
+/// started is discarded instead of overwriting fresher numbers.
+static CALIBRATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn calibration_cell() -> &'static RwLock<grain_core::action_decision::Calibration> {
+    ACTION_CALIBRATION
+        .get_or_init(|| RwLock::new(grain_core::action_decision::Calibration::conservative()))
+}
 
 struct HostState {
     app: AppHandle,
@@ -441,6 +475,7 @@ pub fn refresh_index(app: &AppHandle) {
     let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
     let mut transforms: Vec<(String, u64)> = Vec::new();
     let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
+    let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
     let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -459,6 +494,9 @@ pub fn refresh_index(app: &AppHandle) {
             if !pack.has_runtime() {
                 continue;
             }
+            // Actions ARE gated on a runtime, unlike prompt layers: a pack with
+            // nothing to call would win a route and then dead-end.
+            collect_actions(&rec, &pack, &mut actions);
             let mut granted_variants = Vec::new();
             for variant in declared_event_variants(&pack.manifest.activation) {
                 let Some(capability) = daemon_event_capability(&variant) else {
@@ -502,6 +540,11 @@ pub fn refresh_index(app: &AppHandle) {
     let prompt_layers: Vec<CompiledPromptLayer> =
         prompt_layers.into_iter().map(|(l, _)| l).collect();
 
+    let action_count = actions.len();
+    let action_classes = grain_core::action_router::equivalence_classes(&actions);
+    let action_index = grain_core::action_router::ActionIndex::build(actions);
+    HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
+
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
     HAS_PROMPT_LAYERS.store(!prompt_layers.is_empty(), Ordering::Relaxed);
@@ -521,7 +564,10 @@ pub fn refresh_index(app: &AppHandle) {
         by_event,
         transforms,
         prompt_layers,
+        actions: action_index.clone(),
+        action_classes,
     };
+    recalibrate_actions(action_index);
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
     // free rather than having to remember a second call. `sync` defers onto
@@ -591,6 +637,126 @@ fn collect_prompt_layers(
             rec.toggle_seq,
         ));
     }
+}
+
+/// Compile one enabled extension's declared actions into the index.
+///
+/// Same two-gate shape as [`collect_prompt_layers`], and the digest gate matters
+/// more here rather than less: what an update can quietly change is not wording
+/// but **what happens** — a `confirm` that became `safe` loses its read-back, and
+/// a widened `when` starts offering the action where it was never approved.
+fn collect_actions(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    out: &mut Vec<grain_core::action_router::IndexedAction>,
+) {
+    let declared = &pack.manifest.contributes.actions;
+    if declared.is_empty() {
+        return;
+    }
+    let approved = grain_core::extensions::actions_fingerprint(declared);
+    if rec.actions_approved.as_deref() != Some(approved.as_str()) {
+        log::warn!(
+            "[ext:{}] actions not routable — the declaration differs from what was approved; \
+             the user must review it again",
+            rec.id
+        );
+        return;
+    }
+    for decl in declared {
+        out.push(grain_core::action_router::IndexedAction::from_decl(
+            &rec.id, decl,
+        ));
+    }
+}
+
+/// Kick off calibration for a freshly built index, off the rebuild path.
+///
+/// Fire-and-forget on purpose. Until it lands the router uses
+/// `Calibration::conservative`, which only executes a near-exact match — so the
+/// window between a switch being flipped and the thresholds arriving is a window
+/// where Grain asks more, never one where it guesses.
+fn recalibrate_actions(index: grain_core::action_router::ActionIndex) {
+    let generation = CALIBRATION_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if index.is_empty() {
+        *calibration_cell().write().unwrap() =
+            grain_core::action_decision::Calibration::conservative();
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let calibration = grain_core::action_decision::calibrate(
+            &index,
+            grain_core::action_decision::DEFAULT_ALPHA,
+        );
+        // A rebuild that started after this one owns the answer. Without the
+        // generation check, a slow calibration for an old extension set could
+        // land on top of fresh thresholds and quietly mis-tune routing.
+        if CALIBRATION_GENERATION.load(Ordering::SeqCst) != generation {
+            log::debug!("[GRAIN] ext-host: discarding stale action calibration (gen {generation})");
+            return;
+        }
+        log::debug!(
+            "[GRAIN] ext-host: action calibration ready — floor {:.3}, slack {:.3}, {} samples",
+            calibration.pooled_floor(),
+            calibration.slack(),
+            calibration.samples
+        );
+        *calibration_cell().write().unwrap() = calibration;
+    });
+}
+
+/// Route one spoken request against the installed actions.
+///
+/// The whole decision, minus execution: which action, whose, with what spans,
+/// and whether to run it, ask, escalate or say nothing can. With no
+/// action-bearing extension installed this is one relaxed atomic load.
+pub fn route_action(
+    spoken: &str,
+    preferences: &grain_core::action_decision::Preferences,
+) -> Option<grain_core::action_decision::Outcome> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return None;
+    }
+    let host = HOST.get()?;
+    let index = host.index.read().unwrap();
+    let calibration = calibration_cell().read().unwrap();
+    Some(grain_core::action_decision::decide(
+        spoken,
+        &index.actions,
+        &index.action_classes,
+        &calibration,
+        preferences,
+    ))
+}
+
+/// The names an utterance may end with to name a provider ("…on Spotify"),
+/// paired with the extension id they resolve to.
+///
+/// Read from the registry rather than the index because an extension's display
+/// name is not something the router needs to carry.
+pub fn action_provider_names(app: &AppHandle) -> Vec<(String, String)> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let owners: std::collections::HashSet<String> = host
+        .index
+        .read()
+        .unwrap()
+        .actions
+        .actions()
+        .iter()
+        .map(|a| a.extension_id.clone())
+        .collect();
+    owners
+        .into_iter()
+        .filter_map(|id| {
+            let name = load_manifest(app, &id)?.manifest.name;
+            (!name.trim().is_empty()).then_some((name, id))
+        })
+        .collect()
 }
 
 /// What installed extensions bring to this dictation: the layers that match the
@@ -1664,6 +1830,11 @@ pub fn reload_dev_extension(
                 )
             },
         ),
+        // Same reasoning for actions, and the same limit: this shortcut exists
+        // only for a load-unpacked project on the author's own disk.
+        actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
+            grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
+        }),
         dev: prior.dev,
         // A dev hot-reload preserves the record's rung (a load-unpacked project
         // is `dev`); trust is never changed by a reload.

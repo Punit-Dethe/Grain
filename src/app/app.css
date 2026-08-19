@@ -6611,6 +6611,54 @@ html[data-theme="light"] .installed-extension-actions {
   color: var(--text-2);
   font-style: italic;
 }
+
+/* Declared actions on the approval sheet: one row per preference domain, so
+   "what can this do" reads as a short list rather than a scroll. Shares the
+   prompt-layer row shape — they are answering the same kind of question. */
+.extension-confirm ul.extension-actions {
+  margin-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.extension-actions li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+}
+
+.extension-action-domain {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-4, var(--text-3));
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.extension-action-titles {
+  color: var(--text-2);
+}
+
+/* The one thing on the row that must not be skimmed past. */
+.extension-action-confirms {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
 .extension-confirm-actions {
   justify-content: flex-end;
 }

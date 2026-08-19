@@ -3352,7 +3352,34 @@ export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvid
  * drifting apart would mean the user approved one wording and can later only
  * review another.
  */
-export type PromptLayerInfo = { id: string; 
+/**
+ * [GRAIN] One declared action, as the approval sheet and the extension card
+ * need it (`docs/Action Routing/PLAN.md` §5).
+ *
+ * Note what is absent: the utterance list. The consent question is "what can
+ * this do", not "what words does it listen for".
+ */
+export type ActionInfo = { id: string;
+/**
+ * One plain line, written for the user.
+ */
+title: string;
+/**
+ * The preference group — "media", "messaging" — used as the sheet's heading
+ * and as the key for "always use this one".
+ */
+domain: string;
+/**
+ * Whether performing this reads the resolved action back first. The single
+ * most important thing on the row.
+ */
+confirms: boolean;
+/**
+ * No conditions at all — offered on every request.
+ */
+everywhere: boolean; app: string[]; website: string[] }
+
+export type PromptLayerInfo = { id: string;
 /**
  * The instruction, verbatim. Never summarised anywhere it is displayed.
  */

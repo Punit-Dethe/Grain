@@ -880,6 +880,45 @@ impl PromptLayerInfo {
     }
 }
 
+/// [GRAIN] One declared action, as the approval sheet and the extension card
+/// need it (`docs/Action Routing/PLAN.md` §5).
+///
+/// Note what is **absent**: the utterance list. The consent question is "what
+/// can this do", not "what words does it listen for" — a list of phrasings is
+/// review and `doctor` material, and putting it on a sheet trains people to
+/// scroll past the part that matters. What the user decides on is the title, the
+/// domain, and whether it will ask before acting.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct ActionInfo {
+    pub id: String,
+    /// One plain line, written for the user.
+    pub title: String,
+    /// The preference group — "media", "messaging" — used as the sheet's
+    /// heading and as the key for "always use this one".
+    pub domain: String,
+    /// Whether performing this reads the resolved action back first. The single
+    /// most important thing on the row.
+    pub confirms: bool,
+    /// No conditions at all — offered on every request.
+    pub everywhere: bool,
+    pub app: Vec<String>,
+    pub website: Vec<String>,
+}
+
+impl ActionInfo {
+    fn from_decl(decl: &grain_sdk::manifest::ActionDecl) -> Self {
+        Self {
+            id: decl.id.clone(),
+            title: decl.title.clone(),
+            domain: decl.domain.clone(),
+            confirms: !decl.risk.is_safe(),
+            everywhere: decl.when.is_unconditional(),
+            app: decl.when.app.clone(),
+            website: decl.when.website.clone(),
+        }
+    }
+}
+
 /// The Overview tab's data: every extension, enabled and disabled alike.
 #[tauri::command]
 #[specta::specta]
@@ -1101,15 +1140,35 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         .unwrap_or_default();
                     approved != ext::prompt_layers_fingerprint(declared)
                 };
-                if !missing.is_empty() || unapproved {
+                // Same question for actions, and it has to be asked here or an
+                // extension that declares one stays permanently inert: the
+                // routing gate refuses an unapproved declaration, and nothing
+                // else would ever ask the user about it.
+                let declared_actions = &pack.manifest.contributes.actions;
+                let actions_unapproved = !declared_actions.is_empty() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|r| r.actions_approved)
+                        .unwrap_or_default();
+                    approved != ext::actions_fingerprint(declared_actions)
+                };
+                if !missing.is_empty() || unapproved || actions_unapproved {
                     let layers: Vec<PromptLayerInfo> = if unapproved {
                         declared.iter().map(PromptLayerInfo::from_decl).collect()
                     } else {
                         Vec::new()
                     };
+                    let actions: Vec<ActionInfo> = if actions_unapproved {
+                        declared_actions.iter().map(ActionInfo::from_decl).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    // One sheet carrying all three. Two sheets in a row is how a
+                    // user learns to click through without reading.
                     return Err(serde_json::json!({
                         "needsPermissions": missing,
                         "needsPromptLayers": layers,
+                        "needsActions": actions,
                     })
                     .to_string());
                 }
@@ -1319,6 +1378,8 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
             .then(|| {
                 ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers)
             }),
+        actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
+            .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
         dev: None,
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
@@ -1768,6 +1829,10 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // the enable, and shows the user what changed. This is the update path
         // the rug-pull incidents of 2025 walked through.
         prompt_layers_approved: prior.as_ref().and_then(|r| r.prompt_layers_approved.clone()),
+        // Carried, never recomputed. Importing is not approving: if the
+        // declaration changed, this stops matching, the actions go inert, and
+        // the enable path shows the user what is different.
+        actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
         // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
         // that they are externalised — the Agent centre layout ships as a real
         // pack rather than a host-synthesised record.
@@ -1930,6 +1995,11 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     }
     rec.prompt_layers_approved = (!manifest.contributes.prompt_layers.is_empty())
         .then(|| ext::prompt_layers_fingerprint(&manifest.contributes.prompt_layers));
+    // Recomputed from disk, never taken from the caller — the fingerprint IS the
+    // grant, so accepting one over the wire would let a caller approve a
+    // declaration the user never saw.
+    rec.actions_approved = (!manifest.contributes.actions.is_empty())
+        .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
     reg.install(rec).map_err(|e| e.to_string())
 }
 

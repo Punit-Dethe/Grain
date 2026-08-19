@@ -160,6 +160,37 @@ fn same_word(a: &str, b: &str) -> bool {
     edit_distance_at_most_one(short, long)
 }
 
+/// How many candidate actions one query may gather before the walk stops.
+///
+/// Generous relative to any real decision — the prediction set is at most a
+/// handful — and small enough that calibration over a large installed set stays
+/// in milliseconds rather than seconds.
+const MAX_CANDIDATES: usize = 64;
+
+/// Keys a token is filed under, so an inverted-index lookup can find every
+/// token within [`same_word`]'s tolerance without scanning.
+///
+/// The **deletion neighbourhood** (SymSpell's construction): file a token under
+/// itself and under each of its single-character deletions. Two strings within
+/// one edit always share a key, so one hash lookup per key finds every fuzzy
+/// match — no scan, and no enumerating 26 substitutions per position.
+///
+/// Tokens shorter than four characters get no tolerance in `same_word`, so they
+/// are filed under themselves alone. The two functions must agree, or the index
+/// prunes away candidates the matcher would have accepted.
+fn fuzzy_keys(token: &str) -> Vec<String> {
+    let mut keys = vec![token.to_string()];
+    if token.len() >= 4 && token.is_ascii() {
+        for skip in 0..token.len() {
+            let mut variant = String::with_capacity(token.len() - 1);
+            variant.push_str(&token[..skip]);
+            variant.push_str(&token[skip + 1..]);
+            keys.push(variant);
+        }
+    }
+    keys
+}
+
 /// True when `a` becomes `b` with at most one insertion, deletion or
 /// substitution. Bounded at one on purpose — two edits on a four-letter word is
 /// a different word.
@@ -202,6 +233,16 @@ pub struct ActionIndex {
     /// How much evidence one literal token carries, by how rare it is across
     /// every declared utterance in the installed set.
     idf: HashMap<String, f32>,
+    /// Fuzzy key → actions whose literals contain a token reachable from it.
+    ///
+    /// Scoring every action against every utterance is fine on the felt path
+    /// (hundreds of cheap matches, ~1 ms) and catastrophic in calibration, which
+    /// multiplies it by the sample count: 300 actions took **6.5 seconds in
+    /// release**, on a rebuild that runs whenever a switch is flipped. This
+    /// prunes to the actions that share a literal token with what was said,
+    /// which is a superset of what can possibly match — `find_tokens` needs at
+    /// least one confirmed token — so it changes no result.
+    postings: HashMap<String, Vec<u32>>,
 }
 
 impl ActionIndex {
@@ -210,7 +251,8 @@ impl ActionIndex {
         // frequency is how many of them contain it.
         let mut document_frequency: HashMap<String, usize> = HashMap::new();
         let mut documents = 0usize;
-        for action in &actions {
+        let mut postings: HashMap<String, Vec<u32>> = HashMap::new();
+        for (position, action) in actions.iter().enumerate() {
             for template in &action.templates {
                 documents += 1;
                 let mut seen = std::collections::HashSet::new();
@@ -222,9 +264,16 @@ impl ActionIndex {
                         if seen.insert(token.to_string()) {
                             *document_frequency.entry(token.to_string()).or_insert(0) += 1;
                         }
+                        for key in fuzzy_keys(token) {
+                            postings.entry(key).or_default().push(position as u32);
+                        }
                     }
                 }
             }
+        }
+        for list in postings.values_mut() {
+            list.sort_unstable();
+            list.dedup();
         }
         let n = documents as f32;
         let idf = document_frequency
@@ -238,7 +287,11 @@ impl ActionIndex {
                 (token, value.max(0.0))
             })
             .collect();
-        ActionIndex { actions, idf }
+        ActionIndex {
+            actions,
+            idf,
+            postings,
+        }
     }
 
     pub fn actions(&self) -> &[IndexedAction] {
@@ -256,12 +309,56 @@ impl ActionIndex {
         self.idf.get(token).copied().unwrap_or(1.0)
     }
 
-    /// Score every indexed action, best first.
+    /// Actions that share at least one literal token with the query, allowing
+    /// the same single-edit tolerance the matcher uses.
+    ///
+    /// Query tokens are consulted **rarest first**, and the walk stops once
+    /// enough candidates are gathered. That bound matters: postings alone prune
+    /// nothing when a token is shared by most of the installed set, which is not
+    /// hypothetical — "open", "play" and "next" will each be declared by dozens
+    /// of extensions.
+    ///
+    /// Dropping the common tokens' postings is an approximation, and a safe one
+    /// in the direction that counts. An action reachable *only* through a token
+    /// that half the corpus declares has almost no IDF evidence behind it, so it
+    /// scores near the bottom and could not have cleared the calibrated floor.
+    /// The candidates given up are the ones that were never going to win.
+    fn candidates(&self, query: &str) -> Vec<u32> {
+        let mut query_tokens = tokens(query);
+        // Rarest first: the discriminative tokens are the ones worth spending
+        // the budget on, which is the same argument IDF makes about evidence.
+        query_tokens.sort_by(|a, b| {
+            self.idf
+                .get(*b)
+                .unwrap_or(&f32::MAX)
+                .total_cmp(self.idf.get(*a).unwrap_or(&f32::MAX))
+        });
+        let mut out = Vec::new();
+        for token in query_tokens {
+            for key in fuzzy_keys(token) {
+                if let Some(list) = self.postings.get(&key) {
+                    out.extend_from_slice(list);
+                }
+            }
+            if out.len() >= MAX_CANDIDATES {
+                break;
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Score every plausible action, best first.
     pub fn rank(&self, spoken: &str) -> Vec<Candidate> {
+        let query = normalise(spoken);
         let mut out: Vec<Candidate> = self
-            .actions
-            .iter()
-            .filter_map(|action| self.score_action(spoken, action))
+            .candidates(&query)
+            .into_iter()
+            .filter_map(|position| {
+                let action = self.actions.get(position as usize)?;
+                self.score_action(spoken, action)
+            })
             .collect();
         out.sort_by(|a, b| {
             b.kind

@@ -207,6 +207,32 @@ pub struct Calibration {
 }
 
 impl Calibration {
+    /// What to use before [`calibrate`] has finished.
+    ///
+    /// Calibrating a large installed set takes seconds, and it runs whenever the
+    /// extension set changes — which is a switch being flipped, where a stall is
+    /// very visible. So the host builds the index synchronously, routes with
+    /// this, and swaps in the real thing when the background pass lands.
+    ///
+    /// Safe in the direction that matters: a high floor and no slack means only
+    /// a near-exact match executes. The degradation is "asks more often for a
+    /// moment", never "acts on a guess".
+    pub fn conservative() -> Self {
+        Calibration {
+            by_class: HashMap::new(),
+            pooled: UNCALIBRATED_FLOOR,
+            slack: 0.0,
+            alpha: DEFAULT_ALPHA,
+            samples: 0,
+        }
+    }
+
+    /// Whether this came from data. `false` means [`Calibration::conservative`]
+    /// is still in place.
+    pub fn is_calibrated(&self) -> bool {
+        self.samples > 0
+    }
+
     /// The pooled score floor. Exposed so the operating point can be reported
     /// rather than inferred — PLAN §12 asks for it per phase.
     pub fn pooled_floor(&self) -> f32 {
@@ -278,13 +304,40 @@ pub fn calibrate(index: &ActionIndex, alpha: f32) -> Calibration {
 
     let mut margins = Vec::new();
 
-    for action in index.actions() {
+    // Bounded, because the naive cost is a product of four things that all grow
+    // with the installed set: every action's every utterance, times every
+    // corruption, ranked against every action's every template. At a
+    // pessimistic twenty extensions that is ~10^8 template matches on a switch
+    // toggle — and `refresh_index` runs on enable, disable, grant and import,
+    // where a multi-second hitch is very visible.
+    //
+    // Sampling is the right answer rather than a compromise: a conformal
+    // quantile needs *enough* points, not all of them, and the budget below
+    // supports α well past anything sane. The share is per action so a large
+    // installed set thins every action equally instead of starving the ones
+    // that happen to sort last.
+    let action_count = index.actions().len().max(1);
+    let budget_per_action = (MAX_CALIBRATION_SAMPLES / action_count).max(MIN_SAMPLES_PER_ACTION);
+
+    'actions: for action in index.actions() {
         let class = classes.class_of(&action.extension_id, &action.action_id);
+        let mut taken = 0usize;
         for template in &action.templates {
             let Some(clean) = render_template(template) else {
                 continue;
             };
             for spoken in corrupt(&clean) {
+                if taken >= budget_per_action {
+                    break;
+                }
+                // The per-action share is a floor for fairness, not a licence to
+                // exceed the total. On a very large installed set the tail of
+                // actions calibrates on the pooled floor instead of its own,
+                // which is a documented degradation rather than a stall.
+                if all.len() >= MAX_CALIBRATION_SAMPLES {
+                    break 'actions;
+                }
+                taken += 1;
                 let ranked = index.rank(&spoken);
                 let score = ranked
                     .iter()
@@ -375,6 +428,20 @@ fn conformal_slack(margins: &mut [f32], alpha: f32) -> Option<f32> {
 /// that matters here: a small slack means small sets, which means the decision
 /// falls back to "act only on a clear leader".
 const UNCALIBRATED_SLACK: f32 = 0.05;
+
+/// Total calibration queries across the whole installed set.
+///
+/// Sized by what the quantile needs, not by what is available: at α = 0.05 the
+/// budget is split to 0.025 per condition, so the rank is ⌈(n+1)·0.975⌉ and any
+/// n above ~40 supports it. Two thousand leaves three orders of magnitude of
+/// headroom on resolution while keeping a rebuild in the tens of milliseconds.
+const MAX_CALIBRATION_SAMPLES: usize = 2000;
+
+/// Never thin an action below this, however many are installed. Per-class
+/// (Mondrian) floors need their own samples, and an action reduced to a handful
+/// silently falls back to the pooled floor — which is a correctness cliff, not a
+/// gentle degradation.
+const MIN_SAMPLES_PER_ACTION: usize = 12;
 
 /// The corruption model: what happens to a declared phrase between the manifest
 /// and the microphone.
@@ -939,6 +1006,98 @@ mod tests {
         // And the refusal itself: a budget this fixture cannot support falls
         // back rather than pretending.
         assert_eq!(calibrate(&index, 0.001).pooled, super::UNCALIBRATED_FLOOR);
+    }
+
+    /// Build a deliberately adversarial installed set: every action shares its
+    /// vocabulary with every other, so the inverted index prunes nothing. Real
+    /// vocabularies are far more diverse; this is the worst case, not the case.
+    fn crowded(extensions: usize, per_extension: usize) -> Vec<IndexedAction> {
+        let mut actions = Vec::new();
+        for extension in 0..extensions {
+            for id in 0..per_extension {
+                let utterances: Vec<String> = (0..12)
+                    .map(|phrasing| format!("command {extension} number {id} way {phrasing}"))
+                    .collect();
+                let borrowed: Vec<&str> = utterances.iter().map(String::as_str).collect();
+                actions.push(action(
+                    &format!("ext{extension}"),
+                    &format!("act{id}"),
+                    "media",
+                    ActionRisk::Safe,
+                    &borrowed,
+                    &[],
+                ));
+            }
+        }
+        actions
+    }
+
+    #[test]
+    fn building_the_index_is_fast_even_when_calibrating_is_not() {
+        // The split that makes the background pass possible: the host must be
+        // able to build an index and start routing conservatively without
+        // waiting for a quantile. If this ever becomes slow, flipping a switch
+        // stalls.
+        let actions = crowded(20, 15);
+        let started = std::time::Instant::now();
+        let index = ActionIndex::build(actions);
+        let elapsed = started.elapsed();
+        assert_eq!(index.actions().len(), 300);
+        assert!(
+            elapsed.as_millis() < 500,
+            "building a 300-action index took {elapsed:?}; it is on the rebuild path"
+        );
+    }
+
+    #[test]
+    fn calibration_stays_bounded_on_a_large_installed_set() {
+        // Bounds the SAMPLE count, not the wall clock — calibration runs in the
+        // background precisely because its cost grows with the installed set.
+        // What must not happen is the sample budget quietly escaping, which is
+        // what turns seconds into minutes.
+        let index = ActionIndex::build(crowded(20, 15));
+        let calibration = calibrate(&index, DEFAULT_ALPHA);
+        assert!(
+            calibration.samples <= MAX_CALIBRATION_SAMPLES,
+            "sampling budget escaped: {} samples",
+            calibration.samples
+        );
+        assert!(calibration.is_calibrated());
+    }
+
+    #[test]
+    fn a_conservative_calibration_only_lets_a_near_exact_match_through() {
+        // What routing uses while the background pass is still running. It has
+        // to be safe rather than merely present: high floor, no slack, so the
+        // degradation is "asks more often for a moment", never "acts on a
+        // guess".
+        let index = ActionIndex::build(media_set());
+        let classes = equivalence_classes(index.actions());
+        let waiting = Calibration::conservative();
+        assert!(!waiting.is_calibrated());
+
+        // A declared phrase, said exactly, still runs.
+        assert!(matches!(
+            decide(
+                "go back",
+                &index,
+                &classes,
+                &waiting,
+                &Preferences::default()
+            ),
+            Outcome::Execute(_)
+        ));
+        // Anything softer waits for the real thresholds rather than guessing.
+        assert!(matches!(
+            decide(
+                "tell Jack that I am running late",
+                &index,
+                &classes,
+                &waiting,
+                &Preferences::default()
+            ),
+            Outcome::Refuse(_)
+        ));
     }
 
     #[test]
