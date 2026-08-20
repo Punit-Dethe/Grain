@@ -61,7 +61,7 @@
   --radius-lg: 18px;
   --hero-radius: 18px;
   --sidebar: 224px;
-  --titlebar: 44px;
+  --titlebar: 38px;
   /* Gap between the content bubble and the window/sidebar edges. */
   --shell-gutter: 12px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
@@ -309,9 +309,12 @@ html[data-theme="light"] .app {
 .titlebar {
   grid-column: 2 / -1;
   grid-row: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
+  /* Flex, not a two-column grid: the window controls are the strip's only
+     child now, so they must be pushed to the right rather than dropped into
+     a leading column. */
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
   position: relative;
   z-index: 35;
   background: transparent;
@@ -386,9 +389,9 @@ html[data-theme="light"] .app {
 .theme-toggle::after {
   content: "";
   position: absolute;
-  top: 13px;
+  top: 10px;
   right: 0;
-  bottom: 13px;
+  bottom: 10px;
   width: 1px;
   background: var(--hairline-soft);
 }
