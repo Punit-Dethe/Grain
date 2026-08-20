@@ -222,7 +222,7 @@ function IconSprite() {
   );
 }
 
-function WindowChrome({ route }: { route: AppRoute }) {
+function WindowChrome() {
   const { isDark, setMode } = useTheme();
   const currentWindow = useMemo(() => getCurrentWindow(), []);
   const [maximized, setMaximized] = useState(false);
@@ -274,21 +274,8 @@ function WindowChrome({ route }: { route: AppRoute }) {
       onMouseDown={startDrag}
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
-      <div className="workspace-title">
-        {route.page === "settings"
-          ? "Settings"
-          : route.page === "notes"
-            ? "Notes"
-            : route.page === "history"
-              ? "History"
-              : route.page === "tools"
-                ? "Studio"
-                : route.page === "extensions"
-                  ? "Extensions"
-                  : route.page === "extension-settings"
-                    ? "Extension settings"
-                    : "Overview"}
-      </div>
+      {/* No page label here: the nav rail already says where you are, and the
+          strip reads as one surface with the sidebar without it. */}
       <div
         className="window-actions"
         data-no-drag
@@ -417,9 +404,10 @@ function Sidebar({
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
-      {/* The sidebar now runs the full height of the window, so the wordmark
-          lives at its head rather than in the titlebar. This strip stays a
-          drag region so the top-left corner still moves the window. */}
+      {/* The sidebar runs the full height of the window and the titlebar is
+          transparent, so the brand sits *below* the window-control line rather
+          than beside it. The strip's top padding covers that line and stays a
+          drag region, so the top-left corner still moves the window. */}
       <div
         className="sidebar-brand"
         data-tauri-drag-region
@@ -427,8 +415,8 @@ function Sidebar({
       >
         <div className="grain-wordmark">
           <strong>GRAIN</strong>
+          <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
         </div>
-        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
       </div>
       {NAV_GROUPS.map((group) => (
         <nav className="nav-section" key={group.label}>
@@ -484,230 +472,212 @@ function Sidebar({
   );
 }
 
-const DARK_PALETTE = [
-  [9, 11, 15],
-  [18, 23, 31],
-  [29, 37, 51],
-  [44, 57, 80],
-  [63, 82, 118],
-  [92, 118, 170],
-  [120, 148, 216],
-  [142, 168, 253],
-  [176, 198, 255],
+const BRAID_COLORS = [
+  [66, 139, 235], // electric blue
+  [76, 204, 213], // cyan
+  [159, 106, 226], // violet
 ] as const;
 
-const LIGHT_PALETTE = [
-  [248, 249, 252],
-  [236, 240, 247],
-  [221, 228, 240],
-  [201, 214, 233],
-  [175, 194, 226],
-  [144, 171, 219],
-  [114, 144, 205],
-  [96, 125, 193],
-  [142, 168, 253],
-] as const;
+function clamp(v: number, a: number, b: number): number {
+  return Math.max(a, Math.min(b, v));
+}
 
-const BAYER_8 = [
-  [0, 48, 12, 60, 3, 51, 15, 63],
-  [32, 16, 44, 28, 35, 19, 47, 31],
-  [8, 56, 4, 52, 11, 59, 7, 55],
-  [40, 24, 36, 20, 43, 27, 39, 23],
-  [2, 50, 14, 62, 1, 49, 13, 61],
-  [34, 18, 46, 30, 33, 17, 45, 29],
-  [10, 58, 6, 54, 9, 57, 5, 53],
-  [42, 26, 38, 22, 41, 25, 37, 21],
-] as const;
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function smooth(a: number, b: number, x: number): number {
+  const v = clamp((x - a) / (b - a), 0, 1);
+  return v * v * (3 - 2 * v);
+}
+
+function mixRGB(
+  a: readonly [number, number, number],
+  b: readonly [number, number, number],
+  t: number,
+): [number, number, number] {
+  return [
+    Math.round(lerp(a[0], b[0], t)),
+    Math.round(lerp(a[1], b[1], t)),
+    Math.round(lerp(a[2], b[2], t)),
+  ];
+}
+
+function colorAt(t: number): [number, number, number] {
+  const norm = clamp(t, 0, 1);
+  if (norm < 0.5) return mixRGB(BRAID_COLORS[0], BRAID_COLORS[1], norm * 2);
+  return mixRGB(BRAID_COLORS[1], BRAID_COLORS[2], (norm - 0.5) * 2);
+}
+
+function hash(x: number, y: number): number {
+  let n = x * 374761393 + y * 668265263;
+  n = (n ^ (n >> 13)) * 1274126177;
+  return ((n ^ (n >> 16)) >>> 0) / 4294967295;
+}
 
 function DitherCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const { isDark } = useTheme();
+  const isDarkRef = useRef(isDark);
+
+  useEffect(() => {
+    isDarkRef.current = isDark;
+  }, [isDark]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const hero = canvas?.closest<HTMLElement>(".hero");
-    const context = canvas?.getContext("2d", {
-      alpha: false,
-      desynchronized: true,
-    });
-    if (!canvas || !hero || !context) return;
+    const context = canvas?.getContext("2d");
+    if (!canvas || !context) return;
 
-    context.imageSmoothingEnabled = false;
-    const palette = isDark ? DARK_PALETTE : LIGHT_PALETTE;
     const reducedMotion = window.matchMedia(
       "(prefers-reduced-motion: reduce)",
     ).matches;
-    const pointer = {
-      x: 0.72,
-      y: 0.34,
-      tx: 0.72,
-      ty: 0.34,
-      active: false,
-    };
-    let width = 300;
-    let height = 120;
-    let imageData = context.createImageData(width, height);
     let animationFrame = 0;
-    let lastFrame = 0;
 
-    const clamp = (value: number, min = 0, max = 1) =>
-      Math.max(min, Math.min(max, value));
-    const smoothstep = (a: number, b: number, value: number) => {
-      const amount = clamp((value - a) / (b - a));
-      return amount * amount * (3 - 2 * amount);
-    };
-    const mix = (a: number, b: number, amount: number) => a + (b - a) * amount;
-    const orb = (
-      x: number,
-      y: number,
-      centerX: number,
-      centerY: number,
-      radius: number,
-      softness = 1.75,
-    ) =>
-      Math.pow(
-        clamp(1 - Math.hypot(x - centerX, y - centerY) / radius),
-        softness,
-      );
+    const resize = () => {
+      const r = canvas.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const w = Math.max(1, Math.floor(r.width * dpr));
+      const h = Math.max(1, Math.floor(r.height * dpr));
 
-    const resizeCanvas = () => {
-      const heroWidth = hero.clientWidth || 1200;
-      const heroHeight = hero.clientHeight || 420;
-      width = Math.max(220, Math.min(360, Math.round(heroWidth / 5.2)));
-      height = Math.max(84, Math.min(168, Math.round(heroHeight / 3.1)));
-      canvas.width = width;
-      canvas.height = height;
-      imageData = context.createImageData(width, height);
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const rect = hero.getBoundingClientRect();
-      pointer.tx = clamp((event.clientX - rect.left) / rect.width);
-      pointer.ty = clamp((event.clientY - rect.top) / rect.height);
-      pointer.active = true;
-    };
-    const handlePointerLeave = () => {
-      pointer.tx = 0.72;
-      pointer.ty = 0.34;
-      pointer.active = false;
-    };
-
-    const field = (pixelX: number, pixelY: number, time: number) => {
-      let x = pixelX / width;
-      let y = pixelY / height;
-      pointer.x = mix(pointer.x, pointer.tx, 0.08);
-      pointer.y = mix(pointer.y, pointer.ty, 0.08);
-
-      x +=
-        Math.sin(y * 7.2 + time * 0.68) * 0.045 +
-        Math.cos(x * 6.4 - time * 0.34) * 0.032;
-      y +=
-        Math.cos(x * 8.8 - time * 0.54) * 0.048 +
-        Math.sin((x + y) * 5.2 + time * 0.24) * 0.024;
-
-      const baseWaves =
-        0.08 +
-        0.09 * Math.sin(x * 7.8 + time * 0.58) +
-        0.07 * Math.cos(y * 9.4 - time * 0.36) +
-        0.05 * Math.sin((x + y) * 10.5 - time * 0.41);
-      const orbitA = orb(
-        x,
-        y,
-        0.18 + Math.sin(time * 0.27) * 0.08,
-        0.29 + Math.cos(time * 0.19) * 0.08,
-        0.31,
-        1.8,
-      );
-      const orbitB = orb(
-        x,
-        y,
-        0.81 + Math.cos(time * 0.21) * 0.06,
-        0.37 + Math.sin(time * 0.23) * 0.07,
-        0.29,
-        1.85,
-      );
-      const orbitC = orb(
-        x,
-        y,
-        0.53 + Math.sin(time * 0.15) * 0.06,
-        0.79 + Math.cos(time * 0.18) * 0.05,
-        0.34,
-        1.95,
-      );
-      const orbitD = orb(
-        x,
-        y,
-        pointer.x,
-        pointer.y,
-        pointer.active ? 0.24 : 0.19,
-        2.1,
-      );
-      const topMist = orb(x, y, 0.5, -0.14, 0.9, 2.3) * 0.12;
-      const edgeFade = smoothstep(
-        1.05,
-        0.38,
-        Math.hypot((x - 0.5) * 1.12, (y - 0.5) * 1.02),
-      );
-
-      return clamp(
-        (baseWaves +
-          orbitA * 0.36 +
-          orbitB * 0.3 +
-          orbitC * 0.25 +
-          orbitD * 0.18 +
-          topMist) *
-          mix(0.72, 1, edgeFade),
-      );
-    };
-
-    const draw = (milliseconds: number) => {
-      if (!reducedMotion && milliseconds - lastFrame < 1000 / 28) {
-        animationFrame = requestAnimationFrame(draw);
-        return;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
       }
-      lastFrame = milliseconds;
-      const time = reducedMotion ? 0 : milliseconds / 1000;
-      const data = imageData.data;
-      const bands = palette.length - 1;
+    };
 
-      for (let y = 0; y < height; y += 1) {
-        for (let x = 0; x < width; x += 1) {
-          const value = field(x, y, time);
-          const scaled = value * bands;
-          let index = Math.floor(scaled);
-          const threshold = (BAYER_8[y & 7][x & 7] + 0.5) / 64;
-          const flutter =
-            ((Math.sin(x * 0.19 + y * 0.13 + time * 5.2) + 1) * 0.5 - 0.5) *
-            0.045;
-          if (scaled - index > threshold + flutter) index += 1;
-          index = Math.max(0, Math.min(bands, index));
-          const color = palette[index];
-          const offset = (y * width + x) * 4;
-          data[offset] = color[0];
-          data[offset + 1] = color[1];
-          data[offset + 2] = color[2];
-          data[offset + 3] = 255;
+    const draw = (now: number) => {
+      resize();
+
+      const t = reducedMotion ? 0 : now / 1000;
+      const w = canvas.width;
+      const h = canvas.height;
+      const dark =
+        isDarkRef.current &&
+        document.documentElement.dataset.theme !== "light";
+
+      context.clearRect(0, 0, w, h);
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      const cell = 4.1 * dpr;
+      const cols = Math.ceil(w / cell);
+      const rows = Math.ceil(h / cell);
+
+      // Precompute column-invariant wave trajectory arrays for ~15x performance gain
+      const c1Arr = new Float32Array(cols);
+      const c2Arr = new Float32Array(cols);
+      const c3Arr = new Float32Array(cols);
+      const echoCenterArr = new Float32Array(cols);
+      const edgeFadeArr = new Float32Array(cols);
+      const driftYArr = new Float32Array(cols);
+      const xNormArr = new Float32Array(cols);
+
+      const maxCols = Math.max(1, cols - 1);
+      for (let gx = 0; gx < cols; gx++) {
+        const x = gx / maxCols;
+        xNormArr[gx] = x;
+        c1Arr[gx] =
+          0.23 +
+          0.11 * Math.sin(x * 5.5 - t * 0.72) +
+          0.018 * Math.sin(x * 14.0 + t * 0.25);
+        c2Arr[gx] =
+          0.39 +
+          0.1 * Math.sin(x * 5.5 - t * 0.72 + 2.05) +
+          0.014 * Math.sin(x * 12.0 - t * 0.18);
+        c3Arr[gx] = 0.55 + 0.095 * Math.sin(x * 5.5 - t * 0.72 + 4.1);
+        echoCenterArr[gx] =
+          0.13 + 0.72 * x + 0.05 * Math.sin(x * 8.0 + t * 0.35);
+        edgeFadeArr[gx] =
+          0.72 + 0.28 * smooth(0.0, 0.12, x) * (1 - smooth(0.9, 1.0, x));
+        driftYArr[gx] = Math.cos(t * 0.38 + gx * 0.06) * cell * 0.035;
+      }
+
+      const maxRows = Math.max(1, rows - 1);
+      const colorDriftT = 0.025 * Math.sin(t * 0.25);
+      const baseAlpha = dark ? 0.57 : 0.48;
+
+      for (let gy = 0; gy < rows; gy++) {
+        const y = gy / maxRows;
+        const driftX = Math.sin(t * 0.45 + gy * 0.075) * cell * 0.045;
+        const pulseY = gy * 0.03;
+
+        for (let gx = 0; gx < cols; gx++) {
+          const c1 = c1Arr[gx];
+          const c2 = c2Arr[gx];
+          const c3 = c3Arr[gx];
+
+          const d1 = Math.abs(y - c1);
+          const d2 = Math.abs(y - c2);
+          const d3 = Math.abs(y - c3);
+
+          // Thin cores + softer atmospheric wings
+          const r1 = 1 - smooth(0.004, 0.044, d1);
+          const r2 = (1 - smooth(0.004, 0.044, d2)) * 0.92;
+          const r3 = (1 - smooth(0.004, 0.044, d3)) * 0.76;
+
+          const wing1 = (1 - smooth(0.04, 0.15, d1)) * 0.16;
+          const wing2 = (1 - smooth(0.04, 0.15, d2)) * 0.13;
+          const wing3 = (1 - smooth(0.04, 0.15, d3)) * 0.1;
+
+          // Secondary echo arc
+          const echoDist = Math.abs(y - echoCenterArr[gx]);
+          const echo = (1 - smooth(0.01, 0.055, echoDist)) * 0.22;
+
+          let density = clamp(
+            r1 + r2 + r3 + wing1 + wing2 + wing3 + echo,
+            0,
+            1,
+          );
+
+          density *= edgeFadeArr[gx];
+
+          const threshold = hash(gx, gy);
+          const active = smooth(threshold - 0.13, threshold + 0.12, density);
+          if (active < 0.045) continue;
+
+          // Color calculation
+          const x = xNormArr[gx];
+          const cp = clamp(0.05 + x * 0.78 + y * 0.18 + colorDriftT, 0, 1);
+          const rgb = colorAt(cp);
+
+          let boost = 0.78;
+          if (d1 < d2 && d1 < d3) boost = 1;
+          else if (d2 < d3) boost = 0.9;
+
+          const alpha = baseAlpha * (0.15 + active * 0.85) * boost;
+          const pulse =
+            1 + 0.035 * Math.sin(t * 1.5 + gx * 0.07 + pulseY);
+          const size = cell * (0.11 + active * 0.49) * pulse;
+
+          const px = gx * cell + cell * 0.5 + driftX;
+          const py = gy * cell + cell * 0.5 + driftYArr[gx];
+
+          context.fillStyle = `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+
+          if ((gx * 2 + gy) % 10 === 0) {
+            context.beginPath();
+            context.arc(px, py, Math.max(size * 0.4, 0.42), 0, Math.PI * 2);
+            context.fill();
+          } else {
+            context.fillRect(
+              px - size * 0.5,
+              py - size * 0.5,
+              Math.max(size, 0.6),
+              Math.max(size, 0.6),
+            );
+          }
         }
       }
 
-      context.putImageData(imageData, 0, 0);
-      if (!reducedMotion) animationFrame = requestAnimationFrame(draw);
+      if (!reducedMotion) {
+        animationFrame = requestAnimationFrame(draw);
+      }
     };
 
-    resizeCanvas();
-    const resizeObserver = new ResizeObserver(resizeCanvas);
-    resizeObserver.observe(hero);
-    window.addEventListener("resize", resizeCanvas, { passive: true });
-    hero.addEventListener("pointermove", handlePointerMove);
-    hero.addEventListener("pointerleave", handlePointerLeave);
     animationFrame = requestAnimationFrame(draw);
 
     return () => {
       cancelAnimationFrame(animationFrame);
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", resizeCanvas);
-      hero.removeEventListener("pointermove", handlePointerMove);
-      hero.removeEventListener("pointerleave", handlePointerLeave);
     };
   }, [isDark]);
 
@@ -759,22 +729,9 @@ function OverviewPage({ history }: { history: HistoryController }) {
     <section className="page active" data-page-panel="overview">
       <div className="page-wrap wide">
         <div className="hero refined-hero">
-          <button
-            className="icon-button hero-design-trigger"
-            type="button"
-            disabled
-            aria-label="Design system panel is not available in this phase"
-          >
-            <Icon name="panel" />
-          </button>
           <DitherCanvas />
-          <div className="hero-topline">
-            <span className="live-dot" />
-            {PROTOTYPE_COPY.heroTopline}
-          </div>
           <div className="hero-content">
             <div className="hero-copy">
-              <div className="hero-kicker">{PROTOTYPE_COPY.heroKicker}</div>
               <h2>{PROTOTYPE_COPY.heroTitle}</h2>
             </div>
             <div className="hero-actions">
@@ -797,7 +754,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
         <div className="section-head compact-section-head">
           <div>
             <h2>{PROTOTYPE_COPY.quickActions}</h2>
-            <p>{PROTOTYPE_COPY.quickActionsBody}</p>
           </div>
         </div>
         <OverviewCards />
@@ -805,7 +761,6 @@ function OverviewPage({ history }: { history: HistoryController }) {
         <div className="section-head transcript-section-head">
           <div>
             <h2>{PROTOTYPE_COPY.recent}</h2>
-            <p>{PROTOTYPE_COPY.recentBody}</p>
           </div>
           <div className="section-head-actions">
             <ViewSwitch
@@ -1018,7 +973,7 @@ function NextShell() {
       data-theme={isDark ? "dark" : "light"}
     >
       <IconSprite />
-      <WindowChrome route={route} />
+      <WindowChrome />
       <Sidebar route={route} onOpenQuickPanel={() => setQuickPanelOpen(true)} />
       <main className="main">
         {route.page === "history" ? (

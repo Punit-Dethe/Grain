@@ -29,8 +29,8 @@ const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
   { value: "center", label: "Center panel (beta)" },
 ];
 
-/** [GRAIN] Agent settings — the rows BELOW the feature's own switch, rendered
- * inside its panel (see [`FeaturePanel`]) as one ungrouped list.
+/** [GRAIN] Agent settings — the rows BELOW the tool's master switch (the one
+ * pinned to the page heading in Studio), rendered as one ungrouped list.
  *
  * There are no sub-headings. Seven controls split across "Reply surface",
  * "Replies" and "Input & context" spent three headings naming what the rows
