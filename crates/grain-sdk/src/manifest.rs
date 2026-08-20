@@ -1614,10 +1614,10 @@ mod tests {
             r#"[{"id":"a","text":"Be terse."},{"id":"a","text":"Be brief."}]"#
         )
         .is_err());
-        assert!(
-            pack_with_layers(r#"[{"id":"a","when":{"category":["nope"]},"text":"Be terse."}]"#)
-                .is_err()
-        );
+        assert!(pack_with_layers(
+            r#"[{"id":"a","when":{"category":["nope"]},"text":"Be terse."}]"#
+        )
+        .is_err());
         assert!(
             pack_with_layers(r#"[{"id":"a","when":{"field":"sideways"},"text":"Be terse."}]"#)
                 .is_err()
@@ -1832,10 +1832,10 @@ mod tests {
             r#"[{"id":"n","title":"","domain":"media","risk":"safe","utterances":["next"]}]"#
         )
         .is_err());
-        assert!(with(
-            r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":[]}]"#
-        )
-        .is_err());
+        assert!(
+            with(r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":[]}]"#)
+                .is_err()
+        );
         // Duplicate ids, and a repeated utterance within one action.
         assert!(with(
             r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":["next"]},

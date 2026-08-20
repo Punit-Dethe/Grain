@@ -760,6 +760,33 @@ mod tests {
     }
 
     #[test]
+    fn a_declared_action_is_a_valid_runtime_activation_path() {
+        // The shape `grain.voice-actions` ships after dropping its transform:
+        // no activation array at all, woken only because a route picked it.
+        // There is deliberately no `onAction:` to write, so an extension that
+        // does nothing but actions must pass with an empty activation list —
+        // otherwise every such author is pushed into declaring something they
+        // do not need.
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("manifest.json"),
+            r#"{
+              "id":"com.example.open","name":"Open","version":"1.1.0",
+              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+              "permissions":["open:url","settings"],"activation":[],
+              "contributes":{"actions":[{
+                "id":"open","title":"Open a site you set up","domain":"system",
+                "risk":"safe","utterances":["open {target}","launch {target}"],
+                "params":[{"name":"target","kind":"entity","resolve":true}]}]}
+            }"#,
+        )
+        .unwrap();
+
+        let report = doctor(directory.path());
+        assert!(report.is_clean(), "{report}");
+    }
+
+    #[test]
     fn ignored_dependency_and_build_directories_are_not_scanned() {
         let directory = scaffold();
         for ignored in ["node_modules", "dist", ".git", "target"] {
