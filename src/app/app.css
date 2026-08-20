@@ -321,19 +321,27 @@ html[data-theme="light"] .app {
   -webkit-app-region: drag;
 }
 
-/* The rail's head IS the chrome row, not padding above it: this band is
-   exactly as tall as the window-control strip on the other column, so the
-   wordmark and the buttons sit on one centerline and no space is reserved
-   and then left empty. Its inline padding matches the nav item's, which puts
-   the wordmark's left edge on the same axis as the nav icons. The band stays
-   a drag region, so the top-left corner still moves the window. */
+/* The brand belongs to the rail, never to the top bar, so it is spaced by two
+   rules rather than by eye:
+
+   TOP (26px) is the smallest inset that still drops the wordmark clear of the
+   window-control strip — cap-top lands at ~29px, past the 38px strip's
+   centerline, so the brand reads as the head of the rail and never as a
+   titlebar item. The rail does not reserve the strip's full height: it has no
+   buttons to clear, only the window's drag corner, which this block is.
+
+   BOTTOM (16px) is set so the OPTICAL gaps match: the 9px the group label
+   carries above its own text counts as part of the gap below the wordmark,
+   making it ~25px against ~29px above. Equal padding numbers would have read
+   bottom-heavy.
+
+   Inline padding matches the nav item's, putting the wordmark's left edge on
+   the same axis as the nav icons. */
 .sidebar-brand {
-  height: var(--titlebar);
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding: 0 11px;
-  margin-bottom: 2px;
+  padding: 26px 11px 16px;
   color: var(--text-1);
   -webkit-app-region: drag;
 }
@@ -345,7 +353,7 @@ html[data-theme="light"] .app {
 }
 
 .grain-wordmark strong {
-  font-size: 17px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0.005em;
