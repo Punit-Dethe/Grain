@@ -847,6 +847,14 @@ pub struct ExtensionCard {
     /// approval sheet is where the user first reads it; this is where they can
     /// go back and read it again without uninstalling anything.
     pub prompt_layers: Vec<PromptLayerInfo>,
+    /// [GRAIN] What this extension can do when asked out loud
+    /// (`docs/Action Routing/PLAN.md` §5).
+    ///
+    /// Here for the same reason as `prompt_layers`, and a stronger one: the
+    /// approval sheet is a single moment, and "what can this thing do" is
+    /// exactly what someone wants to look up again a week later without
+    /// uninstalling it to find out.
+    pub actions: Vec<ActionInfo>,
 }
 
 /// [GRAIN] One contributed prompt layer, as every surface that shows one needs
@@ -992,7 +1000,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.
     for rec in reg.records() {
-        let (name, description, repository, capabilities, has_detail, tier, prompt_layers) =
+        let (name, description, repository, capabilities, has_detail, tier, prompt_layers, actions) =
             match load_pack(&app, &rec.id) {
                 Ok(p) => {
                     // A pack with prompt layers has something worth opening even
@@ -1005,9 +1013,21 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                         .iter()
                         .map(PromptLayerInfo::from_decl)
                         .collect();
+                    // Same argument for actions, and a stronger one: what an
+                    // extension can DO is the thing a user most wants to look up
+                    // again later, and the approval sheet is a moment they will
+                    // not get back.
+                    let actions: Vec<ActionInfo> = p
+                        .manifest
+                        .contributes
+                        .actions
+                        .iter()
+                        .map(ActionInfo::from_decl)
+                        .collect();
                     let has_detail = !p.manifest.contributes.settings.is_empty()
                         || !p.manifest.contributes.shortcuts.is_empty()
-                        || !prompt_layers.is_empty();
+                        || !prompt_layers.is_empty()
+                        || !actions.is_empty();
                     let tier = match p.manifest.tier {
                         grain_sdk::Tier::Pack => "pack",
                         grain_sdk::Tier::Scripted => "scripted",
@@ -1021,6 +1041,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                         has_detail,
                         tier,
                         prompt_layers,
+                        actions,
                     )
                 }
                 // SPEC §6 last row: a broken/missing pack file renders an error
@@ -1032,6 +1053,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     Vec::new(),
                     false,
                     "pack",
+                    Vec::new(),
                     Vec::new(),
                 ),
             };
@@ -1067,6 +1089,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             repository,
             capabilities,
             prompt_layers,
+            actions,
             has_detail,
             slots: rec
                 .slots

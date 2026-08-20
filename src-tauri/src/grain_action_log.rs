@@ -144,6 +144,30 @@ pub fn declines(qualified: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// Which extension last successfully performed something in this domain.
+///
+/// Rung 4 of the provider ladder (PLAN §6). A **tie-break only** — it never
+/// overrules an explicit default, because a habit is evidence and a setting is
+/// an instruction.
+///
+/// Only successful runs count. A provider the user picked and then watched fail
+/// is not the one to quietly prefer next time, and a cancelled chooser is the
+/// opposite of a preference.
+pub fn recent_provider(domain: &str) -> Option<String> {
+    let log = log().lock().ok()?;
+    log.iter()
+        .rev()
+        .find(|e| {
+            e.domain.as_deref() == Some(domain) && matches!(e.outcome, ActionLogOutcome::Ran { .. })
+        })
+        .and_then(|e| {
+            e.action
+                .as_deref()
+                .and_then(|q| q.split(':').next())
+                .map(str::to_string)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

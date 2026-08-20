@@ -543,9 +543,25 @@ fn render_template(template: &[grain_sdk::manifest::UtterancePart]) -> Option<St
 pub struct Preferences {
     /// Rung 2: domain → extension id.
     pub default_provider: HashMap<String, String>,
-    /// Rung 4, tie-break only: the foreground application's extension, when one
-    /// of the candidates owns it.
-    pub foreground_extension: Option<String>,
+    /// Rung 4, tie-break only: which provider to prefer when two are otherwise
+    /// of equal standing.
+    ///
+    /// The plan called this "the foreground app's extension", and that turned
+    /// out to be unevaluable: **an extension never declares which application it
+    /// is**. Spotify's extension is not the Spotify window, and inventing a
+    /// mapping would mean either a new manifest field nobody needs or a guess
+    /// from the extension's name.
+    ///
+    /// So the signal is **most recently used in this domain**, read from the
+    /// action log. It is strictly better for the job anyway: it is a fact about
+    /// what this user actually does rather than about which window happens to
+    /// be focused, and the focused window was already the least stable rung on
+    /// the ladder. Still a tie-break — it never overrules an explicit default.
+    ///
+    /// Keyed by domain, exactly like `default_provider`, because which domain
+    /// wins is not known until after the decision — a single "most recent
+    /// provider" would apply a music habit to a messaging request.
+    pub recent_provider: HashMap<String, String>,
     /// Whether an Agent is available for escalation.
     pub agent_available: bool,
 }
@@ -710,11 +726,11 @@ fn resolve_single(
             return Outcome::Execute(chosen.clone());
         }
     }
-    // Rung 4 — the foreground app, and ONLY as a tie-break between providers of
-    // equal standing. It never overrules an explicit default, because the app
-    // that happens to be focused is the least stable signal there is.
-    if let Some(foreground) = &preferences.foreground_extension {
-        if let Some(chosen) = providers.iter().find(|p| &p.extension_id == foreground) {
+    // Rung 4 — most recently used, and ONLY as a tie-break between providers of
+    // equal standing. It never overrules an explicit default: a habit is
+    // evidence, a setting is an instruction.
+    if let Some(recent) = preferences.recent_provider.get(&winner.domain) {
+        if let Some(chosen) = providers.iter().find(|p| &p.extension_id == recent) {
             return Outcome::Execute(chosen.clone());
         }
     }
@@ -896,9 +912,9 @@ mod tests {
         let (actions, classes, calibration) = fixture();
         let preferences = Preferences {
             default_provider: HashMap::from([("media".to_string(), "apple".to_string())]),
-            // The foreground app disagrees, and must lose: it is a tie-break,
-            // never an override.
-            foreground_extension: Some("spotify".into()),
+            // The habit disagrees, and must lose: a habit is evidence, a
+            // setting is an instruction.
+            recent_provider: HashMap::from([("media".to_string(), "spotify".to_string())]),
             ..Default::default()
         };
         match decide("skip this", &actions, &classes, &calibration, &preferences) {
@@ -908,16 +924,36 @@ mod tests {
     }
 
     #[test]
-    fn the_foreground_app_breaks_a_tie_but_only_a_tie() {
+    fn a_habit_breaks_a_tie_but_only_a_tie() {
         let (actions, classes, calibration) = fixture();
         let preferences = Preferences {
-            foreground_extension: Some("apple".into()),
+            recent_provider: HashMap::from([("media".to_string(), "apple".to_string())]),
             ..Default::default()
         };
         match decide("skip this", &actions, &classes, &calibration, &preferences) {
             Outcome::Execute(selection) => assert_eq!(selection.extension_id, "apple"),
             other => panic!("expected the tie-break to resolve, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_habit_in_one_domain_does_not_leak_into_another() {
+        // The reason rung 4 is keyed by domain rather than being a single
+        // "most recent provider": the winning domain is not known until after
+        // the decision, so a flat value would apply a music habit to a
+        // messaging request.
+        let (actions, classes, calibration) = fixture();
+        let preferences = Preferences {
+            recent_provider: HashMap::from([("messaging".to_string(), "apple".to_string())]),
+            ..Default::default()
+        };
+        assert!(
+            matches!(
+                decide("skip this", &actions, &classes, &calibration, &preferences),
+                Outcome::Choose { .. }
+            ),
+            "a habit from another domain must not resolve this tie"
+        );
     }
 
     #[test]

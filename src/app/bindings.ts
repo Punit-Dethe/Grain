@@ -1599,6 +1599,44 @@ async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
     return await TAURI_INVOKE("extension_shortcuts_status", { id });
 },
 /**
+ * [GRAIN] Start or stop listening for an action
+ * (`docs/Action Routing/PLAN.md` §3).
+ * 
+ * The extension surface's own trigger calls this; **Grain registers no
+ * shortcut for it here**. What the design depends on is only that the user's
+ * intent was unambiguous by the time audio started, and the trigger mechanism
+ * is decided separately.
+ * 
+ * One command for all three transitions rather than three, because the
+ * invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
+ * merge-conflict surface.
+ */
+async grainActionListen(phase: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_action_listen", { phase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Read the action log, optionally clearing it first
+ * (`docs/Action Routing/PLAN.md` §8.3).
+ * 
+ * The "why did that happen" surface. It holds what was heard, so it is capped,
+ * lives only in memory, and clearing it is one call with no confirmation
+ * dance — this is the user's own speech and asking twice before letting them
+ * delete it is the wrong default.
+ */
+async grainActionLog(clear: boolean) : Promise<Result<ActionLogEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_action_log", { clear }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Write one schema-declared setting from the host's own control.
  * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
@@ -2461,6 +2499,61 @@ updateDownloadProgress: "update-download-progress"
 
 /** user-defined types **/
 
+export type ActionLogEntry = { 
+/**
+ * Milliseconds since the Unix epoch, for ordering and display only.
+ */
+at: number; 
+/**
+ * What the acoustic model produced, before any routing. The whole point of
+ * the log: when an action surprises someone, this is usually the answer.
+ */
+heard: string; 
+/**
+ * `<extension>:<action>`, when one was chosen.
+ */
+action: string | null; 
+/**
+ * The action's user-facing title, so the log reads without a manifest.
+ */
+title: string | null; domain: string | null; score: number | null; outcome: ActionLogOutcome }
+/**
+ * What became of one routed request. Mirrors the decision layer's outcomes,
+ * flattened for display.
+ */
+export type ActionLogOutcome = 
+/**
+ * It ran. `confirmed` records whether the user read it back first.
+ */
+{ ran: { confirmed: boolean } } | 
+/**
+ * The user was asked and picked.
+ */
+"chose" | 
+/**
+ * The user was asked and walked away. **The single most useful signal in
+ * here**: a route that is regularly offered and regularly declined is one
+ * the ranking is getting wrong, and it is what feeds the misroute counter.
+ */
+"cancelled" | 
+/**
+ * Handed to the Agent.
+ */
+"escalated" | 
+/**
+ * Nothing installed could do it, or the capture was unusable.
+ */
+{ refused: { reason: string } } | 
+/**
+ * It ran and failed for a reason worth showing.
+ */
+{ failed: { reason: string } } | 
+/**
+ * The deadline passed with the call already in flight — it may well have
+ * happened. Kept distinct from `Failed` because telling someone their
+ * message failed when it was sent is worse than admitting uncertainty.
+ */
+"unknown"
 /**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the
@@ -3002,7 +3095,37 @@ slots: string[];
  * approval sheet is where the user first reads it; this is where they can
  * go back and read it again without uninstalling anything.
  */
-prompt_layers: PromptLayerInfo[] }
+prompt_layers: PromptLayerInfo[];
+/**
+ * [GRAIN] What this extension can do when asked out loud.
+ */
+actions: ActionInfo[] }
+
+/**
+ * [GRAIN] One declared action, as the approval sheet and the extension card
+ * need it (`docs/Action Routing/PLAN.md` §5).
+ *
+ * Note what is absent: the utterance list. The consent question is "what can
+ * this do", not "what words does it listen for".
+ */
+export type ActionInfo = { id: string;
+/**
+ * One plain line, written for the user.
+ */
+title: string;
+/**
+ * The preference group — "media", "messaging" — used as the sheet's heading
+ * and as the key for "always use this one".
+ */
+domain: string;
+/**
+ * Whether performing this reads the resolved action back first.
+ */
+confirms: boolean;
+/**
+ * No conditions at all — offered on every request.
+ */
+everywhere: boolean; app: string[]; website: string[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
@@ -3352,34 +3475,7 @@ export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvid
  * drifting apart would mean the user approved one wording and can later only
  * review another.
  */
-/**
- * [GRAIN] One declared action, as the approval sheet and the extension card
- * need it (`docs/Action Routing/PLAN.md` §5).
- *
- * Note what is absent: the utterance list. The consent question is "what can
- * this do", not "what words does it listen for".
- */
-export type ActionInfo = { id: string;
-/**
- * One plain line, written for the user.
- */
-title: string;
-/**
- * The preference group — "media", "messaging" — used as the sheet's heading
- * and as the key for "always use this one".
- */
-domain: string;
-/**
- * Whether performing this reads the resolved action back first. The single
- * most important thing on the row.
- */
-confirms: boolean;
-/**
- * No conditions at all — offered on every request.
- */
-everywhere: boolean; app: string[]; website: string[] }
-
-export type PromptLayerInfo = { id: string;
+export type PromptLayerInfo = { id: string; 
 /**
  * The instruction, verbatim. Never summarised anywhere it is displayed.
  */

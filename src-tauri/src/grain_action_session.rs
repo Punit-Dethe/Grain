@@ -225,23 +225,35 @@ pub async fn route(app: &AppHandle, heard: &str) {
     let (utterance, named_provider) =
         grain_core::action_decision::split_named_provider(heard, &providers);
 
+    let domains = crate::extension_host::action_domains();
     let preferences = Preferences {
-        default_provider: named_provider
-            .map(|id| {
-                // An explicitly named provider is the top rung, and it outranks
-                // every stored default — so it is applied by pinning every
-                // domain to it rather than by a separate code path that could
-                // disagree with the ladder.
-                crate::extension_host::action_domains()
-                    .into_iter()
-                    .map(|domain| (domain, id.clone()))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        // Rungs 2-4 (stored defaults, the learned offer, the foreground
-        // tie-break) arrive with the chooser; until then every genuine
-        // ambiguity is asked about, which is the safe end of that ladder.
-        foreground_extension: None,
+        default_provider: match &named_provider {
+            // Rung 1 — named in the utterance, and absolute. Applied by pinning
+            // every domain to it rather than through a separate code path,
+            // because a second place to decide a provider is a second place to
+            // disagree with the ladder.
+            Some(id) => domains
+                .iter()
+                .map(|domain| (domain.clone(), id.clone()))
+                .collect(),
+            // Rung 2 — the user's explicit standing choice per domain.
+            None => crate::settings::get_settings(app)
+                .action_default_provider
+                .clone(),
+        },
+        // Rung 4 — a habit, used only to break a tie. Keyed by domain because
+        // the winning one is not known yet; reading all of them is a single
+        // pass over a bounded in-memory log.
+        recent_provider: if named_provider.is_some() {
+            std::collections::HashMap::new()
+        } else {
+            domains
+                .iter()
+                .filter_map(|domain| {
+                    action_log::recent_provider(domain).map(|id| (domain.clone(), id))
+                })
+                .collect()
+        },
         agent_available: false,
     };
 
