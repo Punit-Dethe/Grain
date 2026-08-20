@@ -321,14 +321,19 @@ html[data-theme="light"] .app {
   -webkit-app-region: drag;
 }
 
-/* Wordmark block at the head of the sidebar. Its top padding spans the
-   titlebar row — the brand sits *below* that line, and the padding keeps the
-   top-left corner draggable. */
+/* The rail's head IS the chrome row, not padding above it: this band is
+   exactly as tall as the window-control strip on the other column, so the
+   wordmark and the buttons sit on one centerline and no space is reserved
+   and then left empty. Its inline padding matches the nav item's, which puts
+   the wordmark's left edge on the same axis as the nav icons. The band stays
+   a drag region, so the top-left corner still moves the window. */
 .sidebar-brand {
+  height: var(--titlebar);
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding: calc(var(--titlebar) + 4px) 11px 14px;
+  padding: 0 11px;
+  margin-bottom: 2px;
   color: var(--text-1);
   -webkit-app-region: drag;
 }
@@ -336,15 +341,14 @@ html[data-theme="light"] .app {
 .grain-wordmark {
   display: flex;
   align-items: baseline;
-  gap: 9px;
-  letter-spacing: 0.02em;
+  gap: 8px;
 }
 
 .grain-wordmark strong {
-  font-size: 19px;
+  font-size: 17px;
   font-weight: 700;
   line-height: 1;
-  letter-spacing: -0.012em;
+  letter-spacing: 0.005em;
 }
 
 /* Rides the wordmark's baseline. Dim and small, so it reads as a status tag
@@ -441,8 +445,10 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   margin-top: 0;
 }
 
+/* 11px inline, like the nav item and the wordmark: one left axis down the
+   whole rail. */
 .nav-label {
-  padding: 9px 10px 7px;
+  padding: 9px 11px 7px;
   color: var(--text-4);
   font-size: 10px;
   font-weight: 650;
@@ -515,7 +521,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 }
 
 .model-status {
-  margin: 10px 6px 8px;
+  margin: 10px 0 8px;
   padding: 12px;
   border-radius: 10px;
   background: #151618;
@@ -541,7 +547,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
  * The card stays quiet until asked; the modal carries release notes and the
  * protected install action. */
 .update-notice {
-  margin: 10px 6px 0;
+  margin: 10px 0 0;
   overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -1042,7 +1048,6 @@ html[data-theme="light"] .update-progress {
   display: flex;
   align-items: center;
   gap: 11px;
-  margin: 0 6px;
   padding-inline: 11px;
   border-radius: 8px;
   color: var(--text-2);
