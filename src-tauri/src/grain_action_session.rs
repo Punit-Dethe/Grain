@@ -27,6 +27,7 @@
 //! that the user's intent was unambiguous by the time audio started.
 
 use crate::audio_toolkit::VadPolicy;
+use crate::grain_actions::action_chooser as chooser;
 use crate::grain_actions::action_log::{self, ActionLogOutcome};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
@@ -274,20 +275,16 @@ pub async fn route(app: &AppHandle, heard: &str) {
     match outcome {
         Outcome::Execute(selection) => {
             if selection.needs_confirmation() {
-                // The read-back is not built yet, and running the action anyway
-                // would be exactly the failure this tier exists to prevent: an
-                // ASR substitution reverses intent, scores well, and sends the
-                // wrong message. Refusing is the honest degradation.
-                log::info!(
-                    "[GRAIN] action: '{}' needs a read-back, which is not wired yet — not running it",
-                    selection.action_id
-                );
-                log_selection(
-                    heard,
-                    &selection,
-                    ActionLogOutcome::Refused {
-                        reason: "this action asks before running, and that step is not ready"
-                            .into(),
+                // Never runs from here. The read-back is a keypress on a
+                // sentence the user has just read, and that is the entire
+                // safety property of this tier: an ASR substitution reverses
+                // intent, scores well, and parses cleanly, so no score retires
+                // it.
+                chooser::open(
+                    app,
+                    chooser::Pending::Confirm {
+                        heard: heard.to_string(),
+                        selection,
                     },
                 );
                 return;
@@ -295,15 +292,8 @@ pub async fn route(app: &AppHandle, heard: &str) {
             execute(app, heard, selection).await;
         }
         Outcome::Choose { options, reason } => {
-            // The chooser is P2. Until it exists an ambiguity is declined, not
-            // guessed — picking the top candidate here would quietly convert
-            // every "ask" into an execution and undo the whole decision layer.
-            log::info!(
-                "[GRAIN] action: ambiguous ({reason:?}) between {} option(s) — waiting for the chooser",
-                options.len()
-            );
-            let first = options.first();
-            if let Some(top) = first {
+            use grain_core::action_decision::ChooseReason;
+            if let Some(top) = options.first() {
                 let qualified = format!("{}:{}", top.extension_id, top.action_id);
                 let declines = action_log::declines(&qualified);
                 if declines >= SUSPICIOUS_DECLINES {
@@ -313,14 +303,41 @@ pub async fn route(app: &AppHandle, heard: &str) {
                     );
                 }
             }
-            action_log::record(
-                heard,
-                first.map(|s| format!("{}:{}", s.extension_id, s.action_id)),
-                first.map(|s| s.title.clone()),
-                first.map(|s| s.domain.clone()),
-                first.map(|s| s.score),
-                ActionLogOutcome::Cancelled,
-            );
+            match reason {
+                // A required span is empty, so there is nothing to choose
+                // between: picking cannot supply a value nobody said. Saying so
+                // beats a one-row capsule that answers nothing.
+                ChooseReason::MissingDetail => {
+                    let missing = options
+                        .first()
+                        .map(|s| s.missing.join(", "))
+                        .unwrap_or_default();
+                    action_log::record(
+                        heard,
+                        None,
+                        None,
+                        None,
+                        None,
+                        ActionLogOutcome::Refused {
+                            reason: format!("that needs a {missing}"),
+                        },
+                    );
+                }
+                ChooseReason::WhichAction | ChooseReason::WhichProvider => {
+                    chooser::open(
+                        app,
+                        chooser::Pending::Pick {
+                            heard: heard.to_string(),
+                            kind: if reason == ChooseReason::WhichProvider {
+                                "provider"
+                            } else {
+                                "action"
+                            },
+                            options,
+                        },
+                    );
+                }
+            }
         }
         Outcome::Escalate(options) => {
             action_log::record(
@@ -373,11 +390,21 @@ async fn execute(app: &AppHandle, heard: &str, selection: Selection) {
             ActionLogOutcome::Ran { confirmed: false }
         }
         ActionOutcome::Ambiguous { param, options } => {
-            log::info!(
-                "[GRAIN] action: '{param}' resolved to {} candidates — waiting for the chooser",
-                options.len()
+            // The extension matched the span against its own catalogue and got
+            // more than one hit. That is the user's question to answer, not
+            // ours to guess — and unlike the other two uses of the capsule,
+            // Grain could not have resolved this one at any price, because it
+            // does not know what is in that catalogue.
+            chooser::open(
+                app,
+                chooser::Pending::Entity {
+                    heard: heard.to_string(),
+                    selection: selection.clone(),
+                    param,
+                    options,
+                },
             );
-            ActionLogOutcome::Cancelled
+            return;
         }
         ActionOutcome::Failed(reason) => {
             log::warn!("[GRAIN] action: failed — {reason}");
@@ -388,6 +415,33 @@ async fn execute(app: &AppHandle, heard: &str, selection: Selection) {
         ActionOutcome::Unknown => ActionLogOutcome::Unknown,
     };
     log_selection(heard, &selection, logged);
+}
+
+/// The user answered a chooser. Runs the selection they picked.
+///
+/// Spawned rather than awaited because the caller is a **shortcut dispatch** —
+/// doing work there is how the whole global-shortcut system deadlocks.
+pub fn run_choice(app: &AppHandle, heard: String, selection: Selection) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        execute(&app, &heard, selection).await;
+    });
+}
+
+/// The user dismissed a chooser, or it timed out.
+///
+/// Recorded rather than dropped: an action repeatedly offered and repeatedly
+/// walked away from is the clearest evidence the ranking has it wrong, and that
+/// evidence only exists if this path writes it down.
+pub fn record_decline(heard: &str, selection: Option<&Selection>) {
+    action_log::record(
+        heard,
+        selection.map(|s| format!("{}:{}", s.extension_id, s.action_id)),
+        selection.map(|s| s.title.clone()),
+        selection.map(|s| s.domain.clone()),
+        selection.map(|s| s.score),
+        ActionLogOutcome::Cancelled,
+    );
 }
 
 fn log_selection(heard: &str, selection: &Selection, outcome: ActionLogOutcome) {

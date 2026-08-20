@@ -32,6 +32,9 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AudioLevel",
     "PromptChanged",
     "PromptActive",
+    "ActionChoice",
+    "ActionChoiceClosed",
+    "ActionResult",
     "AgentFollowupOffer",
     "AgentFollowupClear",
     "AgentInputShow",
@@ -230,6 +233,32 @@ pub enum DaemonEvent {
     PromptActive {
         name: String,
     },
+    /// [GRAIN] A routed action needs the user to decide
+    /// (`docs/Action Routing/PLAN.md` §7). The pill reveals a capsule listing
+    /// the numbered options; digits pick, Escape cancels, and it releases on
+    /// its own after a moment.
+    ///
+    /// `heard` is what the recogniser produced, shown verbatim. It is the whole
+    /// reason a chooser is not a dead end: when the wrong options appear, the
+    /// answer is almost always visible in that line.
+    ActionChoice {
+        /// `action`, `provider`, `entity`, or `confirm` — the four things this
+        /// one capsule is used for.
+        kind: String,
+        heard: String,
+        /// One line per option, already ordered. Never more than a handful:
+        /// past that there is no honest question to ask.
+        options: Vec<String>,
+    },
+    /// [GRAIN] The choice was answered, cancelled, or timed out — hide the
+    /// capsule. Emitted exactly once per [`DaemonEvent::ActionChoice`].
+    ActionChoiceClosed,
+    /// [GRAIN] What became of a routed action, for the pill's brief
+    /// confirmation. `ok` false means it did not run.
+    ActionResult {
+        ok: bool,
+        message: String,
+    },
     /// [GRAIN] Quick Agent: a reply was just auto-pasted at the cursor. The pill
     /// briefly reveals with an "ASK FOLLOW-UP · <shortcut>" affordance; clicking
     /// it (or pressing the shortcut) reopens the Agent expanded with the
@@ -425,6 +454,9 @@ impl DaemonEvent {
             AudioLevel { .. } => "AudioLevel",
             PromptChanged { .. } => "PromptChanged",
             PromptActive { .. } => "PromptActive",
+            ActionChoice { .. } => "ActionChoice",
+            ActionChoiceClosed => "ActionChoiceClosed",
+            ActionResult { .. } => "ActionResult",
             AgentFollowupOffer { .. } => "AgentFollowupOffer",
             AgentFollowupClear => "AgentFollowupClear",
             AgentInputShow { .. } => "AgentInputShow",
