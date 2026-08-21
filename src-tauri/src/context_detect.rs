@@ -700,7 +700,7 @@ pub enum ControlClass {
     Other,
 }
 
-/// One read of the focused element, as facts. Filled by `uia::read_focus_facts`.
+/// One read of the focused element, as facts. Filled by `uia::read_focus_probe`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FocusFacts {
     pub is_password: bool,
@@ -724,31 +724,18 @@ pub struct FocusFacts {
     ///
     /// This is the signal UI Automation misses. Terminal emulators, custom-drawn
     /// editors and older Win32 applications accept pasted text while exposing
-    /// little or no UIA text pattern — judged on UIA alone they look like a
-    /// missed paste, which would hold a transcript that landed perfectly well.
-    /// A blinking caret is proof that an insertion point exists.
+    /// little or no UIA text pattern. A blinking caret is proof that an
+    /// insertion point exists, so it argues *against* calling a `Document`
+    /// read-only — see [`classify`].
     pub has_native_caret: bool,
-}
-
-impl FocusFacts {
-    /// Whether this element exposes **any** route by which typed or pasted text
-    /// could enter it.
+    /// The foreground window is the Explorer **desktop** (`Progman`/`WorkerW`).
     ///
-    /// The negation is the useful direction: an element offering no text
-    /// pattern, no value, no text control type and no system caret cannot have
-    /// received a paste. That is a statement about the element, not a guess
-    /// about the application, which is what makes it usable as evidence.
-    ///
-    /// The two mechanisms are complementary rather than redundant: UI
-    /// Automation covers web and modern frameworks, the system caret covers
-    /// native and custom-drawn ones.
-    pub fn has_any_text_affordance(&self) -> bool {
-        self.has_text_edit_pattern
-            || self.value_read_only.is_some()
-            || self.has_text_pattern
-            || self.has_native_caret
-            || matches!(self.control, ControlClass::Edit | ControlClass::Document)
-    }
+    /// The desktop is the flagship missed-paste surface, and the only common one
+    /// that can be recognised *positively* rather than by absence of evidence.
+    /// Its focused element is a `List`, which is a container type and therefore
+    /// deliberately inconclusive — without this fact the single most obvious
+    /// miss in the product would go uncaught.
+    pub is_shell_desktop: bool,
 }
 
 /// A cheap composite identity for the focused element.
@@ -802,6 +789,18 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
     if facts.is_password {
         return FocusTarget::Editable;
     }
+    // Focus is one of Grain's own windows. Nothing about someone else's paste
+    // can be concluded from our own surfaces, and several of them report leaf
+    // control types that would otherwise read as positive evidence of a miss.
+    if facts.is_own_process {
+        return FocusTarget::Unknown;
+    }
+    // The desktop: no text field exists anywhere on it, whatever its list view
+    // claims. Catching it here rather than after the fact also stops the paste
+    // chord from firing at Explorer, where Ctrl+V is a real command (paste file).
+    if facts.is_shell_desktop {
+        return FocusTarget::NotEditable;
+    }
     if facts.has_text_edit_pattern {
         return FocusTarget::Editable;
     }
@@ -820,7 +819,10 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
         // viewer, a mail preview, a rendered reader. WITH a caret it stays
         // ambiguous — a real editor and a selectable web page both present one,
         // and the web page is exactly the case we must not guess wrong about.
-        ControlClass::Document if facts.has_caret => FocusTarget::Unknown,
+        // A *system* caret counts too: custom-drawn editors render a `Document`
+        // and expose no UIA selection, and calling those read-only would
+        // suppress a paste the user wanted.
+        ControlClass::Document if facts.has_caret || facts.has_native_caret => FocusTarget::Unknown,
         ControlClass::Document => FocusTarget::NotEditable,
         ControlClass::NonText => FocusTarget::NotEditable,
         ControlClass::Other => FocusTarget::Unknown,
@@ -3370,6 +3372,27 @@ mod uia {
         GetGUIThreadInfo(thread_id, &mut info).is_ok() && !info.hwndCaret.is_invalid()
     }
 
+    /// Whether the foreground window is the Explorer desktop.
+    ///
+    /// `Progman` is the classic desktop window; `WorkerW` owns the icon list
+    /// whenever a wallpaper slideshow or Active Desktop is in play, and is what
+    /// the foreground actually is on most current systems. Matching the window
+    /// CLASS rather than the process keeps this from firing on ordinary Explorer
+    /// file windows, which have a perfectly real address bar and search box.
+    unsafe fn foreground_is_shell_desktop() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+        let Some(hwnd) = super::windows_impl::foreground_window() else {
+            return false;
+        };
+        let mut buf = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut buf);
+        if len <= 0 {
+            return false;
+        }
+        let class = String::from_utf16_lossy(&buf[..len as usize]);
+        matches!(class.as_str(), "Progman" | "WorkerW")
+    }
+
     /// Pattern availability, control class and identity — one pass over the
     /// focused element.
     unsafe fn fill_patterns(
@@ -3384,6 +3407,7 @@ mod uia {
             .unwrap_or(0);
         facts.is_own_process = identity.process_id as u32 == std::process::id();
         facts.has_native_caret = foreground_has_caret();
+        facts.is_shell_desktop = foreground_is_shell_desktop();
         facts.has_text_edit_pattern = el
             .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
             .is_ok();
@@ -3559,8 +3583,47 @@ mod focus_target_tests {
     }
 
     #[test]
+    fn a_custom_drawn_document_with_a_system_caret_stays_ambiguous() {
+        // A custom-drawn editor renders a `Document` and exposes no UIA
+        // selection, but the GUI thread owns a blinking caret. Calling that
+        // read-only would suppress a paste the user wanted.
+        let f = FocusFacts {
+            control: ControlClass::Document,
+            has_caret: false,
+            has_native_caret: true,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Unknown);
+    }
+
+    #[test]
+    fn the_shell_desktop_is_positive_evidence() {
+        // Its focused element is a `List` — a container type, and therefore
+        // inconclusive on its own. The window class is what settles it.
+        let f = FocusFacts {
+            is_shell_desktop: true,
+            control: ControlClass::Other,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::NotEditable);
+    }
+
+    #[test]
+    fn grains_own_window_is_never_classified() {
+        // The pill and the panels report leaf control types that would
+        // otherwise read as positive evidence of a miss.
+        let f = FocusFacts {
+            is_own_process: true,
+            control: ControlClass::NonText,
+            value_read_only: Some(true),
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Unknown);
+    }
+
+    #[test]
     fn a_failed_read_yields_no_evidence() {
-        // `read_focus_facts` returns the default on every failure path, and the
+        // `read_focus_probe` returns the default on every failure path, and the
         // default must never be actionable.
         assert_eq!(classify(FocusFacts::default()), FocusTarget::Unknown);
     }
