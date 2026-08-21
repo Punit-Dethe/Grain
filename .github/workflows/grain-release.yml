@@ -205,81 +205,29 @@ jobs:
           releaseDraft: ${{ github.event_name != 'workflow_dispatch' || inputs.draft }}
           prerelease: false
           releaseBody: |
-            # Grain v0.0.2 — Context, polish & reliability
+            # Grain v0.0.3
 
-            Grain `v0.0.2` focuses on reliability, context awareness, and a more polished dictation experience.
+            A refinement-focused release across Agent, dictation, streaming UI, updates, and reliability.
 
-            ## What's new
+            ### What's new
 
-            ### Redesigned pill
+            - Added **image support to Agent**.
+            - Added **Gemini support** to the LLM Router and post-processing pipeline.
+            - Rebuilt the **Agent UI and overlay** with cleaner layouts, transitions, and animations.
+            - Added production **Parakeet TDT Flow**, bringing batch-quality punctuation to sub-second streaming on supported models.
+            - Added a dedicated **processing state** to the streaming pill.
+            - Improved expanded pill interactions, including working cancel controls, **Prompt Record**, and **Prompt Switching**.
+            - Reworked **dictation prompt priority** with a new algorithmic resolution system.
+            - Added extension support for **extending or overriding dictation prompts**.
+            - Replaced the three default dictation prompts with **one refined default prompt**.
+            - Further refined **cursor-aware dictation**.
 
-            Grain now ships with a new default pill design featuring a cleaner layout, smoother waveform, and improved state feedback.
+            ### Fixes & reliability
 
-            The previous pill design remains available in Settings.
-
-            ### Context Awareness in the pill
-
-            The pill can now display the active application or supported website, including app icons and website favicons.
-
-            Context can also update while dictating, allowing Grain to adapt when you switch between applications or supported websites.
-
-            ### Lost Text recovery
-
-            If Grain finishes a transcription without an active text field, the result is automatically copied to the clipboard and surfaced through a notification.
-
-            ### Simplified capture modes
-
-            The three capture modes have been reorganized and presented more clearly, making it easier to understand and choose the right mode.
-
-            ### Improved onboarding
-
-            Onboarding has been rebuilt to properly introduce dictation and guide new users through all three capture modes.
-
-            ## Context Awareness
-
-            Context Awareness received a major update.
-
-            - Added built-in categories for **Work, Email, Technical, Casual, and AI Chat**
-            - Added editable category prompts
-            - Added custom categories for specific applications and websites
-            - Added support for assigning one or multiple applications/websites to a custom category
-            - Custom categories override Grain's built-in mappings
-            - Added live context switching during dictation
-
-            ## UI & workflow improvements
-
-            - Quick Search is now fully functional
-            - Added model status for selected model, load state, and local/cloud mode
-            - Redesigned Dictionary UI
-            - Redesigned Snippets UI
-            - Redesigned Context Awareness UI
-            - Improved Prompt Record interaction with a dedicated hover action
-            - Push-to-talk is now disabled by default
-            - General UI and interaction refinements throughout the application
-
-            ## Flow improvements
-
-            Flow received a reliability pass covering:
-
-            - Error handling
-            - Memory management
-            - Rolling-window stability
-            - General performance and edge-case handling
-
-            ## Fixes
-
-            - Fixed toggle behavior
-            - Improved transcription failure handling
-            - Improved resource cleanup and memory behavior
-            - General stability fixes
-
-            ## Maintenance
-
-            - Continued integration of upstream Handy changes
-            - Internal cleanup and reliability improvements
-
-            ---
-
-            Thanks for using Grain.
+            - Fixed repeated transcription when dictating inside Agent.
+            - Fixed updater launch and restart behavior.
+            - Improved how available updates are surfaced in the UI.
+            - Fixed waveform rendering with virtual audio devices such as VB-Audio Cable.
+            - Reduced false **Lost Text** warnings when text was inserted successfully.
           # NSIS installer only (matches tauri.conf.json windows.nsis).
           args: "--bundles nsis"
