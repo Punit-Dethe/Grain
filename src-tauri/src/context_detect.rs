@@ -819,10 +819,13 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
         // viewer, a mail preview, a rendered reader. WITH a caret it stays
         // ambiguous — a real editor and a selectable web page both present one,
         // and the web page is exactly the case we must not guess wrong about.
-        // A *system* caret counts too: custom-drawn editors render a `Document`
-        // and expose no UIA selection, and calling those read-only would
-        // suppress a paste the user wanted.
-        ControlClass::Document if facts.has_caret || facts.has_native_caret => FocusTarget::Unknown,
+        //
+        // Deliberately NOT `has_native_caret`. That signal is asked of the
+        // foreground THREAD, not of this element, so an application whose thread
+        // owns a caret anywhere (Chromium keeps one for IME positioning) would
+        // veto the whole rule and silence the most common miss there is. An
+        // imprecise signal must never override a precise one.
+        ControlClass::Document if facts.has_caret => FocusTarget::Unknown,
         ControlClass::Document => FocusTarget::NotEditable,
         ControlClass::NonText => FocusTarget::NotEditable,
         ControlClass::Other => FocusTarget::Unknown,
@@ -3583,17 +3586,18 @@ mod focus_target_tests {
     }
 
     #[test]
-    fn a_custom_drawn_document_with_a_system_caret_stays_ambiguous() {
-        // A custom-drawn editor renders a `Document` and exposes no UIA
-        // selection, but the GUI thread owns a blinking caret. Calling that
-        // read-only would suppress a paste the user wanted.
+    fn a_thread_level_caret_does_not_veto_the_caret_less_document_rule() {
+        // `has_native_caret` is asked of the foreground THREAD, not of this
+        // element — Chromium keeps a caret around for IME positioning while the
+        // focused element is an inert page body. Letting it override the
+        // element's own answer silenced the most common miss there is.
         let f = FocusFacts {
             control: ControlClass::Document,
             has_caret: false,
             has_native_caret: true,
             ..facts()
         };
-        assert_eq!(classify(f), FocusTarget::Unknown);
+        assert_eq!(classify(f), FocusTarget::NotEditable);
     }
 
     #[test]

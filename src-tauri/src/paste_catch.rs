@@ -210,34 +210,36 @@ pub fn verdict_after_paste(
         }
     }
 
-    // Everything below compares against the pre-paste image, and is valid only
-    // for the SAME element the paste targeted. If focus moved we are looking at
-    // something the paste never went to, and it proves nothing either way.
-    let Some(before) = before.filter(|b| b.identity == after.identity) else {
-        return PasteOutcome::Unknown;
-    };
+    // Differencing is valid only for the SAME element the paste targeted. If
+    // focus moved we are looking at something the paste never went to, and its
+    // contents prove nothing either way.
+    let same_element = before.filter(|b| b.identity == after.identity);
 
     // 2. The element still holds *exactly* the content it held before the
     //    paste. Non-empty on both sides is what makes this a statement about
     //    the paste: an empty field that is still empty is the signature of a
     //    composer that sent and cleared, not of a paste that never arrived.
-    match (before.readable(), after.readable()) {
-        (Some(was), Some(now)) if was == now && !was.trim().is_empty() => {
-            return PasteOutcome::Missed;
+    if let Some(before) = same_element {
+        match (before.readable(), after.readable()) {
+            (Some(was), Some(now)) if was == now && !was.trim().is_empty() => {
+                return PasteOutcome::Missed;
+            }
+            // Content moved, but not into a tail we recognise. Something
+            // arrived and the application reshaped it (autocorrect, smart
+            // quotes, newline stripping). Landed is the safe reading.
+            (Some(was), Some(now)) if was != now => return PasteOutcome::Landed,
+            _ => {}
         }
-        // Content moved, but not into a tail we recognise. Something arrived
-        // and the application reshaped it (autocorrect, smart quotes, newline
-        // stripping). Landed is the safe reading.
-        (Some(was), Some(now)) if was != now => return PasteOutcome::Landed,
-        _ => {}
     }
 
-    // 3. This read is better informed than the pre-flight one was, and it says
-    //    the element is positively not editable — a read-only value, a leaf
-    //    widget, a caret-less document. Reachable when an accessibility tree
-    //    finished building between the two reads, which is the case that
-    //    genuinely needs catching after the fact rather than before it.
-    if classify(after.facts) == FocusTarget::NotEditable {
+    // 3. This element is positively not editable — a read-only value, a leaf
+    //    widget, a caret-less document. Skipped when focus has demonstrably
+    //    MOVED since the paste, because "focus is on a button now" is what
+    //    pressing Enter in a chat app looks like, not what a miss looks like.
+    //    A missing before-image does not block it: that only means the
+    //    pre-flight read failed, which is no reason to discard this one.
+    let focus_moved = before.is_some() && same_element.is_none();
+    if !focus_moved && classify(after.facts) == FocusTarget::NotEditable {
         return PasteOutcome::Missed;
     }
 
@@ -1034,10 +1036,12 @@ mod tests {
     }
 
     #[test]
-    fn a_native_caret_keeps_a_custom_editor_out_of_the_not_editable_bucket() {
-        // A custom-drawn editor renders a `Document` and exposes no UIA
-        // selection, but GetGUIThreadInfo reports a blinking caret — so text
-        // CAN be inserted, and rule 3 must not fire on it.
+    fn a_thread_level_caret_does_not_rescue_an_inert_page_body() {
+        // Chromium keeps a system caret around for IME positioning while the
+        // focused element is a caret-less `Document` — a rendered page, the
+        // single most common surface a dictation paste lands on by mistake.
+        // Treating that thread-level signal as evidence about this element
+        // silenced the catch in every browser and Electron app.
         let facts = crate::context_detect::FocusFacts {
             control: crate::context_detect::ControlClass::Document,
             has_native_caret: true,
@@ -1046,8 +1050,23 @@ mod tests {
         let before = view(facts, None, None);
         let after = view(facts, None, None);
         assert_eq!(
-            verdict_after_paste(Some(&before), &after, "a transcript that did land"),
-            PasteOutcome::Unknown
+            verdict_after_paste(Some(&before), &after, "a transcript with nowhere to go"),
+            PasteOutcome::Missed
+        );
+    }
+
+    #[test]
+    fn a_failed_pre_flight_read_does_not_block_positive_evidence() {
+        // `before` is None only because the pre-paste probe failed. That is no
+        // reason to discard a post-paste read that positively says the element
+        // cannot take text.
+        let facts = crate::context_detect::FocusFacts {
+            value_read_only: Some(true),
+            ..Default::default()
+        };
+        assert_eq!(
+            verdict(&view(facts, None, None), "a transcript with nowhere to go"),
+            PasteOutcome::Missed
         );
     }
 
