@@ -199,14 +199,13 @@ impl Drop for LoadingGuard {
     }
 }
 
-/// RAII guard that clears the streaming worker/lease flags on any worker exit -
+/// RAII guard that clears the streaming-worker flags on any worker exit —
 /// normal return, early return, or a panic in an engine call that unwinds the
-/// detached worker thread. Tokens prevent an older worker from clearing a newer
-/// worker's state if a start/finalize race ever slips through.
+/// detached worker thread. The token prevents an older worker from clearing a
+/// newer worker's state if a start/finalize race ever slips through.
 struct StreamWorkerGuard {
     worker_id: u64,
     active_stream_worker: Arc<AtomicU64>,
-    active_engine_lease: Arc<AtomicU64>,
     stream_active: Arc<AtomicBool>,
 }
 
@@ -215,12 +214,6 @@ impl Drop for StreamWorkerGuard {
         if self.active_stream_worker.load(Ordering::Acquire) == self.worker_id {
             self.stream_active.store(false, Ordering::Release);
         }
-        let _ = self.active_engine_lease.compare_exchange(
-            self.worker_id,
-            0,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        );
         let _ = self.active_stream_worker.compare_exchange(
             self.worker_id,
             0,
@@ -228,6 +221,70 @@ impl Drop for StreamWorkerGuard {
             Ordering::Acquire,
         );
     }
+}
+
+/// Exclusive visibility token for every long-lived engine checkout. Native ASR
+/// reserves it before spawning its worker; TDT Flow holds it across every
+/// descriptor. Both modes therefore contend on one atomic owner instead of
+/// silently starting a worker that can never acquire the shared session.
+struct EngineLeaseGuard {
+    lease_id: u64,
+    active_engine_lease: Arc<AtomicU64>,
+}
+
+impl EngineLeaseGuard {
+    fn acquire(lease_id: u64, active_engine_lease: Arc<AtomicU64>) -> Result<Self> {
+        active_engine_lease
+            .compare_exchange(0, lease_id, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| anyhow::anyhow!("transcription engine is already in use"))?;
+        Ok(Self {
+            lease_id,
+            active_engine_lease,
+        })
+    }
+}
+
+impl Drop for EngineLeaseGuard {
+    fn drop(&mut self) {
+        let _ = self.active_engine_lease.compare_exchange(
+            self.lease_id,
+            0,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+}
+
+fn allocate_engine_owner_id(next_id: &AtomicU64) -> Result<u64> {
+    next_id
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .map_err(|_| anyhow::anyhow!("transcription engine owner id overflow"))
+        .and_then(|id| {
+            (id != 0)
+                .then_some(id)
+                .ok_or_else(|| anyhow::anyhow!("transcription engine owner id is invalid"))
+        })
+}
+
+fn reserve_stream_worker(
+    worker_id: u64,
+    active_stream_worker: Arc<AtomicU64>,
+    active_engine_lease: Arc<AtomicU64>,
+    stream_active: Arc<AtomicBool>,
+) -> Result<(StreamWorkerGuard, EngineLeaseGuard)> {
+    if worker_id == 0 {
+        return Err(anyhow::anyhow!("stream worker owner id is invalid"));
+    }
+    active_stream_worker
+        .compare_exchange(0, worker_id, Ordering::AcqRel, Ordering::Acquire)
+        .map_err(|_| anyhow::anyhow!("another stream worker is already active"))?;
+    let worker = StreamWorkerGuard {
+        worker_id,
+        active_stream_worker,
+        stream_active,
+    };
+    let lease = EngineLeaseGuard::acquire(worker_id, active_engine_lease)?;
+    Ok((worker, lease))
 }
 
 #[derive(Clone)]
@@ -250,18 +307,18 @@ pub struct TranscriptionManager {
     /// the worker once `stream()` succeeds). Used for overlay/UI decisions.
     stream_active: Arc<AtomicBool>,
     /// Streaming uses four independent flags: router open = frames should route,
-    /// worker active = no second worker may start, engine lease = engine is out
-    /// of the mutex, stream active = UI should show a live session.
+    /// worker active = no second worker may start, engine lease = one long-lived
+    /// owner has reserved the shared engine, stream active = UI should show a
+    /// live session.
     ///
-    /// Monotonic id source for stream workers; zero means "no worker".
+    /// Monotonic id source for all long-lived engine owners; zero is invalid.
     next_stream_worker_id: Arc<AtomicU64>,
-    /// Nonzero while a stream worker exists, even if it has not leased the engine
-    /// yet. This prevents a second worker from starting after finalize/cancel
-    /// closes the router but before the first worker has fully exited.
+    /// Nonzero from successful stream admission until the worker fully exits.
+    /// Every active stream worker owns the same-id engine lease.
     active_stream_worker: Arc<AtomicU64>,
-    /// Nonzero while the streaming worker has taken the engine out of `engine`.
-    /// `is_model_loaded()` consults this so the model still reports "loaded"
-    /// while the worker holds it.
+    /// Nonzero while a long-lived worker has reserved or checked out the engine.
+    /// This covers both Handy streaming and Grain TDT Flow, so
+    /// `is_model_loaded()` stays true while either worker owns a loaded session.
     active_engine_lease: Arc<AtomicU64>,
 }
 
@@ -368,9 +425,11 @@ impl TranscriptionManager {
     }
 
     pub fn is_model_loaded(&self) -> bool {
-        // The engine may be leased out to the streaming worker (taken out of
-        // the mutex). It's still loaded, just in use, so report true.
-        self.lock_engine().is_some() || self.active_engine_lease.load(Ordering::Acquire) != 0
+        if self.lock_engine().is_some() {
+            return true;
+        }
+        self.active_engine_lease.load(Ordering::Acquire) != 0
+            && self.current_model_id.lock().unwrap().is_some()
     }
 
     /// Accelerator changes should not disturb the current transcription. Mark
@@ -541,23 +600,32 @@ impl TranscriptionManager {
                 // --device-index flag) hard-select that registered device;
                 // otherwise re-read the persisted accelerator preference (so an
                 // accelerator change marked for reload takes effect here).
-                let (backend, gpu_device) = match device_index {
+                let (backend, device) = match device_index {
                     Some(index) => resolve_device_index(index).inspect_err(|e| {
                         emit_loading_failed(&e.to_string());
                     })?,
                     None => {
                         let settings = get_settings(&self.app_handle);
                         let accelerator = settings.transcribe_accelerator;
-                        (
-                            select_transcribe_backend(accelerator),
-                            resolve_gpu_device(accelerator, settings.transcribe_gpu_device),
-                        )
+                        let device = resolve_gpu_device(
+                            accelerator,
+                            settings.transcribe_gpu_device.as_deref(),
+                        );
+                        // An exact opaque device is compatible with Backend::Auto.
+                        // Without one, retain Grain's explicit backend preference.
+                        let backend = if device.is_some() {
+                            Backend::Auto
+                        } else {
+                            select_transcribe_backend(accelerator)
+                        };
+                        (backend, device)
                     }
                 };
-                let model_options = ModelOptions {
-                    backend,
-                    gpu_device,
-                };
+                let requested_device = device
+                    .as_ref()
+                    .map(transcribe_device_label)
+                    .unwrap_or_else(|| "automatic".to_string());
+                let model_options = ModelOptions { backend, device };
                 let model = Model::load_with(&model_path, &model_options).map_err(|e| {
                     let error_msg = format!("Failed to load whisper model {}: {}", model_id, e);
                     emit_loading_failed(&error_msg);
@@ -586,13 +654,19 @@ impl TranscriptionManager {
                     caps.supports_language_detect,
                     caps.languages.clone(),
                 );
+                let bound_device = model
+                    .device()
+                    .map(|device| transcribe_device_label(&device))
+                    .unwrap_or_else(|_| "unknown".to_string());
                 info!(
-                    "Loaded whisper model '{}' (requested {:?}, gpu_device {}, bound backend '{}', \
-                     supports_streaming={}, supports_translate={}, supports_language_detect={})",
+                    "Loaded whisper model '{}' (requested {:?}, requested device '{}', \
+                     bound backend '{}', bound device '{}', supports_streaming={}, \
+                     supports_translate={}, supports_language_detect={})",
                     model_id,
                     backend,
-                    gpu_device,
+                    requested_device,
                     bound_backend,
+                    bound_device,
                     caps.supports_streaming,
                     caps.supports_translate,
                     caps.supports_language_detect
@@ -739,30 +813,38 @@ impl TranscriptionManager {
             warn!("start_stream called while a stream worker is already active");
             return;
         }
-        let worker_id = self.next_stream_worker_id.fetch_add(1, Ordering::Relaxed);
-        if self
-            .active_stream_worker
-            .compare_exchange(0, worker_id, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            warn!("start_stream lost a race with another stream worker");
-            return;
-        }
+        let worker_id = match allocate_engine_owner_id(&self.next_stream_worker_id) {
+            Ok(worker_id) => worker_id,
+            Err(error) => {
+                error!("Live preview could not allocate an engine owner: {error}");
+                return;
+            }
+        };
+        let (worker_guard, lease_guard) = match reserve_stream_worker(
+            worker_id,
+            Arc::clone(&self.active_stream_worker),
+            Arc::clone(&self.active_engine_lease),
+            Arc::clone(&self.stream_active),
+        ) {
+            Ok(guards) => guards,
+            Err(error) => {
+                warn!("Live preview could not reserve the transcription engine: {error}");
+                return;
+            }
+        };
         let rx = self.router.open();
         self.stream_active.store(false, Ordering::Release);
 
         let manager = self.clone();
-        thread::spawn(move || manager.run_stream_worker(rx, worker_id));
+        thread::spawn(move || manager.run_stream_worker(rx, worker_guard, lease_guard));
     }
 
-    fn run_stream_worker(&self, rx: mpsc::Receiver<StreamCmd>, worker_id: u64) {
-        let _worker = StreamWorkerGuard {
-            worker_id,
-            active_stream_worker: Arc::clone(&self.active_stream_worker),
-            active_engine_lease: Arc::clone(&self.active_engine_lease),
-            stream_active: Arc::clone(&self.stream_active),
-        };
-
+    fn run_stream_worker(
+        &self,
+        rx: mpsc::Receiver<StreamCmd>,
+        _worker_guard: StreamWorkerGuard,
+        _lease_guard: EngineLeaseGuard,
+    ) {
         // Wait for any in-progress model load to finish (start_stream races the
         // background load kicked off when recording starts).
         {
@@ -774,20 +856,9 @@ impl TranscriptionManager {
 
         let model_id = self.get_current_model().unwrap_or_default();
 
-        // Take the engine out of the mutex so we own it during streaming,
-        // structurally excluding any concurrent batch transcription (which
-        // transcribe-cpp's compute_lock would refuse anyway). Returned when the
-        // worker exits, or dropped if the model was switched/unloaded mid-stream.
-        if self
-            .active_engine_lease
-            .compare_exchange(0, worker_id, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            warn!("Live preview: another worker already holds the transcription engine");
-            self.router.clear();
-            drain_until_finalize(rx);
-            return;
-        }
+        // The shared lease was reserved before the router opened, so no TDT or
+        // second stream can take the engine between admission and checkout.
+        // The guard remains live until this worker returns the engine.
         let mut engine = match self.lock_engine().take() {
             Some(e) => e,
             None => {
@@ -795,12 +866,6 @@ impl TranscriptionManager {
                     "Live preview: model '{}' was unloaded before streaming could begin; \
                      falling back to batch transcription",
                     model_id
-                );
-                let _ = self.active_engine_lease.compare_exchange(
-                    worker_id,
-                    0,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
                 );
                 self.router.clear();
                 drain_until_finalize(rx);
@@ -1009,7 +1074,7 @@ impl TranscriptionManager {
         if let (Some(reply), Some(result)) = (finalize_reply, finalize_result) {
             let _ = reply.send(result);
         }
-        // `_worker` drops here, clearing this worker's active/lease flags after
+        // The explicit guards drop here, clearing both ownership tokens after
         // the engine has been returned to the pool.
     }
 
@@ -1399,6 +1464,46 @@ impl TranscriptionManager {
         }
     }
 
+    /// [GRAIN] Resolve one persisted language intent through the selected
+    /// model's catalog capabilities and transcribe-cpp's run-option gate.
+    /// TDT Flow calls this before engine checkout so its language behavior
+    /// matches Batch and Native ASR without duplicating Handy policy.
+    pub(crate) fn grain_transcribe_cpp_language_for_model(
+        &self,
+        intent: &str,
+        model_id: &str,
+    ) -> Option<String> {
+        let info = self.model_manager.get_model_info(model_id)?;
+        transcribe_cpp_language_for_capabilities(
+            intent,
+            &info.supported_languages,
+            info.supports_language_detection,
+        )
+    }
+
+    /// [GRAIN] Hold one checked-out transcribe.cpp session for an entire Grain
+    /// flow lifecycle. This is deliberately policy-free: capability routing,
+    /// descriptor planning, retries, cancellation, and text assembly stay in
+    /// Grain-owned modules. The wrapper only reuses Handy's existing load wait,
+    /// panic isolation, stale-model reconciliation, and exclusive engine lease.
+    pub(crate) fn with_grain_tdt_flow_session<T>(
+        &self,
+        f: impl FnOnce(&mut Session) -> Result<T>,
+    ) -> Result<T> {
+        self.touch_activity();
+        let settings = get_settings(&self.app_handle);
+        let active_model = self
+            .get_current_model()
+            .unwrap_or_else(|| settings.selected_model.clone());
+
+        // The engine is removed from its mutex for this entire closure. Publish
+        // that ownership before checkout so status/load paths cannot mistake the
+        // long TDT session for an unloaded model and allocate a second engine.
+        let lease_id = allocate_engine_owner_id(&self.next_stream_worker_id)?;
+        let _lease = EngineLeaseGuard::acquire(lease_id, Arc::clone(&self.active_engine_lease))?;
+        self.with_engine_session(&active_model, f)
+    }
+
     /// [GRAIN] Decode one rolling-window chunk and return the FULL transcript
     /// (text + word timings), NOT post-processed. The rolling driver owns the
     /// dedup/assembly and applies custom-word + filler correction ONCE on the
@@ -1613,6 +1718,19 @@ fn effective_language_for_model(
         ),
         None => settings.selected_language.clone(),
     }
+}
+
+fn transcribe_cpp_language_for_capabilities(
+    intent: &str,
+    supported_languages: &[String],
+    supports_language_detection: bool,
+) -> Option<String> {
+    let effective_language = crate::managers::model::effective_language(
+        intent,
+        supported_languages,
+        supports_language_detection,
+    );
+    transcribe_cpp_run_plan(false, &effective_language, supported_languages, false).language
 }
 
 /// Resolve how confidently Handy knows the language of the text produced by a
@@ -1876,35 +1994,26 @@ pub fn describe_compute_devices() -> Vec<String> {
         .collect()
 }
 
-/// Resolve a `--list-devices` registry index to the (backend, gpu_device) pair
-/// for a transcribe-cpp model load (the `--device-index` flag). The
-/// backend is set explicitly from the device's kind, so there's no "index 0 =
-/// auto" ambiguity. Errors if the index isn't a registered, loadable device.
-fn resolve_device_index(index: usize) -> Result<(Backend, i32)> {
+/// Resolve a `--list-devices` registry index to an exact opaque device handle.
+/// In transcribe.cpp 0.2 index zero is an exact selection too; only an omitted
+/// index requests automatic device selection.
+fn resolve_device_index(index: usize) -> Result<(Backend, Option<transcribe_cpp::Device>)> {
     let device = transcribe_compute_devices()
         .into_iter()
         .find(|d| d.index == Some(index))
         .ok_or_else(|| {
             anyhow::anyhow!("No compute device with index {index} (see --list-devices)")
         })?;
-    let backend = match device.kind.as_str() {
-        "cpu" => Backend::Cpu,
-        "metal" => Backend::Metal,
-        "cuda" => Backend::Cuda,
-        "vulkan" => Backend::Vulkan,
-        other => {
-            return Err(anyhow::anyhow!(
-                "Device index {index} has kind '{other}', which cannot host a model"
-            ))
-        }
-    };
-    // gpu_device is a registry index used only by GPU backends; CPU ignores it.
-    let gpu_device = if matches!(backend, Backend::Cpu) {
-        0
-    } else {
-        index as i32
-    };
-    Ok((backend, gpu_device))
+    if matches!(
+        device.device_type,
+        transcribe_cpp::DeviceType::Accel | transcribe_cpp::DeviceType::Unknown
+    ) {
+        return Err(anyhow::anyhow!(
+            "Device index {index} ({}) cannot host a model",
+            device.kind
+        ));
+    }
+    Ok((Backend::Auto, Some(device)))
 }
 
 /// Map Handy's whisper accelerator setting to a transcribe-cpp [`Backend`].
@@ -1922,7 +2031,7 @@ fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
             #[cfg(target_os = "macos")]
             let candidates = [Backend::Metal];
             #[cfg(not(target_os = "macos"))]
-            let candidates = [Backend::Cuda, Backend::Vulkan];
+            let candidates = [Backend::Cuda, Backend::Rocm, Backend::Vulkan];
 
             match candidates
                 .into_iter()
@@ -1950,33 +2059,43 @@ fn select_transcribe_backend(setting: TranscribeAcceleratorSetting) -> Backend {
     }
 }
 
-/// Resolve the user's stored GPU device choice into a [`ModelOptions::gpu_device`]
-/// registry index for the next model load.
-///
-/// Settings store a registry index into [`transcribe_cpp::devices`] (`-1` is the
-/// UI's auto/CPU sentinel); transcribe-cpp treats `0` as "auto / first match" and
-/// rejects an out-of-range or non-GPU index. So an explicit selection is honored
-/// only when the user chose the GPU accelerator and the stored index still
-/// resolves to a registered GPU device — otherwise fall back to `0` so a stale
-/// selection can never fail the load.
-fn resolve_gpu_device(setting: TranscribeAcceleratorSetting, gpu_device: i32) -> i32 {
-    if transcribe_gpu_disabled_for_host()
-        || setting != TranscribeAcceleratorSetting::Gpu
-        || gpu_device <= 0
-    {
-        return 0;
+/// Resolve a persisted stable GPU identity to this process's fresh opaque
+/// device handle. Registry indices and handles are process-local and are never
+/// stored across launches.
+fn resolve_gpu_device(
+    setting: TranscribeAcceleratorSetting,
+    gpu_device: Option<&str>,
+) -> Option<transcribe_cpp::Device> {
+    if transcribe_gpu_disabled_for_host() || setting != TranscribeAcceleratorSetting::Gpu {
+        return None;
     }
-    let still_valid = transcribe_compute_devices()
-        .iter()
-        .any(|d| d.index == Some(gpu_device as usize) && is_transcribe_gpu_device(d));
-    if still_valid {
-        gpu_device
-    } else {
+    let gpu_device = gpu_device?;
+    let resolved = transcribe_compute_devices().into_iter().find(|device| {
+        is_transcribe_gpu_device(device) && transcribe_device_key(device) == gpu_device
+    });
+    if resolved.is_none() {
         warn!(
-            "Stored transcribe GPU device index {} is no longer available; using auto",
+            "Stored transcribe GPU device '{}' is no longer available; using automatic GPU selection",
             gpu_device
         );
-        0
+    }
+    resolved
+}
+
+fn transcribe_device_key(device: &transcribe_cpp::Device) -> String {
+    let (identity_kind, identity) = match device.device_id.as_deref() {
+        Some(device_id) => ("id", device_id),
+        None => ("name", device.name.as_str()),
+    };
+    serde_json::to_string(&(device.kind.as_str(), identity_kind, identity))
+        .expect("transcribe device identity is always JSON serializable")
+}
+
+fn transcribe_device_label(device: &transcribe_cpp::Device) -> String {
+    if device.description.is_empty() {
+        device.name.clone()
+    } else {
+        device.description.clone()
     }
 }
 
@@ -1997,7 +2116,7 @@ pub fn apply_accelerator_settings(app: &tauri::AppHandle) {
 
 #[derive(Serialize, Clone, Debug, Type)]
 pub struct GpuDeviceOption {
-    pub id: i32,
+    pub id: String,
     pub name: String,
     pub total_vram_mb: usize,
 }
@@ -2020,7 +2139,10 @@ fn effective_transcribe_accelerator(
 }
 
 fn is_transcribe_gpu_device(device: &transcribe_cpp::Device) -> bool {
-    device.kind != "cpu" && device.kind != "accel"
+    matches!(
+        device.device_type,
+        transcribe_cpp::DeviceType::Gpu | transcribe_cpp::DeviceType::Igpu
+    )
 }
 
 fn transcribe_device_allowed(kind: &str, gpu_disabled: bool) -> bool {
@@ -2049,22 +2171,17 @@ fn available_transcribe_accelerators(gpu_disabled: bool) -> Vec<String> {
 }
 
 fn cached_gpu_devices() -> &'static [GpuDeviceOption] {
-    // GPU compute devices transcribe-cpp registered at startup. `id` is the
-    // device's registry index (`Device::index`, not a re-counted position) so it
-    // feeds straight back as `ModelOptions::gpu_device` (see `resolve_gpu_device`).
-    // `total_vram_mb` is the backend-reported capacity, 0 when unreported (some
-    // Metal/Vulkan drivers).
+    // GPU compute devices transcribe-cpp registered at startup. `id` is a
+    // persistent identity key, never the process-local registry index. It uses
+    // the backend's device_id where available and its name otherwise (Metal).
+    // `total_vram_mb` is zero when the backend does not report capacity.
     GPU_DEVICES.get_or_init(|| {
         transcribe_compute_devices()
             .into_iter()
             .filter(is_transcribe_gpu_device)
             .map(|d| GpuDeviceOption {
-                id: d.index.unwrap_or(0) as i32,
-                name: if d.description.is_empty() {
-                    d.name
-                } else {
-                    d.description
-                },
+                id: transcribe_device_key(&d),
+                name: transcribe_device_label(&d),
                 total_vram_mb: (d.memory_total / (1024 * 1024)) as usize,
             })
             .collect()
@@ -2096,6 +2213,84 @@ mod tests {
 
     fn languages(codes: &[&str]) -> Vec<String> {
         codes.iter().map(|code| (*code).to_string()).collect()
+    }
+
+    #[test]
+    fn long_engine_lease_is_exclusive_and_scope_bound() {
+        let active = Arc::new(AtomicU64::new(0));
+        {
+            let _lease = EngineLeaseGuard::acquire(41, Arc::clone(&active)).unwrap();
+            assert_eq!(active.load(Ordering::Acquire), 41);
+            assert!(EngineLeaseGuard::acquire(42, Arc::clone(&active)).is_err());
+            assert_eq!(active.load(Ordering::Acquire), 41);
+        }
+        assert_eq!(active.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn stale_engine_lease_guard_cannot_clear_a_new_owner() {
+        let active = Arc::new(AtomicU64::new(73));
+        let stale = EngineLeaseGuard {
+            lease_id: 72,
+            active_engine_lease: Arc::clone(&active),
+        };
+        drop(stale);
+        assert_eq!(active.load(Ordering::Acquire), 73);
+    }
+
+    #[test]
+    fn engine_owner_ids_are_checked_without_wrapping() {
+        let next = AtomicU64::new(1);
+        assert_eq!(allocate_engine_owner_id(&next).unwrap(), 1);
+        assert_eq!(next.load(Ordering::Relaxed), 2);
+
+        let exhausted = AtomicU64::new(u64::MAX);
+        assert!(allocate_engine_owner_id(&exhausted).is_err());
+        assert_eq!(exhausted.load(Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn stream_admission_reserves_the_shared_engine_lease() {
+        let active_stream = Arc::new(AtomicU64::new(0));
+        let active_engine = Arc::new(AtomicU64::new(0));
+        let stream_active = Arc::new(AtomicBool::new(false));
+
+        let (worker, lease) = reserve_stream_worker(
+            81,
+            Arc::clone(&active_stream),
+            Arc::clone(&active_engine),
+            Arc::clone(&stream_active),
+        )
+        .unwrap();
+        assert_eq!(active_stream.load(Ordering::Acquire), 81);
+        assert_eq!(active_engine.load(Ordering::Acquire), 81);
+        assert!(EngineLeaseGuard::acquire(82, Arc::clone(&active_engine)).is_err());
+
+        drop(lease);
+        drop(worker);
+        assert_eq!(active_stream.load(Ordering::Acquire), 0);
+        assert_eq!(active_engine.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn busy_tdt_lease_rejects_stream_admission_without_stale_stream_state() {
+        let active_stream = Arc::new(AtomicU64::new(0));
+        let active_engine = Arc::new(AtomicU64::new(0));
+        let stream_active = Arc::new(AtomicBool::new(false));
+        let tdt_lease = EngineLeaseGuard::acquire(91, Arc::clone(&active_engine)).unwrap();
+
+        assert!(reserve_stream_worker(
+            92,
+            Arc::clone(&active_stream),
+            Arc::clone(&active_engine),
+            stream_active,
+        )
+        .is_err());
+        assert_eq!(active_stream.load(Ordering::Acquire), 0);
+        assert_eq!(active_engine.load(Ordering::Acquire), 91);
+
+        drop(tdt_lease);
+        assert_eq!(active_engine.load(Ordering::Acquire), 0);
     }
 
     #[test]
@@ -2355,6 +2550,40 @@ mod tests {
         );
 
         assert_eq!(evidence, OutputLanguageEvidence::TranslatedToEnglish);
+    }
+
+    #[test]
+    fn tdt_language_uses_model_aware_transcribe_cpp_gating() {
+        let v3_languages = languages(&[
+            "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it", "lv",
+            "lt", "mt", "pl", "pt", "ro", "ru", "sk", "sl", "es", "sv", "uk",
+        ]);
+        assert_eq!(
+            transcribe_cpp_language_for_capabilities("pt-BR", &v3_languages, true).as_deref(),
+            Some("pt")
+        );
+        assert_eq!(
+            transcribe_cpp_language_for_capabilities("zh-Hant", &v3_languages, true),
+            None
+        );
+        assert_eq!(
+            transcribe_cpp_language_for_capabilities("ja", &v3_languages, true),
+            None
+        );
+        assert_eq!(
+            transcribe_cpp_language_for_capabilities("auto", &v3_languages, true),
+            None
+        );
+
+        let v2_languages = languages(&["en"]);
+        assert_eq!(
+            transcribe_cpp_language_for_capabilities("de", &v2_languages, false).as_deref(),
+            Some("en")
+        );
+        assert_eq!(
+            transcribe_cpp_language_for_capabilities("auto", &v2_languages, false).as_deref(),
+            Some("en")
+        );
     }
 
     #[test]

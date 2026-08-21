@@ -28,11 +28,12 @@ use rolling_window::{
     seam_overlap_len, AudioChunk, RollingWindowConfig, SessionCursor, TimingQuality, WordTiming,
 };
 use tauri::AppHandle;
-use transcribe_cpp::Transcript;
+use transcribe_cpp::{CancelToken, Transcript};
 
 use crate::grain_audio_journal::{PcmJournal, PcmJournalReader};
 use crate::managers::transcription::TranscriptionManager;
 use crate::settings::get_settings;
+use crate::tdt_flow::{TdtRunConfig, TdtWorkerResult};
 
 /// Where the live preview streams to (the pill's Studio Window over the WS bus).
 /// `None` = preview OFF, which is the zero-overhead path (the worker blocks on
@@ -158,6 +159,7 @@ pub struct RollingTranscriber {
 pub(crate) struct RollingSessionOutput {
     pub(crate) text: String,
     pub(crate) error: Option<String>,
+    pub(crate) preserves_native_text: bool,
     journal: Arc<PcmJournal>,
 }
 
@@ -173,6 +175,20 @@ impl RollingSessionOutput {
     pub(crate) fn save_wav(&self, path: &std::path::Path) -> anyhow::Result<()> {
         self.journal.save_wav(path)
     }
+}
+
+struct ModelLoadBarrier;
+
+fn establish_model_load_barrier(
+    active_generation: &AtomicU64,
+    session_id: u64,
+    initiate_load: impl FnOnce() -> Result<(), String>,
+) -> Result<ModelLoadBarrier, String> {
+    // This store must precede load initiation: delayed cleanup from an older
+    // generation uses it to decide whether it may unload the shared model.
+    active_generation.store(session_id, Ordering::Release);
+    initiate_load()?;
+    Ok(ModelLoadBarrier)
 }
 
 impl RollingTranscriber {
@@ -212,18 +228,49 @@ impl RollingTranscriber {
     /// extra compute); when `None` the worker takes the exact zero-overhead path
     /// it always did.
     pub fn start_session(self: &Arc<Self>, app: AppHandle, session_id: u64, preview: bool) -> bool {
+        // Register the generation before initiating the load so a cancelled
+        // predecessor cannot unload underneath this recording. `ensure_loaded`
+        // sets the manager's loading predicate synchronously, then starts the
+        // expensive load on its own thread. The rolling/TDT worker must only be
+        // spawned after that predicate is visible or it can mistake "not started
+        // loading yet" for "model is not loaded".
+        let _load_barrier =
+            match establish_model_load_barrier(&self.active_generation, session_id, || {
+                self.ensure_loaded(&app)
+            }) {
+                Ok(barrier) => barrier,
+                Err(error) => {
+                    log::error!("[GRAIN] rolling model load could not start: {error}");
+                    let previous = self.active.lock().unwrap().take();
+                    if let Some(previous) = previous {
+                        self.retire_cancelled_session(previous, false);
+                    }
+                    return false;
+                }
+            };
+
+        let settings = get_settings(&app);
+        let tdt_language = self.tm.grain_transcribe_cpp_language_for_model(
+            &settings.selected_language,
+            &settings.selected_model,
+        );
+        let tdt_config = TdtRunConfig {
+            model_id: settings.selected_model.clone(),
+            language: tdt_language,
+            translate_to_english: settings.translate_to_english,
+            conditioning: settings.audio_conditioning,
+        };
         let sink = preview.then(|| PreviewSink {
             app,
             session_id,
             scrap_that: self.scrap_that.load(Ordering::Relaxed),
         });
-        let session = match RollingSession::start(self.clone(), sink, session_id) {
+        let session = match RollingSession::start(self.clone(), sink, session_id, tdt_config) {
             Ok(session) => Arc::new(session),
             Err(error) => {
                 log::error!("[GRAIN] rolling session journal creation failed: {error}");
                 let previous = {
                     let mut active = self.active.lock().unwrap();
-                    self.active_generation.store(session_id, Ordering::Release);
                     active.take()
                 };
                 if let Some(previous) = previous {
@@ -237,7 +284,6 @@ impl RollingTranscriber {
         };
         let previous = {
             let mut active = self.active.lock().unwrap();
-            self.active_generation.store(session_id, Ordering::Release);
             active.replace(session)
         };
         if let Some(previous) = previous {
@@ -269,6 +315,7 @@ impl RollingTranscriber {
         let output = RollingSessionOutput {
             text: worker_output.text,
             error: worker_output.error,
+            preserves_native_text: worker_output.preserves_native_text,
             journal: session.journal.clone(),
         };
         self.tm.maybe_unload_immediately("rolling session");
@@ -331,6 +378,7 @@ struct RollingSession {
     tx: SyncSender<Job>,
     worker: Mutex<Option<JoinHandle<WorkerOutput>>>,
     cancelled: Arc<AtomicBool>,
+    cancel_token: CancelToken,
     journal_failed: Arc<AtomicBool>,
     metrics: Arc<RollingMetrics>,
     frames_fed: AtomicUsize,
@@ -338,7 +386,7 @@ struct RollingSession {
 }
 
 #[derive(Default)]
-struct RollingMetrics {
+pub(crate) struct RollingMetrics {
     queued_fresh_frames: AtomicU64,
     debt_frames: AtomicU64,
     queued_descriptors: AtomicUsize,
@@ -392,14 +440,14 @@ impl RollingMetrics {
         self.debt_frames.fetch_sub(fresh_frames, Ordering::AcqRel);
     }
 
-    fn dequeue_descriptor(&self, fresh_frames: u64) -> u64 {
+    pub(crate) fn dequeue_descriptor(&self, fresh_frames: u64) -> u64 {
         self.queued_descriptors.fetch_sub(1, Ordering::AcqRel);
         self.queued_fresh_frames
             .fetch_sub(fresh_frames, Ordering::AcqRel)
             .saturating_sub(fresh_frames)
     }
 
-    fn begin_decode(&self, chunk: ChunkJob) {
+    pub(crate) fn begin_decode(&self, chunk: ChunkJob) {
         let worker_frames = chunk
             .end_frame
             .saturating_sub(chunk.start_frame)
@@ -408,7 +456,7 @@ impl RollingMetrics {
             .fetch_max(worker_frames, Ordering::AcqRel);
     }
 
-    fn end_decode(&self, fresh_frames: u64) {
+    pub(crate) fn end_decode(&self, fresh_frames: u64) {
         self.debt_frames.fetch_sub(fresh_frames, Ordering::AcqRel);
     }
 
@@ -417,16 +465,17 @@ impl RollingMetrics {
     }
 }
 
-enum Job {
+pub(crate) enum Job {
     Chunk(ChunkJob),
     Finish,
 }
 
 #[derive(Clone, Copy)]
-struct ChunkJob {
+pub(crate) struct ChunkJob {
     sequence: u64,
     start_frame: u64,
     fresh_start_frame: u64,
+    pub(crate) commit_end_frame: u64,
     end_frame: u64,
     start_sec: f64,
     fresh_start_sec: f64,
@@ -440,6 +489,7 @@ impl ChunkJob {
             sequence,
             start_frame: chunk.start_frame as u64,
             fresh_start_frame: chunk.fresh_start_frame as u64,
+            commit_end_frame: chunk.end_frame as u64,
             end_frame: chunk.end_frame as u64,
             start_sec: chunk.start_sec,
             fresh_start_sec: chunk.fresh_start_sec,
@@ -452,7 +502,7 @@ impl ChunkJob {
         (self.end_sec - self.fresh_start_sec).max(0.0)
     }
 
-    fn fresh_frames(self) -> u64 {
+    pub(crate) fn fresh_frames(self) -> u64 {
         self.end_frame.saturating_sub(self.fresh_start_frame)
     }
 
@@ -483,6 +533,7 @@ struct WorkerOutput {
     error: Option<String>,
     recovered_chunks: usize,
     decode_rtf_ewma: Option<f64>,
+    preserves_native_text: bool,
 }
 
 impl WorkerOutput {
@@ -492,6 +543,17 @@ impl WorkerOutput {
             error: None,
             recovered_chunks,
             decode_rtf_ewma,
+            preserves_native_text: false,
+        }
+    }
+
+    fn tdt_success(text: String, _descriptors: usize, decode_rtf_ewma: Option<f64>) -> Self {
+        Self {
+            text,
+            error: None,
+            recovered_chunks: 0,
+            decode_rtf_ewma,
+            preserves_native_text: true,
         }
     }
 
@@ -501,6 +563,7 @@ impl WorkerOutput {
             error: Some(error.into()),
             recovered_chunks: 0,
             decode_rtf_ewma: None,
+            preserves_native_text: false,
         }
     }
 }
@@ -631,6 +694,7 @@ impl RollingSession {
         transcriber: Arc<RollingTranscriber>,
         preview: Option<PreviewSink>,
         session_id: u64,
+        tdt_config: TdtRunConfig,
     ) -> Result<Self, String> {
         // [GRAIN] The rolling-window geometry is fixed by the research-tuned,
         // model-agnostic defaults in `RollingWindowConfig::default()` (see
@@ -644,12 +708,43 @@ impl RollingSession {
         let mut journal_reader = journal.reader().map_err(|error| error.to_string())?;
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = cancelled.clone();
+        let cancel_token = CancelToken::new();
+        let worker_cancel_token = cancel_token.clone();
         let journal_failed = Arc::new(AtomicBool::new(false));
         let worker_journal_failed = journal_failed.clone();
         let metrics = Arc::new(RollingMetrics::default());
         let worker_metrics = metrics.clone();
+        let worker_journal = journal.clone();
         let (tx, rx) = mpsc::sync_channel::<Job>(MAX_PENDING_CHUNKS);
         let worker = std::thread::spawn(move || {
+            let mut emit_tdt_preview = |text: &str| {
+                if let Some(sink) = preview.as_ref() {
+                    sink.emit(text, "");
+                }
+            };
+            match crate::tdt_flow::run_worker(
+                &transcriber.tm,
+                &worker_journal,
+                &mut journal_reader,
+                &rx,
+                &worker_cancelled,
+                &worker_cancel_token,
+                &worker_metrics,
+                tdt_config,
+                &mut emit_tdt_preview,
+            ) {
+                TdtWorkerResult::Unsupported => {}
+                TdtWorkerResult::Success {
+                    text,
+                    descriptors,
+                    decode_rtf_ewma,
+                } => return WorkerOutput::tdt_success(text, descriptors, decode_rtf_ewma),
+                TdtWorkerResult::Failure(error) => return WorkerOutput::failure(error),
+            }
+
+            // Capability-disabled/incompatible models enter the pre-existing
+            // generic rolling path below without changed descriptors, reads,
+            // assembler behavior, retry timing, or output canonicalization.
             // Time-based assembler with the fuzzy seam pass enabled (see
             // merge.rs). Native word timings use positional overlap dedup;
             // segment-only and timestamp-free models use bounded lexical escrow.
@@ -838,6 +933,7 @@ impl RollingSession {
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled,
+            cancel_token,
             journal_failed,
             metrics,
             frames_fed: AtomicUsize::new(0),
@@ -962,15 +1058,16 @@ impl RollingSession {
                 "Rolling transcription stopped because its bounded audio pipeline failed",
             );
         }
-        if let Some(tail) = self.cursor.lock().unwrap().stop() {
-            if let Err(error) = self.journal.flush() {
-                log::error!("[GRAIN] rolling journal final flush failed: {error}");
-                self.request_cancel();
-                self.join_cancelled();
-                return WorkerOutput::failure(format!(
-                    "Rolling transcription could not flush its audio journal: {error}"
-                ));
-            }
+        let final_tail = self.cursor.lock().unwrap().stop();
+        if let Err(error) = self.journal.close() {
+            log::error!("[GRAIN] rolling journal final close failed: {error}");
+            self.request_cancel();
+            self.join_cancelled();
+            return WorkerOutput::failure(format!(
+                "Rolling transcription could not close its audio journal: {error}"
+            ));
+        }
+        if let Some(tail) = final_tail {
             let sequence = self.chunks_emitted.fetch_add(1, Ordering::Relaxed) as u64 + 1;
             let job = ChunkJob::from_chunk(sequence, &tail);
             let stop_debt_frames = self
@@ -1020,6 +1117,8 @@ impl RollingSession {
 
     fn request_cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
+        self.cancel_token.cancel();
+        self.journal.wake_waiters();
         // Wake a preview-off worker blocked on `recv`. Queued chunks do not run:
         // the cancellation flag is checked before and after every receive.
         let _ = self.tx.try_send(Job::Finish);
@@ -1057,6 +1156,7 @@ mod tests {
             sequence,
             start_frame: (start_sec * 16_000.0) as u64,
             fresh_start_frame: (start_sec * 16_000.0) as u64,
+            commit_end_frame: (end_sec * 16_000.0) as u64,
             end_frame: (end_sec * 16_000.0) as u64,
             start_sec,
             fresh_start_sec: start_sec,
@@ -1085,6 +1185,27 @@ mod tests {
             status: ChunkStatus::Failed(error.to_string()),
             decode_duration: Duration::ZERO,
         }
+    }
+
+    #[test]
+    fn model_load_barrier_precedes_rolling_worker_start() {
+        let generation = AtomicU64::new(9);
+        let loading_predicate = AtomicBool::new(false);
+
+        let barrier = establish_model_load_barrier(&generation, 10, || {
+            // A cancelled predecessor must already see the new generation when
+            // model-load initiation establishes the predicate.
+            assert_eq!(generation.load(Ordering::Acquire), 10);
+            loading_predicate.store(true, Ordering::Release);
+            Ok(())
+        })
+        .unwrap();
+
+        // RollingSession::start is called only after this barrier returns, so
+        // the TDT worker's first checkout cannot observe the old false state.
+        assert!(loading_predicate.load(Ordering::Acquire));
+        assert_eq!(generation.load(Ordering::Acquire), 10);
+        drop(barrier);
     }
 
     #[test]
@@ -1141,6 +1262,7 @@ mod tests {
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled,
+            cancel_token: CancelToken::new(),
             journal_failed: Arc::new(AtomicBool::new(false)),
             metrics: Arc::new(RollingMetrics::default()),
             frames_fed: AtomicUsize::new(0),
@@ -1170,6 +1292,7 @@ mod tests {
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled: cancelled.clone(),
+            cancel_token: CancelToken::new(),
             journal_failed: Arc::new(AtomicBool::new(false)),
             metrics: Arc::new(RollingMetrics::default()),
             frames_fed: AtomicUsize::new(0),
@@ -1227,6 +1350,7 @@ mod tests {
             tx,
             worker: Mutex::new(Some(worker)),
             cancelled: cancelled.clone(),
+            cancel_token: CancelToken::new(),
             journal_failed: Arc::new(AtomicBool::new(false)),
             metrics: metrics.clone(),
             frames_fed: AtomicUsize::new(0),

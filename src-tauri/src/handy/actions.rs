@@ -63,8 +63,7 @@ struct TranscribeAction {
 pub(crate) const TRANSCRIPTION_FIELD: &str = "transcription"; // [GRAIN] pub(crate): shared with grain_post_process
 
 /// Strip invisible Unicode characters that some LLMs may insert
-pub(crate) fn strip_invisible_chars(s: &str) -> String {
-    // [GRAIN] pub(crate)
+pub(crate) fn strip_invisible_chars(s: &str) -> String { // [GRAIN] pub(crate)
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
 }
 
@@ -87,8 +86,7 @@ fn strip_think_block(s: &str) -> &str {
 
 /// Build a system prompt from the user's prompt template.
 /// Removes `${output}` placeholder since the transcription is sent as the user message.
-pub(crate) fn build_system_prompt(prompt_template: &str) -> String {
-    // [GRAIN] pub(crate)
+pub(crate) fn build_system_prompt(prompt_template: &str) -> String { // [GRAIN] pub(crate)
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
@@ -97,8 +95,7 @@ pub(crate) fn build_system_prompt(prompt_template: &str) -> String {
 /// LLM call when nothing was actually transcribed, which would otherwise make
 /// the model reply with an error message such as "you need to provide the
 /// transcription".
-pub(crate) fn is_blank_transcription(transcription: &str) -> bool {
-    // [GRAIN] pub(crate)
+pub(crate) fn is_blank_transcription(transcription: &str) -> bool { // [GRAIN] pub(crate)
     transcription.trim().is_empty()
 }
 
@@ -608,9 +605,7 @@ impl ShortcutAction for TranscribeAction {
                                             let _ = ah_clone.emit("paste-error", ());
                                         }
                                     }
-                                    crate::grain_actions::emit_processing_complete(
-                                        &ah_clone, session_id,
-                                    );
+                                    crate::grain_actions::emit_processing_complete(&ah_clone, session_id);
                                     change_tray_icon(&ah_clone, TrayIconState::Idle);
                                 })
                                 .unwrap_or_else(|e| {

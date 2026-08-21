@@ -1785,7 +1785,7 @@ async changeTranscribeAcceleratorSetting(accelerator: TranscribeAcceleratorSetti
     else return { status: "error", error: e  as any };
 }
 },
-async changeTranscribeGpuDevice(device: number) : Promise<Result<null, string>> {
+async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_transcribe_gpu_device", { device }) };
 } catch (e) {
@@ -2649,7 +2649,12 @@ export type AgentSource = { note_id: string; title: string; saved_at: number }
  * object, so a partial store can never fail the whole load (upstream #1619).
  * Field-level defaults below take precedence where present.
  */
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
+export type AppSettings = {
+/**
+ * Missing in pre-schema settings files; the field-level default of zero
+ * intentionally triggers one-time migrations instead of using `Self::default()`.
+ */
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
@@ -2753,13 +2758,11 @@ action_default_provider?: Partial<{ [key in string]: string }>; post_process_mod
  */
 reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
- * transcribe-cpp compute-device *registry index* for explicit GPU picks
- * (`-1` = auto). NOTE: deliberately NOT aliased to the old
- * `whisper_gpu_device` — that was a transcribe-rs UI ordinal with different
- * semantics, so legacy values reset to auto instead of pointing at a
- * possibly different device.
+ * Stable transcribe.cpp device selector, derived from the backend's
+ * `device_id` when available (or its name for backends such as Metal).
+ * Never persist process-local registry indices.
  */
-transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; 
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
 /**
  * [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
  * + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
@@ -3212,7 +3215,7 @@ ui_source: string | null }
  * One enabled extension's settings, ready to render.
  */
 export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
-export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 /**
  * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
  */

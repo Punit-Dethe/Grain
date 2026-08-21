@@ -167,11 +167,7 @@ pub fn prompt_layers_fingerprint(layers: &[grain_sdk::manifest::PromptLayerDecl]
         // Each list is framed by its own length and closed with a separator, so
         // moving a value from `app` to `website` — which changes which surfaces
         // the layer fires on — changes the digest.
-        for list in [
-            &layer.when.app,
-            &layer.when.website,
-            &layer.when.category,
-        ] {
+        for list in [&layer.when.app, &layer.when.website, &layer.when.category] {
             hasher.update((list.len() as u64).to_le_bytes());
             for value in list {
                 field(&mut hasher, value);
@@ -211,7 +207,11 @@ pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> Strin
         // The single most important byte in here: `safe` means no read-back.
         field(
             &mut hasher,
-            if action.risk.is_safe() { "safe" } else { "confirm" },
+            if action.risk.is_safe() {
+                "safe"
+            } else {
+                "confirm"
+            },
         );
         // Each list framed by its own length and closed with a separator, so a
         // value moved between fields — which changes WHERE the action is

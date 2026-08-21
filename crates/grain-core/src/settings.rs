@@ -21,6 +21,10 @@ use std::fmt;
 pub const APPLE_INTELLIGENCE_PROVIDER_ID: &str = "apple_intelligence";
 pub const APPLE_INTELLIGENCE_DEFAULT_MODEL_ID: &str = "Apple Intelligence";
 
+/// Grain's compiled settings schema. Version 2 replaces transcribe.cpp's
+/// process-local integer device indices with stable hardware identity keys.
+pub const CURRENT_SETTINGS_SCHEMA_VERSION: u32 = 2;
+
 #[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
@@ -649,6 +653,10 @@ impl std::ops::DerefMut for SecretMap {
 #[derive(Serialize, Deserialize, Debug, Clone, Type)]
 #[serde(default)]
 pub struct AppSettings {
+    /// Missing in pre-schema settings files; the field-level default of zero
+    /// intentionally triggers one-time migrations instead of using `Self::default()`.
+    #[serde(default)]
+    pub settings_schema_version: u32,
     pub bindings: HashMap<String, ShortcutBinding>,
     pub push_to_talk: bool,
     pub audio_feedback: bool,
@@ -825,13 +833,14 @@ pub struct AppSettings {
     pub custom_filler_words: Option<Vec<String>>,
     #[serde(default, alias = "whisper_accelerator")]
     pub transcribe_accelerator: TranscribeAcceleratorSetting,
-    /// transcribe-cpp compute-device *registry index* for explicit GPU picks
-    /// (`-1` = auto). NOTE: deliberately NOT aliased to the old
-    /// `whisper_gpu_device` — that was a transcribe-rs UI ordinal with different
-    /// semantics, so legacy values reset to auto instead of pointing at a
-    /// possibly different device.
-    #[serde(default = "default_transcribe_gpu_device")]
-    pub transcribe_gpu_device: i32,
+    /// Stable transcribe.cpp device selector, derived from the backend's
+    /// `device_id` when available (or its name for backends such as Metal).
+    /// Never persist process-local registry indices.
+    #[serde(
+        default = "default_transcribe_gpu_device",
+        deserialize_with = "deserialize_transcribe_gpu_device"
+    )]
+    pub transcribe_gpu_device: Option<String>,
     #[serde(default)]
     pub extra_recording_buffer_ms: u64,
     /// [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
@@ -1321,8 +1330,46 @@ fn default_post_process_prompts() -> Vec<LLMPrompt> {
     ]
 }
 
-fn default_transcribe_gpu_device() -> i32 {
-    -1 // auto
+fn default_transcribe_gpu_device() -> Option<String> {
+    None // automatic device selection
+}
+
+/// Accept 0.1-era integer registry indices long enough to migrate them away.
+/// Unknown JSON types remain errors so the normal per-field salvage path can
+/// discard only this setting rather than resetting the whole store.
+fn deserialize_transcribe_gpu_device<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    match Option::<serde_json::Value>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value)),
+        Some(serde_json::Value::Number(_)) => Ok(None),
+        Some(_) => Err(de::Error::custom(
+            "transcribe GPU device must be a string, integer, or null",
+        )),
+    }
+}
+
+/// Apply persisted settings migrations used by the headless Grain context.
+/// Returns true exactly when the caller must rewrite the settings file.
+pub fn apply_settings_migrations(settings: &mut AppSettings) -> bool {
+    let mut changed = false;
+    if settings.settings_schema_version < CURRENT_SETTINGS_SCHEMA_VERSION {
+        settings.transcribe_gpu_device = None;
+        settings.settings_schema_version = CURRENT_SETTINGS_SCHEMA_VERSION;
+        changed = true;
+    }
+
+    // transcribe.cpp 0.2 selects either Auto or an exact opaque device. The
+    // short-lived generic GPU choice is redundant without a device identity.
+    if settings.transcribe_accelerator == TranscribeAcceleratorSetting::Gpu
+        && settings.transcribe_gpu_device.is_none()
+    {
+        settings.transcribe_accelerator = TranscribeAcceleratorSetting::Auto;
+        changed = true;
+    }
+    changed
 }
 fn default_typing_tool() -> TypingTool {
     TypingTool::Auto
@@ -1740,6 +1787,7 @@ pub fn get_default_settings() -> AppSettings {
     // releases the chord instead of leaving it registered against a missing action.
 
     AppSettings {
+        settings_schema_version: CURRENT_SETTINGS_SCHEMA_VERSION,
         bindings,
         // [GRAIN] Push-to-talk defaults OFF — a fresh install uses toggle-style
         // capture (press once to start, again to stop) rather than hold-to-talk.
@@ -1873,6 +1921,59 @@ impl AppSettings {
         self.post_process_providers
             .iter_mut()
             .find(|provider| provider.id == provider_id)
+    }
+}
+
+#[cfg(test)]
+mod transcribe_device_migration_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_integer_device_is_cleared_and_generic_gpu_becomes_auto() {
+        let mut settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "settings_schema_version": 1,
+            "transcribe_accelerator": "gpu",
+            "transcribe_gpu_device": 2
+        }))
+        .unwrap();
+        assert_eq!(settings.transcribe_gpu_device, None);
+        assert!(apply_settings_migrations(&mut settings));
+        assert_eq!(
+            settings.transcribe_accelerator,
+            TranscribeAcceleratorSetting::Auto
+        );
+        assert_eq!(
+            settings.settings_schema_version,
+            CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+        assert!(!apply_settings_migrations(&mut settings));
+    }
+
+    #[test]
+    fn current_generic_gpu_without_device_becomes_auto() {
+        let mut settings = AppSettings {
+            transcribe_accelerator: TranscribeAcceleratorSetting::Gpu,
+            transcribe_gpu_device: None,
+            ..AppSettings::default()
+        };
+        assert!(apply_settings_migrations(&mut settings));
+        assert_eq!(
+            settings.transcribe_accelerator,
+            TranscribeAcceleratorSetting::Auto
+        );
+        assert!(!apply_settings_migrations(&mut settings));
+    }
+
+    #[test]
+    fn current_stable_device_key_survives_deserialization() {
+        let key = r#"["vulkan","id","0000:01:00.0"]"#;
+        let settings: AppSettings = serde_json::from_value(serde_json::json!({
+            "settings_schema_version": CURRENT_SETTINGS_SCHEMA_VERSION,
+            "transcribe_accelerator": "gpu",
+            "transcribe_gpu_device": key
+        }))
+        .unwrap();
+        assert_eq!(settings.transcribe_gpu_device.as_deref(), Some(key));
     }
 }
 

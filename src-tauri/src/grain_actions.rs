@@ -72,6 +72,16 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
     emit_session_started_with_owner(app, session_id, mode, None);
 }
 
+/// Keep explicit TDT projector bytes intact; all generic rolling output retains
+/// its historical lowercase/punctuation-stripping canonicalization.
+fn finalize_rolling_surface(text: String, preserves_native_text: bool) -> String {
+    if preserves_native_text {
+        text
+    } else {
+        rolling_window::canonicalize_text(&text)
+    }
+}
+
 fn emit_session_started_with_owner(
     app: &AppHandle,
     session_id: u64,
@@ -457,19 +467,11 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // zero-overhead path and no preview events fire.
         let preview = get_settings(app).rolling_live_preview;
         let sid = next_session_id();
+        // start_session registers this generation and synchronously establishes
+        // the manager's load predicate before it spawns the rolling worker. The
+        // model itself still loads asynchronously, so recording startup does not
+        // wait for weights or allocate a second engine.
         let rolling_started = rt.start_session(app.clone(), sid, preview);
-        // Register the new session generation before the asynchronous model
-        // load begins. A cancelled predecessor can finish cleanup concurrently,
-        // but can no longer unload the model underneath this recording.
-        {
-            let app = app.clone();
-            let rt = rt.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = rt.ensure_loaded(&app) {
-                    warn!("[GRAIN] rolling model load failed: {e}");
-                }
-            });
-        }
         {
             let rm = Arc::clone(&rm);
             std::thread::spawn(move || {
@@ -646,6 +648,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
             {
                 (String::new(), None, false, Some(error))
             } else {
+                let preserves_native_text = rolling
+                    .as_ref()
+                    .is_some_and(|output| output.preserves_native_text);
                 let assembled = !rolling_text.trim().is_empty();
                 let ft = if assembled {
                     // Apply the shared final-text stage (custom-word dictionary
@@ -682,12 +687,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 } else {
                     String::new()
                 };
-                (
-                    rolling_window::canonicalize_text(&ft),
-                    None,
-                    post_process,
-                    None,
-                )
+                let ft = finalize_rolling_surface(ft, preserves_native_text);
+                (ft, None, post_process, None)
             };
 
             let processed = if let Some(error) = pipeline_error.as_ref() {
@@ -1089,4 +1090,23 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "grain_space_recall".to_string(),
         Arc::new(GrainSpaceRecallAction) as Arc<dyn ShortcutAction>,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finalize_rolling_surface;
+
+    #[test]
+    fn tdt_surface_preserves_model_native_bytes() {
+        let native = "Hello, Grain! NASA's TDT Works—Today.".to_string();
+        assert_eq!(finalize_rolling_surface(native.clone(), true), native);
+    }
+
+    #[test]
+    fn generic_surface_retains_existing_canonicalization() {
+        assert_eq!(
+            finalize_rolling_surface("Hello, Grain!".to_string(), false),
+            "hello grain"
+        );
+    }
 }

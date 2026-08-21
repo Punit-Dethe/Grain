@@ -1,4 +1,4 @@
-﻿//! Phase 5A install / update / remove transaction (DISTRIBUTION-PLAN Â§5.2,
+//! Phase 5A install / update / remove transaction (DISTRIBUTION-PLAN Â§5.2,
 //! correction C-9) and **the trust invariant** (Â§3.2).
 //!
 //! This module is the *only* place a record may be born `verified` or `core`.
@@ -143,8 +143,7 @@ pub fn plan_record(
     // that widened, a phrase that now captures a request it never used to.
     let approved_actions = prior.and_then(|r| r.actions_approved.clone());
     let changes_actions = actions.is_some() && actions != approved_actions;
-    let enabled =
-        prior_enabled && !adds_permissions && !changes_prompt_layers && !changes_actions;
+    let enabled = prior_enabled && !adds_permissions && !changes_prompt_layers && !changes_actions;
 
     ExtensionRecord {
         id: entry.id.clone(),

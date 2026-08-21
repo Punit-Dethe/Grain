@@ -104,6 +104,7 @@ mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
 mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
 mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
+mod tdt_flow; // [GRAIN] capability-gated transactional TDT Flow orchestration
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
 #[path = "handy/tray.rs"]
