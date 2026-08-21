@@ -7,8 +7,8 @@
 //! in `docs/Prompt Priority/PLAN.md`.
 //!
 //! # The layers this module can contribute
-//! - **BASE** — the user's selected post-processing prompt (General/Email/Coding
-//!   or a custom one). Always present; unchanged behavior.
+//! - **BASE** — the user's selected post-processing prompt (the shipped Default
+//!   Prompt or a custom one). Always present; unchanged behavior.
 //! - **RULE** — the profile instruction that claims this surface. A *custom*
 //!   profile is the user naming an app or site, so it carries their authority;
 //!   a *built-in* category profile applies because Grain guessed, and stays a

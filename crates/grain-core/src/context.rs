@@ -549,6 +549,65 @@ mod tests {
     }
 
     #[test]
+    fn legacy_prompt_set_is_replaced_and_persisted_without_losing_user_prompts() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir_all(&data).unwrap();
+        fs::write(
+            data.join(SETTINGS_FILE),
+            r#"{
+                "settings_schema_version": 2,
+                "post_process_prompts": [
+                    {"id":"general","name":"Renamed General","prompt":"edited"},
+                    {"id":"email","name":"Renamed Email","prompt":"edited"},
+                    {"id":"coding","name":"Renamed Coding","prompt":"edited"},
+                    {"id":"prompt_123","name":"User Prompt","prompt":"preserve me"}
+                ],
+                "post_process_selected_prompt_id": "general"
+            }"#,
+        )
+        .unwrap();
+
+        let ctx = AppContext::new("res", &data);
+        let settings = ctx.settings();
+        assert_eq!(
+            settings
+                .post_process_prompts
+                .iter()
+                .map(|prompt| prompt.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["default_prompt", "prompt_123"]
+        );
+        assert_eq!(settings.post_process_prompts[0].name, "Default Prompt");
+        assert_eq!(settings.post_process_prompts[1].name, "User Prompt");
+        assert_eq!(settings.post_process_prompts[1].prompt, "preserve me");
+        assert_eq!(
+            settings.post_process_selected_prompt_id.as_deref(),
+            Some("default_prompt")
+        );
+        assert_eq!(
+            settings.settings_schema_version,
+            crate::settings::CURRENT_SETTINGS_SCHEMA_VERSION
+        );
+        drop(settings);
+        drop(ctx);
+
+        let persisted: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(data.join(SETTINGS_FILE)).unwrap()).unwrap();
+        assert_eq!(persisted["settings_schema_version"], 3);
+        assert_eq!(
+            persisted["post_process_prompts"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(persisted["post_process_prompts"][0]["id"], "default_prompt");
+        assert_eq!(persisted["post_process_prompts"][1]["id"], "prompt_123");
+        assert_eq!(
+            persisted["post_process_selected_prompt_id"],
+            "default_prompt"
+        );
+    }
+
+    #[test]
     fn settings_round_trip_across_reload() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
