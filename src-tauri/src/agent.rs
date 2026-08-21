@@ -84,11 +84,6 @@ const PANEL_W: f64 = 500.0;
 const PANEL_COMPACT_W: f64 = 432.0;
 const PANEL_COMPACT_H: f64 = 488.0;
 const PANEL_MARGIN: f64 = 20.0;
-/// Grace between handing the panel its reveal event and actually showing the
-/// window — a couple of frames, enough for the webview to paint the armed
-/// (fully transparent) first frame of its opening animation. Must stay well
-/// under the animation duration in `agent.css`.
-const PANEL_ARM_DELAY: Duration = Duration::from_millis(45);
 
 /// [GRAIN] CENTER-TOP panel geometry (logical px). The center variant is a
 /// single sleek surface anchored near the top-centre of the work area. Its width
@@ -509,20 +504,20 @@ fn start_dictation(app: &AppHandle) {
     }
 }
 
-/// Show a panel that has just been handed its reveal event, giving the webview
-/// this long to paint the armed first frame of its opening animation.
+/// THE reveal choke point: every path that makes the panel visible goes through
+/// here, and each one announces itself first.
 ///
-/// Showing in the same breath as the emit paints the card at rest for a frame
-/// or two before the event lands — the animation then starts from a card the
-/// user has already seen, which reads as a flash rather than an entrance. The
-/// wait is off the main thread; only the `show` hops back onto it.
-fn show_after_arming(win: &tauri::WebviewWindow) {
-    let app = win.app_handle().clone();
-    let win = win.clone();
-    std::thread::spawn(move || {
-        std::thread::sleep(PANEL_ARM_DELAY);
-        let _ = app.run_on_main_thread(move || show_and_focus(&win));
-    });
+/// Showing a window and arming its opening animation are two different threads
+/// of control, and there is no ordering between them — which frame the webview
+/// happens to paint when the window appears used to be a race that a fixed
+/// pre-show delay could only ever narrow, never close. So the ordering is
+/// removed instead of tuned: the panel renders NOTHING until this event lands
+/// (`agent-reveal` in `AgentPanel.tsx`), so showing early costs an empty
+/// transparent window for a frame rather than a flash of the resting card, and
+/// the first thing ever painted is the entrance animation's own first frame.
+fn reveal_panel(win: &tauri::WebviewWindow) {
+    let _ = win.app_handle().emit_to(PANEL_LABEL, "agent-reveal", ());
+    show_and_focus(win);
 }
 
 /// Show + reliably grab keyboard focus. A hotkey-summoned, always-on-top, frameless
@@ -549,6 +544,16 @@ fn show_and_focus(win: &tauri::WebviewWindow) {
             let label = label.clone();
             let _ = app.clone().run_on_main_thread(move || {
                 if let Some(w) = app.get_webview_window(&label) {
+                    // Only if focus was actually lost. `focus_now` re-runs
+                    // ShowWindow + BringWindowToTop + SetForegroundWindow, and on
+                    // a transparent always-on-top window that is a z-order change
+                    // and a full recomposite. Firing it unconditionally landed two
+                    // of those 60ms and 180ms into the 440ms entrance — the panel
+                    // visibly hitching twice mid-animation, which read as it
+                    // opening, stopping, and opening again.
+                    if w.is_focused().unwrap_or(false) {
+                        return;
+                    }
                     focus_now(&w);
                 }
             });
@@ -747,6 +752,63 @@ fn panel_start_size(app: &AppHandle) -> (f64, f64) {
     }
 }
 
+/// Move AND resize in a single step.
+///
+/// `set_size` + `set_position` are two window operations, and between them the
+/// window exists at the new size in the OLD place. For a surface anchored to its
+/// bottom-right corner that intermediate is catastrophic rather than cosmetic:
+/// growing 432x488 → 500x880 with the top-left pinned pushes the bottom-right
+/// corner — the very corner the card is glued to — clean off the bottom-right of
+/// the screen, so the card DISAPPEARS for those frames and then reappears at the
+/// corrected position. That is the "it opens, then glitches and opens again"
+/// everything else was being blamed for; no amount of CSS can hide a card the
+/// compositor has moved off the display. Doing both in one `SetWindowPos` means
+/// the anchored corner never moves at all, which is what lets the card be pinned
+/// across the resize and grow on its own terms afterwards.
+///
+/// `SWP_NOCOPYBITS` matters here too: without it Windows blits the old client
+/// bits into the top-left of the larger window, leaving a stale copy of the
+/// compact card sitting in the wrong corner until the webview repaints over it.
+fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
+    #[cfg(windows)]
+    if set_bounds_win32(window, x, y, w, h) {
+        return;
+    }
+    // Position first, then size: the fallback still shows an intermediate, but
+    // moving the small window to the final top-left keeps it on screen, whereas
+    // sizing first throws the anchored corner off the edge.
+    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+/// One atomic move+resize. `false` if the handle or scale factor is unavailable,
+/// so the caller can fall back to the two-step path.
+#[cfg(windows)]
+fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOZORDER,
+    };
+    let (Ok(raw), Ok(scale)) = (window.hwnd(), window.scale_factor()) else {
+        return false;
+    };
+    // Tauri takes LOGICAL px; SetWindowPos takes physical.
+    let px = |v: f64| (v * scale).round() as i32;
+    let hwnd = HWND(raw.0 as isize as _);
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            px(x),
+            px(y),
+            px(w),
+            px(h),
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
+        )
+        .is_ok()
+    }
+}
+
 /// Place the panel per the active layout. SIDE anchors the bottom-right corner
 /// (the reference design). CENTER pins the top-centre and sizes to the height
 /// the webview last requested (preserved across transitions so an already-grown
@@ -777,10 +839,14 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
                 PANEL_COMPACT_H.min(sh - 2.0 * PANEL_MARGIN),
             )
         };
-        let _ = window.set_size(tauri::LogicalSize::new(w, h));
+        // Both footprints are anchored PANEL_MARGIN in from the bottom-right, so
+        // this corner is identical compact and expanded. One atomic step keeps it
+        // literally motionless across the resize — which is what lets the card be
+        // pinned to its old box and grow up-and-left from a corner that never
+        // moved.
         let x = ox + sw - w - PANEL_MARGIN;
         let y = oy + sh - h - PANEL_MARGIN;
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+        set_bounds(window, x, y, w, h);
     }
 }
 
@@ -793,10 +859,11 @@ fn place_panel_center(window: &tauri::WebviewWindow, height: f64) {
         let w = PANEL_CENTER_W.min(sw - 32.0);
         let max_h = (sh - PANEL_CENTER_TOP - PANEL_CENTER_BOTTOM_GAP).max(PANEL_CENTER_MIN_H);
         let h = height.clamp(PANEL_CENTER_MIN_H, max_h);
-        let _ = window.set_size(tauri::LogicalSize::new(w, h));
         let x = ox + (sw - w) / 2.0;
         let y = oy + PANEL_CENTER_TOP;
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+        // One step, same as SIDE: the center panel grows on every height report,
+        // so a two-step resize would jitter the whole surface continuously.
+        set_bounds(window, x, y, w, h);
     }
 }
 
@@ -1118,7 +1185,7 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
             w
         }
     };
-    show_and_focus(&win);
+    reveal_panel(&win);
     info!("[GRAIN] agent: panel shown");
     Ok(())
 }
@@ -1352,7 +1419,7 @@ fn reveal_panel_loading(app: &AppHandle) {
             },
         };
         let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
-        show_after_arming(&win);
+        reveal_panel(&win);
     });
 }
 
@@ -1385,7 +1452,7 @@ fn deliver_agent_error(app: &AppHandle, message: &str) {
             std::thread::sleep(Duration::from_millis(delay));
             let _ = app_for_emit.emit_to(PANEL_LABEL, "agent-error", message);
             if let Some(w) = app_for_emit.get_webview_window(PANEL_LABEL) {
-                show_after_arming(&w);
+                reveal_panel(&w);
             }
         });
     });
@@ -1584,7 +1651,7 @@ pub fn open_followup(app: &AppHandle) {
         // The panel is already mounted: it re-checks the retained conversation
         // on this event (take is consuming, so double delivery is harmless).
         let _ = app.emit_to(PANEL_LABEL, "agent-followup-open", ());
-        show_after_arming(&panel);
+        reveal_panel(&panel);
         return;
     }
 

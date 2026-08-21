@@ -35,8 +35,9 @@ const CENTER_TOP_OFFSET = 76;
 const CENTER_BOTTOM_GAP = 52;
 
 /** Duration of the card's opening growth — must match `agc-expand` in
- * `agent.css`, and must stay above the backend's pre-show arming delay
- * (`PANEL_ARM_DELAY` in `agent.rs`). */
+ * `agent.css`. Nothing on the backend races it any more: the window no longer
+ * waits a guessed interval before showing, because the panel paints nothing at
+ * all until `agent-reveal` arrives. */
 const REVEAL_MS = 440;
 /** Shared opening curve. Decelerating, no overshoot. */
 const EXPAND_EASE = "cubic-bezier(0.16, 0.84, 0.3, 1)";
@@ -148,6 +149,13 @@ export function AgentPanel() {
   // Bumped on every reveal signal so the card replays its opening animation.
   // The window is warm and pre-created, so mounting is NOT the reveal.
   const [appearNonce, setAppearNonce] = useState(0);
+  // Nothing renders until the window is actually being shown. Showing a window
+  // and arming an animation inside it are independent, so which one wins is a
+  // race — and the losing order paints the card at rest for a frame before it
+  // snaps small and grows, which is what read as the panel opening twice. With
+  // nothing to paint until the entrance is armed, that order stops mattering.
+  const [revealed, setRevealed] = useState(false);
+  const revealedRef = useRef(false);
   const revealingRef = useRef(false);
   // Set by `expand()` to the box the card occupied BEFORE the window grew. Its
   // presence tells the reveal effect to animate the card's box open from there
@@ -206,6 +214,17 @@ export function AgentPanel() {
   const compactSources = versions[versionIdx]?.sources ?? [];
   const compactNotFound = versions[versionIdx]?.not_found ?? false;
   const compactConfirmDelete = versions[versionIdx]?.confirm_delete ?? null;
+
+  /** The window is on screen — render, and play the entrance. Idempotent: the
+   * backend announces the reveal AND the panel checks for itself on mount, so
+   * whichever arrives first wins and the second is a no-op. One window is only
+   * ever revealed once (Esc destroys it rather than hiding it). */
+  const reveal = useCallback(() => {
+    if (revealedRef.current) return;
+    revealedRef.current = true;
+    setRevealed(true);
+    setAppearNonce((n) => n + 1);
+  }, []);
 
   const flashCopied = useCallback(() => {
     setCopyFlash(true);
@@ -333,27 +352,42 @@ export function AgentPanel() {
     // window grow around it — the added area is transparent, so nothing on
     // screen changes — and only then swap in the conversation and animate the
     // card's own box open. Nothing blanks, and nothing jumps.
+    //
+    // Pinning the card's SIZE only holds it still because the backend moves and
+    // resizes the window in one atomic step (`set_bounds` in `agent.rs`). The
+    // card is glued to the window's bottom-right corner, so any intermediate
+    // window box drags it across the screen no matter what its size is fixed to.
     const from = { w: window.innerWidth, h: window.innerHeight };
     const card = cardRef.current;
     if (card) {
       card.style.width = `${from.w}px`;
       card.style.height = `${from.h}px`;
     }
+    // The command resolving does NOT mean the window has resized — it hands the
+    // work to the event loop and returns. `resize` is the webview saying the new
+    // viewport is actually live, which is the only moment measuring it gives the
+    // real target; a fixed number of frames was a guess that measured the OLD
+    // box whenever it lost, leaving nothing to grow into. The timer is the
+    // fallback for a resize that never comes (already at the target size).
+    let started = false;
+    let guard = 0;
+    const begin = () => {
+      if (started) return;
+      started = true;
+      window.removeEventListener("resize", begin);
+      window.clearTimeout(guard);
+      growFromRef.current = from;
+      setMessages(seed);
+      setExpanded(true);
+      setAppearNonce((n) => n + 1);
+      window.setTimeout(() => followupRef.current?.focus(), 60);
+    };
     void commands
       .agentSetPanelMode(true)
       .catch(() => {})
       .finally(() => {
-        // One frame past the command so the webview has taken the new viewport
-        // metrics — reading them too early measures the OLD window and there is
-        // nothing to grow into. The card is still pinned, so this frame shows
-        // no change.
-        requestAnimationFrame(() => {
-          growFromRef.current = from;
-          setMessages(seed);
-          setExpanded(true);
-          setAppearNonce((n) => n + 1);
-          window.setTimeout(() => followupRef.current?.focus(), 60);
-        });
+        window.addEventListener("resize", begin);
+        guard = window.setTimeout(begin, 220);
       });
   }, []);
 
@@ -482,12 +516,17 @@ export function AgentPanel() {
         void startFirstIfQueued();
       })
       .then(track);
-    // Reveal-in-loading handshake: the window was just shown; keep the loading
-    // state until the first reply (or an error) lands.
+    // The ONE entrance signal, emitted by every backend path that shows this
+    // window (`reveal_panel` in `agent.rs`) and always after the state event
+    // below, so the card is already showing the right thing when it appears.
+    // The state events do NOT arm the entrance themselves — two of them can
+    // land for a single reveal, and that played the animation twice.
+    void win.listen("agent-reveal", reveal).then(track);
+    // Reveal-in-loading handshake: the window is about to be shown; keep the
+    // loading state until the first reply (or an error) lands.
     void win
       .listen("agent-loading", () => {
         if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
-        setAppearNonce((n) => n + 1);
       })
       .then(track);
     // A backend-side failure (STT/LLM) with no reply to show.
@@ -496,14 +535,12 @@ export function AgentPanel() {
         firstRunStartedRef.current = true;
         setBusy(false);
         setError(e.payload || t("agent.error"));
-        setAppearNonce((n) => n + 1);
       })
       .then(track);
     // Follow-up offer opened the warm hidden panel → seed the conversation.
     void win
       .listen("agent-followup-open", () => {
         void openRetainedConversation();
-        setAppearNonce((n) => n + 1);
       })
       .then(track);
     // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
@@ -540,11 +577,29 @@ export function AgentPanel() {
         requestAnimationFrame(() => append(centerInputRef.current));
       })
       .then(track);
+    // A window BUILT already-visible (the windowless follow-up rebuild) emits
+    // its reveal while this webview is still loading, so that event is gone
+    // before anything can hear it. Asking closes that hole: whichever of the
+    // two answers first reveals, and `reveal` makes the loser a no-op. Without
+    // this, one path would render a permanently blank window.
+    void win
+      .isVisible()
+      .then((v) => {
+        if (v) reveal();
+      })
+      .catch(() => {});
     return () => {
       dead = true;
       uns.forEach((u) => u());
     };
-  }, [openRetainedConversation, startCompose, startFirstIfQueued, t, win]);
+  }, [
+    openRetainedConversation,
+    reveal,
+    startCompose,
+    startFirstIfQueued,
+    t,
+    win,
+  ]);
 
   // Replay the opening animation on each reveal. Restarted imperatively rather
   // than by remounting: the card carries refs (height reporting, scroll) that
@@ -950,6 +1005,8 @@ export function AgentPanel() {
     ? followupShortcut.split("+").map(keycapLabel)
     : [];
   const canConfirm = !busy && displayedReply.trim().length > 0;
+  // Held back until the window is actually being shown — see `reveal`.
+  const rootClass = `agent-panel-root${revealed ? " is-revealed" : ""}`;
 
   // ══ CENTER: the sleek center-top panel ════════════════════════════════════
   // One continuously-growing surface (no compact/expanded split). Before the
@@ -979,7 +1036,7 @@ export function AgentPanel() {
     const lastIdx = thread.length - 1;
 
     return (
-      <div className="agent-panel-root">
+      <div className={rootClass}>
         <div
           ref={cardRef}
           className="agc-card agc-center"
@@ -1148,7 +1205,7 @@ export function AgentPanel() {
   // ── COMPACT: the reference reply card ─────────────────────────────────────
   if (!expanded) {
     return (
-      <div className="agent-panel-root">
+      <div className={rootClass}>
         <div className="agc-card" ref={cardRef}>
           {/* Header: version pager (left) · close (right). Draggable. */}
           <div className="agc-head" data-tauri-drag-region>
@@ -1279,7 +1336,7 @@ export function AgentPanel() {
 
   // ── EXPANDED: the conversation ─────────────────────────────────────────────
   return (
-    <div className="agent-panel-root">
+    <div className={rootClass}>
       <div className="agc-card agc-card--expanded" ref={cardRef}>
         {/* Header (draggable): a quiet wordmark balances the close button. */}
         <div className="agc-head agc-head--expanded" data-tauri-drag-region>

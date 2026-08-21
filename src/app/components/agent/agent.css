@@ -305,6 +305,17 @@
 .agent-panel-root {
   position: relative;
 }
+/* Nothing is painted until the backend says the window is going on screen. The
+ * window can be shown before the entrance is armed — they are independent — and
+ * the frame that used to slip through was the card at REST, which then snapped
+ * small and grew: the "it opens twice" glitch. Hidden costs an empty
+ * transparent window for that frame instead, so the first thing ever painted is
+ * the animation's own first frame. `visibility` rather than `opacity`: it takes
+ * the card out of painting entirely while leaving layout intact, so the center
+ * panel's height reporting still measures a real box behind it. */
+.agent-panel-root:not(.is-revealed) {
+  visibility: hidden;
+}
 .agc-card:not(.agc-center) {
   position: absolute;
   right: 0;
