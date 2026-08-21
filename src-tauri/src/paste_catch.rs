@@ -429,12 +429,14 @@ fn observe(app: &AppHandle, transcript: &str) -> PasteOutcome {
     let outcome = verdict_after_paste(before_view.as_ref(), &after_view, transcript);
 
     // Every field report about this feature is "it held when it shouldn't have"
-    // in some application nobody can reproduce locally, so the reasons behind a
-    // non-`Landed` verdict have to be recoverable from a log. Debug level: this
-    // runs on every dictation.
+    // — or now "it didn't hold when it should have" — in some application
+    // nobody can reproduce locally, so the reasons behind a non-`Landed`
+    // verdict have to be recoverable from a log the user already has. Info
+    // level while the decision table is still being tuned against real
+    // applications; a paste that lands prints nothing.
     if outcome != PasteOutcome::Landed {
         let f = after_view.facts;
-        log::debug!(
+        log::info!(
             "[paste-catch] {outcome:?} — control={:?} edit_pattern={} text_pattern={} \
              read_only={:?} uia_caret={} native_caret={} desktop={} same_element={} \
              before={} after={}",
