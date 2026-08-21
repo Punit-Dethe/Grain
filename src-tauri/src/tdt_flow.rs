@@ -19,11 +19,10 @@ const SAMPLE_RATE: u64 = 16_000;
 const LEFT_CONTEXT_ENCODER_FRAMES: u64 = 70;
 const RIGHT_CONTEXT_ENCODER_FRAMES: u64 = 13;
 const MAX_DESCRIPTOR_ATTEMPTS: usize = 2;
-// The rolling cursor can own 25 seconds before a hard cut. Reviewed TDT adds
-// 5.6 seconds left + 1.04 seconds right at its 1,280-sample encoder stride, so
-// the native default 30-second validation cap is too small even though the
-// actual descriptor is correctly bounded. This changes only the acceptance
-// envelope; it does not lengthen descriptors or reduce either context side.
+// Keep every native recompute below 33 seconds. A rolling callback can cross
+// the nominal 25-second hard cut, and queued commit hints can span still more;
+// Planner therefore splits ownership ranges against this cap instead of
+// assuming the cursor will always provide a small enough descriptor.
 const REVIEWED_TDT_MAX_WINDOW_SAMPLES: usize = 33 * SAMPLE_RATE as usize;
 
 pub(crate) enum TdtWorkerResult {
@@ -93,25 +92,43 @@ struct Planner {
     stride: u64,
     left_context: u64,
     right_context: u64,
+    max_window: u64,
     sequence: u64,
     committed: u64,
     finalized: bool,
 }
 
 impl Planner {
-    fn new(stride: usize) -> Result<Self, String> {
+    fn new(stride: usize, max_window_samples: usize) -> Result<Self, String> {
         let stride = u64::try_from(stride).map_err(|_| "TDT stride exceeds u64".to_string())?;
         if stride == 0 {
             return Err("TDT stride is zero".into());
         }
+        let left_context = stride
+            .checked_mul(LEFT_CONTEXT_ENCODER_FRAMES)
+            .ok_or_else(|| "TDT left context overflow".to_string())?;
+        let right_context = stride
+            .checked_mul(RIGHT_CONTEXT_ENCODER_FRAMES)
+            .ok_or_else(|| "TDT right context overflow".to_string())?;
+        let configured_max = u64::try_from(max_window_samples)
+            .map_err(|_| "TDT max window exceeds u64".to_string())?;
+        // Every non-final boundary is stride-aligned, so use the largest whole
+        // encoder-frame window accepted by the configured native cap.
+        let max_window = configured_max - configured_max % stride;
+        let minimum_window = left_context
+            .checked_add(right_context)
+            .and_then(|value| value.checked_add(stride))
+            .ok_or_else(|| "TDT minimum window overflow".to_string())?;
+        if max_window < minimum_window {
+            return Err(format!(
+                "TDT max window {configured_max} is too small for left/right context and one owned encoder frame"
+            ));
+        }
         Ok(Self {
             stride,
-            left_context: stride
-                .checked_mul(LEFT_CONTEXT_ENCODER_FRAMES)
-                .ok_or_else(|| "TDT left context overflow".to_string())?,
-            right_context: stride
-                .checked_mul(RIGHT_CONTEXT_ENCODER_FRAMES)
-                .ok_or_else(|| "TDT right context overflow".to_string())?,
+            left_context,
+            right_context,
+            max_window,
             sequence: 0,
             committed: 0,
             finalized: false,
@@ -122,12 +139,16 @@ impl Planner {
         if self.finalized {
             return None;
         }
-        let commit = commit_hint - commit_hint % self.stride;
+        let aligned_hint = commit_hint - commit_hint % self.stride;
+        let context_start = self.committed.saturating_sub(self.left_context);
+        let max_commit = context_start
+            .checked_add(self.max_window)?
+            .checked_sub(self.right_context)?;
+        let commit = aligned_hint.min(max_commit);
         if commit <= self.committed {
             return None;
         }
         let context_end = commit.checked_add(self.right_context)?;
-        let context_start = self.committed.saturating_sub(self.left_context);
         Some((
             TdtFlowWindow {
                 sequence: self.sequence,
@@ -141,18 +162,30 @@ impl Planner {
         ))
     }
 
-    fn final_window(&self, total: u64) -> Option<TdtFlowWindow> {
+    /// Return the next bounded descriptor required after the journal closes.
+    /// Large tails are emitted as one or more non-final windows whose right
+    /// context is already present, followed by one exact (possibly unaligned)
+    /// final window.
+    fn closing_window(&self, total: u64) -> Option<TdtFlowWindow> {
         if self.finalized || total <= self.committed {
             return None;
         }
-        Some(TdtFlowWindow {
-            sequence: self.sequence,
-            context_start_sample: self.committed.saturating_sub(self.left_context),
-            fresh_start_sample: self.committed,
-            commit_end_sample: total,
-            context_end_sample: total,
-            final_window: true,
-        })
+        let context_start = self.committed.saturating_sub(self.left_context);
+        if total.saturating_sub(context_start) <= self.max_window {
+            return Some(TdtFlowWindow {
+                sequence: self.sequence,
+                context_start_sample: context_start,
+                fresh_start_sample: self.committed,
+                commit_end_sample: total,
+                context_end_sample: total,
+                final_window: true,
+            });
+        }
+
+        // The tail is too large for one final descriptor. Commit a bounded
+        // prefix while retaining real recorded audio as right lookahead.
+        let commit_hint = total.saturating_sub(self.right_context);
+        self.non_final(commit_hint).map(|(window, _)| window)
     }
 
     fn commit(&mut self, window: &TdtFlowWindow) -> Result<(), String> {
@@ -251,7 +284,7 @@ fn run_capable_worker(
             return TdtWorkerResult::Failure(format!("TDT Flow geometry query failed: {error}"));
         }
     };
-    let mut planner = match Planner::new(stride) {
+    let mut planner = match Planner::new(stride, flow_options.max_window_samples) {
         Ok(planner) => planner,
         Err(error) => {
             flow.reset();
@@ -284,35 +317,15 @@ fn run_capable_worker(
                     metrics,
                     fresh_frames,
                 };
-                let Some((window, target)) = planner.non_final(chunk.commit_end_frame) else {
-                    continue;
-                };
-                match journal.wait_for_frames(target, cancelled) {
-                    Ok(JournalAvailability::Available) => {
-                        if let Err(error) = process_descriptor(
-                            &mut flow,
-                            reader,
-                            &mut audio,
-                            &window,
-                            conditioning,
-                            cancelled,
-                            &mut planner,
-                            &mut text,
-                            &mut descriptors,
-                            &mut decode_rtf_ewma,
-                        ) {
-                            flow.reset();
-                            return TdtWorkerResult::Failure(error);
-                        }
-                        emit_preview(&text);
-                    }
-                    Ok(JournalAvailability::Closed) => {
-                        if let Some(final_window) = planner.final_window(journal.frame_count()) {
+                let commit_hint = chunk.commit_end_frame;
+                while let Some((window, target)) = planner.non_final(commit_hint) {
+                    match journal.wait_for_frames(target, cancelled) {
+                        Ok(JournalAvailability::Available) => {
                             if let Err(error) = process_descriptor(
                                 &mut flow,
                                 reader,
                                 &mut audio,
-                                &final_window,
+                                &window,
                                 conditioning,
                                 cancelled,
                                 &mut planner,
@@ -323,51 +336,56 @@ fn run_capable_worker(
                                 flow.reset();
                                 return TdtWorkerResult::Failure(error);
                             }
+                            emit_preview(&text);
                         }
-                    }
-                    Ok(JournalAvailability::Cancelled) => {
-                        flow.reset();
-                        return TdtWorkerResult::Failure("rolling session cancelled".into());
-                    }
-                    Err(error) => {
-                        flow.reset();
-                        return TdtWorkerResult::Failure(format!(
-                            "TDT Flow journal lookahead failed: {error}"
-                        ));
+                        // Finish owns terminal draining. Breaking here leaves
+                        // this uncommitted range for bounded closing windows.
+                        Ok(JournalAvailability::Closed) => break,
+                        Ok(JournalAvailability::Cancelled) => {
+                            flow.reset();
+                            return TdtWorkerResult::Failure("rolling session cancelled".into());
+                        }
+                        Err(error) => {
+                            flow.reset();
+                            return TdtWorkerResult::Failure(format!(
+                                "TDT Flow journal lookahead failed: {error}"
+                            ));
+                        }
                     }
                 }
             }
             Job::Finish => {
-                if !planner.finalized {
-                    let total = journal.frame_count();
-                    if let Some(final_window) = planner.final_window(total) {
-                        if let Err(error) = process_descriptor(
-                            &mut flow,
-                            reader,
-                            &mut audio,
-                            &final_window,
-                            conditioning,
-                            cancelled,
-                            &mut planner,
-                            &mut text,
-                            &mut descriptors,
-                            &mut decode_rtf_ewma,
-                        ) {
-                            flow.reset();
-                            return TdtWorkerResult::Failure(error);
-                        }
-                    } else if total == 0 {
-                        flow.reset();
-                        return TdtWorkerResult::Success {
-                            text,
-                            descriptors,
-                            decode_rtf_ewma,
-                        };
-                    } else {
+                let total = journal.frame_count();
+                if total == 0 && planner.committed == 0 {
+                    flow.reset();
+                    return TdtWorkerResult::Success {
+                        text,
+                        descriptors,
+                        decode_rtf_ewma,
+                    };
+                }
+                while !planner.finalized {
+                    let Some(window) = planner.closing_window(total) else {
                         flow.reset();
                         return TdtWorkerResult::Failure(format!(
-                            "TDT Flow final descriptor invariant failed: journal ended at committed sample {total}"
+                            "TDT Flow final descriptor invariant failed: journal ended at {total}, committed through {}",
+                            planner.committed
                         ));
+                    };
+                    if let Err(error) = process_descriptor(
+                        &mut flow,
+                        reader,
+                        &mut audio,
+                        &window,
+                        conditioning,
+                        cancelled,
+                        &mut planner,
+                        &mut text,
+                        &mut descriptors,
+                        &mut decode_rtf_ewma,
+                    ) {
+                        flow.reset();
+                        return TdtWorkerResult::Failure(error);
                     }
                 }
                 if let Err(error) = flow.finish() {
@@ -579,7 +597,7 @@ mod tests {
 
     #[test]
     fn planner_has_strict_left_owned_right_ranges() {
-        let mut planner = Planner::new(1_280).unwrap();
+        let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
         let (first, target) = planner.non_final(16_000 * 15).unwrap();
         assert_eq!(first.sequence, 0);
         assert_eq!(first.context_start_sample, 0);
@@ -602,7 +620,7 @@ mod tests {
 
     #[test]
     fn reviewed_cap_accepts_descriptor_two_after_a_full_rolling_hard_cut() {
-        let mut planner = Planner::new(1_280).unwrap();
+        let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
         // Cursor reconstructed from the report: descriptor 1 committed through
         // 42.56 s, then continuous speech reached the unchanged 25 s hard cut.
         planner.sequence = 2;
@@ -621,8 +639,67 @@ mod tests {
     }
 
     #[test]
+    fn planner_splits_the_oversized_descriptors_from_the_runtime_report() {
+        for (sequence, committed, commit_hint) in [(1, 330_240, 752_640), (6, 1_770_240, 2_215_680)]
+        {
+            let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
+            planner.sequence = sequence;
+            planner.committed = committed;
+            let mut windows = Vec::new();
+
+            while planner.committed < commit_hint {
+                let (window, _) = planner.non_final(commit_hint).unwrap();
+                assert_eq!(window.fresh_start_sample, planner.committed);
+                assert!(
+                    window.context_end_sample - window.context_start_sample
+                        <= REVIEWED_TDT_MAX_WINDOW_SAMPLES as u64
+                );
+                planner.commit(&window).unwrap();
+                windows.push(window);
+            }
+
+            assert_eq!(planner.committed, commit_hint);
+            assert!(windows.len() >= 2, "reported range must be split");
+        }
+    }
+
+    #[test]
+    fn closing_a_large_unaligned_tail_stays_bounded_and_finishes_exactly() {
+        let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
+        let total = 3 * REVIEWED_TDT_MAX_WINDOW_SAMPLES as u64 + 777;
+        let mut windows = Vec::new();
+
+        while !planner.finalized {
+            let window = planner.closing_window(total).unwrap();
+            assert_eq!(window.fresh_start_sample, planner.committed);
+            assert!(
+                window.context_end_sample - window.context_start_sample
+                    <= REVIEWED_TDT_MAX_WINDOW_SAMPLES as u64
+            );
+            planner.commit(&window).unwrap();
+            windows.push(window);
+        }
+
+        assert!(windows.len() > 1);
+        assert!(windows[..windows.len() - 1]
+            .iter()
+            .all(|window| !window.final_window));
+        let final_window = windows.last().unwrap();
+        assert!(final_window.final_window);
+        assert_eq!(final_window.commit_end_sample, total);
+        assert_eq!(planner.committed, total);
+    }
+
+    #[test]
+    fn planner_rejects_a_cap_that_cannot_hold_context_and_owned_audio() {
+        let too_small =
+            ((LEFT_CONTEXT_ENCODER_FRAMES + RIGHT_CONTEXT_ENCODER_FRAMES) * 1_280) as usize;
+        assert!(Planner::new(1_280, too_small).is_err());
+    }
+
+    #[test]
     fn planner_state_is_bounded_over_long_session() {
-        let mut planner = Planner::new(1_280).unwrap();
+        let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
         for index in 1..=100_000u64 {
             let hint = index * 16 * 1_280;
             let (window, _) = planner.non_final(hint).unwrap();
@@ -632,18 +709,18 @@ mod tests {
         assert_eq!(planner.sequence, 100_000);
         assert_eq!(
             std::mem::size_of::<Planner>(),
-            6 * std::mem::size_of::<u64>()
+            7 * std::mem::size_of::<u64>()
         );
     }
 
     #[test]
     fn terminal_close_always_leaves_a_final_owned_range() {
-        let mut planner = Planner::new(1_280).unwrap();
+        let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
         let (candidate, required_total) = planner.non_final(16_000).unwrap();
 
         // If the journal closes before right lookahead arrives, the candidate
         // was never committed and its owned range becomes the final window.
-        let closed_early = planner.final_window(candidate.commit_end_sample).unwrap();
+        let closed_early = planner.closing_window(candidate.commit_end_sample).unwrap();
         assert_eq!(closed_early.fresh_start_sample, 0);
         assert_eq!(closed_early.commit_end_sample, candidate.commit_end_sample);
 
@@ -652,7 +729,7 @@ mod tests {
         // an owned tail to submit as final_window=true.
         assert!(required_total > candidate.commit_end_sample);
         planner.commit(&candidate).unwrap();
-        let closed_after_commit = planner.final_window(required_total).unwrap();
+        let closed_after_commit = planner.closing_window(required_total).unwrap();
         assert_eq!(
             closed_after_commit.fresh_start_sample,
             candidate.commit_end_sample
@@ -663,22 +740,22 @@ mod tests {
 
     #[test]
     fn planner_final_consumes_exact_unaligned_tail_once() {
-        let mut planner = Planner::new(1_280).unwrap();
+        let mut planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
         let (first, _) = planner.non_final(16_000).unwrap();
         planner.commit(&first).unwrap();
-        let final_window = planner.final_window(16_777).unwrap();
+        let final_window = planner.closing_window(16_777).unwrap();
         assert!(final_window.final_window);
         assert_eq!(final_window.fresh_start_sample, first.commit_end_sample);
         assert_eq!(final_window.commit_end_sample, 16_777);
         assert_eq!(final_window.context_end_sample, 16_777);
         planner.commit(&final_window).unwrap();
-        assert!(planner.final_window(16_777).is_none());
+        assert!(planner.closing_window(16_777).is_none());
     }
 
     #[test]
     fn planner_never_emits_zero_owned_descriptor() {
-        let planner = Planner::new(1_280).unwrap();
+        let planner = Planner::new(1_280, REVIEWED_TDT_MAX_WINDOW_SAMPLES).unwrap();
         assert!(planner.non_final(1_279).is_none());
-        assert!(planner.final_window(0).is_none());
+        assert!(planner.closing_window(0).is_none());
     }
 }
