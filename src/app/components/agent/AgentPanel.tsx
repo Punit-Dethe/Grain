@@ -346,49 +346,38 @@ export function AgentPanel() {
         confirmDelete: reply.confirm_delete,
       });
     }
-    // ONE window, growing. The native resize is a single instant step that
-    // cannot be animated (staging it risks the tauri#3990 freeze), so instead
-    // it is made invisible: pin the card to the box it has right now, let the
-    // window grow around it — the added area is transparent, so nothing on
-    // screen changes — and only then swap in the conversation and animate the
-    // card's own box open. Nothing blanks, and nothing jumps.
+    // ONE window, and it does not move. The window is already the conversation's
+    // footprint (`side_envelope` in `agent.rs`) — the compact card is just a box
+    // in its bottom-right corner — so expanding is that box growing to fill a
+    // window that never resizes. No native step to hide, race, or wait for.
     //
-    // Pinning the card's SIZE only holds it still because the backend moves and
-    // resizes the window in one atomic step (`set_bounds` in `agent.rs`). The
-    // card is glued to the window's bottom-right corner, so any intermediate
-    // window box drags it across the screen no matter what its size is fixed to.
-    const from = { w: window.innerWidth, h: window.innerHeight };
+    // Measure the CARD, not the viewport: the viewport is the target, and it has
+    // been the target the whole time. Reading the window for the start box was
+    // only ever correct while the window itself was being resized, and when that
+    // read lost its race it returned the target — collapsing the growth to
+    // nothing and falling through to the entrance animation instead, which
+    // played scale(0.86)→1 on the full-size conversation. That is the "big card
+    // compacts, then the expanded appears".
+    // `offsetWidth/Height`, not the bounding rect: the rect includes transforms,
+    // so expanding while the entrance is still scaling would read a shrunken box
+    // and grow from the wrong size. Same reason `reportHeight` uses it.
     const card = cardRef.current;
+    const from = {
+      w: card?.offsetWidth || window.innerWidth,
+      h: card?.offsetHeight || window.innerHeight,
+    };
     if (card) {
       card.style.width = `${from.w}px`;
       card.style.height = `${from.h}px`;
     }
-    // The command resolving does NOT mean the window has resized — it hands the
-    // work to the event loop and returns. `resize` is the webview saying the new
-    // viewport is actually live, which is the only moment measuring it gives the
-    // real target; a fixed number of frames was a guess that measured the OLD
-    // box whenever it lost, leaving nothing to grow into. The timer is the
-    // fallback for a resize that never comes (already at the target size).
-    let started = false;
-    let guard = 0;
-    const begin = () => {
-      if (started) return;
-      started = true;
-      window.removeEventListener("resize", begin);
-      window.clearTimeout(guard);
-      growFromRef.current = from;
-      setMessages(seed);
-      setExpanded(true);
-      setAppearNonce((n) => n + 1);
-      window.setTimeout(() => followupRef.current?.focus(), 60);
-    };
-    void commands
-      .agentSetPanelMode(true)
-      .catch(() => {})
-      .finally(() => {
-        window.addEventListener("resize", begin);
-        guard = window.setTimeout(begin, 220);
-      });
+    growFromRef.current = from;
+    setMessages(seed);
+    setExpanded(true);
+    setAppearNonce((n) => n + 1);
+    window.setTimeout(() => followupRef.current?.focus(), 60);
+    // State only now (which brain owns Enter, whether dictation routes into the
+    // panel). It no longer touches the window, so nothing waits on it.
+    void commands.agentSetPanelMode(true).catch(() => {});
   }, []);
 
   /** Open the CENTER follow-up field (button click or the continuation
@@ -618,9 +607,14 @@ export function AgentPanel() {
 
     const to = { w: window.innerWidth, h: window.innerHeight };
     let anim: Animation | undefined;
-    if (from && (to.w > from.w || to.h > from.h)) {
-      // Expanding: the window has ALREADY grown around the card. Animate the
-      // card's own box open from the one it had before that.
+    if (from) {
+      // Expanding: grow the card's own box out to fill the window.
+      //
+      // `from` being set IS the signal, with no second opinion about whether the
+      // box actually got bigger. That extra test used to decide this, and when
+      // it read equal sizes it fell through to the ENTRANCE animation — which
+      // shrinks the full-size card to 0.86 and grows it back. A growth that
+      // measures as no growth must be a no-op, never a different animation.
       //
       // The inline size is the START box, so the first painted frame is right
       // by construction — never dependent on when the animation's own first

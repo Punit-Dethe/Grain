@@ -321,6 +321,19 @@
   right: 0;
   bottom: 0;
 }
+/* The SIDE window is ALWAYS the conversation's footprint — it never resizes
+ * while it is on screen (`side_envelope` in `agent.rs` explains why). So the
+ * compact card is not "the window", it is a box in the window's bottom-right
+ * corner, and expanding is that box growing to fill a window that does not move.
+ *
+ * These numbers live HERE and nowhere else — the backend has no use for them
+ * any more, so it deliberately keeps no copy. `min(…, 100%)` keeps the card
+ * inside the envelope on short screens, which is the clamp the backend used to
+ * apply to the window itself. */
+.agc-card:not(.agc-center):not(.agc-card--expanded) {
+  width: min(432px, 100%);
+  height: min(488px, 100%);
+}
 /* The conversation is a different layout to the card it replaces, so it fades
  * up as the box grows instead of cutting straight in. */
 @keyframes agc-fade-in {

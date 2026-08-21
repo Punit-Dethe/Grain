@@ -81,8 +81,8 @@ const FIELD_CONTEXT_MAX_CHARS: usize = 6000;
 /// The card fills its window exactly — it casts no drop shadow, so there is no
 /// transparent gutter to budget for and these are the visible sizes.
 const PANEL_W: f64 = 500.0;
-const PANEL_COMPACT_W: f64 = 432.0;
-const PANEL_COMPACT_H: f64 = 488.0;
+/// Tallest the SIDE window ever gets (the conversation on a big screen).
+const PANEL_SIDE_MAX_H: f64 = 880.0;
 const PANEL_MARGIN: f64 = 20.0;
 
 /// [GRAIN] CENTER-TOP panel geometry (logical px). The center variant is a
@@ -477,7 +477,7 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
     let (sw, sh) = panel_start_size(app);
     let w = build_window(app, PANEL_LABEL, sw, sh)
         .map_err(|e| format!("failed to build agent panel: {e}"))?;
-    place_panel(&w, false); // placed but NOT shown
+    place_panel(&w); // placed but NOT shown
     info!("[GRAIN] agent: panel pre-created (hidden, warming)");
     Ok(())
 }
@@ -748,8 +748,38 @@ fn panel_start_size(app: &AppHandle) -> (f64, f64) {
     if panel_position(app) == AgentPanelPosition::Center {
         (PANEL_CENTER_W, PANEL_CENTER_START_H)
     } else {
-        (PANEL_COMPACT_W, PANEL_COMPACT_H)
+        // SIDE opens at the full envelope — there is only one size. See
+        // [`side_envelope`].
+        (PANEL_W, PANEL_SIDE_MAX_H)
     }
+}
+
+/// The SIDE window's footprint — the SAME for the compact card and the
+/// conversation, deliberately.
+///
+/// Growing the window at the moment the user expands is the thing that could
+/// never be made smooth, and each fix only moved the seam: the resize is one
+/// instant native step that the webview's own render loop knows nothing about,
+/// so whatever the newly exposed region paints for its first frame or two lands
+/// in the middle of the animation, and the animation cannot even measure its own
+/// target until the resize has actually been applied. Racing that was the whole
+/// bug, in three different costumes.
+///
+/// So the window never resizes while it is on screen. It opens at the size the
+/// conversation will need, and expanding is a pure CSS growth inside a window
+/// that does not move a pixel. Nothing to race.
+///
+/// The compact card is therefore no longer a window size at all — it is a box in
+/// this window's bottom-right corner, owned entirely by `agent.css`. Nothing here
+/// needs its dimensions, which is why they are not mirrored in this file: a copy
+/// nothing reads is a copy that silently goes stale.
+///
+/// The cost is honest and bounded: while compact, the transparent area above and
+/// left of the card belongs to this window, so clicks there hit it instead of
+/// whatever is behind. That is the same region the conversation occupies anyway,
+/// on a surface that lives seconds and closes on Esc.
+fn side_envelope(work_h: f64) -> (f64, f64) {
+    (PANEL_W, (work_h - 110.0).clamp(360.0, PANEL_SIDE_MAX_H))
 }
 
 /// Move AND resize in a single step.
@@ -813,7 +843,7 @@ fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f6
 /// (the reference design). CENTER pins the top-centre and sizes to the height
 /// the webview last requested (preserved across transitions so an already-grown
 /// surface never snaps back).
-fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
+fn place_panel(window: &tauri::WebviewWindow) {
     if panel_position(window.app_handle()) == AgentPanelPosition::Center {
         let stored = window
             .app_handle()
@@ -831,19 +861,10 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
 
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
-        let (w, h) = if expanded {
-            (PANEL_W, (sh - 110.0).clamp(360.0, 880.0))
-        } else {
-            (
-                PANEL_COMPACT_W,
-                PANEL_COMPACT_H.min(sh - 2.0 * PANEL_MARGIN),
-            )
-        };
-        // Both footprints are anchored PANEL_MARGIN in from the bottom-right, so
-        // this corner is identical compact and expanded. One atomic step keeps it
-        // literally motionless across the resize — which is what lets the card be
-        // pinned to its old box and grow up-and-left from a corner that never
-        // moved.
+        // ONE footprint for both stages, anchored PANEL_MARGIN in from the
+        // bottom-right — so this only ever runs while the window is hidden or
+        // already at this exact box, and expanding moves nothing native at all.
+        let (w, h) = side_envelope(sh);
         let x = ox + sw - w - PANEL_MARGIN;
         let y = oy + sh - h - PANEL_MARGIN;
         set_bounds(window, x, y, w, h);
@@ -1109,7 +1130,7 @@ pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), 
         state.panel_expanded.store(expanded, Ordering::SeqCst);
     }
     if let Some(w) = app.get_webview_window(PANEL_LABEL) {
-        place_panel(&w, expanded);
+        place_panel(&w);
     }
     arm_global_enter(&app, expanded);
     Ok(())
@@ -1165,22 +1186,16 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
     info!("[GRAIN] agent: showing panel (expanded: {expanded})");
     let win = match app.get_webview_window(PANEL_LABEL) {
         Some(w) => {
-            place_panel(&w, expanded);
+            place_panel(&w);
             w
         }
         None => {
             info!("[GRAIN] agent: building panel window");
-            let (w, h) = if panel_position(app) == AgentPanelPosition::Center {
-                (PANEL_CENTER_W, PANEL_CENTER_START_H)
-            } else if expanded {
-                (PANEL_W, 600.0)
-            } else {
-                (PANEL_COMPACT_W, PANEL_COMPACT_H)
-            };
+            let (w, h) = panel_start_size(app);
             let w = build_window(app, PANEL_LABEL, w, h)
                 .map_err(|e| format!("failed to build agent panel: {e}"))?;
             info!("[GRAIN] agent: panel window built");
-            place_panel(&w, expanded);
+            place_panel(&w);
             info!("[GRAIN] agent: panel window placed");
             w
         }
@@ -1409,7 +1424,7 @@ fn reveal_panel_loading(app: &AppHandle) {
             Some(w) => w,
             None => match build_window(&app2, PANEL_LABEL, sw, sh) {
                 Ok(w) => {
-                    place_panel(&w, false);
+                    place_panel(&w);
                     w
                 }
                 Err(e) => {
@@ -1436,7 +1451,7 @@ fn deliver_agent_error(app: &AppHandle, message: &str) {
         if !existed {
             let (sw, sh) = panel_start_size(&app);
             match build_window(&app, PANEL_LABEL, sw, sh) {
-                Ok(w) => place_panel(&w, false),
+                Ok(w) => place_panel(&w),
                 Err(e) => {
                     error!("[GRAIN] agent: failed to build panel for error: {e}");
                     return;
@@ -1647,7 +1662,7 @@ pub fn open_followup(app: &AppHandle) {
 
         // Not on the main thread (we're on a shortcut/WS thread), so resizing
         // the window here is safe (tauri#3990 only bites main-thread resizes).
-        place_panel(&panel, true);
+        place_panel(&panel);
         // The panel is already mounted: it re-checks the retained conversation
         // on this event (take is consuming, so double delivery is harmless).
         let _ = app.emit_to(PANEL_LABEL, "agent-followup-open", ());
