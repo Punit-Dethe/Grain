@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Grain's always-on dot-matrix pill: a lightweight winit + tiny-skia native surface rendering the volume-density Aura Core. Captures mic levels directly (low latency) and presents with true per-pixel transparency (Win32 layered window)."
+description = "Grain's always-on dot-matrix pill: a lightweight winit + tiny-skia native surface rendering the volume-density Aura Core from Grain's configured recorder."
 
 [lib]
 name = "grain_pill"
@@ -13,7 +13,6 @@ path = "src/lib.rs"
 [dependencies]
 winit = "0.30"
 tiny-skia = "0.11"
-cpal = "0.15"
 raw-window-handle = "0.6"
 fontdue = "0.9" # text rasterization for the prompt riser
 # [GRAIN] the wire contract only (events + handshake) - the pill is the

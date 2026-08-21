@@ -2,8 +2,8 @@
 //! Grain pill — the always-on dot-matrix "Aura Core" surface.
 //!
 //! winit + tiny-skia. A 25×8 dot grid presented as a true per-pixel-transparent
-//! floating capsule (Win32 layered window). Mic levels are captured directly
-//! (cpal) for lowest latency.
+//! floating capsule (Win32 layered window). Mic levels arrive from Grain's
+//! configured recorder over the authenticated event stream.
 //!
 //! Visual language:
 //! - RECORDING: lit-dot *density* tracks mic amplitude (random placement,
@@ -19,7 +19,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -2889,66 +2888,6 @@ fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32, hover: bool) 
     }
 }
 
-// ── Mic capture (direct, low-latency) ───────────────────────────────────────
-
-fn start_mic(amp: Arc<AtomicU32>) -> Option<cpal::Stream> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
-    let device = cpal::default_host().default_input_device()?;
-    let supported = device.default_input_config().ok()?;
-    let sample_format = supported.sample_format();
-    let config: cpal::StreamConfig = supported.into();
-    let err_fn = |e| eprintln!("mic stream error: {e}");
-
-    let shape = move |rms: f32| {
-        let floor = 0.008_f32;
-        let gated = if rms < floor {
-            0.0
-        } else {
-            (rms - floor) / (1.0 - floor)
-        };
-        let reference = 0.15_f32;
-        let shaped = (gated / reference).min(1.0).sqrt();
-        amp.store(shaped.to_bits(), Ordering::Relaxed);
-    };
-
-    let stream = match sample_format {
-        cpal::SampleFormat::F32 => device
-            .build_input_stream(
-                &config,
-                move |data: &[f32], _: &_| {
-                    let n = data.len().max(1) as f32;
-                    let sum: f32 = data.iter().map(|s| s * s).sum();
-                    shape((sum / n).sqrt());
-                },
-                err_fn,
-                None,
-            )
-            .ok()?,
-        cpal::SampleFormat::I16 => device
-            .build_input_stream(
-                &config,
-                move |data: &[i16], _: &_| {
-                    let n = data.len().max(1) as f32;
-                    let sum: f32 = data
-                        .iter()
-                        .map(|&s| {
-                            let f = s as f32 / 32768.0;
-                            f * f
-                        })
-                        .sum();
-                    shape((sum / n).sqrt());
-                },
-                err_fn,
-                None,
-            )
-            .ok()?,
-        _ => return None,
-    };
-    stream.play().ok()?;
-    Some(stream)
-}
-
 // ── Win32 layered-window presentation (true per-pixel transparency) ─────────
 
 #[cfg(windows)]
@@ -3217,6 +3156,10 @@ mod present {
 #[derive(Clone)]
 struct Remote {
     state: PillState,
+    /// Scalar energy derived from the configured recorder's normalized vocal
+    /// spectrum. Unlike a second CPAL stream, this always follows Grain's
+    /// selected microphone and channel.
+    amp: f32,
     visible: bool,
     /// Where the pill anchors; `None` means the user disabled the overlay, so the
     /// pill never shows regardless of session events.
@@ -3301,6 +3244,7 @@ impl Default for Remote {
     fn default() -> Self {
         Remote {
             state: PillState::Idle,
+            amp: 0.0,
             visible: false,
             anchor: OverlayPosition::Bottom,
             prompt_name: String::new(),
@@ -3328,6 +3272,26 @@ impl Default for Remote {
     }
 }
 
+/// Collapse the recorder's normalized vocal-frequency buckets to one stable
+/// waveform input. RMS keeps broad speech energy prominent without letting one
+/// noisy frequency bin dominate; malformed values are ignored at the process
+/// boundary and the result remains in the renderer's documented 0..1 range.
+fn audio_level_amp(levels: &[f32]) -> f32 {
+    let (sum_squares, count) = levels
+        .iter()
+        .copied()
+        .filter(|level| level.is_finite())
+        .map(|level| level.clamp(0.0, 1.0))
+        .fold((0.0_f32, 0_u32), |(sum, count), level| {
+            (sum + level * level, count + 1)
+        });
+    if count == 0 {
+        0.0
+    } else {
+        (sum_squares / count as f32).sqrt().clamp(0.0, 1.0)
+    }
+}
+
 fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
     let mut r = remote.lock().unwrap();
     // When the overlay is disabled (None), no session event may reveal the pill.
@@ -3345,6 +3309,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         // recording; processing only appears after the stop signal.
         DaemonEvent::RecordingStarted { mode, owner, .. } => {
             r.state = PillState::Recording;
+            r.amp = 0.0;
             r.visible = can_show(&r);
             // [GRAIN] Every session opens as the small collapsed capsule. A live
             // STREAMING session (Native ASR / rolling live preview) is allowed to
@@ -3365,8 +3330,15 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
+        // The backend recorder already emits these normalized buckets at ~30
+        // FPS from the configured device. Keep the reducer silent: logging this
+        // high-frequency event would flood the application log.
+        DaemonEvent::AudioLevel { levels } if r.state == PillState::Recording => {
+            r.amp = audio_level_amp(&levels);
+        }
         DaemonEvent::RecordingStopped { .. } => {
             r.state = PillState::Processing;
+            r.amp = 0.0;
             r.visible = can_show(&r);
             r.prompt_recording = false; // recording over → drop the blue tint.
             eprintln!("event: RecordingStopped -> processing");
@@ -3384,6 +3356,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             // idle (see `is_centered_overlay_only`) instead of leaking the stale
             // `Processing` body beside the capsule.
             r.state = PillState::Idle;
+            r.amp = 0.0;
             r.visible = false;
             if r.session_owner.take().is_some() {
                 r.session_owner_seq = r.session_owner_seq.wrapping_add(1);
@@ -3516,7 +3489,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             });
             r.icon_seq = r.icon_seq.wrapping_add(1);
         }
-        _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
+        _ => {} // AudioLevel while idle / Asr* after the freeze / etc.
     }
 
     // [GRAIN] First-word expand / "scrap that" collapse. A streaming session flips
@@ -3813,10 +3786,7 @@ struct App {
     /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint — the
     /// sole visual indicator of Prompt Record.
     prompt_recording: bool,
-    amp: Arc<AtomicU32>,
-    _mic: Option<cpal::Stream>,
-    sim_target: f32,
-    sim_amp: f32,
+    amp: f32,
     font: Option<fontdue::Font>,
     prompts: Vec<String>,
     prompt_idx: usize,
@@ -3946,12 +3916,6 @@ struct App {
 
 impl App {
     fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
-        let amp = Arc::new(AtomicU32::new(0));
-        // [GRAIN] The mic is NOT opened at startup. The pill is always-on but
-        // hidden between dictations; holding a capture stream open 24/7 wastes RAM,
-        // wakes the audio callback for nothing, and keeps the mic device busy (OS
-        // "mic in use" indicator). We open it only while the pill is visible and
-        // close it on hide — see `about_to_wait`.
         let remote = Arc::new(Mutex::new(Remote::default()));
         // [GRAIN] Reverse channel for explicit pill controls. Unbounded so the
         // winit thread never blocks handing an action to the async WS task.
@@ -3969,10 +3933,7 @@ impl App {
             state: PillState::Idle,
             theme: None,
             prompt_recording: false,
-            amp,
-            _mic: None,
-            sim_target: 0.5,
-            sim_amp: 0.0,
+            amp: 0.0,
             // [GRAIN] The single shared font loads LAZILY (on the first text
             // render) and is freed after a long idle — so the always-on pill
             // doesn't hold a parsed font while it sits hidden.
@@ -4418,18 +4379,6 @@ impl App {
     /// The dot grid's cell size. Matrix-skin only — the wave skin has no grid.
     fn cell_px() -> f32 {
         CELL * SCALE
-    }
-
-    fn current_amp(&mut self) -> f32 {
-        if self._mic.is_some() {
-            f32::from_bits(self.amp.load(Ordering::Relaxed))
-        } else {
-            if self.aura.rng.f32() < 0.15 {
-                self.sim_target = 0.15 + self.aura.rng.f32() * 0.8;
-            }
-            self.sim_amp += (self.sim_target - self.sim_amp) * 0.35;
-            self.sim_amp
-        }
     }
 
     /// Dispatch to whichever surface is current. The two are independent,
@@ -6135,6 +6084,7 @@ impl ApplicationHandler<UserEvent> for App {
                 Key::Character("r") => {
                     let mut r = self.remote.lock().unwrap();
                     r.state = PillState::Recording;
+                    r.amp = 0.45;
                     r.visible = true;
                 }
                 Key::Character("p") => {
@@ -6194,6 +6144,7 @@ impl ApplicationHandler<UserEvent> for App {
             // and the body renders off-center).
             let prev_state = self.state;
             self.state = r.state;
+            self.amp = r.amp;
             let session_started_from_overlay =
                 matches!(self.state, PillState::Recording | PillState::Processing)
                     && !matches!(prev_state, PillState::Recording | PillState::Processing)
@@ -6571,24 +6522,6 @@ impl ApplicationHandler<UserEvent> for App {
                 self.next_tick = now;
             }
 
-            // [GRAIN] Mic lifecycle is gated on RECORDING, not mere visibility:
-            // only `roll_recording` consumes live amplitude, so opening the
-            // capture device for the Processing phase or a prompt-riser preview
-            // would light the OS "mic in use" indicator and wake the audio
-            // callback for nothing ("destroy if not in use"). Open it just-in-time
-            // when recording starts; release it the instant we leave Recording
-            // (stop → Processing) or the pill hides.
-            let needs_mic = self.visible && self.state == PillState::Recording;
-            if needs_mic && self._mic.is_none() {
-                self._mic = start_mic(self.amp.clone());
-                if self._mic.is_none() {
-                    eprintln!("no microphone — falling back to a simulated signal");
-                }
-            } else if !needs_mic && self._mic.is_some() {
-                // Recording ended (or the pill hid) — free the device immediately.
-                self._mic = None;
-            }
-
             if self.visible {
                 // Ease the Studio Window's whole-window fade. A no-op for the
                 // collapsed pill (which never sets `closing` and always
@@ -6645,14 +6578,14 @@ impl ApplicationHandler<UserEvent> for App {
                     // the motion, never slow it down.
                     let dt = now.saturating_duration_since(self.wave_at).as_secs_f32();
                     self.wave_at = now;
-                    let amp = self.current_amp();
+                    let amp = self.amp;
                     let n = wave_bar_count(self.wave_row_w());
                     self.wave.advance(dt, self.state, amp, n);
                 }
                 // Re-roll the dot field on its own (slower) cadence so it stays
                 // calm; everything else eases every frame for smoothness.
                 if now >= self.next_roll && !wave_live {
-                    let amp = self.current_amp();
+                    let amp = self.amp;
                     // The expanded pill uses the 2-column field: center-outward
                     // waveform while recording, grey sparkle while processing,
                     // calm breathing for idle/fallback. Collapsed pill unchanged.
@@ -6855,6 +6788,40 @@ pub fn run_pill() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audio_level_buckets_reduce_to_bounded_rms() {
+        assert_eq!(audio_level_amp(&[]), 0.0);
+        assert_eq!(audio_level_amp(&[f32::NAN, f32::INFINITY]), 0.0);
+        assert_eq!(audio_level_amp(&[-1.0, 2.0]), (0.5_f32).sqrt());
+        let amp = audio_level_amp(&[0.3, 0.4]);
+        assert!((amp - (0.125_f32).sqrt()).abs() < 1e-6);
+        assert!((0.0..=1.0).contains(&amp));
+    }
+
+    #[test]
+    fn audio_levels_drive_only_an_active_recording() {
+        let remote = Mutex::new(Remote::default());
+        apply_event(&remote, DaemonEvent::AudioLevel { levels: vec![1.0] });
+        assert_eq!(remote.lock().unwrap().amp, 0.0);
+        apply_event(
+            &remote,
+            DaemonEvent::RecordingStarted {
+                session_id: 7,
+                mode: SessionMode::Batch,
+                owner: None,
+            },
+        );
+        apply_event(
+            &remote,
+            DaemonEvent::AudioLevel {
+                levels: vec![0.25, 0.75],
+            },
+        );
+        assert!(remote.lock().unwrap().amp > 0.0);
+        apply_event(&remote, DaemonEvent::RecordingStopped { session_id: 7 });
+        assert_eq!(remote.lock().unwrap().amp, 0.0);
+    }
 
     #[test]
     fn a_missed_paste_arms_the_short_clipboard_confirmation() {
