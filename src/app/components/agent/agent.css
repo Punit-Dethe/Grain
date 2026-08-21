@@ -1288,9 +1288,8 @@
 .agc-c-textarea::placeholder {
   color: rgba(255, 255, 255, 0.32);
 }
-.agc-c-textarea:disabled {
-  opacity: 0.6;
-}
+/* No `:disabled` rule — the follow-up fields are never disabled, so the dim
+ * state can no longer be reached. See the note beside the inputs. */
 
 /* Center scrollbars (match the card's quiet palette). */
 .agc-c-scroll::-webkit-scrollbar,

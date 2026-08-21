@@ -1126,11 +1126,11 @@ export function AgentPanel() {
               follow-up + shortcut (left) and Confirm on the first reply (right). */}
           {composing ? (
             <div className="agc-c-compose">
+              {/* Enabled while busy, for the same reason as the side field. */}
               <textarea
                 ref={centerInputRef}
                 rows={1}
                 className="agc-c-textarea"
-                disabled={busy}
                 placeholder={
                   busy
                     ? t("agent.followupWaiting")
@@ -1381,11 +1381,18 @@ export function AgentPanel() {
 
         {/* Follow-up input */}
         <div className={`agc-input ${busy ? "is-busy" : ""}`}>
+          {/* NOT disabled while busy. Disabling a focused field makes the
+              browser blur it on the spot, and the refocus in `runConversation`
+              then runs before React has re-enabled it — focusing a disabled
+              input is a no-op, so focus was lost for good and every follow-up
+              needed a fresh click. Staying enabled means focus is never taken
+              away in the first place, and the user can compose their next
+              question while the answer is still coming. Submitting is what's
+              blocked while busy (`sendFollowup` guards, and Send is disabled). */}
           <input
             ref={followupRef}
             type="text"
             className="agc-input-field"
-            disabled={busy}
             placeholder={
               busy ? t("agent.followupWaiting") : t("agent.followupPlaceholder")
             }
@@ -1401,6 +1408,10 @@ export function AgentPanel() {
             className="agc-send"
             disabled={busy}
             title={t("agent.followupPlaceholder")}
+            // Clicking a button moves focus to it, so sending by mouse emptied
+            // the field AND took the caret out of it. Send is the one control
+            // whose whole purpose is to return you to typing.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => void sendFollowup()}
           >
             {SEND_ARROW}
