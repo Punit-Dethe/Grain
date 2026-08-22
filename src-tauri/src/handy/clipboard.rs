@@ -421,6 +421,39 @@ fn type_text_via_xdotool(text: &str) -> Result<(), String> {
         .output()
         .map_err(|e| format!("Failed to execute xdotool: {}", e))?;
 
+    // `--clearmodifiers` restores the modifiers that were held when xdotool
+    // started. If the user releases one while xdotool is typing, that synthetic
+    // restore can leave the modifier latched on the XTEST keyboard (#1817).
+    // Release both sides of Handy's supported push-style modifiers to clear any
+    // stale restore. Lock keys are intentionally excluded because key events
+    // toggle them. Cleanup precedes the status check because xdotool may have
+    // changed modifier state before returning an error.
+    match Command::new("xdotool")
+        .arg("keyup")
+        .args([
+            "Control_L",
+            "Control_R",
+            "Shift_L",
+            "Shift_R",
+            "Alt_L",
+            "Alt_R",
+            "Super_L",
+            "Super_R",
+        ])
+        .output()
+    {
+        Ok(cleanup_output) if !cleanup_output.status.success() => {
+            let stderr = String::from_utf8_lossy(&cleanup_output.stderr);
+            log::warn!(
+                "xdotool modifier cleanup failed with status {:?}: {}",
+                cleanup_output.status.code(),
+                stderr.trim()
+            );
+        }
+        Err(error) => log::warn!("Failed to execute xdotool modifier cleanup: {}", error),
+        _ => {}
+    }
+
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("xdotool failed: {}", stderr));

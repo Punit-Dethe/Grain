@@ -223,7 +223,7 @@
     "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
   },
   "99052eefa6c15c32d11d7ccc29f3d14b6ae26cb8": {
-    "notes": "Already covered: both Grain xdotool type and paste invocations use --clearmodifiers, preventing a stale modifier latch.",
+    "notes": "Ported the explicit post-type xdotool keyup cleanup for both sides of Control/Shift/Alt/Super. --clearmodifiers alone can restore a modifier released during typing and leave XTEST latched.",
     "status": "Merged"
   },
   "99ac7ebb23473d8ce5b63e6578f37e239b89e738": {
