@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { AudioFeedback } from "@/components/settings/AudioFeedback";
+import { ChannelSelector } from "@/components/settings/ChannelSelector";
 import { MicrophoneSelector } from "@/components/settings/MicrophoneSelector";
 import { MuteWhileRecording } from "@/components/settings/MuteWhileRecording";
 import { OutputDeviceSelector } from "@/components/settings/OutputDeviceSelector";
@@ -26,6 +27,7 @@ export function AudioPane() {
         info={t("ui2.settings.groups.inputInfo")}
       >
         <MicrophoneSelector descriptionMode="tooltip" grouped />
+        <ChannelSelector descriptionMode="tooltip" grouped />
         <VoiceProcessing descriptionMode="tooltip" grouped />
         <MuteWhileRecording descriptionMode="tooltip" grouped />
       </SettingsGroup>

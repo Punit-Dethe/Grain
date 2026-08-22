@@ -488,6 +488,12 @@
         "placeholder": "Select microphone...",
         "loading": "Loading..."
       },
+      "channel": {
+        "title": "Input Channel",
+        "description": "Select which input channel to record from. Use this if your audio interface has multiple inputs.",
+        "average": "Average all channels",
+        "channel": "Channel {{n}}"
+      },
       "audioFeedback": {
         "label": "Audio Feedback",
         "description": "Play sound when recording starts and stops"
@@ -505,6 +511,10 @@
     },
     "advanced": {
       "title": "Advanced",
+      "fillerWordRemoval": {
+        "title": "Remove Filler Words",
+        "description": "Removes common hesitation words from transcriptions. Turn off to keep them."
+      },
       "groups": {
         "app": "App",
         "output": "Output",
@@ -908,6 +918,10 @@
       "wordCorrectionThreshold": {
         "title": "Word Correction Threshold",
         "description": "Sensitivity for custom word corrections"
+      },
+      "reliablePaste": {
+        "title": "Reliable Paste (Beta)",
+        "description": "Restore the clipboard only after the target app actually reads the transcription, instead of after a fixed delay. Intended to fix old clipboard content being pasted under system load. Requires a clipboard paste method; macOS and Windows only."
       },
       "historyLimit": {
         "title": "History Limit",

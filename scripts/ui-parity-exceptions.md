@@ -31,6 +31,7 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 | Field                           | Reason                                                                                                          |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `extensions_imported_v1`        | One-shot migration flag (`grain-core/context.rs`): marks that the bundled packs were imported. Nothing to show. |
+| `settings_schema_version`       | Internal settings-file format version used to run migrations after upgrades; never user-configurable.           |
 | `post_process_quota_reset_date` | Local date the post-process daily quotas last rolled over; the router resets lazily at routing time.            |
 | `stt_quota_reset_date`          | Same, for the STT pool.                                                                                         |
 
@@ -45,40 +46,8 @@ python scripts/ui_parity.py --commands # what nothing calls any more
 
 | Field                              | Reason                                                                                                                                                                                                                                                                                                                                                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `action_default_provider`          | Reserved per-domain extension-routing preference from the unfinished action chooser. It defaults empty and currently has no writer, so Grain cannot silently select a hidden provider; surface it with that chooser when the routing work resumes.                                                                                                                                                           |
+| `custom_filler_words`              | Handy keeps this power-user override backend-only and exposes only the master filler-removal toggle. Grain mirrors that product boundary instead of inventing a fork-only editor.                                                                                                                                                                                                                            |
 | `grain_space_decay_half_life_days` | Recall recency-decay tuning (`grain_space/recall.rs`). Has a sensible default; exposing a half-life in days asks the user a question they cannot answer. Revisit only if recall ranking needs field tuning.                                                                                                                                                                                                  |
+| `paste_catch_hold_ms`              | Internal expiry for Recover Missed Text Insertion. The feature switch is surfaced; its 20-second safety window is implementation tuning, not a second user preference.                                                                                                                                                                                                                                       |
 | `selected_model`                   | **Reachable, just not as a setting** — triaged 2026-08-15. Not dead and not upstream-only: it is the live Batch/Rolling model id (`rolling.rs`, `lib.rs` preload, `actions.rs` language resolution). Its control is the Model Library, which writes it through the `set_active_model` command rather than the generic settings updater — and a command writer is what the gate cannot see. Nothing to build. |
-
-## Gaps — no UI today, and that is not deliberate
-
-Not exceptions so much as a to-do list the gate keeps honest. Kept here so the
-gate is green; move them out when UI 2.0 gives them a home.
-
-| Field                 | Reason                                                                                                                                                                                                                                   |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `custom_filler_words` | A real user-facing override — it replaces Grain's built-in filler-word list in `finalize_transcript` — with no control anywhere. It predates the gate. **Candidate to surface in UI 2.0** next to Custom Words, which already has a row. |
-
-### Revealed 2026-08-15 — triaged
-
-These six are not judgements. They surfaced the moment `ui_parity.py`'s
-generated-bindings exclusion was fixed: it compared a tree-relative name against
-a `src/`-relative path, so after the UI 2.0 move to `src/app/` it stopped
-matching and `bindings.ts` — which names every field — was admitted as evidence.
-Every field looked reachable because its own type declaration counted as a UI
-control. Rows are here to keep the gate green while it is honest again; each one
-still needs a real decision.
-
-| Field | Reason |
-| ----- | ------ |
-
-Triaged 2026-08-15. Two left the list: `paste_catch_enabled` already had a
-control (`OutputPane.tsx`) and the row was simply wrong — the gate said so in
-its own output; `selected_model` is reachable through the Model Library and
-moved to _Deliberately not surfaced_ above. The four below are real, ranked by
-what a user loses today.
-
-| Field                         | Reason                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `filler_word_removal_enabled` | **Most urgent of the four.** The master switch for filler-word removal, default ON, live in `finalize_transcript` — so Grain is editing every transcript (dropping "um", "uh", …) with no way to stop it. Its companion `custom_filler_words` is the word list, equally unreachable, so the whole feature is off-limits rather than just the tuning. One toggle plus a word list, next to Custom Words which already has both. Build them together. |
-| `paste_catch_hold_ms`         | How long a caught transcript stays on the clipboard (default 20s). Lower urgency than it looks: the feature's own switch IS surfaced, and this is the tuning knob behind it. Ship the default; surface only if 20s proves wrong in use.                                                                                                                                                                                                             |
-| `selected_channel`            | Which input channel to record from a multi-channel microphone (`None` = average all). Live — `managers/audio.rs` applies it to the real recorder, and `set_selected_channel` exists. Matters only to people on interfaces or stereo inputs where speech is on one channel; for everyone else the default is right. A picker belongs beside the Microphone selector when someone asks for it.                                                        |
-| `reliable_paste`              | Upstream's receipt-sequenced paste: restore the clipboard once the target app has actually read the transcript, instead of after a fixed delay. Defaults OFF and its own doc calls it debug-gated beta. **Decide, do not surface**: either finish it and replace `paste_delay_ms`, or pin it off and stop carrying the branch in `clipboard.rs`.                                                                                                    |

@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import { AppendTrailingSpace } from "@/components/settings/AppendTrailingSpace";
 import { AutoSubmit } from "@/components/settings/AutoSubmit";
 import { ClipboardHandlingSetting } from "@/components/settings/ClipboardHandling";
+import { FillerWordRemoval } from "@/components/settings/FillerWordRemoval";
 import { PasteMethodSetting } from "@/components/settings/PasteMethod";
 import { TypingToolSetting } from "@/components/settings/TypingTool";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
@@ -48,6 +49,7 @@ export function OutputPane() {
         title={t("ui2.settings.groups.corrections")}
         info={t("ui2.settings.groups.correctionsInfo")}
       >
+        <FillerWordRemoval descriptionMode="tooltip" grouped />
         <ToggleSwitch
           label={t("ui2.settings.scrapThat.title")}
           description={t("ui2.settings.scrapThat.description")}
