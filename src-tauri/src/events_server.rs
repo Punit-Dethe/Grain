@@ -688,6 +688,20 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
         grain_core::PillAction::AgentFollowup => {
             crate::agent::open_followup(app);
         }
+        // [GRAIN] Switcher arrows on the expanded card. Routed into the very
+        // function the switcher shortcut calls, so the mouse cannot drift from
+        // the keyboard — it writes the setting and echoes `PromptChanged`.
+        grain_core::PillAction::PromptCycle { delta } => {
+            crate::grain_actions::cycle_prompt(app, delta);
+        }
+        // [GRAIN] Cancel × on the expanded card. Same two-step teardown the
+        // Cancel shortcut runs (`CancelAction`): upstream's recording/model
+        // cancellation, then Grain's session surfaces (chords, rolling worker,
+        // live stream) — so a mouse cancel and Esc cannot diverge.
+        grain_core::PillAction::CancelSession => {
+            crate::utils::cancel_current_operation(app);
+            crate::grain_actions::cancel_session(app);
+        }
         // [GRAIN] Native agent input: the pill's summon card talking back.
         grain_core::PillAction::AgentInputSubmitText { text, title, quick } => {
             crate::agent::input_submit_text(app, text, title, quick);

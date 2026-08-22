@@ -1,0 +1,5 @@
+add_executable(transcribe_tdt_flow_projector_unit tdt_flow_projector_unit.cpp)
+target_link_libraries(transcribe_tdt_flow_projector_unit PRIVATE transcribe ggml)
+target_include_directories(transcribe_tdt_flow_projector_unit PRIVATE ${CMAKE_SOURCE_DIR}/src)
+transcribe_apply_warnings(transcribe_tdt_flow_projector_unit)
+add_test(NAME transcribe_tdt_flow_projector_unit COMMAND transcribe_tdt_flow_projector_unit)

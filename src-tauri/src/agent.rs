@@ -39,8 +39,9 @@ use specta::Type;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
+use crate::context_screen::CapturedImage;
 use crate::input::EnigoState;
-use crate::llm_client::LlmError;
+use crate::llm_client::{ImageAttachment, LlmError};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use crate::rotation_state::{CallOutcome, RotationTrackers};
@@ -76,10 +77,13 @@ const FIELD_CONTEXT_MAX_CHARS: usize = 6000;
 /// Panel geometry (logical px). The COMPACT reply card sits in the bottom-right
 /// corner (the reference design); the EXPANDED conversation keeps the old
 /// sidebar footprint but stays anchored bottom-right.
+///
+/// The card fills its window exactly — it casts no drop shadow, so there is no
+/// transparent gutter to budget for and these are the visible sizes.
 const PANEL_W: f64 = 500.0;
-const PANEL_COMPACT_W: f64 = 392.0;
-const PANEL_COMPACT_H: f64 = 442.0;
-const PANEL_MARGIN: f64 = 18.0;
+/// Tallest the SIDE window ever gets (the conversation on a big screen).
+const PANEL_SIDE_MAX_H: f64 = 880.0;
+const PANEL_MARGIN: f64 = 20.0;
 
 /// [GRAIN] CENTER-TOP panel geometry (logical px). The center variant is a
 /// single sleek surface anchored near the top-centre of the work area. Its width
@@ -126,6 +130,16 @@ pub struct AgentState {
     pub target_hwnd: Mutex<Option<isize>>,
     /// Focused-field context captured at summon (per `agent_context_mode`).
     pub field_context: Mutex<Option<FieldContext>>,
+    /// [GRAIN] Screen frame captured at summon (per `agent_screen_image`), held
+    /// for the life of ONE session so follow-up turns can still see the window
+    /// the user asked about — the request is stateless, so a frame that is not
+    /// re-sent is a frame the model no longer has.
+    ///
+    /// `None` whenever the setting is off, the mode is not Assist, or the
+    /// capture failed. Overwritten on every summon and dropped when the session
+    /// ends ("destroy if not in use"); [`CapturedImage`] zeroes its buffer on the
+    /// way out, so ending a session actually erases the picture.
+    pub screen_image: Mutex<Option<CapturedImage>>,
     /// Quick-Agent conversation retained so "ask follow-up" can reopen the panel
     /// with history. Cleared on fresh summon and consumed by the panel on mount.
     pub conversation: Mutex<Vec<AgentMessage>>,
@@ -136,6 +150,10 @@ pub struct AgentState {
     pub followup_offer_active: AtomicBool,
     /// Bumped per offer so a stale TTL expiry never clears a newer offer.
     pub followup_offer_gen: AtomicU64,
+    /// [GRAIN] Bumped on every summon. Work that finishes AFTER the summon
+    /// returns (the screen capture) compares against it before writing, so a
+    /// slow capture can never land in the session that superseded it.
+    pub summon_gen: AtomicU64,
     /// True while the NATIVE input (the pill's summon card) is up. Gates the
     /// transient global Enter/Escape routing and dedups double submits.
     pub input_active: AtomicBool,
@@ -312,6 +330,10 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             None
         };
         let chars = c.as_ref().map(|s| s.chars().count() as u32).unwrap_or(0);
+        // Identifies THIS summon. The screen frame is taken at the end (below),
+        // after the user already has their listening card, so it needs a way to
+        // know whether the session it belongs to is still the current one.
+        let mut summon_gen = 0u64;
         if let Some(state) = app.try_state::<AgentState>() {
             if let Ok(mut g) = state.context.lock() {
                 *g = c;
@@ -322,6 +344,13 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
             if let Ok(mut g) = state.field_context.lock() {
                 *g = fc;
             }
+            // Unconditional: the previous session's frame is erased here, before
+            // this one has taken (or declined to take) its own. A summon that
+            // photographs nothing must never inherit an older picture.
+            if let Ok(mut g) = state.screen_image.lock() {
+                *g = None;
+            }
+            summon_gen = state.summon_gen.fetch_add(1, Ordering::SeqCst) + 1;
             if let Ok(mut g) = state.conversation.lock() {
                 g.clear();
             }
@@ -374,6 +403,32 @@ fn summon_inner(app: &AppHandle, agent_mode: AgentMode) {
                 }
             });
         }
+
+        // [GRAIN] The screen frame comes LAST, and deliberately so. `PrintWindow`
+        // plus a downscale and a PNG encode is a few hundred milliseconds on a
+        // large window — spent ahead of `start_dictation` it would push back the
+        // moment the card says "listening", which is the one piece of latency in
+        // this whole path the user can feel. Nothing needs the frame until they
+        // submit, which is a sentence away.
+        //
+        // Taking it late is safe because it is taken by HANDLE: our own card
+        // being in front by now changes nothing about which window is
+        // photographed, and `capture_window` renders that window regardless of
+        // z-order or focus.
+        if assist {
+            if let Some(image) = capture_screen_image(&app, hwnd) {
+                if let Some(state) = app.try_state::<AgentState>() {
+                    // A newer summon may have started while this was encoding;
+                    // its (cleared) state wins. Storing here would hand the next
+                    // question a picture of the last question's screen.
+                    if state.summon_gen.load(Ordering::SeqCst) == summon_gen {
+                        if let Ok(mut g) = state.screen_image.lock() {
+                            *g = Some(image);
+                        }
+                    }
+                }
+            }
+        }
     });
 }
 
@@ -422,7 +477,7 @@ fn prepare_panel(app: &AppHandle) -> Result<(), String> {
     let (sw, sh) = panel_start_size(app);
     let w = build_window(app, PANEL_LABEL, sw, sh)
         .map_err(|e| format!("failed to build agent panel: {e}"))?;
-    place_panel(&w, false); // placed but NOT shown
+    place_panel(&w); // placed but NOT shown
     info!("[GRAIN] agent: panel pre-created (hidden, warming)");
     Ok(())
 }
@@ -449,6 +504,22 @@ fn start_dictation(app: &AppHandle) {
     }
 }
 
+/// THE reveal choke point: every path that makes the panel visible goes through
+/// here, and each one announces itself first.
+///
+/// Showing a window and arming its opening animation are two different threads
+/// of control, and there is no ordering between them — which frame the webview
+/// happens to paint when the window appears used to be a race that a fixed
+/// pre-show delay could only ever narrow, never close. So the ordering is
+/// removed instead of tuned: the panel renders NOTHING until this event lands
+/// (`agent-reveal` in `AgentPanel.tsx`), so showing early costs an empty
+/// transparent window for a frame rather than a flash of the resting card, and
+/// the first thing ever painted is the entrance animation's own first frame.
+fn reveal_panel(win: &tauri::WebviewWindow) {
+    let _ = win.app_handle().emit_to(PANEL_LABEL, "agent-reveal", ());
+    show_and_focus(win);
+}
+
 /// Show + reliably grab keyboard focus. A hotkey-summoned, always-on-top, frameless
 /// window is subject to Windows' foreground lock: it appears on top but keyboard
 /// focus stays with the previous app, so typing/Enter/Esc go nowhere. We bridge the
@@ -473,6 +544,16 @@ fn show_and_focus(win: &tauri::WebviewWindow) {
             let label = label.clone();
             let _ = app.clone().run_on_main_thread(move || {
                 if let Some(w) = app.get_webview_window(&label) {
+                    // Only if focus was actually lost. `focus_now` re-runs
+                    // ShowWindow + BringWindowToTop + SetForegroundWindow, and on
+                    // a transparent always-on-top window that is a z-order change
+                    // and a full recomposite. Firing it unconditionally landed two
+                    // of those 60ms and 180ms into the 440ms entrance — the panel
+                    // visibly hitching twice mid-animation, which read as it
+                    // opening, stopping, and opening again.
+                    if w.is_focused().unwrap_or(false) {
+                        return;
+                    }
                     focus_now(&w);
                 }
             });
@@ -581,10 +662,33 @@ fn build_window(
     // and keep hijacking Enter/Escape system-wide ("destroy if not in use").
     {
         let app = app.clone();
+        // The session this surface belongs to. A teardown can land well after a
+        // NEWER summon has begun (closing the old panel is dispatched to the main
+        // thread), and the cleanup below must then leave the new session alone.
+        let built_for = app
+            .try_state::<AgentState>()
+            .map(|s| s.summon_gen.load(Ordering::SeqCst))
+            .unwrap_or(0);
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if app.get_webview_window(PANEL_LABEL).is_none() {
                     unregister_transient_shortcuts_deferred(&app);
+                    // [GRAIN] The session's screen frame dies with its last
+                    // surface — unless the pill is still offering "ask
+                    // follow-up", which reopens THIS conversation and would
+                    // otherwise reopen it blind.
+                    let state = app.try_state::<AgentState>();
+                    let offered = state
+                        .as_ref()
+                        .map(|s| s.followup_offer_active.load(Ordering::SeqCst))
+                        .unwrap_or(false);
+                    let still_ours = state
+                        .as_ref()
+                        .map(|s| s.summon_gen.load(Ordering::SeqCst) == built_for)
+                        .unwrap_or(false);
+                    if !offered && still_ours {
+                        clear_screen_image(&app);
+                    }
                 }
                 // A Recall session may have spawned the embedding engine; drop
                 // it unless the overlay browser is still using it (RECALL-PLAN
@@ -644,7 +748,94 @@ fn panel_start_size(app: &AppHandle) -> (f64, f64) {
     if panel_position(app) == AgentPanelPosition::Center {
         (PANEL_CENTER_W, PANEL_CENTER_START_H)
     } else {
-        (PANEL_COMPACT_W, PANEL_COMPACT_H)
+        // SIDE opens at the full envelope — there is only one size. See
+        // [`side_envelope`].
+        (PANEL_W, PANEL_SIDE_MAX_H)
+    }
+}
+
+/// The SIDE window's footprint — the SAME for the compact card and the
+/// conversation, deliberately.
+///
+/// Growing the window at the moment the user expands is the thing that could
+/// never be made smooth, and each fix only moved the seam: the resize is one
+/// instant native step that the webview's own render loop knows nothing about,
+/// so whatever the newly exposed region paints for its first frame or two lands
+/// in the middle of the animation, and the animation cannot even measure its own
+/// target until the resize has actually been applied. Racing that was the whole
+/// bug, in three different costumes.
+///
+/// So the window never resizes while it is on screen. It opens at the size the
+/// conversation will need, and expanding is a pure CSS growth inside a window
+/// that does not move a pixel. Nothing to race.
+///
+/// The compact card is therefore no longer a window size at all — it is a box in
+/// this window's bottom-right corner, owned entirely by `agent.css`. Nothing here
+/// needs its dimensions, which is why they are not mirrored in this file: a copy
+/// nothing reads is a copy that silently goes stale.
+///
+/// The cost is honest and bounded: while compact, the transparent area above and
+/// left of the card belongs to this window, so clicks there hit it instead of
+/// whatever is behind. That is the same region the conversation occupies anyway,
+/// on a surface that lives seconds and closes on Esc.
+fn side_envelope(work_h: f64) -> (f64, f64) {
+    (PANEL_W, (work_h - 110.0).clamp(360.0, PANEL_SIDE_MAX_H))
+}
+
+/// Move AND resize in a single step.
+///
+/// `set_size` + `set_position` are two window operations, and between them the
+/// window exists at the new size in the OLD place. For a surface anchored to its
+/// bottom-right corner that intermediate is catastrophic rather than cosmetic:
+/// growing 432x488 → 500x880 with the top-left pinned pushes the bottom-right
+/// corner — the very corner the card is glued to — clean off the bottom-right of
+/// the screen, so the card DISAPPEARS for those frames and then reappears at the
+/// corrected position. That is the "it opens, then glitches and opens again"
+/// everything else was being blamed for; no amount of CSS can hide a card the
+/// compositor has moved off the display. Doing both in one `SetWindowPos` means
+/// the anchored corner never moves at all, which is what lets the card be pinned
+/// across the resize and grow on its own terms afterwards.
+///
+/// `SWP_NOCOPYBITS` matters here too: without it Windows blits the old client
+/// bits into the top-left of the larger window, leaving a stale copy of the
+/// compact card sitting in the wrong corner until the webview repaints over it.
+fn set_bounds(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) {
+    #[cfg(windows)]
+    if set_bounds_win32(window, x, y, w, h) {
+        return;
+    }
+    // Position first, then size: the fallback still shows an intermediate, but
+    // moving the small window to the final top-left keeps it on screen, whereas
+    // sizing first throws the anchored corner off the edge.
+    let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+}
+
+/// One atomic move+resize. `false` if the handle or scale factor is unavailable,
+/// so the caller can fall back to the two-step path.
+#[cfg(windows)]
+fn set_bounds_win32(window: &tauri::WebviewWindow, x: f64, y: f64, w: f64, h: f64) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOZORDER,
+    };
+    let (Ok(raw), Ok(scale)) = (window.hwnd(), window.scale_factor()) else {
+        return false;
+    };
+    // Tauri takes LOGICAL px; SetWindowPos takes physical.
+    let px = |v: f64| (v * scale).round() as i32;
+    let hwnd = HWND(raw.0 as isize as _);
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            px(x),
+            px(y),
+            px(w),
+            px(h),
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS,
+        )
+        .is_ok()
     }
 }
 
@@ -652,7 +843,7 @@ fn panel_start_size(app: &AppHandle) -> (f64, f64) {
 /// (the reference design). CENTER pins the top-centre and sizes to the height
 /// the webview last requested (preserved across transitions so an already-grown
 /// surface never snaps back).
-fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
+fn place_panel(window: &tauri::WebviewWindow) {
     if panel_position(window.app_handle()) == AgentPanelPosition::Center {
         let stored = window
             .app_handle()
@@ -670,18 +861,13 @@ fn place_panel(window: &tauri::WebviewWindow, expanded: bool) {
 
     let metrics = monitor_work_logical(window).or_else(|| monitor_logical(window));
     if let Some((ox, oy, sw, sh)) = metrics {
-        let (w, h) = if expanded {
-            (PANEL_W, (sh - 90.0).clamp(360.0, 880.0))
-        } else {
-            (
-                PANEL_COMPACT_W,
-                PANEL_COMPACT_H.min(sh - 2.0 * PANEL_MARGIN),
-            )
-        };
-        let _ = window.set_size(tauri::LogicalSize::new(w, h));
+        // ONE footprint for both stages, anchored PANEL_MARGIN in from the
+        // bottom-right — so this only ever runs while the window is hidden or
+        // already at this exact box, and expanding moves nothing native at all.
+        let (w, h) = side_envelope(sh);
         let x = ox + sw - w - PANEL_MARGIN;
         let y = oy + sh - h - PANEL_MARGIN;
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+        set_bounds(window, x, y, w, h);
     }
 }
 
@@ -694,10 +880,11 @@ fn place_panel_center(window: &tauri::WebviewWindow, height: f64) {
         let w = PANEL_CENTER_W.min(sw - 32.0);
         let max_h = (sh - PANEL_CENTER_TOP - PANEL_CENTER_BOTTOM_GAP).max(PANEL_CENTER_MIN_H);
         let h = height.clamp(PANEL_CENTER_MIN_H, max_h);
-        let _ = window.set_size(tauri::LogicalSize::new(w, h));
         let x = ox + (sw - w) / 2.0;
         let y = oy + PANEL_CENTER_TOP;
-        let _ = window.set_position(tauri::LogicalPosition::new(x, y));
+        // One step, same as SIDE: the center panel grows on every height report,
+        // so a two-step resize would jitter the whole surface continuously.
+        set_bounds(window, x, y, w, h);
     }
 }
 
@@ -822,6 +1009,81 @@ fn capture_field_context(mode: AgentContextMode) -> Option<FieldContext> {
     }
 }
 
+/// [GRAIN] Agent screen vision: photograph the window the user summoned from.
+///
+/// Opt-in (`agent_screen_image`, off by default) and read fresh at every summon,
+/// so switching it off stops the very next capture — there is no cached decision
+/// anywhere. Best-effort and silent, exactly like the field read: any failure
+/// (unsupported platform, the window went away, a protected surface that renders
+/// black) yields `None` and the turn proceeds as pure text.
+///
+/// `hwnd` is the paste-target snapshot taken moments earlier. Photographing that
+/// handle rather than re-asking for the foreground window closes the race with
+/// our own UI — see [`crate::context_screen::capture_window`].
+fn capture_screen_image(app: &AppHandle, hwnd: Option<isize>) -> Option<CapturedImage> {
+    if !get_settings(app).agent_screen_image {
+        return None;
+    }
+    let started = std::time::Instant::now();
+    let image = match hwnd {
+        Some(raw) => crate::context_screen::capture_window(raw),
+        None => crate::context_screen::capture_foreground_window(),
+    };
+    match &image {
+        // Shape only — `CapturedImage`'s Debug never prints pixels, and neither
+        // may we.
+        Some(img) => info!(
+            "[GRAIN] agent: screen frame captured ({}x{}, {} KB, {} ms)",
+            img.width,
+            img.height,
+            img.bytes.len() / 1024,
+            started.elapsed().as_millis()
+        ),
+        None => info!("[GRAIN] agent: screen vision is on but no frame was available"),
+    }
+    image
+}
+
+/// Encoded ceiling for one attachment. A 1280px PNG of a window is typically
+/// 200–600 KB, so this only ever catches the pathological case (a photographic
+/// wallpaper behind a transparent window), where base64 would push a single
+/// request past 6 MB. Dropping the frame there costs the user a picture; sending
+/// it costs them a timeout, a bill, or a 413 — and the reply either way.
+const SCREEN_IMAGE_MAX_BYTES: usize = 3 * 1024 * 1024;
+
+/// The summon frame, encoded for the wire — or `None` when this session has no
+/// picture to send.
+///
+/// Base64 happens HERE, once per turn, rather than being kept alongside the PNG:
+/// holding both would keep a second, 33%-larger copy of the screenshot resident
+/// for the whole session, and this is a low-RAM app.
+fn screen_attachment(app: &AppHandle) -> Option<ImageAttachment> {
+    let state = app.try_state::<AgentState>()?;
+    let guard = state.screen_image.lock().ok()?;
+    let image = guard.as_ref()?;
+    if image.bytes.len() > SCREEN_IMAGE_MAX_BYTES {
+        warn!(
+            "[GRAIN] agent: screen frame is {} KB (cap {} KB) — sending text only",
+            image.bytes.len() / 1024,
+            SCREEN_IMAGE_MAX_BYTES / 1024
+        );
+        return None;
+    }
+    Some(ImageAttachment::new(image.mime, image.to_base64()))
+}
+
+/// Drop the session's screen frame. Called from every path that ends a session,
+/// because a picture of the user's screen must not outlive the question it was
+/// taken to answer.
+fn clear_screen_image(app: &AppHandle) {
+    if let Some(state) = app.try_state::<AgentState>() {
+        if let Ok(mut g) = state.screen_image.lock() {
+            // `CapturedImage::drop` zeroes the buffer.
+            *g = None;
+        }
+    }
+}
+
 // ============================================================================
 // Commands
 // ============================================================================
@@ -868,7 +1130,7 @@ pub async fn agent_set_panel_mode(app: AppHandle, expanded: bool) -> Result<(), 
         state.panel_expanded.store(expanded, Ordering::SeqCst);
     }
     if let Some(w) = app.get_webview_window(PANEL_LABEL) {
-        place_panel(&w, expanded);
+        place_panel(&w);
     }
     arm_global_enter(&app, expanded);
     Ok(())
@@ -924,27 +1186,21 @@ fn show_panel(app: &AppHandle, expanded: bool) -> Result<(), String> {
     info!("[GRAIN] agent: showing panel (expanded: {expanded})");
     let win = match app.get_webview_window(PANEL_LABEL) {
         Some(w) => {
-            place_panel(&w, expanded);
+            place_panel(&w);
             w
         }
         None => {
             info!("[GRAIN] agent: building panel window");
-            let (w, h) = if panel_position(app) == AgentPanelPosition::Center {
-                (PANEL_CENTER_W, PANEL_CENTER_START_H)
-            } else if expanded {
-                (PANEL_W, 600.0)
-            } else {
-                (PANEL_COMPACT_W, PANEL_COMPACT_H)
-            };
+            let (w, h) = panel_start_size(app);
             let w = build_window(app, PANEL_LABEL, w, h)
                 .map_err(|e| format!("failed to build agent panel: {e}"))?;
             info!("[GRAIN] agent: panel window built");
-            place_panel(&w, expanded);
+            place_panel(&w);
             info!("[GRAIN] agent: panel window placed");
             w
         }
     };
-    show_and_focus(&win);
+    reveal_panel(&win);
     info!("[GRAIN] agent: panel shown");
     Ok(())
 }
@@ -1090,6 +1346,14 @@ fn input_cancel_cleanup(app: &AppHandle) {
     // The Destroyed handler also triggers this, but a failed pre-create means
     // no window (and no Destroyed) — release explicitly either way.
     unregister_transient_shortcuts_deferred(app);
+    // Bump BEFORE clearing: a screen capture started by this summon may still be
+    // encoding, and would otherwise store its frame into the session the user
+    // just cancelled — leaving a picture of their screen resident with no
+    // conversation left to end it.
+    if let Some(state) = app.try_state::<AgentState>() {
+        state.summon_gen.fetch_add(1, Ordering::SeqCst);
+    }
+    clear_screen_image(app);
 }
 
 /// Pill → core: typing started (`true` → drop the voice capture) or the user
@@ -1160,7 +1424,7 @@ fn reveal_panel_loading(app: &AppHandle) {
             Some(w) => w,
             None => match build_window(&app2, PANEL_LABEL, sw, sh) {
                 Ok(w) => {
-                    place_panel(&w, false);
+                    place_panel(&w);
                     w
                 }
                 Err(e) => {
@@ -1170,7 +1434,7 @@ fn reveal_panel_loading(app: &AppHandle) {
             },
         };
         let _ = app2.emit_to(PANEL_LABEL, "agent-loading", ());
-        show_and_focus(&win);
+        reveal_panel(&win);
     });
 }
 
@@ -1187,21 +1451,24 @@ fn deliver_agent_error(app: &AppHandle, message: &str) {
         if !existed {
             let (sw, sh) = panel_start_size(&app);
             match build_window(&app, PANEL_LABEL, sw, sh) {
-                Ok(w) => place_panel(&w, false),
+                Ok(w) => place_panel(&w),
                 Err(e) => {
                     error!("[GRAIN] agent: failed to build panel for error: {e}");
                     return;
                 }
             }
         }
-        if let Some(w) = app.get_webview_window(PANEL_LABEL) {
-            show_and_focus(&w);
-        }
+        // Hand the panel its message BEFORE showing it, same as every other
+        // reveal path — a freshly built webview needs the longer grace just to
+        // mount its listener.
         let delay = if existed { 30 } else { 400 };
         let app_for_emit = app.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(delay));
             let _ = app_for_emit.emit_to(PANEL_LABEL, "agent-error", message);
+            if let Some(w) = app_for_emit.get_webview_window(PANEL_LABEL) {
+                reveal_panel(&w);
+            }
         });
     });
 }
@@ -1395,11 +1662,11 @@ pub fn open_followup(app: &AppHandle) {
 
         // Not on the main thread (we're on a shortcut/WS thread), so resizing
         // the window here is safe (tauri#3990 only bites main-thread resizes).
-        place_panel(&panel, true);
+        place_panel(&panel);
         // The panel is already mounted: it re-checks the retained conversation
         // on this event (take is consuming, so double delivery is harmless).
         let _ = app.emit_to(PANEL_LABEL, "agent-followup-open", ());
-        show_and_focus(&panel);
+        reveal_panel(&panel);
         return;
     }
 
@@ -1617,6 +1884,8 @@ fn offer_followup(app: &AppHandle) {
             if app2.get_webview_window(PANEL_LABEL).is_none() {
                 unregister_followup_shortcut(&app2);
                 let _ = crate::shortcut::unregister_shortcut(&app2, close_binding());
+                // The offer was the last thing keeping the frame alive.
+                clear_screen_image(&app2);
             }
         }
     });
@@ -1743,7 +2012,10 @@ pub async fn agent_run(
         .try_state::<AgentState>()
         .and_then(|s| s.field_context.lock().ok().and_then(|g| g.clone()));
     let full = build_messages(&messages, context.as_deref(), field.as_ref());
-    run_with_note_tools(&app, full).await
+    // Only Assist reaches here (Recall returned above, Capture never opens a
+    // panel), so the frame — if this session has one — belongs to this turn.
+    let image = screen_attachment(&app);
+    run_with_note_tools(&app, full, image.as_ref()).await
 }
 
 /// How many tool hops one turn may take before it is made to answer. Small on
@@ -1769,12 +2041,13 @@ const MAX_NOTE_TOOL_HOPS: usize = 4;
 async fn run_with_note_tools(
     app: &AppHandle,
     full: Vec<(String, String)>,
+    image: Option<&ImageAttachment>,
 ) -> Result<AgentReply, String> {
     use crate::llm_client::ChatEntry;
 
     let tools = crate::grain_space::agent_tools::specs(app);
     if tools.is_empty() {
-        return Ok(AgentReply::plain(run_messages(app, full).await?));
+        return Ok(AgentReply::plain(run_messages(app, full, image).await?));
     }
 
     let mut entries: Vec<ChatEntry> = full
@@ -1787,7 +2060,8 @@ async fn run_with_note_tools(
         .collect();
 
     let mut log = crate::grain_space::agent_tools::TurnLog::default();
-    let mut reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools)).await?;
+    let mut reply =
+        run_messages_with_tools(app, entries.clone(), tools_cloned(&tools), image).await?;
 
     let mut hops = 0usize;
     while !reply.tool_calls.is_empty() && hops < MAX_NOTE_TOOL_HOPS {
@@ -1800,7 +2074,11 @@ async fn run_with_note_tools(
                 content,
             });
         }
-        reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools)).await?;
+        // The frame rides every hop, not just the first. The hop that produces
+        // the ANSWER is the one that needs to see the screen, and an OpenAI-shaped
+        // request is stateless — dropping the image after hop 1 would leave the
+        // model answering a screen question from a note lookup alone.
+        reply = run_messages_with_tools(app, entries.clone(), tools_cloned(&tools), image).await?;
     }
 
     // Still asking for tools at the cap. `entries` ends on a tool result, so this
@@ -1811,7 +2089,9 @@ async fn run_with_note_tools(
         entries.push(ChatEntry::User(
             "Answer now, using what you already have.".to_string(),
         ));
-        reply = run_messages_with_tools(app, entries, Vec::new()).await?;
+        // No image on the forcing turn: it appends a new last USER entry, so the
+        // frame would move onto "Answer now" and away from the actual question.
+        reply = run_messages_with_tools(app, entries, Vec::new(), None).await?;
     }
 
     let sources: Vec<AgentSource> = log
@@ -1854,21 +2134,29 @@ pub async fn run_conversation(
         }
     );
     let full = build_messages(messages, context, field);
-    run_messages(app, full).await
+    // Quick Agent answers the same question from the same summon, so it sees the
+    // same screen the panel path would.
+    let image = screen_attachment(app);
+    run_messages(app, full, image.as_ref()).await
 }
 
 /// Run an ALREADY-BUILT `(role, content)` message list through the configured
 /// AI (single provider or the smart-rotation pool). Shared by the assistant
 /// (`run_conversation`, which prepends its selection/field framing) and Grain
 /// Recall (`recall.rs`, which builds its own system prompt + memories block).
+///
+/// `image`, when present, rides the last user turn and degrades to a text-only
+/// retry on a model that cannot take it (`llm_client::send_chat_with_image`).
+/// `None` is the ordinary text path, unchanged.
 pub(crate) async fn run_messages(
     app: &AppHandle,
     full: Vec<(String, String)>,
+    image: Option<&ImageAttachment>,
 ) -> Result<String, String> {
     let settings = get_settings(app);
 
     if settings.post_process_smart_rotation {
-        return agent_run_rotated(app, &full).await;
+        return agent_run_rotated(app, &full, image).await;
     }
 
     let provider = settings
@@ -1897,7 +2185,7 @@ pub(crate) async fn run_messages(
         .map(|s| s.inner().clone())
         .ok_or("Agent: shared HTTP client unavailable")?;
 
-    match run_agent_once(&http_client, &provider, model, api_key, &full).await {
+    match run_agent_once(&http_client, &provider, model, api_key, &full, image).await {
         CallOutcome::Ok { text, .. } => Ok(text),
         CallOutcome::RateLimited { .. } => Err(format!(
             "{} is rate-limited right now — try again shortly.",
@@ -1966,7 +2254,11 @@ fn build_messages(
 /// Smart-rotation path: health-ordered failover across eligible post-process
 /// providers (those enabled, under daily quota, and with a model configured),
 /// recording quota usage on success — exactly the post-processing strategy.
-async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result<String, String> {
+async fn agent_run_rotated(
+    app: &AppHandle,
+    full: &[(String, String)],
+    image: Option<&ImageAttachment>,
+) -> Result<String, String> {
     crate::post_process_router::reset_quota_if_new_day(app);
     let settings = get_settings(app); // re-read so quotas reflect any reset
 
@@ -2031,7 +2323,7 @@ async fn agent_run_rotated(app: &AppHandle, full: &[(String, String)]) -> Result
                     .get(&provider.id)
                     .cloned()
                     .unwrap_or_default();
-                run_agent_once(&http_client, provider, model, api_key, full).await
+                run_agent_once(&http_client, provider, model, api_key, full, image).await
             }
         },
         |id| {
@@ -2052,6 +2344,7 @@ async fn run_agent_once(
     model: String,
     api_key: String,
     messages: &[(String, String)],
+    image: Option<&ImageAttachment>,
 ) -> CallOutcome {
     // Disable reasoning where it adds latency without helping (mirrors the
     // post-process path): custom servers + OpenRouter.
@@ -2095,19 +2388,42 @@ async fn run_agent_once(
         }
     }
 
-    let response = tokio::time::timeout(
-        AGENT_LLM_TIMEOUT,
-        crate::llm_client::send_chat(
-            client,
-            provider,
-            api_key,
-            &model,
-            messages.to_vec(),
-            reasoning_effort,
-            reasoning,
-        ),
-    )
-    .await;
+    // One timeout budget either way. `send_chat_with_image` may spend it on two
+    // requests (image, then the text-only degrade), which is the correct
+    // trade — a reply inside the budget beats a picture that never lands.
+    let response = match image {
+        Some(image) => {
+            tokio::time::timeout(
+                AGENT_LLM_TIMEOUT,
+                crate::llm_client::send_chat_with_image(
+                    client,
+                    provider,
+                    api_key,
+                    &model,
+                    messages.to_vec(),
+                    image,
+                    reasoning_effort,
+                    reasoning,
+                ),
+            )
+            .await
+        }
+        None => {
+            tokio::time::timeout(
+                AGENT_LLM_TIMEOUT,
+                crate::llm_client::send_chat(
+                    client,
+                    provider,
+                    api_key,
+                    &model,
+                    messages.to_vec(),
+                    reasoning_effort,
+                    reasoning,
+                ),
+            )
+            .await
+        }
+    };
 
     match response {
         Err(_) => {
@@ -2159,10 +2475,14 @@ pub(crate) struct LlmToolReply {
 /// injected into the conversation. That silent degrade is intentional: native
 /// tools are a refinement, never a hard dependency (RECALL retrieval always
 /// pre-injects a strong first pass).
+///
+/// `image` behaves exactly as in [`run_messages`], so a notebook-enabled Agent
+/// sees precisely what a notebook-less one would; Recall passes `None`.
 pub(crate) async fn run_messages_with_tools(
     app: &AppHandle,
     entries: Vec<crate::llm_client::ChatEntry>,
     tools: Vec<crate::llm_client::ToolSpec>,
+    image: Option<&ImageAttachment>,
 ) -> Result<LlmToolReply, String> {
     let settings = get_settings(app);
 
@@ -2172,7 +2492,7 @@ pub(crate) async fn run_messages_with_tools(
         .ok_or("Agent: shared HTTP client unavailable")?;
 
     if settings.post_process_smart_rotation {
-        return agent_run_rotated_tools(app, &http_client, entries, tools).await;
+        return agent_run_rotated_tools(app, &http_client, entries, tools, image).await;
     }
 
     let provider = settings
@@ -2196,8 +2516,16 @@ pub(crate) async fn run_messages_with_tools(
         .cloned()
         .unwrap_or_default();
 
-    let (outcome, reply) =
-        run_agent_once_tools(&http_client, &provider, model, api_key, &entries, &tools).await;
+    let (outcome, reply) = run_agent_once_tools(
+        &http_client,
+        &provider,
+        model,
+        api_key,
+        &entries,
+        &tools,
+        image,
+    )
+    .await;
     match outcome {
         CallOutcome::Ok { .. } => Ok(reply),
         CallOutcome::RateLimited { .. } => Err(format!(
@@ -2217,6 +2545,7 @@ async fn agent_run_rotated_tools(
     http_client: &reqwest::Client,
     entries: Vec<crate::llm_client::ChatEntry>,
     tools: Vec<crate::llm_client::ToolSpec>,
+    image: Option<&ImageAttachment>,
 ) -> Result<LlmToolReply, String> {
     crate::post_process_router::reset_quota_if_new_day(app);
     let settings = get_settings(app);
@@ -2287,9 +2616,16 @@ async fn agent_run_rotated_tools(
                     .get(&provider.id)
                     .cloned()
                     .unwrap_or_default();
-                let (outcome, reply) =
-                    run_agent_once_tools(&http_client, provider, model, api_key, entries, tools)
-                        .await;
+                let (outcome, reply) = run_agent_once_tools(
+                    &http_client,
+                    provider,
+                    model,
+                    api_key,
+                    entries,
+                    tools,
+                    image,
+                )
+                .await;
                 if matches!(outcome, CallOutcome::Ok { .. }) {
                     if let Ok(mut g) = captured.lock() {
                         *g = Some(reply);
@@ -2315,6 +2651,7 @@ async fn agent_run_rotated_tools(
 /// Run ONE tool-enabled provider call with already-resolved model/key. Returns
 /// a [`CallOutcome`] for the rotation tracker plus the structured reply. A
 /// response that carries ONLY tool calls (empty content) is still a success.
+#[allow(clippy::too_many_arguments)]
 async fn run_agent_once_tools(
     client: &reqwest::Client,
     provider: &PostProcessProvider,
@@ -2322,6 +2659,7 @@ async fn run_agent_once_tools(
     api_key: String,
     entries: &[crate::llm_client::ChatEntry],
     tools: &[crate::llm_client::ToolSpec],
+    image: Option<&ImageAttachment>,
 ) -> (CallOutcome, LlmToolReply) {
     let empty_reply = || LlmToolReply {
         content: String::new(),
@@ -2386,6 +2724,7 @@ async fn run_agent_once_tools(
             &model,
             entries.to_vec(),
             tools_cloned(tools),
+            image,
             reasoning_effort,
             reasoning,
         ),

@@ -123,27 +123,91 @@ impl ChatMessage {
     }
 }
 
-/// Whether a provider error means "this model cannot take images".
+/// One image to attach to the final user turn, already encoded.
 ///
-/// There is no capability signal to check first: the OpenAI-compatible `/models`
-/// response carries no modality metadata, so every client that tries to know in
-/// advance ends up with a hardcoded list that goes stale — or strips the image
-/// silently and tells the model it failed, which makes the model narrate a
-/// limitation instead of answering.
+/// Base64 once per turn, not once per provider attempt: smart rotation can walk
+/// several providers for a single request, and re-encoding a few hundred KB on
+/// each hop is pure waste.
+#[derive(Debug, Clone)]
+pub struct ImageAttachment {
+    /// MIME type of the encoded bytes (`image/png`).
+    pub mime: String,
+    /// Standard base64 of those bytes — the payload of the `data:` URI.
+    pub base64: String,
+}
+
+impl ImageAttachment {
+    pub fn new(mime: impl Into<String>, base64: impl Into<String>) -> Self {
+        Self {
+            mime: mime.into(),
+            base64: base64.into(),
+        }
+    }
+}
+
+/// Statuses that mean "this request body is wrong" — the only ones worth
+/// retrying without the image.
 ///
-/// Grain asks the provider instead. It sends the image and treats a failure
-/// naming an image/vision/modality problem as the answer.
-fn is_vision_unsupported_error(body: &str) -> bool {
-    let body = body.to_ascii_lowercase();
-    const SIGNALS: &[&str] = &[
-        "image",
-        "vision",
-        "multimodal",
-        "modalit",
-        "content type",
-        "image_url",
-    ];
-    SIGNALS.iter().any(|signal| body.contains(signal))
+/// Status, not wording. An earlier version keyword-matched the error text for
+/// "image"/"vision"/"modality", which missed the way providers actually phrase
+/// it: Groq answers a multi-part message with `messages[1].content must be a
+/// string`, which names no image at all and so was never retried. What every
+/// one of these failures has in common is not vocabulary, it is a 4xx saying the
+/// body was unacceptable — and the image (or the multi-part array carrying it)
+/// is the only part of that body Grain can remove and still have a question.
+///
+/// 401/403/404 are excluded on purpose: a bad key or a missing model fails
+/// identically without the image, so retrying only spends a second request.
+fn is_repairable_by_dropping_the_image(status: u16) -> bool {
+    matches!(
+        status,
+        400 // malformed body: the array form, or an unsupported part type
+        | 413 // payload too large: the image IS the payload
+        | 415 // unsupported media type
+        | 422 // well-formed but rejected
+    )
+}
+
+/// Whether a serialized request carries an image part.
+fn payload_has_image(payload: &Value) -> bool {
+    payload["messages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m["content"].as_array())
+        .flatten()
+        .any(|part| part["type"] == "image_url")
+}
+
+/// Remove every image part, collapsing what is left back to a plain string.
+///
+/// The collapse matters as much as the removal. A provider that rejects the
+/// multi-part form rejects `content: [{"type":"text",…}]` just as hard as it
+/// rejects the image — Groq's complaint is literally that content must be a
+/// string. So the repaired request is not "the same request minus a picture",
+/// it is byte-for-byte what Grain would have sent had there been no image at
+/// all, which is the only shape known to work everywhere.
+///
+/// Deliberately says nothing to the model about a dropped image: a request that
+/// announces its own limitation gets an answer *about* the limitation instead of
+/// an answer to the question.
+fn strip_image_parts(payload: &mut Value) {
+    let Some(messages) = payload["messages"].as_array_mut() else {
+        return;
+    };
+    for message in messages {
+        let Some(parts) = message["content"].as_array() else {
+            continue;
+        };
+        let text: Vec<&str> = parts
+            .iter()
+            .filter(|p| p["type"] == "text")
+            .filter_map(|p| p["text"].as_str())
+            .collect();
+        if parts.iter().any(|p| p["type"] == "image_url") {
+            message["content"] = Value::String(text.join("\n"));
+        }
+    }
 }
 
 /// OpenAI tool-calling wire types. Kept separate from the public
@@ -460,21 +524,15 @@ pub async fn send_chat(
 
 /// [GRAIN] Like [`send_chat`], but the final user turn also carries an image.
 ///
-/// # Degrading rather than failing
-///
 /// Whether a given provider/model pair accepts an image cannot be known ahead of
-/// time, so this asks and handles the answer:
+/// time — the OpenAI-compatible `/models` response carries no modality metadata,
+/// so any client that tries to know in advance ends up maintaining a hardcoded
+/// list that goes stale. Grain asks the provider, by sending it.
 ///
-/// 1. Send with the image.
-/// 2. If the provider rejects it *as an image problem*, send the identical
-///    request again with the image removed.
-/// 3. Any other failure is returned unchanged — a rate limit is a rate limit,
-///    and retrying it as a text call would hide it.
-///
-/// The retry deliberately does **not** tell the model an image was dropped.
-/// Injecting "ERROR: cannot read image" is what makes a model answer *about* its
-/// limitation instead of answering the question, and the caller usually cannot
-/// act on it anyway. It answers from the text it has.
+/// The failure half lives one layer down, in [`post_chat`]: a 4xx meaning "this
+/// body is unacceptable" is retried once with the image stripped and the content
+/// collapsed back to a plain string. Callers get an answer from a text-only
+/// model rather than an error, and never have to ask which happened.
 #[allow(clippy::too_many_arguments)]
 pub async fn send_chat_with_image(
     client: &reqwest::Client,
@@ -482,8 +540,7 @@ pub async fn send_chat_with_image(
     api_key: String,
     model: &str,
     messages: Vec<(String, String)>,
-    image_mime: &str,
-    image_base64: &str,
+    image: &ImageAttachment,
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmSuccess, LlmError> {
@@ -492,40 +549,31 @@ pub async fn send_chat_with_image(
     let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
     // The image rides on the LAST user turn — the one the model is answering.
-    let build = |with_image: bool| -> Vec<ChatMessage> {
-        let last_user = messages.iter().rposition(|(role, _)| role == "user");
-        messages
-            .iter()
-            .enumerate()
-            .map(|(i, (role, content))| {
-                if with_image && Some(i) == last_user {
-                    ChatMessage::text_with_image(content.clone(), image_mime, image_base64)
-                } else {
-                    ChatMessage::text(role.clone(), content.clone())
-                }
-            })
-            .collect()
-    };
+    let last_user = messages.iter().rposition(|(role, _)| role == "user");
+    let messages: Vec<ChatMessage> = messages
+        .into_iter()
+        .enumerate()
+        .map(|(i, (role, content))| {
+            if Some(i) == last_user {
+                ChatMessage::text_with_image(content, &image.mime, &image.base64)
+            } else {
+                ChatMessage::text(role, content)
+            }
+        })
+        .collect();
 
-    let request = |messages| ChatCompletionRequest {
+    let request_body = ChatCompletionRequest {
         model: model.to_string(),
         messages,
         stream: false,
         response_format: None,
-        reasoning_effort: reasoning_effort.clone(),
-        reasoning: reasoning.clone(),
+        reasoning_effort,
+        reasoning,
         tools: None,
         tool_choice: None,
     };
 
-    match send_request(client, &url, headers.clone(), &request(build(true))).await {
-        Ok(success) => Ok(success),
-        Err(LlmError::Other(body)) if is_vision_unsupported_error(&body) => {
-            log::info!("[GRAIN] llm: '{model}' rejected the image; retrying text-only");
-            send_request(client, &url, headers, &request(build(false))).await
-        }
-        Err(other) => Err(other),
-    }
+    send_request(client, &url, headers, &request_body).await
 }
 
 /// [GRAIN] Send a tool-enabled multi-turn chat completion (Grain Recall's
@@ -533,6 +581,9 @@ pub async fn send_chat_with_image(
 /// but the request advertises `tools` and the response may come back as one or
 /// more `tool_calls` instead of prose. The agentic loop (bounded hops) lives in
 /// the caller (`recall.rs`); this function is a single stateless round-trip.
+///
+/// `image`, when present, rides the last USER entry, and a provider that cannot
+/// take it is handled one layer down exactly as in [`send_chat_with_image`].
 #[allow(clippy::too_many_arguments)]
 pub async fn send_chat_with_tools(
     client: &reqwest::Client,
@@ -541,6 +592,7 @@ pub async fn send_chat_with_tools(
     model: &str,
     entries: Vec<ChatEntry>,
     tools: Vec<ToolSpec>,
+    image: Option<&ImageAttachment>,
     reasoning_effort: Option<String>,
     reasoning: Option<ReasoningConfig>,
 ) -> Result<LlmChatResult, LlmError> {
@@ -549,11 +601,24 @@ pub async fn send_chat_with_tools(
 
     let headers = build_auth_headers(provider, &api_key).map_err(LlmError::Other)?;
 
+    let last_user = entries
+        .iter()
+        .rposition(|e| matches!(e, ChatEntry::User(_)));
+
     let messages: Vec<ChatMessage> = entries
         .into_iter()
-        .map(|e| match e {
+        .enumerate()
+        .map(|(i, e)| match e {
             ChatEntry::System(c) => ChatMessage::text("system", c),
-            ChatEntry::User(c) => ChatMessage::text("user", c),
+            ChatEntry::User(c) => match image {
+                // Only ONE turn carries the frame: attaching it to every user
+                // turn of a long conversation would re-upload it per turn and
+                // leave the model reconciling several pictures of one window.
+                Some(img) if Some(i) == last_user => {
+                    ChatMessage::text_with_image(c, &img.mime, &img.base64)
+                }
+                _ => ChatMessage::text("user", c),
+            },
             ChatEntry::Assistant(c) => ChatMessage::text("assistant", c),
             ChatEntry::AssistantToolCalls(calls) => ChatMessage {
                 role: "assistant".to_string(),
@@ -738,6 +803,11 @@ async fn post_chat(
         reasoning_in_payload = false;
     }
 
+    // [GRAIN] An image, if this request carries one, is the other thing that can
+    // be removed to rescue a rejected body. Checked before the first send, since
+    // stripping mutates the payload.
+    let carries_image = payload_has_image(&payload);
+
     let mut response = client
         .post(url)
         .headers(headers.clone())
@@ -753,6 +823,33 @@ async fn post_chat(
     if reasoning_in_payload && matches!(response.status().as_u16(), 400 | 422) {
         remember_reasoning_rejection(&reject_key);
         strip_reasoning_fields(&mut payload);
+        response = client
+            .post(url)
+            .headers(headers.clone())
+            .timeout(LLM_REQUEST_TIMEOUT)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| LlmError::Other(report_reqwest_error("HTTP retry failed", &e)))?;
+    }
+
+    // [GRAIN] Same move, for the image: a model that cannot take one must still
+    // answer the question. Strip it, send the plain-text request, and let the
+    // reply come back as if there had never been a picture.
+    //
+    // Asked EVERY time rather than remembered per endpoint. One account holds
+    // both text-only and vision models behind one URL, a model id can start
+    // accepting images on a Tuesday, and a gateway can re-route the same name to
+    // something new — so a sticky "this endpoint is blind" flag would eventually
+    // be wrong and would keep being wrong until a restart. The cost of asking is
+    // one extra request on a turn that was already failing.
+    if carries_image && is_repairable_by_dropping_the_image(response.status().as_u16()) {
+        log::info!(
+            "[GRAIN] llm: '{}' rejected the request with the image ({}); retrying text-only",
+            request_body.model,
+            response.status()
+        );
+        strip_image_parts(&mut payload);
         response = client
             .post(url)
             .headers(headers)
@@ -888,5 +985,76 @@ mod tests {
         assert!(reasoning_endpoint_rejected(key));
         // A different endpoint is unaffected.
         assert!(!reasoning_endpoint_rejected("https://other.test|m"));
+    }
+
+    /// The wire shape a multi-part message has, so the repair functions are
+    /// tested against what actually goes out rather than a hand-written guess.
+    fn payload_with_image() -> Value {
+        serde_json::json!({
+            "model": "m",
+            "messages": [
+                { "role": "system", "content": "be terse" },
+                { "role": "user", "content": [
+                    { "type": "text", "text": "what is this?" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]}
+            ]
+        })
+    }
+
+    #[test]
+    fn an_image_payload_is_recognised_and_a_plain_one_is_not() {
+        assert!(payload_has_image(&payload_with_image()));
+        assert!(!payload_has_image(&body_with_reasoning()));
+        assert!(!payload_has_image(&serde_json::json!({
+            "messages": [{ "role": "user", "content": "just text" }]
+        })));
+    }
+
+    /// The repair must leave a request indistinguishable from one that never
+    /// carried an image — including collapsing the multi-part ARRAY back to a
+    /// bare string, which is the actual complaint from providers that answer
+    /// `messages[1].content must be a string`.
+    #[test]
+    fn stripping_the_image_collapses_content_back_to_a_string() {
+        let mut payload = payload_with_image();
+        strip_image_parts(&mut payload);
+
+        assert!(!payload_has_image(&payload));
+        let messages = payload["messages"].as_array().unwrap();
+        // The system turn was a string and is untouched.
+        assert_eq!(messages[0]["content"], "be terse");
+        // The user turn is now a bare string carrying the original question.
+        assert_eq!(messages[1]["content"], "what is this?");
+        assert!(messages[1]["content"].is_string());
+    }
+
+    /// Only the bodies that can be repaired by dropping the image are retried.
+    /// A bad key or a missing model fails identically without it, and spending a
+    /// second request to learn that is pure waste.
+    #[test]
+    fn only_body_rejections_are_worth_a_text_only_retry() {
+        for status in [400, 413, 415, 422] {
+            assert!(
+                is_repairable_by_dropping_the_image(status),
+                "should retry {status}"
+            );
+        }
+        for status in [200, 401, 403, 404, 429, 500, 503] {
+            assert!(
+                !is_repairable_by_dropping_the_image(status),
+                "should NOT retry {status}"
+            );
+        }
+    }
+
+    /// Repairing a payload with no image must be a no-op, since the same code
+    /// runs on every request.
+    #[test]
+    fn stripping_a_text_only_payload_changes_nothing() {
+        let mut payload = body_with_reasoning();
+        let before = payload.clone();
+        strip_image_parts(&mut payload);
+        assert_eq!(payload, before);
     }
 }

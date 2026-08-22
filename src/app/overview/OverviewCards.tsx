@@ -1,29 +1,5 @@
-/**
- * The four cards under the Overview hero.
- *
- * They replace the inert prototype tiles, and they are deliberately not four of
- * the same thing — each earns its slot a different way:
- *
- * In render order:
- *
- * | Card       | Kind          | Affordance                              |
- * |------------|---------------|-----------------------------------------|
- * | Shortcuts  | informational | READ-ONLY reference, not clickable      |
- * | Dictionary | interactive   | inline add field, never leaves the page |
- * | Agent      | promotional   | surfaces the summon key → Studio        |
- * | Extensions | navigational  | whole card is a button → store          |
- *
- * The Shortcuts card is a reference, not a control: it is a `<div>`, has no
- * hover lift and no pointer cursor, and carries no link, so nothing about it
- * invites a click. Rebinding lives in Settings.
- *
- * Every card tells the truth about state. A shortcut that is not currently
- * registered (AI keys with post-processing off, the summon key with Agent off)
- * renders as an explicit off-state with the fix one click away — never as a
- * keycap the user could press to no effect.
- */
 import { useMemo, useState } from "react";
-import { Blocks, BookOpen, ChevronRight, Keyboard, Plus } from "lucide-react";
+import { ArrowRight, Blocks, BookOpen, Keyboard, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
@@ -33,27 +9,26 @@ import { hashForRoute } from "../navigation";
 const COPY = {
   extensions: {
     title: "Extensions",
-    body: "Teach Grain new tricks.",
-    // Two extensions that actually ship, so the chips are examples rather than
-    // a promise. They double as the card's bottom row, which is what puts it on
-    // the same baseline as the other three.
-    examples: ["Voice Actions", "App Modes"],
+    body: "Supercharge your workflow with voice actions, modes, and tools.",
+    explore: "Browse extensions",
   },
   dictionary: {
     title: "Dictionary",
-    body: "Teach Grain a word it mishears.",
-    placeholder: "Add a word",
+    body: "Add unique words, names, or jargon Grain should always recognize.",
+    placeholder: "Add custom word...",
     add: "Add word",
   },
   shortcuts: {
     title: "Shortcuts",
+    body: "Your quick keys to start dictating.",
     aiOff: "AI off",
     none: "Not set",
   },
   agent: {
     title: "Agent",
-    body: "Rewrite anything you have selected.",
-    bodyOff: "Rewrite anything you have selected.",
+    body: "Select any text on screen and summon AI to rewrite or summarize.",
+    bodyOff: "Select any text on screen and summon AI to rewrite or summarize.",
+    shortcutLabel: "Shortcut",
     enable: "Turn on in Studio",
   },
 };
@@ -69,10 +44,7 @@ function go(hash: string) {
 }
 
 /**
- * A chord as one keycap per key, wrapping within the card rather than
- * truncating. A single wide cap of "Left Ctrl + Left Shift + Q" had to be
- * clipped to fit and spilled toward the card edge; separate caps that wrap read
- * cleanly at any width. Presentational only — never interactive.
+ * A chord as one keycap per key.
  */
 function Keycap({ combination }: { combination: string }) {
   const keys = combination
@@ -92,9 +64,6 @@ function Keycap({ combination }: { combination: string }) {
 
 /**
  * One `label — keycap` line in the Shortcuts card.
- *
- * `combination` of `null` means the shortcut exists but holds no key right now;
- * the row says so rather than showing an empty cap.
  */
 function ShortcutRow({
   label,
@@ -122,29 +91,21 @@ function ShortcutRow({
 function ExtensionsCard() {
   return (
     <button
-      className="quick-card overview-card"
+      className="overview-card overview-card--interactive"
       type="button"
       onClick={() => go(hashForRoute({ page: "extensions", view: "store" }))}
     >
-      <span className="action-icon" aria-hidden="true">
-        <Blocks width={22} height={22} strokeWidth={1.7} />
-      </span>
-      <div className="action-copy">
-        <strong>{COPY.extensions.title}</strong>
-        <small>{COPY.extensions.body}</small>
-        <div className="overview-chips">
-          {COPY.extensions.examples.map((name) => (
-            <span className="overview-chip" key={name}>
-              {name}
-            </span>
-          ))}
+      <div className="overview-card-header">
+        <Blocks className="overview-card-icon" size={18} strokeWidth={1.8} />
+        <strong className="overview-card-title">{COPY.extensions.title}</strong>
+      </div>
+      <p className="overview-card-desc">{COPY.extensions.body}</p>
+      <div className="overview-card-footer">
+        <div className="overview-cta-row">
+          <span className="overview-card-cta">{COPY.extensions.explore}</span>
+          <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
         </div>
       </div>
-      <ChevronRight
-        className="overview-card-chev"
-        size={15}
-        aria-hidden="true"
-      />
     </button>
   );
 }
@@ -155,9 +116,6 @@ function DictionaryCard() {
   const words = useMemo(() => getSetting("custom_words") ?? [], [getSetting]);
   const busy = isUpdating("custom_words");
 
-  // Same acceptance rule as the full Dictionary tool in Studio: one token, no
-  // markup characters, 50 chars. Two front doors to one list must not disagree
-  // on what the list can hold.
   const submit = () => {
     const candidate = word.trim().replace(/[<>"']/g, "");
     if (!candidate || candidate.includes(" ") || candidate.length > 50) return;
@@ -171,13 +129,13 @@ function DictionaryCard() {
   };
 
   return (
-    <div className="quick-card overview-card overview-card--static">
-      <span className="action-icon" aria-hidden="true">
-        <BookOpen width={22} height={22} strokeWidth={1.7} />
-      </span>
-      <div className="action-copy">
-        <strong>{COPY.dictionary.title}</strong>
-        <small>{COPY.dictionary.body}</small>
+    <div className="overview-card overview-card--static">
+      <div className="overview-card-header">
+        <BookOpen className="overview-card-icon" size={18} strokeWidth={1.8} />
+        <strong className="overview-card-title">{COPY.dictionary.title}</strong>
+      </div>
+      <p className="overview-card-desc">{COPY.dictionary.body}</p>
+      <div className="overview-card-footer">
         <div className="overview-add-row">
           <input
             className="overview-add-input"
@@ -216,40 +174,31 @@ function ShortcutsCard() {
   const { getSetting } = useSettings();
   const bindings = getSetting("bindings") ?? {};
 
-  // All three capture modes are live; the card only has room for one — Flow is
-  // the mode this card's AI key actually pairs with, and the other two are one
-  // click away in Settings.
   const captureId = FLOW_BINDING_ID;
-
   const capture = bindings[captureId];
   const ai = bindings[AI_BINDING_ID];
-  // The AI keys are released whenever post-processing is off — there is no
-  // behaviour behind them to trigger. Reflect that instead of showing the key.
   const aiActive = (getSetting("post_process_enabled") ?? false) && Boolean(ai);
 
-  // Both labels come from the binding itself, so renaming an action in one
-  // place renames it here too — the card can never caption a key wrongly.
   const label = (id: string, fallback?: string) =>
     t(`settings.general.shortcut.bindings.${id}.name`, fallback ?? id);
 
   return (
-    <div className="quick-card overview-card overview-card--static">
-      <span className="action-icon" aria-hidden="true">
-        <Keyboard width={22} height={22} strokeWidth={1.7} />
-      </span>
-      <div className="action-copy">
-        <strong>{COPY.shortcuts.title}</strong>
-        <div className="overview-shortcut-list">
-          <ShortcutRow
-            label={label(captureId, capture?.name)}
-            combination={capture?.current_binding || null}
-          />
-          <ShortcutRow
-            label={label(AI_BINDING_ID, ai?.name)}
-            combination={aiActive ? ai?.current_binding || null : null}
-            offLabel={aiActive ? undefined : COPY.shortcuts.aiOff}
-          />
-        </div>
+    <div className="overview-card overview-card--static">
+      <div className="overview-card-header">
+        <Keyboard className="overview-card-icon" size={18} strokeWidth={1.8} />
+        <strong className="overview-card-title">{COPY.shortcuts.title}</strong>
+      </div>
+      <p className="overview-card-desc">{COPY.shortcuts.body}</p>
+      <div className="overview-shortcut-list">
+        <ShortcutRow
+          label={label(captureId, capture?.name)}
+          combination={capture?.current_binding || null}
+        />
+        <ShortcutRow
+          label={label(AI_BINDING_ID, ai?.name)}
+          combination={aiActive ? ai?.current_binding || null : null}
+          offLabel={aiActive ? undefined : COPY.shortcuts.aiOff}
+        />
       </div>
     </div>
   );
@@ -263,37 +212,38 @@ function AgentCard() {
 
   return (
     <button
-      className="quick-card overview-card overview-card--agent"
+      className="overview-card overview-card--interactive"
       type="button"
       onClick={() => go(hashForRoute({ page: "tools", section: "agent" }))}
     >
-      <span className="action-icon" aria-hidden="true">
+      <div className="overview-card-header">
         <AgentGlyph />
-      </span>
-      <div className="action-copy">
-        <strong>{COPY.agent.title}</strong>
-        <small>{enabled ? COPY.agent.body : COPY.agent.bodyOff}</small>
+        <strong className="overview-card-title">{COPY.agent.title}</strong>
+      </div>
+      <p className="overview-card-desc">
+        {enabled ? COPY.agent.body : COPY.agent.bodyOff}
+      </p>
+      <div className="overview-card-footer">
         {combination ? (
-          <div className="overview-agent-press">
+          <div className="overview-shortcut-row overview-agent-row">
+            <span className="overview-shortcut-label">{COPY.agent.shortcutLabel}</span>
             <Keycap combination={combination} />
           </div>
         ) : (
-          <span className="overview-card-cta">{COPY.agent.enable}</span>
+          <div className="overview-cta-row">
+            <span className="overview-card-cta">{COPY.agent.enable}</span>
+            <ArrowRight size={13} className="overview-cta-arrow" aria-hidden="true" />
+          </div>
         )}
       </div>
-      <ChevronRight
-        className="overview-card-chev"
-        size={15}
-        aria-hidden="true"
-      />
     </button>
   );
 }
 
-/** The prototype's Agent face — kept so Agent stays recognisable across the app. */
+/** The prototype's Agent face — clean inline SVG glyph. */
 function AgentGlyph() {
   return (
-    <svg viewBox="0 0 24 24" className="action-svg action-icon-agent">
+    <svg viewBox="0 0 24 24" className="overview-card-icon overview-agent-svg" aria-hidden="true">
       <rect x="5.25" y="6" width="13.5" height="10.5" rx="4.25" />
       <circle cx="10" cy="11.25" r="1" />
       <circle cx="14" cy="11.25" r="1" />
@@ -304,7 +254,7 @@ function AgentGlyph() {
 
 export function OverviewCards() {
   return (
-    <div className="quick-grid overview-grid">
+    <div className="overview-grid">
       <ShortcutsCard />
       <DictionaryCard />
       <AgentCard />
@@ -312,3 +262,4 @@ export function OverviewCards() {
     </div>
   );
 }
+

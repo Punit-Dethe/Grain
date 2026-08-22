@@ -1,0 +1,206 @@
+{
+  "_comment": [
+    "Golden set for action routing (docs/Action Routing/PLAN.md §12).",
+    "",
+    "Deliberately adversarial. The metric that decides whether this feature can",
+    "ship is not top-1 accuracy — it is the false-execution rate at the shipped",
+    "operating point, and the reject accuracy on requests nothing installed can",
+    "serve. So most of these cases are the awkward ones.",
+    "",
+    "expect:",
+    "  '<ext>:<action>'  the router should land here confidently",
+    "  'choose'          genuinely ambiguous — a chooser is the correct answer,",
+    "                    and executing anything is a failure",
+    "  'none'            nothing installed can do this; saying so is the answer"
+  ],
+
+  "extensions": [
+    {
+      "id": "spotify",
+      "actions": [
+        {
+          "id": "next",
+          "title": "Skip to the next track",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": [
+            "skip this",
+            "next song",
+            "next track",
+            "play something else",
+            "i don't want this one",
+            "move on"
+          ]
+        },
+        {
+          "id": "previous",
+          "title": "Go back a track",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": ["go back", "previous song", "previous track", "play that again"]
+        },
+        {
+          "id": "pause",
+          "title": "Pause playback",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": ["pause", "pause the music", "stop the music", "shut it off"]
+        },
+        {
+          "id": "play_artist",
+          "title": "Play music by an artist",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": [
+            "play {artist}",
+            "put on some {artist}",
+            "play something by {artist}",
+            "put on {artist}"
+          ],
+          "params": [{ "name": "artist", "kind": "entity", "resolve": true }]
+        },
+        {
+          "id": "play_playlist",
+          "title": "Play one of your playlists",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": ["play my {playlist} playlist", "start my {playlist} playlist"],
+          "params": [{ "name": "playlist", "kind": "entity", "resolve": true }]
+        }
+      ]
+    },
+    {
+      "id": "apple-music",
+      "actions": [
+        {
+          "id": "next",
+          "title": "Skip to the next track",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": ["skip this", "next song", "next track", "move on"]
+        },
+        {
+          "id": "play_artist",
+          "title": "Play music by an artist",
+          "domain": "media",
+          "risk": "safe",
+          "utterances": ["play {artist}", "put on some {artist}", "put on {artist}"],
+          "params": [{ "name": "artist", "kind": "entity", "resolve": true }]
+        }
+      ]
+    },
+    {
+      "id": "slack",
+      "actions": [
+        {
+          "id": "send_dm",
+          "title": "Send a direct message",
+          "domain": "messaging",
+          "risk": "confirm",
+          "utterances": ["tell {who} that {message}", "message {who} saying {message}"],
+          "params": [
+            { "name": "who", "kind": "entity", "resolve": true },
+            { "name": "message", "kind": "text" }
+          ]
+        },
+        {
+          "id": "set_away",
+          "title": "Set yourself away",
+          "domain": "messaging",
+          "risk": "safe",
+          "utterances": ["set me away", "mark me as away", "i'm away"]
+        }
+      ]
+    },
+    {
+      "id": "voice-actions",
+      "actions": [
+        {
+          "id": "open_app",
+          "title": "Open an application",
+          "domain": "system",
+          "risk": "safe",
+          "utterances": ["open {app}", "launch {app}", "start up {app}"],
+          "params": [{ "name": "app", "kind": "entity", "resolve": true }]
+        }
+      ]
+    },
+    {
+      "id": "deck",
+      "actions": [
+        {
+          "id": "next_slide",
+          "title": "Advance the slide",
+          "domain": "system",
+          "risk": "safe",
+          "utterances": ["next slide", "advance the slide", "forward one slide"]
+        }
+      ]
+    }
+  ],
+
+  "cases": [
+    { "said": "skip this", "expect": "choose", "why": "two media providers, verbatim in both" },
+    { "said": "next song", "expect": "choose", "why": "same request, two providers" },
+    { "said": "go back", "expect": "spotify:previous", "why": "only one provider declares it" },
+    { "said": "previous track", "expect": "spotify:previous", "why": "unambiguous" },
+    { "said": "pause", "expect": "spotify:pause", "why": "single-word exact" },
+    { "said": "pause the music", "expect": "spotify:pause", "why": "exact phrase" },
+    { "said": "Shut it off.", "expect": "spotify:pause", "why": "punctuation and case are noise" },
+
+    { "said": "next slide", "expect": "deck:next_slide", "why": "same words, different domain" },
+    {
+      "said": "advance the slide",
+      "expect": "deck:next_slide",
+      "why": "must not be pulled into media"
+    },
+
+    { "said": "set me away", "expect": "slack:set_away", "why": "unambiguous" },
+    { "said": "mark me as away", "expect": "slack:set_away", "why": "unambiguous" },
+
+    { "said": "open Slack", "expect": "voice-actions:open_app", "why": "template with a span" },
+    { "said": "launch Photoshop", "expect": "voice-actions:open_app", "why": "template" },
+
+    {
+      "said": "tell Jack that I am running late",
+      "expect": "slack:send_dm",
+      "why": "two spans, bounded by literals"
+    },
+
+    { "said": "play Radiohead", "expect": "choose", "why": "both music providers take this" },
+    { "said": "put on some Kendrick", "expect": "choose", "why": "both take this" },
+    {
+      "said": "play something by Daft Punk",
+      "expect": "choose",
+      "why": "Spotify's phrasing is more specific, but Apple declares play {artist} too — so the ACTION is decided and the provider is not. Originally labelled spotify:play_artist, which was simply wrong about the fixture."
+    },
+    {
+      "said": "play my gym playlist",
+      "expect": "spotify:play_playlist",
+      "why": "more specific than play_artist"
+    },
+
+    { "said": "file a bug about the login page", "expect": "none", "why": "no issues provider" },
+    { "said": "what's the weather", "expect": "none", "why": "nothing installed does this" },
+    { "said": "turn the lights off", "expect": "none", "why": "no smart-home provider" },
+    { "said": "book a table for two", "expect": "none", "why": "no provider" },
+    { "said": "", "expect": "none", "why": "empty capture must never route" },
+    { "said": "...", "expect": "none", "why": "punctuation-only capture" },
+    {
+      "said": "so anyway I was thinking we should probably rewrite the parser this week",
+      "expect": "none",
+      "why": "ordinary dictation that leaked in"
+    },
+    {
+      "said": "remind me to send the invoice",
+      "expect": "none",
+      "why": "no calendar or reminder provider installed"
+    },
+
+    {
+      "said": "play something else and then queue Get Lucky",
+      "expect": "choose",
+      "why": "compound. Tier L cannot split one utterance into two requests — that needs the Agent (P4). What it must never do is silently perform half, and asking is the safe degradation. Re-label to 'escalate' once P4 lands."
+    }
+  ]
+}

@@ -1149,8 +1149,11 @@ async fn run_tool_loop(
     use crate::llm_client::ChatEntry;
 
     let tools = vec![search_memory_spec()];
+    // No image: a memory question is answered from saved notes, never from
+    // whatever happens to be on screen.
     let mut reply =
-        crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools)).await?;
+        crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools), None)
+            .await?;
 
     let mut hops = 0usize;
     while !reply.tool_calls.is_empty() && hops < MAX_TOOL_HOPS {
@@ -1163,8 +1166,9 @@ async fn run_tool_loop(
                 content: result,
             });
         }
-        reply = crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools))
-            .await?;
+        reply =
+            crate::agent::run_messages_with_tools(app, entries.clone(), clone_tools(&tools), None)
+                .await?;
     }
 
     // Still wanting tools after the cap: `entries` ends cleanly on a tool
@@ -1177,7 +1181,7 @@ async fn run_tool_loop(
              fact genuinely isn't there, say so honestly."
                 .to_string(),
         ));
-        reply = crate::agent::run_messages_with_tools(app, entries, Vec::new()).await?;
+        reply = crate::agent::run_messages_with_tools(app, entries, Vec::new(), None).await?;
     }
 
     Ok(reply.content)

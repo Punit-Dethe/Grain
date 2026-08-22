@@ -286,12 +286,19 @@ fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorRepo
     // A declared session mode is itself an activation path: the host registers
     // its contributed shortcut and wakes the owner for the slow stage without
     // an `activation` array entry (Phase 4).
-    if project.manifest.activation.is_empty() && project.manifest.contributes.session_mode.is_none()
+    //
+    // Declared actions are the same, and deliberately so — there is no
+    // `onAction:<id>` to write. A second place to say "and please actually wake
+    // me for this" is a second place to forget, and the failure mode is an
+    // action that routes, wins, and then silently does nothing.
+    if project.manifest.activation.is_empty()
+        && project.manifest.contributes.session_mode.is_none()
+        && project.manifest.contributes.actions.is_empty()
     {
         report.findings.push(Finding::project(
             "E_ACTIVATION",
             "manifest.json",
-            "runtime extensions require at least one activation or a sessionMode",
+            "runtime extensions require at least one activation, a sessionMode, or an action",
         ));
         return;
     }
@@ -750,6 +757,33 @@ mod tests {
         .unwrap();
 
         assert!(doctor(directory.path()).is_clean());
+    }
+
+    #[test]
+    fn a_declared_action_is_a_valid_runtime_activation_path() {
+        // The shape `grain.voice-actions` ships after dropping its transform:
+        // no activation array at all, woken only because a route picked it.
+        // There is deliberately no `onAction:` to write, so an extension that
+        // does nothing but actions must pass with an empty activation list —
+        // otherwise every such author is pushed into declaring something they
+        // do not need.
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(
+            directory.path().join("manifest.json"),
+            r#"{
+              "id":"com.example.open","name":"Open","version":"1.1.0",
+              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+              "permissions":["open:url","settings"],"activation":[],
+              "contributes":{"actions":[{
+                "id":"open","title":"Open a site you set up","domain":"system",
+                "risk":"safe","utterances":["open {target}","launch {target}"],
+                "params":[{"name":"target","kind":"entity","resolve":true}]}]}
+            }"#,
+        )
+        .unwrap();
+
+        let report = doctor(directory.path());
+        assert!(report.is_clean(), "{report}");
     }
 
     #[test]

@@ -240,6 +240,28 @@ pub fn arm_session(app: &tauri::AppHandle) {
     });
 }
 
+/// Seed this session's bias with the **action vocabulary** instead of the
+/// surface (`docs/Action Routing/PLAN.md` §3.3).
+///
+/// The dominant real-world failure in action routing is not the router, it is
+/// transcription of the words that identify the action — "skip" arriving as
+/// "skit", an extension name mangled entirely. The fix is free: the phrases are
+/// already declared in the manifest, already approved by the user, and already
+/// in memory in the host's index.
+///
+/// Static, host-owned, and no privacy cost — unlike the surface path this reads
+/// nothing about what the user is doing, so it is not gated on the context
+/// opt-in. Biasing from an extension's own *data* (contacts, playlist names)
+/// would be a different question and is not built.
+///
+/// Synchronous because there is nothing to fetch: the terms are already here.
+pub fn arm_action_session(terms: Vec<String>) {
+    SESSION_GEN.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut guard) = SESSION_TERMS.lock() {
+        *guard = terms;
+    }
+}
+
 /// The decoder prefix for this transcription, or `None` when there is nothing
 /// worth biasing with.
 ///

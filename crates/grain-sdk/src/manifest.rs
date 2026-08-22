@@ -181,6 +181,687 @@ pub struct Contributes {
         skip_serializing_if = "Option::is_none"
     )]
     pub session_mode: Option<SessionModeDecl>,
+    /// [GRAIN] Lines added to the dictation prompt when a surface matches.
+    ///
+    /// Declared as an ARRAY even though most packs ship one: the motivating
+    /// case is per-app rules (STRESS-TEST §4b, "App Modes as an extension"),
+    /// which is many narrow layers rather than one broad one. Accepts the
+    /// singular `promptLayer` spelling from the SPEC example as an alias.
+    #[serde(
+        default,
+        rename = "promptLayers",
+        alias = "promptLayer",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub prompt_layers: Vec<PromptLayerDecl>,
+    /// [GRAIN] Things this extension can DO when the user asks for them out
+    /// loud (`docs/Action Routing/PLAN.md`).
+    ///
+    /// Declared, never claimed. The extension supplies ways a request might be
+    /// phrased; the HOST ranks every installed action against what was actually
+    /// said and picks. That is the whole reason two music extensions can coexist
+    /// without one of them owning the word "play".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actions: Vec<ActionDecl>,
+}
+
+/// One contributed prompt layer (SPEC §4, STRESS-TEST GAP-4).
+///
+/// # Why this shape and not a callback
+///
+/// The text is **static and lives in the manifest**. That is the entire
+/// security argument for letting an inert pack contribute to the prompt at all:
+///
+/// - It is reviewable. A store reviewer, and the user in the permission sheet,
+///   read the exact string the model will receive.
+/// - It cannot carry anything fetched. Text an extension pulls off a web page or
+///   an API is evidence, never an instruction — see `docs/Prompt Priority/PLAN.md`
+///   §T4. A static declaration makes that structural rather than a promise.
+/// - Matching is done by the HOST against context it already has, so the
+///   extension is never told what application the user is in, and is never told
+///   whether it matched (§T7). Contributing a layer is strictly weaker than the
+///   `context:app` capability, and must stay that way.
+///
+/// The text is also part of the **permission surface**: changing it in an update
+/// holds the extension until the user approves the new wording, because approval
+/// that does not survive an update is approval of a version nobody runs (§T1,
+/// CVE-2025-54136).
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PromptLayerDecl {
+    /// Stable id, unique within the extension. Appears in logs and in the
+    /// user-visible stack, so it should read as a name.
+    pub id: String,
+    /// The surfaces this layer applies to. An EMPTY match applies everywhere —
+    /// allowed, and deliberately the loudest thing in the permission sheet.
+    #[serde(default)]
+    pub when: LayerWhen,
+    /// The instruction, verbatim. Never framed by the extension: the host writes
+    /// every header and every scoping sentence around it.
+    pub text: String,
+}
+
+/// Host-evaluated match conditions. Every field is a set; a layer applies when
+/// EVERY non-empty field has a member that matches, so fields intersect and
+/// members alternate.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct LayerWhen {
+    /// Executable stems (`code`) or AppUserModelIDs, matched the same way the
+    /// user's own context profiles match an application.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app: Vec<String>,
+    /// Address-bar hosts. `jira.` is a prefix wildcard, exactly as in Grain's
+    /// own site table, and matching is dot-bounded so `notgithub.com` cannot
+    /// inherit `github.com`'s layer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub website: Vec<String>,
+    /// Detected profile names: `email`, `work`, `casual`, `technical`,
+    /// `ai_chat`, `other`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub category: Vec<String>,
+    /// `single_line` or `multi_line`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+impl LayerWhen {
+    pub fn is_unconditional(&self) -> bool {
+        self.app.is_empty()
+            && self.website.is_empty()
+            && self.category.is_empty()
+            && self.field.is_none()
+    }
+}
+
+/// Hard ceiling on one layer's text, in bytes.
+///
+/// Not a suggestion and not per-extension configurable. Instruction-following
+/// degrades with length well before any context limit, and these ride on every
+/// matching dictation in front of models Grain deliberately keeps small. The
+/// number is the same order as Grain's own profile instructions (~340 bytes),
+/// with room for a rule that genuinely needs two sentences.
+pub const PROMPT_LAYER_MAX_BYTES: usize = 600;
+
+/// Hard ceiling on how many layers ONE extension may declare.
+///
+/// Bounds the review surface, not just the prompt: a pack with forty rules is
+/// one nobody reads before approving.
+pub const PROMPT_LAYERS_MAX_PER_EXTENSION: usize = 12;
+
+/// The detected profiles a `when.category` may name. Mirrors `AppCategory` in
+/// the host; kept as strings because the sdk is the dependency leaf and must not
+/// learn about context detection.
+const LAYER_CATEGORIES: &[&str] = &["email", "work", "casual", "technical", "ai_chat", "other"];
+
+/// Structural validation of contributed prompt layers.
+///
+/// Structural ONLY. Whether the text tries to talk its way up the ladder is a
+/// question about Grain's prompt, so it is asked by the host next to the prompt
+/// code (`prompt_stack::screen_contributed_text`) rather than duplicated here
+/// against a copy of the header list that would drift.
+fn validate_prompt_layers(layers: &[PromptLayerDecl]) -> Result<(), String> {
+    if layers.len() > PROMPT_LAYERS_MAX_PER_EXTENSION {
+        return Err(format!(
+            "an extension may declare at most {PROMPT_LAYERS_MAX_PER_EXTENSION} prompt layers"
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for layer in layers {
+        let id = layer.id.trim();
+        if id.is_empty() {
+            return Err("a prompt layer is missing its id".into());
+        }
+        // `:` is the namespacing separator everywhere else in the contract, so
+        // allowing it here would make a layer's qualified name ambiguous.
+        if id.contains(':') {
+            return Err(format!("prompt layer id '{id}' must not contain ':'"));
+        }
+        if !seen.insert(id) {
+            return Err(format!("duplicate prompt layer id '{id}'"));
+        }
+        let text = layer.text.trim();
+        if text.is_empty() {
+            return Err(format!("prompt layer '{id}' has no text"));
+        }
+        if text.len() > PROMPT_LAYER_MAX_BYTES {
+            return Err(format!(
+                "prompt layer '{id}' is {} bytes; the limit is {PROMPT_LAYER_MAX_BYTES}",
+                text.len()
+            ));
+        }
+        // What the reviewer read must be what the model receives. Bidi overrides
+        // and zero-width characters break that equivalence, and no legitimate
+        // instruction needs them.
+        if let Some(bad) = text.chars().find(|c| is_deceptive_char(*c)) {
+            return Err(format!(
+                "prompt layer '{id}' contains a control or direction-override character (U+{:04X})",
+                bad as u32
+            ));
+        }
+        for category in &layer.when.category {
+            if !LAYER_CATEGORIES.contains(&category.as_str()) {
+                return Err(format!(
+                    "prompt layer '{id}' names unknown category '{category}'"
+                ));
+            }
+        }
+        if let Some(field) = &layer.when.field {
+            if field != "single_line" && field != "multi_line" {
+                return Err(format!(
+                    "prompt layer '{id}' field must be 'single_line' or 'multi_line'"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Characters that let reviewed text render as one thing and tokenize as
+/// another: C0/C1 controls (bar the ordinary whitespace an instruction may
+/// legitimately contain), bidi overrides, and zero-width joiners/spaces.
+fn is_deceptive_char(c: char) -> bool {
+    if c == '\n' || c == '\t' || c == '\r' {
+        return false;
+    }
+    c.is_control()
+        || matches!(c,
+            '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{FEFF}')
+}
+
+// ── Actions (`contributes.actions`) ─────────────────────────────────────────
+//
+// See `docs/Action Routing/PLAN.md`. The shape deliberately mirrors
+// `PromptLayerDecl`: static text in the manifest, a host-evaluated `when`, and
+// everything here inside the approval digest. Two things differ, and both are
+// because an action has a SIDE EFFECT where a prompt layer has only wording:
+//
+//   · `risk` is required. An action's blast radius is never implicit, and a
+//     silent `confirm → safe` downgrade in an update is exactly the attack the
+//     digest exists to close.
+//   · `title` is required and is what the permission sheet shows. The utterance
+//     list never reaches a consent surface — "what can this do" is the consent
+//     question, not "what words".
+//
+// The extension is never told the transcript unless one of its actions wins,
+// and then it receives only the extracted spans. Losing the route means
+// learning nothing, exactly as with prompt layers.
+
+/// One action an extension can perform when the user asks for it by voice.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ActionDecl {
+    /// Stable id, unique within the extension. Appears in the action log and in
+    /// `doctor` output, so it should read as a name.
+    pub id: String,
+    /// One plain line, shown in the permission sheet and the chooser. Written
+    /// for the user, not the model: "Skip to the next track".
+    pub title: String,
+    /// Which preference group this belongs to — the key behind "always use
+    /// Spotify for media", the chooser's heading, and the scope within which
+    /// two extensions' actions can be recognised as the same request.
+    ///
+    /// NOT a fulfilment contract: it has no parameters and no version, and
+    /// getting it wrong costs a mis-grouped default, never a broken extension.
+    pub domain: String,
+    /// Whether performing this needs a read-back first. Required, and never
+    /// inferred — see [`ActionRisk`].
+    pub risk: ActionRisk,
+    /// Surfaces this action is offered on. Empty = everywhere. Reuses the
+    /// prompt-layer matcher verbatim, so "next slide" can be scoped to a deck
+    /// without the extension ever learning what application the user is in.
+    #[serde(default)]
+    pub when: LayerWhen,
+    /// Ways a user might ask for this, in English. Ranked by the HOST against
+    /// what was said; the extension neither sees the utterance nor learns
+    /// whether it matched.
+    ///
+    /// `{param}` placeholders name a declared parameter and mark where its span
+    /// begins. Locale sets are a later additive field (`utterancesByLocale`),
+    /// reserved so nobody squats the name; this list is the `en` set.
+    #[serde(default)]
+    pub utterances: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ActionParamDecl>,
+    /// Short guidance hydrated into the Agent's context *only* when this action
+    /// is retrieved for a turn. Never in the permanent prompt.
+    #[serde(
+        default,
+        rename = "agentRules",
+        alias = "agent_rules",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_rules: Option<String>,
+}
+
+/// Irreversibility, which is a separate axis from confidence.
+///
+/// A high similarity score is evidence about the transcript, never about the
+/// speech: ASR substitutions reverse intent ("cancel my order" heard as
+/// "schedule my order"), score well, and parse cleanly. So `Confirm` is not
+/// confidence-gated and no score retires it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionRisk {
+    /// Cheap and obvious when wrong: skip a track, open an app, set volume.
+    Safe,
+    /// Sends, deletes, spends, posts. Always reads the resolved action back
+    /// before running it, however confident the router was.
+    Confirm,
+}
+
+impl ActionRisk {
+    pub fn is_safe(self) -> bool {
+        matches!(self, ActionRisk::Safe)
+    }
+}
+
+/// One parameter, filled from a span of what the user said.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ActionParamDecl {
+    pub name: String,
+    pub kind: ActionParamKind,
+    /// Entity only: the host hands over the raw span and the EXTENSION resolves
+    /// it against its own catalogue, returning zero, one, or several
+    /// candidates. Grain does not know Spotify's library and never should.
+    #[serde(default)]
+    pub resolve: bool,
+    /// A required parameter with an empty span sends the route to the chooser
+    /// rather than guessing.
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionParamKind {
+    /// Something in the extension's own data: an artist, a contact, a playlist.
+    Entity,
+    /// Free text, passed through verbatim — a message body, a note.
+    Text,
+    /// A bare number: a volume, a count.
+    Number,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// The preference groups an action may name. Short, closed, and host-owned; a
+/// new one is added when a second provider appears in a new area.
+///
+/// Distinct from [`LAYER_CATEGORIES`], which classifies the surface the user is
+/// typing into. Similar-looking, unrelated vocabulary — naming one where the
+/// other belongs is rejected with that sentence.
+pub const ACTION_DOMAINS: &[&str] = &[
+    "media",
+    "messaging",
+    "mail",
+    "calendar",
+    "issues",
+    "files",
+    "browser",
+    "notes",
+    "system",
+];
+
+/// Hard ceiling on actions per extension. Bounds the review surface and the
+/// permission sheet, not just the index.
+pub const ACTIONS_MAX_PER_EXTENSION: usize = 24;
+
+/// Hard ceiling on utterances per action. More phrasings help recall and hurt
+/// separation — past this an action starts eating its neighbours' language,
+/// and ranking is global, so a greedy author degrades everyone.
+pub const ACTION_UTTERANCES_MAX: usize = 24;
+
+/// Hard ceiling on one utterance, in bytes. An utterance is a way of asking for
+/// something, not a sentence of prose.
+pub const ACTION_UTTERANCE_MAX_BYTES: usize = 120;
+
+/// Hard ceiling on the permission-sheet line.
+pub const ACTION_TITLE_MAX_BYTES: usize = 80;
+
+/// Hard ceiling on `agentRules`, which ride into the Agent's context.
+pub const ACTION_AGENT_RULES_MAX_BYTES: usize = 300;
+
+/// Hard ceiling on parameters per action. An action needing five spans out of
+/// one spoken sentence is an Agent turn, not a route.
+pub const ACTION_PARAMS_MAX: usize = 4;
+
+/// Capabilities whose effect leaves the machine or changes the user's data, and
+/// which therefore cannot be driven by an unbounded span of what Grain *thought*
+/// it heard. See [`validate_actions`].
+const SIDE_EFFECT_CAPABILITIES: &[&str] = &["open:url", "open:app", "notes"];
+
+/// One piece of a parsed utterance template.
+///
+/// Lives in the sdk because the host's span extraction and `doctor`'s
+/// validation must agree on where a parameter starts, and two parsers would
+/// drift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UtterancePart {
+    Literal(String),
+    Param(String),
+}
+
+/// Split an utterance into literals and `{param}` placeholders.
+pub fn parse_utterance(utterance: &str) -> Result<Vec<UtterancePart>, String> {
+    let mut parts = Vec::new();
+    let mut literal = String::new();
+    let mut rest = utterance;
+    while let Some(open) = rest.find('{') {
+        literal.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let close = after
+            .find('}')
+            .ok_or_else(|| format!("unclosed '{{' in \"{utterance}\""))?;
+        let name = &after[..close];
+        if name.is_empty() {
+            return Err(format!("empty placeholder in \"{utterance}\""));
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(format!(
+                "placeholder '{{{name}}}' must be lowercase letters, digits or '_'"
+            ));
+        }
+        if !literal.trim().is_empty() {
+            parts.push(UtterancePart::Literal(literal.trim().to_string()));
+        }
+        literal.clear();
+        parts.push(UtterancePart::Param(name.to_string()));
+        rest = &after[close + 1..];
+    }
+    if rest.contains('}') {
+        return Err(format!("unmatched '}}' in \"{utterance}\""));
+    }
+    literal.push_str(rest);
+    if !literal.trim().is_empty() {
+        parts.push(UtterancePart::Literal(literal.trim().to_string()));
+    }
+    Ok(parts)
+}
+
+/// Structural validation of contributed actions.
+///
+/// Takes the extension's capabilities because one rule genuinely needs them:
+/// a free-text span feeding a side-effecting sink cannot be `safe`. Everything
+/// else here is shape and ceilings.
+fn validate_actions(actions: &[ActionDecl], permissions: &[String]) -> Result<(), String> {
+    if actions.len() > ACTIONS_MAX_PER_EXTENSION {
+        return Err(format!(
+            "an extension may declare at most {ACTIONS_MAX_PER_EXTENSION} actions"
+        ));
+    }
+    // A free-text span becomes an argument to whatever this extension can
+    // reach. `net:` counts: an exact-host grant still means the span is sent
+    // somewhere. A RESOLVED entity does not, because the extension matched it
+    // against its own catalogue first, so the value came from a bounded set.
+    let has_sink = permissions.iter().any(|p| {
+        SIDE_EFFECT_CAPABILITIES.contains(&p.as_str()) || network_capability_host(p).is_some()
+    });
+
+    let mut seen = std::collections::HashSet::new();
+    for action in actions {
+        let id = action.id.trim();
+        if id.is_empty() {
+            return Err("an action is missing its id".into());
+        }
+        // `:` namespaces everywhere else in the contract; allowing it here makes
+        // a qualified action name ambiguous.
+        if id.contains(':') {
+            return Err(format!("action id '{id}' must not contain ':'"));
+        }
+        if !seen.insert(id) {
+            return Err(format!("duplicate action id '{id}'"));
+        }
+
+        let title = action.title.trim();
+        if title.is_empty() {
+            return Err(format!("action '{id}' has no title"));
+        }
+        if title.len() > ACTION_TITLE_MAX_BYTES {
+            return Err(format!(
+                "action '{id}' title is {} bytes; the limit is {ACTION_TITLE_MAX_BYTES}",
+                title.len()
+            ));
+        }
+
+        if !ACTION_DOMAINS.contains(&action.domain.as_str()) {
+            // The two vocabularies look alike and mean different things, so say
+            // which one was reached for rather than just "unknown".
+            if LAYER_CATEGORIES.contains(&action.domain.as_str()) {
+                return Err(format!(
+                    "action '{id}' names '{}', which is a prompt-layer category (the surface the \
+                     user is typing into), not an action domain (which provider performs this)",
+                    action.domain
+                ));
+            }
+            return Err(format!(
+                "action '{id}' names unknown domain '{}'; expected one of: {}",
+                action.domain,
+                ACTION_DOMAINS.join(", ")
+            ));
+        }
+
+        if let Some(rules) = &action.agent_rules {
+            if rules.len() > ACTION_AGENT_RULES_MAX_BYTES {
+                return Err(format!(
+                    "action '{id}' agentRules is {} bytes; the limit is \
+                     {ACTION_AGENT_RULES_MAX_BYTES}",
+                    rules.len()
+                ));
+            }
+            if let Some(bad) = rules.chars().find(|c| is_deceptive_char(*c)) {
+                return Err(format!(
+                    "action '{id}' agentRules contains a control or direction-override character \
+                     (U+{:04X})",
+                    bad as u32
+                ));
+            }
+        }
+
+        validate_action_when(id, &action.when)?;
+        let declared = validate_action_params(id, &action.params, has_sink, action.risk)?;
+        validate_action_utterances(id, &action.utterances, &declared, &action.params)?;
+    }
+    validate_no_self_collision(actions)?;
+    Ok(())
+}
+
+/// Two of ONE extension's own actions declaring the same phrase.
+///
+/// Rejected, because it is unambiguously a bug rather than a judgement call:
+/// ranking is global and deterministic, so one of the two can never win, and
+/// the author has made their own action unreachable without being told.
+///
+/// The interesting case — two *different* extensions declaring the same phrase —
+/// is deliberately NOT an error. That is two providers of one request, which is
+/// a legitimate steady state resolved by provider selection, and it cannot be
+/// seen from inside one manifest anyway.
+fn validate_no_self_collision(actions: &[ActionDecl]) -> Result<(), String> {
+    let mut owner: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+    for action in actions {
+        for utterance in &action.utterances {
+            // Compare on the literal skeleton, so `play {artist}` and
+            // `play {track}` collide — the parameter's NAME is the author's
+            // private business and changes nothing about what the router hears.
+            let Ok(parts) = parse_utterance(utterance.trim()) else {
+                continue;
+            };
+            let skeleton = parts
+                .iter()
+                .map(|part| match part {
+                    UtterancePart::Literal(l) => l.to_lowercase(),
+                    UtterancePart::Param(_) => "\u{1}".into(),
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            if let Some(first) = owner.insert(skeleton, action.id.trim()) {
+                if first != action.id.trim() {
+                    return Err(format!(
+                        "actions '{first}' and '{}' both claim \"{}\", so one of them can never \
+                         win",
+                        action.id.trim(),
+                        utterance.trim()
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `when` reuses the prompt-layer vocabulary, so it reuses its checks too.
+fn validate_action_when(id: &str, when: &LayerWhen) -> Result<(), String> {
+    for category in &when.category {
+        if !LAYER_CATEGORIES.contains(&category.as_str()) {
+            return Err(format!("action '{id}' names unknown category '{category}'"));
+        }
+    }
+    if let Some(field) = &when.field {
+        if field != "single_line" && field != "multi_line" {
+            return Err(format!(
+                "action '{id}' field must be 'single_line' or 'multi_line'"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Returns the declared parameter names, in declaration order.
+fn validate_action_params(
+    id: &str,
+    params: &[ActionParamDecl],
+    has_sink: bool,
+    risk: ActionRisk,
+) -> Result<Vec<String>, String> {
+    if params.len() > ACTION_PARAMS_MAX {
+        return Err(format!(
+            "action '{id}' declares {} parameters; the limit is {ACTION_PARAMS_MAX}",
+            params.len()
+        ));
+    }
+    let mut names = Vec::with_capacity(params.len());
+    for param in params {
+        let name = param.name.trim();
+        if name.is_empty() {
+            return Err(format!("action '{id}' has a parameter with no name"));
+        }
+        if !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        {
+            return Err(format!(
+                "action '{id}' parameter '{name}' must be lowercase letters, digits or '_'"
+            ));
+        }
+        if names.iter().any(|existing| existing == name) {
+            return Err(format!("action '{id}' has duplicate parameter '{name}'"));
+        }
+        if param.resolve && param.kind != ActionParamKind::Entity {
+            return Err(format!(
+                "action '{id}' parameter '{name}' sets resolve on a non-entity parameter"
+            ));
+        }
+        // The span is whatever Grain THOUGHT it heard. Unbounded, it becomes an
+        // argument to a sink the extension can already reach — "open {url}" is
+        // "open whatever Grain mishears". A resolved entity is bounded by the
+        // extension's own catalogue, so it does not trip this.
+        let unbounded = param.kind == ActionParamKind::Text
+            || (param.kind == ActionParamKind::Entity && !param.resolve);
+        if unbounded && has_sink && risk.is_safe() {
+            return Err(format!(
+                "action '{id}' takes free text in '{name}' and this extension can act outside \
+                 Grain, so it cannot declare risk 'safe' — use 'confirm', or resolve the \
+                 parameter against the extension's own data"
+            ));
+        }
+        names.push(name.to_string());
+    }
+    Ok(names)
+}
+
+fn validate_action_utterances(
+    id: &str,
+    utterances: &[String],
+    declared: &[String],
+    params: &[ActionParamDecl],
+) -> Result<(), String> {
+    if utterances.is_empty() {
+        return Err(format!("action '{id}' declares no utterances"));
+    }
+    if utterances.len() > ACTION_UTTERANCES_MAX {
+        return Err(format!(
+            "action '{id}' declares {} utterances; the limit is {ACTION_UTTERANCES_MAX}",
+            utterances.len()
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut mentioned = std::collections::HashSet::new();
+    for utterance in utterances {
+        let trimmed = utterance.trim();
+        if trimmed.is_empty() {
+            return Err(format!("action '{id}' has an empty utterance"));
+        }
+        if trimmed.len() > ACTION_UTTERANCE_MAX_BYTES {
+            return Err(format!(
+                "action '{id}' utterance \"{trimmed}\" is {} bytes; the limit is \
+                 {ACTION_UTTERANCE_MAX_BYTES}",
+                trimmed.len()
+            ));
+        }
+        // Same equivalence rule as prompt-layer text: what the reviewer read
+        // must be what the router matches.
+        if let Some(bad) = trimmed.chars().find(|c| is_deceptive_char(*c)) {
+            return Err(format!(
+                "action '{id}' utterance contains a control or direction-override character \
+                 (U+{:04X})",
+                bad as u32
+            ));
+        }
+        let normalised = trimmed.to_lowercase();
+        if !seen.insert(normalised) {
+            return Err(format!("action '{id}' repeats the utterance \"{trimmed}\""));
+        }
+        let parts = parse_utterance(trimmed).map_err(|e| format!("action '{id}': {e}"))?;
+        let mut has_literal = false;
+        for part in &parts {
+            match part {
+                UtterancePart::Literal(_) => has_literal = true,
+                UtterancePart::Param(name) => {
+                    if !declared.iter().any(|d| d == name) {
+                        return Err(format!(
+                            "action '{id}' utterance \"{trimmed}\" uses undeclared parameter \
+                             '{{{name}}}'"
+                        ));
+                    }
+                    mentioned.insert(name.clone());
+                }
+            }
+        }
+        // A bare placeholder matches every utterance ever spoken. Ranking is
+        // global, so this is not the author's problem to discover in the wild.
+        if !has_literal {
+            return Err(format!(
+                "action '{id}' utterance \"{trimmed}\" is only a placeholder, so it would match \
+                 anything the user says"
+            ));
+        }
+    }
+    // A required parameter that appears in no template can never be filled, so
+    // the action would route and then always fall to the chooser.
+    for param in params {
+        if param.required && !mentioned.contains(param.name.trim()) {
+            return Err(format!(
+                "action '{id}' requires '{}' but no utterance shows where it appears",
+                param.name.trim()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// A recording mode contributed by one extension (SPEC §1.3, §3.1).
@@ -363,7 +1044,26 @@ pub const KNOWN_SLOTS: &[&str] = &[
     "pill.theme",
     "agent.reply-surface",
     "output.destination",
+    PROMPT_CONTEXT_SLOT,
 ];
+
+/// The soft-context line in the dictation prompt: **Grain's opinion about how to
+/// write for the surface it detected**.
+///
+/// Claimable because it is a guess, and an extension may guess better. The three
+/// layers around it are not:
+///
+/// - the user's own prompt and their custom profiles are theirs, and an
+///   extension replacing them is the one thing the ladder exists to prevent;
+/// - a spoken instruction is the user's voice about this transcript;
+/// - the single-line rule, the cursor fit and nearby terms are structural facts
+///   about the field, not opinions about writing, so there is nothing there to
+///   disagree with.
+///
+/// Claiming it means taking responsibility for it: Grain then says nothing about
+/// the surface, and if the claimant contributes no matching layer, no soft
+/// context is sent at all.
+pub const PROMPT_CONTEXT_SLOT: &str = "prompt.context";
 
 /// Capabilities a scripted pack may request in API 1.0. Anything outside this
 /// set is rejected at import (R1: grant narrowly, widen with each consumer).
@@ -648,11 +1348,24 @@ impl GrainPack {
             }
         }
 
+        validate_prompt_layers(&m.contributes.prompt_layers)?;
+        validate_actions(&m.contributes.actions, &m.permissions)?;
+
         // Surfaces and code-backed contributions need code to back them.
+        //
+        // Prompt layers are deliberately NOT in this list: static text plus a
+        // host-evaluated match is exactly the kind of contribution an inert pack
+        // should be able to make, and requiring a runtime for it would push
+        // authors toward code they do not need — which is the more dangerous
+        // outcome, not the safer one.
         let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
-            || m.contributes.session_mode.is_some();
+            || m.contributes.session_mode.is_some()
+            // Unlike a prompt layer, an action has to be PERFORMED. A pack with
+            // no runtime that declares one would route, win, and then have
+            // nothing to call.
+            || !m.contributes.actions.is_empty();
         if (declares_surface || contributes_code) && m.tier == Tier::Pack {
             return Err("surfaces and contributes require a scripted or native runtime".into());
         }
@@ -815,6 +1528,416 @@ mod tests {
 
     fn extends_of(json: &str) -> Vec<String> {
         serde_json::from_str::<GrainPack>(json).unwrap().extends()
+    }
+
+    /// A pack declaring `promptLayers`, with the given layer array spliced in.
+    fn pack_with_layers(layers: &str) -> Result<(), String> {
+        pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                "contributes":{{"promptLayers":{layers}}}}}}}"#
+        ))
+    }
+
+    #[test]
+    fn an_inert_pack_may_contribute_a_prompt_layer() {
+        // Static text plus a host-evaluated match is exactly what a tier-A pack
+        // should be able to do. Requiring a runtime for it would push authors
+        // toward code they do not need, which is the more dangerous outcome.
+        assert_eq!(
+            pack_with_layers(
+                r#"[{"id":"jira","when":{"website":["jira."]},
+                     "text":"Write in imperative mood."}]"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_inert_pack_may_claim_the_context_slot() {
+        // Door 2: replacing Grain's guess about a surface needs no runtime —
+        // a pack that ships better wording for the same job is the point.
+        assert_eq!(
+            pack(&format!(
+                r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                    "slots":["{PROMPT_CONTEXT_SLOT}"],
+                    "contributes":{{"promptLayers":[{{"id":"a","text":"Be terse."}}]}}}}}}"#
+            )),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_singular_spelling_from_the_spec_still_parses() {
+        assert_eq!(
+            pack(
+                r#"{"manifest":{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                    "contributes":{"promptLayer":[{"id":"a","text":"Be terse."}]}}}"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn prompt_layers_are_bounded_in_count_and_size() {
+        let many: Vec<String> = (0..PROMPT_LAYERS_MAX_PER_EXTENSION + 1)
+            .map(|i| format!(r#"{{"id":"l{i}","text":"Be terse."}}"#))
+            .collect();
+        assert!(pack_with_layers(&format!("[{}]", many.join(","))).is_err());
+
+        let fat = "x".repeat(PROMPT_LAYER_MAX_BYTES + 1);
+        assert!(pack_with_layers(&format!(r#"[{{"id":"a","text":"{fat}"}}]"#)).is_err());
+    }
+
+    #[test]
+    fn prompt_layer_text_may_not_hide_what_a_reviewer_read() {
+        // A right-to-left override can make approved text render as one thing
+        // and tokenize as another; no legitimate instruction needs one. Written
+        // as JSON escapes because rustc refuses the raw codepoints in a source
+        // literal — the same defence, one layer down.
+        let bidi = format!(r#"[{{"id":"a","text":"Be terse.{}evil"}}]"#, '\u{202E}');
+        assert!(pack_with_layers(&bidi).is_err());
+        let zero_width = format!(r#"[{{"id":"a","text":"Be{}terse."}}]"#, '\u{200B}');
+        assert!(pack_with_layers(&zero_width).is_err());
+        // Ordinary line breaks are fine — an instruction may be two sentences.
+        assert_eq!(
+            pack_with_layers(r#"[{"id":"a","text":"Be terse.\nUse British spelling."}]"#),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn prompt_layer_ids_and_match_values_are_checked() {
+        assert!(pack_with_layers(r#"[{"id":"","text":"Be terse."}]"#).is_err());
+        assert!(pack_with_layers(r#"[{"id":"a:b","text":"Be terse."}]"#).is_err());
+        assert!(pack_with_layers(r#"[{"id":"a","text":"  "}]"#).is_err());
+        assert!(pack_with_layers(
+            r#"[{"id":"a","text":"Be terse."},{"id":"a","text":"Be brief."}]"#
+        )
+        .is_err());
+        assert!(pack_with_layers(
+            r#"[{"id":"a","when":{"category":["nope"]},"text":"Be terse."}]"#
+        )
+        .is_err());
+        assert!(
+            pack_with_layers(r#"[{"id":"a","when":{"field":"sideways"},"text":"Be terse."}]"#)
+                .is_err()
+        );
+    }
+
+    /// A scripted extension declaring `actions`, with permissions and the
+    /// action array spliced in.
+    fn pack_with_actions(permissions: &str, actions: &str) -> Result<(), String> {
+        pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.a","name":"A","version":"1.0","tier":"scripted",
+                "entry_source":"//","permissions":{permissions},
+                "contributes":{{"actions":{actions}}}}}}}"#
+        ))
+    }
+
+    const NEXT_TRACK: &str = r#"[{"id":"next","title":"Skip to the next track",
+        "domain":"media","risk":"safe",
+        "utterances":["skip this","next song","play something else"]}]"#;
+
+    #[test]
+    fn a_plain_action_declares_and_validates() {
+        assert_eq!(pack_with_actions("[]", NEXT_TRACK), Ok(()));
+    }
+
+    #[test]
+    fn an_action_needs_a_runtime_to_perform_it() {
+        // Unlike a prompt layer, which is text the host renders, an action has
+        // to be called. A pack that wins a route and has nothing to call is a
+        // dead end the user cannot diagnose.
+        assert!(pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                "contributes":{{"actions":{NEXT_TRACK}}}}}}}"#
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn risk_is_required_so_a_blast_radius_is_never_implicit() {
+        // Omitting it must not silently mean "safe" — and it must not silently
+        // mean "confirm" either, because then an update that adds a destructive
+        // action reads the same as one that adds a harmless one.
+        assert!(pack_with_actions(
+            "[]",
+            r#"[{"id":"next","title":"Next","domain":"media","utterances":["next song"]}]"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn free_text_into_a_sink_cannot_be_safe() {
+        // "open {url}" in an extension that can open URLs is "open whatever
+        // Grain mishears". The router is not the weak link here; the acoustic
+        // model is.
+        let open_anything = r#"[{"id":"open","title":"Open a link","domain":"browser",
+            "risk":"safe","utterances":["open {url}"],
+            "params":[{"name":"url","kind":"text"}]}]"#;
+        assert!(pack_with_actions(r#"["open:url"]"#, open_anything).is_err());
+
+        // The same declaration is fine once it reads the action back first.
+        let confirmed = open_anything.replace(r#""risk":"safe""#, r#""risk":"confirm""#);
+        assert_eq!(pack_with_actions(r#"["open:url"]"#, &confirmed), Ok(()));
+
+        // And fine as `safe` when there is no sink to feed.
+        assert_eq!(pack_with_actions("[]", open_anything), Ok(()));
+    }
+
+    #[test]
+    fn a_resolved_entity_is_bounded_so_it_stays_safe() {
+        // The span goes to the extension, which matches it against its OWN
+        // catalogue before anything happens — so the value that reaches the
+        // network came from a bounded set, not from the microphone.
+        let play_artist = r#"[{"id":"play_artist","title":"Play music by an artist",
+            "domain":"media","risk":"safe","utterances":["play {artist}","put on some {artist}"],
+            "params":[{"name":"artist","kind":"entity","resolve":true}]}]"#;
+        assert_eq!(
+            pack_with_actions(r#"["net:api.spotify.com"]"#, play_artist),
+            Ok(())
+        );
+        // Unresolved, the same parameter is raw ASR output again.
+        let unresolved = play_artist.replace(r#""resolve":true"#, r#""resolve":false"#);
+        assert!(pack_with_actions(r#"["net:api.spotify.com"]"#, &unresolved).is_err());
+    }
+
+    #[test]
+    fn a_bare_placeholder_would_match_anything_the_user_says() {
+        // Ranking is global, so this is not the author's problem to discover in
+        // the wild — one greedy utterance degrades every other extension.
+        assert!(pack_with_actions(
+            "[]",
+            r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+                 "utterances":["{anything}"],
+                 "params":[{"name":"anything","kind":"text"}]}]"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn placeholders_and_parameters_must_agree() {
+        // An undeclared placeholder has no span to fill.
+        assert!(pack_with_actions(
+            "[]",
+            r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+                 "utterances":["play {artist}"]}]"#
+        )
+        .is_err());
+        // A required parameter that appears in no template can never be filled,
+        // so the action would route and then always fall to the chooser.
+        assert!(pack_with_actions(
+            "[]",
+            r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+                 "utterances":["play something"],
+                 "params":[{"name":"artist","kind":"entity","resolve":true}]}]"#
+        )
+        .is_err());
+        // Optional is the escape hatch for a parameter filled another way.
+        assert_eq!(
+            pack_with_actions(
+                "[]",
+                r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+                     "utterances":["play something"],
+                     "params":[{"name":"artist","kind":"entity","resolve":true,
+                                "required":false}]}]"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_prompt_layer_category_is_not_an_action_domain() {
+        // The two vocabularies look alike and mean different things: one is the
+        // surface being typed into, the other is which provider performs this.
+        let err = pack_with_actions(
+            "[]",
+            r#"[{"id":"n","title":"Next","domain":"email","risk":"safe",
+                 "utterances":["next song"]}]"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("prompt-layer category"), "{err}");
+    }
+
+    #[test]
+    fn actions_are_bounded_in_every_direction() {
+        let many: Vec<String> = (0..ACTIONS_MAX_PER_EXTENSION + 1)
+            .map(|i| {
+                format!(
+                    r#"{{"id":"a{i}","title":"A","domain":"media","risk":"safe",
+                        "utterances":["do the thing {i}"]}}"#
+                )
+            })
+            .collect();
+        assert!(pack_with_actions("[]", &format!("[{}]", many.join(","))).is_err());
+
+        let phrasings: Vec<String> = (0..ACTION_UTTERANCES_MAX + 1)
+            .map(|i| format!(r#""skip it {i}""#))
+            .collect();
+        assert!(pack_with_actions(
+            "[]",
+            &format!(
+                r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                     "utterances":[{}]}}]"#,
+                phrasings.join(",")
+            )
+        )
+        .is_err());
+
+        let fat = "x".repeat(ACTION_UTTERANCE_MAX_BYTES + 1);
+        assert!(pack_with_actions(
+            "[]",
+            &format!(
+                r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                     "utterances":["{fat}"]}}]"#
+            )
+        )
+        .is_err());
+
+        let rules = "x".repeat(ACTION_AGENT_RULES_MAX_BYTES + 1);
+        assert!(pack_with_actions(
+            "[]",
+            &format!(
+                r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                     "utterances":["next song"],"agentRules":"{rules}"}}]"#
+            )
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn an_utterance_may_not_hide_what_a_reviewer_read() {
+        // Same equivalence rule as prompt-layer text: what the reviewer read
+        // must be what the router matches.
+        let bidi = format!(
+            r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                 "utterances":["skip{}this"]}}]"#,
+            '\u{202E}'
+        );
+        assert!(pack_with_actions("[]", &bidi).is_err());
+    }
+
+    #[test]
+    fn action_ids_and_match_values_are_checked() {
+        let with = |body: &str| pack_with_actions("[]", body);
+        assert!(with(
+            r#"[{"id":"","title":"N","domain":"media","risk":"safe","utterances":["next"]}]"#
+        )
+        .is_err());
+        assert!(with(
+            r#"[{"id":"a:b","title":"N","domain":"media","risk":"safe","utterances":["next"]}]"#
+        )
+        .is_err());
+        assert!(with(
+            r#"[{"id":"n","title":"","domain":"media","risk":"safe","utterances":["next"]}]"#
+        )
+        .is_err());
+        assert!(
+            with(r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":[]}]"#)
+                .is_err()
+        );
+        // Duplicate ids, and a repeated utterance within one action.
+        assert!(with(
+            r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":["next"]},
+                {"id":"n","title":"M","domain":"media","risk":"safe","utterances":["prev"]}]"#
+        )
+        .is_err());
+        assert!(with(
+            r#"[{"id":"n","title":"N","domain":"media","risk":"safe",
+                 "utterances":["Next Song","next song"]}]"#
+        )
+        .is_err());
+        // `when` reuses the prompt-layer vocabulary, so it reuses its checks.
+        assert!(with(
+            r#"[{"id":"n","title":"N","domain":"media","risk":"safe",
+                 "utterances":["next"],"when":{"category":["nope"]}}]"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn the_shipped_voice_actions_declaration_validates() {
+        // The first real consumer, pinned. It is also the case the risk rule was
+        // written for and the one easiest to get backwards: this extension holds
+        // `open:url` and `open:app`, so a free-text span would be "open whatever
+        // Grain mishears" — but `target` is a RESOLVED entity, matched against
+        // the user's own configured shortcuts before anything launches, so
+        // `safe` is correct here.
+        assert_eq!(
+            pack_with_actions(
+                r#"["transform:transcript","open:url","open:app","capture:app","settings"]"#,
+                r#"[{"id":"open","title":"Open an app or site you set up","domain":"system",
+                     "risk":"safe",
+                     "utterances":["open {target}","launch {target}","go to {target}",
+                                   "start up {target}","bring up {target}"],
+                     "params":[{"name":"target","kind":"entity","resolve":true}]}]"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_extension_may_not_make_its_own_action_unreachable() {
+        // Ranking is global and deterministic, so of two actions claiming one
+        // phrase, the same one always wins and the other is dead. The author
+        // would never see that from their own extension in isolation.
+        assert!(pack_with_actions(
+            "[]",
+            r#"[{"id":"a","title":"A","domain":"media","risk":"safe","utterances":["skip this"]},
+                {"id":"b","title":"B","domain":"media","risk":"safe","utterances":["Skip This"]}]"#
+        )
+        .is_err());
+
+        // The parameter's NAME is the author's private business — the router
+        // hears the same words either way, so these collide too.
+        assert!(pack_with_actions(
+            "[]",
+            r#"[{"id":"a","title":"A","domain":"media","risk":"safe",
+                 "utterances":["play {artist}"],
+                 "params":[{"name":"artist","kind":"entity","resolve":true}]},
+                {"id":"b","title":"B","domain":"media","risk":"safe",
+                 "utterances":["play {track}"],
+                 "params":[{"name":"track","kind":"entity","resolve":true}]}]"#
+        )
+        .is_err());
+
+        // Distinct phrases across actions are the normal case.
+        assert_eq!(
+            pack_with_actions(
+                "[]",
+                r#"[{"id":"a","title":"A","domain":"media","risk":"safe",
+                     "utterances":["skip this"]},
+                    {"id":"b","title":"B","domain":"media","risk":"safe",
+                     "utterances":["go back"]}]"#
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn utterance_templates_parse_into_literals_and_spans() {
+        // The host's span extraction and doctor's validation must agree on
+        // where a parameter starts; two parsers would drift.
+        assert_eq!(
+            parse_utterance("put on some {artist}"),
+            Ok(vec![
+                UtterancePart::Literal("put on some".into()),
+                UtterancePart::Param("artist".into()),
+            ])
+        );
+        assert_eq!(
+            parse_utterance("tell {who} that {message}"),
+            Ok(vec![
+                UtterancePart::Literal("tell".into()),
+                UtterancePart::Param("who".into()),
+                UtterancePart::Literal("that".into()),
+                UtterancePart::Param("message".into()),
+            ])
+        );
+        assert!(parse_utterance("play {artist").is_err());
+        assert!(parse_utterance("play artist}").is_err());
+        assert!(parse_utterance("play {}").is_err());
+        assert!(parse_utterance("play {Artist}").is_err());
     }
 
     #[test]

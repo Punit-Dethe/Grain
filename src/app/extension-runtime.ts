@@ -276,6 +276,28 @@ export const GRAIN_RUNTIME_JS = `(function () {
     onSessionResult: function (fn) {
       grain.onSessionStage(function (text) { return fn(text); });
     },
+    // A routed action (docs/Action Routing/PLAN.md). The handler receives the
+    // action id and the extracted spans — never the raw utterance, and never
+    // anything about requests that went to somebody else.
+    //
+    // Three shapes may be returned, and the second is the interesting one:
+    //   undefined / { message }         it ran
+    //   { param, options: [...] }       the span resolved to several candidates
+    //                                   and the user should pick
+    //   { error }                       it could not run, with a reason
+    //
+    // Resolution belongs here rather than in the host because the extension is
+    // the only party that knows its own catalogue. Grain hands over the words
+    // it heard; what "gym" means is Spotify's question, not Grain's.
+    onAction: function (fn) {
+      handlers.action = function (p) {
+        return Promise.resolve(
+          fn(String((p && p.action) || ""), (p && p.params) || {}),
+        ).then(function (out) {
+          return out == null ? {} : out;
+        });
+      };
+    },
     // A shortcut press is acknowledged on RECEIPT, not on completion: the
     // handler runs detached so an extension that opens an LLM call from a
     // hotkey is never mistaken for an unresponsive one.

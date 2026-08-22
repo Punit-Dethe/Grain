@@ -104,6 +104,7 @@ mod stt_client; // [GRAIN] S2: HTTP STT adapters (OpenAI / Deepgram / AssemblyAI
 mod stt_router; // [GRAIN] S3: STT dispatcher (local vs cloud rotation)
 mod surface_watch; // [GRAIN] follow the foreground app mid-session (settled)
 mod surfaces; // [GRAIN] host-owned UI surfaces (SPEC 1.2) — the sleeping workspace window
+mod tdt_flow; // [GRAIN] capability-gated transactional TDT Flow orchestration
 #[path = "handy/transcription_coordinator.rs"]
 mod transcription_coordinator;
 #[path = "handy/tray.rs"]
@@ -985,6 +986,7 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::change_agent_autocopy_setting,
             grain_commands::change_agent_quick_enabled_setting,
             grain_commands::change_agent_context_mode_setting,
+            grain_commands::change_agent_screen_image_setting,
             grain_commands::change_agent_input_type_to_expand_setting,
             grain_commands::change_agent_panel_position_setting,
             grain_commands::change_scrap_that_enabled_setting,
@@ -1020,6 +1022,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_capture_app,
             grain_commands::extension_host_call,
             grain_commands::extension_shortcuts_status,
+            grain_commands::grain_action_listen,
+            grain_commands::grain_action_log,
             grain_commands::extension_setting_set,
             grain_commands::extension_surface_init,
             grain_commands::extension_surface_ui_ready,

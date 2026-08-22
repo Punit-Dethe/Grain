@@ -2,13 +2,13 @@
 //! Grain pill — the always-on dot-matrix "Aura Core" surface.
 //!
 //! winit + tiny-skia. A 25×8 dot grid presented as a true per-pixel-transparent
-//! floating capsule (Win32 layered window). Mic levels are captured directly
-//! (cpal) for lowest latency.
+//! floating capsule (Win32 layered window). Mic levels arrive from Grain's
+//! configured recorder over the authenticated event stream.
 //!
 //! Visual language:
 //! - RECORDING: lit-dot *density* tracks mic amplitude (random placement,
 //!   grey/near-white tiers, flicker) across the WHOLE grid.
-//! - PROCESSING: orange "static" sparkle across the whole grid.
+//! - PROCESSING: a neutral grey "static" sparkle across the whole grid.
 //! - IDLE: a calm soft sweep/breathing shimmer (fills the grid, no gap).
 //! - HOVER: the right (non-voice-reactive) section smoothly turns off and
 //!   expands leftward to reveal lit-pixel glyphs — ✓ + ✗ while recording, ✓
@@ -19,7 +19,6 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -52,6 +51,11 @@ const ROWS: usize = 8;
 const DOT_D: f32 = 3.0;
 const CELL: f32 = 5.0;
 const SCALE: f32 = 1.0; // px per grid unit — small pill (native QML size)
+/// Gap between the collapsed pill and the work-area bottom edge. The pill's
+/// body ends flush with its window bottom (`win_h`), so this is also the gap
+/// under the pill as drawn — which makes it the reference every other
+/// bottom-anchored overlay surface lines up against.
+const PILL_BOTTOM_MARGIN: f32 = 7.0;
 
 // ── Pill skin geometry ──────────────────────────────────────────────────────
 //
@@ -70,6 +74,61 @@ const SKIN_SHRINK: f32 = 0.85;
 /// inside is positioned from the body's centre line, so nothing needs moving:
 /// see `cy` in `paint_wave_body`.
 const WAVE_H_BOOST: f32 = 1.12;
+
+// ── Opening the collapsed pill ──────────────────────────────────────────────
+//
+// [GRAIN] The pill used to APPEAR: one frame it isn't there, the next it is at
+// full width with every element already drawn. It now opens — the capsule grows
+// out of a dot at its own centre and its contents are uncovered by the moving
+// edge, waveform first (it lives in the middle) and the app icon last (it sits
+// at the far left, where the edge arrives last).
+//
+// The reveal is a per-element GATE on x, not a clip mask: nothing is allocated
+// per frame, nothing is scaled — the icon in particular is blitted at its one
+// prepared size, exactly as before, and only its opacity moves. Once `open`
+// settles at 1.0 every gate is a no-op and the draw is byte-identical to the
+// pill that shipped.
+
+/// How long the capsule takes to open. Long enough to read as motion, short
+/// enough to be over before the first syllable lands — an invocation animation
+/// that makes the user wait is worse than no animation at all.
+const OPEN_DUR: Duration = Duration::from_millis(220);
+/// Fraction of `OPEN_DUR` the whole surface takes to fade up. Deliberately far
+/// shorter than the grow: the pill must be unmistakably PRESENT almost at once,
+/// and only its shape is still arriving.
+const OPEN_FADE: f32 = 0.35;
+/// The capsule's starting width, as a multiple of its height — exactly 1 is a
+/// circle. It never starts from zero: a sub-pixel sliver reads as a glitch, a
+/// dot reads as a pill that is about to open.
+const OPEN_SEED: f32 = 1.0;
+/// How far past its final width the capsule swings before settling, as a
+/// fraction of the "back" easing's own scale. Small on purpose — this is a
+/// settle, not a bounce, and the overshoot has to stay inside the window's
+/// `inset` margin so it can never clip.
+const OPEN_BACK: f32 = 0.7;
+/// Softness (px) of the edge that uncovers the contents. An element fades in
+/// over the last `OPEN_SOFT` px of the edge's approach, so nothing pops.
+const OPEN_SOFT: f32 = 9.0;
+
+/// Ease-out with a small overshoot (the standard "back" curve): fast away from
+/// 0, passing just above 1 before settling exactly on it at `t = 1`.
+fn ease_out_back(t: f32) -> f32 {
+    let u = t.clamp(0.0, 1.0) - 1.0;
+    1.0 + (OPEN_BACK + 1.0) * u * u * u + OPEN_BACK * u * u
+}
+
+/// Plain cubic ease-out, for the parts of the reveal that must not overshoot
+/// (opacity — an alpha above 1 is just a wasted clamp).
+fn ease_out_cubic(t: f32) -> f32 {
+    let u = 1.0 - t.clamp(0.0, 1.0);
+    1.0 - u * u * u
+}
+
+/// How lit an element is, given how far `inside` the opening capsule it already
+/// sits (px). Negative — still outside the capsule — is fully hidden.
+fn open_gate(inside: f32) -> f32 {
+    (inside / OPEN_SOFT).clamp(0.0, 1.0)
+}
 
 /// Runtime geometry of the COLLAPSED pill for one skin. Pure and copy-cheap —
 /// recomputed wherever it's needed instead of cached, so a skin change can never
@@ -116,6 +175,24 @@ impl PillGeom {
     /// Left/right edges of the painted capsule within the window.
     fn body_x(self) -> (f32, f32) {
         (self.inset, self.core_w - self.inset)
+    }
+
+    /// [GRAIN] The capsule's edges partway through the opening animation.
+    /// `open` is the EASED width factor: 0 leaves a body-height dot at the
+    /// capsule's centre, 1 is the full body (exactly — the arithmetic is an
+    /// identity there, so a settled pill is pixel-for-pixel the old one), and
+    /// slightly above 1 is the overshoot on its way back down.
+    ///
+    /// Every part of the opening pill — fill, rim, and each content gate —
+    /// reads its edges from here, so they cannot disagree about where the
+    /// capsule currently ends.
+    fn body_x_open(self, open: f32) -> (f32, f32) {
+        let (x0, x1) = self.body_x();
+        let full = x1 - x0;
+        let seed = (self.body_h * OPEN_SEED).min(full);
+        let w = seed + (full - seed) * open;
+        let cx = (x0 + x1) / 2.0;
+        (cx - w / 2.0, cx + w / 2.0)
     }
 
     fn win_h(self) -> u32 {
@@ -205,9 +282,10 @@ const BTN_SPAN: usize = 4;
 // layered window, so it costs nothing at rest.
 const RISER_RESERVE: f32 = 5.0; // grid-cells kept transparent ABOVE the collapsed pill
 const RISER_HOLD: Duration = Duration::from_millis(1600);
-/// Keep the Prompt Record action available briefly after the cursor leaves its
-/// reveal surface, giving it time to cross the transparent gap.
-const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(1);
+/// Keep the Prompt Record action (and, on Studio, the switcher beside it)
+/// available after the cursor leaves its reveal surface, giving it time to
+/// cross the transparent gap — and time to read the row before it withdraws.
+const PROMPT_RECORD_HOLD: Duration = Duration::from_secs(2);
 /// A missed paste has already been placed on the clipboard when its event
 /// arrives. Keep the acknowledgement long enough to read without tying its
 /// lifetime to the longer Paste Catch hold.
@@ -264,6 +342,33 @@ const STUDIO_TOP_PILL_H: f32 = 30.0;
 const STUDIO_TOP_GAP: f32 = 9.0; // gap between the top capsule and the card
 const STUDIO_TOP_RESERVE: f32 = STUDIO_TOP_PILL_H + STUDIO_TOP_GAP + 6.0; // canvas above the card
 const STUDIO_TOP_ARROW_INSET: f32 = 22.0; // ‹ › inset from each capsule end
+// [GRAIN] The Studio top band is ONE row shared by two controls that together
+// span exactly the card width — never more: the prompt SWITCHER on the left
+// (wider, it carries an arbitrary prompt name) and the Prompt RECORD action on
+// the right (sparkle + a fixed one-word label). Both are `STUDIO_TOP_PILL_H`
+// tall so the row reads as a single strip rather than two unrelated chips.
+const STUDIO_TOP_SPLIT_GAP: f32 = 8.0; // transparent gap between the two controls
+const STUDIO_TOP_RECORD_W: f32 = 100.0; // fixed — the label never changes
+const STUDIO_TOP_RECORD_ICON_GAP: f32 = 7.0; // sparkle → label gap
+const STUDIO_RECORD_LABEL: &str = "Record";
+/// How much of each capsule end is the `‹`/`›` target. Wider than the glyph so
+/// the arrows are comfortable to hit, still clear of the centered label.
+const STUDIO_TOP_ARROW_HIT_W: f32 = STUDIO_TOP_ARROW_INSET + 12.0;
+/// Where in the reveal the row hands over. The switcher finishes contracting at
+/// this point and Record only starts fading in after it — the two capsules must
+/// never occupy the same pixels, or their rims blend into a smear halfway
+/// through. Running out, the order reverses for free: Record leaves, then the
+/// switcher grows back into the space.
+const STUDIO_TOP_HANDOVER: f32 = 0.62;
+
+/// The switcher's width on the Studio surface. It owns the WHOLE band while the
+/// Prompt Record capsule is absent — a plain prompt switch has no reason to
+/// leave a hole — and contracts to make room as that capsule is revealed.
+/// `record` is Record's eased reveal: 0 = absent (full width), 1 = fully out.
+fn studio_top_switch_w(record: f32) -> f32 {
+    let taken = (STUDIO_TOP_RECORD_W + STUDIO_TOP_SPLIT_GAP) * record.clamp(0.0, 1.0);
+    (STUDIO_W - taken).max(0.0)
+}
                                           // Present (and ease the riser/hover) at ~60 fps so motion is smooth; the dot
                                           // field itself only re-rolls every ROLL_INTERVAL so it keeps its calm cadence
                                           // instead of turning into 60 fps static.
@@ -336,8 +441,19 @@ fn should_show_prompt_record(
 // pixels are click-through, so the unused canvas area doesn't eat clicks).
 const AIN_WIN_W: u32 = 580;
 const AIN_WIN_H: u32 = 170;
-/// Margin between the card and the work-area edge it anchors to.
-const AIN_EDGE_MARGIN: i32 = 40;
+/// Inset between the card and the canvas edge it hugs (see `card_y`).
+const AIN_CARD_INSET: f32 = 1.0;
+/// Margin between the agent input CANVAS and the work-area top edge, for the
+/// Top overlay anchor.
+const AIN_TOP_MARGIN: i32 = 40;
+/// Margin between the agent input CANVAS and the work-area bottom edge.
+///
+/// Derived so the card's own bottom edge lands on exactly the same line as the
+/// collapsed dictation pill's: the pill's body ends flush with its window
+/// bottom, while the card is inset from its canvas bottom, so the canvas has to
+/// sit that much lower. Both agent input states hug the same canvas edge, so
+/// this places the compact and expanded cards alike.
+const AIN_BOTTOM_MARGIN: i32 = (PILL_BOTTOM_MARGIN * SCALE - AIN_CARD_INSET) as i32;
 /// Expanded card: 520px content + 2×10px horizontal padding (the reference).
 const AIN_EXPANDED_W: f32 = 540.0;
 const AIN_EXPANDED_H: f32 = 136.0;
@@ -391,6 +507,11 @@ const STUDIO_FADE_PX: f32 = 22.0;
 // cancel X (right). Its height matches the small pill's dot field (ROWS·CELL) so
 // the collapsed capsule can grow into it without the matrix changing size.
 const STUDIO_CTRL_H: f32 = 26.0; // holds the 22px cancel disc + the trimmed matrix
+/// Radius of the card's cancel (×) disc — shared by the painter and the hit rect.
+const X_BUTTON_R: f32 = 11.0;
+/// A hair of forgiveness around the 22px disc so the click doesn't demand
+/// pixel precision. Small enough that it cannot reach the waveform beside it.
+const X_HIT_SLOP: f32 = 3.0;
                                  // [GRAIN] A breathing gap BELOW the control row so the dot-matrix never touches
                                  // the capsule's bottom edge (per the unified-pill spec — the pill "grows a little
                                  // bit down" past the matrix).
@@ -880,8 +1001,8 @@ impl Aura {
         }
     }
 
-    /// [GRAIN] Roll the PROCESSING state's studio field: orange sparkle across
-    /// the 2-row strip, matching the collapsed pill's orange processing but
+    /// [GRAIN] Roll the PROCESSING state's studio field: a neutral sparkle across
+    /// the 2-row strip, matching the collapsed pill's processing grey but
     /// constrained to the studio rows only. Unlit = fully black.
     fn roll_studio_processing(&mut self) {
         self.phase += 1.0;
@@ -896,12 +1017,15 @@ impl Aura {
                     continue;
                 }
                 let shade = self.rng.f32();
+                // The same three-step ladder the orange sparkle had, moved onto
+                // the neutral ramp: `WAVE_INK_PROCESSING` is the middle rung, so
+                // both skins process in exactly the same grey.
                 let (rr, gg, bb) = if shade < 0.40 {
-                    (255, 93, 30) // deep orange
+                    (96, 101, 112) // deep
                 } else if shade < 0.72 {
-                    (255, 145, 70) // mid orange
+                    (120, 126, 138) // mid — WAVE_INK_PROCESSING
                 } else {
-                    (255, 185, 110) // light orange
+                    (148, 155, 168) // light
                 };
                 let a = if self.rng.f32() < 0.30 {
                     0.60 + self.rng.f32() * 0.40
@@ -1135,12 +1259,13 @@ impl Aura {
                     continue;
                 }
                 let shade = self.rng.f32();
+                // See `roll_studio_processing` — the neutral processing ladder.
                 let (rr, gg, bb) = if shade < 0.40 {
-                    (255, 93, 30)
+                    (96, 101, 112)
                 } else if shade < 0.72 {
-                    (255, 145, 70)
+                    (120, 126, 138)
                 } else {
-                    (255, 185, 110)
+                    (148, 155, 168)
                 };
                 let a = if self.rng.f32() < 0.25 {
                     0.60 + self.rng.f32() * 0.40
@@ -1369,6 +1494,15 @@ fn wave_bar_count(w: f32) -> usize {
 /// point is that it reads as calm at a glance.
 const WAVE_INK: [u8; 3] = [236, 239, 245];
 const WAVE_INK_IDLE: [u8; 3] = [138, 146, 163];
+/// [GRAIN] PROCESSING's ink. This used to be `ACCENT` — the recording orange —
+/// which read as an alarm rather than as work: nothing else on the pill is warm,
+/// so the state looked bolted on to the interface around it. It is now one step
+/// DOWN the same neutral ladder the rest of the waveform already lives on:
+/// evidently darker than the resting line, so "something is happening" still
+/// reads at a glance, but nowhere near the near-black body — that would read as
+/// the pill going dead rather than thinking. This single const is the dial for
+/// how loud the state is.
+const WAVE_INK_PROCESSING: [u8; 3] = [120, 126, 138];
 /// Prompt Record keeps the established light-blue signal (see `Aura`).
 const WAVE_INK_PROMPT: [u8; 3] = [150, 194, 255];
 
@@ -1627,6 +1761,13 @@ impl WaveField {
 /// pixels that ship, instead of a copy of this that can quietly drift from it.
 /// `themed_dot` is an extension theme's colour, which still wins over the
 /// state's own ink — a theme keeps working across a skin change.
+///
+/// [GRAIN] `open` is the capsule's eased opening factor (1.0 = fully open, the
+/// only value that ever reaches a settled pill). Below 1 the layout does NOT
+/// move: every element keeps its final position and is simply gated by how far
+/// inside the still-growing capsule it already is, so the wave (centre) lights
+/// up first and the left mark (far left) arrives last.
+#[allow(clippy::too_many_arguments)]
 fn paint_wave_body(
     pixmap: &mut Pixmap,
     geom: PillGeom,
@@ -1635,14 +1776,22 @@ fn paint_wave_body(
     themed_dot: Option<[u8; 3]>,
     icon: Option<&Pixmap>,
     wave: &WaveField,
+    open: f32,
 ) {
     let (x0, x1) = geom.body_x();
+    let opening = open < 1.0;
+    // The edges the reveal is measured against. At rest these ARE `body_x`.
+    let (bx0, bx1) = if opening {
+        geom.body_x_open(open)
+    } else {
+        (x0, x1)
+    };
     let cy = geom.y_off + geom.body_h / 2.0;
 
     let ink = themed_dot.unwrap_or(match state {
         PillState::Recording if prompt_recording => WAVE_INK_PROMPT,
         PillState::Recording => WAVE_INK,
-        PillState::Processing => ACCENT,
+        PillState::Processing => WAVE_INK_PROCESSING,
         PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
     });
 
@@ -1667,9 +1816,21 @@ fn paint_wave_body(
         PillState::Processing => 0.75 + 0.25 * (wave.clock * 3.6).sin(),
         PillState::Idle | PillState::Fallback => 0.55,
     }
-    .clamp(0.0, 1.0);
+    .clamp(0.0, 1.0)
+        // [GRAIN] The left mark is the LAST thing the opening capsule uncovers:
+        // it only starts fading up once the growing left edge has reached its
+        // slot. Scaling opacity, never geometry — the icon is never resampled.
+        * if opening {
+            open_gate(slot_x - bx0)
+        } else {
+            1.0
+        };
 
     match icon {
+        // Below a quarter of a percent the mark is not on screen in any
+        // meaningful sense; skipping it keeps the earliest opening frames to
+        // the capsule and its waveform alone.
+        _ if mark_a <= 0.004 => {}
         Some(icon) => {
             // Already scaled to its draw size, so this is a straight blit. Round
             // the origin so it lands on whole pixels — a half-pixel offset on
@@ -1722,6 +1883,7 @@ fn paint_wave_body(
         wave,
         ink,
         1.0,
+        opening.then_some((bx0, bx1)),
     );
 }
 
@@ -1732,6 +1894,13 @@ fn paint_wave_body(
 /// half-sine taper softens the edges so the row tapers toward the tips rather
 /// than chopping off square.
 #[allow(clippy::too_many_arguments)]
+///
+/// [GRAIN] `reveal` is the opening capsule's current interior (`None` once the
+/// pill is open — the settled path, which pays nothing for this). While it is
+/// `Some`, each bar is lit by how far inside those edges it sits, so the row
+/// unfurls from the middle outward as the capsule grows around it. The bars
+/// themselves never move: the row is laid out at its final width throughout, so
+/// the physics keeps the same bar count and no spring is ever re-indexed.
 fn draw_wave_bars(
     pixmap: &mut Pixmap,
     x: f32,
@@ -1741,6 +1910,7 @@ fn draw_wave_bars(
     field: &WaveField,
     color: [u8; 3],
     alpha: f32,
+    reveal: Option<(f32, f32)>,
 ) {
     let a = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
     if w <= 0.5 || a == 0 {
@@ -1775,6 +1945,20 @@ fn draw_wave_bars(
         let h = WAVE_BAR_MIN_H + field.bar(i) * reach;
         let bx = x0 + i as f32 * pitch;
         let by = cy - h / 2.0;
+        if let Some((rx0, rx1)) = reveal {
+            // Whichever edge is nearer decides: a bar is lit only once BOTH are
+            // clear of it, which is what makes the row grow outward evenly.
+            let gate = open_gate((bx - rx0).min(rx1 - (bx + WAVE_BAR_W)));
+            if gate <= 0.004 {
+                continue;
+            }
+            paint.set_color(Color::from_rgba8(
+                color[0],
+                color[1],
+                color[2],
+                (gate * a as f32) as u8,
+            ));
+        }
         if let Some(path) = rounded_rect_path(bx, by, WAVE_BAR_W, h, r) {
             pixmap.fill_path(
                 &path,
@@ -2291,6 +2475,28 @@ fn studio_card_height(n: usize) -> f32 {
     top_gap + n as f32 * STUDIO_LINE_HEIGHT + STUDIO_CTRL_H + STUDIO_BOTTOM_PAD
 }
 
+/// [GRAIN] Hit rect of the Studio card's cancel (×) control, derived from the
+/// SAME geometry `paint_studio_card`/`draw_control_row` draw it with, so the
+/// visible disc and the clickable area can never drift apart. `None` until the
+/// card has opened far enough for the side controls to have faded in — the
+/// button must not be clickable while it is still invisible.
+fn studio_cancel_rect(card_h: f32, expand: f32) -> Option<HitRect> {
+    let expand = expand.clamp(0.0, 1.0);
+    if expand < STUDIO_TEXT_GATE {
+        return None;
+    }
+    let (w, h) = studio_pixel_size();
+    let (wf, hf) = (w as f32, h as f32);
+    let card_h = card_h.clamp(studio_card_height(0), hf);
+    let card_top = hf - card_h;
+    let cap_w = STUDIO_MIN_W + (wf - STUDIO_MIN_W) * expand;
+    let cap_right = (wf - cap_w) / 2.0 + cap_w;
+    let cx = cap_right - STUDIO_PAD - X_BUTTON_R;
+    let cy = card_top + card_h - STUDIO_CTRL_H - STUDIO_BOTTOM_PAD + STUDIO_CTRL_H / 2.0;
+    let r = X_BUTTON_R + X_HIT_SLOP;
+    Some((cx - r, cy - r, cx + r, cy + r))
+}
+
 /// How many lines the current transcript wraps to at the Studio width (before
 /// the cap) — this drives the card's grow height. `1` when empty so a fresh
 /// session opens at its smallest size rather than flashing tall.
@@ -2505,9 +2711,11 @@ fn draw_control_row(
         _ => draw_spinner(pixmap, left_cx, cy, phase, side),
     }
 
-    // RIGHT — cancel glyph (display-only), 22px circle inset from the edge.
-    let x_cx = cap_right - STUDIO_PAD - 11.0;
-    draw_x_button(pixmap, x_cx, cy, side);
+    // RIGHT — cancel button, a 22px circle inset from the edge. Its hit rect is
+    // `studio_cancel_rect`, derived from this same geometry; the hovered pass is
+    // overdrawn by the caller (which owns the cursor).
+    let x_cx = cap_right - STUDIO_PAD - X_BUTTON_R;
+    draw_x_button(pixmap, x_cx, cy, side, false);
 
     // CENTER — the active skin's voice visualisation, centred on the card.
     let (w, _) = studio_pixel_size();
@@ -2517,7 +2725,7 @@ fn draw_control_row(
             // expanding the pill does not change the waveform's language.
             let ink = match state {
                 PillState::Recording => WAVE_INK,
-                PillState::Processing => ACCENT,
+                PillState::Processing => WAVE_INK_PROCESSING,
                 PillState::Idle | PillState::Fallback => WAVE_INK_IDLE,
             };
             draw_wave_bars(
@@ -2529,6 +2737,9 @@ fn draw_control_row(
                 wave,
                 ink,
                 fade,
+                // The card has its own grow (`studio_expand`); the collapsed
+                // pill's reveal does not follow it in here.
+                None,
             );
         }
         PillSkin::Matrix => {
@@ -2607,6 +2818,9 @@ fn draw_rec_dot(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
 }
 
 /// A rotating dot-ring spinner (the finalizing indicator, Handy's `.sspinner`).
+/// It wears `WAVE_INK_PROCESSING`, not the record accent: the record dot beside
+/// it is the only thing on the pill allowed to be warm, and the spinner means
+/// the opposite of recording.
 fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
     let mut p = Paint {
         anti_alias: true,
@@ -2622,7 +2836,12 @@ fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
         let dx = cx + ang.cos() * r;
         let dy = cy + ang.sin() * r;
         if let Some(c) = PathBuilder::from_circle(dx, dy, 1.4) {
-            p.set_color(Color::from_rgba8(ACCENT[0], ACCENT[1], ACCENT[2], a));
+            p.set_color(Color::from_rgba8(
+                WAVE_INK_PROCESSING[0],
+                WAVE_INK_PROCESSING[1],
+                WAVE_INK_PROCESSING[2],
+                a,
+            ));
             pixmap.fill_path(&c, &p, FillRule::Winding, Transform::identity(), None);
         }
     }
@@ -2631,20 +2850,28 @@ fn draw_spinner(pixmap: &mut Pixmap, cx: f32, cy: f32, phase: f32, fade: f32) {
 /// The circular cancel affordance — a subtle hairline disc with a muted ✗
 /// (Handy's `.sx`). Display-only: it is drawn for visual parity but the pill has
 /// no back-channel to trigger a cancel yet.
-fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32) {
+fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32, hover: bool) {
     let mut bg = Paint {
         anti_alias: true,
         ..Default::default()
     };
-    bg.set_color(Color::from_rgba8(255, 255, 255, (16.0 * fade) as u8));
-    if let Some(c) = PathBuilder::from_circle(cx, cy, 11.0) {
+    // [GRAIN] Hovered, the disc lifts and the glyph goes to full cream — the
+    // only feedback the control needs, drawn over the resting one at identical
+    // geometry (a more opaque pass, so nothing shows through).
+    let (bg_a, ink, ink_a) = if hover {
+        (40.0, [236, 229, 218], 255.0)
+    } else {
+        (16.0, [168, 168, 168], 235.0)
+    };
+    bg.set_color(Color::from_rgba8(255, 255, 255, (bg_a * fade) as u8));
+    if let Some(c) = PathBuilder::from_circle(cx, cy, X_BUTTON_R) {
         pixmap.fill_path(&c, &bg, FillRule::Winding, Transform::identity(), None);
     }
     let mut stroke_paint = Paint {
         anti_alias: true,
         ..Default::default()
     };
-    stroke_paint.set_color(Color::from_rgba8(168, 168, 168, (fade * 235.0) as u8));
+    stroke_paint.set_color(Color::from_rgba8(ink[0], ink[1], ink[2], (fade * ink_a) as u8));
     let d = 3.8;
     let mut pb = PathBuilder::new();
     pb.move_to(cx - d, cy - d);
@@ -2659,66 +2886,6 @@ fn draw_x_button(pixmap: &mut Pixmap, cx: f32, cy: f32, fade: f32) {
         };
         pixmap.stroke_path(&path, &stroke_paint, &stroke, Transform::identity(), None);
     }
-}
-
-// ── Mic capture (direct, low-latency) ───────────────────────────────────────
-
-fn start_mic(amp: Arc<AtomicU32>) -> Option<cpal::Stream> {
-    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
-    let device = cpal::default_host().default_input_device()?;
-    let supported = device.default_input_config().ok()?;
-    let sample_format = supported.sample_format();
-    let config: cpal::StreamConfig = supported.into();
-    let err_fn = |e| eprintln!("mic stream error: {e}");
-
-    let shape = move |rms: f32| {
-        let floor = 0.008_f32;
-        let gated = if rms < floor {
-            0.0
-        } else {
-            (rms - floor) / (1.0 - floor)
-        };
-        let reference = 0.15_f32;
-        let shaped = (gated / reference).min(1.0).sqrt();
-        amp.store(shaped.to_bits(), Ordering::Relaxed);
-    };
-
-    let stream = match sample_format {
-        cpal::SampleFormat::F32 => device
-            .build_input_stream(
-                &config,
-                move |data: &[f32], _: &_| {
-                    let n = data.len().max(1) as f32;
-                    let sum: f32 = data.iter().map(|s| s * s).sum();
-                    shape((sum / n).sqrt());
-                },
-                err_fn,
-                None,
-            )
-            .ok()?,
-        cpal::SampleFormat::I16 => device
-            .build_input_stream(
-                &config,
-                move |data: &[i16], _: &_| {
-                    let n = data.len().max(1) as f32;
-                    let sum: f32 = data
-                        .iter()
-                        .map(|&s| {
-                            let f = s as f32 / 32768.0;
-                            f * f
-                        })
-                        .sum();
-                    shape((sum / n).sqrt());
-                },
-                err_fn,
-                None,
-            )
-            .ok()?,
-        _ => return None,
-    };
-    stream.play().ok()?;
-    Some(stream)
 }
 
 // ── Win32 layered-window presentation (true per-pixel transparency) ─────────
@@ -2989,6 +3156,10 @@ mod present {
 #[derive(Clone)]
 struct Remote {
     state: PillState,
+    /// Scalar energy derived from the configured recorder's normalized vocal
+    /// spectrum. Unlike a second CPAL stream, this always follows Grain's
+    /// selected microphone and channel.
+    amp: f32,
     visible: bool,
     /// Where the pill anchors; `None` means the user disabled the overlay, so the
     /// pill never shows regardless of session events.
@@ -2998,6 +3169,11 @@ struct Remote {
     /// and trigger the riser (+ a brief reveal when idle).
     prompt_name: String,
     prompt_seq: u64,
+    /// [GRAIN] Bumped by `PromptActive` — the SAME `prompt_name`, announced
+    /// without a switch (session start). It refreshes the switcher's label so a
+    /// hover-revealed capsule reads the current title, and must never arm the
+    /// riser or reveal an idle pill the way `prompt_seq` does.
+    prompt_active_seq: u64,
     /// Bumped whenever Paste Catch publishes a missed transcript to the
     /// clipboard. The pill owns the acknowledgement's short visual lifetime.
     clipboard_notice_seq: u64,
@@ -3068,10 +3244,12 @@ impl Default for Remote {
     fn default() -> Self {
         Remote {
             state: PillState::Idle,
+            amp: 0.0,
             visible: false,
             anchor: OverlayPosition::Bottom,
             prompt_name: String::new(),
             prompt_seq: 0,
+            prompt_active_seq: 0,
             clipboard_notice_seq: 0,
             clipboard_notice_clear_seq: 0,
             mode: PillMode::Collapsed,
@@ -3094,6 +3272,26 @@ impl Default for Remote {
     }
 }
 
+/// Collapse the recorder's normalized vocal-frequency buckets to one stable
+/// waveform input. RMS keeps broad speech energy prominent without letting one
+/// noisy frequency bin dominate; malformed values are ignored at the process
+/// boundary and the result remains in the renderer's documented 0..1 range.
+fn audio_level_amp(levels: &[f32]) -> f32 {
+    let (sum_squares, count) = levels
+        .iter()
+        .copied()
+        .filter(|level| level.is_finite())
+        .map(|level| level.clamp(0.0, 1.0))
+        .fold((0.0_f32, 0_u32), |(sum, count), level| {
+            (sum + level * level, count + 1)
+        });
+    if count == 0 {
+        0.0
+    } else {
+        (sum_squares / count as f32).sqrt().clamp(0.0, 1.0)
+    }
+}
+
 fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
     let mut r = remote.lock().unwrap();
     // When the overlay is disabled (None), no session event may reveal the pill.
@@ -3111,6 +3309,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
         // recording; processing only appears after the stop signal.
         DaemonEvent::RecordingStarted { mode, owner, .. } => {
             r.state = PillState::Recording;
+            r.amp = 0.0;
             r.visible = can_show(&r);
             // [GRAIN] Every session opens as the small collapsed capsule. A live
             // STREAMING session (Native ASR / rolling live preview) is allowed to
@@ -3131,8 +3330,15 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
         }
+        // The backend recorder already emits these normalized buckets at ~30
+        // FPS from the configured device. Keep the reducer silent: logging this
+        // high-frequency event would flood the application log.
+        DaemonEvent::AudioLevel { levels } if r.state == PillState::Recording => {
+            r.amp = audio_level_amp(&levels);
+        }
         DaemonEvent::RecordingStopped { .. } => {
             r.state = PillState::Processing;
+            r.amp = 0.0;
             r.visible = can_show(&r);
             r.prompt_recording = false; // recording over → drop the blue tint.
             eprintln!("event: RecordingStopped -> processing");
@@ -3150,6 +3356,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             // idle (see `is_centered_overlay_only`) instead of leaking the stale
             // `Processing` body beside the capsule.
             r.state = PillState::Idle;
+            r.amp = 0.0;
             r.visible = false;
             if r.session_owner.take().is_some() {
                 r.session_owner_seq = r.session_owner_seq.wrapping_add(1);
@@ -3168,6 +3375,13 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.prompt_name = name;
             r.prompt_seq = r.prompt_seq.wrapping_add(1);
             eprintln!("event: PromptChanged -> riser");
+        }
+        // [GRAIN] The active prompt, announced without a switch (session start).
+        // Only the label is refreshed — no riser, no reveal — so the switcher
+        // already carries the right title whenever a hover brings it up.
+        DaemonEvent::PromptActive { name } => {
+            r.prompt_name = name;
+            r.prompt_active_seq = r.prompt_active_seq.wrapping_add(1);
         }
         // [GRAIN] Paste Catch already wrote the transcript before emitting this
         // event. Collapse any finished Studio surface and let the existing
@@ -3275,7 +3489,7 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             });
             r.icon_seq = r.icon_seq.wrapping_add(1);
         }
-        _ => {} // AudioLevel / Asr* after the freeze / etc. — not a state change
+        _ => {} // AudioLevel while idle / Asr* after the freeze / etc.
     }
 
     // [GRAIN] First-word expand / "scrap that" collapse. A streaming session flips
@@ -3572,17 +3786,18 @@ struct App {
     /// collapsed pill's blue dot tint and the Studio waveform's sky-blue tint — the
     /// sole visual indicator of Prompt Record.
     prompt_recording: bool,
-    amp: Arc<AtomicU32>,
-    _mic: Option<cpal::Stream>,
-    sim_target: f32,
-    sim_amp: f32,
+    amp: f32,
     font: Option<fontdue::Font>,
     prompts: Vec<String>,
     prompt_idx: usize,
     // [GRAIN] WS-driven riser label + change detection + transient idle reveal.
     prompt_label: String,
     cached_label: Option<CachedText>,
+    /// The Prompt Record capsule's fixed label, rasterized once (see
+    /// `ensure_record_label`). Dropped with the font on the idle-free.
+    cached_record_label: Option<CachedText>,
     last_prompt_seq: u64,
+    last_prompt_active_seq: u64,
     prompt_preview_until: Option<Instant>,
     /// Short, renderer-owned acknowledgement for `PasteMissed`. It deliberately
     /// has no core timer/thread and never changes Paste Catch's hold lifecycle.
@@ -3621,6 +3836,21 @@ struct App {
     prompt_record_hold_until: Option<Instant>,
     prompt_record_hover_progress: f32,
     prompt_record_rect: Option<(f32, f32, f32, f32)>,
+    /// [GRAIN] The Studio card's cancel (×) rect as last drawn, or `None` on any
+    /// other surface / before the card is open. A click inside it cancels the
+    /// session exactly as the Cancel shortcut does.
+    cancel_rect: Option<HitRect>,
+    cancel_hover: bool,
+    /// [GRAIN] The Studio switcher's `‹`/`›` targets (prev, next) as last drawn.
+    /// A click cycles the active prompt through the core — the same action the
+    /// switcher shortcut runs. `None` on every other surface.
+    prompt_cycle_rects: Option<(HitRect, HitRect)>,
+    /// Which arrow the cursor is on: `-1` previous, `1` next, `0` neither.
+    prompt_arrow_hover: i32,
+    /// Whether the cursor is over the window at all. `cursor_pos` keeps its last
+    /// value after the cursor leaves, so anything re-evaluated per frame (rather
+    /// than on `CursorMoved`) needs this to know that value is still live.
+    cursor_inside: bool,
     /// Live keyboard modifiers (Ctrl+Backspace word delete, Ctrl+V paste).
     ctrl_down: bool,
     /// [GRAIN] Shift held — Capture submits the note on Shift/Ctrl+Enter (plain
@@ -3674,16 +3904,18 @@ struct App {
     /// [GRAIN] First-seen time per transcript word (global order) — drives the
     /// per-word fade-in. Grows as words are decoded; cleared each new session.
     reveal_since: Vec<Instant>,
+    /// [GRAIN] When the collapsed capsule started opening. Cleared the moment the
+    /// animation completes, so a pill that is simply on screen carries no
+    /// per-frame animation state at all.
+    open_at: Option<Instant>,
+    /// LINEAR 0..1 progress of that open, recomputed once per frame from
+    /// `open_at`; the easing lives in the draw. `1.0` = fully open, which is what
+    /// every surface other than the collapsed pill always sees.
+    open_t: f32,
 }
 
 impl App {
     fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
-        let amp = Arc::new(AtomicU32::new(0));
-        // [GRAIN] The mic is NOT opened at startup. The pill is always-on but
-        // hidden between dictations; holding a capture stream open 24/7 wastes RAM,
-        // wakes the audio callback for nothing, and keeps the mic device busy (OS
-        // "mic in use" indicator). We open it only while the pill is visible and
-        // close it on hide — see `about_to_wait`.
         let remote = Arc::new(Mutex::new(Remote::default()));
         // [GRAIN] Reverse channel for explicit pill controls. Unbounded so the
         // winit thread never blocks handing an action to the async WS task.
@@ -3701,10 +3933,7 @@ impl App {
             state: PillState::Idle,
             theme: None,
             prompt_recording: false,
-            amp,
-            _mic: None,
-            sim_target: 0.5,
-            sim_amp: 0.0,
+            amp: 0.0,
             // [GRAIN] The single shared font loads LAZILY (on the first text
             // render) and is freed after a long idle — so the always-on pill
             // doesn't hold a parsed font while it sits hidden.
@@ -3716,7 +3945,9 @@ impl App {
             prompt_idx: 0,
             prompt_label: String::new(),
             cached_label: None,
+            cached_record_label: None,
             last_prompt_seq: 0,
+            last_prompt_active_seq: 0,
             prompt_preview_until: None,
             clipboard_notice: false,
             clipboard_notice_until: None,
@@ -3737,6 +3968,11 @@ impl App {
             prompt_record_hold_until: None,
             prompt_record_hover_progress: 0.0,
             prompt_record_rect: None,
+            cancel_rect: None,
+            cancel_hover: false,
+            prompt_cycle_rects: None,
+            prompt_arrow_hover: 0,
+            cursor_inside: false,
             ctrl_down: false,
             shift_down: false,
             fallback_font: None,
@@ -3760,6 +3996,8 @@ impl App {
             studio_grown_h: 0.0,
             studio_expand: 0.0,
             reveal_since: Vec::new(),
+            open_at: None,
+            open_t: 1.0,
         }
     }
 
@@ -3806,6 +4044,16 @@ impl App {
         point_in_rect(self.cursor_pos, rect)
     }
 
+    /// Which switcher arrow the cursor is on: `-1` previous, `1` next, `0`
+    /// neither. Drives both the hover highlight and the click.
+    fn arrow_under_cursor(&self) -> i32 {
+        match self.prompt_cycle_rects {
+            Some((prev, _)) if self.cursor_in_rect(prev) => -1,
+            Some((_, next)) if self.cursor_in_rect(next) => 1,
+            _ => 0,
+        }
+    }
+
     fn set_prompt_record_hover(&mut self, hovered: bool) {
         if hovered {
             self.prompt_record_hover = true;
@@ -3838,6 +4086,20 @@ impl App {
                 let (w, h) = Self::win_size_for(PillMode::Studio, self.skin);
                 let card_h = self.studio_grown_h.clamp(studio_card_height(0), h as f32);
                 self.cursor_in_rect((0.0, h as f32 - card_h, w as f32, h as f32))
+                    // [GRAIN] The band's own controls are reveal surfaces in
+                    // their own right, not just things the reveal produced.
+                    // Reading a prompt name and stepping through the list takes
+                    // time, and the row must not withdraw from under the cursor
+                    // that is using it. Leaving them restarts the hold like
+                    // leaving the card does. This is also how a switcher that
+                    // came up alone (a plain prompt switch) offers Record: hover
+                    // it and the row makes room.
+                    || self
+                        .prompt_switch_rect
+                        .is_some_and(|rect| self.cursor_in_rect(rect))
+                    || self
+                        .prompt_record_rect
+                        .is_some_and(|rect| self.cursor_in_rect(rect))
             }
             PillMode::AgentInput => false,
         };
@@ -3879,7 +4141,7 @@ impl App {
         // "move the pill down" means a smaller gap at the bottom and a larger
         // one at the top — one shared number silently moves one of them the
         // wrong way. Applies to the collapsed pill and the Studio card alike.
-        let bottom_margin = (7.0 * SCALE) as i32;
+        let bottom_margin = (PILL_BOTTOM_MARGIN * SCALE) as i32;
         // [GRAIN] Horizontally center the CONTENT (`center_w`), not the full window.
         // The collapsed window is wider than the pill (transparent reserve to the
         // right for the sibling capsule); centering on the pill's own width keeps
@@ -3924,10 +4186,10 @@ impl App {
         let x = mp.x + ((ms.width.saturating_sub(w)) / 2) as i32;
         let (cx, cy) = (mp.x + (ms.width / 2) as i32, mp.y + (ms.height / 2) as i32);
         let y = match anchor {
-            OverlayPosition::Top => work_area_top(cx, cy).unwrap_or(mp.y) + AIN_EDGE_MARGIN,
+            OverlayPosition::Top => work_area_top(cx, cy).unwrap_or(mp.y) + AIN_TOP_MARGIN,
             _ => {
                 let bottom = work_area_bottom(cx, cy).unwrap_or(mp.y + ms.height as i32);
-                bottom - h as i32 - AIN_EDGE_MARGIN
+                bottom - h as i32 - AIN_BOTTOM_MARGIN
             }
         };
         window.set_outer_position(PhysicalPosition::new(x, y));
@@ -4096,10 +4358,14 @@ impl App {
     /// follow-up offer, within the arrow-less capsule).
     fn prompt_label_max(&self) -> f32 {
         match self.mode {
-            // Studio top capsule: full card width, arrows at a fixed inset.
-            PillMode::Studio => {
-                (STUDIO_W - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD).max(0.0)
-            }
+            // Studio top capsule, measured at its CONTRACTED width (Record
+            // revealed). The capsule's width animates but the label is
+            // rasterized once — fitting it to the narrowest state is what keeps
+            // it from overflowing when the row makes room for Record.
+            PillMode::Studio => (studio_top_switch_w(1.0)
+                - 2.0 * STUDIO_TOP_ARROW_INSET
+                - 2.0 * SIB_TEXT_PAD)
+                .max(0.0),
             // Collapsed sibling: the arrow-less offer fills its max width; the
             // switcher fits between its arrows in the fixed-width capsule.
             _ if self.agent_offer.is_some() || self.session_owner.is_some() => {
@@ -4115,18 +4381,6 @@ impl App {
         CELL * SCALE
     }
 
-    fn current_amp(&mut self) -> f32 {
-        if self._mic.is_some() {
-            f32::from_bits(self.amp.load(Ordering::Relaxed))
-        } else {
-            if self.aura.rng.f32() < 0.15 {
-                self.sim_target = 0.15 + self.aura.rng.f32() * 0.8;
-            }
-            self.sim_amp += (self.sim_target - self.sim_amp) * 0.35;
-            self.sim_amp
-        }
-    }
-
     /// Dispatch to whichever surface is current. The two are independent,
     /// fixed-size renderers (see `win_size_for`) — never mixed in one frame.
     fn render(&mut self) {
@@ -4134,11 +4388,26 @@ impl App {
         // sure the single shared font is resident before we render a frame. It
         // loads once here (lazy) and is dropped again after a long idle.
         self.ensure_font();
+        // The cancel × and the switcher's arrows are Studio-card controls; clear
+        // them up front so no other surface inherits a stale clickable rect.
+        self.cancel_rect = None;
+        self.prompt_cycle_rects = None;
         match self.mode {
             PillMode::Collapsed => self.render_collapsed(),
             PillMode::Studio => self.render_studio(),
             PillMode::AgentInput => self.render_agent_input(),
         }
+        if self.cancel_rect.is_none() {
+            self.cancel_hover = false;
+        }
+        // The arrows move while the row contracts, so a cursor that is holding
+        // still can end up highlighting an arrow that has slid out from under
+        // it. Re-read the targets each frame rather than only on cursor motion.
+        self.prompt_arrow_hover = if self.cursor_inside {
+            self.arrow_under_cursor()
+        } else {
+            0
+        };
     }
 
     /// Lazily load the bundled primary font (idempotent). Called before each
@@ -4262,9 +4531,9 @@ impl App {
         // Anchored to the canvas edge nearest the screen edge, so the card
         // grows AWAY from it (upward at the bottom, downward at the top).
         let card_y = if anchored_top {
-            1.0
+            AIN_CARD_INSET
         } else {
-            h as f32 - card_h - 1.0
+            h as f32 - card_h - AIN_CARD_INSET
         };
         ui.card_rect = (card_x, card_y, card_x + card_w, card_y + card_h);
 
@@ -4803,6 +5072,21 @@ impl App {
         let r = geom.radius();
         let (x0, x1) = geom.body_x();
 
+        // [GRAIN] The opening capsule. `open` drives WIDTH (with a small settle
+        // past its final size) and `open_a` the surface's fade — the fade runs
+        // over the first third only, so the pill reads as present immediately
+        // and it is just its shape that is still arriving. Both are exactly 1.0
+        // once the animation finishes, and from then on every branch below is
+        // the code that shipped.
+        let open = ease_out_back(self.open_t);
+        let open_a = ease_out_cubic((self.open_t / OPEN_FADE).min(1.0));
+        let opening = self.open_t < 1.0;
+        let (bx0, bx1) = if opening {
+            geom.body_x_open(open)
+        } else {
+            (x0, x1)
+        };
+
         // [GRAIN] Centered overlay-only: the pill is visible ONLY to show a
         // transient capsule (idle prompt-switch preview or agent follow-up
         // offer), no session. Drop the body + dot aura and render the capsule
@@ -4846,7 +5130,7 @@ impl App {
             // now that `rounded_rect_path` is cubic it traces the same shape, and
             // sharing it with the rim below guarantees the two cannot disagree
             // about where the edge is.
-            if let Some(path) = rounded_rect_path(x0, y_off, x1 - x0, pill_h, r) {
+            if let Some(path) = rounded_rect_path(bx0, y_off, bx1 - bx0, pill_h, r) {
                 pixmap.fill_path(&path, &body, FillRule::Winding, Transform::identity(), None);
             }
             // …and its hairline rim, so the capsule keeps its edge against a
@@ -4856,13 +5140,13 @@ impl App {
                 .and_then(|t| t.background)
                 .is_none()
             {
-                stroke_grain_rim(&mut pixmap, x0, y_off, x1 - x0, pill_h, r, 1.0);
+                stroke_grain_rim(&mut pixmap, bx0, y_off, bx1 - bx0, pill_h, r, 1.0);
             }
 
             // 2) The voice visualisation — whichever the active skin defines.
             match self.skin {
-                PillSkin::Matrix => self.draw_matrix_body(&mut pixmap, y_off),
-                PillSkin::Wave => self.draw_wave_body(&mut pixmap, geom),
+                PillSkin::Matrix => self.draw_matrix_body(&mut pixmap, y_off, opening, bx0, bx1),
+                PillSkin::Wave => self.draw_wave_body(&mut pixmap, geom, open),
             }
         }
 
@@ -4893,8 +5177,11 @@ impl App {
         // withdrawal). The pixmap is premultiplied RGBA, so scaling every byte
         // uniformly preserves the premultiplication invariant. No-op at full
         // opacity; the pixmap is tiny, so the pass is negligible.
-        if self.studio_alpha < 0.995 {
-            let f = self.studio_alpha.clamp(0.0, 1.0);
+        // [GRAIN] The open's own fade rides the same pass — one multiply for
+        // both, so opening costs nothing extra here.
+        let surface_a = self.studio_alpha.min(open_a);
+        if surface_a < 0.995 {
+            let f = surface_a.clamp(0.0, 1.0);
             for b in pixmap.data_mut() {
                 *b = (*b as f32 * f) as u8;
             }
@@ -5007,26 +5294,47 @@ impl App {
             self.icon.as_ref(),
         );
 
-        // [GRAIN] Prompt switcher — the same mid-speech switch as the collapsed
-        // pill, here a full-width capsule that slides UP into the reserved band
-        // above the transcript card. Drawn AFTER the card; the two share the same
-        // near-black fill, so the capsule's lower edge tucking behind the card
-        // during the slide is seamless (identical color over identical color).
-        if self.prompt_record_hover_progress > 0.01 {
+        // [GRAIN] The top band — ONE row above the transcript card carrying the
+        // prompt switcher (left, wider) and the Prompt Record action (right).
+        // Together they span exactly the card width. Both slide up out of the
+        // card on the SHARED progress so the row moves as one piece, but each
+        // fades on its own trigger: a mid-speech prompt switch reveals only the
+        // switcher, a hover reveals both. Drawn AFTER the card — the two share
+        // its near-black fill, so the slide out from behind its edge is seamless.
+        let hover_p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
+        let band_p = hover_p.max(self.riser_progress.clamp(0.0, 1.0));
+        if band_p > 0.01 {
             let hf = h as f32;
             let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
             let card_top = hf - card_h;
-            self.draw_studio_prompt_record(&mut pixmap, w as f32, card_top, fade);
-            self.prompt_switch_rect = None;
-        } else if self.riser_progress > 0.01 {
-            let hf = h as f32;
-            let card_h = self.studio_grown_h.clamp(studio_card_height(0), hf);
-            let card_top = hf - card_h;
-            self.draw_studio_top_pill(&mut pixmap, w as f32, card_top, fade);
-            self.prompt_record_rect = None;
+            let top = card_top - (STUDIO_TOP_GAP + STUDIO_TOP_PILL_H) * band_p;
+            // One eased value drives both halves of the handover, split at
+            // STUDIO_TOP_HANDOVER so the space is cleared before it is filled.
+            let record = eased_progress(hover_p);
+            let contract = (record / STUDIO_TOP_HANDOVER).min(1.0);
+            let reveal =
+                ((record - STUDIO_TOP_HANDOVER) / (1.0 - STUDIO_TOP_HANDOVER)).clamp(0.0, 1.0);
+            self.draw_studio_top_pill(&mut pixmap, top, band_p * fade, contract);
+            if reveal > 0.01 {
+                self.draw_studio_prompt_record(&mut pixmap, w as f32, top, reveal * fade);
+            } else {
+                // Never leave a rect for a button that has not appeared yet.
+                self.prompt_record_rect = None;
+            }
         } else {
             self.prompt_switch_rect = None;
+            self.prompt_cycle_rects = None;
             self.prompt_record_rect = None;
+        }
+
+        // [GRAIN] The cancel × is a real control, not decoration: remember the
+        // rect the control row drew it at so a click can fire the same teardown
+        // as the Cancel shortcut, and brighten it in place while hovered.
+        self.cancel_rect = studio_cancel_rect(self.studio_grown_h, self.studio_expand);
+        if self.cancel_hover {
+            if let Some((x0, y0, x1, y1)) = self.cancel_rect {
+                draw_x_button(&mut pixmap, (x0 + x1) / 2.0, (y0 + y1) / 2.0, fade, true);
+            }
         }
 
         if let Some(presenter) = &self.presenter {
@@ -5037,7 +5345,11 @@ impl App {
 
     /// [GRAIN] `PillSkin::Matrix` body — the original dot-matrix aura. Unchanged
     /// from when it was the default; it simply no longer is one.
-    fn draw_matrix_body(&self, pixmap: &mut Pixmap, y_off: f32) {
+    ///
+    /// While `opening`, a dot is lit only once the growing capsule (`bx0`..`bx1`)
+    /// has uncovered its column — the same centre-outward reveal the wave skin
+    /// gets, expressed in the grid's own terms.
+    fn draw_matrix_body(&self, pixmap: &mut Pixmap, y_off: f32, opening: bool, bx0: f32, bx1: f32) {
         let cell_px = Self::cell_px();
         let dots = &self.aura.dots;
         let radius = DOT_D * SCALE / 2.0;
@@ -5056,8 +5368,21 @@ impl App {
                 }
                 let dx = col as f32 * cell_px + cell_px / 2.0;
                 let dy = y_off + row as f32 * cell_px + cell_px / 2.0;
+                let gate = if opening {
+                    open_gate((dx - bx0).min(bx1 - dx))
+                } else {
+                    1.0
+                };
+                if gate <= 0.004 {
+                    continue;
+                }
                 if let Some(circle) = PathBuilder::from_circle(dx, dy, radius) {
-                    paint.set_color(Color::from_rgba8(c[0], c[1], c[2], c[3]));
+                    paint.set_color(Color::from_rgba8(
+                        c[0],
+                        c[1],
+                        c[2],
+                        (c[3] as f32 * gate) as u8,
+                    ));
                     pixmap.fill_path(
                         &circle,
                         &paint,
@@ -5076,7 +5401,7 @@ impl App {
     /// First-pass proportions; the `WAVE_*` consts are the dial board for the
     /// final visual spec. A theme's `dot` colour still wins over the state ink,
     /// so an extension theme keeps working across a skin change.
-    fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom) {
+    fn draw_wave_body(&self, pixmap: &mut Pixmap, geom: PillGeom, open: f32) {
         paint_wave_body(
             pixmap,
             geom,
@@ -5085,6 +5410,7 @@ impl App {
             theme_for_state(self.theme.as_ref(), self.state).and_then(|t| t.dot),
             self.icon.as_ref(),
             &self.wave,
+            open,
         );
     }
 
@@ -5114,22 +5440,27 @@ impl App {
             .map_or(WAVE_DOT_R * 2.0, |i| i.width() as f32)
     }
 
-    /// Draw the explicit Prompt Record action as a full-round, icon-only button.
-    /// Its sparkle is a prebuilt pixmap and takes the same straight-blit path as
-    /// the foreground application icon.
+    /// Draw the explicit Prompt Record action into `w × h` at `(left, top)`.
+    /// With `label = None` it is the collapsed pill's round, icon-only button
+    /// (`w == h`); with a label it is the Studio band's capsule — sparkle on the
+    /// LEFT, word on the right, the pair centered as one group. The sparkle is a
+    /// prebuilt pixmap and takes the same straight-blit path as the foreground
+    /// application icon; the label is pre-rasterized once (`CachedText`).
     fn draw_prompt_record_button(
         &self,
         pixmap: &mut Pixmap,
         left: f32,
         top: f32,
-        diameter: f32,
+        w: f32,
+        h: f32,
         alpha: f32,
+        label: Option<&CachedText>,
     ) {
         let alpha = alpha.clamp(0.0, 1.0);
-        if alpha < 0.01 || diameter <= 0.0 {
+        if alpha < 0.01 || w <= 0.0 || h <= 0.0 {
             return;
         }
-        let radius = diameter / 2.0;
+        let radius = (h / 2.0).min(w / 2.0);
         let mut fill = Paint {
             anti_alias: true,
             ..Default::default()
@@ -5140,13 +5471,20 @@ impl App {
             GRAIN_SURFACE[2],
             (alpha * GRAIN_CARD_A) as u8,
         ));
-        if let Some(path) = PathBuilder::from_circle(left + radius, top + radius, radius) {
+        if let Some(path) = rounded_rect_path(left, top, w, h, radius) {
             pixmap.fill_path(&path, &fill, FillRule::Winding, Transform::identity(), None);
         }
-        stroke_grain_rim(pixmap, left, top, diameter, diameter, radius, alpha);
+        stroke_grain_rim(pixmap, left, top, w, h, radius, alpha);
 
-        let ix = (left + (diameter - self.prompt_record_icon.width() as f32) / 2.0).round() as i32;
-        let iy = (top + (diameter - self.prompt_record_icon.height() as f32) / 2.0).round() as i32;
+        // Icon (+ label) laid out as one centered group, so the capsule's optical
+        // centre holds whichever form is drawn.
+        let icon_w = self.prompt_record_icon.width() as f32;
+        let group_w = label.map_or(icon_w, |l| {
+            icon_w + STUDIO_TOP_RECORD_ICON_GAP + l.total_width
+        });
+        let icon_left = left + (w - group_w) / 2.0;
+        let ix = icon_left.round() as i32;
+        let iy = (top + (h - self.prompt_record_icon.height() as f32) / 2.0).round() as i32;
         pixmap.draw_pixmap(
             ix,
             iy,
@@ -5159,6 +5497,32 @@ impl App {
             Transform::identity(),
             None,
         );
+        if let Some(label) = label {
+            let text_cx = icon_left + icon_w + STUDIO_TOP_RECORD_ICON_GAP + label.total_width / 2.0;
+            draw_cached_text_centered(
+                pixmap,
+                label,
+                (text_cx, top + h / 2.0),
+                PROMPT_LABEL_PX,
+                [236, 229, 218],
+                alpha,
+            );
+        }
+    }
+
+    /// Rasterize the Prompt Record capsule's fixed label once. Rebuilt only
+    /// after the idle-free drops the shared font — never measured per frame.
+    fn ensure_record_label(&mut self) {
+        if self.cached_record_label.is_some() {
+            return;
+        }
+        if let Some(font) = self.font.as_ref() {
+            self.cached_record_label = Some(CachedText::new(
+                font,
+                STUDIO_RECORD_LABEL,
+                PROMPT_LABEL_PX,
+            ));
+        }
     }
 
     fn draw_collapsed_prompt_record(
@@ -5171,25 +5535,33 @@ impl App {
         let p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
         let eased = eased_progress(p);
         let rect = prompt_record_button_rect(pill_right, y_off, pill_h, p);
-        self.draw_prompt_record_button(pixmap, rect.0, rect.1, pill_h, eased);
+        self.draw_prompt_record_button(pixmap, rect.0, rect.1, pill_h, pill_h, eased, None);
         self.prompt_record_rect = Some(rect);
     }
 
-    fn draw_studio_prompt_record(
-        &mut self,
-        pixmap: &mut Pixmap,
-        width: f32,
-        card_top: f32,
-        fade: f32,
-    ) {
-        let p = self.prompt_record_hover_progress.clamp(0.0, 1.0);
-        let eased = eased_progress(p);
-        let diameter = STUDIO_TOP_PILL_H;
-        let left = width - diameter;
-        let final_top = card_top - STUDIO_TOP_GAP - diameter;
-        let top = final_top - SIB_SLIDE * (1.0 - eased);
-        self.draw_prompt_record_button(pixmap, left, top, diameter, eased * fade.clamp(0.0, 1.0));
-        self.prompt_record_rect = Some((left, top, left + diameter, top + diameter));
+    /// [GRAIN] The Studio band's RIGHT control — the Prompt Record action as a
+    /// labelled capsule ("✦ Record"), right-aligned to the card edge and exactly
+    /// as tall as the switcher beside it. `top` is the shared band position (the
+    /// two slide together); `alpha` is this control's own reveal.
+    fn draw_studio_prompt_record(&mut self, pixmap: &mut Pixmap, width: f32, top: f32, alpha: f32) {
+        self.ensure_record_label();
+        let left = width - STUDIO_TOP_RECORD_W;
+        let label = self.cached_record_label.as_ref();
+        self.draw_prompt_record_button(
+            pixmap,
+            left,
+            top,
+            STUDIO_TOP_RECORD_W,
+            STUDIO_TOP_PILL_H,
+            alpha,
+            label,
+        );
+        self.prompt_record_rect = Some((
+            left,
+            top,
+            left + STUDIO_TOP_RECORD_W,
+            top + STUDIO_TOP_PILL_H,
+        ));
     }
 
     /// [GRAIN] The collapsed pill's SIBLING prompt capsule — a fixed-width pill
@@ -5397,29 +5769,37 @@ impl App {
         self.prompt_switch_rect = None;
     }
 
-    /// [GRAIN] The Studio surface's prompt capsule — a full-width pill (matching
-    /// the transcript card's width) that slides UP into the reserved band above
-    /// the card (`card_top`). Fixed size; the label truncates rather than resizing
-    /// it. `riser_progress` drives the slide; `fade` is the whole-window opacity.
-    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, wf: f32, card_top: f32, fade: f32) {
-        let p = self.riser_progress.clamp(0.0, 1.0);
-        let travel = STUDIO_TOP_GAP + STUDIO_TOP_PILL_H;
-        let top = card_top - travel * p;
+    /// [GRAIN] The Studio band's LEFT control — the prompt switcher. It hosts an
+    /// arbitrary prompt name, so it takes the whole row when Record is absent
+    /// and the wider share when it is not; the label truncates rather than
+    /// resizing the capsule. `top` is the shared band position, `alpha` its
+    /// reveal (a mid-speech switch OR the hover), `record` Record's eased
+    /// reveal, which is what it contracts against.
+    fn draw_studio_top_pill(&mut self, pixmap: &mut Pixmap, top: f32, alpha: f32, record: f32) {
+        let right = studio_top_switch_w(record);
         let bottom = top + STUDIO_TOP_PILL_H;
         self.draw_prompt_capsule(
             pixmap,
             0.0,
-            wf,
+            right,
             top,
             STUDIO_TOP_PILL_H,
             STUDIO_TOP_ARROW_INSET,
-            p * fade.clamp(0.0, 1.0),
+            alpha,
         );
-        self.prompt_switch_rect = if self.agent_offer.is_some() {
-            None
-        } else {
-            Some((0.0, top, wf, bottom))
-        };
+        // The follow-up offer borrows this capsule as a single clickable
+        // affordance — it has no arrows, so it exposes no cycle targets either.
+        if self.agent_offer.is_some() {
+            self.prompt_switch_rect = None;
+            self.prompt_cycle_rects = None;
+            return;
+        }
+        self.prompt_switch_rect = Some((0.0, top, right, bottom));
+        let hit = STUDIO_TOP_ARROW_HIT_W.min(right / 2.0);
+        self.prompt_cycle_rects = Some((
+            (0.0, top, hit, bottom),
+            (right - hit, top, right, bottom),
+        ));
     }
 
     /// Draw a prompt capsule into `[px0,px1] × [top, top+ph]`: a near-black
@@ -5479,12 +5859,22 @@ impl App {
             {
                 let l = CachedText::new(font, "\u{2039}", PROMPT_LABEL_PX);
                 let r = CachedText::new(font, "\u{203a}", PROMPT_LABEL_PX);
+                // The arrows are clickable on the Studio band, so the one under
+                // the cursor lifts to full cream — the feedback that tells the
+                // user they are a control and not an ornament.
+                let arrow_col = |side: i32| {
+                    if self.prompt_arrow_hover == side {
+                        [255, 252, 246]
+                    } else {
+                        col
+                    }
+                };
                 draw_cached_text_centered(
                     pixmap,
                     &l,
                     (px0 + arrow_inset, cy),
                     PROMPT_LABEL_PX,
-                    col,
+                    arrow_col(-1),
                     content_alpha,
                 );
                 draw_cached_text_centered(
@@ -5492,7 +5882,7 @@ impl App {
                     &r,
                     (px1 - arrow_inset, cy),
                     PROMPT_LABEL_PX,
-                    col,
+                    arrow_col(1),
                     content_alpha,
                 );
             }
@@ -5563,6 +5953,7 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_pos = (position.x as f32, position.y as f32);
+                self.cursor_inside = true;
                 if let Some(ui) = &mut self.agent_input {
                     let (x0, y0, x1, y1) = ui.confirm_rect;
                     ui.hover_confirm = ui.expanded
@@ -5572,9 +5963,17 @@ impl ApplicationHandler<UserEvent> for App {
                         && self.cursor_pos.1 <= y1;
                 }
                 self.update_prompt_record_hover();
+                self.cancel_hover = self
+                    .cancel_rect
+                    .is_some_and(|rect| self.cursor_in_rect(rect));
+                // `prompt_arrow_hover` is deliberately NOT set here — `render`
+                // owns it, so the moving arrows and the highlight stay in step.
             }
             WindowEvent::CursorLeft { .. } => {
+                self.cursor_inside = false;
                 self.set_prompt_record_hover(false);
+                self.cancel_hover = false;
+                self.prompt_arrow_hover = 0;
             }
             // [GRAIN] Prompt Record is deliberately NOT attached to the pill
             // body. Hover reveals an explicit action; only a click inside that
@@ -5606,6 +6005,18 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     return;
                 }
+                // [GRAIN] Cancel × on the Studio card — the mouse equivalent of
+                // the Cancel shortcut (Esc). The core owns the teardown; the pill
+                // just reports the click and waits to be hidden like any other
+                // cancel, so both routes end a session identically.
+                if self
+                    .cancel_rect
+                    .is_some_and(|rect| point_in_rect(self.cursor_pos, rect))
+                {
+                    self.cancel_hover = false;
+                    let _ = self.action_tx.send(PillAction::CancelSession);
+                    return;
+                }
                 if should_trigger_prompt_record(
                     self.state,
                     self.prompt_recording,
@@ -5621,9 +6032,17 @@ impl ApplicationHandler<UserEvent> for App {
                     let _ = self.action_tx.send(PillAction::PromptRecord);
                     return;
                 }
-                // [GRAIN] Ignore clicks that land on the prompt-SWITCHER capsule —
-                // it is a display-only indicator (cycled by the shortcut, not the
-                // mouse), so a click there must not fire a pill action.
+                // [GRAIN] The switcher's `‹`/`›` cycle the active prompt — the
+                // same core action the switcher shortcut runs, so mouse and
+                // keyboard land on one implementation. The core answers with
+                // `PromptChanged`, which re-arms the riser and keeps the row up.
+                let arrow = self.arrow_under_cursor();
+                if arrow != 0 {
+                    let _ = self.action_tx.send(PillAction::PromptCycle { delta: arrow });
+                    return;
+                }
+                // The rest of the capsule is a display-only indicator, so a click
+                // there must not fall through and fire some other pill action.
                 if let Some((rx0, ry0, rx1, ry1)) = self.prompt_switch_rect {
                     let (cx, cy) = self.cursor_pos;
                     if cx >= rx0 && cx <= rx1 && cy >= ry0 && cy <= ry1 {
@@ -5665,6 +6084,7 @@ impl ApplicationHandler<UserEvent> for App {
                 Key::Character("r") => {
                     let mut r = self.remote.lock().unwrap();
                     r.state = PillState::Recording;
+                    r.amp = 0.45;
                     r.visible = true;
                 }
                 Key::Character("p") => {
@@ -5724,6 +6144,7 @@ impl ApplicationHandler<UserEvent> for App {
             // and the body renders off-center).
             let prev_state = self.state;
             self.state = r.state;
+            self.amp = r.amp;
             let session_started_from_overlay =
                 matches!(self.state, PillState::Recording | PillState::Processing)
                     && !matches!(prev_state, PillState::Recording | PillState::Processing)
@@ -5743,6 +6164,11 @@ impl ApplicationHandler<UserEvent> for App {
                 self.clipboard_notice = false;
                 self.clipboard_notice_until = None;
                 self.offer_fade_close = false;
+                // The pill was already on screen, but only as a capsule — the
+                // BODY is new, so give it the same open a cold show gets rather
+                // than letting it blink into place beside the fading capsule.
+                self.open_at = Some(now);
+                self.open_t = 0.0;
             }
             self.prompt_recording = r.prompt_recording;
             if self.state != PillState::Recording {
@@ -5866,6 +6292,11 @@ impl ApplicationHandler<UserEvent> for App {
                     && desired_mode == PillMode::Studio
                     && (self.visible || self.closing);
                 self.mode = desired_mode;
+                // [GRAIN] The prompt label is ellipsis-truncated to the capsule
+                // width of the CURRENT surface, and the Studio band is far wider
+                // than the collapsed sibling. Re-truncate on the swap or a title
+                // measured for one surface stays clipped on the other.
+                self.update_cached_label();
                 if let Some(window) = &self.window {
                     let (w, h) = Self::win_size_for(self.mode, self.skin);
                     // [GRAIN] winit 0.30 renamed this `request_inner_size` (the
@@ -5932,6 +6363,23 @@ impl ApplicationHandler<UserEvent> for App {
                     self.prompt_label = r.prompt_name.clone();
                     self.riser_hide_at = Some(now + RISER_HOLD);
                     self.prompt_preview_until = Some(now + RISER_HOLD);
+                    self.update_cached_label();
+                }
+            }
+
+            // [GRAIN] …and the SILENT announcement (session start): adopt the
+            // title only. Without this the switcher renders its arrows around an
+            // empty label until the user actually switches a prompt. It must not
+            // touch `riser_hide_at`/`prompt_preview_until` (that would flash the
+            // capsule on every recording), and it yields to whatever transient
+            // status currently owns the shared label slot.
+            if r.prompt_active_seq != self.last_prompt_active_seq {
+                self.last_prompt_active_seq = r.prompt_active_seq;
+                let slot_taken = self.session_owner.is_some()
+                    || self.agent_offer.is_some()
+                    || self.clipboard_notice;
+                if !slot_taken && self.prompt_label != r.prompt_name {
+                    self.prompt_label = r.prompt_name.clone();
                     self.update_cached_label();
                 }
             }
@@ -6048,6 +6496,12 @@ impl ApplicationHandler<UserEvent> for App {
             if becoming_visible {
                 self.visible = true;
                 self.closing = false;
+                // [GRAIN] Every show opens: the capsule grows out of a dot and
+                // uncovers its own contents. Armed here — before the first frame
+                // is drawn — so the window is revealed already mid-animation
+                // rather than one frame late.
+                self.open_at = Some(now);
+                self.open_t = 0.0;
             } else if starting_close {
                 // Studio always fades; the collapsed capsule fades only when the
                 // hide is an offer withdrawal — session ends keep the instant hide.
@@ -6066,24 +6520,6 @@ impl ApplicationHandler<UserEvent> for App {
             // (UserEvent::Wake already shortened the sleep; this is the safety net).
             if becoming_visible {
                 self.next_tick = now;
-            }
-
-            // [GRAIN] Mic lifecycle is gated on RECORDING, not mere visibility:
-            // only `roll_recording` consumes live amplitude, so opening the
-            // capture device for the Processing phase or a prompt-riser preview
-            // would light the OS "mic in use" indicator and wake the audio
-            // callback for nothing ("destroy if not in use"). Open it just-in-time
-            // when recording starts; release it the instant we leave Recording
-            // (stop → Processing) or the pill hides.
-            let needs_mic = self.visible && self.state == PillState::Recording;
-            if needs_mic && self._mic.is_none() {
-                self._mic = start_mic(self.amp.clone());
-                if self._mic.is_none() {
-                    eprintln!("no microphone — falling back to a simulated signal");
-                }
-            } else if !needs_mic && self._mic.is_some() {
-                // Recording ended (or the pill hid) — free the device immediately.
-                self._mic = None;
             }
 
             if self.visible {
@@ -6109,6 +6545,24 @@ impl ApplicationHandler<UserEvent> for App {
             }
 
             if self.visible {
+                // [GRAIN] Advance the open. Driven by the WALL CLOCK, not by a
+                // per-frame ease: a dropped frame must shorten the animation,
+                // never stretch it — the pill has to be open by the time the
+                // user has finished reacting to their own shortcut. Clearing
+                // `open_at` at the end takes the whole thing back to zero cost.
+                self.open_t = match self.open_at {
+                    Some(started) => {
+                        let p = now.saturating_duration_since(started).as_secs_f32()
+                            / OPEN_DUR.as_secs_f32();
+                        if p >= 1.0 {
+                            self.open_at = None;
+                            1.0
+                        } else {
+                            p
+                        }
+                    }
+                    None => 1.0,
+                };
                 // [GRAIN] The WAVE skin advances every frame, not on the dot
                 // field's slow cadence — its whole character is a continuously
                 // scrolling line, and an 80ms step would read as a stutter. The
@@ -6124,16 +6578,16 @@ impl ApplicationHandler<UserEvent> for App {
                     // the motion, never slow it down.
                     let dt = now.saturating_duration_since(self.wave_at).as_secs_f32();
                     self.wave_at = now;
-                    let amp = self.current_amp();
+                    let amp = self.amp;
                     let n = wave_bar_count(self.wave_row_w());
                     self.wave.advance(dt, self.state, amp, n);
                 }
                 // Re-roll the dot field on its own (slower) cadence so it stays
                 // calm; everything else eases every frame for smoothness.
                 if now >= self.next_roll && !wave_live {
-                    let amp = self.current_amp();
+                    let amp = self.amp;
                     // The expanded pill uses the 2-column field: center-outward
-                    // waveform while recording, orange sparkle while processing,
+                    // waveform while recording, grey sparkle while processing,
                     // calm breathing for idle/fallback. Collapsed pill unchanged.
                     // [GRAIN] Feed the Prompt Record tint into the dot field: the
                     // collapsed recording field turns grey/light-blue, the Studio
@@ -6293,6 +6747,7 @@ impl ApplicationHandler<UserEvent> for App {
                         self.fallback_tried = false;
                         self.pixmap = None;
                         self.cached_label = None;
+                        self.cached_record_label = None;
                         self.free_idle_at = None;
                         event_loop.set_control_flow(ControlFlow::Wait);
                     }
@@ -6335,6 +6790,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn audio_level_buckets_reduce_to_bounded_rms() {
+        assert_eq!(audio_level_amp(&[]), 0.0);
+        assert_eq!(audio_level_amp(&[f32::NAN, f32::INFINITY]), 0.0);
+        assert_eq!(audio_level_amp(&[-1.0, 2.0]), (0.5_f32).sqrt());
+        let amp = audio_level_amp(&[0.3, 0.4]);
+        assert!((amp - (0.125_f32).sqrt()).abs() < 1e-6);
+        assert!((0.0..=1.0).contains(&amp));
+    }
+
+    #[test]
+    fn audio_levels_drive_only_an_active_recording() {
+        let remote = Mutex::new(Remote::default());
+        apply_event(&remote, DaemonEvent::AudioLevel { levels: vec![1.0] });
+        assert_eq!(remote.lock().unwrap().amp, 0.0);
+        apply_event(
+            &remote,
+            DaemonEvent::RecordingStarted {
+                session_id: 7,
+                mode: SessionMode::Batch,
+                owner: None,
+            },
+        );
+        apply_event(
+            &remote,
+            DaemonEvent::AudioLevel {
+                levels: vec![0.25, 0.75],
+            },
+        );
+        assert!(remote.lock().unwrap().amp > 0.0);
+        apply_event(&remote, DaemonEvent::RecordingStopped { session_id: 7 });
+        assert_eq!(remote.lock().unwrap().amp, 0.0);
+    }
+
+    #[test]
     fn a_missed_paste_arms_the_short_clipboard_confirmation() {
         let remote = Mutex::new(Remote {
             mode: PillMode::Studio,
@@ -6365,6 +6854,143 @@ mod tests {
         assert_eq!(clipboard_capsule_width(1.0, pill_h), CLIPBOARD_SIB_W);
         let halfway = clipboard_capsule_width(0.5, pill_h);
         assert!(halfway > pill_h && halfway < CLIPBOARD_SIB_W);
+    }
+
+    /// [GRAIN] The Studio top band holds BOTH controls — switcher + Record —
+    /// inside the card's own width. It may never be wider than the card, the
+    /// switcher must keep the larger share (it hosts arbitrary prompt names),
+    /// and the two must sit at the same height so the row reads as one strip.
+    #[test]
+    fn the_studio_top_band_fits_inside_the_card_width() {
+        let total = studio_top_switch_w(1.0) + STUDIO_TOP_SPLIT_GAP + STUDIO_TOP_RECORD_W;
+        assert!(
+            (total - STUDIO_W).abs() < 0.01,
+            "the band ({total}) must span exactly the card ({STUDIO_W})"
+        );
+        assert!(
+            studio_top_switch_w(1.0) > 2.0 * STUDIO_TOP_RECORD_W,
+            "the switcher gets the room — it carries the prompt name"
+        );
+
+        // With Record absent the switcher owns the whole row (no dead gap), and
+        // the handover between the two states is monotonic — no snap mid-slide.
+        assert!((studio_top_switch_w(0.0) - STUDIO_W).abs() < 0.01);
+        let mid = studio_top_switch_w(0.5);
+        assert!(mid < studio_top_switch_w(0.0) && mid > studio_top_switch_w(1.0));
+
+        // The Record capsule's content (sparkle + word) must clear its rounded
+        // ends: at least a full radius of padding on each side.
+        let font = font();
+        let label = CachedText::new(&font, STUDIO_RECORD_LABEL, PROMPT_LABEL_PX);
+        let group =
+            PROMPT_RECORD_ICON_PX as f32 + STUDIO_TOP_RECORD_ICON_GAP + label.total_width;
+        assert!(
+            group + STUDIO_TOP_PILL_H <= STUDIO_TOP_RECORD_W,
+            "sparkle + \"{STUDIO_RECORD_LABEL}\" ({group}px) does not clear the capsule ends"
+        );
+
+        // …and the switcher's label still has real room between its arrows.
+        let label_max =
+            studio_top_switch_w(1.0) - 2.0 * STUDIO_TOP_ARROW_INSET - 2.0 * SIB_TEXT_PAD;
+        assert!(
+            label_max > 200.0,
+            "the prompt name would truncate far too early ({label_max}px)"
+        );
+
+        // The `‹`/`›` targets must cover their glyph and still leave the label
+        // its own space — an arrow zone that swallowed the middle would make the
+        // capsule cycle prompts wherever you clicked it.
+        assert!(STUDIO_TOP_ARROW_HIT_W > STUDIO_TOP_ARROW_INSET);
+        assert!(2.0 * STUDIO_TOP_ARROW_HIT_W < studio_top_switch_w(1.0) - label_max / 2.0);
+    }
+
+    /// [GRAIN] The row hands over in two phases on purpose. Sweep the whole
+    /// reveal and prove the switcher has always cleared Record's footprint by
+    /// the time Record is visible at all — overlapping capsules blend their
+    /// rims, which is exactly the smear the split exists to prevent.
+    #[test]
+    fn the_band_never_draws_its_two_capsules_over_each_other() {
+        let record_left = STUDIO_W - STUDIO_TOP_RECORD_W;
+        for step in 0..=100 {
+            let record = step as f32 / 100.0;
+            let contract = (record / STUDIO_TOP_HANDOVER).min(1.0);
+            let reveal =
+                ((record - STUDIO_TOP_HANDOVER) / (1.0 - STUDIO_TOP_HANDOVER)).clamp(0.0, 1.0);
+            if reveal > 0.0 {
+                let switch_right = studio_top_switch_w(contract);
+                assert!(
+                    switch_right <= record_left,
+                    "at reveal {record}: switcher reaches {switch_right}, Record starts at {record_left}"
+                );
+            }
+        }
+        // Fully hovered, the gap between them is exactly the designed one.
+        assert!((record_left - studio_top_switch_w(1.0) - STUDIO_TOP_SPLIT_GAP).abs() < 0.01);
+    }
+
+    /// [GRAIN] The cancel × became a real control. Its hit rect is derived from
+    /// the same geometry the control row paints the disc with, so the two can
+    /// never drift; and it stays unclickable while the card is still opening.
+    #[test]
+    fn the_cancel_hit_rect_tracks_the_drawn_disc() {
+        assert!(
+            studio_cancel_rect(studio_card_height(1), 0.5).is_none(),
+            "a half-open card has no visible ×, so nothing to click"
+        );
+
+        let card_h = studio_card_height(2);
+        let rect = studio_cancel_rect(card_h, 1.0).expect("an open card exposes the ×");
+        let (w, h) = studio_pixel_size();
+        let (wf, hf) = (w as f32, h as f32);
+
+        // Same centre `draw_control_row` uses at full expansion (cap_right = wf).
+        let card_top = hf - card_h;
+        let ctrl_top = card_top + card_h - STUDIO_CTRL_H - STUDIO_BOTTOM_PAD;
+        let cx = wf - STUDIO_PAD - X_BUTTON_R;
+        let cy = ctrl_top + STUDIO_CTRL_H / 2.0;
+        assert!(((rect.0 + rect.2) / 2.0 - cx).abs() < 0.01);
+        assert!(((rect.1 + rect.3) / 2.0 - cy).abs() < 0.01);
+
+        // Inside the card, and clear of the centred waveform beside it.
+        assert!(rect.2 <= wf && rect.3 <= hf);
+        assert!(
+            rect.0 > (wf + STUDIO_WAVE_W) / 2.0,
+            "the × hit zone must not reach the waveform"
+        );
+    }
+
+    /// [GRAIN] The switcher is revealed by hover now, not only by a switch — so
+    /// the core announces the active prompt at session start. That announcement
+    /// must carry the title WITHOUT looking like a switch, or every recording
+    /// would flash the capsule.
+    #[test]
+    fn the_active_prompt_arrives_without_arming_the_riser() {
+        let remote = Mutex::new(Remote::default());
+        apply_event(
+            &remote,
+            DaemonEvent::PromptActive {
+                name: "Meeting Notes".to_string(),
+            },
+        );
+        {
+            let state = remote.lock().unwrap();
+            assert_eq!(state.prompt_name, "Meeting Notes");
+            assert_eq!(state.prompt_active_seq, 1);
+            assert_eq!(state.prompt_seq, 0, "a silent announcement is not a switch");
+            assert!(!state.visible, "…and it must never reveal an idle pill");
+        }
+
+        // A real switch still drives the riser through its own sequence.
+        apply_event(
+            &remote,
+            DaemonEvent::PromptChanged {
+                name: "Email Format".to_string(),
+            },
+        );
+        let state = remote.lock().unwrap();
+        assert_eq!(state.prompt_name, "Email Format");
+        assert_eq!(state.prompt_seq, 1);
+        assert_eq!(state.prompt_active_seq, 1);
     }
 
     #[test]
@@ -6422,7 +7048,7 @@ mod tests {
         assert_eq!(rect.3 - rect.1, pill_h);
 
         let now = Instant::now();
-        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(1));
+        assert_eq!(PROMPT_RECORD_HOLD, Duration::from_secs(2));
         let deadline = now + PROMPT_RECORD_HOLD;
         assert!(should_show_prompt_record(
             PillState::Recording,
@@ -6796,6 +7422,99 @@ mod tests {
     }
 
     #[test]
+    fn processing_is_a_neutral_grey_clearly_below_the_resting_line() {
+        // The state used to wear the record accent, which read as an alarm. It
+        // now sits on the SAME neutral ramp as the rest of the waveform —
+        // evidently darker than the idle baseline (so the change is legible at a
+        // glance) but far enough above the body that it never reads as dead.
+        let [r, g, b] = WAVE_INK_PROCESSING;
+        let spread = r.max(g).max(b) - r.min(g).min(b);
+        assert!(spread < 30, "processing must stay neutral, not tinted");
+        let lum = |c: [u8; 3]| c[0] as f32 * 0.299 + c[1] as f32 * 0.587 + c[2] as f32 * 0.114;
+        assert!(
+            lum([r, g, b]) < lum(WAVE_INK_IDLE) - 10.0,
+            "processing must be evidently darker than the resting line"
+        );
+        assert!(
+            lum([r, g, b]) > lum(GRAIN_SURFACE) * 2.5,
+            "…but nowhere near the body, which would read as the pill going dead"
+        );
+    }
+
+    #[test]
+    fn the_open_starts_as_a_dot_and_lands_exactly_on_the_full_body() {
+        for skin in [PillSkin::Wave, PillSkin::Matrix] {
+            let g = PillGeom::for_skin(skin);
+            let (x0, x1) = g.body_x();
+            let (s0, s1) = g.body_x_open(0.0);
+            assert!(
+                (s1 - s0 - g.body_h).abs() < 0.01,
+                "the pill opens out of a dot the height of its own body"
+            );
+            assert!(
+                ((s0 + s1) / 2.0 - (x0 + x1) / 2.0).abs() < 0.01,
+                "…centred on where the capsule will end up"
+            );
+            // The settled pill must be the pill that shipped, to the pixel.
+            let (o0, o1) = g.body_x_open(1.0);
+            assert!((o0 - x0).abs() < 0.001 && (o1 - x1).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn the_opens_overshoot_stays_inside_the_window_margin() {
+        // `ease_out_back` swings past 1 before settling. That swing widens the
+        // capsule symmetrically, so it must not push the left edge out of the
+        // window — there is only `inset` px of margin there.
+        let peak = (0..=200)
+            .map(|i| ease_out_back(i as f32 / 200.0))
+            .fold(f32::MIN, f32::max);
+        assert!(peak > 1.0, "the settle needs an actual overshoot");
+        for skin in [PillSkin::Wave, PillSkin::Matrix] {
+            let g = PillGeom::for_skin(skin);
+            let (bx0, _) = g.body_x_open(peak);
+            assert!(
+                bx0 > 0.0,
+                "{skin:?}: the overshoot must stay inside the window"
+            );
+        }
+        assert!(ease_out_back(0.0).abs() < 1e-5);
+        assert!((ease_out_back(1.0) - 1.0).abs() < 1e-5);
+        assert!(ease_out_cubic(0.0).abs() < 1e-5);
+        assert!((ease_out_cubic(1.0) - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn the_opening_pill_shows_the_waveform_before_the_left_mark() {
+        // The staging the reveal is FOR: the row lives in the middle, so the
+        // growing capsule uncovers it first; the mark sits at the far left, where
+        // the edge arrives last. Anything else and the pill's identity mark
+        // floats outside its own body mid-animation.
+        let g = PillGeom::for_skin(PillSkin::Wave);
+        let (x0, x1) = g.body_x();
+        let centre = (x0 + x1) / 2.0;
+        let slot_x = x0 + WAVE_PAD_X;
+        let mut wave_lit_at = None;
+        let mut mark_lit_at = None;
+        for i in 0..=100 {
+            let t = i as f32 / 100.0;
+            let (bx0, bx1) = g.body_x_open(ease_out_back(t));
+            if wave_lit_at.is_none() && open_gate((centre - bx0).min(bx1 - centre)) > 0.5 {
+                wave_lit_at = Some(t);
+            }
+            if mark_lit_at.is_none() && open_gate(slot_x - bx0) > 0.5 {
+                mark_lit_at = Some(t);
+            }
+        }
+        let wave = wave_lit_at.expect("the waveform must light during the open");
+        let mark = mark_lit_at.expect("the left mark must light during the open");
+        assert!(
+            wave < mark,
+            "waveform ({wave}) must lead the left mark ({mark})"
+        );
+    }
+
+    #[test]
     fn trimming_a_bar_keeps_the_row_centred() {
         // WAVE_BAR_TRIM removes a bar; the leftover slack must be split evenly or
         // the row would visibly hug one side of the capsule.
@@ -6939,6 +7658,7 @@ mod tests {
             &f,
             WAVE_INK,
             1.0,
+            None,
         );
 
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
@@ -7073,7 +7793,7 @@ mod tests {
                 (_, Some(_)) => &f_icon,
                 (_, None) => &f_dot,
             };
-            paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave);
+            paint_wave_body(&mut pixmap, geom, state, false, None, icon, wave, 1.0);
 
             // Composite over a neutral desktop grey and magnify (nearest, so the
             // actual pixels are what you inspect).
@@ -7122,7 +7842,17 @@ mod tests {
         let mut pixmap = Pixmap::new(160, 40).unwrap();
         pixmap.fill(Color::TRANSPARENT);
         let f = WaveField::new();
-        draw_wave_bars(&mut pixmap, 10.0, 20.0, 140.0, 12.0, &f, WAVE_INK_IDLE, 1.0);
+        draw_wave_bars(
+            &mut pixmap,
+            10.0,
+            20.0,
+            140.0,
+            12.0,
+            &f,
+            WAVE_INK_IDLE,
+            1.0,
+            None,
+        );
         let painted = pixmap.pixels().iter().filter(|p| p.alpha() > 0).count();
         assert!(painted > 40, "the resting row vanished ({painted}px)");
 
@@ -7501,6 +8231,7 @@ mod tests {
                 &f,
                 WAVE_INK,
                 1.0,
+                None,
             );
             let y_base = row as u32 * band * ZOOM;
             for y in 0..band {

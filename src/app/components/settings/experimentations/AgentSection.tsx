@@ -29,10 +29,10 @@ const LOOK_OPTIONS: { value: AgentPanelPosition; label: string }[] = [
   { value: "center", label: "Center panel (beta)" },
 ];
 
-/** [GRAIN] Agent settings — the rows BELOW the feature's own switch, rendered
- * inside its panel (see [`FeaturePanel`]) as one ungrouped list.
+/** [GRAIN] Agent settings — the rows BELOW the tool's master switch (the one
+ * pinned to the page heading in Studio), rendered as one ungrouped list.
  *
- * There are no sub-headings. Six controls split across "Reply surface",
+ * There are no sub-headings. Seven controls split across "Reply surface",
  * "Replies" and "Input & context" spent three headings naming what the rows
  * already said, and made a short list look like a long one. They read in the
  * order you meet them instead: how the reply appears, how it comes back to you,
@@ -43,6 +43,7 @@ export const AgentSection: React.FC = () => {
   const autocopy = getSetting("agent_autocopy") ?? "first";
   const quick = getSetting("agent_quick_enabled") ?? false;
   const contextMode = getSetting("agent_context_mode") ?? "off";
+  const screenImage = getSetting("agent_screen_image") ?? false;
   const typeToExpand = getSetting("agent_input_type_to_expand") ?? true;
   const panelPosition = getSetting("agent_panel_position") ?? "side";
 
@@ -157,6 +158,21 @@ export const AgentSection: React.FC = () => {
           }
         />
       </SettingContainer>
+
+      {/* 7. …and whether it may LOOK. Its own row rather than a fifth entry in
+          the dropdown above: that one is a ladder of how much text to read,
+          and a screenshot is a different kind of thing to hand over — worth
+          its own deliberate switch. Sits last because it is the most it can
+          ever be given. */}
+      <ToggleSwitch
+        label="See my screen"
+        description="Send a picture of the window you summoned from, so the Agent can answer about what's actually there — a chart, a diff, an error dialog, anything with no readable text. One window only, never the whole desktop or another app; the picture is taken when you press the key, kept only for that conversation, and never saved to disk. Needs an AI model that accepts images — on one that doesn't, your request still goes through as text and you still get a reply."
+        descriptionMode="tooltip"
+        grouped
+        checked={screenImage}
+        isUpdating={isUpdating("agent_screen_image")}
+        onChange={(v) => updateSetting("agent_screen_image", v)}
+      />
     </>
   );
 };

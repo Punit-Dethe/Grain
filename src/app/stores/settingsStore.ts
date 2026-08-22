@@ -157,6 +157,8 @@ const settingUpdaters: {
     commands.changeAgentQuickEnabledSetting(value as boolean),
   agent_context_mode: (value) =>
     commands.changeAgentContextModeSetting(value as AgentContextMode),
+  agent_screen_image: (value) =>
+    commands.changeAgentScreenImageSetting(value as boolean),
   agent_input_type_to_expand: (value) =>
     commands.changeAgentInputTypeToExpandSetting(value as boolean),
   agent_panel_position: (value) =>
@@ -202,7 +204,7 @@ const settingUpdaters: {
       value as TranscribeAcceleratorSetting,
     ),
   transcribe_gpu_device: (value) =>
-    commands.changeTranscribeGpuDevice(value as number),
+    commands.changeTranscribeGpuDevice(value as string | null),
   extra_recording_buffer_ms: (value) =>
     commands.changeExtraRecordingBufferSetting(value as number),
   audio_conditioning: (value) =>

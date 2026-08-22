@@ -1143,6 +1143,18 @@ async changeAgentContextModeSetting(mode: AgentContextMode) : Promise<Result<nul
 }
 },
 /**
+ * [GRAIN] Agent screen vision: send a picture of the summoned-from window with
+ * the instruction. OFF by default; see `Settings::agent_screen_image`.
+ */
+async changeAgentScreenImageSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_agent_screen_image_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * [GRAIN] Toggle "type to expand" on the native agent input.
  */
 async changeAgentInputTypeToExpandSetting(enabled: boolean) : Promise<Result<null, string>> {
@@ -1460,12 +1472,20 @@ async extensionUnloadDev(id: string) : Promise<Result<null, string>> {
 }
 },
 /**
- * Record the user's approval of a scripted extension's capabilities (SPEC §6).
- * Called by the permission sheet on Approve; the caller then retries enable.
+ * Record the user's approval of what an extension asked for (SPEC §6) —
+ * capabilities, and the prompt layers it contributes. Called by the permission
+ * sheet on Approve; the caller then retries enable.
  * 
  * Grants are clamped to what the manifest actually requests, so neither a
  * compromised frontend nor a stale sheet can widen an extension's reach beyond
  * what the user was shown.
+ * 
+ * **Prompt layers are approved here too**, by the same act and with no
+ * parameter of their own: the approved value is recomputed from the pack on
+ * disk, so what gets recorded is necessarily the text the sheet just rendered
+ * and never something the caller supplies. An inert pack whose only ask is a
+ * prompt layer therefore approves through `extension_grant(id, [])` — one
+ * approval act rather than a second command that could drift from this one.
  */
 async extensionGrant(id: string, permissions: string[]) : Promise<Result<null, string>> {
     try {
@@ -1577,6 +1597,44 @@ async extensionHostCall(id: string, method: string, params: JsonValue) : Promise
  */
 async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
     return await TAURI_INVOKE("extension_shortcuts_status", { id });
+},
+/**
+ * [GRAIN] Start or stop listening for an action
+ * (`docs/Action Routing/PLAN.md` §3).
+ * 
+ * The extension surface's own trigger calls this; **Grain registers no
+ * shortcut for it here**. What the design depends on is only that the user's
+ * intent was unambiguous by the time audio started, and the trigger mechanism
+ * is decided separately.
+ * 
+ * One command for all three transitions rather than three, because the
+ * invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
+ * merge-conflict surface.
+ */
+async grainActionListen(phase: string) : Promise<Result<boolean, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_action_listen", { phase }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Read the action log, optionally clearing it first
+ * (`docs/Action Routing/PLAN.md` §8.3).
+ * 
+ * The "why did that happen" surface. It holds what was heard, so it is capped,
+ * lives only in memory, and clearing it is one call with no confirmation
+ * dance — this is the user's own speech and asking twice before letting them
+ * delete it is the wrong default.
+ */
+async grainActionLog(clear: boolean) : Promise<Result<ActionLogEntry[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_action_log", { clear }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Write one schema-declared setting from the host's own control.
@@ -1727,7 +1785,7 @@ async changeTranscribeAcceleratorSetting(accelerator: TranscribeAcceleratorSetti
     else return { status: "error", error: e  as any };
 }
 },
-async changeTranscribeGpuDevice(device: number) : Promise<Result<null, string>> {
+async changeTranscribeGpuDevice(device: string | null) : Promise<Result<null, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("change_transcribe_gpu_device", { device }) };
 } catch (e) {
@@ -2442,6 +2500,90 @@ updateDownloadProgress: "update-download-progress"
 /** user-defined types **/
 
 /**
+ * [GRAIN] One declared action, as the approval sheet and the extension card
+ * need it (`docs/Action Routing/PLAN.md` §5).
+ * 
+ * Note what is **absent**: the utterance list. The consent question is "what
+ * can this do", not "what words does it listen for" — a list of phrasings is
+ * review and `doctor` material, and putting it on a sheet trains people to
+ * scroll past the part that matters. What the user decides on is the title, the
+ * domain, and whether it will ask before acting.
+ */
+export type ActionInfo = { id: string; 
+/**
+ * One plain line, written for the user.
+ */
+title: string; 
+/**
+ * The preference group — "media", "messaging" — used as the sheet's
+ * heading and as the key for "always use this one".
+ */
+domain: string; 
+/**
+ * Whether performing this reads the resolved action back first. The single
+ * most important thing on the row.
+ */
+confirms: boolean; 
+/**
+ * No conditions at all — offered on every request.
+ */
+everywhere: boolean; app: string[]; website: string[] }
+export type ActionLogEntry = { 
+/**
+ * Milliseconds since the Unix epoch, for ordering and display only.
+ */
+at: number; 
+/**
+ * What the acoustic model produced, before any routing. The whole point of
+ * the log: when an action surprises someone, this is usually the answer.
+ */
+heard: string; 
+/**
+ * `<extension>:<action>`, when one was chosen.
+ */
+action: string | null; 
+/**
+ * The action's user-facing title, so the log reads without a manifest.
+ */
+title: string | null; domain: string | null; score: number | null; outcome: ActionLogOutcome }
+/**
+ * What became of one routed request. Mirrors the decision layer's outcomes,
+ * flattened for display.
+ */
+export type ActionLogOutcome = 
+/**
+ * It ran. `confirmed` records whether the user read it back first.
+ */
+{ ran: { confirmed: boolean } } | 
+/**
+ * The user was asked and picked.
+ */
+"chose" | 
+/**
+ * The user was asked and walked away. **The single most useful signal in
+ * here**: a route that is regularly offered and regularly declined is one
+ * the ranking is getting wrong, and it is what feeds the misroute counter.
+ */
+"cancelled" | 
+/**
+ * Handed to the Agent.
+ */
+"escalated" | 
+/**
+ * Nothing installed could do it, or the capture was unusable.
+ */
+{ refused: { reason: string } } | 
+/**
+ * It ran and failed for a reason worth showing.
+ */
+{ failed: { reason: string } } | 
+/**
+ * The deadline passed with the call already in flight — it may well have
+ * happened. Kept distinct from `Failed` because telling someone their
+ * message failed when it was sent is worse than admitting uncertainty.
+ */
+"unknown"
+/**
  * [GRAIN] Agent auto-copy policy: which assistant replies are copied to the
  * clipboard automatically as they arrive. `First` (default) mirrors the
  * original behavior — only the first reply of a session is auto-copied.
@@ -2507,7 +2649,12 @@ export type AgentSource = { note_id: string; title: string; saved_at: number }
  * object, so a partial store can never fail the whole load (upstream #1619).
  * Field-level defaults below take precedence where present.
  */
-export type AppSettings = { bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
+export type AppSettings = {
+/**
+ * Missing in pre-schema settings files; the field-level default of zero
+ * intentionally triggers one-time migrations instead of using `Self::default()`.
+ */
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
@@ -2590,7 +2737,20 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
+stt_quota_reset_date?: string; 
+/**
+ * [GRAIN] Which extension performs each kind of spoken action — domain
+ * (`media`, `messaging`, …) to extension id
+ * (`docs/Action Routing/PLAN.md` §6, rung 2).
+ * 
+ * The whole reason a `domain` exists. Without an entry here, installing a
+ * second music extension makes *every* media command ambiguous, so the
+ * user is asked every time; with one, the request just runs. Empty by
+ * default and only ever written by an explicit choice — a routing default
+ * the user cannot audit because they were never told about it is a dark
+ * pattern, not a convenience.
+ */
+action_default_provider?: Partial<{ [key in string]: string }>; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -2598,13 +2758,11 @@ stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: 
  */
 reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingTool; external_script_path: string | null; filler_word_removal_enabled?: boolean; custom_filler_words?: string[] | null; transcribe_accelerator?: TranscribeAcceleratorSetting; 
 /**
- * transcribe-cpp compute-device *registry index* for explicit GPU picks
- * (`-1` = auto). NOTE: deliberately NOT aliased to the old
- * `whisper_gpu_device` — that was a transcribe-rs UI ordinal with different
- * semantics, so legacy values reset to auto instead of pointing at a
- * possibly different device.
+ * Stable transcribe.cpp device selector, derived from the backend's
+ * `device_id` when available (or its name for backends such as Metal).
+ * Never persist process-local registry indices.
  */
-transcribe_gpu_device?: number; extra_recording_buffer_ms?: number; 
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
 /**
  * [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
  * + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
@@ -2694,10 +2852,10 @@ extension_developer_mode?: boolean;
  */
 context_nearby_terms?: boolean; 
 /**
- * [GRAIN] Seamless insertion: read a short span of text on either side of
- * the caret and give it to the post-processing LLM as `<before_text>` /
- * `<after_text>`, so dictating into the middle of a sentence produces text
- * that flows — correct leading space, no stray capital, no repeated words.
+ * [GRAIN] Seamless insertion: read the nearest useful sentence fragment on
+ * either side of the caret (maximum 200 left / 80 right) and give it to the
+ * post-processing LLM as compact L/R context, so dictating into the middle
+ * of a sentence flows. An empty neighbourhood adds no cursor prompt.
  * 
  * **This is a SEPARATE opt-in from [`Self::context_nearby_terms`] on
  * purpose.** That one promises to send unique tokens and explicitly never
@@ -2723,6 +2881,22 @@ agent_quick_enabled?: boolean;
  * capped raw text). OFF by default.
  */
 agent_context_mode?: AgentContextMode; 
+/**
+ * [GRAIN] Agent screen vision: when on, summoning the Agent also photographs
+ * the window you were in and sends that frame with your instruction, so it
+ * can answer about what is actually on screen — a chart, a diff, an error
+ * dialog, a page that has no accessibility text at all.
+ * 
+ * Deliberately a separate switch from [`AgentContextMode::Screen`] rather
+ * than a fifth rung on it. That mode reads the window's accessibility TEXT;
+ * this one takes a picture. They cost different things, they fail in
+ * different ways, and a model that cannot see images still handles the text
+ * one — folding them together would make choosing "read my window" silently
+ * start uploading screenshots.
+ * 
+ * OFF by default and off is free: no capture, no permission, no bytes.
+ */
+agent_screen_image?: boolean; 
 /**
  * [GRAIN] "Scrap that" voice reset: when on, saying the phrase "scrap that"
  * mid-dictation discards everything spoken before it — the transcript starts
@@ -2956,7 +3130,27 @@ has_detail: boolean;
  * — so this is what lets the UI open the place it actually affects
  * instead of dead-ending on a preview.
  */
-slots: string[] }
+slots: string[]; 
+/**
+ * [GRAIN] Prompt layers this pack contributes.
+ * 
+ * Carried on the card because **attribution is not optional for this
+ * contribution**: a prompt layer changes what the model does to the user's
+ * own words, and unlike a capability it is invisible once approved. The
+ * approval sheet is where the user first reads it; this is where they can
+ * go back and read it again without uninstalling anything.
+ */
+prompt_layers: PromptLayerInfo[]; 
+/**
+ * [GRAIN] What this extension can do when asked out loud
+ * (`docs/Action Routing/PLAN.md` §5).
+ * 
+ * Here for the same reason as `prompt_layers`, and a stronger one: the
+ * approval sheet is a single moment, and "what can this thing do" is
+ * exactly what someone wants to look up again a week later without
+ * uninstalling it to find out.
+ */
+actions: ActionInfo[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
@@ -3021,7 +3215,7 @@ ui_source: string | null }
  * One enabled extension's settings, ready to render.
  */
 export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
-export type GpuDeviceOption = { id: number; name: string; total_vram_mb: number }
+export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 /**
  * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
  */
@@ -3298,6 +3492,23 @@ quota_limit?: number | null; quota_used_today?: number }
  * model map (model names are not secret).
  */
 export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvider[]; selected_provider_id: string; providers_with_keys: string[]; models: Partial<{ [key in string]: string }> }
+/**
+ * [GRAIN] One contributed prompt layer, as every surface that shows one needs
+ * it: the approval sheet, the extension card, and the prompt-stack view.
+ * 
+ * One type for all three deliberately. The sheet's copy and the card's copy
+ * drifting apart would mean the user approved one wording and can later only
+ * review another.
+ */
+export type PromptLayerInfo = { id: string; 
+/**
+ * The instruction, verbatim. Never summarised anywhere it is displayed.
+ */
+text: string; 
+/**
+ * No conditions at all — it applies to every dictation.
+ */
+everywhere: boolean; app: string[]; website: string[]; category: string[] }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.
@@ -3613,11 +3824,11 @@ export type UpdateInfo = {
 /**
  * Version of the available release, e.g. `0.0.2`.
  */
-version: string;
+version: string; 
 /**
  * Release notes, when the release carried a body.
  */
-notes: string | null;
+notes: string | null; 
 /**
  * RFC 3339 publication date as `latest.json` reported it.
  */

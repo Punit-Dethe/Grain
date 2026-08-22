@@ -72,6 +72,40 @@ pub struct ExtensionRecord {
     /// Granted capability names (empty for A-inert packs, which need none).
     #[serde(default)]
     pub granted: Vec<String>,
+    /// Fingerprint of the prompt layers the user approved, from
+    /// [`prompt_layers_fingerprint`].
+    ///
+    /// **A prompt layer's text is part of the permission surface.** It changes
+    /// what the model does to the user's own words, and unlike a capability it
+    /// is granted implicitly by installing — so without this, an approved pack
+    /// could change its wording in a routine update and nothing would ask again.
+    /// That is CVE-2025-54136's exact shape ("approval did not survive later
+    /// changes"), and the VS Code marketplace's 2025 incidents were mostly
+    /// ordinary version bumps.
+    ///
+    /// `None` means "never approved" — which is what a registry written before
+    /// this field reads back as, so old records re-prompt rather than
+    /// grandfathering text nobody ever saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_layers_approved: Option<String>,
+    /// Fingerprint of the actions the user approved, from
+    /// [`actions_fingerprint`].
+    ///
+    /// Same argument as `prompt_layers_approved`, with a sharper edge: an action
+    /// has a **side effect**, so the thing an update can quietly change is not
+    /// wording but what happens. The two failure shapes this closes are a
+    /// `confirm → safe` downgrade (the read-back disappears) and a widened
+    /// `when` (the action starts being offered where it was not).
+    ///
+    /// Kept separate from `prompt_layers_approved` so changing a sentence does
+    /// not re-ask about what an extension can *do*, and vice versa. Both are
+    /// carried in one approval sheet — two sheets in a row is how a user learns
+    /// to click through.
+    ///
+    /// `None` means "never approved", so a registry written before this field
+    /// re-prompts rather than grandfathering actions nobody ever saw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actions_approved: Option<String>,
     /// Exclusive positions this pack's manifest *declares* (SPEC §3.2). Copied
     /// from the manifest at install so occupancy is answerable from memory —
     /// no pack file is ever read to decide who owns a slot.
@@ -106,6 +140,333 @@ pub struct ExtensionRecord {
     /// before 5A reads back as untrusted, never accidentally verified.
     #[serde(default = "default_trust")]
     pub trust: Trust,
+}
+
+/// Fingerprint the declared prompt layers, for the approval check on
+/// [`ExtensionRecord::prompt_layers_approved`].
+///
+/// SHA-256 rather than a cheap hash, because the input is attacker-controlled:
+/// the whole point is to detect a *deliberate* change, so a function whose
+/// collisions can be constructed would let an update carry new wording under the
+/// old approval.
+///
+/// Covers every field that reaches the model or decides when it does — id, text
+/// and the whole match — with length-prefixed framing so two layers cannot be
+/// re-cut into one another and hash the same.
+pub fn prompt_layers_fingerprint(layers: &[grain_sdk::manifest::PromptLayerDecl]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let field = |h: &mut Sha256, s: &str| {
+        h.update((s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    };
+    hasher.update((layers.len() as u64).to_le_bytes());
+    for layer in layers {
+        field(&mut hasher, layer.id.trim());
+        field(&mut hasher, layer.text.trim());
+        // Each list is framed by its own length and closed with a separator, so
+        // moving a value from `app` to `website` — which changes which surfaces
+        // the layer fires on — changes the digest.
+        for list in [&layer.when.app, &layer.when.website, &layer.when.category] {
+            hasher.update((list.len() as u64).to_le_bytes());
+            for value in list {
+                field(&mut hasher, value);
+            }
+            hasher.update([0xfeu8]);
+        }
+        field(&mut hasher, layer.when.field.as_deref().unwrap_or(""));
+        hasher.update([0xffu8]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// Fingerprint the declared actions, for the approval check on
+/// [`ExtensionRecord::actions_approved`].
+///
+/// Same construction as [`prompt_layers_fingerprint`] and for the same reason —
+/// the input is attacker-controlled, so the hash has to resist a *constructed*
+/// collision, not just a careless one.
+///
+/// Covers everything that decides **what happens and when**: id, title, domain,
+/// risk, the whole `when`, every utterance, every parameter, and `agentRules`.
+/// Deliberately NOT a subset — the tempting economy is to hash only the risk
+/// tier, and then a widened `when` or a new utterance ships under the old
+/// approval.
+pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let field = |h: &mut Sha256, s: &str| {
+        h.update((s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    };
+    hasher.update((actions.len() as u64).to_le_bytes());
+    for action in actions {
+        field(&mut hasher, action.id.trim());
+        field(&mut hasher, action.title.trim());
+        field(&mut hasher, action.domain.trim());
+        // The single most important byte in here: `safe` means no read-back.
+        field(
+            &mut hasher,
+            if action.risk.is_safe() {
+                "safe"
+            } else {
+                "confirm"
+            },
+        );
+        // Each list framed by its own length and closed with a separator, so a
+        // value moved between fields — which changes WHERE the action is
+        // offered — changes the digest.
+        for list in [
+            &action.when.app,
+            &action.when.website,
+            &action.when.category,
+        ] {
+            hasher.update((list.len() as u64).to_le_bytes());
+            for value in list {
+                field(&mut hasher, value);
+            }
+            hasher.update([0xfeu8]);
+        }
+        field(&mut hasher, action.when.field.as_deref().unwrap_or(""));
+        hasher.update((action.utterances.len() as u64).to_le_bytes());
+        for utterance in &action.utterances {
+            field(&mut hasher, utterance.trim());
+        }
+        hasher.update([0xfeu8]);
+        hasher.update((action.params.len() as u64).to_le_bytes());
+        for param in &action.params {
+            field(&mut hasher, param.name.trim());
+            field(&mut hasher, &format!("{:?}", param.kind));
+            hasher.update([u8::from(param.resolve), u8::from(param.required)]);
+        }
+        hasher.update([0xfeu8]);
+        field(&mut hasher, action.agent_rules.as_deref().unwrap_or(""));
+        hasher.update([0xffu8]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+mod action_fingerprint_tests {
+    use grain_sdk::manifest::{
+        ActionDecl, ActionParamDecl, ActionParamKind, ActionRisk, LayerWhen,
+    };
+
+    fn action(risk: ActionRisk, when: LayerWhen, utterances: &[&str]) -> ActionDecl {
+        ActionDecl {
+            id: "next".into(),
+            title: "Skip to the next track".into(),
+            domain: "media".into(),
+            risk,
+            when,
+            utterances: utterances.iter().map(|s| (*s).to_string()).collect(),
+            params: Vec::new(),
+            agent_rules: None,
+        }
+    }
+
+    fn site(host: &str) -> LayerWhen {
+        LayerWhen {
+            website: vec![host.into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn dropping_the_read_back_requires_renewed_approval() {
+        // The attack this exists for: ship `confirm`, get approved, then quietly
+        // become `safe` in a patch release so the action fires with no prompt.
+        let approved = super::actions_fingerprint(&[action(
+            ActionRisk::Confirm,
+            LayerWhen::default(),
+            &["send it"],
+        )]);
+        let downgraded = super::actions_fingerprint(&[action(
+            ActionRisk::Safe,
+            LayerWhen::default(),
+            &["send it"],
+        )]);
+        assert_ne!(approved, downgraded);
+    }
+
+    #[test]
+    fn widening_where_an_action_is_offered_requires_renewed_approval() {
+        // Identical wording, identical risk — only the scope grew, from one site
+        // to every dictation surface. That is an escalation.
+        let scoped =
+            super::actions_fingerprint(&[action(ActionRisk::Safe, site("jira."), &["next song"])]);
+        let everywhere = super::actions_fingerprint(&[action(
+            ActionRisk::Safe,
+            LayerWhen::default(),
+            &["next song"],
+        )]);
+        assert_ne!(scoped, everywhere);
+    }
+
+    #[test]
+    fn teaching_an_action_new_language_requires_renewed_approval() {
+        // A new utterance changes what the action captures out of everything the
+        // user says, which is the routing equivalent of widening `when`.
+        let taught = super::actions_fingerprint(&[action(
+            ActionRisk::Safe,
+            LayerWhen::default(),
+            &["next song", "do it"],
+        )]);
+        let original = super::actions_fingerprint(&[action(
+            ActionRisk::Safe,
+            LayerWhen::default(),
+            &["next song"],
+        )]);
+        assert_ne!(taught, original);
+    }
+
+    #[test]
+    fn unresolving_a_parameter_requires_renewed_approval() {
+        // `resolve: true` is what keeps a span bounded by the extension's own
+        // catalogue. Flipping it off sends raw ASR output wherever the parameter
+        // goes, with no other visible change.
+        let bounded = ActionParamDecl {
+            name: "artist".into(),
+            kind: ActionParamKind::Entity,
+            resolve: true,
+            required: true,
+        };
+        let raw = ActionParamDecl {
+            resolve: false,
+            ..bounded.clone()
+        };
+        let with = |param: ActionParamDecl| {
+            let mut a = action(ActionRisk::Safe, LayerWhen::default(), &["play {artist}"]);
+            a.params = vec![param];
+            super::actions_fingerprint(&[a])
+        };
+        assert_ne!(with(bounded), with(raw));
+    }
+
+    #[test]
+    fn an_unchanged_declaration_keeps_its_approval() {
+        let once =
+            super::actions_fingerprint(&[action(ActionRisk::Safe, site("jira."), &["next song"])]);
+        let twice =
+            super::actions_fingerprint(&[action(ActionRisk::Safe, site("jira."), &["next song"])]);
+        assert_eq!(once, twice);
+    }
+}
+
+#[cfg(test)]
+mod prompt_layer_fingerprint_tests {
+    use grain_sdk::manifest::{LayerWhen, PromptLayerDecl};
+
+    fn layer(id: &str, text: &str, when: LayerWhen) -> PromptLayerDecl {
+        PromptLayerDecl {
+            id: id.into(),
+            when,
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn the_fingerprint_tracks_every_field_that_reaches_the_model() {
+        let base = vec![layer("a", "Write tersely.", LayerWhen::default())];
+        let fp = super::prompt_layers_fingerprint(&base);
+
+        // Same declaration, same digest — an update that changes nothing must
+        // not nag the user.
+        assert_eq!(fp, super::prompt_layers_fingerprint(&base));
+
+        for changed in [
+            vec![layer("a", "Write at length.", LayerWhen::default())],
+            vec![layer("b", "Write tersely.", LayerWhen::default())],
+            vec![layer(
+                "a",
+                "Write tersely.",
+                LayerWhen {
+                    app: vec!["code".into()],
+                    ..Default::default()
+                },
+            )],
+            vec![
+                layer("a", "Write tersely.", LayerWhen::default()),
+                layer("b", "And politely.", LayerWhen::default()),
+            ],
+        ] {
+            assert_ne!(fp, super::prompt_layers_fingerprint(&changed));
+        }
+    }
+
+    /// The escalation that changes no text at all.
+    ///
+    /// `when: {website: ["jira."]}` → `when: {}` leaves every instruction
+    /// byte-identical while taking a layer from one site to EVERY dictation the
+    /// user makes. A digest over the text alone would wave that through, which
+    /// is why the whole effective declaration is covered: what it says AND
+    /// where it may say it.
+    #[test]
+    fn widening_where_a_layer_applies_requires_renewed_approval() {
+        let text = "Write in imperative mood.";
+        let scoped = vec![layer(
+            "a",
+            text,
+            LayerWhen {
+                website: vec!["jira.".into()],
+                ..Default::default()
+            },
+        )];
+        let everywhere = vec![layer("a", text, LayerWhen::default())];
+        assert_eq!(scoped[0].text, everywhere[0].text, "the text is unchanged");
+        assert_ne!(
+            super::prompt_layers_fingerprint(&scoped),
+            super::prompt_layers_fingerprint(&everywhere),
+            "widening the scope must not pass as the approved declaration"
+        );
+    }
+
+    /// Narrowing is a change too. It is harmless, but the digest is a statement
+    /// about the declaration, not a risk assessment — a rule that only fires
+    /// sometimes is not the rule the user read.
+    #[test]
+    fn narrowing_where_a_layer_applies_also_changes_the_fingerprint() {
+        let broad = vec![layer("a", "Be terse.", LayerWhen::default())];
+        let narrow = vec![layer(
+            "a",
+            "Be terse.",
+            LayerWhen {
+                field: Some("single_line".into()),
+                ..Default::default()
+            },
+        )];
+        assert_ne!(
+            super::prompt_layers_fingerprint(&broad),
+            super::prompt_layers_fingerprint(&narrow)
+        );
+    }
+
+    #[test]
+    fn moving_a_target_between_lists_changes_the_fingerprint() {
+        // `app: ["acme.com"]` and `website: ["acme.com"]` fire on different
+        // surfaces, so they must not share a digest — the length-prefixed
+        // per-list framing is what makes that true.
+        let as_app = vec![layer(
+            "a",
+            "Write tersely.",
+            LayerWhen {
+                app: vec!["acme.com".into()],
+                ..Default::default()
+            },
+        )];
+        let as_site = vec![layer(
+            "a",
+            "Write tersely.",
+            LayerWhen {
+                website: vec!["acme.com".into()],
+                ..Default::default()
+            },
+        )];
+        assert_ne!(
+            super::prompt_layers_fingerprint(&as_app),
+            super::prompt_layers_fingerprint(&as_site)
+        );
+    }
 }
 
 /// A record's trust when it did not come from a verified index entry. This is
@@ -704,6 +1065,8 @@ mod tests {
             toggle_seq: 0,
             installed_version: "1".into(),
             granted: vec![],
+            prompt_layers_approved: None,
+            actions_approved: None,
             slots: slots.iter().map(|s| s.to_string()).collect(),
             variant_slots: vec![],
             dev: None,

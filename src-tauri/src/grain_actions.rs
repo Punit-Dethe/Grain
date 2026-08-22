@@ -25,6 +25,29 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// [GRAIN] The action log (`docs/Action Routing/PLAN.md` §8.3).
+///
+/// A submodule for the same reason `context_detect::prompt_stack` is one: a peer
+/// module needs a line in the Handy-derived `lib.rs`, whose module block is a
+/// live merge-conflict surface (see `Upstream/UPSTREAM.md`). It also sits
+/// honestly here — this module owns Grain's own invocations, and the log is the
+/// record of what one of them did.
+#[path = "grain_action_log.rs"]
+pub(crate) mod action_log;
+
+/// [GRAIN] The action session (`docs/Action Routing/PLAN.md` §3.2) — a
+/// host-owned sibling of `extension_session` that routes raw ASR instead of
+/// pasting post-processed text. A submodule for the same divergence reason as
+/// [`action_log`].
+#[path = "grain_action_session.rs"]
+pub(crate) mod action_session;
+
+/// [GRAIN] The action chooser (`docs/Action Routing/PLAN.md` §7) — the capsule
+/// that asks which action, whose, which entity, or "are you sure". Submodule for
+/// the same divergence reason as [`action_log`].
+#[path = "grain_action_chooser.rs"]
+pub(crate) mod action_chooser;
+
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -49,6 +72,16 @@ pub(crate) fn emit_session_started(app: &AppHandle, session_id: u64, mode: Sessi
     emit_session_started_with_owner(app, session_id, mode, None);
 }
 
+/// Keep explicit TDT projector bytes intact; all generic rolling output retains
+/// its historical lowercase/punctuation-stripping canonicalization.
+fn finalize_rolling_surface(text: String, preserves_native_text: bool) -> String {
+    if preserves_native_text {
+        text
+    } else {
+        rolling_window::canonicalize_text(&text)
+    }
+}
+
 fn emit_session_started_with_owner(
     app: &AppHandle,
     session_id: u64,
@@ -70,6 +103,14 @@ fn emit_session_started_with_owner(
     // paste target, and the pill should end up agreeing with post-processing
     // (which resolves its context at paste time, after every switch).
     crate::surface_watch::start(app);
+    // [GRAIN] Tell the pill which prompt is active BEFORE it shows. The switcher
+    // capsule is revealed by hover on the expanded card, not only by a switch,
+    // so without this it would open with empty space between its arrows until
+    // the user happened to cycle a prompt. Silent by contract — `PromptActive`
+    // never arms the riser (see `DaemonEvent::PromptActive`).
+    if let Some(name) = current_prompt_name(app) {
+        crate::bridge::emit(app, DaemonEvent::PromptActive { name });
+    }
     crate::bridge::emit(
         app,
         DaemonEvent::RecordingStarted {
@@ -187,6 +228,23 @@ struct PromptSwitchAction {
     delta: i32,
 }
 
+/// The active post-processing prompt's display name, or `None` only when there
+/// are no prompts at all. With none explicitly selected this falls back to the
+/// FIRST prompt — the same index [`cycle_prompt`] treats as current — so the
+/// switcher capsule never shows empty arrows over a prompt the keys would
+/// actually cycle away from. Single lookup shared by the switcher and the
+/// session-start announcement, so the two can never disagree.
+pub(crate) fn current_prompt_name(app: &AppHandle) -> Option<String> {
+    let settings = get_settings(app);
+    let selected = settings
+        .post_process_selected_prompt_id
+        .as_deref()
+        .and_then(|id| settings.post_process_prompts.iter().find(|p| p.id == id));
+    selected
+        .or_else(|| settings.post_process_prompts.first())
+        .map(|p| p.name.clone())
+}
+
 /// Cycle the active post-processing prompt by `delta` (wrapping) and show
 /// the new title in the pill's switcher capsule. Shared by the hold-shortcut
 /// [`PromptSwitchAction`] and the switcher's transient arrow keys ([`SwitcherArrowAction`]).
@@ -238,6 +296,28 @@ impl ShortcutAction for SwitcherArrowAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         cycle_prompt(app, self.delta);
         crate::master_key::bump_switcher(app);
+    }
+
+    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+// One of the action chooser's transient digit keys, or Escape.
+//
+// `start` does nothing but hand off, and that is load-bearing: this runs on the
+// global-shortcut dispatch thread, where doing real work — above all
+// registering or unregistering a shortcut — deadlocks every binding in the app.
+// The chooser defers all of its plugin plumbing for exactly that reason.
+struct ActionChoiceAction {
+    /// `Some(index)` picks that option; `None` is Escape.
+    index: Option<usize>,
+}
+
+impl ShortcutAction for ActionChoiceAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        match self.index {
+            Some(index) => action_chooser::pick(app, index),
+            None => action_chooser::cancel(app),
+        }
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -387,19 +467,11 @@ impl ShortcutAction for RealtimeTranscribeAction {
         // zero-overhead path and no preview events fire.
         let preview = get_settings(app).rolling_live_preview;
         let sid = next_session_id();
+        // start_session registers this generation and synchronously establishes
+        // the manager's load predicate before it spawns the rolling worker. The
+        // model itself still loads asynchronously, so recording startup does not
+        // wait for weights or allocate a second engine.
         let rolling_started = rt.start_session(app.clone(), sid, preview);
-        // Register the new session generation before the asynchronous model
-        // load begins. A cancelled predecessor can finish cleanup concurrently,
-        // but can no longer unload the model underneath this recording.
-        {
-            let app = app.clone();
-            let rt = rt.clone();
-            std::thread::spawn(move || {
-                if let Err(e) = rt.ensure_loaded(&app) {
-                    warn!("[GRAIN] rolling model load failed: {e}");
-                }
-            });
-        }
         {
             let rm = Arc::clone(&rm);
             std::thread::spawn(move || {
@@ -576,6 +648,9 @@ impl ShortcutAction for RealtimeTranscribeAction {
             {
                 (String::new(), None, false, Some(error))
             } else {
+                let preserves_native_text = rolling
+                    .as_ref()
+                    .is_some_and(|output| output.preserves_native_text);
                 let assembled = !rolling_text.trim().is_empty();
                 let ft = if assembled {
                     // Apply the shared final-text stage (custom-word dictionary
@@ -612,12 +687,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 } else {
                     String::new()
                 };
-                (
-                    rolling_window::canonicalize_text(&ft),
-                    None,
-                    post_process,
-                    None,
-                )
+                let ft = finalize_rolling_surface(ft, preserves_native_text);
+                (ft, None, post_process, None)
             };
 
             let processed = if let Some(error) = pipeline_error.as_ref() {
@@ -969,6 +1040,19 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "switcher_prompt_prev".to_string(),
         Arc::new(SwitcherArrowAction { delta: -1 }) as Arc<dyn ShortcutAction>,
     );
+    // The action chooser's transient keys. Registered here once; the chooser
+    // grabs and releases the OS bindings as it opens and closes, so these entries
+    // are inert whenever no question is on screen.
+    for index in 0..action_chooser::MAX_OPTIONS {
+        map.insert(
+            format!("action_choice_{index}"),
+            Arc::new(ActionChoiceAction { index: Some(index) }) as Arc<dyn ShortcutAction>,
+        );
+    }
+    map.insert(
+        "action_choice_cancel".to_string(),
+        Arc::new(ActionChoiceAction { index: None }) as Arc<dyn ShortcutAction>,
+    );
     // Summon the Agent window.
     map.insert(
         "summon_agent".to_string(),
@@ -1006,4 +1090,23 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
         "grain_space_recall".to_string(),
         Arc::new(GrainSpaceRecallAction) as Arc<dyn ShortcutAction>,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::finalize_rolling_surface;
+
+    #[test]
+    fn tdt_surface_preserves_model_native_bytes() {
+        let native = "Hello, Grain! NASA's TDT Works—Today.".to_string();
+        assert_eq!(finalize_rolling_surface(native.clone(), true), native);
+    }
+
+    #[test]
+    fn generic_surface_retains_existing_canonicalization() {
+        assert_eq!(
+            finalize_rolling_surface("Hello, Grain!".to_string(), false),
+            "hello grain"
+        );
+    }
 }

@@ -455,6 +455,17 @@ pub fn change_agent_context_mode_setting(
     Ok(())
 }
 
+/// [GRAIN] Agent screen vision: send a picture of the summoned-from window with
+/// the instruction. OFF by default; see `Settings::agent_screen_image`.
+#[tauri::command]
+#[specta::specta]
+pub fn change_agent_screen_image_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.agent_screen_image = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] Toggle "type to expand" on the native agent input.
 #[tauri::command]
 #[specta::specta]
@@ -828,6 +839,144 @@ pub struct ExtensionCard {
     /// — so this is what lets the UI open the place it actually affects
     /// instead of dead-ending on a preview.
     pub slots: Vec<String>,
+    /// [GRAIN] Prompt layers this pack contributes.
+    ///
+    /// Carried on the card because **attribution is not optional for this
+    /// contribution**: a prompt layer changes what the model does to the user's
+    /// own words, and unlike a capability it is invisible once approved. The
+    /// approval sheet is where the user first reads it; this is where they can
+    /// go back and read it again without uninstalling anything.
+    pub prompt_layers: Vec<PromptLayerInfo>,
+    /// [GRAIN] What this extension can do when asked out loud
+    /// (`docs/Action Routing/PLAN.md` §5).
+    ///
+    /// Here for the same reason as `prompt_layers`, and a stronger one: the
+    /// approval sheet is a single moment, and "what can this thing do" is
+    /// exactly what someone wants to look up again a week later without
+    /// uninstalling it to find out.
+    pub actions: Vec<ActionInfo>,
+}
+
+/// [GRAIN] One contributed prompt layer, as every surface that shows one needs
+/// it: the approval sheet, the extension card, and the prompt-stack view.
+///
+/// One type for all three deliberately. The sheet's copy and the card's copy
+/// drifting apart would mean the user approved one wording and can later only
+/// review another.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct PromptLayerInfo {
+    pub id: String,
+    /// The instruction, verbatim. Never summarised anywhere it is displayed.
+    pub text: String,
+    /// No conditions at all — it applies to every dictation.
+    pub everywhere: bool,
+    pub app: Vec<String>,
+    pub website: Vec<String>,
+    pub category: Vec<String>,
+}
+
+impl PromptLayerInfo {
+    fn from_decl(decl: &grain_sdk::manifest::PromptLayerDecl) -> Self {
+        Self {
+            id: decl.id.clone(),
+            text: decl.text.clone(),
+            everywhere: decl.when.is_unconditional(),
+            app: decl.when.app.clone(),
+            website: decl.when.website.clone(),
+            category: decl.when.category.clone(),
+        }
+    }
+}
+
+/// [GRAIN] Start or stop listening for an action
+/// (`docs/Action Routing/PLAN.md` §3).
+///
+/// The extension surface's own trigger calls this; **Grain registers no
+/// shortcut for it here**. What the design depends on is only that the user's
+/// intent was unambiguous by the time audio started, and the trigger mechanism
+/// is decided separately.
+///
+/// One command for all three transitions rather than three, because the
+/// invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
+/// merge-conflict surface.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String> {
+    use crate::grain_actions::action_session;
+    match phase.as_str() {
+        "start" => match action_session::start(&app) {
+            Ok(()) => Ok(true),
+            // Not an error the user needs shown: something else already owns the
+            // microphone, or nothing is installed that could answer.
+            Err(action_session::StartError::Busy)
+            | Err(action_session::StartError::NothingInstalled) => Ok(false),
+            Err(action_session::StartError::Unavailable(why)) => Err(why),
+        },
+        "stop" => {
+            action_session::stop(&app);
+            Ok(true)
+        }
+        "cancel" => Ok(action_session::cancel(&app)),
+        other => Err(format!("unknown action phase '{other}'")),
+    }
+}
+
+/// [GRAIN] Read the action log, optionally clearing it first
+/// (`docs/Action Routing/PLAN.md` §8.3).
+///
+/// The "why did that happen" surface. It holds what was heard, so it is capped,
+/// lives only in memory, and clearing it is one call with no confirmation
+/// dance — this is the user's own speech and asking twice before letting them
+/// delete it is the wrong default.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_action_log(
+    clear: bool,
+) -> Result<Vec<crate::grain_actions::action_log::ActionLogEntry>, String> {
+    if clear {
+        crate::grain_actions::action_log::clear();
+        return Ok(Vec::new());
+    }
+    Ok(crate::grain_actions::action_log::entries())
+}
+
+/// [GRAIN] One declared action, as the approval sheet and the extension card
+/// need it (`docs/Action Routing/PLAN.md` §5).
+///
+/// Note what is **absent**: the utterance list. The consent question is "what
+/// can this do", not "what words does it listen for" — a list of phrasings is
+/// review and `doctor` material, and putting it on a sheet trains people to
+/// scroll past the part that matters. What the user decides on is the title, the
+/// domain, and whether it will ask before acting.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct ActionInfo {
+    pub id: String,
+    /// One plain line, written for the user.
+    pub title: String,
+    /// The preference group — "media", "messaging" — used as the sheet's
+    /// heading and as the key for "always use this one".
+    pub domain: String,
+    /// Whether performing this reads the resolved action back first. The single
+    /// most important thing on the row.
+    pub confirms: bool,
+    /// No conditions at all — offered on every request.
+    pub everywhere: bool,
+    pub app: Vec<String>,
+    pub website: Vec<String>,
+}
+
+impl ActionInfo {
+    fn from_decl(decl: &grain_sdk::manifest::ActionDecl) -> Self {
+        Self {
+            id: decl.id.clone(),
+            title: decl.title.clone(),
+            domain: decl.domain.clone(),
+            confirms: !decl.risk.is_safe(),
+            everywhere: decl.when.is_unconditional(),
+            app: decl.when.app.clone(),
+            website: decl.when.website.clone(),
+        }
+    }
 }
 
 /// The Overview tab's data: every extension, enabled and disabled alike.
@@ -851,11 +1000,34 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.
     for rec in reg.records() {
-        let (name, description, repository, capabilities, has_detail, tier) =
+        let (name, description, repository, capabilities, has_detail, tier, prompt_layers, actions) =
             match load_pack(&app, &rec.id) {
                 Ok(p) => {
+                    // A pack with prompt layers has something worth opening even
+                    // with no settings or shortcuts of its own — the text it puts
+                    // in front of the model is the whole reason to look.
+                    let prompt_layers: Vec<PromptLayerInfo> = p
+                        .manifest
+                        .contributes
+                        .prompt_layers
+                        .iter()
+                        .map(PromptLayerInfo::from_decl)
+                        .collect();
+                    // Same argument for actions, and a stronger one: what an
+                    // extension can DO is the thing a user most wants to look up
+                    // again later, and the approval sheet is a moment they will
+                    // not get back.
+                    let actions: Vec<ActionInfo> = p
+                        .manifest
+                        .contributes
+                        .actions
+                        .iter()
+                        .map(ActionInfo::from_decl)
+                        .collect();
                     let has_detail = !p.manifest.contributes.settings.is_empty()
-                        || !p.manifest.contributes.shortcuts.is_empty();
+                        || !p.manifest.contributes.shortcuts.is_empty()
+                        || !prompt_layers.is_empty()
+                        || !actions.is_empty();
                     let tier = match p.manifest.tier {
                         grain_sdk::Tier::Pack => "pack",
                         grain_sdk::Tier::Scripted => "scripted",
@@ -868,6 +1040,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                         p.manifest.permissions,
                         has_detail,
                         tier,
+                        prompt_layers,
+                        actions,
                     )
                 }
                 // SPEC §6 last row: a broken/missing pack file renders an error
@@ -879,6 +1053,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     Vec::new(),
                     false,
                     "pack",
+                    Vec::new(),
+                    Vec::new(),
                 ),
             };
         cards.push(ExtensionCard {
@@ -912,6 +1088,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             toggle_seq: rec.toggle_seq.to_string(),
             repository,
             capabilities,
+            prompt_layers,
+            actions,
             has_detail,
             slots: rec
                 .slots
@@ -1002,17 +1180,72 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             // that code cannot start running on capabilities nobody approved.
             // The frontend catches this structured error, shows the permission
             // sheet, calls `extension_grant`, and retries.
-            if enabled && pack.has_runtime() {
+            //
+            // [GRAIN] Prompt layers are asked for in the SAME sheet, because a
+            // prompt layer needs no capability — which is what makes it the safe
+            // way to contribute, and also what would let a pack ship harmless
+            // wording, get approved, and change it in an update with nothing
+            // asking again. That is the rug pull (CVE-2025-54136). The TEXT is
+            // part of what was approved, so when it no longer matches, the
+            // extension is held and the user reads the new wording before it can
+            // shape a single dictation.
+            //
+            // Both are gathered before either is returned: two sheets in a row
+            // for one enable is how a user learns to click Approve without
+            // reading, which defeats the point of asking at all.
+            if enabled {
                 let granted = reg.record(pack_id).map(|r| r.granted).unwrap_or_default();
-                let missing: Vec<String> = pack
-                    .manifest
-                    .permissions
-                    .iter()
-                    .filter(|p| !granted.contains(p))
-                    .cloned()
-                    .collect();
-                if !missing.is_empty() {
-                    return Err(serde_json::json!({ "needsPermissions": missing }).to_string());
+                let missing: Vec<String> = if pack.has_runtime() {
+                    pack.manifest
+                        .permissions
+                        .iter()
+                        .filter(|p| !granted.contains(p))
+                        .cloned()
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                // Inert packs included, deliberately: a tier-A pack with a
+                // prompt layer is exactly the case the sheet would never see.
+                let declared = &pack.manifest.contributes.prompt_layers;
+                let unapproved = !declared.is_empty() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|r| r.prompt_layers_approved)
+                        .unwrap_or_default();
+                    approved != ext::prompt_layers_fingerprint(declared)
+                };
+                // Same question for actions, and it has to be asked here or an
+                // extension that declares one stays permanently inert: the
+                // routing gate refuses an unapproved declaration, and nothing
+                // else would ever ask the user about it.
+                let declared_actions = &pack.manifest.contributes.actions;
+                let actions_unapproved = !declared_actions.is_empty() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|r| r.actions_approved)
+                        .unwrap_or_default();
+                    approved != ext::actions_fingerprint(declared_actions)
+                };
+                if !missing.is_empty() || unapproved || actions_unapproved {
+                    let layers: Vec<PromptLayerInfo> = if unapproved {
+                        declared.iter().map(PromptLayerInfo::from_decl).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    let actions: Vec<ActionInfo> = if actions_unapproved {
+                        declared_actions.iter().map(ActionInfo::from_decl).collect()
+                    } else {
+                        Vec::new()
+                    };
+                    // One sheet carrying all three. Two sheets in a row is how a
+                    // user learns to click through without reading.
+                    return Err(serde_json::json!({
+                        "needsPermissions": missing,
+                        "needsPromptLayers": layers,
+                        "needsActions": actions,
+                    })
+                    .to_string());
                 }
             }
             // [GRAIN] SPEC §3.2: at most one enabled occupant per slot, and a
@@ -1211,6 +1444,17 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         granted,
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: Vec::new(),
+        // Dev records approve their own prompt layers. The user pointed Grain
+        // at a folder on their own disk, which is the same act as approving it,
+        // and the alternative is a permission sheet on every iteration of a
+        // sentence the author is actively writing. Store and manual-import
+        // packs get no such shortcut — see `extension_import_pack`.
+        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
+            .then(|| {
+                ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers)
+            }),
+        actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
+            .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
         dev: None,
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
@@ -1654,6 +1898,16 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
             .map(|r| r.granted.clone())
             .unwrap_or_default(),
         slots: pack.manifest.slots.clone(),
+        // A manually imported pack is a third-party file, so its prompt text is
+        // NOT approved by importing it: the prior approval is carried forward
+        // and a re-import with changed wording therefore stops matching, holds
+        // the enable, and shows the user what changed. This is the update path
+        // the rug-pull incidents of 2025 walked through.
+        prompt_layers_approved: prior.as_ref().and_then(|r| r.prompt_layers_approved.clone()),
+        // Carried, never recomputed. Importing is not approving: if the
+        // declaration changed, this stops matching, the actions go inert, and
+        // the enable path shows the user what is different.
+        actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
         // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
         // that they are externalised — the Agent centre layout ships as a real
         // pack rather than a host-synthesised record.
@@ -1778,12 +2032,20 @@ pub async fn extension_host_call(
         })
 }
 
-/// Record the user's approval of a scripted extension's capabilities (SPEC §6).
-/// Called by the permission sheet on Approve; the caller then retries enable.
+/// Record the user's approval of what an extension asked for (SPEC §6) —
+/// capabilities, and the prompt layers it contributes. Called by the permission
+/// sheet on Approve; the caller then retries enable.
 ///
 /// Grants are clamped to what the manifest actually requests, so neither a
 /// compromised frontend nor a stale sheet can widen an extension's reach beyond
 /// what the user was shown.
+///
+/// **Prompt layers are approved here too**, by the same act and with no
+/// parameter of their own: the approved value is recomputed from the pack on
+/// disk, so what gets recorded is necessarily the text the sheet just rendered
+/// and never something the caller supplies. An inert pack whose only ask is a
+/// prompt layer therefore approves through `extension_grant(id, [])` — one
+/// approval act rather than a second command that could drift from this one.
 #[tauri::command]
 #[specta::specta]
 pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> Result<(), String> {
@@ -1794,8 +2056,11 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     let mut rec = reg
         .record(&id)
         .ok_or_else(|| format!("'{id}' is not installed"))?;
-    let requested = load_pack(&app, &id)?.manifest.permissions;
-    if let Some(extra) = permissions.iter().find(|p| !requested.contains(p)) {
+    let manifest = load_pack(&app, &id)?.manifest;
+    if let Some(extra) = permissions
+        .iter()
+        .find(|p| !manifest.permissions.contains(p))
+    {
         return Err(format!("'{extra}' is not requested by this extension"));
     }
     for p in permissions {
@@ -1803,6 +2068,13 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
             rec.granted.push(p);
         }
     }
+    rec.prompt_layers_approved = (!manifest.contributes.prompt_layers.is_empty())
+        .then(|| ext::prompt_layers_fingerprint(&manifest.contributes.prompt_layers));
+    // Recomputed from disk, never taken from the caller — the fingerprint IS the
+    // grant, so accepting one over the wire would let a caller approve a
+    // declaration the user never saw.
+    rec.actions_approved = (!manifest.contributes.actions.is_empty())
+        .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
     reg.install(rec).map_err(|e| e.to_string())
 }
 

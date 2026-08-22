@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -26,6 +33,14 @@ import "./agent.css";
  * match what the window will actually clamp to. */
 const CENTER_TOP_OFFSET = 76;
 const CENTER_BOTTOM_GAP = 52;
+
+/** Duration of the card's opening growth — must match `agc-expand` in
+ * `agent.css`. Nothing on the backend races it any more: the window no longer
+ * waits a guessed interval before showing, because the panel paints nothing at
+ * all until `agent-reveal` arrives. */
+const REVEAL_MS = 440;
+/** Shared opening curve. Decelerating, no overshoot. */
+const EXPAND_EASE = "cubic-bezier(0.16, 0.84, 0.3, 1)";
 
 type Role = "user" | "assistant";
 interface ChatMessage {
@@ -106,7 +121,13 @@ function keycapLabel(part: string): string {
  */
 export function AgentPanel() {
   const { t } = useTranslation();
-  const win = getCurrentWindow();
+  // ONE handle for the component's life. `getCurrentWindow()` mints a fresh
+  // object on every call, so calling it inline made `win` a new identity each
+  // render — every effect that depends on it tore down and re-subscribed
+  // constantly, and `listen()` is async, so any subscription still in flight
+  // when its own cleanup ran survived forever. Those orphans stacked up and
+  // each one handled the same event again (one dictation pasted N times).
+  const win = useMemo(() => getCurrentWindow(), []);
 
   // Conversation (expanded stage). In the compact stage this holds only the
   // first user turn; the assistant replies live in `versions`.
@@ -125,6 +146,21 @@ export function AgentPanel() {
   // CENTER: which reply's copy icon is currently flashing (per-turn, not global).
   const [flashedId, setFlashedId] = useState<string | null>(null);
   const [quoteOpen, setQuoteOpen] = useState(false);
+  // Bumped on every reveal signal so the card replays its opening animation.
+  // The window is warm and pre-created, so mounting is NOT the reveal.
+  const [appearNonce, setAppearNonce] = useState(0);
+  // Nothing renders until the window is actually being shown. Showing a window
+  // and arming an animation inside it are independent, so which one wins is a
+  // race — and the losing order paints the card at rest for a frame before it
+  // snaps small and grows, which is what read as the panel opening twice. With
+  // nothing to paint until the entrance is armed, that order stops mattering.
+  const [revealed, setRevealed] = useState(false);
+  const revealedRef = useRef(false);
+  const revealingRef = useRef(false);
+  // Set by `expand()` to the box the card occupied BEFORE the window grew. Its
+  // presence tells the reveal effect to animate the card's box open from there
+  // instead of playing the plain opening growth. Consumed once.
+  const growFromRef = useRef<{ w: number; h: number } | null>(null);
   const [followupShortcut, setFollowupShortcut] = useState<string>("");
   // Which reply surface this session is rendering — loaded at mount. `side` is
   // the original bottom-right card; `center` is the sleek center-top panel.
@@ -148,8 +184,9 @@ export function AgentPanel() {
   const expandedRef = useRef(false);
   const busyRef = useRef(false);
   const followupRef = useRef<HTMLInputElement>(null);
-  // CENTER layout: the auto-growing follow-up textarea + the card whose height
-  // the webview reports to the backend so the window hugs its content.
+  // CENTER layout: the auto-growing follow-up textarea. `cardRef` is the card
+  // itself — every layout uses it for the reveal animation, and CENTER also
+  // reports its height to the backend so the window hugs its content.
   const centerInputRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const lastReportedH = useRef(0);
@@ -177,6 +214,17 @@ export function AgentPanel() {
   const compactSources = versions[versionIdx]?.sources ?? [];
   const compactNotFound = versions[versionIdx]?.not_found ?? false;
   const compactConfirmDelete = versions[versionIdx]?.confirm_delete ?? null;
+
+  /** The window is on screen — render, and play the entrance. Idempotent: the
+   * backend announces the reveal AND the panel checks for itself on mount, so
+   * whichever arrives first wins and the second is a no-op. One window is only
+   * ever revealed once (Esc destroys it rather than hiding it). */
+  const reveal = useCallback(() => {
+    if (revealedRef.current) return;
+    revealedRef.current = true;
+    setRevealed(true);
+    setAppearNonce((n) => n + 1);
+  }, []);
 
   const flashCopied = useCallback(() => {
     setCopyFlash(true);
@@ -298,10 +346,38 @@ export function AgentPanel() {
         confirmDelete: reply.confirm_delete,
       });
     }
+    // ONE window, and it does not move. The window is already the conversation's
+    // footprint (`side_envelope` in `agent.rs`) — the compact card is just a box
+    // in its bottom-right corner — so expanding is that box growing to fill a
+    // window that never resizes. No native step to hide, race, or wait for.
+    //
+    // Measure the CARD, not the viewport: the viewport is the target, and it has
+    // been the target the whole time. Reading the window for the start box was
+    // only ever correct while the window itself was being resized, and when that
+    // read lost its race it returned the target — collapsing the growth to
+    // nothing and falling through to the entrance animation instead, which
+    // played scale(0.86)→1 on the full-size conversation. That is the "big card
+    // compacts, then the expanded appears".
+    // `offsetWidth/Height`, not the bounding rect: the rect includes transforms,
+    // so expanding while the entrance is still scaling would read a shrunken box
+    // and grow from the wrong size. Same reason `reportHeight` uses it.
+    const card = cardRef.current;
+    const from = {
+      w: card?.offsetWidth || window.innerWidth,
+      h: card?.offsetHeight || window.innerHeight,
+    };
+    if (card) {
+      card.style.width = `${from.w}px`;
+      card.style.height = `${from.h}px`;
+    }
+    growFromRef.current = from;
     setMessages(seed);
     setExpanded(true);
-    void commands.agentSetPanelMode(true).catch(() => {});
+    setAppearNonce((n) => n + 1);
     window.setTimeout(() => followupRef.current?.focus(), 60);
+    // State only now (which brain owns Enter, whether dictation routes into the
+    // panel). It no longer touches the window, so nothing waits on it.
+    void commands.agentSetPanelMode(true).catch(() => {});
   }, []);
 
   /** Open the CENTER follow-up field (button click or the continuation
@@ -416,20 +492,32 @@ export function AgentPanel() {
 
   // Backend → panel signals for the pre-created (warm) window lifecycle.
   useEffect(() => {
+    // `listen()` resolves asynchronously, so a subscription can land AFTER this
+    // effect has been torn down. Retiring it on arrival is what guarantees no
+    // orphan outlives the effect — "destroy if not in use", and the reason a
+    // single event can never be handled twice.
+    let dead = false;
     const uns: Array<() => void> = [];
+    const track = (un: () => void) => (dead ? un() : uns.push(un));
     // The core queued the first instruction after we mounted → run it.
     void win
       .listen("agent-instruction", () => {
         void startFirstIfQueued();
       })
-      .then((fn) => uns.push(fn));
-    // Reveal-in-loading handshake: the window was just shown; keep the loading
-    // state until the first reply (or an error) lands.
+      .then(track);
+    // The ONE entrance signal, emitted by every backend path that shows this
+    // window (`reveal_panel` in `agent.rs`) and always after the state event
+    // below, so the card is already showing the right thing when it appears.
+    // The state events do NOT arm the entrance themselves — two of them can
+    // land for a single reveal, and that played the animation twice.
+    void win.listen("agent-reveal", reveal).then(track);
+    // Reveal-in-loading handshake: the window is about to be shown; keep the
+    // loading state until the first reply (or an error) lands.
     void win
       .listen("agent-loading", () => {
         if (!firstRunStartedRef.current && !expandedRef.current) setBusy(true);
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // A backend-side failure (STT/LLM) with no reply to show.
     void win
       .listen<string>("agent-error", (e) => {
@@ -437,13 +525,13 @@ export function AgentPanel() {
         setBusy(false);
         setError(e.payload || t("agent.error"));
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // Follow-up offer opened the warm hidden panel → seed the conversation.
     void win
       .listen("agent-followup-open", () => {
         void openRetainedConversation();
       })
-      .then((fn) => uns.push(fn));
+      .then(track);
     // [GRAIN] Dictation routed INTO the panel (the user used the app's STT while
     // the expanded conversation was focused). Append the transcript to the
     // follow-up field instead of it being OS-pasted (which would paste the
@@ -477,9 +565,103 @@ export function AgentPanel() {
         startCompose();
         requestAnimationFrame(() => append(centerInputRef.current));
       })
-      .then((fn) => uns.push(fn));
-    return () => uns.forEach((u) => u());
-  }, [openRetainedConversation, startCompose, startFirstIfQueued, t, win]);
+      .then(track);
+    // A window BUILT already-visible (the windowless follow-up rebuild) emits
+    // its reveal while this webview is still loading, so that event is gone
+    // before anything can hear it. Asking closes that hole: whichever of the
+    // two answers first reveals, and `reveal` makes the loser a no-op. Without
+    // this, one path would render a permanently blank window.
+    void win
+      .isVisible()
+      .then((v) => {
+        if (v) reveal();
+      })
+      .catch(() => {});
+    return () => {
+      dead = true;
+      uns.forEach((u) => u());
+    };
+  }, [
+    openRetainedConversation,
+    reveal,
+    startCompose,
+    startFirstIfQueued,
+    t,
+    win,
+  ]);
+
+  // Replay the opening animation on each reveal. Restarted imperatively rather
+  // than by remounting: the card carries refs (height reporting, scroll) that
+  // must survive, and re-adding the class after a reflow is what re-arms a CSS
+  // animation on an element that is already in the tree.
+  //
+  // LAYOUT effect, not a passive one: on expand the conversation card mounts in
+  // the same commit that arms the animation, and a passive effect would let it
+  // paint once at full size first — a visible pop before the growth begins.
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el || appearNonce === 0) return;
+    revealingRef.current = true;
+    const from = growFromRef.current;
+    growFromRef.current = null;
+
+    const to = { w: window.innerWidth, h: window.innerHeight };
+    let anim: Animation | undefined;
+    if (from) {
+      // Expanding: grow the card's own box out to fill the window.
+      //
+      // `from` being set IS the signal, with no second opinion about whether the
+      // box actually got bigger. That extra test used to decide this, and when
+      // it read equal sizes it fell through to the ENTRANCE animation — which
+      // shrinks the full-size card to 0.86 and grows it back. A growth that
+      // measures as no growth must be a no-op, never a different animation.
+      //
+      // The inline size is the START box, so the first painted frame is right
+      // by construction — never dependent on when the animation's own first
+      // keyframe lands. Setting it to the TARGET and leaning on `fill:
+      // backwards` instead is what flashed the full-size card for one frame at
+      // the start of the growth. `fill: forwards` then holds the end box until
+      // the finish handler hands the card back to the stylesheet.
+      el.classList.add("is-growing");
+      el.style.width = `${from.w}px`;
+      el.style.height = `${from.h}px`;
+      anim = el.animate(
+        [
+          { width: `${from.w}px`, height: `${from.h}px` },
+          { width: `${to.w}px`, height: `${to.h}px` },
+        ],
+        { duration: REVEAL_MS, easing: EXPAND_EASE, fill: "forwards" },
+      );
+      const done = anim;
+      void done.finished
+        .then(() => {
+          // Clear the pin FIRST (the stylesheet's 100%/100% is the same box the
+          // fill is holding), then release the fill — so no frame falls between
+          // the two and snaps the card shut.
+          el.style.width = "";
+          el.style.height = "";
+          done.cancel();
+        })
+        .catch(() => {});
+    } else {
+      el.classList.remove("is-appearing");
+      void el.offsetWidth; // force reflow so the animation restarts
+      el.classList.add("is-appearing");
+    }
+
+    // Hand the card back to the stylesheet once it has played out, so nothing
+    // (a pinned box, `will-change`) outlives the animation that needed it.
+    const timer = window.setTimeout(() => {
+      el.classList.remove("is-appearing", "is-growing");
+      el.style.width = "";
+      el.style.height = "";
+      revealingRef.current = false;
+    }, REVEAL_MS + 60);
+    return () => {
+      window.clearTimeout(timer);
+      anim?.cancel();
+    };
+  }, [appearNonce]);
 
   // Esc closes — global so it works even when no field is focused.
   useEffect(() => {
@@ -496,15 +678,15 @@ export function AgentPanel() {
   // Backend bridges: the transient global Enter (compact → confirm) and the
   // follow-up shortcut / pill click (→ expand).
   useEffect(() => {
-    let unEnter: (() => void) | undefined;
-    let unFollow: (() => void) | undefined;
+    // Same late-resolve guard as the lifecycle listeners above.
+    let dead = false;
+    const uns: Array<() => void> = [];
+    const track = (un: () => void) => (dead ? un() : uns.push(un));
     void win
       .listen("agent-global-enter", () => {
         if (!expandedRef.current) confirm();
       })
-      .then((fn) => {
-        unEnter = fn;
-      });
+      .then(track);
     void win
       .listen("agent-followup", () => {
         // CENTER: the continuation shortcut opens (and focuses) the follow-up
@@ -515,17 +697,22 @@ export function AgentPanel() {
           expand();
         }
       })
-      .then((fn) => {
-        unFollow = fn;
-      });
+      .then(track);
     return () => {
-      unEnter?.();
-      unFollow?.();
+      dead = true;
+      uns.forEach((u) => u());
     };
   }, [confirm, expand, startCompose, win]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    // A smooth scroll running at the same time as the reveal is two animations
+    // moving the same content on different curves — it reads as stutter. While
+    // the card is opening, jump instead; the user has not seen the old position
+    // anyway.
+    endRef.current?.scrollIntoView({
+      behavior: revealingRef.current ? "auto" : "smooth",
+      block: "end",
+    });
   }, [messages, versions, versionIdx, busy]);
 
   const sendFollowup = useCallback(async () => {
@@ -589,11 +776,13 @@ export function AgentPanel() {
 
   /** Report the card's natural height to the backend so the window hugs it. The
    * CSS max-height caps the measurement, so the window stops growing and the
-   * thread scrolls internally past that point. */
+   * thread scrolls internally past that point. `offsetHeight` (not the bounding
+   * rect) so the reveal animation's transform never leaks into the size the
+   * window is driven to. */
   const reportHeight = useCallback(() => {
     const el = cardRef.current;
     if (!el) return;
-    const h = Math.ceil(el.getBoundingClientRect().height);
+    const h = el.offsetHeight;
     if (h > 0 && Math.abs(h - lastReportedH.current) >= 2) {
       lastReportedH.current = h;
       void commands.agentResizePanel(h).catch(() => {});
@@ -810,6 +999,8 @@ export function AgentPanel() {
     ? followupShortcut.split("+").map(keycapLabel)
     : [];
   const canConfirm = !busy && displayedReply.trim().length > 0;
+  // Held back until the window is actually being shown — see `reveal`.
+  const rootClass = `agent-panel-root${revealed ? " is-revealed" : ""}`;
 
   // ══ CENTER: the sleek center-top panel ════════════════════════════════════
   // One continuously-growing surface (no compact/expanded split). Before the
@@ -839,7 +1030,7 @@ export function AgentPanel() {
     const lastIdx = thread.length - 1;
 
     return (
-      <div className="agent-panel-root">
+      <div className={rootClass}>
         <div
           ref={cardRef}
           className="agc-card agc-center"
@@ -935,11 +1126,11 @@ export function AgentPanel() {
               follow-up + shortcut (left) and Confirm on the first reply (right). */}
           {composing ? (
             <div className="agc-c-compose">
+              {/* Enabled while busy, for the same reason as the side field. */}
               <textarea
                 ref={centerInputRef}
                 rows={1}
                 className="agc-c-textarea"
-                disabled={busy}
                 placeholder={
                   busy
                     ? t("agent.followupWaiting")
@@ -1008,8 +1199,8 @@ export function AgentPanel() {
   // ── COMPACT: the reference reply card ─────────────────────────────────────
   if (!expanded) {
     return (
-      <div className="agent-panel-root">
-        <div className="agc-card">
+      <div className={rootClass}>
+        <div className="agc-card" ref={cardRef}>
           {/* Header: version pager (left) · close (right). Draggable. */}
           <div className="agc-head" data-tauri-drag-region>
             <div className="agc-pager">
@@ -1057,7 +1248,7 @@ export function AgentPanel() {
               role="button"
               tabIndex={-1}
             >
-              <span className="agc-quote-text">“{quoteText}</span>
+              <span className="agc-quote-text">{quoteText}</span>
               {!quoteOpen && quoteText.length > 120 && (
                 <span className="agc-quote-more">…{t("agent.more")}</span>
               )}
@@ -1139,14 +1330,11 @@ export function AgentPanel() {
 
   // ── EXPANDED: the conversation ─────────────────────────────────────────────
   return (
-    <div className="agent-panel-root">
-      <div className="agc-card agc-card--expanded">
-        {/* Header (draggable) */}
-        <div className="agc-head" data-tauri-drag-region>
-          <span
-            className={`agent-dot-status ${busy ? "is-busy" : "is-ready"}`}
-          />
-          <span className="agc-brand">{t("agent.brand")}</span>
+    <div className={rootClass}>
+      <div className="agc-card agc-card--expanded" ref={cardRef}>
+        {/* Header (draggable): a quiet wordmark balances the close button. */}
+        <div className="agc-head agc-head--expanded" data-tauri-drag-region>
+          <span className="agc-title">{t("agent.brand")}</span>
           <span className="agc-spacer" />
           <button
             type="button"
@@ -1158,15 +1346,10 @@ export function AgentPanel() {
           </button>
         </div>
 
-        {/* Conversation */}
+        {/* Conversation — the user's turns are bubbles, answers are prose. */}
         <div className="agc-scroll">
           {messages.map((m) => (
             <div key={m.id} className="agc-turn">
-              <div
-                className={`agc-turn-label ${m.role === "user" ? "is-user" : "is-grain"}`}
-              >
-                {m.role === "user" ? t("agent.you") : t("agent.grain")}
-              </div>
               <div className={`agc-turn-body agc-turn-body--${m.role}`}>
                 {m.role === "assistant" ? (
                   <AgentMarkdown markdown={m.content} />
@@ -1184,7 +1367,6 @@ export function AgentPanel() {
 
           {busy && (
             <div className="agc-turn">
-              <div className="agc-turn-label is-grain">{t("agent.grain")}</div>
               <div className="agent-typing" aria-hidden="true">
                 <span />
                 <span />
@@ -1199,11 +1381,18 @@ export function AgentPanel() {
 
         {/* Follow-up input */}
         <div className={`agc-input ${busy ? "is-busy" : ""}`}>
+          {/* NOT disabled while busy. Disabling a focused field makes the
+              browser blur it on the spot, and the refocus in `runConversation`
+              then runs before React has re-enabled it — focusing a disabled
+              input is a no-op, so focus was lost for good and every follow-up
+              needed a fresh click. Staying enabled means focus is never taken
+              away in the first place, and the user can compose their next
+              question while the answer is still coming. Submitting is what's
+              blocked while busy (`sendFollowup` guards, and Send is disabled). */}
           <input
             ref={followupRef}
             type="text"
             className="agc-input-field"
-            disabled={busy}
             placeholder={
               busy ? t("agent.followupWaiting") : t("agent.followupPlaceholder")
             }
@@ -1219,6 +1408,10 @@ export function AgentPanel() {
             className="agc-send"
             disabled={busy}
             title={t("agent.followupPlaceholder")}
+            // Clicking a button moves focus to it, so sending by mouse emptied
+            // the field AND took the caret out of it. Send is the one control
+            // whose whole purpose is to return you to typing.
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => void sendFollowup()}
           >
             {SEND_ARROW}

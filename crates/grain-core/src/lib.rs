@@ -23,6 +23,13 @@ pub mod trust;
 pub mod pack;
 // [GRAIN] Phase 5A: install/update/remove transaction + the trust invariant.
 pub mod install;
+// [GRAIN] Action routing, Tier L (docs/Action Routing/PLAN.md §4.1). Pure
+// functions over declared actions: no model, no state, nothing held between
+// invocations — so the eval harness can drive it without a running app.
+pub mod action_router;
+// [GRAIN] What to do with a ranking: conformal prediction sets turned into
+// execute / choose / escalate / refuse (docs/Action Routing/PLAN.md §4.3–§4.5).
+pub mod action_decision;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};

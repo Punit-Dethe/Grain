@@ -1,11 +1,22 @@
 //! [GRAIN] Context awareness — detect the foreground app/site and compose the
 //! layered post-processing system prompt.
 //!
-//! # The layers
-//! 1. **BASE** — the user's selected post-processing prompt (General/Email/Coding
-//!    or a custom one). Always present; unchanged behavior.
-//! 2. **CONTEXT (soft)** — an automatic, ≤2-line nudge derived from the detected
-//!    app *category* (tone + vocabulary). Never restructures or hard-formats.
+//! This module answers **which layers apply** to a dictation. What each layer
+//! says, how much authority it carries and how the whole thing renders belongs
+//! to [`prompt_stack`]; the ladder and the reasoning behind it are written down
+//! in `docs/Prompt Priority/PLAN.md`.
+//!
+//! # The layers this module can contribute
+//! - **BASE** — the user's selected post-processing prompt (the shipped Default
+//!   Prompt or a custom one). Always present; unchanged behavior.
+//! - **RULE** — the profile instruction that claims this surface. A *custom*
+//!   profile is the user naming an app or site, so it carries their authority;
+//!   a *built-in* category profile applies because Grain guessed, and stays a
+//!   soft tone nudge that never restructures.
+//! - **SURFACE** — the single-line-field rule and the cursor-fit rule, both
+//!   detected rather than asserted.
+//! - **EVIDENCE** — the app/site fact line and nearby terms. Reference material
+//!   with no authority at all.
 //!
 //! HARD per-app formatting is no longer built in: it is what the App Modes
 //! extension does, in its own transform hook and its own storage, so Grain
@@ -23,6 +34,20 @@
 
 use grain_core::settings::CustomContextProfile;
 use grain_core::AppSettings;
+use std::fmt::Write as _;
+
+/// [GRAIN] The prompt as an ordered, attributable structure — tiers, sources,
+/// and the one place allowed to write a layer header.
+///
+/// A submodule for the same reason [`app_catalog`] is one: a peer module needs a
+/// line in the Handy-derived `lib.rs`, whose module block is a live
+/// merge-conflict surface (see `Upstream/UPSTREAM.md`). It also happens to be
+/// the honest structure — composing the prompt is the second half of this
+/// module's job, and the two must agree about what a layer is.
+#[path = "prompt_stack.rs"]
+pub(crate) mod prompt_stack;
+
+use prompt_stack::{ContributedLayer, Contributions, PromptStack};
 
 /// [GRAIN] The installed-application catalogue behind the context-profile app
 /// picker.
@@ -336,15 +361,111 @@ pub(crate) fn is_supported_site(host: &str, settings: &AppSettings) -> bool {
 /// Resolved HERE rather than during detection so that `detect_active_context`
 /// keeps its signature and its callers — the pill's icon path calls it too, and
 /// does not want to read settings to find out what an app is called.
-fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option<&'a str> {
+/// Returns the instruction and whether the USER chose the surface it applies to
+/// — which is what decides its authority tier, not who typed the words.
+///
+/// A custom profile is the user naming an app or a site and saying "here, do
+/// this", so it goes out as one of their own rules. A built-in category profile
+/// applies because *Grain guessed* the surface, and stays soft even when the
+/// user has edited its wording — a tier that flipped when someone fixed a typo
+/// would be invisible and surprising. See [`prompt_stack::Tier`].
+fn instruction_for<'a>(ctx: &ActiveContext, settings: &'a AppSettings) -> Option<(&'a str, bool)> {
     if let Some(profile) = custom_profile_for(ctx, settings) {
         let text = profile.instruction.trim();
         // An empty custom instruction still WINS — it means "say nothing here",
         // which is a real thing to want for one noisy app, and falling back to
         // the built-in would quietly ignore the profile the user made.
-        return (!text.is_empty()).then_some(text);
+        return (!text.is_empty()).then_some((text, true));
     }
-    ctx.category.instruction(settings)
+    ctx.category.instruction(settings).map(|text| (text, false))
+}
+
+/// Whether a contributed prompt layer's conditions hold for this surface.
+///
+/// # Why the HOST evaluates this
+///
+/// The obvious alternative — hand the extension the context and let it decide —
+/// would make "add a line to my prompt" a way to read the user's foreground
+/// application and browsing history. Evaluating here means an inert pack can
+/// target Jira without ever being told the user opened Jira, and **the extension
+/// is never informed whether it matched**: no callback, no event, no return
+/// value. Contributing a layer stays strictly weaker than `context:app`, which
+/// is a separate grant with its own permission line.
+///
+/// # Semantics
+///
+/// Fields intersect, members alternate: every non-empty field must have one
+/// member that matches. An empty `when` matches everything, which is legitimate
+/// (a pack whose rule is genuinely universal) and is why the permission sheet
+/// says so loudly.
+///
+/// A conditional layer with **no context at all** does not match. Detection only
+/// runs when context awareness is on, so a targeted layer is inert while that
+/// setting is off — stated here because "my layer never fires" is otherwise a
+/// mystery, and answering it in the UI is a later, separate job.
+pub fn layer_matches(when: &grain_sdk::manifest::LayerWhen, ctx: Option<&ActiveContext>) -> bool {
+    if when.is_unconditional() {
+        return true;
+    }
+    let Some(ctx) = ctx else {
+        return false;
+    };
+    if !when.app.is_empty() {
+        let hit = when.app.iter().any(|target| {
+            let target = target.trim();
+            !target.is_empty()
+                && ((!ctx.exe.is_empty() && target.eq_ignore_ascii_case(&ctx.exe))
+                    || ctx
+                        .aumid
+                        .as_deref()
+                        .is_some_and(|aumid| target.eq_ignore_ascii_case(aumid)))
+        });
+        if !hit {
+            return false;
+        }
+    }
+    if !when.website.is_empty() {
+        // The same confidence bar the user's own site profiles clear. A
+        // `Probable` host was found by scanning the window and can belong to a
+        // tab the user is not typing into — and a layer firing on the wrong
+        // site is worse than one that stays quiet.
+        let host = ctx
+            .url_host
+            .as_deref()
+            .filter(|_| ctx.confidence.allows_site_category());
+        let Some(host) = host else {
+            return false;
+        };
+        let host = host.trim().trim_start_matches("www.");
+        if !when
+            .website
+            .iter()
+            .any(|pattern| host_matches(host, pattern.trim()))
+        {
+            return false;
+        }
+    }
+    if !when.category.is_empty() {
+        let Some(id) = ctx.category.profile_id() else {
+            // `Other` has no profile id, so naming it is the way to target
+            // "a surface Grain has no opinion about".
+            return when.category.iter().any(|c| c == "other");
+        };
+        if !when.category.iter().any(|c| c == id) {
+            return false;
+        }
+    }
+    if let Some(field) = when.field.as_deref() {
+        let want = match field {
+            "single_line" => FieldKind::SingleLine,
+            "multi_line" => FieldKind::MultiLine,
+            _ => return false,
+        };
+        if ctx.field != want {
+            return false;
+        }
+    }
+    true
 }
 
 /// Address-bar host → category. **This is the table that makes context awareness
@@ -579,7 +700,7 @@ pub enum ControlClass {
     Other,
 }
 
-/// One read of the focused element, as facts. Filled by `uia::read_focus_facts`.
+/// One read of the focused element, as facts. Filled by `uia::read_focus_probe`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FocusFacts {
     pub is_password: bool,
@@ -603,31 +724,18 @@ pub struct FocusFacts {
     ///
     /// This is the signal UI Automation misses. Terminal emulators, custom-drawn
     /// editors and older Win32 applications accept pasted text while exposing
-    /// little or no UIA text pattern — judged on UIA alone they look like a
-    /// missed paste, which would hold a transcript that landed perfectly well.
-    /// A blinking caret is proof that an insertion point exists.
+    /// little or no UIA text pattern. A blinking caret is proof that an
+    /// insertion point exists, so it argues *against* calling a `Document`
+    /// read-only — see [`classify`].
     pub has_native_caret: bool,
-}
-
-impl FocusFacts {
-    /// Whether this element exposes **any** route by which typed or pasted text
-    /// could enter it.
+    /// The foreground window is the Explorer **desktop** (`Progman`/`WorkerW`).
     ///
-    /// The negation is the useful direction: an element offering no text
-    /// pattern, no value, no text control type and no system caret cannot have
-    /// received a paste. That is a statement about the element, not a guess
-    /// about the application, which is what makes it usable as evidence.
-    ///
-    /// The two mechanisms are complementary rather than redundant: UI
-    /// Automation covers web and modern frameworks, the system caret covers
-    /// native and custom-drawn ones.
-    pub fn has_any_text_affordance(&self) -> bool {
-        self.has_text_edit_pattern
-            || self.value_read_only.is_some()
-            || self.has_text_pattern
-            || self.has_native_caret
-            || matches!(self.control, ControlClass::Edit | ControlClass::Document)
-    }
+    /// The desktop is the flagship missed-paste surface, and the only common one
+    /// that can be recognised *positively* rather than by absence of evidence.
+    /// Its focused element is a `List`, which is a container type and therefore
+    /// deliberately inconclusive — without this fact the single most obvious
+    /// miss in the product would go uncaught.
+    pub is_shell_desktop: bool,
 }
 
 /// A cheap composite identity for the focused element.
@@ -681,6 +789,18 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
     if facts.is_password {
         return FocusTarget::Editable;
     }
+    // Focus is one of Grain's own windows. Nothing about someone else's paste
+    // can be concluded from our own surfaces, and several of them report leaf
+    // control types that would otherwise read as positive evidence of a miss.
+    if facts.is_own_process {
+        return FocusTarget::Unknown;
+    }
+    // The desktop: no text field exists anywhere on it, whatever its list view
+    // claims. Catching it here rather than after the fact also stops the paste
+    // chord from firing at Explorer, where Ctrl+V is a real command (paste file).
+    if facts.is_shell_desktop {
+        return FocusTarget::NotEditable;
+    }
     if facts.has_text_edit_pattern {
         return FocusTarget::Editable;
     }
@@ -699,6 +819,12 @@ pub fn classify(facts: FocusFacts) -> FocusTarget {
         // viewer, a mail preview, a rendered reader. WITH a caret it stays
         // ambiguous — a real editor and a selectable web page both present one,
         // and the web page is exactly the case we must not guess wrong about.
+        //
+        // Deliberately NOT `has_native_caret`. That signal is asked of the
+        // foreground THREAD, not of this element, so an application whose thread
+        // owns a caret anywhere (Chromium keeps one for IME positioning) would
+        // veto the whole rule and silence the most common miss there is. An
+        // imprecise signal must never override a precise one.
         ControlClass::Document if facts.has_caret => FocusTarget::Unknown,
         ControlClass::Document => FocusTarget::NotEditable,
         ControlClass::NonText => FocusTarget::NotEditable,
@@ -1048,14 +1174,32 @@ pub(crate) fn fit_text_to_caret(text: &str, caret: &CaretContext) -> String {
         return fitted;
     }
 
-    // If both sides contain text, this output is an insertion inside an
-    // existing sentence, not a standalone sentence. Weak/local models often
-    // return the ASR's leading capital and automatic final period unchanged;
-    // those two artifacts are mechanically wrong at this seam and do not need
-    // another model decision.
+    // Both sides having text is NOT on its own enough to call this an insertion
+    // inside an existing sentence — it also has to be true that the left does
+    // not end a sentence and the right does not begin one.
+    //
+    // Today `relevant_left_fragment` cuts everything up to the last sentence
+    // terminator and `relevant_right_fragment` stops at the first, so a capture
+    // that reaches here already satisfies both. That is a property of a
+    // different function, though, and this one writes into the user's document:
+    // widen either fragment and dictating a whole sentence between two others
+    // would come out lowercased with its full stop removed
+    // ("I went home. it was late Then I slept."). Checking it here costs two
+    // character comparisons and makes the function correct on its own terms
+    // rather than correct by coincidence.
+    let left_continues = !ends_sentence(&caret.before);
+    let right_continues = !begins_sentence(&caret.after);
     if !caret.before.trim().is_empty() && !caret.after.trim().is_empty() {
-        strip_automatic_terminal_period(&mut fitted);
-        lowercase_ordinary_sentence_start(&mut fitted);
+        // The final period belongs to the dictation whenever what follows is a
+        // new sentence rather than the rest of this one.
+        if right_continues {
+            strip_automatic_terminal_period(&mut fitted);
+        }
+        // The leading capital is an artifact only when the insertion lands
+        // mid-sentence; after a full stop it is correct.
+        if left_continues {
+            lowercase_ordinary_sentence_start(&mut fitted);
+        }
     }
 
     if fitted.is_empty() {
@@ -1133,6 +1277,39 @@ fn strip_automatic_terminal_period(text: &mut String) {
     if !last.ends_with("..") && !dotted_abbreviation && !named_abbreviation {
         text.pop();
     }
+}
+
+/// Whether the text to the left of the cursor closes a sentence.
+///
+/// Trailing closing quotes and brackets are stepped over, so `he said "fine."`
+/// counts as ended.
+fn ends_sentence(before: &str) -> bool {
+    before
+        .trim_end()
+        .trim_end_matches(['"', '\'', ')', ']', '}', '»', '”', '’'])
+        .chars()
+        .next_back()
+        .is_some_and(is_sentence_terminal)
+}
+
+/// Whether the text to the right of the cursor opens a new sentence rather than
+/// continuing this one.
+///
+/// A capital after whitespace is the signal. Deliberately conservative: when in
+/// doubt this returns `false`, which keeps the existing behaviour of removing a
+/// final period mid-sentence — the common case, and the one users complained
+/// about.
+fn begins_sentence(after: &str) -> bool {
+    let trimmed = after.trim_start();
+    // No gap means the insertion is being welded onto a word, which cannot be
+    // the start of a following sentence.
+    if trimmed.len() == after.len() && !after.is_empty() {
+        return false;
+    }
+    trimmed
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_uppercase() || is_sentence_terminal(ch))
 }
 
 fn lowercase_ordinary_sentence_start(text: &mut String) {
@@ -1946,23 +2123,33 @@ impl ActiveContext {
     }
 }
 
-/// Compose the final post-processing system prompt from up to four stages.
+/// Compose the final post-processing system prompt.
+///
+/// This function decides WHICH layers apply to this dictation; [`PromptStack`]
+/// owns what each one says, what authority it carries, and how the whole thing
+/// renders. The split matters: the prose used to live inline here, which is how
+/// the hand-written precedence sentence ended up naming three layers out of six
+/// and promising a spoken instruction on prompts that had none.
 ///
 /// `spoken_instruction` is the **Prompt Record** layer: an instruction the user
-/// dictated mid-recording (through Prompt Record), aimed at THIS transcript. It is
-/// the absolute highest authority, and is applied even when context awareness is
+/// dictated mid-recording, aimed at THIS transcript. It is the highest
+/// instruction authority there is, and applies even when context awareness is
 /// off.
 ///
 /// Returns `base` unchanged when nothing applies (no spoken instruction, context
-/// off / no detection), so the common path is byte-for-byte today's behavior.
+/// off / no detection), so the common path is byte-for-byte the old behavior.
 /// Otherwise soft layers form a compact preamble, while the mandatory cursor
 /// seam sits after the base cleanup prompt so generic capitalization and
 /// punctuation rules cannot override it.
+///
+/// See `docs/Prompt Priority/PLAN.md` for the tier ladder and the rule that
+/// nothing a third party contributes may outrank what the user typed or spoke.
 pub fn compose_prompt(
     base: &str,
     settings: &AppSettings,
     ctx: Option<&ActiveContext>,
     spoken_instruction: Option<&str>,
+    contributed: &Contributions,
 ) -> String {
     let spoken = spoken_instruction
         .map(|s| s.trim())
@@ -1979,7 +2166,14 @@ pub fn compose_prompt(
     // default. Read through `settings` rather than off the category so that what
     // the settings UI shows and what the model receives are the same string —
     // the whole point of surfacing these was that they stop being invisible.
-    let soft = ctx.and_then(|c| instruction_for(c, settings));
+    let rule = ctx
+        .and_then(|c| instruction_for(c, settings))
+        // The `prompt.context` slot. Its holder has taken responsibility for
+        // saying how to write for this surface, so Grain says nothing — but
+        // only about ITS OWN guess. A custom profile is the user naming this
+        // app and writing a rule for it, which outranks any extension and is
+        // exactly what the ladder exists to protect.
+        .filter(|(_, user_authored)| *user_authored || contributed.context_owner.is_none());
     let terms: &[String] = ctx.map(|c| c.nearby_terms.as_slice()).unwrap_or(&[]);
     // A one-line field gets one extra clause, because the pipeline's habit of
     // capitalizing and adding a full stop is wrong in a search box and the user
@@ -1990,9 +2184,9 @@ pub fn compose_prompt(
     let caret = ctx
         .and_then(|c| c.caret.as_ref())
         .filter(|caret| !caret.is_empty());
-    let has_ctx = soft.is_some() || !terms.is_empty() || one_line || caret.is_some();
+    let has_ctx = rule.is_some() || !terms.is_empty() || one_line || caret.is_some();
 
-    if spoken.is_none() && !has_ctx {
+    if spoken.is_none() && !has_ctx && contributed.layers.is_empty() {
         // The quiet case that most looks like a bug: the feature is on,
         // detection may even have succeeded, and the prompt still goes out
         // untouched — because the app resolved to `Other`, which adds nothing by
@@ -2003,31 +2197,17 @@ pub fn compose_prompt(
         return base.to_string();
     }
 
-    let mut pre = String::with_capacity(base.len() + 640);
+    let mut stack = PromptStack::new();
 
-    // 1) Spoken instruction — ABSOLUTE highest priority. The user just dictated it
-    // for this exact transcript, so it outranks every rule below. It is an
-    // instruction ABOUT the transcript, never content to emit.
+    // Rendered FIRST to catch primacy, and the highest instruction authority
+    // there is: the user dictated it seconds ago, about this exact transcript.
     if let Some(instr) = spoken {
-        pre.push_str("[Spoken instruction — HIGHEST PRIORITY]\n");
-        pre.push_str(
-            "The user just dictated this instruction for how to transform the \
-             transcript. Treat it as the top authority, above every rule below \
-             (including any app-specific formatting). Apply it to the transcript; \
-             never output the instruction text itself:\n",
-        );
-        pre.push_str(instr);
-        pre.push_str("\n\n");
+        stack.push_spoken(instr);
     }
 
-    // 2) Context-awareness block (soft context / nearby terms).
     if has_ctx {
         if let Some(c) = ctx {
-            pre.push_str("[Context awareness]\n");
-            pre.push_str(&format!(
-                "The user is dictating into \"{}\".",
-                c.app_name.trim()
-            ));
+            let mut facts = format!("The user is dictating into \"{}\".", c.app_name.trim());
             // Only assert the site when the URL came structurally off the
             // focused element's own Document ancestor. A `Probable` host was
             // found by scanning the window for something URL-shaped, which on a
@@ -2040,120 +2220,93 @@ pub fn compose_prompt(
                 .as_deref()
                 .filter(|_| c.confidence == Confidence::Exact)
             {
-                pre.push_str(&format!(" (website: {host})"));
+                let _ = write!(facts, " (website: {host})");
             }
             // Only worth a few tokens when it actually disambiguates: "main"
             // says nothing a prompt can act on, but a sidebar or a dialog does.
             if let Some(region) = c.region.as_deref().filter(|r| *r != "main") {
-                pre.push_str(&format!(" (page region: {region})"));
+                let _ = write!(facts, " (page region: {region})");
             }
-            pre.push('\n');
+            stack.push_surface_facts(facts);
         }
-        if let Some(line) = soft {
-            pre.push_str("Soft context (tone/vocabulary only, never restructure): ");
-            pre.push_str(line);
-            pre.push('\n');
+        if let Some((line, user_authored)) = rule {
+            stack.push_rule(line, user_authored);
         }
         if one_line {
-            pre.push_str(
-                "The target is a SINGLE-LINE field (a search or entry box): output one \
-                 line, and do not add a trailing period or sentence-case it unless the \
-                 user dictated it that way.\n",
-            );
+            stack.push_one_line();
         }
         if !terms.is_empty() {
-            // Additive, LOW authority: only fix a term to one of these spellings when
-            // the transcript clearly meant it; otherwise ignore. Never insert them.
-            pre.push_str(
-                "Nearby terms the user may be referring to — use ONLY to correct the \
-                 spelling of a word already in the transcript (proper nouns, code \
-                 identifiers, library names); do NOT insert any that were not spoken: ",
-            );
-            pre.push_str(&terms.join(", "));
-            pre.push('\n');
+            stack.push_terms(terms);
         }
-        pre.push_str(
-            "Apply the above as guidance over the cleanup rules below. Priority when \
-             instructions conflict: the spoken instruction first, then the base cleanup \
-             rules, then soft context. Keep edits minimal, preserve meaning, and never \
-             invent content that was not dictated.\n\n",
-        );
     }
+
+    // Contributed layers, in the order the caller resolved them (toggle order),
+    // under two ceilings.
+    //
+    // The COUNT ceiling comes first and is the one that matters: multi-
+    // constraint benchmarks show instruction-following falling off past roughly
+    // fifteen constraints, and Grain aims at small local models, so four
+    // third-party rules is already generous next to the two or three Grain adds
+    // itself. Overflow is dropped deterministically and loudly — never silently,
+    // never dependent on which extension happened to load first.
+    let mut spent = 0usize;
+    let mut used = 0usize;
+    for layer in &contributed.layers {
+        if used >= prompt_stack::MAX_CONTRIBUTED_LAYERS {
+            log::warn!(
+                "[GRAIN] prompt: dropped layer from {} — at the {} layer ceiling",
+                layer.ext_id,
+                prompt_stack::MAX_CONTRIBUTED_LAYERS
+            );
+            continue;
+        }
+        if spent + layer.text.len() > prompt_stack::MAX_CONTRIBUTED_BYTES {
+            log::warn!(
+                "[GRAIN] prompt: dropped layer from {} — at the {}-byte ceiling",
+                layer.ext_id,
+                prompt_stack::MAX_CONTRIBUTED_BYTES
+            );
+            continue;
+        }
+        if stack.push_extension_layer(&layer.ext_id, &layer.text) {
+            spent += layer.text.len();
+            used += 1;
+        } else {
+            log::warn!(
+                "[GRAIN] prompt: refused layer from {} — text failed the contribution screen",
+                layer.ext_id
+            );
+        }
+    }
+
+    stack.push_base(base);
+
+    if let Some(caret) = caret {
+        stack.push_caret_fit(&caret.before, &caret.after);
+    }
+
+    // Added whenever anything was layered in front of the base prompt, so plain
+    // dictation remains byte-for-byte unchanged and anything that added
+    // reference material is followed by the constraint that stops it leaking.
+    if has_ctx || used > 0 {
+        stack.push_contract();
+    }
+
+    let out = stack.render();
 
     // [GRAIN] What actually reached the model. Detection succeeding and the
     // prompt changing are different questions — context awareness can be off,
     // or the category can be `Other`, and detection will still have logged a
     // confident-looking result while the prompt went out untouched. This is the
-    // line that closes that gap. Layer names only; no prompt text.
-    let mut layers: Vec<&str> = Vec::new();
-    if spoken.is_some() {
-        layers.push("spoken");
-    }
-    if soft.is_some() {
-        layers.push("soft");
-    }
-    if one_line {
-        layers.push("one-line");
-    }
-    if caret.is_some() {
-        layers.push("caret");
-    }
-    if !terms.is_empty() {
-        layers.push("terms");
-    }
-    pre.push_str(base);
-
-    // Cursor rules sit AFTER the generic cleanup prompt. The reported failure
-    // that drove this ordering had captured L/R correctly, but a weak model
-    // followed the later base rule and returned the ASR's standalone capital +
-    // period unchanged. Keep this small and explicit, then enforce the two
-    // deterministic parts locally in `fit_text_to_caret` as a backstop.
-    if let Some(caret) = caret {
-        pre.push_str(
-            "\n\n[Cursor fit — REQUIRED]\nTreat the transcript as an insertion between L and R, \
-             not a standalone sentence. When both have text, lowercase an ordinary first \
-             word and do not end with a period. Never repeat L/R.\n",
-        );
-        if !caret.before.is_empty() {
-            pre.push_str("L:");
-            pre.push_str(&caret.before);
-            pre.push('\n');
-        }
-        if !caret.after.is_empty() {
-            pre.push_str("R:");
-            pre.push_str(&caret.after);
-            pre.push('\n');
-        }
-    }
-
-    // [GRAIN] Terminal output constraint, and the reason it is LAST.
-    //
-    // Everything this function adds is reference material — the app name, the
-    // site, the text around the cursor — and every piece of it is a thing a
-    // model can mistake for content to return. One did: a user's email draft
-    // received the surrounding text and the seam instructions verbatim.
-    //
-    // The generic reference framing sits near the top; cursor instructions now
-    // sit after the base prompt. This terminal constraint remains the final,
-    // most-attended instruction. It is added only when a context layer was
-    // applied, so plain dictation remains byte-for-byte unchanged.
-    if has_ctx {
-        pre.push_str(
-            "\n\nOutput ONLY the corrected transcript itself — no surrounding text, \
-             no labels, no notes, no explanation.",
-        );
-    }
-
+    // line that closes that gap. Layer names only; no prompt text — and it now
+    // reads out of the stack rather than being maintained beside it, which is
+    // how the old hand-kept list fell behind the layers it was describing.
     log::info!(
         "[GRAIN] context: prompt layers applied: {} (+{} bytes)",
-        if layers.is_empty() {
-            "none".to_string()
-        } else {
-            layers.join("+")
-        },
-        pre.len().saturating_sub(base.len()),
+        stack.applied().join("+"),
+        out.len().saturating_sub(base.len()),
     );
-    pre
+    out
 }
 
 /// Detect the foreground app/site. `None` on unsupported platforms or on any
@@ -3222,6 +3375,27 @@ mod uia {
         GetGUIThreadInfo(thread_id, &mut info).is_ok() && !info.hwndCaret.is_invalid()
     }
 
+    /// Whether the foreground window is the Explorer desktop.
+    ///
+    /// `Progman` is the classic desktop window; `WorkerW` owns the icon list
+    /// whenever a wallpaper slideshow or Active Desktop is in play, and is what
+    /// the foreground actually is on most current systems. Matching the window
+    /// CLASS rather than the process keeps this from firing on ordinary Explorer
+    /// file windows, which have a perfectly real address bar and search box.
+    unsafe fn foreground_is_shell_desktop() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+        let Some(hwnd) = super::windows_impl::foreground_window() else {
+            return false;
+        };
+        let mut buf = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut buf);
+        if len <= 0 {
+            return false;
+        }
+        let class = String::from_utf16_lossy(&buf[..len as usize]);
+        matches!(class.as_str(), "Progman" | "WorkerW")
+    }
+
     /// Pattern availability, control class and identity — one pass over the
     /// focused element.
     unsafe fn fill_patterns(
@@ -3236,6 +3410,7 @@ mod uia {
             .unwrap_or(0);
         facts.is_own_process = identity.process_id as u32 == std::process::id();
         facts.has_native_caret = foreground_has_caret();
+        facts.is_shell_desktop = foreground_is_shell_desktop();
         facts.has_text_edit_pattern = el
             .GetCurrentPatternAs::<IUIAutomationTextEditPattern>(UIA_TextEditPatternId)
             .is_ok();
@@ -3411,8 +3586,48 @@ mod focus_target_tests {
     }
 
     #[test]
+    fn a_thread_level_caret_does_not_veto_the_caret_less_document_rule() {
+        // `has_native_caret` is asked of the foreground THREAD, not of this
+        // element — Chromium keeps a caret around for IME positioning while the
+        // focused element is an inert page body. Letting it override the
+        // element's own answer silenced the most common miss there is.
+        let f = FocusFacts {
+            control: ControlClass::Document,
+            has_caret: false,
+            has_native_caret: true,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::NotEditable);
+    }
+
+    #[test]
+    fn the_shell_desktop_is_positive_evidence() {
+        // Its focused element is a `List` — a container type, and therefore
+        // inconclusive on its own. The window class is what settles it.
+        let f = FocusFacts {
+            is_shell_desktop: true,
+            control: ControlClass::Other,
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::NotEditable);
+    }
+
+    #[test]
+    fn grains_own_window_is_never_classified() {
+        // The pill and the panels report leaf control types that would
+        // otherwise read as positive evidence of a miss.
+        let f = FocusFacts {
+            is_own_process: true,
+            control: ControlClass::NonText,
+            value_read_only: Some(true),
+            ..facts()
+        };
+        assert_eq!(classify(f), FocusTarget::Unknown);
+    }
+
+    #[test]
     fn a_failed_read_yields_no_evidence() {
-        // `read_focus_facts` returns the default on every failure path, and the
+        // `read_focus_probe` returns the default on every failure path, and the
         // default must never be actionable.
         assert_eq!(classify(FocusFacts::default()), FocusTarget::Unknown);
     }
@@ -3482,6 +3697,38 @@ mod site_table_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `compose_prompt` with no contributed layers — the shape almost every
+    /// test here wants, kept as a helper so adding a parameter to the real
+    /// function does not mean editing forty call sites.
+    fn compose(
+        base: &str,
+        settings: &AppSettings,
+        ctx: Option<&ActiveContext>,
+        spoken: Option<&str>,
+    ) -> String {
+        compose_prompt(base, settings, ctx, spoken, &Contributions::default())
+    }
+
+    /// `compose_prompt` with contributed layers and no slot claim.
+    fn compose_with(
+        base: &str,
+        settings: &AppSettings,
+        ctx: Option<&ActiveContext>,
+        layers: Vec<ContributedLayer>,
+    ) -> String {
+        compose_prompt(
+            base,
+            settings,
+            ctx,
+            None,
+            &Contributions {
+                layers,
+                context_owner: None,
+            },
+        )
+    }
+
     use grain_core::AppSettings;
 
     fn ctx(exe: &str, category: AppCategory) -> ActiveContext {
@@ -3694,7 +3941,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("chrome", AppCategory::Other);
         c.field = FieldKind::SingleLine;
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
         assert!(out.contains("SINGLE-LINE"));
         assert!(out.contains("do not add a trailing period"));
     }
@@ -3707,7 +3954,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("winword", AppCategory::Work);
         c.field = FieldKind::MultiLine;
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
         assert!(!out.contains("SINGLE-LINE"));
     }
 
@@ -3722,7 +3969,7 @@ mod tests {
             before: "We agreed the release ".into(),
             after: " before the holidays.".into(),
         });
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
 
         assert!(out.contains("We agreed the release"));
         assert!(out.contains("before the holidays."));
@@ -3748,7 +3995,7 @@ mod tests {
             before: "Dear Rita,".into(),
             after: "Regards".into(),
         });
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(!out.contains("<before_text>"));
         assert!(!out.contains("<after_text>"));
     }
@@ -3764,7 +4011,7 @@ mod tests {
             before: "Dear Rita,".into(),
             after: String::new(),
         });
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(out.contains("L:Dear Rita,"));
         assert!(!out.contains("R:"));
     }
@@ -3781,13 +4028,13 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("unknownapp", AppCategory::Other);
         c.caret = Some(CaretContext::default());
-        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&c), None), "BASE");
 
         c.caret = Some(CaretContext {
             before: "  ".into(),
             after: "\t".into(),
         });
-        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&c), None), "BASE");
     }
 
     #[test]
@@ -3860,6 +4107,50 @@ mod tests {
         assert_eq!(
             fit_text_to_caret("A few more times with the testers.", &caret),
             "a few more times with the testers"
+        );
+    }
+
+    /// The seam repair is only correct when the insertion really is landing
+    /// mid-sentence. Both sides having text does not establish that on its own.
+    ///
+    /// The capture never produces these shapes today — `relevant_left_fragment`
+    /// cuts at the last sentence terminator — so this guards a coupling rather
+    /// than a live bug. It is worth a test because the failure is silent and
+    /// lands in the user's document: "I went home. it was late Then I slept."
+    #[test]
+    fn a_whole_sentence_between_two_others_keeps_its_capital_and_full_stop() {
+        let between = CaretContext {
+            before: "I went home. ".into(),
+            after: " Then I slept.".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret("It was late.", &between),
+            "It was late."
+        );
+    }
+
+    #[test]
+    fn a_sentence_start_keeps_its_capital_even_when_the_rest_continues() {
+        // Left ends a sentence, right continues one: the capital is correct,
+        // the trailing period is still the ASR's and goes.
+        let caret = CaretContext {
+            before: "We shipped it. ".into(),
+            after: " went out on Friday.".into(),
+        };
+        assert_eq!(fit_text_to_caret("The release.", &caret), "The release");
+    }
+
+    #[test]
+    fn a_mid_sentence_insertion_before_a_new_sentence_keeps_its_period() {
+        // Left continues, right starts a new sentence: lowercase the first
+        // word, but the dictation still needs its own terminator.
+        let caret = CaretContext {
+            before: "We agreed that ".into(),
+            after: " The team was told.".into(),
+        };
+        assert_eq!(
+            fit_text_to_caret("It would ship on Friday.", &caret),
+            "it would ship on Friday."
         );
     }
 
@@ -3987,12 +4278,12 @@ mod tests {
     fn context_always_ends_with_the_output_constraint() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let out = compose_prompt("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
+        let out = compose("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
         assert!(out.trim_end().ends_with("no notes, no explanation."));
 
         // …and a prompt with NO context added stays byte-for-byte the base.
         let bare = ctx("unknownapp", AppCategory::Other);
-        assert_eq!(compose_prompt("BASE", &s, Some(&bare), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&bare), None), "BASE");
     }
 
     /// Off means off: with the opt-in disabled nothing is captured, so no caret
@@ -4002,7 +4293,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let c = ctx("unknownapp", AppCategory::Other); // no soft line, no terms
-        assert_eq!(compose_prompt("BASE", &s, Some(&c), None), "BASE");
+        assert_eq!(compose("BASE", &s, Some(&c), None), "BASE");
     }
 
     /// The spoken instruction still outranks the seam, same as every other layer.
@@ -4015,7 +4306,7 @@ mod tests {
             before: "before".into(),
             after: "after".into(),
         });
-        let out = compose_prompt("BASE", &s, Some(&c), Some("make it a haiku"));
+        let out = compose("BASE", &s, Some(&c), Some("make it a haiku"));
         let spoken = out.find("make it a haiku").unwrap();
         let seam = out.find("L:before").unwrap();
         assert!(spoken < seam, "spoken instruction must precede the seam");
@@ -4031,14 +4322,14 @@ mod tests {
         let mut exact = ctx("chrome", AppCategory::Email);
         exact.url_host = Some("mail.google.com".into());
         exact.confidence = Confidence::Exact;
-        let out = compose_prompt("BASE", &s, Some(&exact), None);
+        let out = compose("BASE", &s, Some(&exact), None);
         assert!(out.contains("website: mail.google.com"));
 
         // Same host, weaker evidence: it may have come from another tab, so the
         // prompt must not claim it.
         let mut probable = exact.clone();
         probable.confidence = Confidence::Probable;
-        let out = compose_prompt("BASE", &s, Some(&probable), None);
+        let out = compose("BASE", &s, Some(&probable), None);
         assert!(!out.contains("website:"));
     }
 
@@ -4058,12 +4349,12 @@ mod tests {
 
         let mut main = ctx("chrome", AppCategory::Work);
         main.region = Some("main".into());
-        assert!(!compose_prompt("BASE", &s, Some(&main), None).contains("page region"));
+        assert!(!compose("BASE", &s, Some(&main), None).contains("page region"));
 
         let mut side = ctx("chrome", AppCategory::Work);
         side.region = Some("complementary".into());
         assert!(
-            compose_prompt("BASE", &s, Some(&side), None).contains("page region: complementary")
+            compose("BASE", &s, Some(&side), None).contains("page region: complementary")
         );
     }
 
@@ -4160,12 +4451,12 @@ mod tests {
                 instruction: "Write it like a pirate.".into(),
             });
         let c = ctx("outlook", AppCategory::Email);
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(out.contains("Write it like a pirate."));
         assert!(!out.contains("An email composer."));
         // An untouched profile is unaffected by its neighbour's edit.
         let t = ctx("code", AppCategory::Technical);
-        assert!(compose_prompt("BASE", &s, Some(&t), None).contains("exactly as spoken"));
+        assert!(compose("BASE", &s, Some(&t), None).contains("exactly as spoken"));
     }
 
     fn custom(id: &str, instruction: &str, kind: &str, value: &str) -> CustomContextProfile {
@@ -4190,7 +4481,7 @@ mod tests {
             .push(custom("p1", "Speak only in haiku.", "application", "code"));
 
         let claimed = ctx("code", AppCategory::Technical);
-        let out = compose_prompt("BASE", &s, Some(&claimed), None);
+        let out = compose("BASE", &s, Some(&claimed), None);
         assert!(out.contains("Speak only in haiku."));
         assert!(
             !out.contains("exactly as spoken"),
@@ -4199,7 +4490,7 @@ mod tests {
 
         // A different app in the same built-in category is untouched.
         let other = ctx("nvim", AppCategory::Technical);
-        assert!(compose_prompt("BASE", &s, Some(&other), None).contains("exactly as spoken"));
+        assert!(compose("BASE", &s, Some(&other), None).contains("exactly as spoken"));
     }
 
     /// A profile with exactly one target is how "this app gets its own
@@ -4214,7 +4505,261 @@ mod tests {
         let c = ctx("figma", AppCategory::Other);
         // `Other` normally adds nothing at all; the profile is what gives this
         // surface an instruction.
-        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Terse."));
+        assert!(compose("BASE", &s, Some(&c), None).contains("Terse."));
+    }
+
+    /// The authority fix.
+    ///
+    /// A custom profile is the user naming an app and writing a rule for it, so
+    /// it goes out as one of THEIR rules and outranks the base prompt they
+    /// merely picked from a list. Until this landed it was labelled
+    /// "tone/vocabulary only, never restructure" and told the model, in so many
+    /// words, that the base cleanup rules beat it.
+    #[test]
+    fn a_custom_profile_is_delivered_as_the_users_own_rule() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_custom_profiles
+            .push(custom("solo", "Bullet points only.", "application", "figma"));
+        let out = compose("BASE", &s, Some(&ctx("figma", AppCategory::Other)), None);
+
+        assert!(out.contains("Your rule for this app"));
+        assert!(!out.contains("Soft context (tone"));
+        assert!(out.contains(
+            "Priority when instructions conflict: your own rules first, then the base cleanup \
+             rules."
+        ));
+    }
+
+    /// The same surface, claimed by a built-in category instead, stays soft —
+    /// that profile applies because Grain GUESSED, and a guess does not get to
+    /// restructure the user's writing.
+    #[test]
+    fn a_builtin_profile_stays_soft_context() {
+        let s = AppSettings {
+            context_awareness_enabled: true,
+            ..Default::default()
+        };
+        let out = compose("BASE", &s, Some(&ctx("code", AppCategory::Technical)), None);
+
+        assert!(out.contains("Soft context (tone"));
+        assert!(!out.contains("Your rule for this app"));
+        assert!(out.contains(
+            "Priority when instructions conflict: the base cleanup rules first, then soft context."
+        ));
+    }
+
+    /// The precedence sentence is generated from the layers that are actually
+    /// present. It used to be one literal that promised a spoken instruction on
+    /// every prompt, including the overwhelming majority that have none.
+    #[test]
+    fn the_precedence_sentence_never_names_an_absent_layer() {
+        let s = AppSettings {
+            context_awareness_enabled: true,
+            ..Default::default()
+        };
+        let c = ctx("code", AppCategory::Technical);
+
+        let without = compose("BASE", &s, Some(&c), None);
+        assert!(!without.contains("the spoken instruction"));
+
+        let with = compose("BASE", &s, Some(&c), Some("make it a haiku"));
+        assert!(with.contains(
+            "Priority when instructions conflict: the spoken instruction first, then the base \
+             cleanup rules, then soft context."
+        ));
+    }
+
+    fn when(json: &str) -> grain_sdk::manifest::LayerWhen {
+        serde_json::from_str(json).expect("valid when clause")
+    }
+
+    #[test]
+    fn an_unconditional_layer_matches_even_with_no_context() {
+        assert!(layer_matches(&when("{}"), None));
+    }
+
+    #[test]
+    fn a_targeted_layer_needs_a_context_to_match() {
+        // Detection only runs when context awareness is on, so a targeted layer
+        // is inert while that setting is off. Asserted rather than assumed:
+        // "my layer never fires" is otherwise a mystery.
+        assert!(!layer_matches(&when(r#"{"app":["code"]}"#), None));
+    }
+
+    #[test]
+    fn layer_fields_intersect_and_members_alternate() {
+        let mut c = ctx("code", AppCategory::Technical);
+        c.field = FieldKind::MultiLine;
+
+        assert!(layer_matches(&when(r#"{"app":["nvim","code"]}"#), Some(&c)));
+        assert!(!layer_matches(&when(r#"{"app":["nvim"]}"#), Some(&c)));
+        // Both fields must hold, not either.
+        assert!(layer_matches(
+            &when(r#"{"app":["code"],"category":["technical"]}"#),
+            Some(&c)
+        ));
+        assert!(!layer_matches(
+            &when(r#"{"app":["code"],"category":["email"]}"#),
+            Some(&c)
+        ));
+        assert!(layer_matches(&when(r#"{"field":"multi_line"}"#), Some(&c)));
+        assert!(!layer_matches(&when(r#"{"field":"single_line"}"#), Some(&c)));
+    }
+
+    #[test]
+    fn a_layer_site_match_is_dot_bounded_and_needs_exact_confidence() {
+        let mut c = ctx("chrome", AppCategory::Other);
+        c.url_host = Some("jira.acme.com".into());
+        c.confidence = Confidence::Exact;
+
+        assert!(layer_matches(&when(r#"{"website":["jira."]}"#), Some(&c)));
+        assert!(layer_matches(
+            &when(r#"{"website":["acme.com"]}"#),
+            Some(&c)
+        ));
+        // The attack the dot boundary exists for.
+        c.url_host = Some("notacme.com".into());
+        assert!(!layer_matches(
+            &when(r#"{"website":["acme.com"]}"#),
+            Some(&c)
+        ));
+
+        // A host found by scanning the window can belong to a tab the user is
+        // not typing into, so it may not fire a third party's layer.
+        c.url_host = Some("jira.acme.com".into());
+        c.confidence = Confidence::Probable;
+        assert!(!layer_matches(&when(r#"{"website":["jira."]}"#), Some(&c)));
+    }
+
+    #[test]
+    fn contributed_layers_are_capped_by_count_then_bytes() {
+        let s = AppSettings::default();
+        let many: Vec<ContributedLayer> = (0..8)
+            .map(|i| ContributedLayer {
+                ext_id: format!("com.acme.p{i}"),
+                text: format!("Rule number {i}."),
+            })
+            .collect();
+        let out = compose_with("BASE", &s, None, many);
+        let applied = out.matches("(com.acme.p").count();
+        assert_eq!(
+            applied,
+            prompt_stack::MAX_CONTRIBUTED_LAYERS,
+            "the count ceiling is what protects instruction-following"
+        );
+
+        let fat = vec![
+            ContributedLayer {
+                ext_id: "com.acme.big".into(),
+                text: "x".repeat(prompt_stack::MAX_CONTRIBUTED_BYTES),
+            },
+            ContributedLayer {
+                ext_id: "com.acme.small".into(),
+                text: "Prefer British spelling.".into(),
+            },
+        ];
+        let out = compose_with("BASE", &s, None, fat);
+        assert!(out.contains("(com.acme.big)"));
+        assert!(
+            !out.contains("(com.acme.small)"),
+            "the byte ceiling drops the overflow"
+        );
+    }
+
+    /// Door 2. The slot governs Grain's OPINION about the surface and nothing
+    /// else — claiming it is taking responsibility for that one line.
+    #[test]
+    fn the_context_slot_replaces_grains_guess_only() {
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        let mut c = ctx("code", AppCategory::Technical);
+        c.field = FieldKind::SingleLine;
+
+        let held = Contributions {
+            layers: vec![ContributedLayer {
+                ext_id: "com.acme.ctx".into(),
+                text: "Match the file's existing style.".into(),
+            }],
+            context_owner: Some("com.acme.ctx".into()),
+        };
+        let out = compose_prompt("BASE", &s, Some(&c), None, &held);
+
+        assert!(
+            !out.contains("Soft context (tone"),
+            "the claimant speaks for the surface now"
+        );
+        assert!(out.contains("(com.acme.ctx) Match the file's existing style."));
+        // Structural facts are not opinions, so there is nothing to hand over.
+        assert!(out.contains("SINGLE-LINE field"));
+        assert!(out.contains("Output ONLY the corrected transcript"));
+    }
+
+    #[test]
+    fn the_context_slot_never_touches_the_users_own_rule() {
+        // The invariant, at the one place an extension gets closest to it.
+        let mut s = AppSettings::default();
+        s.context_awareness_enabled = true;
+        s.context_custom_profiles
+            .push(custom("mine", "Bullet points only.", "application", "figma"));
+
+        let held = Contributions {
+            layers: vec![],
+            context_owner: Some("com.acme.ctx".into()),
+        };
+        let out = compose_prompt(
+            "BASE",
+            &s,
+            Some(&ctx("figma", AppCategory::Other)),
+            None,
+            &held,
+        );
+        assert!(out.contains("Your rule for this app"));
+        assert!(out.contains("Bullet points only."));
+    }
+
+    #[test]
+    fn a_claimant_that_says_nothing_leaves_the_surface_silent() {
+        // Taking the slot and contributing no matching layer is legal, and the
+        // result is no soft context at all rather than a fallback to Grain's —
+        // a fallback would mean the takeover was never real.
+        let s = AppSettings {
+            context_awareness_enabled: true,
+            ..Default::default()
+        };
+        let held = Contributions {
+            layers: vec![],
+            context_owner: Some("com.acme.ctx".into()),
+        };
+        let out = compose_prompt(
+            "BASE",
+            &s,
+            Some(&ctx("code", AppCategory::Technical)),
+            None,
+            &held,
+        );
+        assert!(!out.contains("Soft context (tone"));
+        assert!(!out.contains("[Extension rules]"));
+    }
+
+    #[test]
+    fn contributed_layers_apply_without_context_awareness() {
+        // An unconditional layer is its own feature, not part of context
+        // awareness, so it must not be gated on that toggle — and whatever adds
+        // reference material must still be followed by the output contract.
+        let s = AppSettings::default();
+        assert!(!s.context_awareness_enabled);
+        let out = compose_with(
+            "BASE",
+            &s,
+            None,
+            vec![ContributedLayer {
+                ext_id: "com.acme.jira".into(),
+                text: "Write in imperative mood.".into(),
+            }],
+        );
+        assert!(out.contains("(com.acme.jira) Write in imperative mood."));
+        assert!(out.contains("Output ONLY the corrected transcript"));
     }
 
     /// A packaged (Store / MSIX) app is named by its AppUserModelID, because it
@@ -4231,13 +4776,13 @@ mod tests {
 
         let mut c = ctx("notepad", AppCategory::Other);
         c.aumid = Some(NOTEPAD.to_string());
-        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("Plain text only."));
+        assert!(compose("BASE", &s, Some(&c), None).contains("Plain text only."));
 
         // …and a different packaged app with the same-looking exe stem does not
         // inherit it, which is the whole reason the AppUserModelID is stored.
         let mut other = ctx("notepad", AppCategory::Other);
         other.aumid = Some("SomeVendor.NotepadClone_abc123!App".to_string());
-        assert!(!compose_prompt("BASE", &s, Some(&other), None).contains("Plain text only."));
+        assert!(!compose("BASE", &s, Some(&other), None).contains("Plain text only."));
     }
 
     /// The two identities must not bleed into one another: a desktop app is
@@ -4253,7 +4798,7 @@ mod tests {
 
         let mut c = ctx("someotherapp", AppCategory::Other);
         c.aumid = Some("Contoso.Code_8wekyb3d8bbwe!App".to_string());
-        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("Syntax intact."));
+        assert!(!compose("BASE", &s, Some(&c), None).contains("Syntax intact."));
     }
 
     /// A site claim beats an app claim, mirroring the built-in rule: "Chrome"
@@ -4271,7 +4816,7 @@ mod tests {
         let mut c = ctx("chrome", AppCategory::Other);
         c.url_host = Some("figma.com".into());
         c.confidence = Confidence::Exact;
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(out.contains("SITE RULE"));
         assert!(!out.contains("APP RULE"));
     }
@@ -4288,7 +4833,7 @@ mod tests {
         let mut c = ctx("chrome", AppCategory::Other);
         c.url_host = Some("figma.com".into());
         c.confidence = Confidence::Probable;
-        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+        assert!(!compose("BASE", &s, Some(&c), None).contains("SITE RULE"));
     }
 
     /// Subdomains inherit, so claiming `figma.com` covers the app subdomain —
@@ -4303,9 +4848,9 @@ mod tests {
         c.confidence = Confidence::Exact;
 
         c.url_host = Some("www.figma.com".into());
-        assert!(compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+        assert!(compose("BASE", &s, Some(&c), None).contains("SITE RULE"));
         c.url_host = Some("notfigma.com".into());
-        assert!(!compose_prompt("BASE", &s, Some(&c), None).contains("SITE RULE"));
+        assert!(!compose("BASE", &s, Some(&c), None).contains("SITE RULE"));
     }
 
     /// The card's icon stack is only as good as these: each must be a real
@@ -4360,7 +4905,7 @@ mod tests {
         s.context_custom_profiles
             .push(custom("mute", "  ", "application", "code"));
         let c = ctx("code", AppCategory::Technical);
-        let out = compose_prompt("BASE", &s, Some(&c), None);
+        let out = compose("BASE", &s, Some(&c), None);
         assert!(!out.contains("exactly as spoken"));
     }
 
@@ -4383,7 +4928,7 @@ mod tests {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE PROMPT ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("code", AppCategory::Technical)), None),
+            compose(base, &s, Some(&ctx("code", AppCategory::Technical)), None),
             base
         );
     }
@@ -4394,7 +4939,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
         assert_eq!(
-            compose_prompt(base, &s, Some(&ctx("unknownapp", AppCategory::Other)), None),
+            compose(base, &s, Some(&ctx("unknownapp", AppCategory::Other)), None),
             base
         );
     }
@@ -4404,7 +4949,7 @@ mod tests {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         let base = "BASE ${output}";
-        let out = compose_prompt(base, &s, Some(&ctx("code", AppCategory::Technical)), None);
+        let out = compose(base, &s, Some(&ctx("code", AppCategory::Technical)), None);
         assert!(out.starts_with("[Context awareness]"));
         assert!(out.contains("code editor"));
         // The base survives verbatim; the terminal output constraint follows it
@@ -4443,7 +4988,7 @@ mod tests {
         s.context_awareness_enabled = true;
         let mut c = ctx("unknownapp", AppCategory::Other);
         c.nearby_terms = vec!["Rita".into(), "PyTorch".into()];
-        let out = compose_prompt("BASE ${output}", &s, Some(&c), None);
+        let out = compose("BASE ${output}", &s, Some(&c), None);
         assert!(out.contains("Nearby terms"));
         assert!(out.contains("Rita, PyTorch"));
     }
@@ -4452,7 +4997,7 @@ mod tests {
     fn spoken_instruction_added_even_with_context_off() {
         let s = AppSettings::default(); // context_awareness_enabled = false
         let base = "BASE ${output}";
-        let out = compose_prompt(base, &s, None, Some("  make it a haiku  "));
+        let out = compose(base, &s, None, Some("  make it a haiku  "));
         assert!(out.starts_with("[Spoken instruction"));
         assert!(out.contains("HIGHEST PRIORITY"));
         assert!(out.contains("make it a haiku")); // trimmed, present
@@ -4463,15 +5008,15 @@ mod tests {
     fn blank_spoken_instruction_is_ignored() {
         let s = AppSettings::default();
         let base = "BASE";
-        assert_eq!(compose_prompt(base, &s, None, Some("   ")), base);
-        assert_eq!(compose_prompt(base, &s, None, None), base);
+        assert_eq!(compose(base, &s, None, Some("   ")), base);
+        assert_eq!(compose(base, &s, None, None), base);
     }
 
     #[test]
     fn spoken_instruction_outranks_soft_context() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
-        let out = compose_prompt(
+        let out = compose(
             "BASE ${output}",
             &s,
             Some(&ctx("code", AppCategory::Technical)),

@@ -184,6 +184,43 @@ impl Workers {
         Some(w.last_activity.clone())
     }
 
+    /// Whether a worker has a live connection, which is what [`call`] needs —
+    /// stricter than "spawned", because a spawned webview takes a moment to
+    /// connect back.
+    fn is_connected(&self, ext_id: &str) -> bool {
+        self.map
+            .lock()
+            .unwrap()
+            .get(ext_id)
+            .is_some_and(|w| w.conn.is_some())
+    }
+
+    /// Wait, bounded, for a just-spawned worker to connect.
+    ///
+    /// Without this an action on a cold extension fails instantly with "worker
+    /// not connected" — and cold is the **normal** case, because a routed
+    /// action is usually the only reason to wake that extension at all. The
+    /// transform path can skip a cold worker (it has a 150 ms budget and text
+    /// to pass through unchanged); an action has neither.
+    ///
+    /// Polling rather than a notify: this runs once per cold action, the
+    /// interval is short enough to be invisible next to the spawn it is waiting
+    /// on, and a condvar threaded through the connection path would be more
+    /// machinery than the problem deserves.
+    async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
+        const POLL: Duration = Duration::from_millis(20);
+        let started = Instant::now();
+        loop {
+            if self.is_connected(ext_id) {
+                return true;
+            }
+            if started.elapsed() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(POLL).await;
+        }
+    }
+
     /// Issue a `HostCall` to a connected worker and await its answer under
     /// `deadline`. Never holds the registry lock across the await.
     async fn call(
@@ -391,6 +428,29 @@ struct Index {
     by_event: HashMap<String, Vec<String>>,
     /// `onTransform` extensions, already sorted into toggle order.
     transforms: Vec<String>,
+    /// Contributed prompt layers, already sorted into toggle order and already
+    /// screened. Held here rather than read from the manifest at dictation time
+    /// for the usual reason — the post-process path must not touch the disk —
+    /// and screened here rather than at render time so a pack whose text was
+    /// edited on disk after import never reaches the prompt at all.
+    prompt_layers: Vec<CompiledPromptLayer>,
+    /// Declared actions, compiled for routing (`docs/Action Routing/PLAN.md`).
+    /// Same reasoning as the layers above: built here so the route never reads a
+    /// manifest, and gated by the approval digest on every rebuild rather than
+    /// once at import.
+    actions: grain_core::action_router::ActionIndex,
+    /// Which declared actions are the same request from different extensions.
+    /// Derived from the index, cached because it is quadratic in the action
+    /// count and completely static between rebuilds.
+    action_classes: grain_core::action_router::EquivalenceMap,
+}
+
+/// An enabled extension's prompt layer, compiled for matching.
+struct CompiledPromptLayer {
+    ext_id: String,
+    layer_id: String,
+    when: grain_sdk::manifest::LayerWhen,
+    text: String,
 }
 
 /// Guards so the common case — no scripted extension enabled — costs exactly
@@ -399,6 +459,38 @@ struct Index {
 /// `OnceLock` deref.
 static HAS_ACTIVATIONS: AtomicBool = AtomicBool::new(false);
 static HAS_TRANSFORMS: AtomicBool = AtomicBool::new(false);
+/// Same guard for prompt layers: with none installed, a dictation pays one
+/// relaxed atomic load and never takes the index lock.
+static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
+/// And for the `prompt.context` slot, which changes the prompt by SUBTRACTION —
+/// an extension can hold it while contributing no layer at all, so it needs its
+/// own guard or that case would read as "nothing installed".
+static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
+/// And for declared actions, so a user with none pays one relaxed load.
+static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
+
+/// Conformal thresholds for action routing.
+///
+/// Held **outside** [`Index`] and behind its own lock because it is the one
+/// piece that cannot be computed on the rebuild path: calibrating a large
+/// installed set takes seconds, and `refresh_index` runs when the user flips a
+/// switch. So the index is rebuilt synchronously, this stays at
+/// [`Calibration::conservative`], and a background task swaps in the real
+/// thresholds when they are ready.
+///
+/// Routing in the meantime is safe rather than absent — a conservative
+/// calibration only lets a near-exact match execute.
+static ACTION_CALIBRATION: OnceLock<RwLock<grain_core::action_decision::Calibration>> =
+    OnceLock::new();
+
+/// Generation counter so a calibration that finishes after a newer rebuild
+/// started is discarded instead of overwriting fresher numbers.
+static CALIBRATION_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn calibration_cell() -> &'static RwLock<grain_core::action_decision::Calibration> {
+    ACTION_CALIBRATION
+        .get_or_init(|| RwLock::new(grain_core::action_decision::Calibration::conservative()))
+}
 
 struct HostState {
     app: AppHandle,
@@ -419,6 +511,8 @@ pub fn refresh_index(app: &AppHandle) {
     };
     let mut by_event: HashMap<String, Vec<String>> = HashMap::new();
     let mut transforms: Vec<(String, u64)> = Vec::new();
+    let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
+    let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
     let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -426,10 +520,20 @@ pub fn refresh_index(app: &AppHandle) {
             if !rec.enabled {
                 continue;
             }
-            let pack = match load_manifest(app, &rec.id) {
-                Some(p) if p.has_runtime() => p,
-                _ => continue,
+            let Some(pack) = load_manifest(app, &rec.id) else {
+                continue;
             };
+            // Prompt layers are collected BEFORE the runtime filter: an inert
+            // tier-A pack contributing static text is the shape this feature
+            // exists for, and requiring a runtime for it would push authors
+            // toward code they do not need.
+            collect_prompt_layers(&rec, &pack, &mut prompt_layers);
+            if !pack.has_runtime() {
+                continue;
+            }
+            // Actions ARE gated on a runtime, unlike prompt layers: a pack with
+            // nothing to call would win a route and then dead-end.
+            collect_actions(&rec, &pack, &mut actions);
             let mut granted_variants = Vec::new();
             for variant in declared_event_variants(&pack.manifest.activation) {
                 let Some(capability) = daemon_event_capability(&variant) else {
@@ -467,18 +571,40 @@ pub fn refresh_index(app: &AppHandle) {
     }
     transforms.sort_by_key(|(_, seq)| *seq);
     let transforms: Vec<String> = transforms.into_iter().map(|(id, _)| id).collect();
+    // Toggle order (SPEC §4.4) is the ordering everywhere else contributions
+    // compete, and it is the only one the user can actually change.
+    prompt_layers.sort_by_key(|(_, seq)| *seq);
+    let prompt_layers: Vec<CompiledPromptLayer> =
+        prompt_layers.into_iter().map(|(l, _)| l).collect();
+
+    let action_count = actions.len();
+    let action_classes = grain_core::action_router::equivalence_classes(&actions);
+    let action_index = grain_core::action_router::ActionIndex::build(actions);
+    HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
+    HAS_PROMPT_LAYERS.store(!prompt_layers.is_empty(), Ordering::Relaxed);
+    HAS_CONTEXT_SLOT.store(
+        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
+            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
+        Ordering::Relaxed,
+    );
     log::debug!(
-        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s)",
+        "[GRAIN] ext-host: index rebuilt — {} activation variant(s), {} transform(s), {} prompt layer(s)",
         by_event.len(),
-        transforms.len()
+        transforms.len(),
+        prompt_layers.len()
     );
     *host.index.write().unwrap() = Index {
         by_event,
         transforms,
+        prompt_layers,
+        actions: action_index.clone(),
+        action_classes,
     };
+    recalibrate_actions(action_index);
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
     // free rather than having to remember a second call. `sync` defers onto
@@ -495,6 +621,284 @@ pub fn refresh_index(app: &AppHandle) {
             log::info!("[ext:{id}] life activation startup");
             spawn_worker(app, &id, &pack, granted, None);
         }
+    }
+}
+
+/// Compile one enabled extension's declared prompt layers into the index.
+///
+/// Two gates, both of which must hold every rebuild rather than once at import:
+///
+/// 1. **The approved text is the text.** A layer whose wording no longer matches
+///    what the user approved is skipped entirely. This is the rug pull —
+///    CVE-2025-54136 is exactly "approval of a definition did not survive a
+///    later change to it", and the VS Code marketplace shipped the same shape
+///    repeatedly through routine version bumps. Grain already holds an extension
+///    for a widened *capability*; a prompt layer changes what the model does to
+///    the user's words, so it belongs to the same permission surface.
+/// 2. **The screen runs again here.** It ran at import too, but import and
+///    dictation are different moments and a pack file can be edited in between.
+///
+/// Both failures are logged and skipped, never repaired: text that has drifted
+/// from what the user agreed to is not something to sanitise and use anyway.
+fn collect_prompt_layers(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    out: &mut Vec<(CompiledPromptLayer, u64)>,
+) {
+    let declared = &pack.manifest.contributes.prompt_layers;
+    if declared.is_empty() {
+        return;
+    }
+    let approved = grain_core::extensions::prompt_layers_fingerprint(declared);
+    if rec.prompt_layers_approved.as_deref() != Some(approved.as_str()) {
+        log::warn!(
+            "[ext:{}] prompt layers not applied — the declared text differs from what was \
+             approved; the user must review it again",
+            rec.id
+        );
+        return;
+    }
+    for layer in declared {
+        let text = layer.text.trim();
+        if let Err(why) = crate::context_detect::prompt_stack::screen_contributed_text(text) {
+            log::warn!("[ext:{}] prompt layer '{}' refused: {why}", rec.id, layer.id);
+            continue;
+        }
+        out.push((
+            CompiledPromptLayer {
+                ext_id: rec.id.clone(),
+                layer_id: layer.id.clone(),
+                when: layer.when.clone(),
+                text: text.to_string(),
+            },
+            rec.toggle_seq,
+        ));
+    }
+}
+
+/// Compile one enabled extension's declared actions into the index.
+///
+/// Same two-gate shape as [`collect_prompt_layers`], and the digest gate matters
+/// more here rather than less: what an update can quietly change is not wording
+/// but **what happens** — a `confirm` that became `safe` loses its read-back, and
+/// a widened `when` starts offering the action where it was never approved.
+fn collect_actions(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    out: &mut Vec<grain_core::action_router::IndexedAction>,
+) {
+    let declared = &pack.manifest.contributes.actions;
+    if declared.is_empty() {
+        return;
+    }
+    let approved = grain_core::extensions::actions_fingerprint(declared);
+    if rec.actions_approved.as_deref() != Some(approved.as_str()) {
+        log::warn!(
+            "[ext:{}] actions not routable — the declaration differs from what was approved; \
+             the user must review it again",
+            rec.id
+        );
+        return;
+    }
+    for decl in declared {
+        out.push(grain_core::action_router::IndexedAction::from_decl(
+            &rec.id, decl,
+        ));
+    }
+}
+
+/// Kick off calibration for a freshly built index, off the rebuild path.
+///
+/// Fire-and-forget on purpose. Until it lands the router uses
+/// `Calibration::conservative`, which only executes a near-exact match — so the
+/// window between a switch being flipped and the thresholds arriving is a window
+/// where Grain asks more, never one where it guesses.
+fn recalibrate_actions(index: grain_core::action_router::ActionIndex) {
+    let generation = CALIBRATION_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if index.is_empty() {
+        *calibration_cell().write().unwrap() =
+            grain_core::action_decision::Calibration::conservative();
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let calibration = grain_core::action_decision::calibrate(
+            &index,
+            grain_core::action_decision::DEFAULT_ALPHA,
+        );
+        // A rebuild that started after this one owns the answer. Without the
+        // generation check, a slow calibration for an old extension set could
+        // land on top of fresh thresholds and quietly mis-tune routing.
+        if CALIBRATION_GENERATION.load(Ordering::SeqCst) != generation {
+            log::debug!("[GRAIN] ext-host: discarding stale action calibration (gen {generation})");
+            return;
+        }
+        log::debug!(
+            "[GRAIN] ext-host: action calibration ready — floor {:.3}, slack {:.3}, {} samples",
+            calibration.pooled_floor(),
+            calibration.slack(),
+            calibration.samples
+        );
+        *calibration_cell().write().unwrap() = calibration;
+    });
+}
+
+/// Route one spoken request against the installed actions.
+///
+/// The whole decision, minus execution: which action, whose, with what spans,
+/// and whether to run it, ask, escalate or say nothing can. With no
+/// action-bearing extension installed this is one relaxed atomic load.
+pub fn route_action(
+    spoken: &str,
+    preferences: &grain_core::action_decision::Preferences,
+) -> Option<grain_core::action_decision::Outcome> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return None;
+    }
+    let host = HOST.get()?;
+    let index = host.index.read().unwrap();
+    let calibration = calibration_cell().read().unwrap();
+    Some(grain_core::action_decision::decide(
+        spoken,
+        &index.actions,
+        &index.action_classes,
+        &calibration,
+        preferences,
+    ))
+}
+
+/// Every preference domain the installed actions use.
+///
+/// Needed when an utterance names a provider outright ("…on Spotify"): that
+/// rung outranks every stored default, and pinning each domain to the named
+/// extension applies it *through* the ladder rather than around it, so there is
+/// only one place provider selection can be decided.
+pub fn action_domains() -> Vec<String> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let mut domains: Vec<String> = host
+        .index
+        .read()
+        .unwrap()
+        .actions
+        .actions()
+        .iter()
+        .map(|a| a.domain.clone())
+        .collect();
+    domains.sort();
+    domains.dedup();
+    domains
+}
+
+/// Every literal word the installed actions declare, for ASR biasing.
+///
+/// Deduplicated and unordered — the bias set has its own budget and ordering
+/// rules. Placeholders contribute nothing: `{artist}` is the part Grain cannot
+/// predict, and that is exactly the part the extension resolves.
+pub fn action_vocabulary() -> Vec<String> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let mut terms: Vec<String> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for action in host.index.read().unwrap().actions.actions() {
+        for template in &action.templates {
+            for part in template {
+                if let grain_sdk::manifest::UtterancePart::Literal(literal) = part {
+                    for word in literal.split_whitespace() {
+                        if word.len() > 2 && seen.insert(word.to_lowercase()) {
+                            terms.push(word.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    terms
+}
+
+/// The names an utterance may end with to name a provider ("…on Spotify"),
+/// paired with the extension id they resolve to.
+///
+/// Read from the registry rather than the index because an extension's display
+/// name is not something the router needs to carry.
+pub fn action_provider_names(app: &AppHandle) -> Vec<(String, String)> {
+    if !HAS_ACTIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let owners: std::collections::HashSet<String> = host
+        .index
+        .read()
+        .unwrap()
+        .actions
+        .actions()
+        .iter()
+        .map(|a| a.extension_id.clone())
+        .collect();
+    owners
+        .into_iter()
+        .filter_map(|id| {
+            let name = load_manifest(app, &id)?.manifest.name;
+            (!name.trim().is_empty()).then_some((name, id))
+        })
+        .collect()
+}
+
+/// What installed extensions bring to this dictation: the layers that match the
+/// surface, in toggle order, and whether one of them holds `prompt.context`.
+///
+/// Called once per finalized transcript, off the paste path. With nothing
+/// installed — the overwhelmingly common case — this is one relaxed atomic load
+/// and an empty struct: no lock, no disk, no clone of the registry.
+pub fn prompt_contributions(
+    app: &AppHandle,
+    ctx: Option<&crate::context_detect::ActiveContext>,
+) -> crate::context_detect::prompt_stack::Contributions {
+    use crate::context_detect::prompt_stack::{ContributedLayer, Contributions};
+
+    // The slot is checked behind the same guard: an extension cannot hold
+    // `prompt.context` without being enabled, and an enabled extension with no
+    // prompt layers has taken over a line it then never writes — legal, but it
+    // still has to be an extension, and every path that claims a slot also
+    // rebuilds this index.
+    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed) && !HAS_CONTEXT_SLOT.load(Ordering::Relaxed) {
+        return Contributions::default();
+    }
+    let Some(host) = HOST.get() else {
+        return Contributions::default();
+    };
+    let context_owner = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
+        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
+    if let Some(owner) = &context_owner {
+        log::info!("[ext:{owner}] holds prompt.context — Grain's soft context is suppressed");
+    }
+    let index = host.index.read().unwrap();
+    let layers = index
+        .prompt_layers
+        .iter()
+        .filter(|l| crate::context_detect::layer_matches(&l.when, ctx))
+        .map(|l| {
+            log::info!("[ext:{}] prompt layer '{}' applies", l.ext_id, l.layer_id);
+            ContributedLayer {
+                ext_id: l.ext_id.clone(),
+                text: l.text.clone(),
+            }
+        })
+        .collect();
+    Contributions {
+        layers,
+        context_owner,
     }
 }
 
@@ -1274,6 +1678,151 @@ pub async fn run_session_stage(
     parse_session_stage_output(result?)
 }
 
+/// How long an action may take before the host gives up.
+///
+/// Generous compared with the transform budget, and deliberately so: an action
+/// is expected to leave the machine (a Spotify call, a Slack post), where the
+/// network grant already allows 15 s. The felt path is not this — routing
+/// decides in milliseconds and the pill says what is happening.
+const ACTION_DEADLINE: Duration = Duration::from_secs(20);
+
+/// How long to wait for a cold worker to connect before giving up.
+///
+/// The plan budgets ~300 ms for a cold wake; this is deliberately several times
+/// that, because the cost of being wrong is a failed action the user has to
+/// repeat, while the cost of waiting is a pill that says "working" for another
+/// moment.
+const ACTION_WAKE_DEADLINE: Duration = Duration::from_secs(3);
+
+/// What performing an action produced.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ActionOutcome {
+    /// It ran. The optional line is what the pill says instead of the title.
+    Done(Option<String>),
+    /// The extension resolved a span to several candidates and wants the user
+    /// to pick. Not a failure — the chooser's third use.
+    Ambiguous { param: String, options: Vec<String> },
+    /// It could not run, with a reason worth showing.
+    Failed(String),
+    /// The deadline passed after the call was already in flight.
+    ///
+    /// **Distinct from `Failed` on purpose.** For anything that leaves the
+    /// machine, a timeout does not mean it did not happen — the message may
+    /// well have been sent. Reporting that as failure is a lie, and the one a
+    /// user is least able to recover from.
+    Unknown,
+}
+
+fn parse_action_outcome(value: Value) -> ActionOutcome {
+    if let Some(options) = value.get("options").and_then(Value::as_array) {
+        let param = value
+            .get("param")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let options: Vec<String> = options
+            .iter()
+            .filter_map(|o| o.as_str().map(str::to_string))
+            .collect();
+        if !param.is_empty() && !options.is_empty() {
+            return ActionOutcome::Ambiguous { param, options };
+        }
+    }
+    if let Some(error) = value.get("error").and_then(Value::as_str) {
+        return ActionOutcome::Failed(error.to_string());
+    }
+    ActionOutcome::Done(
+        value
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+/// Wake the extension that won a route, if it is cold.
+///
+/// Only the winner. Warming every action-bearing extension when the key goes
+/// down is the tempting alternative and it violates destroy-if-not-in-use at
+/// exactly the scale this feature is built for — twenty installed extensions
+/// would mean twenty worker spawns per press.
+pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
+    if is_running(ext_id) {
+        return;
+    }
+    let Some(pack) = load_manifest(app, ext_id) else {
+        return;
+    };
+    let granted = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .map(|record| record.granted)
+        .unwrap_or_default();
+    spawn_worker(
+        app,
+        ext_id,
+        &pack,
+        granted,
+        Some(json!({ "Action": { "action": action_id } })),
+    );
+}
+
+/// Perform one routed action.
+///
+/// The extension receives **only the extracted spans**, never the raw
+/// utterance. Losing the route means learning nothing; winning it means learning
+/// the parameters and no more.
+pub async fn perform_action(
+    app: &AppHandle,
+    ext_id: &str,
+    action_id: &str,
+    spans: &std::collections::BTreeMap<String, String>,
+) -> ActionOutcome {
+    let Some(host) = HOST.get() else {
+        return ActionOutcome::Failed("extension host unavailable".into());
+    };
+    // Re-check enablement at execute, not only at route. A user can disable an
+    // extension while the confirmation sheet is open, and the read-back they
+    // agreed to would then run against something they just turned off.
+    let enabled = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(ext_id))
+        .is_some_and(|record| record.enabled);
+    if !enabled {
+        return ActionOutcome::Failed("that extension is no longer enabled".into());
+    }
+    // The winner was almost certainly cold — a routed action is usually the only
+    // reason to wake it. Give the spawn a bounded moment to connect rather than
+    // failing instantly.
+    if !host.workers.wait_connected(ext_id, ACTION_WAKE_DEADLINE).await {
+        log::warn!("[ext:{ext_id}] action '{action_id}' — worker did not start in time");
+        return ActionOutcome::Failed("that extension did not start in time".into());
+    }
+    match host
+        .workers
+        .call(
+            ext_id,
+            "action",
+            json!({ "action": action_id, "params": spans }),
+            ACTION_DEADLINE,
+        )
+        .await
+    {
+        Ok(value) => {
+            clear_strikes(ext_id);
+            parse_action_outcome(value)
+        }
+        Err(error) if error == "deadline exceeded" => {
+            record_strike(app, ext_id);
+            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {ACTION_DEADLINE:?}");
+            ActionOutcome::Unknown
+        }
+        Err(error) => {
+            record_strike(app, ext_id);
+            ActionOutcome::Failed(error)
+        }
+    }
+}
+
 /// User cancellation is immediate: notify the handler's AbortSignal and drop
 /// the Rust waiter. The worker may finish later; its response has no recipient.
 pub fn cancel_session_stage(ext_id: &str, reason: &str) {
@@ -1510,6 +2059,21 @@ pub fn reload_dev_extension(
         granted: granted.clone(),
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: prior.variant_slots,
+        // A hot reload re-approves, for the same reason the initial dev load
+        // does: this is the author's own project on their own disk, and the
+        // prompt text is the thing they are iterating on.
+        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
+            || {
+                grain_core::extensions::prompt_layers_fingerprint(
+                    &loaded.pack.manifest.contributes.prompt_layers,
+                )
+            },
+        ),
+        // Same reasoning for actions, and the same limit: this shortcut exists
+        // only for a load-unpacked project on the author's own disk.
+        actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
+            grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
+        }),
         dev: prior.dev,
         // A dev hot-reload preserves the record's rung (a load-unpacked project
         // is `dev`); trust is never changed by a reload.

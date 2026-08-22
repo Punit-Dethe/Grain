@@ -1,6 +1,8 @@
 import type {
+  ActionInfo,
   ExtensionCard,
   ExtensionSettingsSection,
+  PromptLayerInfo,
   Result,
   StoreEntry,
 } from "@/bindings";
@@ -32,6 +34,7 @@ const SLOT_LABELS: Record<string, string> = {
   "pill.theme": "the pill's look",
   "agent.reply-surface": "the Agent's reply panel",
   "output.destination": "where your text is sent",
+  "prompt.context": "what Grain tells the AI about the app you are typing in",
 };
 
 export interface SlotConflict {
@@ -71,15 +74,71 @@ export function slotLabel(slot: string): string {
   );
 }
 
-export function parseNeedsPermissions(error: unknown): string[] | null {
+export interface ApprovalRequest {
+  permissions: string[];
+  promptLayers: PromptLayerInfo[];
+  actions: ActionInfo[];
+}
+
+/**
+ * The single structured error an enable can be refused with.
+ *
+ * Capabilities, prompt layers and actions arrive together and are shown in one
+ * sheet: two sheets in a row for one enable is how a user learns to click
+ * Approve without reading, which defeats the point of asking.
+ */
+export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   try {
-    const parsed = JSON.parse(String(error)) as { needsPermissions?: unknown };
-    return Array.isArray(parsed.needsPermissions)
+    const parsed = JSON.parse(String(error)) as {
+      needsPermissions?: unknown;
+      needsPromptLayers?: unknown;
+      needsActions?: unknown;
+    };
+    const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
-      : null;
+      : [];
+    const promptLayers = Array.isArray(parsed.needsPromptLayers)
+      ? (parsed.needsPromptLayers as PromptLayerInfo[])
+      : [];
+    const actions = Array.isArray(parsed.needsActions)
+      ? (parsed.needsActions as ActionInfo[])
+      : [];
+    if (!permissions.length && !promptLayers.length && !actions.length)
+      return null;
+    return { permissions, promptLayers, actions };
   } catch {
     return null;
   }
+}
+
+/**
+ * Actions grouped by their preference domain, which is how the sheet reads
+ * them: "Media — play, pause, skip" rather than one row per action.
+ */
+export function actionsByDomain(
+  actions: ActionInfo[],
+): { domain: string; titles: string[]; confirms: boolean }[] {
+  const groups = new Map<string, { titles: string[]; confirms: boolean }>();
+  for (const action of actions) {
+    const group = groups.get(action.domain) ?? { titles: [], confirms: false };
+    group.titles.push(action.title);
+    group.confirms = group.confirms || action.confirms;
+    groups.set(action.domain, group);
+  }
+  return [...groups.entries()].map(([domain, group]) => ({
+    domain,
+    ...group,
+  }));
+}
+
+/** Plain-language description of when a contributed layer applies. */
+export function promptLayerScope(layer: PromptLayerInfo): string {
+  if (layer.everywhere) return "Every dictation";
+  const parts: string[] = [];
+  if (layer.website.length) parts.push(layer.website.join(", "));
+  if (layer.app.length) parts.push(layer.app.join(", "));
+  if (layer.category.length) parts.push(layer.category.join(", "));
+  return parts.length ? `In ${parts.join(" · ")}` : "Every dictation";
 }
 
 export function parseSlotConflict(error: unknown): SlotConflict | null {

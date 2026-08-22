@@ -1,6 +1,6 @@
 {
   "agent": {
-    "brand": "GRAIN ASSIST",
+    "brand": "Grain Assist",
     "selectionChip": "SELECTION · {{count}} CHARS",
     "noSelection": "NO SELECTION",
     "placeholderListening": "Listening… speak then press ↵, or start typing",
@@ -13,8 +13,6 @@
     "transcribing": "Transcribing…",
     "thinking": "Thinking…",
     "processing": "PROCESSING",
-    "you": "YOU",
-    "grain": "GRAIN",
     "copyReply": "COPY REPLY",
     "copied": "COPIED ✓",
     "autoCopied": "AUTO-COPIED · READY TO PASTE",
