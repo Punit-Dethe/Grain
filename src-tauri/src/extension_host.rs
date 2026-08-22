@@ -867,11 +867,15 @@ fn reembed_recommendations(examples: Vec<(String, Vec<String>)>) {
 /// hand-off: which extensions, in what order, by name or by topic. With nothing
 /// searchable installed this is one relaxed atomic load.
 ///
+/// `excluded` is the decline-and-reopen set (G2): extensions the user already
+/// turned down for this request, dropped from the ballot so the reopened chooser
+/// cannot offer the same wrong pick again.
+///
 /// Runs the semantic leg only when the model is on disk *and* the cached vectors
 /// belong to the current pool; otherwise it hands `None` to the ranker, which is
 /// name-only mode. Blocking on the query embed, so it must not be called from a
 /// felt path — the Extension Mode session calls it off the microphone thread.
-pub fn recommend(spoken: &str) -> Vec<grain_core::recommend::Recommendation> {
+pub fn recommend(spoken: &str, excluded: &[String]) -> Vec<grain_core::recommend::Recommendation> {
     if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
         return Vec::new();
     }
@@ -880,7 +884,28 @@ pub fn recommend(spoken: &str) -> Vec<grain_core::recommend::Recommendation> {
     };
     let index = host.index.read().unwrap();
     let semantic = semantic_scores(spoken);
-    grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref())
+    grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref(), excluded)
+}
+
+/// Whether the topical leg can run right now — the model is on disk. When false,
+/// [`recommend`] is name-only, and a surface may offer the download. Cheap: a
+/// filesystem existence check, no model load.
+pub fn semantic_available() -> bool {
+    crate::grain_space::embed::model_on_disk()
+}
+
+/// The display name and one-line purpose for a pooled extension, for the
+/// recommendation event. Reads the manifest off disk, so it is called from the
+/// session's off-thread `deliver`, never a felt path.
+pub fn recommendation_display(app: &AppHandle, id: &str) -> Option<(String, String)> {
+    let pack = load_manifest(app, id)?;
+    let purpose = pack
+        .manifest
+        .recommend
+        .as_ref()
+        .map(|r| r.purpose.clone())
+        .unwrap_or_default();
+    Some((pack.manifest.name, purpose))
 }
 
 /// How many searchable, approved extensions are in the Extension Mode pool.

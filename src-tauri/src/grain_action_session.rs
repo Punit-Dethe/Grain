@@ -37,11 +37,13 @@
 
 use crate::audio_toolkit::VadPolicy;
 use crate::grain_actions::action_log::{self, ActionLogOutcome};
+use crate::grain_events::{ExtensionRecommendation, RecommendationCandidate};
 use crate::managers::audio::AudioRecordingManager;
 use crate::managers::transcription::TranscriptionManager;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_specta::Event as _;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
@@ -212,63 +214,180 @@ async fn finish(
     complete(session.generation);
 }
 
-/// Rank the searchable extensions for one captured request and record the
-/// outcome.
+/// The request currently on the recommendation surface, and which extensions
+/// the user has already declined for it.
+///
+/// Held between [`deliver`] and [`decline`]/[`accept`] because those are
+/// separate user actions on the surface (behind the §6b gate), and the reopened
+/// chooser must rank the *same* request without re-recording it (G2). Cleared
+/// when the request is accepted, declined into nothing, or superseded by a new
+/// capture.
+#[derive(Clone, Default)]
+struct Pending {
+    request: String,
+    declined: Vec<String>,
+}
+
+fn pending() -> &'static Mutex<Option<Pending>> {
+    static PENDING: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(None))
+}
+
+/// Rank the searchable extensions for one captured request and present it.
 ///
 /// Split from [`finish`] so it can be driven from a test or a replay of the
-/// action log without a microphone. Blocking work (the query embed) happens
-/// inside [`crate::extension_host::recommend`], so this is spawned off the
-/// microphone thread by its caller.
+/// action log without a microphone.
 ///
-/// **The V1-P1 seam.** The recommendation runs here; what does NOT run yet is
-/// the surface (behind the §6b design gate) and the accepted hand-off (V1-P1d
-/// re-attaches `perform_action`). So today this ranks and records — capture and
-/// ranking work end to end — and hands nothing to an extension until the user
-/// has a surface to accept on. That is honest, not a stub: recording the top
-/// recommendation without executing it is exactly the pre-surface behaviour.
-pub async fn deliver(_app: &AppHandle, heard: &str) {
+/// **The V1-P1 seam.** Ranking, the recommendation event, and decline-and-reopen
+/// all run here and in [`decline`]. What does NOT run yet is the surface (behind
+/// the §6b design gate) and the accepted hand-off into the extension's request
+/// API (V1-P2, where the extension-facing side of the same wire contract is
+/// defined — see [`accept`]). So today this ranks, emits the event a surface
+/// will consume, and records — capture and ranking work end to end, and the
+/// request is carried in the event ready to be handed off.
+pub async fn deliver(app: &AppHandle, heard: &str) {
+    *pending().lock().unwrap() = Some(Pending {
+        request: heard.to_string(),
+        declined: Vec::new(),
+    });
+    present(app, heard.to_string(), Vec::new()).await;
+}
+
+/// Rank `request` (excluding `declined`), emit the recommendation event, and
+/// record the outcome. The one place ranking is turned into a surface event, so
+/// deliver and decline present identically.
+async fn present(app: &AppHandle, request: String, declined: Vec<String>) {
     // `recommend` embeds the query and is blocking; keep it off the async
-    // runtime's poll threads. `_app` is unused until V1-P1d attaches the events
-    // and the hand-off, which both need it.
+    // runtime's poll threads.
     let ranked = {
-        let heard = heard.to_string();
-        tauri::async_runtime::spawn_blocking(move || crate::extension_host::recommend(&heard))
-            .await
-            .unwrap_or_default()
+        let request = request.clone();
+        let declined = declined.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            (
+                crate::extension_host::recommend(&request, &declined),
+                crate::extension_host::semantic_available(),
+            )
+        })
+        .await
+        .unwrap_or_else(|_| (Vec::new(), false))
     };
+    let (ranked, semantic_available) = ranked;
 
-    let Some(top) = ranked.first() else {
-        // "Nothing matched" is a real state (§1), not an error: the pool is
-        // empty, everything scored below the floor, or the model is absent and
-        // nothing was named. Recorded so the log explains a request that led
-        // nowhere.
-        action_log::record(
-            heard,
-            None,
-            None,
-            None,
-            ActionLogOutcome::Refused {
-                reason: "nothing matched".into(),
-            },
-        );
-        return;
-    };
+    let candidates: Vec<RecommendationCandidate> = ranked
+        .iter()
+        .map(|r| {
+            let (name, purpose) =
+                crate::extension_host::recommendation_display(app, &r.extension_id)
+                    .unwrap_or_else(|| (r.extension_id.clone(), String::new()));
+            RecommendationCandidate {
+                extension_id: r.extension_id.clone(),
+                name,
+                purpose,
+                signal: match r.signal {
+                    grain_core::recommend::Signal::Named => "named",
+                    grain_core::recommend::Signal::Topical => "topical",
+                }
+                .to_string(),
+                score: r.score,
+            }
+        })
+        .collect();
 
-    log::info!(
-        "[GRAIN] extension mode: top recommendation {} ({:?}, {:.3})",
-        top.extension_id,
-        top.signal,
-        top.score
+    // The surface consumes this; the backend draws nothing. Empty candidates is
+    // the "nothing matched" state, not a separate event.
+    let _ = app.emit(
+        ExtensionRecommendation::NAME,
+        ExtensionRecommendation {
+            request: request.clone(),
+            candidates: candidates.clone(),
+            name_only: !semantic_available,
+        },
     );
+
+    match ranked.first() {
+        None => {
+            action_log::record(
+                &request,
+                None,
+                None,
+                None,
+                ActionLogOutcome::Refused {
+                    reason: "nothing matched".into(),
+                },
+            );
+        }
+        Some(top) => {
+            log::info!(
+                "[GRAIN] extension mode: top recommendation {} ({:?}, {:.3})",
+                top.extension_id,
+                top.signal,
+                top.score
+            );
+            action_log::record(
+                &request,
+                Some(top.extension_id.clone()),
+                None,
+                Some(top.score),
+                // Escalated in the log's vocabulary: it reached the pool and
+                // produced a recommendation, which is neither a run nor a
+                // refusal. The dedicated accepted/declined outcomes arrive with
+                // the surface and the hand-off.
+                ActionLogOutcome::Escalated,
+            );
+        }
+    }
+}
+
+/// The user declined an extension on the surface; reopen the chooser with it
+/// struck out (G2). One keypress, not one re-recording — the request is the one
+/// [`deliver`] already captured.
+///
+/// Called by the surface (behind the §6b gate); no-op if there is no pending
+/// request or it does not match, so a stale click after a new capture does
+/// nothing.
+pub async fn decline(app: &AppHandle, request: &str, extension_id: &str) {
+    let declined = {
+        let mut slot = pending().lock().unwrap();
+        let Some(p) = slot.as_mut() else {
+            return;
+        };
+        if p.request != request {
+            return;
+        }
+        if !p.declined.iter().any(|id| id == extension_id) {
+            p.declined.push(extension_id.to_string());
+        }
+        p.declined.clone()
+    };
+    present(app, request.to_string(), declined).await;
+}
+
+/// The user accepted an extension: the full request is handed to it
+/// (`docs/Extensions V1/PLAN.md` §3).
+///
+/// **The hand-off itself is V1-P2.** What an extension does with a handed-over
+/// request — receive it, rank its own commands, call a model with its own tool
+/// schema (§4) — is the extension-facing request API, and defining the wire
+/// contract from the host side here while P2 defines it from the extension side
+/// would invite two versions of one protocol. So this closes out the pending
+/// request and records the acceptance; wiring it to wake the worker and deliver
+/// the transcript lands with that API. Recorded now so the decision is not lost
+/// in the gap.
+pub fn accept(extension_id: &str) {
+    let request = {
+        let mut slot = pending().lock().unwrap();
+        match slot.take() {
+            Some(p) => p.request,
+            None => return,
+        }
+    };
+    log::info!("[GRAIN] extension mode: accepted {extension_id} (hand-off lands in V1-P2)");
     action_log::record(
-        heard,
-        Some(top.extension_id.clone()),
+        &request,
+        Some(extension_id.to_string()),
         None,
-        Some(top.score),
-        // Escalated in the log's vocabulary: it reached the pool and produced a
-        // recommendation, which is neither a run nor a refusal. The dedicated
-        // hand-off outcomes arrive with the surface in V1-P1d/P2b.
-        ActionLogOutcome::Escalated,
+        None,
+        ActionLogOutcome::Chose,
     );
 }
 

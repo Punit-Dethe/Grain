@@ -1022,6 +1022,32 @@ pub async fn grain_extension_mode_download_model(app: AppHandle) -> Result<(), S
     crate::grain_space::embed::download_model(app).await
 }
 
+/// [GRAIN] The user declined the recommended extension; reopen with it struck
+/// out (`docs/Extensions V1/PLAN.md` §8 G2). The chooser re-ranks the same
+/// captured request and emits a fresh `extension-recommendation` — one keypress,
+/// not one re-recording. No-op if the pending request has moved on.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_extension_mode_decline(
+    app: AppHandle,
+    request: String,
+    extension_id: String,
+) -> Result<(), String> {
+    crate::grain_actions::action_session::decline(&app, &request, &extension_id).await;
+    Ok(())
+}
+
+/// [GRAIN] The user accepted an extension; the full request is handed to it
+/// (`docs/Extensions V1/PLAN.md` §3). The hand-off into the extension's request
+/// API lands in V1-P2; this closes out the pending request and records the
+/// choice so it is not lost in the gap.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_extension_mode_accept(extension_id: String) -> Result<(), String> {
+    crate::grain_actions::action_session::accept(&extension_id);
+    Ok(())
+}
+
 /// [GRAIN] Read the action log, optionally clearing it first
 /// (`docs/Extensions V1/PLAN.md`).
 ///

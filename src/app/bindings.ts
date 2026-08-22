@@ -1661,6 +1661,34 @@ async grainExtensionModeDownloadModel() : Promise<Result<null, string>> {
 }
 },
 /**
+ * [GRAIN] The user declined the recommended extension; reopen with it struck
+ * out (`docs/Extensions V1/PLAN.md` §8 G2). The chooser re-ranks the same
+ * captured request and emits a fresh `extension-recommendation` — one keypress,
+ * not one re-recording. No-op if the pending request has moved on.
+ */
+async grainExtensionModeDecline(request: string, extensionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_decline", { request, extensionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] The user accepted an extension; the full request is handed to it
+ * (`docs/Extensions V1/PLAN.md` §3). The hand-off into the extension's request
+ * API lands in V1-P2; this closes out the pending request and records the
+ * choice so it is not lost in the gap.
+ */
+async grainExtensionModeAccept(extensionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_accept", { extensionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Write one schema-declared setting from the host's own control.
  * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
@@ -2478,6 +2506,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+extensionRecommendation: ExtensionRecommendation,
 historyUpdatePayload: HistoryUpdatePayload,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
@@ -2497,6 +2526,7 @@ themeChanged: ThemeChanged,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
+extensionRecommendation: "extension-recommendation",
 historyUpdatePayload: "history-update-payload",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
@@ -3574,6 +3604,37 @@ everywhere: boolean; app: string[]; website: string[]; category: string[] }
  * `actions::RecordingErrorEvent`.
  */
 export type RecordingError = { error_type: string; detail: string | null }
+/**
+ * [GRAIN] Extension Mode ranked a captured request
+ * (`docs/Extensions V1/PLAN.md` §3, §6b). The surface (behind the design gate)
+ * consumes this; the backend emits it and draws nothing.
+ *
+ * One event covers every outcome the surface must distinguish, because they are
+ * one state machine, not several: an EMPTY `candidates` is the "nothing matched"
+ * state — a real state, not an error — and `name_only` says the topical leg
+ * could not run, which is when the surface offers the model download. Carrying
+ * the verbatim `request` is deliberate: it is what would be handed to the
+ * accepted extension, so the surface must hold it, not reconstruct it.
+ */
+export type ExtensionRecommendation = {
+/**
+ * What the user said, verbatim. The payload a hand-off would carry.
+ */
+request: string;
+/**
+ * Best first. Empty is "nothing matched".
+ */
+candidates: RecommendationCandidate[];
+/**
+ * The topical leg did not run (model absent): only names could match, and
+ * the surface may offer the download. Named candidates still populate the
+ * list.
+ */
+name_only: boolean }
+/**
+ * One extension Extension Mode would offer, enriched for display.
+ */
+export type RecommendationCandidate = { extension_id: string; name: string; purpose: string; signal: string; score: number }
 export type RecordingRetentionPeriod = "never" | "preserve_limit" | "days_3" | "weeks_2" | "months_3"
 export type ReminderState = { status: ReminderStatus; 
 /**

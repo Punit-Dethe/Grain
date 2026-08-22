@@ -114,10 +114,15 @@ const NAMED_SCORE: f32 = 1.0;
 /// degraded: only Named hits can be offered, which is why first use of Extension
 /// Mode offers the download (§5). An empty result is the real "nothing matched"
 /// state (§1), and the caller renders it as such rather than as a failure.
+///
+/// `excluded` is the decline-and-reopen set (§8 G2): extensions the user already
+/// turned down for *this* request, dropped from the ballot so the reopened
+/// chooser cannot offer the same wrong pick again.
 pub fn rank(
     recs: &[IndexedRecommendation],
     spoken: &str,
     semantic: Option<&HashMap<String, f32>>,
+    excluded: &[String],
 ) -> Vec<Recommendation> {
     let request = normalise(spoken);
     let request_tokens = tokens(&request);
@@ -126,6 +131,13 @@ pub fn rank(
     let mut topical: Vec<Recommendation> = Vec::new();
 
     for rec in recs {
+        // Decline-and-reopen (G2): an extension the user has already turned down
+        // for this request is gone from the ballot entirely, not merely demoted —
+        // re-offering it as the runner-up is the loop the recovery exists to
+        // break.
+        if excluded.iter().any(|id| *id == rec.extension_id) {
+            continue;
+        }
         if rec
             .aliases
             .iter()
@@ -222,6 +234,7 @@ mod tests {
             &recs,
             "spotify next song",
             Some(&scores(&[("linear", 0.9)])),
+            &[],
         );
         assert_eq!(out[0].extension_id, "spotify");
         assert_eq!(out[0].signal, Signal::Named);
@@ -235,7 +248,7 @@ mod tests {
     fn a_name_hit_survives_what_asr_does_to_it() {
         // "linear" heard with a dropped vowel — one deletion on a long word.
         let recs = [rec("linear", &["linear"])];
-        let out = rank(&recs, "add a linar ticket", None);
+        let out = rank(&recs, "add a linar ticket", None, &[]);
         assert_eq!(out.len(), 1, "one edit must not lose the name");
         assert_eq!(out[0].signal, Signal::Named);
     }
@@ -244,9 +257,9 @@ mod tests {
     fn a_multi_word_alias_must_appear_together() {
         let recs = [rec("apple", &["apple music"])];
         // The two words are present but not adjacent — not a naming.
-        assert!(rank(&recs, "the apple on the table plays music", None).is_empty());
+        assert!(rank(&recs, "the apple on the table plays music", None, &[]).is_empty());
         assert_eq!(
-            rank(&recs, "apple music play something", None)[0].extension_id,
+            rank(&recs, "apple music play something", None, &[])[0].extension_id,
             "apple"
         );
     }
@@ -258,6 +271,7 @@ mod tests {
             &recs,
             "put on some jazz",
             Some(&scores(&[("spotify", 0.71), ("notes", 0.54)])),
+            &[],
         );
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].extension_id, "spotify");
@@ -271,7 +285,8 @@ mod tests {
         assert!(rank(
             &recs,
             "what's the weather",
-            Some(&scores(&[("spotify", 0.42)]))
+            Some(&scores(&[("spotify", 0.42)])),
+            &[]
         )
         .is_empty());
     }
@@ -281,8 +296,11 @@ mod tests {
         // The model is not on disk: `None`. A topical request that named nothing
         // returns nothing, which is honest — not silently ranking on lexical.
         let recs = [rec("spotify", &["spotify"])];
-        assert!(rank(&recs, "put on some jazz", None).is_empty());
-        assert_eq!(rank(&recs, "open spotify", None)[0].extension_id, "spotify");
+        assert!(rank(&recs, "put on some jazz", None, &[]).is_empty());
+        assert_eq!(
+            rank(&recs, "open spotify", None, &[])[0].extension_id,
+            "spotify"
+        );
     }
 
     #[test]
@@ -292,6 +310,7 @@ mod tests {
             &recs,
             "so anyway we should rewrite the parser",
             Some(&scores(&[])),
+            &[],
         );
         assert!(out.is_empty());
     }
@@ -304,6 +323,7 @@ mod tests {
             &recs,
             "spotify put on some jazz",
             Some(&scores(&[("spotify", 0.8)])),
+            &[],
         );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].signal, Signal::Named);
@@ -315,7 +335,7 @@ mod tests {
         let backwards = [rec("b", &["bbb"]), rec("a", &["aaa"])];
         let s = scores(&[("a", 0.6), ("b", 0.6)]);
         let ids = |recs: &[IndexedRecommendation]| {
-            rank(recs, "something topical", Some(&s))
+            rank(recs, "something topical", Some(&s), &[])
                 .into_iter()
                 .map(|r| r.extension_id)
                 .collect::<Vec<_>>()
@@ -334,6 +354,7 @@ mod tests {
             &recs,
             "topical request",
             Some(&scores(&[("a", 0.9), ("b", 0.6), ("c", 0.55)])),
+            &[],
         );
         assert!((out[0].margin - 0.30).abs() < 1e-6, "0.9 leads 0.6 by 0.30");
         assert!(
@@ -347,9 +368,32 @@ mod tests {
     }
 
     #[test]
+    fn a_declined_extension_leaves_the_ballot_entirely() {
+        // Decline-and-reopen (G2): after the user turns spotify down, reranking
+        // must not offer it again as the runner-up — it is gone, and the next
+        // best takes the top.
+        let recs = [rec("spotify", &["spotify"]), rec("apple", &["apple"])];
+        let s = scores(&[("spotify", 0.8), ("apple", 0.7)]);
+        let first = rank(&recs, "put on some music", Some(&s), &[]);
+        assert_eq!(first[0].extension_id, "spotify");
+
+        let reopened = rank(
+            &recs,
+            "put on some music",
+            Some(&s),
+            &["spotify".to_string()],
+        );
+        assert!(
+            reopened.iter().all(|r| r.extension_id != "spotify"),
+            "a declined extension must not reappear"
+        );
+        assert_eq!(reopened[0].extension_id, "apple");
+    }
+
+    #[test]
     fn an_empty_alias_matches_nothing() {
         // A blank alias would otherwise match every request as a zero-length run.
         let recs = [rec("x", &["", "  "])];
-        assert!(rank(&recs, "anything at all", None).is_empty());
+        assert!(rank(&recs, "anything at all", None, &[]).is_empty());
     }
 }
