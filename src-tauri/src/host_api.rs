@@ -105,6 +105,13 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         // The real grant is derived from the parsed URL (`net:<exact-host>`).
         "net.fetch" => Some("__dynamic_net__"),
         "embed" => Some("embed"),
+        // [GRAIN] The `match.*` primitives (docs/Extensions V1/PLAN.md §4, §12)
+        // take NO capability. A capability governs *reach*, and these reach
+        // nothing beyond the extension's own supplied phrases — unlike `embed`,
+        // which returns raw vectors over arbitrary text and stays gated.
+        // `match.semantic`'s ~130 MB resource is governed by the card-visible
+        // `needs: ["semantic"]` declaration and the §6 lifecycle, not a grant.
+        "match.lexical" | "match.semantic" | "match.decide" => None,
         "session.start" => Some("session:start"),
         "capture.selection" => Some("capture:selection"),
         "capture.app" => Some("capture:app"),
@@ -474,6 +481,128 @@ fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
                 .ok_or_else(|| invalid_argument(format!("'{key}[{index}]' must be a string")))
         })
         .collect()
+}
+
+/// Parse `candidates: [{ id, <phrase_key>: [string] }]` for the match
+/// primitives. `phrase_key` is `"phrases"` for lexical, `"examples"` for
+/// semantic — one shape under two honest names. Empty phrase strings are dropped
+/// rather than embedded/scored.
+fn param_named_phrase_lists(
+    params: &Value,
+    phrase_key: &str,
+) -> HostResult<Vec<(String, Vec<String>)>> {
+    let array = params
+        .get("candidates")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
+    array
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
+                invalid_argument(format!("'candidates[{index}].id' must be a string"))
+            })?;
+            let phrases = candidate
+                .get(phrase_key)
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    invalid_argument(format!(
+                        "'candidates[{index}].{phrase_key}' must be an array of strings"
+                    ))
+                })?
+                .iter()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .filter(|p| !p.trim().is_empty())
+                .collect();
+            Ok((id.to_string(), phrases))
+        })
+        .collect()
+}
+
+/// Parse `candidates: [{ id, score }]` for `match.decide`.
+fn param_scored_candidates(params: &Value) -> HostResult<Vec<(String, f32)>> {
+    let array = params
+        .get("candidates")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
+    array
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
+                invalid_argument(format!("'candidates[{index}].id' must be a string"))
+            })?;
+            let score = candidate
+                .get("score")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| {
+                    invalid_argument(format!("'candidates[{index}].score' must be a number"))
+                })?;
+            Ok((id.to_string(), score as f32))
+        })
+        .collect()
+}
+
+/// Parse `policy: { minConfidence, margin }`, with defaults for an omitted
+/// policy. There is no universal threshold (§8 G4), so these defaults are a
+/// starting point an author overrides after measuring with `grain-ext eval`.
+fn param_decide_policy(params: &Value) -> grain_core::matching::DecidePolicy {
+    let policy = params.get("policy");
+    let field = |key: &str, default: f32| {
+        policy
+            .and_then(|p| p.get(key))
+            .and_then(Value::as_f64)
+            .map(|v| v as f32)
+            .unwrap_or(default)
+    };
+    grain_core::matching::DecidePolicy {
+        min_confidence: field("minConfidence", 0.5),
+        margin: field("margin", 0.1),
+    }
+}
+
+/// Cosine of two vectors the embedder already L2-normalised — a dot product.
+/// Length-guarded so a mismatched pair scores 0 instead of panicking.
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// Score each candidate's best example against the query, best-first, with each
+/// entry's margin to the next. Blocking (model inference) — runs on the blocking
+/// pool. The pure counterpart of `grain_core::matching::lexical_rank`, kept host
+/// -side because it needs the embedder.
+fn semantic_match(text: &str, candidates: &[(String, Vec<String>)]) -> anyhow::Result<Vec<Value>> {
+    let query = crate::grain_space::embed::embed_query(text.to_string())?;
+    let mut scored: Vec<(String, f32)> = Vec::new();
+    for (id, examples) in candidates {
+        if examples.is_empty() {
+            continue;
+        }
+        let vectors = crate::grain_space::embed::embed(examples.clone())?;
+        let best = vectors
+            .iter()
+            .map(|v| cosine(&query, v))
+            .fold(f32::MIN, f32::max);
+        scored.push((id.clone(), best));
+    }
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    Ok(scored
+        .iter()
+        .enumerate()
+        .map(|(index, (id, score))| {
+            let margin = scored
+                .get(index + 1)
+                .map_or(*score, |(_, next)| score - next);
+            json!({ "id": id, "score": score, "margin": margin })
+        })
+        .collect())
 }
 
 fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
@@ -1025,6 +1154,50 @@ pub async fn dispatch(
                     .map_err(|error| service_error("embedding model", error.to_string()))?;
             Ok(json!({ "vectors": vectors }))
         }
+        // ── match.* — the extension ranks its own commands (§4) ─────────────
+        "match.lexical" => {
+            // Lexical rank over the extension's own phrases. Pure, no model, no
+            // capability. Same scorer Grain uses for its own lexical leg.
+            let text = param_str(&params, "text")?;
+            let candidates = param_named_phrase_lists(&params, "phrases")?;
+            let ranked = grain_core::matching::lexical_rank(&text, &candidates);
+            Ok(json!({
+                "matches": ranked
+                    .iter()
+                    .map(|m| json!({ "id": m.id, "score": m.score }))
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        "match.decide" => {
+            // A confidence policy over any scored candidates — pure. The
+            // primitive that turns a ranking into pick / ask / decline, so an
+            // author never hand-writes a threshold check.
+            let candidates = param_scored_candidates(&params)?;
+            let policy = param_decide_policy(&params);
+            Ok(match grain_core::matching::decide(&candidates, &policy) {
+                grain_core::matching::Decision::Pick(id) => json!({ "pick": id }),
+                grain_core::matching::Decision::Ambiguous(ids) => json!({ "ambiguous": ids }),
+                grain_core::matching::Decision::None => json!({ "none": true }),
+            })
+        }
+        "match.semantic" => {
+            // Semantic rank over the extension's own examples. Needs the
+            // embedder, so it lives here rather than in grain-core — but it
+            // reaches nothing beyond the supplied examples, which is why it takes
+            // no capability. Loads the model on demand and refreshes the TTL
+            // (§6): calling it while cold is never the extension's problem.
+            let text = param_str(&params, "text")?;
+            let candidates = param_named_phrase_lists(&params, "examples")?;
+            if candidates.is_empty() {
+                return Ok(json!({ "matches": [] }));
+            }
+            crate::grain_space::embed::touch_extension_mode(app);
+            let matches = tokio::task::spawn_blocking(move || semantic_match(&text, &candidates))
+                .await
+                .map_err(|error| internal_error(format!("semantic match task failed: {error}")))?
+                .map_err(|error| service_error("embedding model", error.to_string()))?;
+            Ok(json!({ "matches": matches }))
+        }
         "capture.selection" => {
             // [GRAIN] Grain Space Test: the selection quick-add path. Simulates
             // a copy in the foreground app, reads the result, and restores the
@@ -1510,6 +1683,16 @@ mod tests {
         assert_eq!(required_capability("doc.put"), Some("storage"));
         assert_eq!(required_capability("doc.list"), Some("storage"));
         assert_eq!(required_capability("log.info"), None);
+
+        // [GRAIN] The match.* primitives (Extensions V1 §4, §12) take NO
+        // capability: they reach nothing beyond the extension's own supplied
+        // phrases. `match.semantic` uses the ~130 MB model but that is a
+        // `needs`-declared resource, not a granted reach — gating it would put a
+        // permission on every searchable extension's sheet and teach people to
+        // click through the ones that matter.
+        assert_eq!(required_capability("match.lexical"), None);
+        assert_eq!(required_capability("match.semantic"), None);
+        assert_eq!(required_capability("match.decide"), None);
 
         // [GRAIN] The notebook has TWO capabilities and they must not collapse
         // into one. `space` is minted by Grain for its own MCP proxy and is

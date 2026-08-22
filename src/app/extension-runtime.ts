@@ -227,6 +227,32 @@ export const GRAIN_RUNTIME_JS = `(function () {
         return r && r.vectors != null ? r.vectors : r;
       });
     },
+    // Rank the extension's OWN commands against a request (Extensions V1, sec 4).
+    // Three composable pieces, callable in any order and none required: lexical
+    // is a fast name/verb match, semantic understands paraphrase (loads the
+    // on-device model on demand, no capability needed), decide turns a ranking
+    // into pick / ask / decline. These are conveniences over the same machinery
+    // Grain uses to rank extensions; an extension may skip them entirely and
+    // call llm() with its own tool schema instead.
+    match: {
+      // candidates: [{ id, phrases: [string] }] -> [{ id, score }] best-first.
+      lexical: function (text, candidates) {
+        return req("match.lexical", { text: String(text), candidates: candidates || [] }).then(function (r) {
+          return r && r.matches != null ? r.matches : r;
+        });
+      },
+      // candidates: [{ id, examples: [string] }] -> [{ id, score, margin }].
+      semantic: function (text, candidates) {
+        return req("match.semantic", { text: String(text), candidates: candidates || [] }).then(function (r) {
+          return r && r.matches != null ? r.matches : r;
+        });
+      },
+      // candidates: [{ id, score }], policy: { minConfidence, margin } ->
+      // { pick } | { ambiguous } | { none }.
+      decide: function (candidates, policy) {
+        return req("match.decide", { candidates: candidates || [], policy: policy || {} });
+      }
+    },
     // The extension asks for ITS OWN workspace surface (SPEC §1.2) — there is
     // no id to pass, because the host derives which extension is calling from
     // the channel, not from an argument. The payload reaches the surface UI on

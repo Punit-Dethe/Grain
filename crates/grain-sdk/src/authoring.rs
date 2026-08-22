@@ -120,6 +120,33 @@ export interface GrainApi {
     }>;
   };
   embed(texts: string[]): Promise<number[][]>;
+  /** Rank this extension's OWN commands against a request (Extensions V1 §4).
+   * Conveniences over the same machinery Grain uses to rank extensions — call
+   * them in any order, or none: an extension may instead pass the request
+   * straight to `llm.complete` with its own tool schema. `match.semantic` needs
+   * the on-device model (declare `needs: ["semantic"]`) but no capability. */
+  readonly match: {
+    /** Fast lexical rank over declared phrasings. Strong for names/verbs, weak
+     * for paraphrase — reach for `semantic` when wording varies. */
+    lexical(
+      text: string,
+      candidates: readonly { id: string; phrases: readonly string[] }[],
+    ): Promise<{ id: string; score: number }[]>;
+    /** Semantic rank over declared examples. Understands paraphrase; loads the
+     * embedding model on demand. `margin` is the gap to the next candidate. */
+    semantic(
+      text: string,
+      candidates: readonly { id: string; examples: readonly string[] }[],
+    ): Promise<{ id: string; score: number; margin: number }[]>;
+    /** Turn a ranking into a decision. `minConfidence` is the floor to act at
+     * all; `margin` is how far the best must lead to be picked outright — within
+     * it, the top candidates are `ambiguous`. There is no universal threshold;
+     * measure with `grain-ext eval` and set these. */
+    decide(
+      candidates: readonly { id: string; score: number }[],
+      policy?: { minConfidence?: number; margin?: number },
+    ): Promise<{ pick: string } | { ambiguous: string[] } | { none: true }>;
+  };
   readonly open: {
     /** Open a link in the user's browser. Host allows only http/https/mailto/tel. */
     url(url: string): Promise<unknown>;
