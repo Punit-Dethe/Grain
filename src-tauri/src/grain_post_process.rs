@@ -100,15 +100,12 @@ pub(crate) async fn post_process_transcription(
         return None;
     }
 
-    // [GRAIN] Context awareness: layer automatic SOFT context (per detected app
-    // category) and any matching user MODE (hard formatting) on top of the base
-    // prompt. Detection is one cheap OS call made ONCE here — never per rolling
-    // chunk — and `compose_prompt` returns the base untouched when the feature is
-    // off, nothing is detected, and no mode matches (so the common path is today's).
+    // [GRAIN] Context awareness: select one active profile for the detected app
+    // or site. Detection is one OS call made once here, never per rolling chunk.
     // [GRAIN] Detect context only when the feature is on (one cheap OS call). The
     // spoken Prompt Record instruction is independent of that toggle, so
-    // `compose_prompt` is always consulted — it returns the base untouched when
-    // there is neither a spoken instruction nor any context layer to add.
+    // `compose_prompt` is always consulted because Grain owns the final output
+    // envelope even when no spoken instruction or profile is present.
     let ctx = if settings.context_awareness_enabled {
         crate::context_detect::detect_active_context(
             settings.context_nearby_terms,
@@ -138,210 +135,14 @@ pub(crate) async fn post_process_transcription(
         run_single_provider(app, settings, &prompt, transcription).await
     };
 
-    // [GRAIN] Last line of defence against the model returning the prompt.
-    //
-    // Everything layered into the system prompt — the app and site, the text
-    // around the cursor, and mode instructions — is reference material, and a
-    // model that mistakes it for content emits it into whatever the user is
-    // typing into. That happened: an email draft received the surrounding page
-    // text and prompt instructions verbatim.
-    //
-    // Prompt wording makes that rarer; it cannot make it impossible, and the
-    // cost of the rare case is corrupted text in a document the user is about
-    // to send. The first guard catches prompt scaffolding; the cursor guard then
-    // compares actual reply content with the captured sides. `None` is exactly
-    // how this function already says "use the raw transcript" — the user loses
-    // the cleanup, never their words.
-    let caret = ctx
-        .as_ref()
-        .and_then(|context| context.caret.as_ref())
-        .filter(|caret| !caret.is_empty());
-    let safe_result = result.filter(|reply| {
-        let echoed = reply_contains_scaffolding(reply);
-        if echoed {
-            warn!(
-                "[GRAIN] post-process: reply echoed prompt scaffolding; \
-                 discarding it and pasting the raw transcript instead"
-            );
-        }
-        !echoed
-    });
-    let safe_result = match (safe_result, caret) {
-        (Some(reply), Some(caret)) => {
-            match crate::context_detect::isolate_caret_reply(&reply, transcription, caret) {
-                crate::context_detect::CaretReply::Clean(reply) => Some(reply),
-                crate::context_detect::CaretReply::Extracted(middle) => {
-                    log::info!(
-                        "[GRAIN] context: removed echoed left/right context from provider reply"
-                    );
-                    Some(middle)
-                }
-                crate::context_detect::CaretReply::Rejected => {
-                    warn!(
-                        "[GRAIN] context: provider reply may contain cursor context; \
-                     discarding it and using the raw transcript"
-                    );
-                    None
-                }
-            }
-        }
-        (result, _) => result,
-    };
-
-    // Cursor spacing is a deterministic concern, not an LLM concern. Apply the
-    // seam pass to successful cleanup and also to the raw transcript when the
-    // provider failed or echoed scaffolding. In the latter case return `Some`
-    // only if the local pass changed anything, preserving the established
-    // `None`-means-raw-fallback contract for the common path.
-    if let Some(caret) = caret {
-        let source = safe_result.as_deref().unwrap_or(transcription);
-        let fitted = crate::context_detect::fit_text_to_caret(source, caret);
-        if fitted != source {
-            log::info!("[GRAIN] context: deterministic cursor seam adjusted output");
-        }
-        if safe_result.is_some() || fitted != transcription {
-            Some(fitted)
-        } else {
-            None
-        }
-    } else {
-        safe_result
-    }
+    // Never reinterpret or reject model output with marker, length or cursor
+    // heuristics. Legitimate dictated output can match any mechanical rule. The
+    // terminal output contract is the sole response-envelope instruction.
+    result
 }
 
-/// Fragments that can only have come from Grain's own prompt scaffolding.
-///
-/// Chosen to be things no one dictates. A false positive costs one round of
-/// cleanup; a false negative costs the user a corrupted document, so the list
-/// leans deliberately toward catching too much. Retired wordings stay listed —
-/// they cost one `contains` each and a stale prompt should still be caught.
-const SCAFFOLDING_MARKERS: &[&str] = &[
-    // Caret / seam block, current and retired forms.
-    "<before_text>",
-    "<after_text>",
-    "immediately before:",
-    "immediately after:",
-    "Reference only — the text already around the cursor",
-    "Never output any part of them",
-    // The PREFIX, not the two exact spellings that used to be listed here:
-    // `[Cursor fit]` and `[Cursor fit — REQUIRED]` were both enumerated, so a
-    // third wording would have leaked undetected until someone remembered to
-    // add it. Caught by `every_prompt_header_is_a_scaffolding_marker`.
-    "[Cursor fit",
-    "Use L/R only to make the transcript fit at the cursor",
-    "Treat the transcript as an insertion between L and R",
-    // Context-awareness block headers.
-    "[Context awareness]",
-    "[Spoken instruction",
-    "[Extension rules]",
-    "Rules contributed by installed extensions",
-    "Soft context (tone",
-    // The user-authored half of the same layer. A custom profile is the user's
-    // own rule for an app they named, so it is delivered with their authority
-    // rather than as a soft nudge — but it is still our scaffolding, and a
-    // header that is not listed here is one the leak guard cannot see.
-    "Your rule for this app",
-    "Nearby terms the user may be referring to",
-    "Priority when instructions conflict",
-    // The framing paragraph that closes the context/extension blocks. It is
-    // prose in front of a model asked to return prose, which is exactly the
-    // shape that leaked into a draft once — and it was missing here until the
-    // header/marker cross-check went in.
-    "Apply the above as guidance over the cleanup rules below",
-    // Rolling seam layer, current and retired forms.
-    "[Live dictation]",
-    "This text was joined from speech segments",
-    "The text was assembled from sequential speech segments",
-    // The terminal output constraint.
-    "Output ONLY the corrected transcript",
-];
-
-fn reply_contains_scaffolding(reply: &str) -> bool {
-    SCAFFOLDING_MARKERS
-        .iter()
-        .any(|marker| reply.contains(marker))
-}
-
-#[cfg(test)]
-mod scaffolding_tests {
-    use super::*;
-
-    /// The exact shape that reached a user's email draft: the text around the
-    /// cursor, the transcript, and the seam instructions, all pasted as one.
-    #[test]
-    fn catches_the_leak_that_happened() {
-        let leaked = "he platform. We regularly share updates on internships, jobs, \
-             competitions... noreply@unstop.news Draft saved So we have a few features \
-             to work on inside Grain, like the snippets, context aware. And what time \
-             is it right now? [Live dictation] The text was assembled from sequential \
-             speech segments. Repair segment-join artifacts: wrong capitalization, \
-             stray or missing periods/commas, doubled words, extra spaces.";
-        assert!(reply_contains_scaffolding(leaked));
-    }
-
-    #[test]
-    fn catches_every_scaffolding_form() {
-        for marker in SCAFFOLDING_MARKERS {
-            let reply = format!("Sure, here you go: {marker} and the rest.");
-            assert!(
-                reply_contains_scaffolding(&reply),
-                "marker not caught: {marker}"
-            );
-        }
-    }
-
-    /// The standing rule from the leak, made structural.
-    ///
-    /// Every header the prompt stack can emit must be visible to this guard.
-    /// Before the stack existed this was a comment asking whoever added a layer
-    /// to remember; now the headers are enumerable, so forgetting is a failing
-    /// test instead of a corrupted document three releases later.
-    #[test]
-    fn every_prompt_header_is_a_scaffolding_marker() {
-        use crate::context_detect::prompt_stack;
-        for layer in prompt_stack::PromptStack::every_layer_for_test().layers() {
-            let Some(header) = layer.header else { continue };
-            assert!(
-                reply_contains_scaffolding(header),
-                "prompt header has no scaffolding marker, so a leak of it would go \
-                 undetected: {header:?}"
-            );
-        }
-        // The block headers the renderer writes are not on any layer, so they
-        // are covered through the list that a contributed layer is forbidden to
-        // imitate. The two lists answer opposite directions of the same
-        // question — what may not go IN, and what must be caught coming OUT —
-        // and every entry belongs in both.
-        for marker in prompt_stack::HOST_MARKERS {
-            assert!(
-                reply_contains_scaffolding(marker),
-                "host marker has no scaffolding marker: {marker:?}"
-            );
-        }
-    }
-
-    /// The guard must not fire on ordinary dictation. A false positive costs one
-    /// round of cleanup, which is survivable — but it should still be rare.
-    #[test]
-    fn ordinary_transcripts_pass_through() {
-        for ordinary in [
-            "So we have a few features to work on inside Grain, like the snippets.",
-            "Let's move the release to Thursday before the holidays.",
-            "The text was fine, so I sent it.",
-            "Can you output only the summary?",
-            "I was reading about live dictation software yesterday.",
-            "",
-        ] {
-            assert!(
-                !reply_contains_scaffolding(ordinary),
-                "false positive on: {ordinary:?}"
-            );
-        }
-    }
-}
-
-/// The default single-provider path — unchanged behavior, lifted out so both it
-/// and the rotation path funnel through the scaffolding guard above.
+/// The default single-provider path, shared by ordinary post-processing and
+/// smart-rotation fallback.
 async fn run_single_provider(
     app: &AppHandle,
     settings: &AppSettings,
