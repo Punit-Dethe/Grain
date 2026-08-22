@@ -653,15 +653,37 @@ fn collect_prompt_layers(
 
 /// Compile one enabled extension's declared actions into the index.
 ///
-/// Same two-gate shape as [`collect_prompt_layers`], and the digest gate matters
-/// more here rather than less: what an update can quietly change is not wording
-/// but **what happens** — a `confirm` that became `safe` loses its read-back, and
-/// a widened `when` starts offering the action where it was never approved.
+/// Three gates, and each closes a different hole:
+///
+/// 1. **Classification** (`docs/Extensions V1/PLAN.md` §2). Only a `searchable`
+///    extension may be handed what the user said. Most of the platform is
+///    `extending` — prompt layers, pill themes, App Modes — and without this
+///    every one of them competes for "next song". Declared, never inferred: an
+///    extension can legitimately be searchable *and* own a shortcut, so
+///    "does it declare commands?" is the wrong question.
+/// 2. **The recommendation digest.** What it gates is *disclosure*: being
+///    pickable means receiving the whole request, so an extension whose
+///    recommendation was rewritten since the user read it drops out until they
+///    read the new one.
+/// 3. **The actions digest**, as before — what an update can quietly change
+///    here is not wording but what happens.
 fn collect_actions(
     rec: &grain_core::extensions::ExtensionRecord,
     pack: &GrainPack,
     out: &mut Vec<grain_core::action_router::IndexedAction>,
 ) {
+    if !pack.manifest.kind.is_searchable() {
+        return;
+    }
+    let recommend = grain_core::extensions::recommendation_fingerprint(&pack.manifest);
+    if rec.recommend_approved.as_deref() != Some(recommend.as_str()) {
+        log::warn!(
+            "[ext:{}] not searchable — what it is ranked by differs from what was approved; \
+             the user must review it again",
+            rec.id
+        );
+        return;
+    }
     let declared = &pack.manifest.contributes.actions;
     if declared.is_empty() {
         return;
@@ -669,7 +691,7 @@ fn collect_actions(
     let approved = grain_core::extensions::actions_fingerprint(declared);
     if rec.actions_approved.as_deref() != Some(approved.as_str()) {
         log::warn!(
-            "[ext:{}] actions not routable — the declaration differs from what was approved; \
+            "[ext:{}] actions not usable — the declaration differs from what was approved; \
              the user must review it again",
             rec.id
         );
@@ -2119,6 +2141,78 @@ mod tests {
     fn hot_paths_are_guarded_off_by_default() {
         assert!(!HAS_TRANSFORMS.load(Ordering::Relaxed));
         assert!(!HAS_ACTIVATIONS.load(Ordering::Relaxed));
+    }
+
+    // ── The Extension Mode pool (`docs/Extensions V1/PLAN.md` §2) ───────────
+
+    fn pack_of(extra: &str) -> GrainPack {
+        let json = format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0",
+                 "tier":"scripted","entry_source":"export default {{}}",
+                 "contributes":{{"actions":[{{"id":"next","title":"Skip",
+                   "risk":"safe","utterances":["next song"]}}]}}{extra}}}}}"#
+        );
+        serde_json::from_str(&json).expect("fixture parses")
+    }
+
+    fn record_for(pack: &GrainPack) -> grain_core::extensions::ExtensionRecord {
+        grain_core::extensions::ExtensionRecord {
+            id: "com.x.p".into(),
+            enabled: true,
+            toggle_seq: 1,
+            installed_version: "1.0".into(),
+            granted: vec![],
+            prompt_layers_approved: None,
+            actions_approved: Some(grain_core::extensions::actions_fingerprint(
+                &pack.manifest.contributes.actions,
+            )),
+            recommend_approved: pack
+                .manifest
+                .kind
+                .is_searchable()
+                .then(|| grain_core::extensions::recommendation_fingerprint(&pack.manifest)),
+            slots: vec![],
+            variant_slots: vec![],
+            dev: None,
+            trust: grain_sdk::Trust::UNTRUSTED_DEFAULT,
+        }
+    }
+
+    const SEARCHABLE: &str = r#","kind":"searchable","recommend":{"purpose":"Play music",
+        "examples":["next song","pause the music"]}"#;
+
+    /// Most of the platform is `extending` — prompt layers, pill themes, App
+    /// Modes. Without the classification gate every one of them would compete
+    /// for "next song" against the extension that actually plays music.
+    #[test]
+    fn an_extending_extension_never_enters_the_pool() {
+        let pack = pack_of("");
+        assert!(!pack.manifest.kind.is_searchable(), "extending by default");
+        let mut out = Vec::new();
+        collect_actions(&record_for(&pack), &pack, &mut out);
+        assert!(out.is_empty(), "commands are its own business, not Grain's");
+    }
+
+    #[test]
+    fn a_searchable_extension_enters_the_pool() {
+        let pack = pack_of(SEARCHABLE);
+        let mut out = Vec::new();
+        collect_actions(&record_for(&pack), &pack, &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].extension_id, "com.x.p");
+    }
+
+    /// The rug pull, at the level that matters most: being pickable means
+    /// receiving everything the user said. An extension that rewrote what it
+    /// asks to be offered for drops out until the user reads the new version.
+    #[test]
+    fn a_rewritten_recommendation_drops_out_of_the_pool() {
+        let pack = pack_of(SEARCHABLE);
+        let mut stale = record_for(&pack);
+        stale.recommend_approved = Some("the-fingerprint-of-a-version-the-user-read".into());
+        let mut out = Vec::new();
+        collect_actions(&stale, &pack, &mut out);
+        assert!(out.is_empty());
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {

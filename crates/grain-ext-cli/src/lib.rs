@@ -256,6 +256,15 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             version: "0.1.0".into(),
             grain_api: format!("^{GRAIN_API_VERSION}"),
             tier: Tier::Scripted,
+            // [GRAIN] The scaffold is `extending` (the default) for the same
+            // reason it declares no prompt layer: `searchable` means Grain may
+            // hand this extension everything the user said, and a starter
+            // template must not opt an author into that before they have
+            // written the `recommend` block that says what it is for.
+            kind: Default::default(),
+            recommend: None,
+            auto_send: None,
+            needs: Vec::new(),
             description: format!("A Grain extension by {name}"),
             repository: None,
             permissions: Vec::new(),

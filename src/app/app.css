@@ -6595,6 +6595,19 @@ html[data-theme="light"] .installed-extension-actions {
 .extension-confirm p {
   margin: 10px 0;
 }
+
+/* [GRAIN] The Extension Mode disclosure (Extensions V1 G1): picking this
+   extension hands it everything the user said. It sits among the other
+   paragraphs but is the one sentence on the sheet that no capability in the
+   list above expresses, so it is set apart rather than left to be skimmed. */
+.extension-confirm-disclosure {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+  color: var(--text-2, var(--text-3));
+}
+
 .extension-confirm ul {
   margin: 0 0 14px 18px;
   list-style: disc;

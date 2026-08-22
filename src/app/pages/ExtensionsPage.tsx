@@ -313,6 +313,30 @@ function useInstalledExtensions(): InstalledController {
             </ul>
           </>
         )}
+        {pending.card.kind === "searchable" && (
+          <>
+            {/*
+              G1. Under V1 the chosen extension receives the WHOLE transcript,
+              not extracted parameters — a materially wider disclosure than any
+              capability in the list above expresses, and one no capability can
+              express, because it is inherent in being pickable at all. Stated
+              here as a consequence of choosing it, not offered as a toggle.
+            */}
+            <p className="extension-confirm-disclosure">
+              When you pick this extension in Extension Mode, Grain hands it
+              everything you said — the whole request, word for word.
+              {pending.card.recommend?.purpose
+                ? ` It asks to be offered for: ${pending.card.recommend.purpose}.`
+                : ""}
+            </p>
+            {pending.card.needs.includes("semantic") && (
+              <p className="extension-confirm-disclosure">
+                It uses Grain's understanding model, a one-time download of
+                about 130 MB.
+              </p>
+            )}
+          </>
+        )}
         {pending.actions.length > 0 && (
           <>
             {/*

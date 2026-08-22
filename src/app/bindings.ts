@@ -3132,7 +3132,39 @@ prompt_layers: PromptLayerInfo[];
  * exactly what someone wants to look up again a week later without
  * uninstalling it to find out.
  */
-actions: ActionInfo[] }
+actions: ActionInfo[]; 
+/**
+ * [GRAIN] `"searchable" | "standalone" | "extending"`
+ * (`docs/Extensions V1/PLAN.md` §2). Declared, never inferred.
+ * 
+ * The card carries it because it is the difference between an extension
+ * that can be handed what the user said and one that cannot, and that is
+ * not visible from anything else on the row.
+ */
+kind: string; 
+/**
+ * [GRAIN] What Grain ranks this extension by. `None` for anything that is
+ * not `searchable` — validation guarantees the two agree.
+ */
+recommend: RecommendInfo | null; 
+/**
+ * [GRAIN] Resources this extension asks Grain to have ready, e.g.
+ * `semantic` for the ~130 MB embedding model (§6). Card-visible by design:
+ * a capability governs *reach* and this governs *cost*, and hiding the
+ * second is how a lightweight-looking install turns out not to be.
+ */
+needs: string[] }
+/**
+ * [GRAIN] The recommendation surface an extension declares
+ * (`docs/Extensions V1/PLAN.md` §3.1).
+ * 
+ * Carried whole rather than pre-formatted: `purpose` is a plain line anyone
+ * can read, while `examples` are the greedy-declaration surface store review
+ * has to see (G3). Whether the in-app card renders the examples is a UI
+ * question still open in the plan (§11) — the backend answering it by omission
+ * would settle it silently.
+ */
+export type RecommendInfo = { purpose: string; examples: string[]; aliases: string[]; entities: string[] }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host

@@ -24,9 +24,34 @@ const MAX_OVERLAY_TIMEOUT_MS: u32 = 15_000;
 
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "dist", "node_modules", "target"];
 
+/// [GRAIN] Whether a finding blocks.
+///
+/// Added with the Extensions V1 recommendation checks, which need a verdict the
+/// old shape could not express: a `recommend` block can be perfectly valid and
+/// still rank badly. Refusing to submit over it would be wrong, and staying
+/// silent leaves the author with the one failure they cannot debug from their
+/// own extension in isolation — ranking is global, so a greedy declaration only
+/// shows up on someone else's machine.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    #[default]
+    Error,
+    Warning,
+}
+
+impl Severity {
+    fn label(self) -> &'static str {
+        match self {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finding {
     pub code: &'static str,
+    pub severity: Severity,
     pub path: PathBuf,
     pub line: Option<usize>,
     pub column: Option<usize>,
@@ -37,10 +62,18 @@ impl Finding {
     fn project(code: &'static str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
         Self {
             code,
+            severity: Severity::Error,
             path: path.into(),
             line: None,
             column: None,
             message: message.into(),
+        }
+    }
+
+    fn advice(code: &'static str, path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
+        Self {
+            severity: Severity::Warning,
+            ..Finding::project(code, path, message)
         }
     }
 }
@@ -54,7 +87,13 @@ impl fmt::Display for Finding {
                 write!(formatter, ":{column}")?;
             }
         }
-        write!(formatter, " [{}] {}", self.code, self.message)
+        write!(
+            formatter,
+            " {} [{}] {}",
+            self.severity.label(),
+            self.code,
+            self.message
+        )
     }
 }
 
@@ -65,14 +104,24 @@ pub struct DoctorReport {
 }
 
 impl DoctorReport {
+    /// Nothing that blocks. Warnings are printed and do not fail the run —
+    /// a check that cannot say "this is legal but will rank badly" without
+    /// refusing the submission would just be turned off.
     pub fn is_clean(&self) -> bool {
-        self.findings.is_empty()
+        !self.findings.iter().any(|f| f.severity == Severity::Error)
+    }
+
+    fn errors(&self) -> usize {
+        self.findings
+            .iter()
+            .filter(|f| f.severity == Severity::Error)
+            .count()
     }
 }
 
 impl fmt::Display for DoctorReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_clean() {
+        if self.findings.is_empty() {
             return write!(
                 formatter,
                 "doctor: 0 findings ({} files checked)",
@@ -81,8 +130,9 @@ impl fmt::Display for DoctorReport {
         }
         writeln!(
             formatter,
-            "doctor: {} finding(s) ({} files checked)",
-            self.findings.len(),
+            "doctor: {} error(s), {} warning(s) ({} files checked)",
+            self.errors(),
+            self.findings.len() - self.errors(),
             self.files_checked
         )?;
         for finding in &self.findings {
@@ -172,6 +222,128 @@ fn check_manifest(root: &Path, report: &mut DoctorReport) {
     check_pack_contract(&project, report);
     check_activations(&project, report);
     check_surface_budgets(&project, report);
+    check_recommendation(&project, report);
+}
+
+/// [GRAIN] Advice on the recommendation surface (`docs/Extensions V1/PLAN.md`
+/// §2, §3.1, G3). Warnings, never errors: everything here is a legal manifest
+/// that will behave worse than the author expects.
+///
+/// These exist because ranking is **global**. An author testing their own
+/// extension in isolation sees none of these problems — a thin example set
+/// ranks fine when it is the only thing installed, and an alias that is really
+/// a verb wins every time nothing competes for it. The first machine where it
+/// misbehaves belongs to someone else.
+fn check_recommendation(project: &ExtensionProjectManifest, report: &mut DoctorReport) {
+    let manifest = &project.manifest;
+
+    // The likeliest confusion after V1: commands declared by something Grain
+    // never ranks. They are not wasted — the extension matches against them
+    // itself — but nothing the user says out loud will reach them.
+    if !manifest.kind.is_searchable() && !manifest.contributes.actions.is_empty() {
+        report.findings.push(Finding::advice(
+            "W_KIND_UNRANKED",
+            "manifest.json",
+            format!(
+                "kind is '{}', so Grain never hands this extension a spoken request; its {} \
+                 declared action(s) are reachable only from its own shortcut or its own \
+                 matching. Declare kind 'searchable' to be recommended.",
+                manifest.kind.as_str(),
+                manifest.contributes.actions.len()
+            ),
+        ));
+    }
+
+    let Some(recommend) = &manifest.recommend else {
+        return;
+    };
+
+    // Semantic ranking buys exactly one thing: paraphrase. Two examples cannot
+    // cover it, so an extension declaring them is relying on the user happening
+    // to say one of two sentences.
+    if recommend.examples.len() < RECOMMEND_EXAMPLES_ADVISED {
+        report.findings.push(Finding::advice(
+            "W_RECOMMEND_THIN",
+            "manifest.json",
+            format!(
+                "recommend.examples has {} entr(ies); {RECOMMEND_EXAMPLES_ADVISED} or more is \
+                 advised. They are embedded, not matched literally, so their job is to span the \
+                 ways someone might ask — not to enumerate commands.",
+                recommend.examples.len()
+            ),
+        ));
+    }
+
+    // Validation already rejects exact repeats. This catches the version that
+    // still counts as several examples while covering one phrasing.
+    for (left, right) in near_duplicate_pairs(&recommend.examples) {
+        report.findings.push(Finding::advice(
+            "W_RECOMMEND_NARROW",
+            "manifest.json",
+            format!(
+                "recommend.examples '{left}' and '{right}' are near-identical, so they add one \
+                 phrasing between them rather than two"
+            ),
+        ));
+    }
+
+    // Lexical matching's whole remaining job is detecting that the user NAMED
+    // the extension (§5). An "alias" that is really a verb from its own example
+    // set turns that into a trigger on ordinary speech.
+    for alias in &recommend.aliases {
+        let normalised = alias.trim().to_lowercase();
+        if normalised.is_empty() {
+            continue;
+        }
+        if recommend
+            .examples
+            .iter()
+            .any(|example| words(example).any(|word| word == normalised))
+        {
+            report.findings.push(Finding::advice(
+                "W_RECOMMEND_ALIAS",
+                "manifest.json",
+                format!(
+                    "alias '{alias}' also appears as an ordinary word in recommend.examples. \
+                     Aliases are how Grain detects that the user NAMED this extension; a common \
+                     word there fires on speech that was never about it."
+                ),
+            ));
+        }
+    }
+}
+
+/// How many example phrasings a searchable extension is advised to declare.
+/// Below this, the embedding has nothing to generalise from.
+const RECOMMEND_EXAMPLES_ADVISED: usize = 3;
+
+/// How much of two examples' words must coincide before they count as one
+/// phrasing. High on purpose — "next song" and "next track" are genuinely two
+/// phrasings, and flagging those would teach authors to ignore this.
+const NEAR_DUPLICATE_RATIO: f32 = 0.8;
+
+fn words(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(str::to_lowercase)
+}
+
+fn near_duplicate_pairs(examples: &[String]) -> Vec<(&str, &str)> {
+    let sets: Vec<HashSet<String>> = examples.iter().map(|e| words(e).collect()).collect();
+    let mut out = Vec::new();
+    for a in 0..examples.len() {
+        for b in (a + 1)..examples.len() {
+            let smaller = sets[a].len().min(sets[b].len());
+            if smaller == 0 {
+                continue;
+            }
+            let shared = sets[a].intersection(&sets[b]).count();
+            if shared as f32 / smaller as f32 >= NEAR_DUPLICATE_RATIO {
+                out.push((examples[a].as_str(), examples[b].as_str()));
+            }
+        }
+    }
+    out
 }
 
 fn check_entry(root: &Path, project: &ExtensionProjectManifest, report: &mut DoctorReport) {
@@ -507,6 +679,7 @@ fn scan_unicode(path: &Path, text: &str, findings: &mut Vec<Finding>) {
         if let Some(name) = forbidden_unicode_name(character) {
             findings.push(Finding {
                 code: "E_UNICODE",
+                severity: Severity::Error,
                 path: path.to_path_buf(),
                 line: Some(line),
                 column: Some(column),
@@ -586,8 +759,11 @@ fn display_path(path: &Path) -> String {
 
 fn sort_findings(findings: &mut [Finding]) {
     findings.sort_by(|left, right| {
-        display_path(&left.path)
-            .cmp(&display_path(&right.path))
+        // Errors before warnings: what blocks the submission is what the author
+        // has to read, and it must not sit below advice about phrasing.
+        left.severity
+            .cmp(&right.severity)
+            .then_with(|| display_path(&left.path).cmp(&display_path(&right.path)))
             .then(left.line.cmp(&right.line))
             .then(left.column.cmp(&right.column))
             .then(left.code.cmp(right.code))
@@ -761,29 +937,133 @@ mod tests {
 
     #[test]
     fn a_declared_action_is_a_valid_runtime_activation_path() {
-        // The shape `grain.voice-actions` ships after dropping its transform:
-        // no activation array at all, woken only because a route picked it.
-        // There is deliberately no `onAction:` to write, so an extension that
-        // does nothing but actions must pass with an empty activation list —
-        // otherwise every such author is pushed into declaring something they
-        // do not need.
+        // The shape `grain.voice-actions` ships: no activation array at all,
+        // woken only because the user picked it. There is deliberately no
+        // `onAction:` to write, so an extension that does nothing but actions
+        // must pass with an empty activation list — otherwise every such author
+        // is pushed into declaring something they do not need.
         let directory = tempfile::tempdir().unwrap();
-        fs::write(
-            directory.path().join("manifest.json"),
-            r#"{
-              "id":"com.example.open","name":"Open","version":"1.1.0",
-              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
-              "permissions":["open:url","settings"],"activation":[],
-              "contributes":{"actions":[{
-                "id":"open","title":"Open a site you set up","domain":"system",
-                "risk":"safe","utterances":["open {target}","launch {target}"],
-                "params":[{"name":"target","kind":"entity","resolve":true}]}]}
-            }"#,
-        )
-        .unwrap();
+        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
 
         let report = doctor(directory.path());
+        assert!(report.findings.is_empty(), "{report}");
+    }
+
+    /// A well-formed searchable extension, as the checks below vary it.
+    const SEARCHABLE: &str = r#"{
+      "id":"com.example.open","name":"Open","version":"1.1.0",
+      "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+      "permissions":["open:url","settings"],"activation":[],
+      "kind":"searchable",
+      "recommend":{
+        "purpose":"Open the apps and sites you set up",
+        "examples":["open my dashboard","launch the design tool","take me to the wiki"],
+        "aliases":["shortcuts"]
+      },
+      "contributes":{"actions":[{
+        "id":"open","title":"Open a site you set up",
+        "risk":"safe","utterances":["open {target}","launch {target}"],
+        "params":[{"name":"target","kind":"entity","resolve":true}]}]}
+    }"#;
+
+    fn variant(replace: &[(&str, &str)]) -> tempfile::TempDir {
+        let mut manifest = SEARCHABLE.to_string();
+        for (from, to) in replace {
+            assert!(manifest.contains(from), "fixture no longer contains {from}");
+            manifest = manifest.replace(from, to);
+        }
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("manifest.json"), manifest).unwrap();
+        directory
+    }
+
+    fn codes(report: &DoctorReport) -> Vec<&'static str> {
+        report.findings.iter().map(|f| f.code).collect()
+    }
+
+    #[test]
+    fn commands_on_an_unranked_extension_are_called_out() {
+        // The likeliest confusion after V1: an author declares actions, ships
+        // `extending` by omission, and nothing they say out loud reaches it.
+        let directory = variant(&[(
+            r#""kind":"searchable",
+      "recommend":{
+        "purpose":"Open the apps and sites you set up",
+        "examples":["open my dashboard","launch the design tool","take me to the wiki"],
+        "aliases":["shortcuts"]
+      },"#,
+            "",
+        )]);
+        let report = doctor(directory.path());
+        assert!(codes(&report).contains(&"W_KIND_UNRANKED"), "{report}");
+        assert!(
+            report.is_clean(),
+            "declaring commands without being searchable is legal, just useless: {report}"
+        );
+    }
+
+    #[test]
+    fn a_thin_example_set_is_advice_not_a_refusal() {
+        let directory = variant(&[(
+            r#""examples":["open my dashboard","launch the design tool","take me to the wiki"]"#,
+            r#""examples":["open my dashboard","take me to the wiki"]"#,
+        )]);
+        let report = doctor(directory.path());
+        assert!(codes(&report).contains(&"W_RECOMMEND_THIN"), "{report}");
         assert!(report.is_clean(), "{report}");
+    }
+
+    #[test]
+    fn two_examples_that_say_the_same_thing_count_as_one() {
+        // Validation rejects an exact repeat. This is the version that gets
+        // past it while still covering a single phrasing — the author believes
+        // they declared three and the embedding sees two.
+        let directory = variant(&[(
+            r#""take me to the wiki""#,
+            r#""take me to the wiki","take me to wiki""#,
+        )]);
+        let report = doctor(directory.path());
+        assert!(codes(&report).contains(&"W_RECOMMEND_NARROW"), "{report}");
+    }
+
+    #[test]
+    fn near_duplicate_detection_leaves_genuinely_different_phrasings_alone() {
+        // "next song" / "next track" must NOT fire, or authors learn to ignore
+        // this check — which is worse than not having it.
+        let report = doctor(variant(&[]).path());
+        assert!(!codes(&report).contains(&"W_RECOMMEND_NARROW"), "{report}");
+    }
+
+    #[test]
+    fn an_alias_that_is_really_a_verb_is_flagged() {
+        // Lexical's whole remaining job is detecting that the user NAMED the
+        // extension. An alias drawn from its own example sentences turns that
+        // into a trigger on ordinary speech.
+        let directory = variant(&[(r#""aliases":["shortcuts"]"#, r#""aliases":["launch"]"#)]);
+        let report = doctor(directory.path());
+        assert!(codes(&report).contains(&"W_RECOMMEND_ALIAS"), "{report}");
+    }
+
+    #[test]
+    fn a_blocking_finding_sorts_above_advice() {
+        // The author has to read what stops the submission before advice about
+        // phrasing, however the paths happen to sort.
+        let directory = variant(&[
+            (
+                r#""permissions":["open:url","settings"]"#,
+                r#""permissions":["not-real"]"#,
+            ),
+            (r#""aliases":["shortcuts"]"#, r#""aliases":["launch"]"#),
+        ]);
+        let report = doctor(directory.path());
+        assert!(!report.is_clean(), "{report}");
+        assert!(codes(&report).contains(&"W_RECOMMEND_ALIAS"), "{report}");
+        assert_eq!(report.findings[0].severity, Severity::Error, "{report}");
+        assert_eq!(
+            report.findings.last().unwrap().severity,
+            Severity::Warning,
+            "{report}"
+        );
     }
 
     #[test]
