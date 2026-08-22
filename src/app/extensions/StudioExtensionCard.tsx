@@ -40,6 +40,7 @@ export function StudioExtensionCard({
   badgeTone = "verified",
   surface,
   primaryLabel,
+  primaryVariant = "button",
   primaryDisabled = false,
   onPrimary,
   onRemove,
@@ -51,6 +52,7 @@ export function StudioExtensionCard({
   badgeTone?: "verified" | "community" | "experimental" | "core" | "dev";
   surface: string;
   primaryLabel: string;
+  primaryVariant?: "button" | "enable-toggle";
   primaryDisabled?: boolean;
   onPrimary: () => void;
   onRemove?: () => void;
@@ -84,14 +86,34 @@ export function StudioExtensionCard({
               <Trash2 size={15} aria-hidden="true" />
             </button>
           )}
-          <button
-            className="studio-extension-primary"
-            type="button"
-            disabled={primaryDisabled}
-            onClick={onPrimary}
-          >
-            {primaryLabel}
-          </button>
+          {primaryVariant === "enable-toggle" ? (
+            <button
+              className="studio-extension-enable"
+              type="button"
+              role="switch"
+              aria-checked={false}
+              aria-label={`Enable ${name}`}
+              disabled={primaryDisabled}
+              onClick={onPrimary}
+            >
+              <span>{primaryLabel}</span>
+              <span
+                className="studio-extension-enable-track"
+                aria-hidden="true"
+              >
+                <span />
+              </span>
+            </button>
+          ) : (
+            <button
+              className="studio-extension-primary"
+              type="button"
+              disabled={primaryDisabled}
+              onClick={onPrimary}
+            >
+              {primaryLabel}
+            </button>
+          )}
         </div>
       </div>
     </article>

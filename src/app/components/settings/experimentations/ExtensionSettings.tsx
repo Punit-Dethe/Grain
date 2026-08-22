@@ -1,12 +1,13 @@
 import React, {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X } from "lucide-react";
+import { ChevronDown, ShieldCheck, X } from "lucide-react";
 import type { ExtensionCard, StoreEntry } from "@/bindings";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { serializeExtensionPalette } from "@/lib/extensionTheme";
@@ -14,7 +15,17 @@ import {
   StudioExtensionCard,
   StudioExtensionMoreCard,
 } from "@/extensions/StudioExtensionCard";
-import { studioShelfMode } from "@/extensions/extensionRuntime";
+import {
+  actionsByDomain,
+  capabilityLabel,
+  parseApprovalRequest,
+  parseSlotConflict,
+  promptLayerScope,
+  slotLabel,
+  studioShelfMode,
+  type ApprovalRequest,
+  type SlotConflict,
+} from "@/extensions/extensionRuntime";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
  * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
@@ -118,6 +129,16 @@ const CONFIGURE_SAVED_LABEL = "Changes are saved as you make them.";
 const INSTALLED_EXTENSIONS_LABEL = "Installed extensions";
 const LOADING_SETTINGS_LABEL = "Loading settings…";
 const NO_SETUP_LABEL = "No setup required";
+const ENABLE_PERMISSION_COPY =
+  "This extension runs code on your device and is asking to:";
+const ENABLE_PROMPT_COPY =
+  "It adds these instructions to what Grain sends the AI when you dictate. They rank below your own prompt.";
+const ENABLE_ACTIONS_COPY = "It can do these things when you ask out loud:";
+const ENABLE_ACTION_CONFIRM_LABEL = "asks you first";
+const ENABLE_CANCEL_LABEL = "Cancel";
+const ENABLE_APPROVE_LABEL = "Allow and enable";
+const ENABLE_KEEP_CURRENT_LABEL = "Keep current";
+const ENABLE_REPLACE_LABEL = "Replace and enable";
 
 function surfacesMatchAnchor(surfaces: readonly string[], anchor: Anchor) {
   const accepted = ANCHOR_SURFACES[anchor];
@@ -1062,6 +1083,151 @@ function openAnchorStore(anchor: Anchor) {
   window.location.hash = `/extensions/store?q=${encodeURIComponent(ANCHOR_LABELS[anchor])}`;
 }
 
+type PendingEnable = { card: ExtensionCard } & ApprovalRequest;
+type ContestedEnable = { card: ExtensionCard; conflict: SlotConflict };
+
+function ExtensionEnableDialogs({
+  pending,
+  contested,
+  occupantName,
+  onCancelApproval,
+  onCancelConflict,
+  onApprove,
+  onTakeOver,
+}: {
+  pending: PendingEnable | null;
+  contested: ContestedEnable | null;
+  occupantName: (id: string) => string;
+  onCancelApproval: () => void;
+  onCancelConflict: () => void;
+  onApprove: () => void;
+  onTakeOver: () => void;
+}) {
+  const permissionTitleId = useId();
+  const conflictTitleId = useId();
+  const approvalTitle = pending ? `Allow “${pending.card.name}”?` : "";
+  const conflictTitle = contested
+    ? `Replace ${slotLabel(contested.conflict.slot)}?`
+    : "";
+  const conflictDescription = contested
+    ? `${occupantName(contested.conflict.currentOccupant)} currently controls ${slotLabel(contested.conflict.slot)}. Enabling ${contested.card.name} will switch it off.`
+    : "";
+
+  if (pending) {
+    return (
+      <div
+        className="extension-confirm-backdrop"
+        role="presentation"
+        onClick={onCancelApproval}
+      >
+        <div
+          className="extension-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={permissionTitleId}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="extension-confirm-title">
+            <ShieldCheck size={17} aria-hidden="true" />
+            <h2 id={permissionTitleId}>{approvalTitle}</h2>
+          </div>
+          {pending.permissions.length > 0 && (
+            <>
+              <p>{ENABLE_PERMISSION_COPY}</p>
+              <ul>
+                {pending.permissions.map((permission) => (
+                  <li key={permission}>{capabilityLabel(permission)}</li>
+                ))}
+              </ul>
+            </>
+          )}
+          {pending.promptLayers.length > 0 && (
+            <>
+              <p>{ENABLE_PROMPT_COPY}</p>
+              <ul className="extension-prompt-layers">
+                {pending.promptLayers.map((layer) => (
+                  <li key={layer.id}>
+                    <span className="extension-prompt-layer-scope">
+                      {promptLayerScope(layer)}
+                    </span>
+                    <q>{layer.text}</q>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {pending.actions.length > 0 && (
+            <>
+              <p>{ENABLE_ACTIONS_COPY}</p>
+              <ul className="extension-actions">
+                {actionsByDomain(pending.actions).map((group) => (
+                  <li key={group.domain}>
+                    <span className="extension-action-domain">
+                      {group.domain}
+                    </span>
+                    <span className="extension-action-titles">
+                      {group.titles.join(", ")}
+                    </span>
+                    {group.confirms && (
+                      <span className="extension-action-confirms">
+                        {ENABLE_ACTION_CONFIRM_LABEL}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="extension-confirm-actions">
+            <button className="button" type="button" onClick={onCancelApproval}>
+              {ENABLE_CANCEL_LABEL}
+            </button>
+            <button
+              className="button primary"
+              type="button"
+              onClick={onApprove}
+            >
+              {ENABLE_APPROVE_LABEL}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!contested) return null;
+
+  return (
+    <div
+      className="extension-confirm-backdrop"
+      role="presentation"
+      onClick={onCancelConflict}
+    >
+      <div
+        className="extension-confirm"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={conflictTitleId}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="extension-confirm-title">
+          <ShieldCheck size={17} aria-hidden="true" />
+          <h2 id={conflictTitleId}>{conflictTitle}</h2>
+        </div>
+        <p>{conflictDescription}</p>
+        <div className="extension-confirm-actions">
+          <button className="button" type="button" onClick={onCancelConflict}>
+            {ENABLE_KEEP_CURRENT_LABEL}
+          </button>
+          <button className="button primary" type="button" onClick={onTakeOver}>
+            {ENABLE_REPLACE_LABEL}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ExtensionConfigureDialog({
   extension,
   anchor,
@@ -1213,11 +1379,21 @@ export const ExtensionAnchor: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [configuring, setConfiguring] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
+  const [pendingEnable, setPendingEnable] = useState<PendingEnable | null>(
+    null,
+  );
+  const [contestedEnable, setContestedEnable] =
+    useState<ContestedEnable | null>(null);
   const [resolvedRows, setResolvedRows] = useState<
     Record<string, SettingRow[]>
   >({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const aliveRef = useRef(true);
+  const shelfPanelId = useId();
+  const shelfHeadingId = useId();
+
+  useEffect(() => setCollapsed(false), [anchor]);
 
   const refresh = useCallback(async () => {
     try {
@@ -1309,6 +1485,79 @@ export const ExtensionAnchor: React.FC<{
     [activeId, refresh],
   );
 
+  const enable = useCallback(
+    async (extension: AnchoredExtension) => {
+      const { card } = extension;
+      if (card.enabled) return;
+      setBusy(card.id);
+      setError(null);
+      try {
+        await invoke("extension_set_enabled", { id: card.id, enabled: true });
+        await refresh();
+      } catch (reason) {
+        const message =
+          reason instanceof Error ? reason.message : String(reason);
+        const approval = parseApprovalRequest(message);
+        const conflict = parseSlotConflict(message);
+        if (approval) setPendingEnable({ card, ...approval });
+        else if (conflict) setContestedEnable({ card, conflict });
+        else setError(message);
+      } finally {
+        if (aliveRef.current) setBusy(null);
+      }
+    },
+    [refresh],
+  );
+
+  const approveEnable = useCallback(async () => {
+    if (!pendingEnable) return;
+    const { card, permissions } = pendingEnable;
+    setPendingEnable(null);
+    setBusy(card.id);
+    setError(null);
+    try {
+      await invoke("extension_grant", { id: card.id, permissions });
+      await invoke("extension_set_enabled", { id: card.id, enabled: true });
+      await refresh();
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const conflict = parseSlotConflict(message);
+      if (conflict) setContestedEnable({ card, conflict });
+      else setError(message);
+    } finally {
+      if (aliveRef.current) setBusy(null);
+    }
+  }, [pendingEnable, refresh]);
+
+  const takeOverSlot = useCallback(async () => {
+    if (!contestedEnable) return;
+    const { card, conflict } = contestedEnable;
+    setContestedEnable(null);
+    setBusy(card.id);
+    setError(null);
+    try {
+      await invoke("extension_take_slot", { id: card.id, slot: conflict.slot });
+      await invoke("extension_set_enabled", { id: card.id, enabled: true });
+      await refresh();
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const nextConflict = parseSlotConflict(message);
+      if (nextConflict) setContestedEnable({ card, conflict: nextConflict });
+      else setError(message);
+      await refresh();
+    } finally {
+      if (aliveRef.current) setBusy(null);
+    }
+  }, [contestedEnable, refresh]);
+
+  const occupantName = useCallback(
+    (id: string) =>
+      id === "grain.core"
+        ? "Grain's built-in default"
+        : (cards.find((card) => card.id === id)?.name ?? id),
+    [cards],
+  );
+
   const closeDialog = useCallback(() => setActiveId(null), []);
   const openConfigure = useCallback(
     async (extension: AnchoredExtension) => {
@@ -1349,57 +1598,99 @@ export const ExtensionAnchor: React.FC<{
   if (loading || anchored.length === 0) return null;
 
   return (
-    <section className="studio-installed-extensions">
+    <section
+      className="studio-installed-extensions"
+      data-collapsed={collapsed || undefined}
+    >
       <div className="studio-extension-section-heading">
         <div>
-          <h2>{INSTALLED_EXTENSIONS_LABEL}</h2>
+          <span className="studio-extension-heading-line">
+            <h2 id={shelfHeadingId}>{INSTALLED_EXTENSIONS_LABEL}</h2>
+            <span className="studio-extension-count">{anchored.length}</span>
+          </span>
           <p>{installedDescription}</p>
         </div>
+        <button
+          className="studio-extension-disclosure"
+          type="button"
+          aria-expanded={!collapsed}
+          aria-controls={shelfPanelId}
+          aria-label={
+            collapsed
+              ? "Expand installed extensions"
+              : "Collapse installed extensions"
+          }
+          title={
+            collapsed
+              ? "Expand installed extensions"
+              : "Collapse installed extensions"
+          }
+          onClick={() => setCollapsed((current) => !current)}
+        >
+          <ChevronDown size={17} aria-hidden="true" />
+        </button>
       </div>
-      {error && <div className="tool-inline-error">{error}</div>}
       <div
-        className="studio-extension-grid"
-        data-card-count={anchored.length + (showMore ? 1 : 0)}
+        id={shelfPanelId}
+        className="studio-extension-panel"
+        hidden={collapsed}
       >
-        {anchored.map((extension) => {
-          const card = extension.card;
-          const trust = trustPresentation(card.trust);
-          const state = card.enabled ? "On" : "Off";
-          return (
-            <StudioExtensionCard
-              key={extension.id}
-              name={card.name}
-              description={
-                card.description ||
-                `Adds focused controls to ${ANCHOR_LABELS[anchor]}.`
-              }
-              meta={`${extension.storeEntry?.author || `Version ${card.version}`} · ${state}`}
-              badge={trust.label}
-              badgeTone={trust.tone}
+        {error && <div className="tool-inline-error">{error}</div>}
+        <div
+          className="studio-extension-grid"
+          data-card-count={anchored.length + (showMore ? 1 : 0)}
+        >
+          {anchored.map((extension) => {
+            const card = extension.card;
+            const trust = trustPresentation(card.trust);
+            const state = card.enabled ? "On" : "Off";
+            return (
+              <StudioExtensionCard
+                key={extension.id}
+                name={card.name}
+                description={
+                  card.description ||
+                  `Adds focused controls to ${ANCHOR_LABELS[anchor]}.`
+                }
+                meta={`${extension.storeEntry?.author || `Version ${card.version}`} · ${state}`}
+                badge={trust.label}
+                badgeTone={trust.tone}
+                surface={anchor}
+                primaryLabel={
+                  !card.enabled
+                    ? busy === extension.id
+                      ? "Enabling…"
+                      : "Enable"
+                    : configuring === extension.id
+                      ? "Opening…"
+                      : "Configure"
+                }
+                primaryVariant={card.enabled ? "button" : "enable-toggle"}
+                primaryDisabled={
+                  busy === extension.id || configuring === extension.id
+                }
+                onPrimary={() =>
+                  void (card.enabled
+                    ? openConfigure(extension)
+                    : enable(extension))
+                }
+                onRemove={
+                  card.trust !== "dev"
+                    ? () => void uninstall(extension)
+                    : undefined
+                }
+              />
+            );
+          })}
+          {showMore && (
+            <StudioExtensionMoreCard
+              title="Get more extensions"
+              description={`Browse additions made for ${ANCHOR_LABELS[anchor]}.`}
               surface={anchor}
-              primaryLabel={
-                configuring === extension.id ? "Opening…" : "Configure"
-              }
-              primaryDisabled={
-                busy === extension.id || configuring === extension.id
-              }
-              onPrimary={() => void openConfigure(extension)}
-              onRemove={
-                card.trust !== "dev"
-                  ? () => void uninstall(extension)
-                  : undefined
-              }
+              onClick={() => openAnchorStore(anchor)}
             />
-          );
-        })}
-        {showMore && (
-          <StudioExtensionMoreCard
-            title="Get more extensions"
-            description={`Browse additions made for ${ANCHOR_LABELS[anchor]}.`}
-            surface={anchor}
-            onClick={() => openAnchorStore(anchor)}
-          />
-        )}
+          )}
+        </div>
       </div>
       {active && (
         <ExtensionConfigureDialog
@@ -1409,6 +1700,15 @@ export const ExtensionAnchor: React.FC<{
           onClose={closeDialog}
         />
       )}
+      <ExtensionEnableDialogs
+        pending={pendingEnable}
+        contested={contestedEnable}
+        occupantName={occupantName}
+        onCancelApproval={() => setPendingEnable(null)}
+        onCancelConflict={() => setContestedEnable(null)}
+        onApprove={() => void approveEnable()}
+        onTakeOver={() => void takeOverSlot()}
+      />
     </section>
   );
 };

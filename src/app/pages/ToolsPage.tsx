@@ -139,6 +139,8 @@ function ToolRecommendations({
         ? "context.after"
         : "agent.after";
 
+  if (!catalogue.loading && recommendations.length === 0) return null;
+
   return (
     <section
       className="extension-recommendations"
@@ -811,7 +813,10 @@ function SnippetsTool() {
 
   return (
     <>
-      <section className="dictionary-workspace" aria-label="Personal shortcuts">
+      <section
+        className="dictionary-workspace studio-core-workspace"
+        aria-label="Personal shortcuts"
+      >
         <div className="dictionary-guide snippets-guide">
           <div className="dictionary-guide-copy">
             <h2>How to use snippets</h2>
@@ -919,7 +924,7 @@ function ContextTool() {
     <>
       {enabled && (
         <>
-          <section className="context-awareness-workspace">
+          <section className="context-awareness-workspace studio-core-workspace">
             <ContextAwareSection />
           </section>
           <StudioExtensionArea anchor="context.after" tool="context" />
@@ -940,7 +945,7 @@ function AgentTool() {
           the same way Snippets and Context awareness do. */}
       {enabled && (
         <>
-          <section className="agent-workspace tool-component-host">
+          <section className="agent-workspace tool-component-host studio-core-workspace">
             <SettingsGroup>
               <AgentSection />
             </SettingsGroup>
