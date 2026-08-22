@@ -7,7 +7,7 @@ import React, {
   useState,
 } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, ShieldCheck, X } from "lucide-react";
+import { ShieldCheck, X } from "lucide-react";
 import type { ExtensionCard, StoreEntry } from "@/bindings";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { serializeExtensionPalette } from "@/lib/extensionTheme";
@@ -1379,7 +1379,6 @@ export const ExtensionAnchor: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [configuring, setConfiguring] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
   const [pendingEnable, setPendingEnable] = useState<PendingEnable | null>(
     null,
   );
@@ -1390,10 +1389,6 @@ export const ExtensionAnchor: React.FC<{
   >({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const aliveRef = useRef(true);
-  const shelfPanelId = useId();
-  const shelfHeadingId = useId();
-
-  useEffect(() => setCollapsed(false), [anchor]);
 
   const refresh = useCallback(async () => {
     try {
@@ -1598,43 +1593,17 @@ export const ExtensionAnchor: React.FC<{
   if (loading || anchored.length === 0) return null;
 
   return (
-    <section
-      className="studio-installed-extensions"
-      data-collapsed={collapsed || undefined}
-    >
+    <section className="studio-installed-extensions">
       <div className="studio-extension-section-heading">
         <div>
           <span className="studio-extension-heading-line">
-            <h2 id={shelfHeadingId}>{INSTALLED_EXTENSIONS_LABEL}</h2>
+            <h2>{INSTALLED_EXTENSIONS_LABEL}</h2>
             <span className="studio-extension-count">{anchored.length}</span>
           </span>
           <p>{installedDescription}</p>
         </div>
-        <button
-          className="studio-extension-disclosure"
-          type="button"
-          aria-expanded={!collapsed}
-          aria-controls={shelfPanelId}
-          aria-label={
-            collapsed
-              ? "Expand installed extensions"
-              : "Collapse installed extensions"
-          }
-          title={
-            collapsed
-              ? "Expand installed extensions"
-              : "Collapse installed extensions"
-          }
-          onClick={() => setCollapsed((current) => !current)}
-        >
-          <ChevronDown size={17} aria-hidden="true" />
-        </button>
       </div>
-      <div
-        id={shelfPanelId}
-        className="studio-extension-panel"
-        hidden={collapsed}
-      >
+      <div className="studio-extension-panel">
         {error && <div className="tool-inline-error">{error}</div>}
         <div
           className="studio-extension-grid"

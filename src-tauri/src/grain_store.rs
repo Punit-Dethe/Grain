@@ -27,7 +27,7 @@ use serde::Serialize;
 
 /// The resident store state (registered as managed Tauri state). Roots and
 /// revocations are small and stay loaded; the parsed index is present only
-/// while the slide-over is open.
+/// while the Extensions store UI is active.
 pub struct StoreState {
     cache_dir: PathBuf,
     roots: RwLock<Roots>,
@@ -55,6 +55,9 @@ pub struct StoreEntry {
     pub author: String,
     pub reviewed_at: String,
     pub reviewed_commit: String,
+    /// Repository popularity captured by the signed publish pipeline. The
+    /// desktop client never contacts GitHub to populate detail pages.
+    pub stars: u64,
     /// Popularity signal shown on the card and detail page. Read straight from
     /// the signed index — the client never counts or queries per card.
     pub installs: u64,
@@ -83,7 +86,7 @@ pub struct StoreMedia {
     pub kind: String,
 }
 
-/// What the store slide-over shows when opened.
+/// Catalogue state projected into the Extensions store and detail UI.
 #[derive(Clone, Serialize, specta::Type)]
 pub struct StoreView {
     /// "fresh" | "offline" | "needs-newer-client".
@@ -181,7 +184,8 @@ impl StoreState {
         self.revocations.read().unwrap().state_for(id, version)
     }
 
-    /// Drop the parsed index (store slide-over closed). Roots + revocations stay.
+    /// Drop the parsed index when the Extensions store UI closes. Roots and
+    /// revocations stay resident.
     pub fn close(&self) {
         *self.index.write().unwrap() = None;
     }
@@ -241,6 +245,7 @@ fn project_entries(entries: &[IndexEntry], revocations: &Revocations) -> Vec<Sto
             author: e.author.clone(),
             reviewed_at: e.reviewed_at.clone(),
             reviewed_commit: e.reviewed_commit.clone(),
+            stars: e.stars,
             installs: e.installs,
             readme: e.readme.clone(),
             media: e
@@ -501,8 +506,8 @@ pub async fn store_browse(app: AppHandle) -> Result<StoreView, String> {
     Ok(refresh(&state, &client).await)
 }
 
-/// Close the store slide-over: drop the parsed index so idle footprint returns
-/// to just the small roots + revocations.
+/// Close the Extensions store UI: drop the parsed index so idle footprint
+/// returns to just the small roots and revocations.
 #[tauri::command]
 #[specta::specta]
 pub fn store_close(app: AppHandle) -> Result<(), String> {

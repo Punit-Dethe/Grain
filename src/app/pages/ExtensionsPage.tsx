@@ -3,12 +3,13 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
-  BookOpen,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
@@ -421,21 +422,141 @@ function useInstalledExtensions(): InstalledController {
   };
 }
 
-type DrawerSelection =
+type DetailSelection =
   | { source: "installed"; card: ExtensionCard }
   | { source: "store"; entry: StoreEntry };
 
-function ExtensionDrawer({
+type StoreEntryWithOptionalStars = StoreEntry & { stars?: number };
+
+function formatStoreCount(value: number | undefined): string {
+  return typeof value === "number" ? value.toLocaleString() : "Not available";
+}
+
+function formatStoreSize(value: string | undefined): string {
+  if (!value) return "Not available";
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return value;
+  if (bytes < 1024) return bytes.toLocaleString() + " B";
+  const units = ["KB", "MB", "GB"];
+  let amount = bytes / 1024;
+  let unit = units[0];
+  for (let index = 1; index < units.length && amount >= 1024; index += 1) {
+    amount /= 1024;
+    unit = units[index];
+  }
+  return (
+    amount.toLocaleString(undefined, { maximumFractionDigits: 1 }) + " " + unit
+  );
+}
+
+function formatReview(entry: StoreEntry | null): string {
+  if (!entry?.reviewed_at && !entry?.reviewed_commit) return "Not available";
+  const parts: string[] = [];
+  if (entry.reviewed_at) {
+    const date = new Date(entry.reviewed_at);
+    parts.push(
+      Number.isNaN(date.getTime())
+        ? entry.reviewed_at
+        : new Intl.DateTimeFormat(undefined, {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          }).format(date),
+    );
+  }
+  if (entry.reviewed_commit) parts.push(entry.reviewed_commit.slice(0, 8));
+  return parts.join(" · ");
+}
+
+function trustDetails(trust: string | undefined): {
+  label: string;
+  meaning: string;
+  tone: string;
+} {
+  if (trust === "verified" || trust === "core") {
+    return {
+      label: "Verified",
+      meaning:
+        "Grain reviewed this version against its signed source before publishing it.",
+      tone: "verified",
+    };
+  }
+  if (trust === "experimental") {
+    return {
+      label: "Experimental",
+      meaning:
+        "Grain reviewed this version, but its APIs or behavior may still change.",
+      tone: "experimental",
+    };
+  }
+  if (trust === "dev") {
+    return {
+      label: "Local development",
+      meaning:
+        "This code was loaded locally in Developer mode and has not been reviewed by Grain.",
+      tone: "dev",
+    };
+  }
+  return {
+    label: "Unverified",
+    meaning: "Grain does not have verification information for this extension.",
+    tone: "unknown",
+  };
+}
+
+function DetailDisclosure({
+  id,
+  title,
+  description,
+  open,
+  onToggle,
+  children,
+}: {
+  id: string;
+  title: string;
+  description: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  const panelId = id + "-panel";
+  return (
+    <section className="extension-detail-disclosure">
+      <h2 className="extension-detail-disclosure-heading">
+        <button
+          className="extension-detail-disclosure-button"
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={onToggle}
+        >
+          <span>
+            <strong>{title}</strong>
+            <small>{description}</small>
+          </span>
+          <ChevronDown size={17} aria-hidden="true" />
+        </button>
+      </h2>
+      {open && (
+        <div id={panelId} className="extension-detail-disclosure-panel">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ExtensionDetail({
   selection,
   controller,
-  onClose,
+  onBack,
   onInstall,
   installing,
   canInstall,
 }: {
-  selection: DrawerSelection;
+  selection: DetailSelection;
   controller: InstalledController;
-  onClose: () => void;
+  onBack: () => void;
   onInstall: (entry: StoreEntry) => Promise<void>;
   installing: string | null;
   canInstall: boolean;
@@ -446,21 +567,27 @@ function ExtensionDrawer({
   const [mediaIndex, setMediaIndex] = useState(0);
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
-  const [readmeOpen, setReadmeOpen] = useState(false);
+  const [informationOpen, setInformationOpen] = useState(true);
+  const backButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => backButtonRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [selection]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") onBack();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [onBack]);
 
   useEffect(() => {
     let alive = true;
     setMediaIndex(0);
     setReadme(null);
-    setReadmeOpen(false);
+    setInformationOpen(true);
     if (selection.source === "installed") {
       setCatalogueEntry(null);
       void commands
@@ -478,11 +605,25 @@ function ExtensionDrawer({
     };
   }, [selection]);
 
-  const card = selection.source === "installed" ? selection.card : null;
-  const entry = selection.source === "store" ? selection.entry : catalogueEntry;
+  const selectedCard = selection.source === "installed" ? selection.card : null;
+  const selectionId =
+    selection.source === "installed" ? selection.card.id : selection.entry.id;
+  const card =
+    controller.cards.find((candidate) => candidate.id === selectionId) ??
+    selectedCard;
+  const entry =
+    selection.source === "store"
+      ? selection.entry
+      : catalogueEntry?.id === selection.card.id
+        ? catalogueEntry
+        : null;
   const name = card?.name ?? entry?.name ?? "Extension";
   const description = card?.description ?? entry?.description ?? "";
-  const media = entry?.media ?? [];
+  const media = entry?.media.length
+    ? entry.media
+    : card && controller.covers[card.id]
+      ? [controller.covers[card.id]]
+      : [];
   const capabilities = entry?.capabilities ?? card?.capabilities ?? [];
   const installedVersion = controller.cards.find(
     (candidate) => candidate.id === (card?.id ?? entry?.id),
@@ -491,13 +632,18 @@ function ExtensionDrawer({
   const destination = card
     ? extensionDestination(card, controller.sections)
     : null;
+  const trust = trustDetails(entry?.trust ?? card?.trust);
+  const stars = (entry as StoreEntryWithOptionalStars | null)?.stars;
 
-  // Fetch as soon as there is a README to fetch. It is still lazy in the sense
-  // that matters — nothing is fetched until a drawer actually opens, and the
-  // text is dropped again when it closes.
+  // This component only mounts after selection, so browse never fetches README
+  // data and cleanup drops it again when the user leaves the detail page.
   const readmeHash = entry?.readme;
   useEffect(() => {
-    if (!readmeHash) return;
+    setReadme(null);
+    if (!readmeHash) {
+      setReadmeLoading(false);
+      return;
+    }
     let live = true;
     setReadmeLoading(true);
     commands
@@ -517,186 +663,212 @@ function ExtensionDrawer({
   }, [readmeHash]);
 
   return (
-    <>
-      {/* Clicking away is how everyone closes a drawer. Escape and the X were
-          the only exits, which left the panel feeling stuck. */}
-      <div
-        className="extension-drawer-scrim"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <aside
-        className="extension-panel extension-preview-panel open"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="extension-drawer-title"
-      >
-        <div className="extension-panel-head">
-          <div>
-            <div className="eyebrow">Extension preview</div>
-            <h2 id="extension-drawer-title">{name}</h2>
-          </div>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="Close preview"
-            onClick={onClose}
-          >
-            <X size={17} />
-          </button>
-        </div>
+    <article
+      className="extension-detail"
+      aria-labelledby="extension-detail-title"
+    >
+      <div className="extension-detail-toolbar">
+        <button
+          ref={backButtonRef}
+          className="button ghost"
+          type="button"
+          onClick={onBack}
+        >
+          <ChevronLeft size={15} aria-hidden="true" />
+          Back to extensions
+        </button>
+      </div>
 
-        <div className="extension-drawer-scroll">
-          <div className="drawer-media-wrap">
-            <MediaArtwork
-              media={media[mediaIndex]}
-              name={name}
-              className="extension-panel-hero refined-panel-hero preview-media"
-            />
-            {media.length > 1 && (
-              <>
-                <button
-                  className="media-arrow media-arrow-left"
-                  type="button"
-                  aria-label="Previous preview"
-                  onClick={() =>
-                    setMediaIndex((index) =>
-                      nextMediaIndex(index, media.length, -1),
-                    )
-                  }
-                >
-                  <ChevronLeft size={18} />
-                </button>
-                <button
-                  className="media-arrow media-arrow-right"
-                  type="button"
-                  aria-label="Next preview"
-                  onClick={() =>
-                    setMediaIndex((index) =>
-                      nextMediaIndex(index, media.length, 1),
-                    )
-                  }
-                >
-                  <ChevronRight size={18} />
-                </button>
-                <span className="media-count">
-                  {mediaIndex + 1} / {media.length}
-                </span>
-              </>
-            )}
-          </div>
-
-          <div className="extension-panel-meta">
-            <span>
-              {entry?.author ||
-                (card?.trust === "dev" ? "Local developer" : "Local pack")}
-            </span>
-            <span>Version {card?.version ?? entry?.version}</span>
-            <span>{entry?.trust ?? card?.trust}</span>
-          </div>
-          <p>{description}</p>
-
-          {/* Fetched with the drawer, revealed on demand. The fetch and the
-              disclosure used to be the same gesture, which cost two clicks to
-              read anything; separating them costs one, on already-loaded text. */}
-          {(entry?.readme || readme || readmeLoading) && (
+      <div className="extension-detail-content">
+        <div className="extension-detail-media-wrap">
+          <MediaArtwork
+            media={media[mediaIndex]}
+            name={name}
+            className="extension-detail-hero preview-media"
+          />
+          {media.length > 1 && (
             <>
-              <div className="panel-section-label">About this extension</div>
               <button
-                className="readme-disclosure"
+                className="media-arrow media-arrow-left"
                 type="button"
-                aria-expanded={readmeOpen}
-                onClick={() => setReadmeOpen((open) => !open)}
+                aria-label="Previous preview"
+                onClick={() =>
+                  setMediaIndex((index) =>
+                    nextMediaIndex(index, media.length, -1),
+                  )
+                }
               >
-                <BookOpen size={15} aria-hidden="true" />
-                <span>
-                  {readmeLoading ? "Loading README…" : "Read the full README"}
-                </span>
-                <ChevronRight
-                  className="readme-chevron"
-                  size={15}
-                  aria-hidden="true"
-                />
+                <ChevronLeft size={18} />
               </button>
-              {readmeOpen && (
-                <div className="extension-readme">
-                  {readme ? (
-                    <Markdown markdown={readme} softBreaks />
-                  ) : (
-                    <div className="drawer-muted">
-                      {readmeLoading
-                        ? "Loading README…"
-                        : "The README could not be loaded."}
-                    </div>
-                  )}
-                </div>
-              )}
+              <button
+                className="media-arrow media-arrow-right"
+                type="button"
+                aria-label="Next preview"
+                onClick={() =>
+                  setMediaIndex((index) =>
+                    nextMediaIndex(index, media.length, 1),
+                  )
+                }
+              >
+                <ChevronRight size={18} />
+              </button>
+              <span className="media-count">
+                {mediaIndex + 1} / {media.length}
+              </span>
             </>
           )}
-
-          <div className="panel-section-label">Permissions</div>
-          <div className="permission-list">
-            {capabilities.length ? (
-              capabilities.map((capability) => (
-                <div className="permission-row" key={capability}>
-                  <ShieldCheck size={15} />
-                  <span>{capabilityLabel(capability)}</span>
-                  <strong>Required</strong>
-                </div>
-              ))
-            ) : (
-              <div className="drawer-muted">
-                This pack declares no runtime permissions.
-              </div>
-            )}
-          </div>
         </div>
 
-        <div className="extension-drawer-actions">
-          {entry && selection.source === "store" && (
-            <button
-              className="button primary"
-              type="button"
-              disabled={
-                current ||
-                installing === entry.id ||
-                entry.revocation === "revoked" ||
-                !canInstall
-              }
-              onClick={() => void onInstall(entry)}
-            >
-              {installing === entry.id
-                ? "Installing…"
-                : current
-                  ? "Installed"
+        <header className="extension-detail-intro">
+          <div>
+            <div className="eyebrow">Extension</div>
+            <h1 id="extension-detail-title">{name}</h1>
+            <p>{description || "No description is available."}</p>
+          </div>
+          <div className="extension-detail-actions">
+            {entry && selection.source === "store" && !current && (
+              <button
+                className="button primary"
+                type="button"
+                disabled={
+                  installing === entry.id ||
+                  entry.revocation === "revoked" ||
+                  !canInstall
+                }
+                onClick={() => void onInstall(entry)}
+              >
+                {installing === entry.id
+                  ? "Installing…"
                   : installedVersion
                     ? "Update"
                     : "Install"}
-            </button>
-          )}
-          {card && destination && destination.kind !== "preview" && (
-            <button
-              className="button primary"
-              type="button"
-              onClick={() => routeToDestination(destination)}
-            >
-              Open settings
-            </button>
-          )}
-          {card?.trust !== "dev" && card && (
-            <button
-              className="button danger"
-              type="button"
-              disabled={controller.busy === card.id}
-              onClick={() => void controller.uninstall(card)}
-            >
-              <Trash2 size={14} />
-              Uninstall
-            </button>
-          )}
+              </button>
+            )}
+            {card && destination && destination.kind !== "preview" && (
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => routeToDestination(destination)}
+              >
+                Open settings
+              </button>
+            )}
+            {entry &&
+              current &&
+              (!destination || destination.kind === "preview") && (
+                <button className="button" type="button" disabled>
+                  Installed
+                </button>
+              )}
+            {card?.trust !== "dev" && card && (
+              <button
+                className="button danger"
+                type="button"
+                disabled={controller.busy === card.id}
+                onClick={() => void controller.uninstall(card)}
+              >
+                <Trash2 size={14} />
+                Uninstall
+              </button>
+            )}
+          </div>
+        </header>
+
+        <div className="extension-detail-sections">
+          <DetailDisclosure
+            id="extension-information"
+            title="Information"
+            description="Identity, trust, release details, and permissions"
+            open={informationOpen}
+            onToggle={() => setInformationOpen((open) => !open)}
+          >
+            <div className="extension-information-grid">
+              <div className="extension-facts">
+                <dl>
+                  <div>
+                    <dt>Creator</dt>
+                    <dd>{entry?.author || "Not available"}</dd>
+                  </div>
+                  <div>
+                    <dt>Installations</dt>
+                    <dd>{formatStoreCount(entry?.installs)}</dd>
+                  </div>
+                  <div>
+                    <dt>Repository stars</dt>
+                    <dd>{formatStoreCount(stars)}</dd>
+                  </div>
+                  <div>
+                    <dt>Version</dt>
+                    <dd>
+                      {card?.version ?? entry?.version ?? "Not available"}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Package size</dt>
+                    <dd>{formatStoreSize(entry?.size)}</dd>
+                  </div>
+                  <div>
+                    <dt>Reviewed</dt>
+                    <dd>{formatReview(entry)}</dd>
+                  </div>
+                </dl>
+                <div className="extension-trust" data-tone={trust.tone}>
+                  <div>
+                    <ShieldCheck size={16} aria-hidden="true" />
+                    <strong>{trust.label}</strong>
+                  </div>
+                  <p>{trust.meaning}</p>
+                </div>
+              </div>
+              <div className="extension-permissions-pane">
+                <div className="extension-permissions-heading">
+                  <strong>Declared permissions</strong>
+                  <span>{capabilities.length}</span>
+                </div>
+                <div className="permission-list">
+                  {capabilities.length ? (
+                    capabilities.map((capability) => (
+                      <div className="permission-row" key={capability}>
+                        <ShieldCheck size={15} aria-hidden="true" />
+                        <span>{capabilityLabel(capability)}</span>
+                        <strong>Required</strong>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="extension-detail-muted">
+                      This extension declares no runtime permissions.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </DetailDisclosure>
+
+          <section
+            className="extension-detail-readme-section"
+            aria-labelledby="extension-readme-title"
+          >
+            <header className="extension-detail-readme-heading">
+              <strong id="extension-readme-title">README</strong>
+              <span>Documentation supplied by the extension author</span>
+            </header>
+            <div className="extension-detail-readme">
+              {readmeLoading ? (
+                <div className="extension-detail-muted" role="status">
+                  Loading README…
+                </div>
+              ) : readme ? (
+                <Markdown markdown={readme} softBreaks />
+              ) : (
+                <div className="extension-detail-muted">
+                  README is not available for this extension.
+                </div>
+              )}
+            </div>
+          </section>
         </div>
-      </aside>
-    </>
+      </div>
+    </article>
   );
 }
 
@@ -731,7 +903,7 @@ function InstalledList({
 }: {
   controller: InstalledController;
   query: string;
-  onPreview: (selection: DrawerSelection) => void;
+  onPreview: (selection: DetailSelection) => void;
   onBrowseStore: () => void;
 }) {
   const entries = filterExtensions(controller.cards, query);
@@ -890,7 +1062,7 @@ function StoreGrid({
 }: {
   query: string;
   controller: InstalledController;
-  onPreview: (selection: DrawerSelection) => void;
+  onPreview: (selection: DetailSelection) => void;
   onStoreChange: (state: {
     view: StoreView | null;
     installing: string | null;
@@ -1022,7 +1194,8 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     const raw = window.location.hash.split("?", 2)[1] ?? "";
     return new URLSearchParams(raw).get("q") ?? "";
   });
-  const [drawer, setDrawer] = useState<DrawerSelection | null>(null);
+  const [detail, setDetail] = useState<DetailSelection | null>(null);
+  const detailOriginRef = useRef<HTMLElement | null>(null);
   const [developer, setDeveloper] = useState<ExtensionDeveloperStatus | null>(
     null,
   );
@@ -1037,7 +1210,8 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
   }>({ view: null, installing: null, install: async () => {} });
 
   useEffect(() => {
-    setDrawer(null);
+    setDetail(null);
+    detailOriginRef.current = null;
     setStoreState({ view: null, installing: null, install: async () => {} });
   }, [view]);
 
@@ -1115,6 +1289,19 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
     }) => setStoreState(next),
     [],
   );
+  const openDetail = useCallback((selection: DetailSelection) => {
+    const active = document.activeElement;
+    detailOriginRef.current = active instanceof HTMLElement ? active : null;
+    setDetail(selection);
+  }, []);
+  const closeDetail = useCallback(() => {
+    const origin = detailOriginRef.current;
+    detailOriginRef.current = null;
+    setDetail(null);
+    requestAnimationFrame(() => {
+      if (origin?.isConnected) origin.focus();
+    });
+  }, []);
 
   return (
     <section
@@ -1122,102 +1309,114 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
       data-page-panel="extensions"
     >
       <div className="page-wrap extensions-page-wrap">
-        <div className="page-header">
-          <div className="extensions-page-heading">
-            <div className="eyebrow">Capability management</div>
-            <h1>Extensions</h1>
-            <p className="page-subtitle">
-              Install, enable, update, and remove focused additions. Settings
-              stay beside the capability each extension extends.
-            </p>
-          </div>
-          <div className="header-actions">
-            <button
-              className="button"
-              type="button"
-              disabled={importBusy}
-              onClick={() => void importPack()}
-            >
-              <Upload size={15} />
-              {importBusy ? "Importing…" : "Import pack"}
-            </button>
-            <button
-              className={`button${developer?.enabled ? " developer-on" : ""}`}
-              type="button"
-              disabled={developerBusy}
-              aria-pressed={developer?.enabled ?? false}
-              onClick={() => void openDeveloper()}
-            >
-              <Code2 size={15} />
-              Developer
-            </button>
-          </div>
-        </div>
-
-        {notice && <div className="extension-store-notice">{notice}</div>}
-        {controller.error && (
-          <div className="extension-inline-error">{controller.error}</div>
+        {detail && (
+          <ExtensionDetail
+            selection={detail}
+            controller={controller}
+            onBack={closeDetail}
+            onInstall={storeState.install}
+            installing={storeState.installing}
+            canInstall={storeState.view?.can_install ?? false}
+          />
         )}
+        <div className="extensions-browse-view" hidden={detail !== null}>
+          <div className="page-header">
+            <div className="extensions-page-heading">
+              <div className="eyebrow">Capability management</div>
+              <h1>Extensions</h1>
+              <p className="page-subtitle">
+                Install, enable, update, and remove focused additions. Settings
+                stay beside the capability each extension extends.
+              </p>
+            </div>
+            <div className="header-actions">
+              <button
+                className="button"
+                type="button"
+                disabled={importBusy}
+                onClick={() => void importPack()}
+              >
+                <Upload size={15} />
+                {importBusy ? "Importing…" : "Import pack"}
+              </button>
+              <button
+                className={`button${developer?.enabled ? " developer-on" : ""}`}
+                type="button"
+                disabled={developerBusy}
+                aria-pressed={developer?.enabled ?? false}
+                onClick={() => void openDeveloper()}
+              >
+                <Code2 size={15} />
+                Developer
+              </button>
+            </div>
+          </div>
 
-        <div className="extension-toolbar">
-          <div className="segmented" aria-label="Extension collection">
-            <button
-              className={view === "installed" ? "active" : ""}
-              type="button"
-              onClick={() => {
-                window.location.hash = hashForRoute({
-                  page: "extensions",
-                  view: "installed",
-                }).slice(1);
-              }}
-            >
-              Installed <span>{controller.cards.length}</span>
-            </button>
-            <button
-              className={view === "store" ? "active" : ""}
-              type="button"
-              onClick={() => {
+          {notice && <div className="extension-store-notice">{notice}</div>}
+          {controller.error && (
+            <div className="extension-inline-error">{controller.error}</div>
+          )}
+
+          <div className="extension-toolbar">
+            <div className="segmented" aria-label="Extension collection">
+              <button
+                className={view === "installed" ? "active" : ""}
+                type="button"
+                onClick={() => {
+                  window.location.hash = hashForRoute({
+                    page: "extensions",
+                    view: "installed",
+                  }).slice(1);
+                }}
+              >
+                Installed <span>{controller.cards.length}</span>
+              </button>
+              <button
+                className={view === "store" ? "active" : ""}
+                type="button"
+                onClick={() => {
+                  window.location.hash = hashForRoute({
+                    page: "extensions",
+                    view: "store",
+                  }).slice(1);
+                }}
+              >
+                Store
+              </button>
+            </div>
+            <label className="search-field">
+              <svg className="icon sm" aria-hidden="true">
+                <use href="#i-search" />
+              </svg>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={`Search ${view === "installed" ? "installed" : "store"} extensions`}
+              />
+            </label>
+          </div>
+
+          {view === "installed" ? (
+            <InstalledList
+              controller={controller}
+              query={query}
+              onPreview={openDetail}
+              onBrowseStore={() => {
                 window.location.hash = hashForRoute({
                   page: "extensions",
                   view: "store",
                 }).slice(1);
               }}
-            >
-              Store
-            </button>
-          </div>
-          <label className="search-field">
-            <svg className="icon sm" aria-hidden="true">
-              <use href="#i-search" />
-            </svg>
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={`Search ${view === "installed" ? "installed" : "store"} extensions`}
             />
-          </label>
+          ) : (
+            <StoreGrid
+              query={query}
+              controller={controller}
+              onPreview={openDetail}
+              onStoreChange={onStoreChange}
+            />
+          )}
         </div>
-
-        {view === "installed" ? (
-          <InstalledList
-            controller={controller}
-            query={query}
-            onPreview={setDrawer}
-            onBrowseStore={() => {
-              window.location.hash = hashForRoute({
-                page: "extensions",
-                view: "store",
-              }).slice(1);
-            }}
-          />
-        ) : (
-          <StoreGrid
-            query={query}
-            controller={controller}
-            onPreview={setDrawer}
-            onStoreChange={onStoreChange}
-          />
-        )}
       </div>
 
       {developerOpen && (
@@ -1255,16 +1454,6 @@ export function ExtensionsPage({ view }: { view: ExtensionViewId }) {
         </div>
       )}
 
-      {drawer && (
-        <ExtensionDrawer
-          selection={drawer}
-          controller={controller}
-          onClose={() => setDrawer(null)}
-          onInstall={storeState.install}
-          installing={storeState.installing}
-          canInstall={storeState.view?.can_install ?? false}
-        />
-      )}
       {controller.permissionDialog}
       {controller.conflictDialog}
     </section>
