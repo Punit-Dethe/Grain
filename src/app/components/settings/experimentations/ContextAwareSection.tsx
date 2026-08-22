@@ -747,6 +747,41 @@ function CustomProfileDialog({
   );
 }
 
+/** [GRAIN] These focused-field readers remain available to developers while
+ * their reliability work continues, but release builds must not surface them.
+ * Vite folds `import.meta.env.DEV` to false for production and removes this
+ * unreachable branch from the shipped frontend bundle. */
+const InternalContextSourceSettings: React.FC = () => {
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const nearbyTerms = getSetting("context_nearby_terms") ?? false;
+  const caretText = getSetting("context_caret_text") ?? false;
+
+  return (
+    <div className="context-profile-options" aria-label="Context sources">
+      <ToggleSwitch
+        label="Fit text to the cursor"
+        description="Read only the nearest useful sentence fragment around your cursor so mid-sentence dictation flows naturally. Sends at most 200 characters before and 80 after; when both sides are empty, no cursor hint is sent. Never stored, password fields skipped."
+        descriptionMode="tooltip"
+        grouped
+        checked={caretText}
+        isUpdating={isUpdating("context_caret_text")}
+        onChange={(v) => updateSetting("context_caret_text", v)}
+      />
+      {/* These remain separate because nearby-term hints promise to send only
+          unique tokens, while cursor fitting sends a short raw excerpt. */}
+      <ToggleSwitch
+        label="Nearby-term hints (silent)"
+        description="Read UNIQUE names and identifiers (e.g. Rita, useGrainStore, PyTorch) from the field you're dictating into and use them to improve accuracy — both as a spelling hint for the AI and to bias the recognizer itself. Never sends raw text, never stored, password fields skipped."
+        descriptionMode="tooltip"
+        grouped
+        checked={nearbyTerms}
+        isUpdating={isUpdating("context_nearby_terms")}
+        onChange={(v) => updateSetting("context_nearby_terms", v)}
+      />
+    </div>
+  );
+};
+
 /** [GRAIN] Context awareness settings rendered below the page-level feature
  * switch. The public profiles are a frontend-only presentation layer for now.
  *
@@ -755,9 +790,6 @@ function CustomProfileDialog({
  * is not here either — it is what the App Modes extension does, in its own
  * storage and its own transform hook, anchored directly below. */
 export const ContextAwareSection: React.FC = () => {
-  const { getSetting, updateSetting, isUpdating } = useSettings();
-  const nearbyTerms = getSetting("context_nearby_terms") ?? false;
-  const caretText = getSetting("context_caret_text") ?? false;
   const [activeProfileId, setActiveProfileId] =
     useState<ContextProfileId>("email");
   const [mode, setMode] = useState<"read" | "write">("read");
@@ -1127,28 +1159,7 @@ export const ContextAwareSection: React.FC = () => {
         )}
       </section>
 
-      <div className="context-profile-options" aria-label="Context sources">
-        <ToggleSwitch
-          label="Fit text to the cursor"
-          description="Read only the nearest useful sentence fragment around your cursor so mid-sentence dictation flows naturally. Sends at most 200 characters before and 80 after; when both sides are empty, no cursor hint is sent. Never stored, password fields skipped."
-          descriptionMode="tooltip"
-          grouped
-          checked={caretText}
-          isUpdating={isUpdating("context_caret_text")}
-          onChange={(v) => updateSetting("context_caret_text", v)}
-        />
-        {/* These remain separate because nearby-term hints promise to send only
-            unique tokens, while cursor fitting sends a short raw excerpt. */}
-        <ToggleSwitch
-          label="Nearby-term hints (silent)"
-          description="Read UNIQUE names and identifiers (e.g. Rita, useGrainStore, PyTorch) from the field you're dictating into and use them to improve accuracy — both as a spelling hint for the AI and to bias the recognizer itself. Never sends raw text, never stored, password fields skipped."
-          descriptionMode="tooltip"
-          grouped
-          checked={nearbyTerms}
-          isUpdating={isUpdating("context_nearby_terms")}
-          onChange={(v) => updateSetting("context_nearby_terms", v)}
-        />
-      </div>
+      {import.meta.env.DEV && <InternalContextSourceSettings />}
 
       {customProfileDialog && (
         <CustomProfileDialog

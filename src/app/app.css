@@ -294,14 +294,13 @@ html[data-theme="light"] .app {
   mix-blend-mode: soft-light;
 }
 
-/* The sidebar spans both rows (see `.sidebar`), so the titlebar covers only the
-   main column — the brand that used to sit in its first cell now heads the
-   sidebar. */
+/* The header owns the full top row. Its first track follows the responsive
+   sidebar width, while navigation starts cleanly below the window chrome. */
 .titlebar {
-  grid-column: 2 / -1;
+  grid-column: 1 / -1;
   grid-row: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: var(--sidebar) minmax(0, 1fr) auto;
   align-items: center;
   position: relative;
   z-index: 35;
@@ -321,15 +320,12 @@ html[data-theme="light"] .app {
   background: var(--hairline-soft);
 }
 
-/* Wordmark strip at the head of the full-height sidebar. Matches the titlebar's
-   height so the brand and the window controls share one baseline. */
-.sidebar-brand {
-  height: var(--titlebar);
-  flex: 0 0 auto;
+/* The wordmark occupies the header's sidebar-aligned track. */
+.titlebar-brand {
+  height: 100%;
   display: flex;
   align-items: center;
-  padding-inline: 7px;
-  margin-bottom: 4px;
+  padding-inline: 18px;
   color: var(--text-1);
   -webkit-app-region: drag;
 }
@@ -431,8 +427,9 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 
 .sidebar {
   grid-column: 1;
-  grid-row: 1 / -1;
+  grid-row: 2;
   min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 0 11px 14px;
@@ -441,6 +438,11 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   background: rgba(9, 10, 13, 0.7);
   backdrop-filter: blur(18px) saturate(112%);
   -webkit-backdrop-filter: blur(18px) saturate(112%);
+  scrollbar-width: none;
+}
+
+.sidebar::-webkit-scrollbar {
+  display: none;
 }
 
 .sidebar::after {
@@ -1105,7 +1107,7 @@ kbd,
   inset: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 30px clamp(28px, 4.2vw, 64px) 64px;
+  padding: 30px clamp(24px, 3.8vw, 56px) 56px clamp(28px, 4.2vw, 64px);
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -2276,7 +2278,7 @@ html[data-theme="light"] .overview-add-btn {
   --sidebar: 68px;
 }
 
-.app.notes-mode .sidebar-brand {
+.app.notes-mode .titlebar-brand {
   justify-content: center;
   padding-inline: 0;
 }
@@ -2686,7 +2688,7 @@ html[data-theme="light"] .capture-mode-option.selected {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 56px clamp(36px, 5vw, 78px) 84px;
+  padding: 56px clamp(32px, 4.5vw, 68px) 72px clamp(36px, 5vw, 78px);
   scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
   scrollbar-width: thin;
 }
@@ -3932,7 +3934,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     --sidebar: 68px;
   }
 
-  .sidebar-brand {
+  .titlebar-brand {
     justify-content: center;
     padding-inline: 0;
   }
@@ -4210,7 +4212,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 42px clamp(34px, 5vw, 72px) 80px;
+  padding: 42px clamp(30px, 4.5vw, 64px) 68px clamp(34px, 5vw, 72px);
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }

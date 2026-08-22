@@ -21,7 +21,10 @@ import {
 } from "@/bindings";
 import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
-import { FeaturePanel } from "@/components/settings/experimentations/FeaturePanel";
+import {
+  FeaturePanel,
+  useFeatureEnabled,
+} from "@/components/settings/experimentations/FeaturePanel";
 import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
@@ -823,23 +826,26 @@ function SnippetsTool() {
 }
 
 function ContextTool() {
-  const { getSetting } = useSettings();
-  const enabled = getSetting("context_awareness_enabled") ?? false;
+  const enabled = useFeatureEnabled("context_awareness_enabled");
 
   return (
     <>
       {enabled && (
-        <section className="context-awareness-workspace">
-          <ContextAwareSection />
-        </section>
+        <>
+          <section className="context-awareness-workspace">
+            <ContextAwareSection />
+          </section>
+          <ExtensionAnchor anchor="context.after" />
+          <ToolRecommendations tool="context" />
+        </>
       )}
-      <ExtensionAnchor anchor="context.after" />
-      <ToolRecommendations tool="context" />
     </>
   );
 }
 
 function AgentTool() {
+  const enabled = useFeatureEnabled("agent_enabled");
+
   return (
     <>
       <section className="tool-section">
@@ -859,8 +865,12 @@ function AgentTool() {
           </FeaturePanel>
         </div>
       </section>
-      <ExtensionAnchor anchor="agent.after" />
-      <ToolRecommendations tool="agent" />
+      {enabled && (
+        <>
+          <ExtensionAnchor anchor="agent.after" />
+          <ToolRecommendations tool="agent" />
+        </>
+      )}
     </>
   );
 }

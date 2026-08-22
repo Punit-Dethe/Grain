@@ -274,6 +274,12 @@ function WindowChrome({ route }: { route: AppRoute }) {
       onMouseDown={startDrag}
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
+      <div className="titlebar-brand" data-tauri-drag-region>
+        <div className="grain-wordmark">
+          <strong>GRAIN</strong>
+        </div>
+        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
+      </div>
       <div className="workspace-title">
         {route.page === "settings"
           ? "Settings"
@@ -349,7 +355,6 @@ const NAV_GROUPS = [
     label: "Workspace",
     items: [
       { page: "overview", label: "Overview", icon: "home", href: "#/overview" },
-      { page: "notes", label: "Notes", icon: "note", href: "#/notes" },
       { page: "history", label: "History", icon: "clock", href: "#/history" },
       {
         page: "tools",
@@ -357,22 +362,23 @@ const NAV_GROUPS = [
         icon: "zap",
         href: "#/tools/dictionary",
       },
+      { page: "notes", label: "Notes", icon: "note", href: "#/notes" },
     ],
   },
   {
     label: "Configure",
     items: [
       {
-        page: "settings",
-        label: "Settings",
-        icon: "sliders",
-        href: "#/settings/capture",
-      },
-      {
         page: "extensions",
         label: "Extensions",
         icon: "box",
         href: "#/extensions/installed",
+      },
+      {
+        page: "settings",
+        label: "Settings",
+        icon: "sliders",
+        href: "#/settings/capture",
       },
     ],
   },
@@ -417,19 +423,6 @@ function Sidebar({
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
-      {/* The sidebar now runs the full height of the window, so the wordmark
-          lives at its head rather than in the titlebar. This strip stays a
-          drag region so the top-left corner still moves the window. */}
-      <div
-        className="sidebar-brand"
-        data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag" } as CSSProperties}
-      >
-        <div className="grain-wordmark">
-          <strong>GRAIN</strong>
-        </div>
-        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
-      </div>
       {NAV_GROUPS.map((group) => (
         <nav className="nav-section" key={group.label}>
           <div className="nav-label">{group.label}</div>
