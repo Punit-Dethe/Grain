@@ -670,7 +670,7 @@ function ExtensionDetail({
       <div className="extension-detail-toolbar">
         <button
           ref={backButtonRef}
-          className="button ghost"
+          className="extension-detail-back-button"
           type="button"
           onClick={onBack}
         >

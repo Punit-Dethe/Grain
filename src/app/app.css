@@ -6724,23 +6724,24 @@ html[data-theme="light"] .installed-extension-actions {
   align-items: flex-start;
 }
 
-.extension-detail-toolbar .button {
+.extension-detail-back-button {
   min-height: 32px;
   padding-inline: 9px 11px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border-color: transparent;
+  border: 0;
+  border-radius: 8px;
   color: var(--text-3);
   background: transparent;
   box-shadow: none;
+  font: inherit;
+  cursor: pointer;
 }
 
-.extension-detail-toolbar .button:hover {
-  border-color: transparent;
+.extension-detail-back-button:hover {
   color: var(--text-1);
   background: transparent;
-  box-shadow: none;
 }
 
 .extension-detail-content {
@@ -6751,7 +6752,7 @@ html[data-theme="light"] .installed-extension-actions {
 
 .extension-detail-media-wrap {
   position: relative;
-  width: min(760px, calc(100% - 96px));
+  width: min(640px, calc(100% - 128px));
   margin: 0 auto;
 }
 
