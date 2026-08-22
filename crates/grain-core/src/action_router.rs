@@ -127,7 +127,7 @@ pub fn normalise(text: &str) -> String {
     out
 }
 
-fn tokens(text: &str) -> Vec<&str> {
+pub(crate) fn tokens(text: &str) -> Vec<&str> {
     text.split(' ').filter(|t| !t.is_empty()).collect()
 }
 
@@ -141,10 +141,12 @@ fn tokens(text: &str) -> Vec<&str> {
 /// spectrum, with Apple's phonetically-augmented rescoring at the far end.
 ///
 /// This is the cheap end deliberately: bounded edit distance, no phonetic table,
-/// no dependency. It is a **recall** aid only — the risk it adds is absorbed by
-/// the conformal decision layer, which is why that had to exist first. Phonetic
-/// keying (Double Metaphone) is the next rung and is named, not built.
-fn same_word(a: &str, b: &str) -> bool {
+/// no dependency. It is a **recall** aid only, and under V1 the risk it adds is
+/// absorbed by the fact that a wrong match costs one keypress: the host ranks
+/// extensions and the user accepts, so an over-eager token match is a wrong
+/// recommendation, not a wrong action. Phonetic keying (Double Metaphone) is the
+/// next rung and is named, not built.
+pub(crate) fn same_word(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }

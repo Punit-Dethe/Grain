@@ -28,6 +28,10 @@ pub mod install;
 // invocations — so the eval harness can drive it without a running app.
 // Under V1 its job is name/alias detection, not topical ranking.
 pub mod action_router;
+// [GRAIN] Recommendation ranking (docs/Extensions V1/PLAN.md §3.1). Which
+// searchable extension should be offered a request. Pure and model-free: the
+// host injects semantic scores, so grain-core carries no embedder.
+pub mod recommend;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
