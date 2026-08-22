@@ -265,7 +265,7 @@ mod tests {
         std::fs::write(
             dir.path().join("manifest.json"),
             format!(
-                r#"{{"id":"com.example.native","name":"Native","version":"0.1.0","grainApi":"^1.0","tier":"native","permissions":[],"activation":["onStartup"],"companion":{{"{platform}":"{binary}"}}}}"#
+                r#"{{"id":"com.example.native","name":"Native","version":"0.1.0","grainApi":"^1.0","tier":"native","permissions":["resident"],"activation":["onStartup"],"companion":{{"{platform}":"{binary}"}}}}"#
             ),
         )
         .unwrap();

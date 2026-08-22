@@ -33,7 +33,6 @@ use std::collections::HashMap;
 pub struct IndexedAction {
     pub extension_id: String,
     pub action_id: String,
-    pub domain: String,
     /// The permission-sheet line, carried so the chooser and the read-back can
     /// name the action without going back to the manifest on the felt path.
     pub title: String,
@@ -58,7 +57,6 @@ impl IndexedAction {
         IndexedAction {
             extension_id: extension_id.to_string(),
             action_id: decl.id.trim().to_string(),
-            domain: decl.domain.trim().to_string(),
             title: decl.title.trim().to_string(),
             risk: decl.risk,
             required_params: decl
@@ -97,7 +95,6 @@ pub enum MatchKind {
 pub struct Candidate {
     pub extension_id: String,
     pub action_id: String,
-    pub domain: String,
     /// 0.0–1.0. Comparable across actions **within** Tier L only; the semantic
     /// leg produces its own scale and the two are combined, never concatenated.
     pub score: f32,
@@ -407,7 +404,6 @@ fn score_action_with(
     Some(Candidate {
         extension_id: action.extension_id.clone(),
         action_id: action.action_id.clone(),
-        domain: action.domain.clone(),
         score,
         kind,
         spans,
@@ -662,141 +658,10 @@ fn token_overlap(query_tokens: &[&str], phrase: &str) -> f32 {
     }
 }
 
-// ── Equivalence classes (REVIEW-PASS2 D1) ───────────────────────────────────
-
-/// Grouping of actions that are **the same request handled by different
-/// extensions**.
-///
-/// Without this, Spotify's `next` and Apple Music's `next` are rivals with
-/// near-identical utterances, the top-two margin is permanently zero, and every
-/// media command falls to the chooser — so the provider ladder, which exists for
-/// exactly that case, never runs.
-///
-/// Computed, never declared. The alternative is a canonical verb space, which
-/// is the design four platforms tried and three abandoned (RESEARCH §2).
-#[derive(Clone, Debug, Default)]
-pub struct EquivalenceMap {
-    /// `<extension>:<action>` → class index.
-    of: HashMap<String, usize>,
-    count: usize,
-}
-
-impl EquivalenceMap {
-    pub fn class_of(&self, extension_id: &str, action_id: &str) -> Option<usize> {
-        self.of.get(&format!("{extension_id}:{action_id}")).copied()
-    }
-
-    pub fn len(&self) -> usize {
-        self.count
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-}
-
-/// How much of two actions' declared language must coincide before they are
-/// treated as the same request.
-const EQUIVALENCE_THRESHOLD: f32 = 0.5;
-
 /// How closely two individual phrases must match to count as the same phrasing.
-/// Higher than the set threshold: a short generic phrase overlapping a longer
-/// specific one is not evidence that two actions do the same thing.
+/// Deliberately strict: a short generic phrase overlapping a longer specific one
+/// is not evidence that two declarations mean the same thing.
 const PHRASE_MATCH_THRESHOLD: f32 = 0.8;
-
-/// Build equivalence classes over the installed set — **constrained
-/// complete-linkage agglomerative clustering**.
-///
-/// # Why not union-find
-///
-/// The first implementation linked any two actions above the threshold and
-/// unioned them, which is *single-linkage* clustering. Single linkage has a
-/// textbook failure mode — the **chaining effect**: two well-separated clusters
-/// joined by one bridging pair are merged into a long thin cluster whose ends
-/// have nothing to do with each other. Both bugs the golden set found were that
-/// one failure wearing different hats:
-///
-/// - Apple's `"play"` bridged Spotify's `"play my playlist"` and Spotify's
-///   `play_artist`, so "play my gym playlist" became a provider chooser;
-/// - `A(ext1) ~ B(ext2) ~ C(ext1)` collapsed one author's own two actions
-///   through a third party, silently making one unreachable.
-///
-/// Complete linkage merges two clusters only when **every** cross-pair is
-/// similar enough, so a single bridging pair can never chain, and both bugs are
-/// structurally impossible rather than patched. It is also the standard fix for
-/// exactly this, and the sizes involved here (hundreds of actions, once per
-/// index rebuild) make the extra comparisons free.
-///
-/// # The constraint
-///
-/// Two actions of the **same extension** carry a hard cannot-link: an author's
-/// own vocabulary is theirs to keep distinct, and merging two of their actions
-/// makes one permanently unreachable. Under complete linkage a cannot-link pair
-/// blocks any merge that would co-locate them, so the constraint holds
-/// transitively for free — which is the property the previous version had to
-/// enforce by hand.
-///
-/// Actions in different domains are never compared: "next slide" and "next
-/// track" are precisely what must stay apart.
-pub fn equivalence_classes(actions: &[IndexedAction]) -> EquivalenceMap {
-    let n = actions.len();
-    let phrases: Vec<Vec<String>> = actions.iter().map(literal_phrases).collect();
-
-    // Pairwise similarity, with `None` for a cannot-link pair. Complete linkage
-    // reads a cannot-link as "-infinity", which blocks the merge outright.
-    let mut similarity = vec![vec![None::<f32>; n]; n];
-    for a in 0..n {
-        for b in (a + 1)..n {
-            let comparable = actions[a].domain == actions[b].domain
-                && actions[a].extension_id != actions[b].extension_id;
-            let value = comparable.then(|| phrase_set_similarity(&phrases[a], &phrases[b]));
-            similarity[a][b] = value;
-            similarity[b][a] = value;
-        }
-    }
-
-    let mut clusters: Vec<Vec<usize>> = (0..n).map(|i| vec![i]).collect();
-    loop {
-        // Complete linkage between two clusters = their WEAKEST cross-pair.
-        let mut best: Option<(usize, usize, f32)> = None;
-        for i in 0..clusters.len() {
-            for j in (i + 1)..clusters.len() {
-                let mut weakest = f32::INFINITY;
-                let mut blocked = false;
-                for a in &clusters[i] {
-                    for b in &clusters[j] {
-                        match similarity[*a][*b] {
-                            // A single cannot-link anywhere across the two
-                            // clusters vetoes the whole merge.
-                            None => blocked = true,
-                            Some(value) => weakest = weakest.min(value),
-                        }
-                    }
-                }
-                if blocked || weakest < EQUIVALENCE_THRESHOLD {
-                    continue;
-                }
-                if best.is_none_or(|(_, _, current)| weakest > current) {
-                    best = Some((i, j, weakest));
-                }
-            }
-        }
-        let Some((i, j, _)) = best else { break };
-        let merged = clusters.remove(j);
-        clusters[i].extend(merged);
-    }
-
-    let mut of = HashMap::new();
-    for (class, members) in clusters.iter().enumerate() {
-        for member in members {
-            of.insert(actions[*member].qualified(), class);
-        }
-    }
-    EquivalenceMap {
-        of,
-        count: clusters.len(),
-    }
-}
 
 /// The literal (non-placeholder) text of each template, normalised. Placeholders
 /// are dropped: `play {artist}` and `play {track}` are the same *request shape*
@@ -819,59 +684,42 @@ fn literal_phrases(action: &IndexedAction) -> Vec<String> {
         .collect()
 }
 
-/// Best-match Jaccard over two phrase sets: how much of the smaller set has a
-/// close counterpart in the larger.
-fn phrase_set_similarity(a: &[String], b: &[String]) -> f32 {
-    if a.is_empty() || b.is_empty() {
-        return 0.0;
-    }
-    let matched = a
-        .iter()
-        .filter(|left| {
-            b.iter().any(|right| {
-                left == &right || token_overlap(&tokens(left), right) >= PHRASE_MATCH_THRESHOLD
-            })
-        })
-        .count();
-    matched as f32 / a.len().min(b.len()) as f32
-}
-
 // ── Author diagnostics (`grain-ext doctor`) ─────────────────────────────────
 
-/// Two actions whose language overlaps enough that the router will struggle.
+/// Two of one extension's own declarations whose language overlaps enough that
+/// its internal matching will struggle to tell them apart.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Collision {
     pub left: String,
     pub right: String,
     pub shared: String,
-    /// True when both sit in the same domain in different extensions — i.e. this
-    /// is the *expected* kind of overlap, resolved by provider selection rather
-    /// than being a mistake.
-    pub is_provider_overlap: bool,
 }
 
-/// Find declarations that will fight at ranking time.
+/// Find one extension's declarations that will fight each other at match time.
 ///
-/// The author sees this in `doctor`, before users do. That is the whole point:
-/// ranking is global, so a phrase that eats a neighbour's language is not a
-/// problem the author would ever discover from their own extension in isolation.
+/// Scoped to a single extension on purpose. Under V1 Grain ranks *extensions*,
+/// never their commands, so Spotify's `next` and Apple Music's `next` are not
+/// rivals — they are never compared, and warning about them would be noise the
+/// author cannot act on. Two of the *same* author's phrasings overlapping is
+/// still a real defect: it makes one of them unreachable.
 pub fn collisions(actions: &[IndexedAction]) -> Vec<Collision> {
     let phrases: Vec<Vec<String>> = actions.iter().map(literal_phrases).collect();
     let mut out = Vec::new();
     for a in 0..actions.len() {
         for b in (a + 1)..actions.len() {
+            if actions[a].extension_id != actions[b].extension_id {
+                continue;
+            }
             let shared = phrases[a].iter().find(|left| {
-                phrases[b]
-                    .iter()
-                    .any(|right| left == &right || token_overlap(&tokens(left), right) >= 0.8)
+                phrases[b].iter().any(|right| {
+                    left == &right || token_overlap(&tokens(left), right) >= PHRASE_MATCH_THRESHOLD
+                })
             });
             if let Some(shared) = shared {
                 out.push(Collision {
                     left: actions[a].qualified(),
                     right: actions[b].qualified(),
                     shared: shared.clone(),
-                    is_provider_overlap: actions[a].domain == actions[b].domain
-                        && actions[a].extension_id != actions[b].extension_id,
                 });
             }
         }
@@ -884,11 +732,10 @@ mod tests {
     use super::*;
     use grain_sdk::manifest::{ActionParamDecl, ActionParamKind, ActionRisk, LayerWhen};
 
-    fn decl(id: &str, domain: &str, utterances: &[&str], params: &[&str]) -> ActionDecl {
+    fn decl(id: &str, utterances: &[&str], params: &[&str]) -> ActionDecl {
         ActionDecl {
             id: id.into(),
             title: id.into(),
-            domain: domain.into(),
             risk: ActionRisk::Safe,
             when: LayerWhen::default(),
             utterances: utterances.iter().map(|u| (*u).to_string()).collect(),
@@ -905,8 +752,8 @@ mod tests {
         }
     }
 
-    fn indexed(ext: &str, id: &str, domain: &str, utterances: &[&str]) -> IndexedAction {
-        IndexedAction::from_decl(ext, &decl(id, domain, utterances, &[]))
+    fn indexed(ext: &str, id: &str, utterances: &[&str]) -> IndexedAction {
+        IndexedAction::from_decl(ext, &decl(id, utterances, &[]))
     }
 
     /// Score one action in isolation. Corpus statistics come from that action's
@@ -920,14 +767,8 @@ mod tests {
         ActionIndex::build(actions.to_vec()).rank(said)
     }
 
-    fn with_params(
-        ext: &str,
-        id: &str,
-        domain: &str,
-        utterances: &[&str],
-        params: &[&str],
-    ) -> IndexedAction {
-        IndexedAction::from_decl(ext, &decl(id, domain, utterances, params))
+    fn with_params(ext: &str, id: &str, utterances: &[&str], params: &[&str]) -> IndexedAction {
+        IndexedAction::from_decl(ext, &decl(id, utterances, params))
     }
 
     #[test]
@@ -940,7 +781,7 @@ mod tests {
 
     #[test]
     fn a_declared_phrase_matches_verbatim() {
-        let next = indexed("spotify", "next", "media", &["skip this", "next song"]);
+        let next = indexed("spotify", "next", &["skip this", "next song"]);
         let hit = score_action("Skip this.", &next).unwrap();
         assert_eq!(hit.kind, MatchKind::Exact);
         assert_eq!(hit.score, 1.0);
@@ -950,7 +791,7 @@ mod tests {
     fn one_shared_token_is_noise_not_evidence() {
         // "play" overlapping "play something else" must not put that action on
         // the ballot — ranking is global, so weak evidence is everyone's problem.
-        let action = indexed("spotify", "next", "media", &["play something else"]);
+        let action = indexed("spotify", "next", &["play something else"]);
         assert!(score_action("play radiohead", &action).is_none());
     }
 
@@ -959,7 +800,6 @@ mod tests {
         let play = with_params(
             "spotify",
             "play_artist",
-            "media",
             &["play {artist}", "put on some {artist}"],
             &["artist"],
         );
@@ -976,7 +816,6 @@ mod tests {
         let tell = with_params(
             "slack",
             "send_dm",
-            "messaging",
             &["tell {who} that {message}"],
             &["who", "message"],
         );
@@ -993,7 +832,6 @@ mod tests {
         let tell = with_params(
             "slack",
             "send_dm",
-            "messaging",
             &["tell {who} that {message}"],
             &["who", "message"],
         );
@@ -1008,7 +846,6 @@ mod tests {
         let play = with_params(
             "spotify",
             "play_on",
-            "media",
             &["play {track} on repeat"],
             &["track"],
         );
@@ -1017,13 +854,7 @@ mod tests {
 
     #[test]
     fn an_empty_span_is_left_unfilled_rather_than_invented() {
-        let play = with_params(
-            "spotify",
-            "play_artist",
-            "media",
-            &["play {artist}"],
-            &["artist"],
-        );
+        let play = with_params("spotify", "play_artist", &["play {artist}"], &["artist"]);
         // Nothing followed "play"; a required parameter with no span is the
         // chooser's business, not something to guess here.
         let hit = score_action("play", &play);
@@ -1040,7 +871,6 @@ mod tests {
         let tell = with_params(
             "slack",
             "send_dm",
-            "messaging",
             &["tell {who} that {message}"],
             &["who", "message"],
         );
@@ -1061,17 +891,10 @@ mod tests {
         let playlist = with_params(
             "spotify",
             "play_playlist",
-            "media",
             &["play my {playlist} playlist"],
             &["playlist"],
         );
-        let artist = with_params(
-            "spotify",
-            "play_artist",
-            "media",
-            &["play {artist}"],
-            &["artist"],
-        );
+        let artist = with_params("spotify", "play_artist", &["play {artist}"], &["artist"]);
         // One shared index: specificity is measured in IDF over the whole
         // installed set, so scoring these separately would compare two different
         // corpora and prove nothing.
@@ -1093,7 +916,7 @@ mod tests {
     fn a_command_survives_one_mangled_character() {
         // ASR substitutes rather than omits, and a single bad character used to
         // throw the whole utterance away.
-        let next = indexed("spotify", "next", "media", &["skip this", "next song"]);
+        let next = indexed("spotify", "next", &["skip this", "next song"]);
         assert!(score_action("skit this", &next).is_some());
         assert!(score_action("next song", &next).is_some());
     }
@@ -1117,7 +940,6 @@ mod tests {
         let tell = with_params(
             "slack",
             "send_dm",
-            "messaging",
             &["tell {who} that {message}"],
             &["who", "message"],
         );
@@ -1128,8 +950,8 @@ mod tests {
 
     #[test]
     fn ranking_is_stable_and_independent_of_registry_order() {
-        let a = indexed("aaa", "next", "media", &["next song"]);
-        let b = indexed("bbb", "next", "media", &["next song"]);
+        let a = indexed("aaa", "next", &["next song"]);
+        let b = indexed("bbb", "next", &["next song"]);
         let forwards = rank("next song", &[a.clone(), b.clone()]);
         let backwards = rank("next song", &[b, a]);
         let names: Vec<String> = forwards.iter().map(|c| c.extension_id.clone()).collect();
@@ -1138,147 +960,24 @@ mod tests {
     }
 
     #[test]
-    fn two_providers_of_one_request_land_in_one_class() {
-        // D1: without this the top-two margin is permanently zero and every
-        // media command falls to the chooser, so the provider ladder — which
-        // exists for exactly this case — never runs.
+    fn doctor_reports_an_author_against_themselves_and_no_one_else() {
+        // Two providers of one request used to be the interesting case. Under
+        // V1 they are never compared — Grain ranks extensions, and each ranks
+        // its own commands — so the only actionable clash is an author's own.
         let actions = [
-            indexed("spotify", "next", "media", &["skip this", "next song"]),
-            indexed("apple", "next_track", "media", &["next song", "skip this"]),
-        ];
-        let classes = equivalence_classes(&actions);
-        assert_eq!(classes.len(), 1);
-        assert_eq!(
-            classes.class_of("spotify", "next"),
-            classes.class_of("apple", "next_track")
-        );
-    }
-
-    #[test]
-    fn the_same_words_in_different_domains_stay_apart() {
-        // "next slide" and "next track" are precisely what must NOT be merged.
-        let actions = [
-            indexed("spotify", "next", "media", &["next one", "move on"]),
-            indexed("deck", "next_slide", "system", &["next one", "move on"]),
-        ];
-        let classes = equivalence_classes(&actions);
-        assert_eq!(classes.len(), 2);
-        assert_ne!(
-            classes.class_of("spotify", "next"),
-            classes.class_of("deck", "next_slide")
-        );
-    }
-
-    #[test]
-    fn a_generic_phrase_does_not_drag_a_specific_one_into_its_class() {
-        // Found by the golden set: "play" (Apple's play_artist) overlapped
-        // "play my playlist" (Spotify's play_playlist) at exactly the set
-        // threshold, linking two unrelated actions — and the union then pulled
-        // Spotify's own play_artist in behind them. "Play my gym playlist"
-        // became a provider chooser.
-        let actions = [
-            with_params(
-                "spotify",
-                "play_playlist",
-                "media",
-                &[
-                    "play my {playlist} playlist",
-                    "start my {playlist} playlist",
-                ],
-                &["playlist"],
-            ),
-            with_params(
-                "spotify",
-                "play_artist",
-                "media",
-                &["play {artist}"],
-                &["artist"],
-            ),
-            with_params(
-                "apple",
-                "play_artist",
-                "media",
-                &["play {artist}"],
-                &["artist"],
-            ),
-        ];
-        let classes = equivalence_classes(&actions);
-        assert_eq!(
-            classes.class_of("spotify", "play_artist"),
-            classes.class_of("apple", "play_artist"),
-            "the same request from two providers is still one class"
-        );
-        assert_ne!(
-            classes.class_of("spotify", "play_playlist"),
-            classes.class_of("spotify", "play_artist"),
-            "a playlist request is not an artist request"
-        );
-    }
-
-    #[test]
-    fn a_merge_never_collapses_one_extension_through_a_third_party() {
-        // Grouping is transitive, so A(ext1)≡B(ext2) and B(ext2)≡C(ext1) would
-        // put two of ext1's own actions in one class without them ever being
-        // compared — silently making one of them unreachable.
-        let actions = [
-            indexed("spotify", "a", "media", &["skip this", "next song"]),
-            indexed(
-                "apple",
-                "next",
-                "media",
-                &["skip this", "next song", "go back"],
-            ),
-            indexed("spotify", "b", "media", &["go back", "next song"]),
-        ];
-        let classes = equivalence_classes(&actions);
-        assert_ne!(
-            classes.class_of("spotify", "a"),
-            classes.class_of("spotify", "b"),
-            "one author's actions must never be collapsed, however they are linked"
-        );
-    }
-
-    #[test]
-    fn one_extension_never_merges_with_itself() {
-        // An author's own vocabulary is theirs to keep distinct; merging their
-        // two actions would silently make one unreachable.
-        let actions = [
-            indexed("spotify", "next", "media", &["skip this"]),
-            indexed("spotify", "next_album", "media", &["skip this"]),
-        ];
-        let classes = equivalence_classes(&actions);
-        assert_eq!(classes.len(), 2);
-    }
-
-    #[test]
-    fn doctor_separates_a_real_clash_from_expected_provider_overlap() {
-        let actions = [
-            indexed("spotify", "next", "media", &["skip this"]),
-            indexed("apple", "next", "media", &["skip this"]),
-            indexed("deck", "next_slide", "system", &["skip this"]),
+            indexed("spotify", "next", &["skip this"]),
+            indexed("spotify", "next_album", &["skip this"]),
+            indexed("apple", "next", &["skip this"]),
         ];
         let found = collisions(&actions);
-        let provider = found
-            .iter()
-            .find(|c| c.left == "apple:next" || c.right == "apple:next")
-            .expect("the two media actions collide");
-        assert!(
-            provider.is_provider_overlap,
-            "two providers of one request is the expected shape, not an author mistake"
-        );
-        let cross = found
-            .iter()
-            .find(|c| c.left.starts_with("deck") || c.right.starts_with("deck"))
-            .expect("the deck action collides across domains");
-        assert!(
-            !cross.is_provider_overlap,
-            "a cross-domain clash is a real problem the author has to fix"
-        );
+        assert_eq!(found.len(), 1, "only the intra-extension clash is reported");
+        assert_eq!(found[0].left, "spotify:next");
+        assert_eq!(found[0].right, "spotify:next_album");
     }
 
     #[test]
     fn an_empty_query_scores_nothing() {
-        let next = indexed("spotify", "next", "media", &["skip this"]);
+        let next = indexed("spotify", "next", &["skip this"]);
         assert!(score_action("", &next).is_none());
         assert!(score_action("...", &next).is_none());
     }

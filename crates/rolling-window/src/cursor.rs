@@ -3,8 +3,8 @@
 //! Ported from `open_voice_router/services/chunked_audio.py` (`ChunkedAudioService`).
 //!
 //! Design (cursor model — the robust fix for "the last few seconds get cut off"):
-//! - The ENTIRE session's audio is kept as an ordered list of blocks
-//!   ([`SessionCursor::all_blocks`]) with a running frame count (`total_frames`).
+//! - A bounded trailing window of session audio is retained with an absolute
+//!   base frame and running frame count.
 //! - A single absolute cursor, `sent_frames`, marks how many leading frames have
 //!   already been dispatched in a chunk.
 //! - A chunk covers frames `[cursor - overlap, current_end)`. After emitting it,
@@ -91,11 +91,11 @@ pub enum CutKind {
 /// chunk was cut: everything before it is overlap context a previous chunk
 /// already covered; everything from it to `end_sec` is new audio only this chunk
 /// carries. `boundary` records WHY the chunk ended (see [`CutKind`]). Port of
-/// `chunked_audio.AudioChunk` (carrying raw samples instead of pre-encoded WAV
-/// bytes — encoding happens at the STT boundary).
+/// `chunked_audio.AudioChunk`. This is intentionally metadata-only: Grain's
+/// journal is the single source for decode audio, so copying the cursor window
+/// into every descriptor would create a large allocation that is never read.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioChunk {
-    pub samples: Vec<i16>,
     pub start_frame: usize,
     pub fresh_start_frame: usize,
     pub end_frame: usize,
@@ -106,9 +106,9 @@ pub struct AudioChunk {
 }
 
 impl AudioChunk {
-    /// Number of mono frames carried by this chunk.
+    /// Number of mono frames covered by this descriptor.
     pub fn frame_count(&self) -> usize {
-        self.samples.len()
+        self.end_frame.saturating_sub(self.start_frame)
     }
 
     pub fn fresh_duration_sec(&self) -> f64 {
@@ -337,28 +337,35 @@ impl SessionCursor {
             return end;
         }
 
-        // Prefix sums of squares over the search region → O(1) window energy.
+        // Sliding energy keeps the quiet-gap search O(n) time and O(1) memory.
         let region = &self.all_samples[rel_start..rel_end];
-        let mut prefix = Vec::with_capacity(region.len() + 1);
-        prefix.push(0.0f64);
-        let mut acc = 0.0f64;
-        for &s in region {
+        let square = |s: i16| {
             let f = s as f64 / 32768.0;
-            acc += f * f;
-            prefix.push(acc);
-        }
+            f * f
+        };
+        let mut window_sum: f64 = region[..quiet_win].iter().map(|&s| square(s)).sum();
 
         let step = (quiet_win / 2).max(1);
         let mut best_ms = f64::INFINITY;
         let mut best_center_rel = None;
         let mut i = 0usize;
-        while i + quiet_win <= region.len() {
-            let ms = (prefix[i + quiet_win] - prefix[i]) / quiet_win as f64;
+        loop {
+            let ms = window_sum / quiet_win as f64;
             if ms < best_ms {
                 best_ms = ms;
                 best_center_rel = Some(i + quiet_win / 2);
             }
-            i += step;
+            let next = i + step;
+            if next + quiet_win > region.len() {
+                break;
+            }
+            for &s in &region[i..next] {
+                window_sum -= square(s);
+            }
+            for &s in &region[i + quiet_win..next + quiet_win] {
+                window_sum += square(s);
+            }
+            i = next;
         }
 
         let threshold = (self.cfg.silence_threshold_rms * QUIET_REL).powi(2);
@@ -402,12 +409,7 @@ impl SessionCursor {
         }
         let start_frame = self.sent_frames.saturating_sub(self.next_overlap_frames);
         let fresh_start_frame = self.sent_frames;
-        let samples = self.slice_frames(start_frame, end);
-        if samples.is_empty() {
-            return None;
-        }
         let chunk = AudioChunk {
-            samples,
             start_frame,
             fresh_start_frame,
             end_frame: end,
@@ -438,15 +440,10 @@ impl SessionCursor {
         let start_frame = self.sent_frames.saturating_sub(self.next_overlap_frames);
         let fresh_start_frame = self.sent_frames;
         let end_frame = self.total_frames();
-        let samples = self.slice_frames(start_frame, end_frame);
         // Cursor now covers the whole session — nothing left unsent.
         self.sent_frames = self.total_frames();
         self.fresh_voiced_frames = 0;
-        if samples.is_empty() {
-            return None;
-        }
         Some(AudioChunk {
-            samples,
             start_frame,
             fresh_start_frame,
             end_frame,
@@ -521,6 +518,11 @@ mod tests {
         let mut s = cur();
         s.set_rolling_window(30.0);
         assert_eq!(s.max_frames, 30 * fps(&s));
+    }
+
+    #[test]
+    fn chunk_descriptor_carries_no_pcm_allocation() {
+        assert!(std::mem::size_of::<AudioChunk>() <= 64);
     }
 
     #[test]

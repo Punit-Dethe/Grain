@@ -5,17 +5,12 @@ import { useSettings } from "../../hooks/useSettings";
 import { Input } from "../ui/Input";
 import { Button } from "../ui/Button";
 import { SettingContainer } from "../ui/SettingContainer";
+import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 
 interface CustomWordsProps {
   descriptionMode?: "inline" | "tooltip";
   grouped?: boolean;
 }
-
-const normalizeCustomWord = (word: string) =>
-  word
-    .replace(/[<>"']/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
 
 export const CustomWords: React.FC<CustomWordsProps> = React.memo(
   ({ descriptionMode = "tooltip", grouped = false }) => {
@@ -26,7 +21,7 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
     const normalizedWord = normalizeCustomWord(newWord);
 
     const handleAddWord = () => {
-      if (normalizedWord && normalizedWord.length <= 50) {
+      if (normalizedWord && normalizedWord.length <= MAX_CUSTOM_WORD_LENGTH) {
         if (customWords.includes(normalizedWord)) {
           toast.error(
             t("settings.advanced.customWords.duplicate", {
@@ -77,7 +72,7 @@ export const CustomWords: React.FC<CustomWordsProps> = React.memo(
               onClick={handleAddWord}
               disabled={
                 !normalizedWord ||
-                normalizedWord.length > 50 ||
+                normalizedWord.length > MAX_CUSTOM_WORD_LENGTH ||
                 isUpdating("custom_words")
               }
               variant="primary"

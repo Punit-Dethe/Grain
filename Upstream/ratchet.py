@@ -142,7 +142,7 @@ STRAY_ALLOWED = {
 }
 
 
-def strays() -> list:
+def strays(worktree: bool = False) -> list:
     """Upstream-tree source files sitting outside src/handy/.
 
     After an upstream merge, a NEW file at upstream's src-tauri/src/ root lands
@@ -155,11 +155,28 @@ def strays() -> list:
             "ls-tree", "-r", "--name-only", "upstream/main", "--", "src-tauri/src/"
         ).splitlines()
     )
-    ours = git("ls-tree", "-r", "--name-only", "HEAD", "--", "src-tauri/src/").splitlines()
+    if worktree:
+        ours = [
+            path
+            for path in git("ls-files", "--", "src-tauri/src/").splitlines()
+            if os.path.exists(path)
+        ]
+    else:
+        ours = git(
+            "ls-tree", "-r", "--name-only", "HEAD", "--", "src-tauri/src/"
+        ).splitlines()
     return [
         f
         for f in ours
         if not f.startswith(HANDY_DIR) and f in upstream_files and f not in STRAY_ALLOWED
+    ]
+
+
+def budget_growth(current: dict, budget: dict) -> list[tuple[str, int | None, int]]:
+    return [
+        (path, budget.get(path), cost)
+        for path, cost in sorted(current.items())
+        if budget.get(path) is None or cost > budget[path]
     ]
 
 
@@ -177,15 +194,31 @@ def main() -> int:
     if worktree:
         print("[ratchet] measuring the WORKING TREE (pre-commit check)")
 
+    with open(BUDGET_PATH) as f:
+        budget = json.load(f)
+
+    stray_paths = strays(worktree=worktree)
+
     if "--update" in sys.argv:
+        growth = budget_growth(current, budget)
+        if stray_paths:
+            for path in stray_paths:
+                print(f"[ratchet] FAIL: refusing update with stray: {path}", file=sys.stderr)
+            return 1
+        if growth and "--accept-growth" not in sys.argv:
+            for path, old, new in growth:
+                label = "NEW" if old is None else f"GREW {old} ->"
+                print(
+                    f"[ratchet] FAIL: {label} {new}: {path}; review semantics, then "
+                    "use --update --accept-growth with commit justification.",
+                    file=sys.stderr,
+                )
+            return 1
         with open(BUDGET_PATH, "w", newline="\n") as f:
             json.dump(dict(sorted(current.items())), f, indent=2)
             f.write("\n")
         print(f"budget.json updated: {len(current)} file(s) carry divergence")
         return 0
-
-    with open(BUDGET_PATH) as f:
-        budget = json.load(f)
 
     failures = []
     improvements = []
@@ -208,7 +241,7 @@ def main() -> int:
     for path in sorted(set(budget) - set(current)):
         improvements.append(f"converged: {path} {budget[path]} -> 0")
 
-    for path in strays():
+    for path in stray_paths:
         failures.append(
             f"STRAY upstream file outside src/handy/: {path} - "
             f"`git mv` it into src-tauri/src/handy/ (and add its #[path] "

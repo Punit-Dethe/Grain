@@ -16,6 +16,19 @@ done, the commit list in the body, and the divergence ratchet already run.
 Review it, merge it. Done — merged commits file themselves as `Merged` in the
 ledger, because being in our ancestry _is_ the record.
 
+`merge=ours` decides file ownership, not whether an upstream fix matters. Every
+upstream change under the frozen frontend or another suppressed Grain-owned
+path must be reviewed as a problem report: state the failure mode, decide
+whether Grain shares it, name the Grain paths adapted/already covering it, and
+record verification evidence. `frontend_freeze.py --review-audit` and
+`suppressed_review.py` enforce those records, including upstream merge commits.
+For transcribe.cpp changes, `vendor/TRANSCRIBE-CPP.md` is an additional binding
+contract for the pristine baseline and Grain's isolated rolling/TDT patch.
+When closing out manually adapted commits, `closeout.py` defers the divergence
+ratchet until after its tree-preserving ancestry merge, because only then does
+the ratchet compare Grain against the newly assessed upstream baseline. Use
+`--accept-growth` only after reviewing every reported Handy-tree increase.
+
 Working locally? One command answers everything:
 
 ```bash
@@ -48,7 +61,8 @@ never compiled (no `mod` declaration): `settings.rs`, `llm_client.rs`,
 `overlay.rs`. Grain's replacements are `grain_settings.rs`,
 `grain_llm_client.rs`, `grain_overlay.rs`, aliased in `lib.rs` so
 `crate::settings::…` etc. still resolve. Upstream edits to inert files merge
-with **zero risk**.
+with low conflict risk but high silent-port risk. `port_audit.py` therefore
+requires a structured outcome and evidence for every mapped runtime destination.
 
 Because git recorded the folder move as 100% renames, merges map upstream's
 `src-tauri/src/X` into our `src-tauri/src/handy/X` automatically (verified
@@ -63,7 +77,9 @@ a huge upstream refactor, fall back to `git merge -s subtree` or map by hand.
 
 - **Grafted ancestry** (`33638cc`, an `ours`-merge of upstream `0392b7b`):
   3-way merges work; upstream-only changes land automatically. The merge base
-  advances only at release close-outs; it currently sits at **v0.9.3**.
+  advances only at real merges or assessed release close-outs. Never trust a
+  version written in docs; query `git merge-base HEAD upstream/main` and
+  `git describe --tags --always <sha>` (audit 2026-08-22: v0.9.5 ancestry).
 - **`merge=ours` attributes** (`.gitattributes`): docs, workflows, identity
   configs, lockfiles auto-keep Grain's side.
 - **rerere, shared**: every conflict resolution is recorded, and — via
@@ -78,7 +94,7 @@ One-time per clone:
 ```bash
 git config merge.ours.driver true
 git config rerere.enabled true
-git config rerere.autoupdate true
+git config rerere.autoupdate false
 git config merge.directoryRenames true
 python Upstream/rerere_cache.py restore
 ```
@@ -203,7 +219,7 @@ git checkout -b sync/upstream-YYYY-MM-DD
 python Upstream/merge_upstream.py       # merges; auto-resolves the frozen frontend
 # resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md
 git commit --no-edit
-python Upstream/merge_upstream.py --finish   # re-baselines budgets + runs every gate
+python Upstream/merge_upstream.py --finish   # gates first; then tightens budgets
 python Upstream/rerere_cache.py save    # share NEW resolutions; commit them
 bun install && cargo check              # regenerate lockfiles
 python Upstream/verdict.py --pending    # anything left unassessed? record it
@@ -229,6 +245,11 @@ Three things `merge_upstream.py` does that hand-merging misses:
 - **Strays are surfaced.** New upstream modules land at the `src-tauri/src/`
   root and must be `git mv`'d into `handy/` with a `#[path]` declaration.
 
+`--finish` is deliberately ordered **gate first, budget update second**. A
+failed gate leaves `budget.json` untouched. `ratchet.py --update` only tightens;
+new/grown budgets require `--update --accept-growth` after semantic review and
+an explanation in the commit.
+
 ### B1. Before you commit anything in the Handy tree
 
 ```bash
@@ -251,12 +272,13 @@ Once every commit of a release has a verdict (`python Upstream/verdict.py
 --pending` comes back empty for it):
 
 ```bash
-git merge -s ours vX.Y.Z              # tree untouched; ancestry says "assessed"
-python Upstream/ratchet.py --update   # budgets re-baseline to the new merge base
+python Upstream/closeout.py vX.Y.Z              # read-only assessment check
+python Upstream/closeout.py vX.Y.Z --execute    # checked close-out + tree proof
 ```
 
-Verify the tree is unchanged (`git diff HEAD~1 --stat` must be empty) and
-commit the regenerated `budget.json` with the close-out. **Never** run
+`closeout.py` verifies the tree hash is unchanged and refuses unassessed ranges,
+dirty worktrees, non-upstream targets, or a failing preflight. Commit the
+regenerated `budget.json` with the close-out. **Never** run raw
 `-s ours` over commits you have not assessed — it silently locks their fixes
 out forever, with no conflict to warn you. Cherry-picks record no ancestry
 (measured 2026-07-17: 13 cherry-picks, conflict surface unchanged at 57) —
@@ -279,8 +301,8 @@ replays them (and re-raises their conflicts) into every future merge, forever.
 `git cherry` won't spot it either: an adapted cherry-pick has a different
 patch-id, so it reports the commit as missing.
 
-**Detection (automatic):** `python Upstream/sync_upstream.py` matches unmerged
-upstream commits against our own subjects since the merge base and prints a
+**Detection (automatic):** `python Upstream/sync_upstream.py` checks exact
+patch IDs, explicit `Upstream-Commit` trailers, and then subject heuristics; it prints a
 loud `ALREADY APPLIED` block. CI runs this every 2 hours, surfaces it in the
 job summary, and — importantly — **suppresses the auto-sync PR** while drift
 exists, because auto-merging in that state would replay resolved work.
@@ -289,9 +311,8 @@ exists, because auto-merging in that state would replay resolved work.
 commit touched), then record it:
 
 ```bash
-git merge -s ours upstream/main      # tree untouched; ancestry says "assessed"
-git diff HEAD~1 --stat               # MUST be empty
-python Upstream/ratchet.py --update  # budgets re-baseline to the new base
+python Upstream/closeout.py upstream/main
+python Upstream/closeout.py upstream/main --execute
 ```
 
 Measured 2026-07-20: four i18n commits (#1697, #1701, #1708, #1709) sat
@@ -299,13 +320,22 @@ applied-but-unrecorded. Recording them took the trial merge from "1 conflict,
 4 behind" to **clean, 0 behind** without changing a single line of code.
 
 **Prevention:** prefer `git merge` over `git cherry-pick` for upstream work.
-If you must cherry-pick (a single urgent fix), close it out afterwards.
+If an urgent fix must be cherry-picked or adapted, put the exact full SHA in
+the commit body as `Upstream-Commit: <sha>`, then close it out afterwards.
+Patch IDs catch exact cherry-picks; the trailer catches adapted ports; subject
+matching remains only a heuristic signal.
 
 ### Verification (every sync)
 
 - Rust: `cargo check --lib` then `cargo test --lib` in `src-tauri/`
 - Frontend: `./node_modules/.bin/tsc --noEmit`
 - Boundary: `python Upstream/ratchet.py`
+- Runtime ports/policy: `python Upstream/port_audit.py` and
+  `python Upstream/policy_check.py`
+- Dependencies: `bun install --frozen-lockfile`; regenerate intentionally if
+  `package.json` changed, then run the existing Nix lock-derivative check
+- Platform fixes: run the native CI target where available; otherwise record
+  the unvalidated OS explicitly in the verdict and PR checklist
 - Windows quirks on the primary dev machine: unset `LOCALAPPDATA` and `TEMP`,
   set `TMP=C:\Windows\Temp` (transcribe-cpp-sys junction workaround), and
   build with `CARGO_TARGET_DIR=C:\gtc` — the running Grain app locks the
@@ -363,3 +393,4 @@ same commit.
 | 2026-08-10    | dashboard retired                  | The GitHub Pages sync dashboard was removed: chronically stale (the API-scraping ledger step gated the deploy, so any hiccup froze the site) and fully redundant with the CI job summary, the auto-sync PR, and `preflight.py`. Deleted `index.html`; stripped the Pages permissions/environment/concurrency + the three deploy steps and the `status.json` block from `upstream-sync.yml`; trimmed `sync_upstream.py` to emit only `data.json` (still verdict.py's input + the drift source), dropping `data.js`/`status.json`. All sync intelligence — trial merge, ledger, ancestry-drift gate, auto-PR, ratchet, port audit, verdicts, rerere — is unchanged.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2026-08-10    | `b50b52a8` (10 commits)            | Backlog to **zero**. Five conflicts: two frozen-frontend (auto), three real. The substantive one is **#1738 filler-word removal** — a real upstream STT-core feature, adopted end to end. Upstream reworked filler removal into a universal tier + language-gated tier keyed on `OutputLanguageEvidence` (user/model/text-detected), split `filter_transcription_output` into `remove_filler_words` + `normalize_transcription_output`, added a `filler_word_removal_enabled` master toggle, and `whatlang`/`isolang` text-LID (`lang_id.rs`). `text.rs` refactor merged clean; the setting was ported into **grain-core** `AppSettings` (inert `settings.rs`), the toggle command + registration kept (`change_vad_enabled_setting` stayed unregistered as before). Grain's diverged `transcribe()` (`with_engine_session`, transcribe-cpp only, `context_bias` initial_prompt) was **kept and extended** to resolve output-language evidence in-closure and thread it + the model language list into `finalize_batch_text`; the relocated `grain_text.rs` (`finalize_transcript`/`finalize_batch_text`) was rewritten onto the new API, and the rolling + cloud callers now key filler removal on the transcription language (`selected_language`), not the UI language — the exact bug #1738 fixes. Native streaming finalize threads upstream's new `FinalizedStreamText` (clean merge; Grain never diverged `StreamCmd`). #1548 compressed API responses (reqwest `gzip`/`brotli`/`deflate`, **kept** Grain's `multipart`). #1866/#1756 Linux paste fixes and #1700 Wayland overlay merged (overlay.rs inert — Grain's pill is native, no port; verdict-noted). **#1659 theme dropped on resolution**: Grain removed the backend theme command long ago (frontend owns theming, pill is native), so `change_theme_setting`/`apply_window_theme` + the startup call are not re-added. `cargo check --lib` clean (only upstream's own `secure_input` `Emitter` warning), `cargo test --lib` **426 passed**, grain-core **73 passed**, `tsc` clean, ratchet + audit + freeze + port-audit green. |
 | 2026-08-15    | `98a4d80c` (6 commits)             | Backlog to **zero**. Two frozen Handy web-overlay conflicts were auto-dropped; one real `managers/audio.rs` conflict was resolved per policy. Adopted #37a26fd6's Secure Input/tray rebuild race fix (including atomic template-icon updates), #1908 portable `HF_HOME` under `Data/huggingface`, #1911 layout-aware macOS Cmd+V key resolution (active keyboard layout with ANSI-V fallback), and #1902's pre-init `GGML_METAL_NO_RESIDENCY=1` shutdown workaround (`HANDY_METAL_RESIDENCY=1` opts back in). #1907's Turkish semantic corrections were **manually ported** into Grain's owned locale schema with Grain branding. #549cbde3's webview arming visualization and compiled first-sample recorder API were **not adopted**: Grain's overlay is the native pill, and the upstream API would cut across batch, rolling, Agent, onboarding, and extension capture paths; the inert `handy/overlay.rs` was nevertheless taken verbatim. Decision recorded in `verdicts.json` and the per-file map. `cargo check --lib` passed (only upstream's documented Windows `Emitter` warning); `cargo test --lib` **510 passed, 1 ignored**; `bun install` unchanged; `tsc --noEmit` clean; ratchet + audit + freeze + port-audit green.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 2026-08-22    | `0e503672` (10 commits)            | Audited every Handy commit after 2026-08-15 and closed ancestry to **zero behind**. Fixed four missed runtime/product changes: #1874 race-safe default-microphone fallback + UI refresh; #1406 phrase support across all Grain dictionary entry points; #1817/#1892 explicit xdotool modifier keyup cleanup; handy-keys 0.3.4. Completed #1924 beyond the earlier partial port by taking the generated catalog/architecture changes verbatim while preserving the exact 0.2.0 vendor baseline and isolated rolling/TDT patch contract. Adapted three suppressed docs fixes (Bluetooth input tradeoff, Apple-only fn/Globe limitation, stale macOS Accessibility grants). The new frontend/suppressed gates require problem, applicability, Grain destinations, and evidence and include upstream merge commits; d55ea7ef's conflict-marker accident is valid only with repair merge 0e503672. `cargo test --lib`: **622 passed, 1 ignored**; grain-core **111 passed**; frontend **81 passed**; TypeScript, policy, semantic audits, ancestry, and ratchet green. |

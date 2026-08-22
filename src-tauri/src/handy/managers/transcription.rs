@@ -1509,8 +1509,9 @@ impl TranscriptionManager {
     /// dedup/assembly and applies custom-word + filler correction ONCE on the
     /// assembled transcript at session end, so this path deliberately skips
     /// per-chunk post-processing AND the idle/immediate unload (the session is
-    /// still live). Word-level timestamps are requested so the timeline
-    /// assembler can dedup overlaps by position. Rolling deliberately sends no
+    /// still live). The finest supported timestamps up to word level are
+    /// requested so the timeline assembler can dedup overlaps by position
+    /// without probing unsupported modes. Rolling deliberately sends no
     /// previous-transcript prompt, keeping chunk policy model-agnostic and
     /// preventing one bad hypothesis from biasing later windows.
     pub fn transcribe_rolling_chunk(&self, audio: &[f32]) -> Result<Transcript> {
@@ -1530,11 +1531,16 @@ impl TranscriptionManager {
             let model = session.model();
             let caps = model.capabilities();
             let model_supports_translate = caps.supports_translate;
+            // [GRAIN] Cap the request at the loaded model's immutable
+            // capability. Unsupported word requests otherwise pay for a full
+            // failed decode before retrying every rolling chunk.
+            let rolling_timestamps = match caps.max_timestamp_kind {
+                TimestampKind::Token | TimestampKind::Word => TimestampKind::Word,
+                TimestampKind::Segment => TimestampKind::Segment,
+                TimestampKind::None => TimestampKind::None,
+                TimestampKind::Auto => TimestampKind::Auto,
+            };
             let model_languages = caps.languages;
-
-            // Architecture remains relevant only to the timestamp fallback
-            // below. Rolling never supplies a model-family prompt.
-            let model_is_whisper = model.arch() == "whisper";
 
             let run_plan = transcribe_cpp_run_plan(
                 settings.translate_to_english,
@@ -1543,37 +1549,20 @@ impl TranscriptionManager {
                 model_supports_translate,
             );
 
-            // Word timestamps give the timeline assembler the best positional
-            // dedup. But not every backend/model supports word-level granularity
-            // — some (seen in release builds) reject it outright with
-            // "unsupported timestamp granularity". Rather than dropping the chunk,
-            // retry with the SAME granularity the (working) batch path uses and
-            // let rolling use its bounded lexical seam path. Segment-only and
-            // timestamp-free output is never presented as fake word evidence.
-            let mut run_options = RunOptions {
+            // Segment-only and timestamp-free output is never presented as fake
+            // word evidence; the integration selects lexical seam handling.
+            let run_options = RunOptions {
                 task: run_plan.task,
                 language: run_plan.language,
                 target_language: run_plan.target_language,
-                timestamps: TimestampKind::Word,
+                timestamps: rolling_timestamps,
                 family: None,
                 ..Default::default()
             };
 
-            match session.run(audio, &run_options) {
-                Ok(t) => Ok(t),
-                Err(_) => {
-                    // Whisper long-form decode with a prompt needs timestamps on
-                    // to avoid the repetition loop; other arches take None.
-                    run_options.timestamps = if model_is_whisper {
-                        TimestampKind::Segment
-                    } else {
-                        TimestampKind::None
-                    };
-                    session
-                        .run(audio, &run_options)
-                        .map_err(|e| anyhow::anyhow!("rolling chunk transcription failed: {}", e))
-                }
-            }
+            session
+                .run(audio, &run_options)
+                .map_err(|e| anyhow::anyhow!("rolling chunk transcription failed: {}", e))
         })
     }
 }

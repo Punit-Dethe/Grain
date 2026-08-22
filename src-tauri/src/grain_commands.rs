@@ -848,13 +848,55 @@ pub struct ExtensionCard {
     /// go back and read it again without uninstalling anything.
     pub prompt_layers: Vec<PromptLayerInfo>,
     /// [GRAIN] What this extension can do when asked out loud
-    /// (`docs/Action Routing/PLAN.md` §5).
+    /// (`docs/Extensions V1/PLAN.md` §5).
     ///
     /// Here for the same reason as `prompt_layers`, and a stronger one: the
     /// approval sheet is a single moment, and "what can this thing do" is
     /// exactly what someone wants to look up again a week later without
     /// uninstalling it to find out.
     pub actions: Vec<ActionInfo>,
+    /// [GRAIN] `"searchable" | "standalone" | "extending"`
+    /// (`docs/Extensions V1/PLAN.md` §2). Declared, never inferred.
+    ///
+    /// The card carries it because it is the difference between an extension
+    /// that can be handed what the user said and one that cannot, and that is
+    /// not visible from anything else on the row.
+    pub kind: String,
+    /// [GRAIN] What Grain ranks this extension by. `None` for anything that is
+    /// not `searchable` — validation guarantees the two agree.
+    pub recommend: Option<RecommendInfo>,
+    /// [GRAIN] Resources this extension asks Grain to have ready, e.g.
+    /// `semantic` for the ~130 MB embedding model (§6). Card-visible by design:
+    /// a capability governs *reach* and this governs *cost*, and hiding the
+    /// second is how a lightweight-looking install turns out not to be.
+    pub needs: Vec<String>,
+}
+
+/// [GRAIN] The recommendation surface an extension declares
+/// (`docs/Extensions V1/PLAN.md` §3.1).
+///
+/// Carried whole rather than pre-formatted: `purpose` is a plain line anyone
+/// can read, while `examples` are the greedy-declaration surface store review
+/// has to see (G3). Whether the in-app card renders the examples is a UI
+/// question still open in the plan (§11) — the backend answering it by omission
+/// would settle it silently.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct RecommendInfo {
+    pub purpose: String,
+    pub examples: Vec<String>,
+    pub aliases: Vec<String>,
+    pub entities: Vec<String>,
+}
+
+impl RecommendInfo {
+    fn from_decl(decl: &grain_sdk::manifest::RecommendDecl) -> Self {
+        Self {
+            purpose: decl.purpose.clone(),
+            examples: decl.examples.clone(),
+            aliases: decl.aliases.clone(),
+            entities: decl.entities.clone(),
+        }
+    }
 }
 
 /// [GRAIN] One contributed prompt layer, as every surface that shows one needs
@@ -866,6 +908,8 @@ pub struct ExtensionCard {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
 pub struct PromptLayerInfo {
     pub id: String,
+    /// `additive` | `main` | `context`.
+    pub target: String,
     /// The instruction, verbatim. Never summarised anywhere it is displayed.
     pub text: String,
     /// No conditions at all — it applies to every dictation.
@@ -879,6 +923,12 @@ impl PromptLayerInfo {
     fn from_decl(decl: &grain_sdk::manifest::PromptLayerDecl) -> Self {
         Self {
             id: decl.id.clone(),
+            target: match decl.target {
+                grain_sdk::manifest::PromptTarget::Additive => "additive",
+                grain_sdk::manifest::PromptTarget::Main => "main",
+                grain_sdk::manifest::PromptTarget::Context => "context",
+            }
+            .to_string(),
             text: decl.text.clone(),
             everywhere: decl.when.is_unconditional(),
             app: decl.when.app.clone(),
@@ -888,8 +938,8 @@ impl PromptLayerInfo {
     }
 }
 
-/// [GRAIN] Start or stop listening for an action
-/// (`docs/Action Routing/PLAN.md` §3).
+/// [GRAIN] Start or stop listening for a request
+/// (`docs/Extensions V1/PLAN.md` §3).
 ///
 /// The extension surface's own trigger calls this; **Grain registers no
 /// shortcut for it here**. What the design depends on is only that the user's
@@ -922,7 +972,7 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
 }
 
 /// [GRAIN] Read the action log, optionally clearing it first
-/// (`docs/Action Routing/PLAN.md` §8.3).
+/// (`docs/Extensions V1/PLAN.md`).
 ///
 /// The "why did that happen" surface. It holds what was heard, so it is capped,
 /// lives only in memory, and clearing it is one call with no confirmation
@@ -941,21 +991,18 @@ pub fn grain_action_log(
 }
 
 /// [GRAIN] One declared action, as the approval sheet and the extension card
-/// need it (`docs/Action Routing/PLAN.md` §5).
+/// need it (`docs/Extensions V1/PLAN.md` §5).
 ///
 /// Note what is **absent**: the utterance list. The consent question is "what
 /// can this do", not "what words does it listen for" — a list of phrasings is
 /// review and `doctor` material, and putting it on a sheet trains people to
-/// scroll past the part that matters. What the user decides on is the title, the
-/// domain, and whether it will ask before acting.
+/// scroll past the part that matters. What the user decides on is the title and
+/// whether it will ask before acting.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
 pub struct ActionInfo {
     pub id: String,
     /// One plain line, written for the user.
     pub title: String,
-    /// The preference group — "media", "messaging" — used as the sheet's
-    /// heading and as the key for "always use this one".
-    pub domain: String,
     /// Whether performing this reads the resolved action back first. The single
     /// most important thing on the row.
     pub confirms: bool,
@@ -970,7 +1017,6 @@ impl ActionInfo {
         Self {
             id: decl.id.clone(),
             title: decl.title.clone(),
-            domain: decl.domain.clone(),
             confirms: !decl.risk.is_safe(),
             everywhere: decl.when.is_unconditional(),
             app: decl.when.app.clone(),
@@ -1000,63 +1046,72 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
     // external pack (Phase 5C) rendered through this same path, not a
     // host-synthesised special case.
     for rec in reg.records() {
-        let (name, description, repository, capabilities, has_detail, tier, prompt_layers, actions) =
-            match load_pack(&app, &rec.id) {
-                Ok(p) => {
-                    // A pack with prompt layers has something worth opening even
-                    // with no settings or shortcuts of its own — the text it puts
-                    // in front of the model is the whole reason to look.
-                    let prompt_layers: Vec<PromptLayerInfo> = p
-                        .manifest
-                        .contributes
-                        .prompt_layers
-                        .iter()
-                        .map(PromptLayerInfo::from_decl)
-                        .collect();
-                    // Same argument for actions, and a stronger one: what an
-                    // extension can DO is the thing a user most wants to look up
-                    // again later, and the approval sheet is a moment they will
-                    // not get back.
-                    let actions: Vec<ActionInfo> = p
-                        .manifest
-                        .contributes
-                        .actions
-                        .iter()
-                        .map(ActionInfo::from_decl)
-                        .collect();
-                    let has_detail = !p.manifest.contributes.settings.is_empty()
-                        || !p.manifest.contributes.shortcuts.is_empty()
-                        || !prompt_layers.is_empty()
-                        || !actions.is_empty();
-                    let tier = match p.manifest.tier {
+        let facts = match load_pack(&app, &rec.id) {
+            Ok(p) => {
+                // A pack with prompt layers has something worth opening even
+                // with no settings or shortcuts of its own — the text it puts
+                // in front of the model is the whole reason to look.
+                let prompt_layers: Vec<PromptLayerInfo> = p
+                    .manifest
+                    .contributes
+                    .prompt_layers
+                    .iter()
+                    .map(PromptLayerInfo::from_decl)
+                    .collect();
+                // Same argument for actions, and a stronger one: what an
+                // extension can DO is the thing a user most wants to look up
+                // again later, and the approval sheet is a moment they will
+                // not get back.
+                let actions: Vec<ActionInfo> = p
+                    .manifest
+                    .contributes
+                    .actions
+                    .iter()
+                    .map(ActionInfo::from_decl)
+                    .collect();
+                let has_detail = !p.manifest.contributes.settings.is_empty()
+                    || !p.manifest.contributes.shortcuts.is_empty()
+                    || !prompt_layers.is_empty()
+                    || !actions.is_empty();
+                PackFacts {
+                    name: p.manifest.name,
+                    description: p.manifest.description,
+                    repository: p.manifest.repository,
+                    capabilities: p.manifest.permissions,
+                    has_detail,
+                    tier: match p.manifest.tier {
                         grain_sdk::Tier::Pack => "pack",
                         grain_sdk::Tier::Scripted => "scripted",
                         grain_sdk::Tier::Native => "native",
-                    };
-                    (
-                        p.manifest.name,
-                        p.manifest.description,
-                        p.manifest.repository,
-                        p.manifest.permissions,
-                        has_detail,
-                        tier,
-                        prompt_layers,
-                        actions,
-                    )
+                    },
+                    prompt_layers,
+                    actions,
+                    kind: p.manifest.kind.as_str(),
+                    recommend: p.manifest.recommend.as_ref().map(RecommendInfo::from_decl),
+                    needs: p.manifest.needs,
                 }
-                // SPEC §6 last row: a broken/missing pack file renders an error
-                // card; it never takes the page down.
-                Err(e) => (
-                    rec.id.clone(),
-                    format!("Unreadable pack: {e}"),
-                    None,
-                    Vec::new(),
-                    false,
-                    "pack",
-                    Vec::new(),
-                    Vec::new(),
-                ),
-            };
+            }
+            // SPEC §6 last row: a broken/missing pack file renders an error
+            // card; it never takes the page down.
+            Err(e) => PackFacts {
+                name: rec.id.clone(),
+                description: format!("Unreadable pack: {e}"),
+                ..PackFacts::default()
+            },
+        };
+        let PackFacts {
+            name,
+            description,
+            repository,
+            capabilities,
+            has_detail,
+            tier,
+            prompt_layers,
+            actions,
+            kind,
+            recommend,
+            needs,
+        } = facts;
         cards.push(ExtensionCard {
             id: rec.id.clone(),
             name,
@@ -1090,6 +1145,9 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             capabilities,
             prompt_layers,
             actions,
+            kind: kind.to_string(),
+            recommend,
+            needs,
             has_detail,
             slots: rec
                 .slots
@@ -1100,6 +1158,45 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
         });
     }
     Ok(cards)
+}
+
+/// Everything one card needs out of a manifest, so the read and the build are
+/// not coupled by an eleven-element tuple whose fields are mostly `String` and
+/// `Vec<String>` — a transposition there is invisible to the compiler and
+/// mislabels an extension on a consent surface.
+struct PackFacts {
+    name: String,
+    description: String,
+    repository: Option<String>,
+    capabilities: Vec<String>,
+    has_detail: bool,
+    tier: &'static str,
+    prompt_layers: Vec<PromptLayerInfo>,
+    actions: Vec<ActionInfo>,
+    kind: &'static str,
+    recommend: Option<RecommendInfo>,
+    needs: Vec<String>,
+}
+
+impl Default for PackFacts {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            repository: None,
+            capabilities: Vec::new(),
+            has_detail: false,
+            tier: "pack",
+            prompt_layers: Vec::new(),
+            actions: Vec::new(),
+            // An unreadable pack is `extending`, i.e. NOT rankable. The
+            // degraded direction has to be the one that keeps a manifest Grain
+            // could not parse out of the pool.
+            kind: grain_sdk::manifest::ExtensionKind::Extending.as_str(),
+            recommend: None,
+            needs: Vec::new(),
+        }
+    }
 }
 
 /// Flip an extension on/off (SPEC §5.1 inline toggle). Built-ins write their
@@ -1227,7 +1324,18 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         .unwrap_or_default();
                     approved != ext::actions_fingerprint(declared_actions)
                 };
-                if !missing.is_empty() || unapproved || actions_unapproved {
+                let recommendation_unapproved = pack.manifest.kind.is_searchable() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|record| record.recommend_approved)
+                        .unwrap_or_default();
+                    approved != ext::recommendation_fingerprint(&pack.manifest)
+                };
+                if !missing.is_empty()
+                    || unapproved
+                    || actions_unapproved
+                    || recommendation_unapproved
+                {
                     let layers: Vec<PromptLayerInfo> = if unapproved {
                         declared.iter().map(PromptLayerInfo::from_decl).collect()
                     } else {
@@ -1244,6 +1352,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         "needsPermissions": missing,
                         "needsPromptLayers": layers,
                         "needsActions": actions,
+                        "needsRecommendation": recommendation_unapproved,
                     })
                     .to_string());
                 }
@@ -1291,6 +1400,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
 
 /// Where imported `.grainpack` files live: `<data>/extensions/<id>.grainpack.json`.
 fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
+    grain_sdk::validate_extension_id(id)?;
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("app context unavailable")?;
@@ -1455,6 +1565,12 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
             }),
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
+        recommend_approved: loaded
+            .pack
+            .manifest
+            .kind
+            .is_searchable()
+            .then(|| ext::recommendation_fingerprint(&loaded.pack.manifest)),
         dev: None,
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
@@ -1908,6 +2024,11 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // declaration changed, this stops matching, the actions go inert, and
         // the enable path shows the user what is different.
         actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
+        // Carried for the same reason, and the stake is higher: what this one
+        // gates is whether the extension is eligible to be handed the user's
+        // words at all. `None` means never approved, so an import that has not
+        // been reviewed under this contract simply is not ranked.
+        recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
         // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
         // that they are externalised — the Agent centre layout ships as a real
         // pack rather than a host-synthesised record.
@@ -2075,6 +2196,13 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     // declaration the user never saw.
     rec.actions_approved = (!manifest.contributes.actions.is_empty())
         .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
+    // Same act, same rule: recomputed from disk. Keyed off `kind` rather than a
+    // list being non-empty, because what is being approved here is eligibility
+    // to be handed the whole request — see `recommendation_fingerprint`.
+    rec.recommend_approved = manifest
+        .kind
+        .is_searchable()
+        .then(|| ext::recommendation_fingerprint(&manifest));
     reg.install(rec).map_err(|e| e.to_string())
 }
 

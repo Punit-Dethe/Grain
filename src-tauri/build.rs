@@ -205,7 +205,7 @@ fn stage_transcribe_runtime_libs() {
             let src = entry.path();
             let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("");
             // Match by NAME, not extension: Linux versions its libs
-            // (libtranscribe.so.0, .so.0.1.3) and the loader needs the SONAME, so
+            // (libtranscribe.so.0, .so.0.2.0) and the loader needs the SONAME, so
             // an extension-only filter would miss the versioned names entirely.
             let is_lib = name.ends_with(".dll")
                 || name.ends_with(".dylib")

@@ -141,6 +141,25 @@ Resources only need re-copying if they change upstream (new icons, sounds, etc.)
 
 ## Troubleshooting
 
+### macOS Accessibility remains enabled after a local rebuild
+
+Local builds use ad-hoc signing. A rebuild can acquire a new code identity while
+the old **System Settings > Privacy & Security > Accessibility** entry remains
+visibly enabled, leaving Grain unable to receive global input.
+
+After installing the final bundle at `/Applications/Grain.app`, quit Grain,
+clear only its stale Accessibility record, and reopen it:
+
+```bash
+osascript -e 'tell application id "com.grain.app" to quit' || true
+tccutil reset Accessibility com.grain.app
+open /Applications/Grain.app
+```
+
+Grant Accessibility again when prompted. This does not reset Microphone or
+other TCC services. For optional diagnosis, compare the designated requirement
+of the previous and rebuilt bundles with `codesign -dr - <app> 2>&1`.
+
 ### AppImage build fails on Arch / rolling-release distros
 
 `linuxdeploy` bundles its own `strip` binary which is too old to process system libraries built with newer toolchains on rolling-release distros (Arch, CachyOS, Manjaro, EndeavourOS).

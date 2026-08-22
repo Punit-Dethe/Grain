@@ -241,6 +241,11 @@ First-run onboarding introduces Batch, Flow, and ASR, then guides you through mo
 
 Grain targets Windows, macOS, and Linux. Linux text insertion may require `wtype` or `dotool` under Wayland.
 
+### Known input and audio behavior
+
+- On macOS, recording through a Bluetooth headset microphone can temporarily reduce playback quality or volume because Bluetooth switches into bidirectional audio mode. Keep the headset as the output and select the Mac's built-in microphone or an external microphone in Grain to avoid it.
+- On macOS, shortcuts containing the `fn`/Globe key work only on Apple keyboards. Third-party keyboards usually handle `Fn` entirely in firmware and send no key event to macOS; use `control`, `option`, `shift`, `command`, or a regular key for a shortcut that must work across keyboards.
+
 ## Build from source
 
 Grain is a Tauri app: React/TypeScript provide on-demand surfaces; Rust handles audio, transcription, extensions, and system integration.
