@@ -320,14 +320,16 @@ html[data-theme="light"] .app {
   background: var(--hairline-soft);
 }
 
-/* The wordmark occupies the header's sidebar-aligned track. */
-.titlebar-brand {
-  height: 100%;
+/* The wordmark is the first row inside the sidebar, immediately below the
+   full-width window header. */
+.sidebar-brand {
+  height: var(--titlebar);
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding-inline: 18px;
+  padding-inline: 7px;
+  margin-bottom: 4px;
   color: var(--text-1);
-  -webkit-app-region: drag;
 }
 
 .grain-wordmark {
@@ -357,6 +359,7 @@ html[data-theme="light"] .app {
 }
 
 .workspace-title {
+  grid-column: 2;
   justify-self: start;
   padding-left: 20px;
   color: var(--text-3);
@@ -364,6 +367,7 @@ html[data-theme="light"] .app {
 }
 
 .window-actions {
+  grid-column: 3;
   height: 100%;
   display: flex;
   align-items: stretch;
@@ -429,7 +433,6 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   grid-column: 1;
   grid-row: 2;
   min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 0 11px 14px;
@@ -438,11 +441,6 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   background: rgba(9, 10, 13, 0.7);
   backdrop-filter: blur(18px) saturate(112%);
   -webkit-backdrop-filter: blur(18px) saturate(112%);
-  scrollbar-width: none;
-}
-
-.sidebar::-webkit-scrollbar {
-  display: none;
 }
 
 .sidebar::after {
@@ -2278,7 +2276,7 @@ html[data-theme="light"] .overview-add-btn {
   --sidebar: 68px;
 }
 
-.app.notes-mode .titlebar-brand {
+.app.notes-mode .sidebar-brand {
   justify-content: center;
   padding-inline: 0;
 }
@@ -3934,7 +3932,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     --sidebar: 68px;
   }
 
-  .titlebar-brand {
+  .sidebar-brand {
     justify-content: center;
     padding-inline: 0;
   }

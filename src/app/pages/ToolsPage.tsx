@@ -820,7 +820,7 @@ function SnippetsTool() {
         )}
       </section>
       <ExtensionAnchor anchor="snippets.after" />
-      <ToolRecommendations tool="snippets" />
+      {import.meta.env.DEV && <ToolRecommendations tool="snippets" />}
     </>
   );
 }
@@ -836,7 +836,7 @@ function ContextTool() {
             <ContextAwareSection />
           </section>
           <ExtensionAnchor anchor="context.after" />
-          <ToolRecommendations tool="context" />
+          {import.meta.env.DEV && <ToolRecommendations tool="context" />}
         </>
       )}
     </>
@@ -868,7 +868,7 @@ function AgentTool() {
       {enabled && (
         <>
           <ExtensionAnchor anchor="agent.after" />
-          <ToolRecommendations tool="agent" />
+          {import.meta.env.DEV && <ToolRecommendations tool="agent" />}
         </>
       )}
     </>

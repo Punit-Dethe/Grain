@@ -411,7 +411,9 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // confirmed missed paste and the moment the clipboard is handed back.
     app_handle.manage(paste_catch::PasteCatchState::default());
 
-    // [GRAIN] start the local WebSocket event transport + launch/supervise the pill.
+    // [GRAIN] Start the local WebSocket event transport. It launches the pill
+    // supervisor only after the listener owns its port, so rapid dev restarts
+    // cannot strand this app run without a pill.
     if let Some(ctx) = app_handle.try_state::<Arc<grain_core::AppContext>>() {
         events_server::start(ctx.inner().clone(), app_handle.clone());
         // [GRAIN] extension worker lifecycle: activation dispatch + idle reaper.
@@ -424,8 +426,6 @@ fn initialize_core_logic(app_handle: &AppHandle) {
             events_server::disable_dev_control(&ctx.data_dir);
         }
     }
-    events_server::spawn_pill_supervisor();
-
     // [GRAIN] Grain Space reminders: fire anything that came due while the app
     // was closed and park a timer for the next one. No-op (no disk touch, no
     // timer) when the feature is disabled.

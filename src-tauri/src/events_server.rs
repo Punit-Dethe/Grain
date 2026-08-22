@@ -5,7 +5,7 @@
 //! This is the seed of the future local server (the OpenAI-compatible endpoints
 //! grow on the same listener later).
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +25,6 @@ use tokio_tungstenite::{
 
 /// Fixed loopback port the pill connects to (`ws://127.0.0.1:EVENTS_PORT`).
 pub const EVENTS_PORT: u16 = 7124;
-static EVENTS_READY: AtomicBool = AtomicBool::new(false);
 static UNAUTHENTICATED_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 const MAX_UNAUTHENTICATED_CONNECTIONS: usize = 64;
 
@@ -276,6 +275,19 @@ fn pill_token() -> &'static str {
     })
 }
 
+fn bind_events_listener(
+    socket_addr: std::net::SocketAddr,
+) -> std::io::Result<tokio::net::TcpListener> {
+    let socket = tokio::net::TcpSocket::new_v4()?;
+    // Windows' SO_REUSEADDR can let two live dev processes bind the same port
+    // and route a new pill to the old core. Keep Windows exclusive; Unix still
+    // needs reuse for quick rebinding after a closed listener.
+    #[cfg(not(windows))]
+    socket.set_reuseaddr(true)?;
+    socket.bind(socket_addr)?;
+    socket.listen(1024)
+}
+
 /// Spawn the event WS server on the Tauri async runtime.
 ///
 /// `app` is carried alongside the headless `ctx` because the reverse channel now
@@ -297,29 +309,35 @@ pub fn start(ctx: Arc<AppContext>, app: AppHandle) {
 
         rt.block_on(async move {
             let addr = format!("127.0.0.1:{EVENTS_PORT}");
-            let listener = match addr.parse::<std::net::SocketAddr>() {
-                Ok(socket_addr) => {
-                    let socket = tokio::net::TcpSocket::new_v4().expect("Failed to create socket");
-                    let _ = socket.set_reuseaddr(true);
-                    if let Err(e) = socket.bind(socket_addr) {
-                        log::error!("[GRAIN] events WS bind {addr} failed: {e}");
-                        return;
-                    }
-                    match socket.listen(1024) {
-                        Ok(l) => l,
-                        Err(e) => {
-                            log::error!("[GRAIN] events WS listen failed: {e}");
-                            return;
-                        }
-                    }
-                }
+            let socket_addr = match addr.parse::<std::net::SocketAddr>() {
+                Ok(socket_addr) => socket_addr,
                 Err(e) => {
                     log::error!("[GRAIN] events WS invalid address: {e}");
                     return;
                 }
             };
-            EVENTS_READY.store(true, Ordering::Release);
+            // Rapid dev restarts can briefly leave the previous process owning
+            // the fixed loopback port. Returning here used to permanently skip
+            // both the event transport and pill launch for the new app run.
+            // Retry at low frequency until the old listener releases the port;
+            // only then is it safe to start the pill supervisor.
+            let mut bind_attempt = 0u32;
+            let listener = loop {
+                match bind_events_listener(socket_addr) {
+                    Ok(listener) => break listener,
+                    Err(error) => {
+                        bind_attempt = bind_attempt.saturating_add(1);
+                        if bind_attempt == 1 || bind_attempt % 20 == 0 {
+                            log::warn!(
+                                "[GRAIN] events WS bind {addr} unavailable ({error}); waiting for the previous dev process"
+                            );
+                        }
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                }
+            };
             log::info!("[GRAIN] events WS listening on ws://{addr}");
+            spawn_pill_supervisor();
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {
@@ -697,7 +715,6 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
 pub fn spawn_pill_supervisor() {
     use std::io::{BufRead, BufReader};
     use std::process::Stdio;
-    use std::sync::atomic::Ordering;
     std::thread::spawn(|| {
         let exe = match std::env::current_exe() {
             Ok(exe) => exe,
@@ -717,17 +734,6 @@ pub fn spawn_pill_supervisor() {
         // pill should ever run. This is a safety net for upgrades from versions
         // that didn't use Job Objects.
         kill_stray_pills();
-
-        for _ in 0..50 {
-            if EVENTS_READY.load(Ordering::Acquire) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        if !EVENTS_READY.load(Ordering::Acquire) {
-            log::warn!("[GRAIN] events WS was not ready; skipping pill launch");
-            return;
-        }
 
         #[cfg(windows)]
         use std::os::windows::process::CommandExt;
@@ -1000,6 +1006,16 @@ fn kill_stray_pills() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn event_listener_is_exclusive_and_rebinds_after_release() {
+        let first = bind_events_listener("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = first.local_addr().unwrap();
+
+        assert!(bind_events_listener(addr).is_err());
+        drop(first);
+        bind_events_listener(addr).expect("the released port should be reusable immediately");
+    }
 
     #[test]
     fn origin_allowlist_covers_native_and_grain_clients() {

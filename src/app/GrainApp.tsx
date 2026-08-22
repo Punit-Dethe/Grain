@@ -274,12 +274,6 @@ function WindowChrome({ route }: { route: AppRoute }) {
       onMouseDown={startDrag}
       style={{ WebkitAppRegion: "drag" } as CSSProperties}
     >
-      <div className="titlebar-brand" data-tauri-drag-region>
-        <div className="grain-wordmark">
-          <strong>GRAIN</strong>
-        </div>
-        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
-      </div>
       <div className="workspace-title">
         {route.page === "settings"
           ? "Settings"
@@ -423,6 +417,12 @@ function Sidebar({
 
   return (
     <aside aria-label="Primary navigation" className="sidebar">
+      <div className="sidebar-brand">
+        <div className="grain-wordmark">
+          <strong>GRAIN</strong>
+        </div>
+        <span className="grain-beta">{PROTOTYPE_COPY.beta}</span>
+      </div>
       {NAV_GROUPS.map((group) => (
         <nav className="nav-section" key={group.label}>
           <div className="nav-label">{group.label}</div>
