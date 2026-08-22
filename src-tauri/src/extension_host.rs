@@ -444,6 +444,12 @@ struct Index {
     /// manifest, and gated by the approval digest on every rebuild rather than
     /// once at import.
     actions: grain_core::action_router::ActionIndex,
+    /// [GRAIN] The Extension Mode pool (`docs/Extensions V1/PLAN.md` §3.1): the
+    /// searchable, recommendation-approved extensions and the aliases the lexical
+    /// leg matches. The examples that feed the semantic leg are embedded off this
+    /// path — see [`RECOMMEND_VECTORS`] — so what lives here is only what ranking
+    /// needs synchronously.
+    recommendations: Vec<grain_core::recommend::IndexedRecommendation>,
 }
 
 /// An enabled extension's prompt layer, compiled for matching.
@@ -470,6 +476,36 @@ static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
 static HAS_MAIN_SLOT: AtomicBool = AtomicBool::new(false);
 /// And for declared actions, so a user with none pays one relaxed load.
 static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
+/// And for the Extension Mode pool: with nothing searchable installed, the
+/// recommendation path is one relaxed load and never touches the index.
+static HAS_RECOMMENDATIONS: AtomicBool = AtomicBool::new(false);
+
+/// [GRAIN] Cached example embeddings for the semantic leg of recommendation
+/// (`docs/Extensions V1/PLAN.md` §3.1). Held outside [`Index`] and behind its
+/// own lock for the same reason the retired calibration was: embedding a pool of
+/// examples is seconds of model work, and `refresh_index` runs when the user
+/// flips a switch. So the index rebuilds synchronously, this stays empty, and a
+/// background task fills it once the vectors are ready — until then
+/// recommendation runs in name-only mode, which is honest rather than blocked.
+///
+/// Keyed by extension id → one vector per declared example. The query is scored
+/// against the best of an extension's example vectors at request time.
+static RECOMMEND_VECTORS: OnceLock<RwLock<RecommendVectors>> = OnceLock::new();
+
+/// Generation guard so a slow embed for an old pool cannot land on top of a
+/// newer one — the same guard the retired calibration used, and for the same
+/// race.
+static RECOMMEND_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct RecommendVectors {
+    generation: u64,
+    vectors: HashMap<String, Vec<Vec<f32>>>,
+}
+
+fn recommend_vectors() -> &'static RwLock<RecommendVectors> {
+    RECOMMEND_VECTORS.get_or_init(|| RwLock::new(RecommendVectors::default()))
+}
 
 struct HostState {
     app: AppHandle,
@@ -492,6 +528,8 @@ pub fn refresh_index(app: &AppHandle) {
     let mut transforms: Vec<(String, u64)> = Vec::new();
     let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
     let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
+    let mut recommendations: Vec<grain_core::recommend::IndexedRecommendation> = Vec::new();
+    let mut recommend_examples: Vec<(String, Vec<String>)> = Vec::new();
     let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -513,6 +551,10 @@ pub fn refresh_index(app: &AppHandle) {
             // Actions ARE gated on a runtime, unlike prompt layers: a pack with
             // nothing to call would win a route and then dead-end.
             collect_actions(&rec, &pack, &mut actions);
+            // The Extension Mode pool. Gated on searchable + recommendation
+            // approval, NOT on declaring any action — a translator is a real
+            // searchable extension with no command catalogue at all (§3.1).
+            collect_recommendation(&rec, &pack, &mut recommendations, &mut recommend_examples);
             let mut granted_variants = Vec::new();
             for variant in declared_event_variants(&pack.manifest.activation) {
                 let Some(capability) = daemon_event_capability(&variant) else {
@@ -543,9 +585,7 @@ pub fn refresh_index(app: &AppHandle) {
             for variant in granted_variants {
                 by_event.entry(variant).or_default().push(rec.id.clone());
             }
-            if has_resident_grant(&pack.manifest.activation, &rec.granted)
-                && !is_running(&rec.id)
-            {
+            if has_resident_grant(&pack.manifest.activation, &rec.granted) && !is_running(&rec.id) {
                 startup_workers.push((rec.id.clone(), pack, rec.granted.clone()));
             } else if declares_startup(&pack.manifest.activation)
                 && !has_grant(&rec.granted, "resident")
@@ -568,6 +608,7 @@ pub fn refresh_index(app: &AppHandle) {
     let action_count = actions.len();
     let action_index = grain_core::action_router::ActionIndex::build(actions);
     HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
+    HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
@@ -595,7 +636,12 @@ pub fn refresh_index(app: &AppHandle) {
         transforms,
         prompt_layers,
         actions: action_index,
+        recommendations,
     };
+    // Embed the pool's examples off this path, generation-guarded, so a slow
+    // rebuild never blocks a switch and a stale embed never lands on a newer
+    // pool. Until it completes the pool ranks name-only, which is honest.
+    reembed_recommendations(recommend_examples);
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
     // free rather than having to remember a second call. `sync` defers onto
@@ -652,7 +698,11 @@ fn collect_prompt_layers(
     for layer in declared {
         let text = layer.text.trim();
         if let Err(why) = crate::context_detect::prompt_stack::screen_contributed_text(text) {
-            log::warn!("[ext:{}] prompt layer '{}' refused: {why}", rec.id, layer.id);
+            log::warn!(
+                "[ext:{}] prompt layer '{}' refused: {why}",
+                rec.id,
+                layer.id
+            );
             continue;
         }
         out.push((
@@ -719,6 +769,158 @@ fn collect_actions(
             &rec.id, decl,
         ));
     }
+}
+
+/// Add one enabled extension to the Extension Mode pool, if it belongs there.
+///
+/// Two gates, the first two from [`collect_actions`] and for the same reasons —
+/// classification (§2) and the recommendation digest (disclosure). It does
+/// **not** gate on declaring an action: a translator is a legitimate searchable
+/// extension with no command catalogue at all (§3.1), and gating it out here
+/// would make the one example the plan uses for "recommend exists even with zero
+/// commands" unrankable.
+fn collect_recommendation(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    recommendations: &mut Vec<grain_core::recommend::IndexedRecommendation>,
+    examples: &mut Vec<(String, Vec<String>)>,
+) {
+    if !pack.manifest.kind.is_searchable() {
+        return;
+    }
+    let fingerprint = grain_core::extensions::recommendation_fingerprint(&pack.manifest);
+    if rec.recommend_approved.as_deref() != Some(fingerprint.as_str()) {
+        // collect_actions already logged the mismatch for a pack that also
+        // declares actions; a recommend-only pack would otherwise be silent.
+        return;
+    }
+    let Some(decl) = &pack.manifest.recommend else {
+        return;
+    };
+    recommendations.push(grain_core::recommend::IndexedRecommendation::new(
+        &rec.id,
+        &decl.aliases,
+    ));
+    examples.push((rec.id.clone(), decl.examples.clone()));
+}
+
+/// Embed the pool's example phrases and cache the vectors, off the rebuild path.
+///
+/// Fire-and-forget and generation-guarded, the shape the retired calibration
+/// used. Skips entirely when the model is not on disk — that is **name-only
+/// mode** (§5), not a failure: the pool still ranks on names, and first use of
+/// Extension Mode is where the download is offered. An extension whose examples
+/// fail to embed simply has no topical vectors and is reachable by name only.
+fn reembed_recommendations(examples: Vec<(String, Vec<String>)>) {
+    let generation = RECOMMEND_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if examples.is_empty() || !crate::grain_space::embed::model_on_disk() {
+        // Clear any vectors from a previous pool so a now-absent model or empty
+        // pool cannot leave stale topical scores behind.
+        let mut cache = recommend_vectors().write().unwrap();
+        if cache.generation < generation {
+            *cache = RecommendVectors {
+                generation,
+                vectors: HashMap::new(),
+            };
+        }
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut vectors: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        for (id, phrases) in examples {
+            let phrases: Vec<String> = phrases
+                .into_iter()
+                .filter(|p| !p.trim().is_empty())
+                .collect();
+            if phrases.is_empty() {
+                continue;
+            }
+            match crate::grain_space::embed::embed(phrases) {
+                Ok(embedded) => {
+                    vectors.insert(id, embedded);
+                }
+                Err(error) => {
+                    log::warn!("[GRAIN] ext-host: embedding examples for '{id}' failed: {error:#}");
+                }
+            }
+        }
+        // A rebuild that started after this one owns the answer.
+        if RECOMMEND_GENERATION.load(Ordering::SeqCst) != generation {
+            log::debug!(
+                "[GRAIN] ext-host: discarding stale recommendation vectors (gen {generation})"
+            );
+            return;
+        }
+        log::debug!(
+            "[GRAIN] ext-host: recommendation vectors ready — {} extension(s) embedded",
+            vectors.len()
+        );
+        *recommend_vectors().write().unwrap() = RecommendVectors {
+            generation,
+            vectors,
+        };
+    });
+}
+
+/// Rank the installed searchable extensions for one spoken request
+/// (`docs/Extensions V1/PLAN.md` §3.1). The whole recommendation, minus the
+/// hand-off: which extensions, in what order, by name or by topic. With nothing
+/// searchable installed this is one relaxed atomic load.
+///
+/// Runs the semantic leg only when the model is on disk *and* the cached vectors
+/// belong to the current pool; otherwise it hands `None` to the ranker, which is
+/// name-only mode. Blocking on the query embed, so it must not be called from a
+/// felt path — the Extension Mode session calls it off the microphone thread.
+pub fn recommend(spoken: &str) -> Vec<grain_core::recommend::Recommendation> {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    let Some(host) = HOST.get() else {
+        return Vec::new();
+    };
+    let index = host.index.read().unwrap();
+    let semantic = semantic_scores(spoken);
+    grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref())
+}
+
+/// The semantic leg: embed the query and score it against each pooled
+/// extension's cached example vectors, best example wins.
+///
+/// `None` — name-only mode — when the model is absent, the cache belongs to an
+/// older pool, or the query cannot be embedded. Every one of those degrades to
+/// names rather than to a wrong topical guess, which is the safe direction: a
+/// missing topical score withholds a recommendation, it never invents one.
+///
+/// Scores are read straight off the cache rather than off the index, because the
+/// generation guard already guarantees the cache belongs to the current pool —
+/// an extension that has embedded is in the map, one that has not simply has no
+/// topical score, and the ranker treats that as "reachable by name only".
+fn semantic_scores(spoken: &str) -> Option<HashMap<String, f32>> {
+    if !crate::grain_space::embed::model_on_disk() {
+        return None;
+    }
+    let cache = recommend_vectors().read().unwrap();
+    if cache.generation != RECOMMEND_GENERATION.load(Ordering::SeqCst) || cache.vectors.is_empty() {
+        return None;
+    }
+    let query = crate::grain_space::embed::embed_query(spoken.to_string()).ok()?;
+    let mut scores = HashMap::new();
+    for (id, vectors) in &cache.vectors {
+        if let Some(best) = vectors.iter().map(|v| cosine(&query, v)).reduce(f32::max) {
+            scores.insert(id.clone(), best);
+        }
+    }
+    (!scores.is_empty()).then_some(scores)
+}
+
+/// Cosine similarity of two vectors the embedder already L2-normalised, so this
+/// is a dot product. Length-guarded rather than trusting both came from the same
+/// model — a mismatch scores 0 instead of panicking on a bad index.
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
 /// Every literal word the installed actions declare, for ASR biasing.
@@ -1746,7 +1948,11 @@ pub async fn perform_action(
     // The winner was almost certainly cold — a routed action is usually the only
     // reason to wake it. Give the spawn a bounded moment to connect rather than
     // failing instantly.
-    if !host.workers.wait_connected(ext_id, ACTION_WAKE_DEADLINE).await {
+    if !host
+        .workers
+        .wait_connected(ext_id, ACTION_WAKE_DEADLINE)
+        .await
+    {
         log::warn!("[ext:{ext_id}] action '{action_id}' — worker did not start in time");
         return ActionOutcome::Failed("that extension did not start in time".into());
     }
@@ -2196,10 +2402,7 @@ mod tests {
         assert!(!has_grant(&granted, "transform:transcript"));
         let startup = vec!["onStartup".to_string()];
         assert!(!has_resident_grant(&startup, &granted));
-        assert!(has_resident_grant(
-            &startup,
-            &["resident".to_string()]
-        ));
+        assert!(has_resident_grant(&startup, &["resident".to_string()]));
     }
 
     /// The whole point of the index: with nothing enabled, the paste path and
@@ -2280,6 +2483,64 @@ mod tests {
         let mut out = Vec::new();
         collect_actions(&stale, &pack, &mut out);
         assert!(out.is_empty());
+    }
+
+    fn pool_of(pack: &GrainPack, rec: &grain_core::extensions::ExtensionRecord) -> Vec<String> {
+        let mut recommendations = Vec::new();
+        let mut examples = Vec::new();
+        collect_recommendation(rec, pack, &mut recommendations, &mut examples);
+        recommendations
+            .into_iter()
+            .map(|r| r.extension_id)
+            .collect()
+    }
+
+    #[test]
+    fn an_extending_extension_is_not_in_the_recommendation_pool() {
+        let pack = pack_of("");
+        assert!(pool_of(&pack, &record_for(&pack)).is_empty());
+    }
+
+    #[test]
+    fn a_searchable_extension_is_in_the_recommendation_pool() {
+        let pack = pack_of(SEARCHABLE);
+        assert_eq!(pool_of(&pack, &record_for(&pack)), vec!["com.x.p"]);
+    }
+
+    /// The translator case (§3.1): a searchable extension with no command
+    /// catalogue at all is still rankable — `recommend` exists even with zero
+    /// actions, and gating the pool on actions would make it unreachable.
+    #[test]
+    fn a_searchable_extension_with_no_actions_is_still_pooled() {
+        let json = r#"{"manifest":{"id":"com.x.t","name":"T","version":"1.0",
+            "tier":"scripted","entry_source":"export default {}",
+            "kind":"searchable","recommend":{"purpose":"Translate text",
+              "examples":["translate this to french","how do you say hello in spanish"]}}}"#;
+        let pack: GrainPack = serde_json::from_str(json).expect("fixture parses");
+        assert!(pack.manifest.contributes.actions.is_empty());
+        let mut rec = record_for(&pack);
+        rec.id = "com.x.t".into();
+        let mut recommendations = Vec::new();
+        let mut examples = Vec::new();
+        collect_recommendation(&rec, &pack, &mut recommendations, &mut examples);
+        assert_eq!(
+            recommendations.len(),
+            1,
+            "a translator is a real searchable extension"
+        );
+        assert_eq!(
+            examples[0].1.len(),
+            2,
+            "its examples are carried for embedding"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_recommendation_drops_out_of_the_recommendation_pool() {
+        let pack = pack_of(SEARCHABLE);
+        let mut stale = record_for(&pack);
+        stale.recommend_approved = Some("a-version-the-user-never-read".into());
+        assert!(pool_of(&pack, &stale).is_empty());
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {

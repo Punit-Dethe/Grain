@@ -212,25 +212,63 @@ async fn finish(
     complete(session.generation);
 }
 
-/// Hand one captured request onward.
+/// Rank the searchable extensions for one captured request and record the
+/// outcome.
 ///
 /// Split from [`finish`] so it can be driven from a test or a replay of the
-/// action log without a microphone.
+/// action log without a microphone. Blocking work (the query embed) happens
+/// inside [`crate::extension_host::recommend`], so this is spawned off the
+/// microphone thread by its caller.
 ///
-/// **The V1-P1 seam.** Ranking which extension should own this, the accept /
-/// correct step, and the hand-off itself all attach here. Until they land the
-/// request is recorded and goes no further — which is the honest behaviour, not
-/// a stub: capture works, and nothing is delivered to an extension that has not
-/// been ranked.
+/// **The V1-P1 seam.** The recommendation runs here; what does NOT run yet is
+/// the surface (behind the §6b design gate) and the accepted hand-off (V1-P1d
+/// re-attaches `perform_action`). So today this ranks and records — capture and
+/// ranking work end to end — and hands nothing to an extension until the user
+/// has a surface to accept on. That is honest, not a stub: recording the top
+/// recommendation without executing it is exactly the pre-surface behaviour.
 pub async fn deliver(_app: &AppHandle, heard: &str) {
+    // `recommend` embeds the query and is blocking; keep it off the async
+    // runtime's poll threads. `_app` is unused until V1-P1d attaches the events
+    // and the hand-off, which both need it.
+    let ranked = {
+        let heard = heard.to_string();
+        tauri::async_runtime::spawn_blocking(move || crate::extension_host::recommend(&heard))
+            .await
+            .unwrap_or_default()
+    };
+
+    let Some(top) = ranked.first() else {
+        // "Nothing matched" is a real state (§1), not an error: the pool is
+        // empty, everything scored below the floor, or the model is absent and
+        // nothing was named. Recorded so the log explains a request that led
+        // nowhere.
+        action_log::record(
+            heard,
+            None,
+            None,
+            None,
+            ActionLogOutcome::Refused {
+                reason: "nothing matched".into(),
+            },
+        );
+        return;
+    };
+
+    log::info!(
+        "[GRAIN] extension mode: top recommendation {} ({:?}, {:.3})",
+        top.extension_id,
+        top.signal,
+        top.score
+    );
     action_log::record(
         heard,
+        Some(top.extension_id.clone()),
         None,
-        None,
-        None,
-        ActionLogOutcome::Refused {
-            reason: "nothing installed can do that".into(),
-        },
+        Some(top.score),
+        // Escalated in the log's vocabulary: it reached the pool and produced a
+        // recommendation, which is neither a run nor a refusal. The dedicated
+        // hand-off outcomes arrive with the surface in V1-P1d/P2b.
+        ActionLogOutcome::Escalated,
     );
 }
 
