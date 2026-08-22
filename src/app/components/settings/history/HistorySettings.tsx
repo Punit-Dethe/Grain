@@ -23,6 +23,7 @@ import { Button } from "../../ui/Button";
 import { HistoryCard, type HistoryViewMode } from "@/history/HistoryCard";
 import {
   hasProcessedText,
+  wasPostProcessRequested,
   type HistoryController,
 } from "@/history/useHistoryController";
 
@@ -75,12 +76,7 @@ interface HistorySettingsProps {
   controller?: HistoryController;
 }
 
-/**
- * [GRAIN] The archive stores no capture mode, so the old Flow/Standard pills
- * could only ever have been guessed from the title. What every entry does
- * carry is whether AI post-processing produced text for it — the same axis the
- * Original / AI processed view switch already reads. Filtering on that is real.
- */
+/** [GRAIN] Filters use persisted AI intent, not guessed capture mode. */
 type HistoryFilter = "all" | "today" | "processed" | "unprocessed";
 
 const HISTORY_FILTERS: readonly HistoryFilter[] = [
@@ -114,6 +110,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
   const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -125,6 +122,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
 
   const activeEntries = controller?.entries ?? entries;
   const activeLoading = controller?.loading ?? loading;
+  const activeLoadingMore = controller?.loadingMore ?? loadingMore;
   const activeLoadError = controller?.loadError ?? loadError;
   const activeHasMore = controller?.hasMore ?? hasMore;
 
@@ -139,6 +137,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     loadingRef.current = true;
 
     if (isFirstPage) setLoading(true);
+    else setLoadingMore(true);
     setLoadError(false);
 
     try {
@@ -148,9 +147,14 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
       );
       if (result.status === "ok") {
         const { entries: newEntries, has_more } = result.data;
-        setEntries((prev) =>
-          isFirstPage ? newEntries : [...prev, ...newEntries],
-        );
+        setEntries((prev) => {
+          if (isFirstPage) return newEntries;
+          const known = new Set(prev.map((entry) => entry.id));
+          return [
+            ...prev,
+            ...newEntries.filter((entry) => !known.has(entry.id)),
+          ];
+        });
         setHasMore(has_more);
       } else {
         setLoadError(true);
@@ -160,6 +164,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
       setLoadError(true);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
       loadingRef.current = false;
     }
   }, []);
@@ -172,7 +177,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
 
   // Infinite scroll via IntersectionObserver
   useEffect(() => {
-    if (activeLoading) return;
+    if (activeLoading || activeLoadingMore) return;
 
     const sentinel = sentinelRef.current;
     if (!sentinel || !activeHasMore) return;
@@ -196,7 +201,7 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
 
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [activeHasMore, activeLoading, controller, loadPage]);
+  }, [activeHasMore, activeLoading, activeLoadingMore, controller, loadPage]);
 
   // Listen for new entries added from the transcription pipeline
   useEffect(() => {
@@ -204,14 +209,18 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     const unlisten = events.historyUpdatePayload.listen((event) => {
       const payload: HistoryUpdatePayload = event.payload;
       if (payload.action === "added") {
-        setEntries((prev) => [payload.entry, ...prev]);
+        setEntries((prev) => [
+          payload.entry,
+          ...prev.filter((entry) => entry.id !== payload.entry.id),
+        ]);
       } else if (payload.action === "updated") {
         setEntries((prev) =>
           prev.map((e) => (e.id === payload.entry.id ? payload.entry : e)),
         );
+      } else if (payload.action === "deleted") {
+        setEntries((prev) => prev.filter((entry) => entry.id !== payload.id));
       }
-      // "deleted" and "toggled" are handled by optimistic updates only,
-      // so we intentionally ignore them here to avoid double-mutation.
+      // "toggled" is handled by the optimistic command path.
     });
 
     return () => {
@@ -314,8 +323,8 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
       if (normalizedQuery && !searchableText.includes(normalizedQuery)) {
         return false;
       }
-      if (filter === "processed") return hasProcessedText(entry);
-      if (filter === "unprocessed") return !hasProcessedText(entry);
+      if (filter === "processed") return wasPostProcessRequested(entry);
+      if (filter === "unprocessed") return !wasPostProcessRequested(entry);
       if (filter !== "today") return true;
 
       const timestamp =
@@ -326,14 +335,12 @@ export const HistorySettings: React.FC<HistorySettingsProps> = ({
     });
   }, [activeEntries, filter, query]);
 
-  // The AI processed view shows ONLY entries the AI actually rewrote. Mixing in
-  // raw transcripts as a silent fallback made it impossible to tell which text
-  // was processed and which was not, so they are hidden here entirely. When
-  // that leaves nothing, the feed says so rather than dropping back to Original.
+  // The AI view is a request view, not a success-only view. Failed calls must
+  // stay visible so the raw fallback cannot masquerade as a standard capture.
   const visibleEntries = useMemo(
     () =>
       viewMode === "processed"
-        ? baseEntries.filter(hasProcessedText)
+        ? baseEntries.filter(wasPostProcessRequested)
         : baseEntries,
     [baseEntries, viewMode],
   );

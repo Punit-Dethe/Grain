@@ -25,6 +25,7 @@ The rules here supersede repeated dated rows in the audit history below.
 | Area | Current rule |
 | --- | --- |
 | `actions.rs` | Preserve Grain's compiled structure/hooks; port post-processing fixes to `grain_post_process.rs` and `grain_actions.rs`. Do not restore Handy web-overlay policy. |
+| `commands/history.rs`, `managers/history.rs` | Merge upstream history/schema fixes. Retry must retain upstream behavior through Grain's relocated post-processing call. Preserve the Windows delete retry and the narrow `[GRAIN]` retention-deletion event hook until upstream emits `HistoryUpdatePayload::Deleted` for automatic cleanup. No other Grain history policy belongs here. |
 | `shortcut/mod.rs` | Merge upstream key fixes; preserve Grain binding IDs and both bulk/per-binding suspension APIs. Keep retired theme/VAD bindings absent. |
 | `managers/transcription.rs` | Preserve Grain engine ownership, routing, context-bias, and narrow TDT hooks; re-thread upstream decode/device/language fixes and assess rolling in parallel. |
 | `audio_toolkit/text.rs` | Merge upstream algorithms; port finalization and word-boundary changes into `handy/audio_toolkit/grain_text.rs`. |

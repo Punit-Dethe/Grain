@@ -1267,6 +1267,7 @@
         "processed": "AI processed",
         "unprocessed": "Unprocessed"
       },
+      "aiFailedOriginalShown": "AI unavailable · Original shown",
       "noProcessedInView": "Nothing in view was AI processed"
     },
     "settings": {

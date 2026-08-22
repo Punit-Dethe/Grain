@@ -111,24 +111,18 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   }
 }
 
-/**
- * Actions grouped by their preference domain, which is how the sheet reads
- * them: "Media — play, pause, skip" rather than one row per action.
- */
+/** Keep the approval sheet compact without recreating the retired domain model. */
 export function actionsByDomain(
   actions: ActionInfo[],
 ): { domain: string; titles: string[]; confirms: boolean }[] {
-  const groups = new Map<string, { titles: string[]; confirms: boolean }>();
-  for (const action of actions) {
-    const group = groups.get(action.domain) ?? { titles: [], confirms: false };
-    group.titles.push(action.title);
-    group.confirms = group.confirms || action.confirms;
-    groups.set(action.domain, group);
-  }
-  return [...groups.entries()].map(([domain, group]) => ({
-    domain,
-    ...group,
-  }));
+  if (!actions.length) return [];
+  return [
+    {
+      domain: "Actions",
+      titles: actions.map((action) => action.title),
+      confirms: actions.some((action) => action.confirms),
+    },
+  ];
 }
 
 /** Plain-language description of when a contributed layer applies. */

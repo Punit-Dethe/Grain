@@ -12,17 +12,25 @@ import { useOsType } from "@/hooks/useOsType";
 const INITIAL_PAGE_SIZE = 3;
 const HISTORY_PAGE_SIZE = 30;
 
-/**
- * [GRAIN] Whether post-processing actually produced text for this entry.
- *
- * `post_process_requested` is not the test: it records that processing was
- * asked for, and a run that failed, was cancelled, or returned nothing leaves
- * it `true` with no text to show. The only honest signal is the text itself.
- * This is the one real axis the archive carries — capture mode is not stored,
- * which is why History filters on this instead.
- */
+/** [GRAIN] Whether post-processing actually produced text for this entry. */
+export type PostProcessState = "not-requested" | "succeeded" | "failed";
+
 export function hasProcessedText(entry: HistoryEntry): boolean {
   return (entry.post_processed_text?.trim().length ?? 0) > 0;
+}
+
+/**
+ * [GRAIN] Requested and succeeded are separate facts. A requested run with no
+ * output is the raw-text fallback, not a standard dictation and not a
+ * successful AI result.
+ */
+export function postProcessState(entry: HistoryEntry): PostProcessState {
+  if (!entry.post_process_requested) return "not-requested";
+  return hasProcessedText(entry) ? "succeeded" : "failed";
+}
+
+export function wasPostProcessRequested(entry: HistoryEntry): boolean {
+  return postProcessState(entry) !== "not-requested";
 }
 
 export function reduceHistoryEntries(
@@ -44,6 +52,7 @@ export function reduceHistoryEntries(
         : entries;
     }
     case "deleted":
+      return entries.filter((entry) => entry.id !== payload.id);
     case "toggled":
       return entries;
   }
@@ -91,9 +100,14 @@ export function useHistoryController(): HistoryController {
         const result = await commands.getHistoryEntries(cursor, limit);
         if (result.status !== "ok") throw new Error(result.error);
         if (!mountedRef.current) return;
-        setEntries((current) =>
-          first ? result.data.entries : [...current, ...result.data.entries],
-        );
+        setEntries((current) => {
+          if (first) return result.data.entries;
+          const known = new Set(current.map((entry) => entry.id));
+          return [
+            ...current,
+            ...result.data.entries.filter((entry) => !known.has(entry.id)),
+          ];
+        });
         setHasMore(result.data.has_more);
       } catch (error) {
         console.error("Failed to load UI 2.0 history:", error);
@@ -128,7 +142,11 @@ export function useHistoryController(): HistoryController {
     mountedRef.current = true;
     const unlisten = events.historyUpdatePayload.listen((event) => {
       const payload = event.payload;
-      if (payload.action === "added" || payload.action === "updated") {
+      if (
+        payload.action === "added" ||
+        payload.action === "updated" ||
+        payload.action === "deleted"
+      ) {
         setEntries((current) => reduceHistoryEntries(current, payload));
       }
     });

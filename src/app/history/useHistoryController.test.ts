@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { HistoryEntry } from "@/bindings";
-import { hasProcessedText, reduceHistoryEntries } from "./useHistoryController";
+import {
+  hasProcessedText,
+  postProcessState,
+  reduceHistoryEntries,
+  wasPostProcessRequested,
+} from "./useHistoryController";
 
 const entry = (id: number, saved = false): HistoryEntry => ({
   id,
@@ -40,11 +45,18 @@ describe("UI 2.0 history reducer", () => {
     ).toBe(current);
   });
 
-  it("ignores delete and toggle events handled by optimistic commands", () => {
+  it("applies delete events idempotently and ignores optimistic toggles", () => {
     const current = [entry(2), entry(1)];
-    expect(reduceHistoryEntries(current, { action: "deleted", id: 2 })).toBe(
-      current,
-    );
+    expect(
+      reduceHistoryEntries(current, { action: "deleted", id: 2 }).map(
+        (item) => item.id,
+      ),
+    ).toEqual([1]);
+    expect(
+      reduceHistoryEntries([entry(1)], { action: "deleted", id: 2 }).map(
+        (item) => item.id,
+      ),
+    ).toEqual([1]);
     expect(reduceHistoryEntries(current, { action: "toggled", id: 1 })).toBe(
       current,
     );
@@ -72,5 +84,22 @@ describe("UI 2.0 history processed-text test", () => {
         post_processed_text: "   \n ",
       }),
     ).toBe(false);
+  });
+
+  it("keeps requested failures distinct from standard and successful runs", () => {
+    const standard = entry(1);
+    const failed = { ...entry(2), post_process_requested: true };
+    const succeeded = {
+      ...entry(3),
+      post_process_requested: true,
+      post_processed_text: "Cleaned",
+    };
+
+    expect(postProcessState(standard)).toBe("not-requested");
+    expect(postProcessState(failed)).toBe("failed");
+    expect(postProcessState(succeeded)).toBe("succeeded");
+    expect(
+      [standard, failed, succeeded].filter(wasPostProcessRequested),
+    ).toEqual([failed, succeeded]);
   });
 });

@@ -673,6 +673,10 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 (ft, None, post_process, None)
             };
 
+            // Keep the pre-LLM transcript alive through persistence. History's
+            // Original/AI comparison is only meaningful when the raw side is
+            // not overwritten by the text that will be pasted.
+            let transcription_text = final_text;
             let processed = if let Some(error) = pipeline_error.as_ref() {
                 error!("[GRAIN] {error}");
                 ProcessedTranscription {
@@ -681,7 +685,8 @@ impl ShortcutAction for RealtimeTranscribeAction {
                     post_process_prompt: None,
                 }
             } else {
-                process_transcription_output(&ah, &final_text, post_process, spoken_prompt).await
+                process_transcription_output(&ah, &transcription_text, post_process, spoken_prompt)
+                    .await
             };
             let final_text = processed.final_text;
 
@@ -705,7 +710,7 @@ impl ShortcutAction for RealtimeTranscribeAction {
                 }
                 if let Err(e) = hm.save_entry(
                     file_name,
-                    final_text.clone(),
+                    transcription_text,
                     post_process,
                     processed.post_processed_text.clone(),
                     processed.post_process_prompt.clone(),

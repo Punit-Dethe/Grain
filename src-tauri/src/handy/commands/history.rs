@@ -1,3 +1,4 @@
+use crate::actions::process_transcription_output;
 use crate::managers::{
     history::{HistoryManager, PaginatedHistory},
     transcription::TranscriptionManager,
@@ -61,7 +62,7 @@ pub async fn delete_history_entry(
 #[tauri::command]
 #[specta::specta]
 pub async fn retry_history_entry_transcription(
-    _app: AppHandle,
+    app: AppHandle,
     history_manager: State<'_, Arc<HistoryManager>>,
     transcription_manager: State<'_, Arc<TranscriptionManager>>,
     id: i64,
@@ -92,11 +93,19 @@ pub async fn retry_history_entry_transcription(
         return Err("Recording contains no speech".to_string());
     }
 
-    // [GRAIN] Re-transcribe ONLY — never re-run AI processing. Clearing the stored
-    // processed text drops the entry back to a plain transcription, so the UI's
-    // TRS/PRO toggle disappears (processing didn't happen on this redo).
+    // [GRAIN] Match upstream retry semantics while calling Grain's relocated
+    // post-processing pipeline. Prompt Record cannot be reconstructed from the
+    // unsplit history transcript, so its instruction is absent on retry.
+    let processed =
+        process_transcription_output(&app, &transcription, entry.post_process_requested, None)
+            .await;
     history_manager
-        .update_transcription(id, transcription, None, None)
+        .update_transcription(
+            id,
+            transcription,
+            processed.post_processed_text,
+            processed.post_process_prompt,
+        )
         .map(|_| ())
         .map_err(|e| e.to_string())
 }

@@ -1,7 +1,7 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
-import { ToggleSwitch } from "../ui/ToggleSwitch";
-import { useSettings } from "../../hooks/useSettings";
+import { ToggleSwitch } from "@/components/ui/ToggleSwitch";
+import { useSettings } from "@/hooks/useSettings";
 
 interface FillerWordRemovalProps {
   descriptionMode?: "inline" | "tooltip";

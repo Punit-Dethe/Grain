@@ -31,8 +31,8 @@ import { ToolsPage } from "./pages/ToolsPage";
 import { ExtensionsPage, ExtensionSettingsPage } from "./pages/ExtensionsPage";
 import { HistoryCard, type HistoryViewMode } from "./history/HistoryCard";
 import {
-  hasProcessedText,
   useHistoryController,
+  wasPostProcessRequested,
   type HistoryController,
 } from "./history/useHistoryController";
 import { OverviewCards } from "./overview/OverviewCards";
@@ -714,13 +714,33 @@ function ViewSwitch({
 function OverviewPage({ history }: { history: HistoryController }) {
   const [mode, setMode] = useState<HistoryViewMode>("original");
 
-  // AI processed view lists only entries the AI actually rewrote — raw
-  // transcripts are hidden so the two are never confused. Original view shows
-  // everything. Either way the recent strip is capped at three.
+  const processedEntries = history.entries.filter(wasPostProcessRequested);
+
+  // The overview starts with three rows. Load older rows only when the user
+  // asks for AI attempts, stopping as soon as three are available.
+  useEffect(() => {
+    if (
+      mode === "processed" &&
+      processedEntries.length < 3 &&
+      history.hasMore &&
+      !history.loading &&
+      !history.loadingMore
+    ) {
+      void history.loadMore();
+    }
+  }, [
+    history.hasMore,
+    history.loadMore,
+    history.loading,
+    history.loadingMore,
+    mode,
+    processedEntries.length,
+  ]);
+
+  // AI view lists attempts, including a failed call whose raw fallback must
+  // remain visible. Original view shows every capture.
   const recentEntries = (
-    mode === "processed"
-      ? history.entries.filter(hasProcessedText)
-      : history.entries
+    mode === "processed" ? processedEntries : history.entries
   ).slice(0, 3);
 
   return (

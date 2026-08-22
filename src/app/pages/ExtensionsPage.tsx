@@ -318,10 +318,10 @@ function useInstalledExtensions(): InstalledController {
         {pending.actions.length > 0 && (
           <>
             {/*
-              Grouped by domain and listed by title — never by the phrases the
-              extension listens for. What the user is deciding is what this can
-              do, and a wall of utterances is the fastest way to train someone
-              to scroll past the part that matters.
+              Listed compactly by title — never by the phrases the extension
+              listens for. What the user is deciding is what this can do, and a
+              wall of utterances is the fastest way to train someone to scroll
+              past the part that matters.
             */}
             <p>It can do these things when you ask out loud:</p>
             <ul className="extension-actions">

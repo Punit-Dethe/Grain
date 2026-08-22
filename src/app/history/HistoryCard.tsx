@@ -12,6 +12,7 @@ import { AudioPlayer } from "@/components/ui/AudioPlayer";
 import { formatDateTime } from "@/utils/dateFormat";
 import {
   hasProcessedText,
+  postProcessState,
   type HistoryController,
 } from "./useHistoryController";
 
@@ -42,6 +43,7 @@ export function HistoryCard({
   const bodyRef = useRef<HTMLParagraphElement>(null);
   const copiedTimer = useRef<number | undefined>(undefined);
   const hasProcessed = hasProcessedText(entry);
+  const processState = postProcessState(entry);
   const displayText =
     viewMode === "processed" && hasProcessed
       ? (entry.post_processed_text ?? "")
@@ -112,12 +114,16 @@ export function HistoryCard({
               used to be labelled a flat "Standard" — a claim nothing backs.
               Fall back to what is actually known about it instead. */}
           <span className="capture-mode">
-            {entry.title.trim() ||
-              t(
-                hasProcessed
-                  ? "ui2.history.filters.processed"
-                  : "ui2.history.filters.unprocessed",
-              )}
+            {processState === "failed"
+              ? t("ui2.history.aiFailedOriginalShown", {
+                  defaultValue: "AI unavailable · Original shown",
+                })
+              : entry.title.trim() ||
+                t(
+                  hasProcessed
+                    ? "ui2.history.filters.processed"
+                    : "ui2.history.filters.unprocessed",
+                )}
           </span>
         </div>
         <div className="transcript-actions">
