@@ -883,6 +883,21 @@ pub fn recommend(spoken: &str) -> Vec<grain_core::recommend::Recommendation> {
     grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref())
 }
 
+/// How many searchable, approved extensions are in the Extension Mode pool.
+///
+/// The one fact a surface needs to decide whether Extension Mode is worth
+/// offering at all, and whether the embedding-model download is worth its ~130 MB
+/// — a pool of zero has nothing to rank, semantic or not. One relaxed atomic
+/// load when nothing searchable is installed.
+pub fn searchable_count() -> usize {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return 0;
+    }
+    HOST.get()
+        .map(|host| host.index.read().unwrap().recommendations.len())
+        .unwrap_or(0)
+}
+
 /// The semantic leg: embed the query and score it against each pooled
 /// extension's cached example vectors, best example wins.
 ///

@@ -1637,6 +1637,30 @@ async grainActionLog(clear: boolean) : Promise<Result<ActionLogEntry[], string>>
 }
 },
 /**
+ * [GRAIN] Report Extension Mode readiness (`docs/Extensions V1/PLAN.md` §5).
+ */
+async grainExtensionModeStatus() : Promise<ExtensionModeStatus> {
+    return await TAURI_INVOKE("grain_extension_mode_status");
+},
+/**
+ * [GRAIN] Download the understanding model for Extension Mode
+ * (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
+ * user consents; progress and completion arrive on the shared model events.
+ *
+ * Deliberately NOT gated on Grain Space being enabled — the model belongs to
+ * neither feature, it is a shared resource, and either feature may be the one
+ * that first needs it. Reuses the same download so a second copy is never
+ * fetched.
+ */
+async grainExtensionModeDownloadModel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_download_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Write one schema-declared setting from the host's own control.
  * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
@@ -3063,7 +3087,29 @@ name: string;
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
 export type EmbedModelStatus = "ready" | "downloading" | "absent"
-export type EngineType = 
+/**
+ * [GRAIN] Whether Extension Mode can recommend, and how well
+ * (`docs/Extensions V1/PLAN.md` §5).
+ *
+ * The one query a surface needs to decide what to offer: is there anything to
+ * rank (`searchable`), and can the topical leg run or is it name-only until the
+ * model is downloaded. The model is the same ~130 MB BGE weights Grain Space
+ * uses, so a copy downloaded for either serves both — this reports its presence
+ * without requiring Grain Space to be enabled.
+ */
+export type ExtensionModeStatus = {
+/**
+ * Searchable, approved extensions installed. Zero means Extension Mode has
+ * nothing to rank and the download is not worth offering.
+ */
+searchable_count: number;
+/**
+ * `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
+ * Extension Mode still works on names, and first use is where the download
+ * is offered — this is what tells the surface to offer it.
+ */
+model: string }
+export type EngineType =
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
  * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from

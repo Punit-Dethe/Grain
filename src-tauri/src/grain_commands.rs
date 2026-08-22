@@ -971,6 +971,57 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
     }
 }
 
+/// [GRAIN] Whether Extension Mode can recommend, and how well
+/// (`docs/Extensions V1/PLAN.md` §5).
+///
+/// The one query a surface needs to decide what to offer: is there anything to
+/// rank (`searchable`), and can the topical leg run or is it name-only until the
+/// model is downloaded. The model is the same ~130 MB BGE weights Grain Space
+/// uses, so a copy downloaded for either serves both — this reports its presence
+/// without requiring Grain Space to be enabled.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct ExtensionModeStatus {
+    /// Searchable, approved extensions installed. Zero means Extension Mode has
+    /// nothing to rank and the download is not worth offering.
+    pub searchable_count: u32,
+    /// `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
+    /// Extension Mode still works on names, and first use is where the download
+    /// is offered — this is what tells the surface to offer it.
+    pub model: String,
+}
+
+/// [GRAIN] Report Extension Mode readiness (`docs/Extensions V1/PLAN.md` §5).
+#[tauri::command]
+#[specta::specta]
+pub fn grain_extension_mode_status() -> ExtensionModeStatus {
+    use crate::grain_space::embed;
+    let model = if embed::is_downloading() {
+        "downloading"
+    } else if embed::model_on_disk() {
+        "ready"
+    } else {
+        "absent"
+    };
+    ExtensionModeStatus {
+        searchable_count: crate::extension_host::searchable_count() as u32,
+        model: model.to_string(),
+    }
+}
+
+/// [GRAIN] Download the understanding model for Extension Mode
+/// (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
+/// user consents; progress and completion arrive on the shared model events.
+///
+/// Deliberately NOT gated on Grain Space being enabled — the model belongs to
+/// neither feature, it is a shared resource, and either feature may be the one
+/// that first needs it. Reuses the same download so a second copy is never
+/// fetched.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_extension_mode_download_model(app: AppHandle) -> Result<(), String> {
+    crate::grain_space::embed::download_model(app).await
+}
+
 /// [GRAIN] Read the action log, optionally clearing it first
 /// (`docs/Extensions V1/PLAN.md`).
 ///
