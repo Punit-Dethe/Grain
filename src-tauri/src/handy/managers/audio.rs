@@ -927,15 +927,15 @@ impl AudioRecordingManager {
 
                 let samples = if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
                     match rec.stop() {
-                        Ok(buf) => buf,
+                        Ok(buf) => Some(buf),
                         Err(e) => {
                             error!("stop() failed: {e}");
-                            Vec::new()
+                            None
                         }
                     }
                 } else {
                     error!("Recorder not available");
-                    Vec::new()
+                    None
                 };
 
                 *self.is_recording.lock().unwrap() = false;
@@ -954,6 +954,10 @@ impl AudioRecordingManager {
                     debug!("Recording stop cancelled; discarding captured samples");
                     return None;
                 }
+
+                // [GRAIN] Capture/consumer failure must not become a valid empty
+                // recording: rolling may already hold a partial journal prefix.
+                let samples = samples?;
 
                 // Pad if very short
                 let s_len = samples.len();

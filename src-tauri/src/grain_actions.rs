@@ -568,9 +568,19 @@ impl ShortcutAction for RealtimeTranscribeAction {
             // Empty on the normal rolling path: its PCM16 journal owns audio.
             // A Vec is retained only if journal creation failed and recording
             // deliberately fell back to the legacy capture contract.
-            let samples = rm
-                .stop_recording(&binding_id, cancel_generation)
-                .unwrap_or_default();
+            let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) else {
+                rt.cancel_session();
+                if !rm.was_cancelled_since(cancel_generation) {
+                    crate::bridge::emit(
+                        &ah,
+                        DaemonEvent::ModelError {
+                            error: "Audio capture failed; no partial transcript was produced"
+                                .to_string(),
+                        },
+                    );
+                }
+                return;
+            };
             // Prompt Record mark (the explicit pill-control split point),
             // taken before draining the worker.
             let prompt_mark = rm.take_prompt_mark();
@@ -864,9 +874,19 @@ impl ShortcutAction for NativeAsrAction {
             // The mic frames already reached the stream worker live; keep the
             // captured samples only as the batch-fallback input (mirrors Handy:
             // a model that turned out not to stream still yields a transcript).
-            let samples = rm
-                .stop_recording(&binding_id, cancel_generation)
-                .unwrap_or_default();
+            let Some(samples) = rm.stop_recording(&binding_id, cancel_generation) else {
+                tm.cancel_stream();
+                if !rm.was_cancelled_since(cancel_generation) {
+                    crate::bridge::emit(
+                        &ah,
+                        DaemonEvent::ModelError {
+                            error: "Audio capture failed; no partial transcript was produced"
+                                .to_string(),
+                        },
+                    );
+                }
+                return;
+            };
             // Prompt Record split mark (the explicit Studio hover control).
             let prompt_mark = rm.take_prompt_mark();
 

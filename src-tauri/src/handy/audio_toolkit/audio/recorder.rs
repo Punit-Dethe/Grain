@@ -2,7 +2,8 @@ use std::{
     io::Error,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        mpsc, Arc, Mutex,
+        mpsc::{self, SyncSender, TrySendError},
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -24,14 +25,20 @@ enum Cmd {
     /// long the command sat in the channel (and how much audio was dropped
     /// before it was seen).
     Start(VadPolicy, Instant, bool), // [GRAIN] retain full-session RAM buffer
-    Stop(mpsc::Sender<Vec<f32>>),
+    Stop(mpsc::Sender<Result<Vec<f32>, String>>),
     Shutdown,
 }
 
 enum AudioChunk {
     Samples(Vec<f32>),
+    CaptureOverflow,
     EndOfStream,
 }
+
+/// [GRAIN] Bound native-rate PCM awaiting the recorder consumer. Sixty-four
+/// device callbacks absorb ordinary scheduler/disk jitter without allowing a
+/// stalled consumer to retain audio for the rest of an unbounded session.
+const MAX_PENDING_CAPTURE_CHUNKS: usize = 64;
 
 /// How 16 kHz mono frames should be filtered for one recording session.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -219,7 +226,10 @@ impl AudioRecorder {
             let _ = self.close();
         }
 
-        let (sample_tx, sample_rx) = mpsc::channel::<AudioChunk>();
+        // [GRAIN] The callback must never block, but an unbounded channel lets
+        // recorder-consumer stalls turn directly into unbounded PCM memory.
+        let (sample_tx, sample_rx) =
+            mpsc::sync_channel::<AudioChunk>(MAX_PENDING_CAPTURE_CHUNKS);
         let (cmd_tx, cmd_rx) = mpsc::channel::<Cmd>();
         let (init_tx, init_rx) = mpsc::sync_channel::<Result<(), String>>(1);
 
@@ -246,6 +256,8 @@ impl AudioRecorder {
         let worker = std::thread::spawn(move || {
             let stop_flag = Arc::new(AtomicBool::new(false));
             let stop_flag_for_stream = stop_flag.clone();
+            let capture_overflow = Arc::new(AtomicBool::new(false));
+            let capture_overflow_for_stream = capture_overflow.clone();
             let init_result = (|| -> Result<(cpal::Stream, u32), String> {
                 let config_started = Instant::now();
                 let device_name = thread_device.name().unwrap_or_default();
@@ -297,6 +309,7 @@ impl AudioRecorder {
                         channels,
                         selected_channel,
                         stop_flag_for_stream,
+                        capture_overflow_for_stream.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::I8 => AudioRecorder::build_stream::<i8>(
@@ -306,6 +319,7 @@ impl AudioRecorder {
                         channels,
                         selected_channel,
                         stop_flag_for_stream,
+                        capture_overflow_for_stream.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::I16 => AudioRecorder::build_stream::<i16>(
@@ -315,6 +329,7 @@ impl AudioRecorder {
                         channels,
                         selected_channel,
                         stop_flag_for_stream,
+                        capture_overflow_for_stream.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::I32 => AudioRecorder::build_stream::<i32>(
@@ -324,6 +339,7 @@ impl AudioRecorder {
                         channels,
                         selected_channel,
                         stop_flag_for_stream,
+                        capture_overflow_for_stream.clone(),
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     cpal::SampleFormat::F32 => AudioRecorder::build_stream::<f32>(
@@ -333,6 +349,7 @@ impl AudioRecorder {
                         channels,
                         selected_channel,
                         stop_flag_for_stream,
+                        capture_overflow_for_stream,
                     )
                     .map_err(|e| format!("Failed to build input stream: {e}"))?,
                     sample_format => {
@@ -380,6 +397,7 @@ impl AudioRecorder {
                         conditioning,
                         recorded_len,
                         stop_flag,
+                        capture_overflow,
                         stream_running_at,
                     );
                     drop(stream);
@@ -443,7 +461,10 @@ impl AudioRecorder {
         if let Some(tx) = &self.cmd_tx {
             tx.send(Cmd::Stop(resp_tx))?;
         }
-        Ok(resp_rx.recv()?) // wait for the samples
+        match resp_rx.recv()? {
+            Ok(samples) => Ok(samples),
+            Err(error) => Err(Box::new(Error::other(error))),
+        }
     }
 
     /// True once the capture worker has exited without anyone calling `close`.
@@ -474,10 +495,11 @@ impl AudioRecorder {
     fn build_stream<T>(
         device: &cpal::Device,
         config: &cpal::SupportedStreamConfig,
-        sample_tx: mpsc::Sender<AudioChunk>,
+        sample_tx: SyncSender<AudioChunk>,
         channels: usize,
         selected_channel: Option<usize>,
         stop_flag: Arc<AtomicBool>,
+        capture_overflow: Arc<AtomicBool>,
     ) -> Result<cpal::Stream, cpal::BuildStreamError>
     where
         T: Sample + SizedSample + Send + 'static,
@@ -496,12 +518,23 @@ impl AudioRecorder {
         let stream_cb = move |data: &[T], _: &cpal::InputCallbackInfo| {
             if stop_flag.load(Ordering::Relaxed) {
                 if !eos_sent {
-                    let _ = sample_tx.send(AudioChunk::EndOfStream);
-                    eos_sent = true;
+                    match sample_tx.try_send(AudioChunk::EndOfStream) {
+                        Ok(()) => eos_sent = true,
+                        Err(TrySendError::Full(_)) => {}
+                        Err(TrySendError::Disconnected(_)) => eos_sent = true,
+                    }
                 }
                 return;
             }
             eos_sent = false;
+
+            // [GRAIN] Once one callback cannot publish without blocking, stop
+            // allocating/copying further PCM for this recording. The consumer
+            // reports the explicit failure from stop(); Start resets the flag.
+            if capture_overflow.load(Ordering::Acquire) {
+                let _ = sample_tx.try_send(AudioChunk::CaptureOverflow);
+                return;
+            }
 
             output_buffer.clear();
 
@@ -540,8 +573,18 @@ impl AudioRecorder {
                 Vec::with_capacity(data.len() / channels),
             );
 
-            if sample_tx.send(AudioChunk::Samples(chunk_to_send)).is_err() {
-                log::error!("Failed to send samples");
+            match sample_tx.try_send(AudioChunk::Samples(chunk_to_send)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    capture_overflow.store(true, Ordering::Release);
+                    log::error!(
+                        "[GRAIN] microphone capture queue reached its {}-chunk bound",
+                        MAX_PENDING_CAPTURE_CHUNKS
+                    );
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    log::error!("Failed to send samples");
+                }
             }
         };
 
@@ -637,7 +680,7 @@ mod tests {
     };
     use std::{
         sync::{
-            atomic::{AtomicBool, AtomicUsize},
+            atomic::{AtomicBool, AtomicUsize, Ordering},
             mpsc, Arc, Mutex,
         },
         time::{Duration, Instant},
@@ -709,6 +752,7 @@ mod tests {
                 Arc::new(AtomicBool::new(false)),
                 Arc::new(AtomicUsize::new(0)),
                 Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicBool::new(false)),
                 Instant::now(),
             );
         });
@@ -734,7 +778,10 @@ mod tests {
             .unwrap();
         sample_tx.send(AudioChunk::EndOfStream).unwrap();
 
-        let batch = reply_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let batch = reply_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
         drop(sample_tx);
         drop(cmd_tx);
         worker.join().unwrap();
@@ -756,6 +803,91 @@ mod tests {
         assert!(batch.is_empty());
         assert!(!rolling.is_empty());
     }
+
+    #[test]
+    fn capture_overflow_fails_stop_instead_of_returning_partial_audio() {
+        let (sample_tx, sample_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let (processed_tx, processed_rx) = mpsc::sync_channel(1);
+        let capture_overflow = Arc::new(AtomicBool::new(false));
+        let worker_overflow = capture_overflow.clone();
+        let worker = std::thread::spawn(move || {
+            run_consumer(
+                16_000,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+                None,
+                Some(Arc::new(move |_frame: &[f32], _speech| {
+                    let _ = processed_tx.try_send(());
+                })),
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicBool::new(false)),
+                worker_overflow,
+                Instant::now(),
+            );
+        });
+
+        cmd_tx
+            .send(Cmd::Start(VadPolicy::Disabled, Instant::now(), true))
+            .unwrap();
+        sample_tx
+            .send(AudioChunk::Samples(vec![0.25; 600]))
+            .unwrap();
+        processed_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("consumer should process the first frame");
+
+        capture_overflow.store(true, Ordering::Release);
+        let (reply_tx, reply_rx) = mpsc::channel();
+        cmd_tx.send(Cmd::Stop(reply_tx)).unwrap();
+        sample_tx
+            .send(AudioChunk::Samples(vec![0.25; 600]))
+            .unwrap();
+        sample_tx.send(AudioChunk::EndOfStream).unwrap();
+
+        let error = reply_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("capture queue exceeded"));
+
+        drop(sample_tx);
+        drop(cmd_tx);
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn idle_overflow_marker_rearms_capture_before_next_start() {
+        let (sample_tx, sample_rx) = mpsc::channel();
+        let (cmd_tx, cmd_rx) = mpsc::channel();
+        let capture_overflow = Arc::new(AtomicBool::new(true));
+        let worker_overflow = capture_overflow.clone();
+        let worker = std::thread::spawn(move || {
+            run_consumer(
+                16_000,
+                None,
+                sample_rx,
+                cmd_rx,
+                None,
+                None,
+                None,
+                Arc::new(AtomicBool::new(false)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicBool::new(false)),
+                worker_overflow,
+                Instant::now(),
+            );
+        });
+
+        cmd_tx.send(Cmd::Shutdown).unwrap();
+        sample_tx.send(AudioChunk::CaptureOverflow).unwrap();
+        worker.join().unwrap();
+
+        assert!(!capture_overflow.load(Ordering::Acquire));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -770,6 +902,7 @@ fn run_consumer(
     conditioning: Arc<AtomicBool>,          // [GRAIN] live toggle
     recorded_len: Arc<AtomicUsize>,         // [GRAIN] Prompt Record split mark
     stop_flag: Arc<AtomicBool>,
+    capture_overflow: Arc<AtomicBool>,      // [GRAIN] bounded capture queue state
     stream_running_at: Instant,
 ) {
     let mut frame_resampler = FrameResampler::new(
@@ -783,6 +916,7 @@ fn run_consumer(
     let mut vad_policy = VadPolicy::Offline;
     let mut retain_full_audio = true; // [GRAIN]
     let mut captured_frames = 0usize; // [GRAIN] rolling Prompt Record timeline
+    let mut capture_failed = false; // [GRAIN] current session exceeded queue bound
 
     // [GRAIN] Voice conditioning state. The high-pass runs at 16 kHz (after the
     // FrameResampler), filtering each frame in `scratch` before it reaches VAD,
@@ -871,7 +1005,20 @@ fn run_consumer(
         // captures it. Commands used to be polled after processing, which
         // silently dropped one buffer period of audio (~10ms built-in, up to
         // ~100ms on Bluetooth) at every recording start.
-        let mut pending = Some(chunk);
+        // An overflow marker belongs to the recording state that existed when
+        // it was captured, before a pending Start command. Consuming it first
+        // prevents idle overflow from poisoning the next session.
+        let mut pending = match chunk {
+            AudioChunk::CaptureOverflow => {
+                if recording {
+                    capture_failed = true;
+                } else {
+                    capture_overflow.store(false, Ordering::Release);
+                }
+                None
+            }
+            chunk => Some(chunk),
+        };
         while let Ok(cmd) = cmd_rx.try_recv() {
             match cmd {
                 Cmd::Start(policy, sent_at, retain) => {
@@ -881,6 +1028,8 @@ fn run_consumer(
                     );
                     awaiting_first_captured_chunk = Some(Instant::now());
                     stop_flag.store(false, Ordering::Relaxed);
+                    capture_overflow.store(false, Ordering::Release);
+                    capture_failed = false;
                     vad_policy = policy;
                     retain_full_audio = retain;
                     processed_samples.clear();
@@ -970,6 +1119,7 @@ fn run_consumer(
                                     }
                                 });
                             }
+                            Ok(AudioChunk::CaptureOverflow) => capture_failed = true,
                             Ok(AudioChunk::EndOfStream) => break,
                             Err(_) => {
                                 log::warn!("Timed out waiting for EndOfStream from audio callback");
@@ -1013,7 +1163,18 @@ fn run_consumer(
                         normalize_gain(&mut processed_samples);
                     }
 
-                    let _ = reply_tx.send(std::mem::take(&mut processed_samples));
+                    let reply = if capture_failed || capture_overflow.load(Ordering::Acquire) {
+                        processed_samples.clear();
+                        Err(format!(
+                            "microphone capture queue exceeded its {}-chunk bound",
+                            MAX_PENDING_CAPTURE_CHUNKS
+                        ))
+                    } else {
+                        Ok(std::mem::take(&mut processed_samples))
+                    };
+                    let _ = reply_tx.send(reply);
+                    capture_overflow.store(false, Ordering::Release);
+                    capture_failed = false;
 
                     // Resume the audio callback so the consumer loop can continue
                     // receiving chunks (important for always-on microphone mode).

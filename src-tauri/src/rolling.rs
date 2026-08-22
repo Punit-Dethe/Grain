@@ -525,7 +525,6 @@ enum ChunkStatus {
 struct ChunkRecord {
     descriptor: ChunkJob,
     status: ChunkStatus,
-    decode_duration: Duration,
 }
 
 struct WorkerOutput {
@@ -647,15 +646,12 @@ where
             ChunkStatus::Failed(error) => error.clone(),
             ChunkStatus::Succeeded(_) => continue,
         };
-        let started = Instant::now();
         match decode(record.descriptor) {
             Ok(decoded) => {
-                record.decode_duration += started.elapsed();
                 record.status = ChunkStatus::Succeeded(decoded);
                 recovered += 1;
             }
             Err(error) => {
-                record.decode_duration += started.elapsed();
                 failures.push(format!(
                     "chunk {} [{:.1}..{:.1}]s: initial decode: {}; recovery: {}",
                     record.descriptor.sequence,
@@ -675,8 +671,10 @@ where
     }
 }
 
-fn assemble_records(records: &[ChunkRecord], overlap: f64) -> Result<String, String> {
-    let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(overlap);
+fn append_recovery_records(
+    assembler: &mut rolling_window::TimelineAssembler,
+    records: &[ChunkRecord],
+) -> Result<(), String> {
     for record in records {
         let ChunkStatus::Succeeded(decoded) = &record.status else {
             return Err(format!(
@@ -684,9 +682,9 @@ fn assemble_records(records: &[ChunkRecord], overlap: f64) -> Result<String, Str
                 record.descriptor.sequence
             ));
         };
-        add_decoded_chunk(&mut assembler, record.descriptor, decoded);
+        add_decoded_chunk(assembler, record.descriptor, decoded);
     }
-    Ok(assembler.finish().to_string())
+    Ok(())
 }
 
 impl RollingSession {
@@ -749,8 +747,15 @@ impl RollingSession {
             // merge.rs). Native word timings use positional overlap dedup;
             // segment-only and timestamp-free models use bounded lexical escrow.
             let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(overlap);
-            let mut records = Vec::<ChunkRecord>::new();
+            // The assembler owns all successful history. Only retain decoded
+            // chunks from the first failure onward, where the recovery barrier
+            // prevents them from being committed until the missing range is
+            // retried. Normal sessions therefore keep no duplicate transcript
+            // ledger regardless of duration.
+            let mut recovery_records = Vec::<ChunkRecord>::new();
             let mut has_failure_barrier = false;
+            let mut processed_chunks = 0usize;
+            let mut total_decode_duration = Duration::ZERO;
             // LocalAgreement-2 state for the live preview: the previous tail
             // hypothesis, so only text two consecutive decodes agree on is shown.
             let mut prev_tail_hyp: Vec<String> = Vec::new();
@@ -801,6 +806,7 @@ impl RollingSession {
                         if chunk.fresh_duration_sec() <= 0.0 {
                             continue;
                         }
+                        processed_chunks += 1;
                         // [GRAIN] boost-only AGC lifts quiet/laptop-mic speech to a
                         // good level for the model. Per-chunk is safe here — chunks
                         // are transcribed independently. The high-pass already ran
@@ -816,6 +822,7 @@ impl RollingSession {
                         match decoded_result {
                             Ok(decoded) => {
                                 let elapsed = started.elapsed();
+                                total_decode_duration += elapsed;
                                 let input_sec = chunk.input_duration_sec();
                                 let sample_rtf = if input_sec > 0.0 {
                                     let rtf = elapsed.as_secs_f64() / input_sec;
@@ -846,24 +853,24 @@ impl RollingSession {
                                         sink.emit(assembler.text(), "");
                                         prev_tail_hyp.clear();
                                     }
+                                } else {
+                                    recovery_records.push(ChunkRecord {
+                                        descriptor: chunk,
+                                        status: ChunkStatus::Succeeded(decoded),
+                                    });
                                 }
-                                records.push(ChunkRecord {
-                                    descriptor: chunk,
-                                    status: ChunkStatus::Succeeded(decoded),
-                                    decode_duration: elapsed,
-                                });
                             }
                             Err(ChunkDecodeError::Transcription(error)) => {
+                                total_decode_duration += started.elapsed();
                                 log::warn!(
                                     "[GRAIN] rolling chunk {} transcribe failed; deferring one journal retry: {}",
                                     chunk.sequence,
                                     error
                                 );
                                 has_failure_barrier = true;
-                                records.push(ChunkRecord {
+                                recovery_records.push(ChunkRecord {
                                     descriptor: chunk,
                                     status: ChunkStatus::Failed(error),
-                                    decode_duration: started.elapsed(),
                                 });
                             }
                             Err(ChunkDecodeError::Journal(error)) => {
@@ -878,8 +885,9 @@ impl RollingSession {
                     }
                     Job::Finish => {
                         let recovered = if has_failure_barrier {
-                            match recover_failed_chunks(&mut records, |chunk| {
-                                match decode_descriptor(
+                            match recover_failed_chunks(&mut recovery_records, |chunk| {
+                                let started = Instant::now();
+                                let result = match decode_descriptor(
                                     &transcriber,
                                     &mut journal_reader,
                                     &mut audio,
@@ -891,7 +899,9 @@ impl RollingSession {
                                         worker_journal_failed.store(true, Ordering::Release);
                                         Err(format!("journal read failed: {error}"))
                                     }
-                                }
+                                };
+                                total_decode_duration += started.elapsed();
+                                result
                             }) {
                                 Ok(count) => count,
                                 Err(failures) => {
@@ -905,20 +915,18 @@ impl RollingSession {
                         } else {
                             0
                         };
-                        let text = if recovered > 0 {
-                            match assemble_records(&records, overlap) {
-                                Ok(text) => text,
-                                Err(error) => return WorkerOutput::failure(error),
+                        if has_failure_barrier {
+                            if let Err(error) =
+                                append_recovery_records(&mut assembler, &recovery_records)
+                            {
+                                return WorkerOutput::failure(error);
                             }
-                        } else {
-                            assembler.finish().to_string()
-                        };
-                        let decode_time: Duration =
-                            records.iter().map(|record| record.decode_duration).sum();
+                        }
+                        let text = assembler.finish().to_string();
                         log::info!(
                             "[GRAIN] rolling ledger finalized {} chunks in {:.2}s ({} recovered)",
-                            records.len(),
-                            decode_time.as_secs_f64(),
+                            processed_chunks,
+                            total_decode_duration.as_secs_f64(),
                             recovered
                         );
                         return WorkerOutput::success(text, recovered, decode_rtf_ewma);
@@ -1174,7 +1182,6 @@ mod tests {
                 words: Vec::new(),
                 timing_quality: TimingQuality::Unavailable,
             }),
-            decode_duration: Duration::ZERO,
         }
     }
 
@@ -1183,7 +1190,6 @@ mod tests {
         ChunkRecord {
             descriptor,
             status: ChunkStatus::Failed(error.to_string()),
-            decode_duration: Duration::ZERO,
         }
     }
 
@@ -1394,8 +1400,8 @@ mod tests {
     }
 
     #[test]
-    fn successful_ledger_performs_no_recovery_decode() {
-        let mut records = vec![succeeded(1, "alpha"), succeeded(2, "beta")];
+    fn successful_path_needs_no_recovery_ledger() {
+        let mut records = Vec::new();
         let mut calls = 0usize;
 
         let recovered = recover_failed_chunks(&mut records, |_| {
@@ -1406,16 +1412,18 @@ mod tests {
 
         assert_eq!(recovered, 0);
         assert_eq!(calls, 0);
-        assert_eq!(assemble_records(&records, 2.0).unwrap(), "alpha beta");
+        assert!(records.is_empty());
     }
 
     #[test]
     fn failed_middle_range_is_retried_once_and_reassembled_in_order() {
-        let mut records = vec![
-            succeeded(1, "alpha"),
-            failed(2, "temporary model error"),
-            succeeded(3, "gamma"),
-        ];
+        let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(2.0);
+        let first = succeeded(1, "alpha");
+        let ChunkStatus::Succeeded(first_decoded) = &first.status else {
+            unreachable!();
+        };
+        add_decoded_chunk(&mut assembler, first.descriptor, first_decoded);
+        let mut records = vec![failed(2, "temporary model error"), succeeded(3, "gamma")];
         let mut retried = Vec::new();
 
         let recovered = recover_failed_chunks(&mut records, |descriptor| {
@@ -1434,12 +1442,13 @@ mod tests {
 
         assert_eq!(recovered, 1);
         assert_eq!(retried, vec![(2, 16_000, 32_000)]);
-        assert_eq!(assemble_records(&records, 2.0).unwrap(), "alpha beta gamma");
+        append_recovery_records(&mut assembler, &records).unwrap();
+        assert_eq!(assembler.finish(), "alpha beta gamma");
     }
 
     #[test]
     fn unrecovered_final_range_returns_explicit_failure() {
-        let mut records = vec![succeeded(1, "alpha"), failed(2, "first failure")];
+        let mut records = vec![failed(2, "first failure")];
         let mut attempts = 0usize;
 
         let failures = recover_failed_chunks(&mut records, |descriptor| {
@@ -1454,6 +1463,7 @@ mod tests {
         assert!(failures[0].contains("chunk 2"));
         assert!(failures[0].contains("first failure"));
         assert!(failures[0].contains("retry failure"));
-        assert!(assemble_records(&records, 2.0).is_err());
+        let mut assembler = rolling_window::TimelineAssembler::new().with_fuzzy_seam(2.0);
+        assert!(append_recovery_records(&mut assembler, &records).is_err());
     }
 }
