@@ -79,7 +79,12 @@ pub enum StartError {
 
 /// Begin listening for a request.
 pub fn start(app: &AppHandle) -> Result<(), StartError> {
-    if crate::extension_host::action_vocabulary().is_empty() {
+    // Gate on the POOL, not on declared actions. A searchable extension may have
+    // a `recommend` block and no command catalogue at all (a translator, §3.1);
+    // gating on `action_vocabulary` here would refuse to start for exactly that
+    // case, which is the one the whole "recommend exists with zero commands"
+    // design is built around.
+    if crate::extension_host::searchable_count() == 0 {
         return Err(StartError::NothingInstalled);
     }
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
@@ -93,10 +98,17 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
         transcription.initiate_model_load();
     }
 
+    // Warm the embedder on the keypress (§6): the recommendation will need it, and
+    // starting the load now hides it behind the recording. A no-op when the model
+    // is absent (name-only mode) or already resident. The TTL reclaims it if the
+    // session leads nowhere.
+    crate::grain_space::embed::touch_extension_mode(app);
+
     // Bias the recogniser with what the installed extensions actually say,
     // before a single sample is captured. Free, because the phrases are already
-    // in the index — and it is the highest-leverage thing in this file, since
-    // the words that identify an extension are exactly the ones ASR mangles.
+    // in the index. Empty for a translator with no actions — nothing to bias,
+    // which is fine; the name is what the recogniser most needs to get right and
+    // that comes from the aliases the pool already carries.
     crate::context_bias::arm_action_session(crate::extension_host::action_vocabulary());
 
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
@@ -257,6 +269,9 @@ pub async fn deliver(app: &AppHandle, heard: &str) {
 /// record the outcome. The one place ranking is turned into a surface event, so
 /// deliver and decline present identically.
 async fn present(app: &AppHandle, request: String, declined: Vec<String>) {
+    // Each ranking is a semantic use — refresh the warmth so an accept or a
+    // decline-and-reopen right after does not race the reaper (§6).
+    crate::grain_space::embed::touch_extension_mode(app);
     // `recommend` embeds the query and is blocking; keep it off the async
     // runtime's poll threads.
     let ranked = {
