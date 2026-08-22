@@ -241,7 +241,7 @@ pub fn arm_session(app: &tauri::AppHandle) {
 }
 
 /// Seed this session's bias with the **action vocabulary** instead of the
-/// surface (`docs/Action Routing/PLAN.md` §3.3).
+/// surface (`docs/Extensions V1/PLAN.md` §3).
 ///
 /// The dominant real-world failure in action routing is not the router, it is
 /// transcription of the words that identify the action — "skip" arriving as

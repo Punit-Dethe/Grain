@@ -106,6 +106,22 @@ pub struct ExtensionRecord {
     /// re-prompts rather than grandfathering actions nobody ever saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions_approved: Option<String>,
+    /// [GRAIN] Fingerprint of the Extension Mode hand-off contract the user
+    /// approved, from [`recommendation_fingerprint`].
+    ///
+    /// The sharpest of the three, because what it gates is **disclosure**: being
+    /// picked in Extension Mode means receiving the full transcript of what the
+    /// user just said, verbatim. `recommend` is the declaration that decides
+    /// when that happens, so widening it in an update widens what an already
+    /// approved extension hears — the same shape as a widened `when`, one level
+    /// up (`docs/Extensions V1/PLAN.md` §G1, §G3).
+    ///
+    /// `None` means "never approved", so an extension that has not been reviewed
+    /// under this contract simply is not ranked. Registries written before this
+    /// field read back that way, which is the correct default: nobody was ever
+    /// shown a hand-off sheet, so nobody agreed to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommend_approved: Option<String>,
     /// Exclusive positions this pack's manifest *declares* (SPEC §3.2). Copied
     /// from the manifest at install so occupancy is answerable from memory —
     /// no pack file is ever read to decide who owns a slot.
@@ -180,6 +196,57 @@ pub fn prompt_layers_fingerprint(layers: &[grain_sdk::manifest::PromptLayerDecl]
     format!("{:x}", hasher.finalize())
 }
 
+/// Fingerprint the Extension Mode hand-off contract, for the approval check on
+/// [`ExtensionRecord::recommend_approved`].
+///
+/// Same length-prefixed construction as the two above, and the same reason for
+/// SHA-256: the input is attacker-controlled and the whole point is to detect a
+/// deliberate change.
+///
+/// Covers everything that decides **whether this extension can be handed the
+/// user's words, and whether it can be handed them without asking**: the kind,
+/// the full `recommend` block, the Auto-send declaration, and `needs`. The
+/// tempting economy is to hash only `examples`; then an author flips
+/// `autoSend.eligible` in a patch release and the hand-off stops asking.
+pub fn recommendation_fingerprint(manifest: &grain_sdk::manifest::ExtensionManifest) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    let field = |h: &mut Sha256, s: &str| {
+        h.update((s.len() as u64).to_le_bytes());
+        h.update(s.as_bytes());
+    };
+    field(&mut hasher, manifest.kind.as_str());
+    match &manifest.recommend {
+        None => hasher.update([0x00u8]),
+        Some(r) => {
+            hasher.update([0x01u8]);
+            field(&mut hasher, r.purpose.trim());
+            // Each list framed by its own length and closed with a separator, so
+            // a phrase moved from `entities` to `examples` — which changes what
+            // the extension is offered for — changes the digest.
+            for list in [&r.examples, &r.aliases, &r.entities] {
+                hasher.update((list.len() as u64).to_le_bytes());
+                for value in list {
+                    field(&mut hasher, value.trim());
+                }
+                hasher.update([0xfeu8]);
+            }
+        }
+    }
+    match &manifest.auto_send {
+        None => hasher.update([0x00u8]),
+        Some(a) => {
+            hasher.update([if a.eligible { 0x02u8 } else { 0x01u8 }]);
+            field(&mut hasher, a.note.as_deref().unwrap_or("").trim());
+        }
+    }
+    hasher.update((manifest.needs.len() as u64).to_le_bytes());
+    for need in &manifest.needs {
+        field(&mut hasher, need.trim());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 /// Fingerprint the declared actions, for the approval check on
 /// [`ExtensionRecord::actions_approved`].
 ///
@@ -187,8 +254,8 @@ pub fn prompt_layers_fingerprint(layers: &[grain_sdk::manifest::PromptLayerDecl]
 /// the input is attacker-controlled, so the hash has to resist a *constructed*
 /// collision, not just a careless one.
 ///
-/// Covers everything that decides **what happens and when**: id, title, domain,
-/// risk, the whole `when`, every utterance, every parameter, and `agentRules`.
+/// Covers everything that decides **what happens and when**: id, title, risk,
+/// the whole `when`, every utterance, every parameter, and `agentRules`.
 /// Deliberately NOT a subset — the tempting economy is to hash only the risk
 /// tier, and then a widened `when` or a new utterance ships under the old
 /// approval.
@@ -203,7 +270,6 @@ pub fn actions_fingerprint(actions: &[grain_sdk::manifest::ActionDecl]) -> Strin
     for action in actions {
         field(&mut hasher, action.id.trim());
         field(&mut hasher, action.title.trim());
-        field(&mut hasher, action.domain.trim());
         // The single most important byte in here: `safe` means no read-back.
         field(
             &mut hasher,
@@ -256,7 +322,6 @@ mod action_fingerprint_tests {
         ActionDecl {
             id: "next".into(),
             title: "Skip to the next track".into(),
-            domain: "media".into(),
             risk,
             when,
             utterances: utterances.iter().map(|s| (*s).to_string()).collect(),
@@ -1067,6 +1132,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
+            recommend_approved: None,
             slots: slots.iter().map(|s| s.to_string()).collect(),
             variant_slots: vec![],
             dev: None,

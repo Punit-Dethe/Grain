@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
-/// [GRAIN] The action log (`docs/Action Routing/PLAN.md` §8.3).
+/// [GRAIN] The action log (`docs/Extensions V1/PLAN.md`).
 ///
 /// A submodule for the same reason `context_detect::prompt_stack` is one: a peer
 /// module needs a line in the Handy-derived `lib.rs`, whose module block is a
@@ -35,18 +35,12 @@ use tauri::{AppHandle, Emitter, Manager};
 #[path = "grain_action_log.rs"]
 pub(crate) mod action_log;
 
-/// [GRAIN] The action session (`docs/Action Routing/PLAN.md` §3.2) — a
-/// host-owned sibling of `extension_session` that routes raw ASR instead of
+/// [GRAIN] The Extension Mode session (`docs/Extensions V1/PLAN.md`) — a
+/// host-owned sibling of `extension_session` that captures raw ASR instead of
 /// pasting post-processed text. A submodule for the same divergence reason as
 /// [`action_log`].
 #[path = "grain_action_session.rs"]
 pub(crate) mod action_session;
-
-/// [GRAIN] The action chooser (`docs/Action Routing/PLAN.md` §7) — the capsule
-/// that asks which action, whose, which entity, or "are you sure". Submodule for
-/// the same divergence reason as [`action_log`].
-#[path = "grain_action_chooser.rs"]
-pub(crate) mod action_chooser;
 
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
@@ -296,28 +290,6 @@ impl ShortcutAction for SwitcherArrowAction {
     fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
         cycle_prompt(app, self.delta);
         crate::master_key::bump_switcher(app);
-    }
-
-    fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
-}
-
-// One of the action chooser's transient digit keys, or Escape.
-//
-// `start` does nothing but hand off, and that is load-bearing: this runs on the
-// global-shortcut dispatch thread, where doing real work — above all
-// registering or unregistering a shortcut — deadlocks every binding in the app.
-// The chooser defers all of its plugin plumbing for exactly that reason.
-struct ActionChoiceAction {
-    /// `Some(index)` picks that option; `None` is Escape.
-    index: Option<usize>,
-}
-
-impl ShortcutAction for ActionChoiceAction {
-    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
-        match self.index {
-            Some(index) => action_chooser::pick(app, index),
-            None => action_chooser::cancel(app),
-        }
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
@@ -1039,19 +1011,6 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "switcher_prompt_prev".to_string(),
         Arc::new(SwitcherArrowAction { delta: -1 }) as Arc<dyn ShortcutAction>,
-    );
-    // The action chooser's transient keys. Registered here once; the chooser
-    // grabs and releases the OS bindings as it opens and closes, so these entries
-    // are inert whenever no question is on screen.
-    for index in 0..action_chooser::MAX_OPTIONS {
-        map.insert(
-            format!("action_choice_{index}"),
-            Arc::new(ActionChoiceAction { index: Some(index) }) as Arc<dyn ShortcutAction>,
-        );
-    }
-    map.insert(
-        "action_choice_cancel".to_string(),
-        Arc::new(ActionChoiceAction { index: None }) as Arc<dyn ShortcutAction>,
     );
     // Summon the Agent window.
     map.insert(

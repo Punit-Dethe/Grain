@@ -271,7 +271,8 @@ html[data-theme="light"] body {
       transparent 65%
     ),
     /* One step below the content bubble, so the bubble reads as a raised
-       plane rather than a border drawn on the same colour. */ var(--bg-0);
+       plane rather than a border drawn on the same colour. */
+      var(--bg-0);
   transition: grid-template-columns 0.32s var(--ease-out);
 }
 
@@ -6652,16 +6653,6 @@ html[data-theme="light"] .installed-extension-actions {
   border-radius: 8px;
   background: var(--bg-1);
   border: 1px solid var(--border-1);
-}
-
-.extension-action-domain {
-  display: block;
-  margin-bottom: 3px;
-  color: var(--text-4, var(--text-3));
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: capitalize;
 }
 
 .extension-action-titles {

@@ -33,6 +33,36 @@ pub struct ExtensionManifest {
     #[serde(default, rename = "grainApi", alias = "grain_api")]
     pub grain_api: String,
     pub tier: Tier,
+    /// [GRAIN] What this extension IS, for Extension Mode
+    /// (`docs/Extensions V1/PLAN.md` §2). Declared, never inferred.
+    ///
+    /// Defaults to [`ExtensionKind::Extending`] because that is what a manifest
+    /// written before V1 meant: it augments Grain, and it must not appear in the
+    /// pool of things a spoken request can be handed to.
+    #[serde(default)]
+    pub kind: ExtensionKind,
+    /// [GRAIN] What Grain ranks this extension BY (`docs/Extensions V1/PLAN.md`
+    /// §3.1). Required for `searchable`, rejected for anything else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommend: Option<RecommendDecl>,
+    /// [GRAIN] Whether the author considers this extension suitable for
+    /// receiving a request without the user confirming the hand-off
+    /// (`docs/Extensions V1/PLAN.md` §5). Absent means no.
+    #[serde(
+        default,
+        rename = "autoSend",
+        alias = "auto_send",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub auto_send: Option<AutoSendDecl>,
+    /// [GRAIN] Host resources this extension needs held for it — currently only
+    /// `semantic` (`docs/Extensions V1/PLAN.md` §6, §12).
+    ///
+    /// **Not a capability.** A capability governs *reach*; this governs
+    /// *resources*, and it is shown on the extension's card rather than in the
+    /// permission sheet. Conflating the two is how permission lists become noise.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub needs: Vec<String>,
     /// One line, shown in Overview; full text on hover.
     #[serde(default)]
     pub description: String,
@@ -370,9 +400,332 @@ fn is_deceptive_char(c: char) -> bool {
             | '\u{FEFF}')
 }
 
+// ── Classification and recommendation (Extensions V1) ───────────────────────
+//
+// See `docs/Extensions V1/PLAN.md`. Grain records, ranks WHICH EXTENSION should
+// own the request, and hands over the original transcript verbatim. Two things
+// follow from that and both live here:
+//
+//   · Not every extension can own a request. Most of the platform today is
+//     prompt layers and pill themes, and without `kind` every one of them would
+//     compete with a music extension for "next song" (§2).
+//   · What Grain ranks an extension BY is its own declaration, separate from
+//     whatever commands the extension has internally — a translator has no
+//     command catalogue at all and must still be rankable (§3.1).
+
+/// What an extension is, for the purposes of Extension Mode.
+///
+/// Declared, never inferred. "Does it declare commands?" is the wrong question:
+/// an extension can legitimately be searchable *and* own a shortcut.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtensionKind {
+    /// Ranked in Extension Mode; may be handed a spoken request.
+    Searchable,
+    /// Invoked only by its own shortcut. Never ranked.
+    Standalone,
+    /// Augments Grain itself — prompt layers, pill skins, App Modes. Never
+    /// ranked, and the default, because it is what every pre-V1 manifest meant.
+    #[default]
+    Extending,
+}
+
+impl ExtensionKind {
+    pub fn is_searchable(self) -> bool {
+        matches!(self, ExtensionKind::Searchable)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExtensionKind::Searchable => "searchable",
+            ExtensionKind::Standalone => "standalone",
+            ExtensionKind::Extending => "extending",
+        }
+    }
+}
+
+/// What Grain ranks a `searchable` extension by.
+///
+/// Deliberately *not* a command list. `examples` are things a user might say,
+/// and they exist to be embedded, not executed — an extension that takes the
+/// whole request and never branches on it is a first-class citizen here.
+///
+/// This whole block is **consent text**, and is inside the approval digest for
+/// that reason: it is what decides when an extension receives everything the
+/// user just said. An author who lists every phrase they can think of gets
+/// recommended for everything, which is why the caps below are hard.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct RecommendDecl {
+    /// One plain line: "Play and control music on Spotify". Shown to the user
+    /// and used as ranking evidence.
+    pub purpose: String,
+    /// Ways a user might phrase a request this extension should own. Ranked
+    /// semantically against what was actually said.
+    #[serde(default)]
+    pub examples: Vec<String>,
+    /// Names the user might say to address this extension outright —
+    /// "spotify". Matched lexically, which is the one job lexical matching is
+    /// genuinely good at (§5). The extension's own `name` is always an implicit
+    /// alias and does not need repeating here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
+    /// Kinds of thing this extension knows about — "artist", "playlist". A weak
+    /// ranking signal, and a hint to the author's own command ranking; never a
+    /// schema and never resolved by Grain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<String>,
+}
+
+/// The author's half of the Auto-send trust boundary (§5).
+///
+/// # Why this is extension-level and not per-command
+///
+/// The product direction has the author marking individual capabilities
+/// eligible. Under V1 Grain does not model an extension's commands at all —
+/// it decides one thing, "does this request go to this extension without
+/// asking" — so an author-declared per-command list would be a promise Grain
+/// cannot keep or check.
+///
+/// The finer boundary is not lost, it moves one level down where it can
+/// actually be enforced: a hand-off carries the fact that it was auto-sent, and
+/// the extension decides for itself whether *that particular* command still
+/// deserves a Confirm. The author keeps control over their sensitive commands;
+/// Grain stops pretending to know which ones those are.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct AutoSendDecl {
+    /// Whether the author permits Auto-send at all. The user can only make this
+    /// stricter, never override it upward.
+    #[serde(default)]
+    pub eligible: bool,
+    /// One line the user reads when deciding: why this extension is safe to
+    /// hand a request to without confirming. Required when `eligible`, because
+    /// "trust me" is not an argument the user can evaluate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Host resources an extension may declare a need for.
+///
+/// Closed and short by design. Each entry costs the user something measurable —
+/// `semantic` keeps a ~130 MB model resident for a while — and appears on the
+/// extension's card in those terms.
+pub const KNOWN_NEEDS: &[&str] = &["semantic"];
+
+/// Hard ceiling on the one-line purpose.
+pub const RECOMMEND_PURPOSE_MAX_BYTES: usize = 120;
+
+/// Hard ceiling on example utterances.
+///
+/// Ranking is global, so this bounds one author's ability to degrade everyone
+/// else's recommendations (§G3). Twenty is enough to cover a real extension's
+/// phrasings and small enough that a store reviewer reads all of them.
+pub const RECOMMEND_EXAMPLES_MAX: usize = 20;
+
+/// Hard ceiling on one example, in bytes. An example is a way of asking for
+/// something, not a paragraph.
+pub const RECOMMEND_EXAMPLE_MAX_BYTES: usize = 120;
+
+/// Hard ceiling on spoken aliases. An extension has a name and perhaps a
+/// nickname; a list of eight is an attempt to own vocabulary.
+pub const RECOMMEND_ALIASES_MAX: usize = 4;
+
+pub const RECOMMEND_ALIAS_MAX_BYTES: usize = 32;
+
+/// Hard ceiling on declared entity kinds.
+pub const RECOMMEND_ENTITIES_MAX: usize = 8;
+
+pub const RECOMMEND_ENTITY_MAX_BYTES: usize = 32;
+
+/// Hard ceiling on the Auto-send justification line.
+pub const AUTO_SEND_NOTE_MAX_BYTES: usize = 120;
+
+/// Structural validation of `kind` / `recommend` / `autoSend` / `needs`.
+fn validate_classification(m: &ExtensionManifest) -> Result<(), String> {
+    for need in &m.needs {
+        if !KNOWN_NEEDS.contains(&need.as_str()) {
+            return Err(format!(
+                "unknown need '{need}'; expected one of: {}",
+                KNOWN_NEEDS.join(", ")
+            ));
+        }
+    }
+
+    match m.kind {
+        ExtensionKind::Searchable => {
+            let Some(recommend) = &m.recommend else {
+                return Err(
+                    "a searchable extension must declare 'recommend' — it is what Grain ranks it \
+                     by, and without it the extension can never be offered"
+                        .into(),
+                );
+            };
+            validate_recommend(recommend)?;
+            // Winning a request means being handed it. A tier-A pack has nothing
+            // to hand it TO, so it would be ranked, chosen, and then silent.
+            if m.tier == Tier::Pack {
+                return Err(
+                    "a searchable extension needs a scripted or native runtime to receive the \
+                     request"
+                        .into(),
+                );
+            }
+        }
+        ExtensionKind::Standalone | ExtensionKind::Extending => {
+            if m.recommend.is_some() {
+                return Err(format!(
+                    "'recommend' only applies to a searchable extension; this one declares kind \
+                     '{}', so it is never ranked",
+                    m.kind.as_str()
+                ));
+            }
+        }
+    }
+
+    if let Some(auto_send) = &m.auto_send {
+        if auto_send.eligible && !m.kind.is_searchable() {
+            return Err(
+                "autoSend only applies to a searchable extension — there is no hand-off to skip \
+                 confirming otherwise"
+                    .into(),
+            );
+        }
+        match auto_send.note.as_deref().map(str::trim) {
+            Some(note) if !note.is_empty() => {
+                if note.len() > AUTO_SEND_NOTE_MAX_BYTES {
+                    return Err(format!(
+                        "autoSend note is {} bytes; the limit is {AUTO_SEND_NOTE_MAX_BYTES}",
+                        note.len()
+                    ));
+                }
+                screen("autoSend note", note)?;
+            }
+            _ if auto_send.eligible => {
+                return Err(
+                    "autoSend eligibility requires a note saying why this extension is safe to \
+                     hand a request to without confirming"
+                        .into(),
+                );
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_recommend(r: &RecommendDecl) -> Result<(), String> {
+    let purpose = r.purpose.trim();
+    if purpose.is_empty() {
+        return Err("recommend.purpose is required — one line saying what this extension is for"
+            .into());
+    }
+    if purpose.len() > RECOMMEND_PURPOSE_MAX_BYTES {
+        return Err(format!(
+            "recommend.purpose is {} bytes; the limit is {RECOMMEND_PURPOSE_MAX_BYTES}",
+            purpose.len()
+        ));
+    }
+    screen("recommend.purpose", purpose)?;
+
+    if r.examples.is_empty() {
+        return Err(
+            "recommend.examples needs at least one thing a user might say; the purpose line alone \
+             is too little to rank on"
+                .into(),
+        );
+    }
+    if r.examples.len() > RECOMMEND_EXAMPLES_MAX {
+        return Err(format!(
+            "recommend.examples has {} entries; the limit is {RECOMMEND_EXAMPLES_MAX}",
+            r.examples.len()
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for example in &r.examples {
+        let trimmed = example.trim();
+        if trimmed.is_empty() {
+            return Err("recommend.examples contains an empty entry".into());
+        }
+        if trimmed.len() > RECOMMEND_EXAMPLE_MAX_BYTES {
+            return Err(format!(
+                "recommend example \"{trimmed}\" is {} bytes; the limit is \
+                 {RECOMMEND_EXAMPLE_MAX_BYTES}",
+                trimmed.len()
+            ));
+        }
+        screen("recommend example", trimmed)?;
+        // A repeat is not just waste: examples are embedded and averaged, so a
+        // duplicate silently doubles one phrasing's weight.
+        if !seen.insert(trimmed.to_lowercase()) {
+            return Err(format!("recommend.examples repeats \"{trimmed}\""));
+        }
+    }
+
+    if r.aliases.len() > RECOMMEND_ALIASES_MAX {
+        return Err(format!(
+            "recommend.aliases has {} entries; the limit is {RECOMMEND_ALIASES_MAX}",
+            r.aliases.len()
+        ));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for alias in &r.aliases {
+        let trimmed = alias.trim();
+        if trimmed.is_empty() {
+            return Err("recommend.aliases contains an empty entry".into());
+        }
+        if trimmed.len() > RECOMMEND_ALIAS_MAX_BYTES {
+            return Err(format!(
+                "recommend alias \"{trimmed}\" is {} bytes; the limit is \
+                 {RECOMMEND_ALIAS_MAX_BYTES}",
+                trimmed.len()
+            ));
+        }
+        screen("recommend alias", trimmed)?;
+        if !seen.insert(trimmed.to_lowercase()) {
+            return Err(format!("recommend.aliases repeats \"{trimmed}\""));
+        }
+    }
+
+    if r.entities.len() > RECOMMEND_ENTITIES_MAX {
+        return Err(format!(
+            "recommend.entities has {} entries; the limit is {RECOMMEND_ENTITIES_MAX}",
+            r.entities.len()
+        ));
+    }
+    for entity in &r.entities {
+        let trimmed = entity.trim();
+        if trimmed.is_empty() {
+            return Err("recommend.entities contains an empty entry".into());
+        }
+        if trimmed.len() > RECOMMEND_ENTITY_MAX_BYTES {
+            return Err(format!(
+                "recommend entity \"{trimmed}\" is {} bytes; the limit is \
+                 {RECOMMEND_ENTITY_MAX_BYTES}",
+                trimmed.len()
+            ));
+        }
+        screen("recommend entity", trimmed)?;
+    }
+    Ok(())
+}
+
+/// Reject text that renders as one thing and tokenizes as another.
+///
+/// Everything under `recommend` is read by a store reviewer and by the user, and
+/// then handed to a model as ranking evidence, so the two have to be the same
+/// string.
+fn screen(what: &str, text: &str) -> Result<(), String> {
+    if let Some(bad) = text.chars().find(|c| is_deceptive_char(*c)) {
+        return Err(format!(
+            "{what} contains a control or direction-override character (U+{:04X})",
+            bad as u32
+        ));
+    }
+    Ok(())
+}
+
 // ── Actions (`contributes.actions`) ─────────────────────────────────────────
 //
-// See `docs/Action Routing/PLAN.md`. The shape deliberately mirrors
+// See `docs/Extensions V1/PLAN.md`. The shape deliberately mirrors
 // `PromptLayerDecl`: static text in the manifest, a host-evaluated `when`, and
 // everything here inside the approval digest. Two things differ, and both are
 // because an action has a SIDE EFFECT where a prompt layer has only wording:
@@ -384,9 +737,11 @@ fn is_deceptive_char(c: char) -> bool {
 //     list never reaches a consent surface — "what can this do" is the consent
 //     question, not "what words".
 //
-// The extension is never told the transcript unless one of its actions wins,
-// and then it receives only the extracted spans. Losing the route means
-// learning nothing, exactly as with prompt layers.
+// [GRAIN] V1: the host no longer routes to a specific action. It ranks whole
+// EXTENSIONS by `recommend` and hands the winner the full request; deciding
+// which of its own commands that request meant is the extension's job. What
+// remains here is a declared catalogue — the consent surface, the ASR biasing
+// vocabulary, and the material an extension matches against with `match.*`.
 
 /// One action an extension can perform when the user asks for it by voice.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -397,13 +752,6 @@ pub struct ActionDecl {
     /// One plain line, shown in the permission sheet and the chooser. Written
     /// for the user, not the model: "Skip to the next track".
     pub title: String,
-    /// Which preference group this belongs to — the key behind "always use
-    /// Spotify for media", the chooser's heading, and the scope within which
-    /// two extensions' actions can be recognised as the same request.
-    ///
-    /// NOT a fulfilment contract: it has no parameters and no version, and
-    /// getting it wrong costs a mis-grouped default, never a broken extension.
-    pub domain: String,
     /// Whether performing this needs a read-back first. Required, and never
     /// inferred — see [`ActionRisk`].
     pub risk: ActionRisk,
@@ -412,9 +760,7 @@ pub struct ActionDecl {
     /// without the extension ever learning what application the user is in.
     #[serde(default)]
     pub when: LayerWhen,
-    /// Ways a user might ask for this, in English. Ranked by the HOST against
-    /// what was said; the extension neither sees the utterance nor learns
-    /// whether it matched.
+    /// Ways a user might ask for this, in English.
     ///
     /// `{param}` placeholders name a declared parameter and mark where its span
     /// begins. Locale sets are a later additive field (`utterancesByLocale`),
@@ -486,24 +832,6 @@ pub enum ActionParamKind {
 fn default_true() -> bool {
     true
 }
-
-/// The preference groups an action may name. Short, closed, and host-owned; a
-/// new one is added when a second provider appears in a new area.
-///
-/// Distinct from [`LAYER_CATEGORIES`], which classifies the surface the user is
-/// typing into. Similar-looking, unrelated vocabulary — naming one where the
-/// other belongs is rejected with that sentence.
-pub const ACTION_DOMAINS: &[&str] = &[
-    "media",
-    "messaging",
-    "mail",
-    "calendar",
-    "issues",
-    "files",
-    "browser",
-    "notes",
-    "system",
-];
 
 /// Hard ceiling on actions per extension. Bounds the review surface and the
 /// permission sheet, not just the index.
@@ -626,23 +954,6 @@ fn validate_actions(actions: &[ActionDecl], permissions: &[String]) -> Result<()
             return Err(format!(
                 "action '{id}' title is {} bytes; the limit is {ACTION_TITLE_MAX_BYTES}",
                 title.len()
-            ));
-        }
-
-        if !ACTION_DOMAINS.contains(&action.domain.as_str()) {
-            // The two vocabularies look alike and mean different things, so say
-            // which one was reached for rather than just "unknown".
-            if LAYER_CATEGORIES.contains(&action.domain.as_str()) {
-                return Err(format!(
-                    "action '{id}' names '{}', which is a prompt-layer category (the surface the \
-                     user is typing into), not an action domain (which provider performs this)",
-                    action.domain
-                ));
-            }
-            return Err(format!(
-                "action '{id}' names unknown domain '{}'; expected one of: {}",
-                action.domain,
-                ACTION_DOMAINS.join(", ")
             ));
         }
 
@@ -1348,6 +1659,7 @@ impl GrainPack {
             }
         }
 
+        validate_classification(m)?;
         validate_prompt_layers(&m.contributes.prompt_layers)?;
         validate_actions(&m.contributes.actions, &m.permissions)?;
 
@@ -1530,12 +1842,156 @@ mod tests {
         serde_json::from_str::<GrainPack>(json).unwrap().extends()
     }
 
+    /// A scripted extension declaring a `kind` and the rest of the V1 hand-off
+    /// contract, spliced in as raw JSON fields.
+    fn searchable(extra: &str) -> Result<(), String> {
+        pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"scripted",
+                "entry_source":"export default {{}}","kind":"searchable",{extra}}}}}"#
+        ))
+    }
+
+    const RECOMMEND: &str = r#""recommend":{"purpose":"Play and control music",
+        "examples":["next song","pause the music"],"aliases":["spotify"],
+        "entities":["artist"]}"#;
+
     /// A pack declaring `promptLayers`, with the given layer array spliced in.
     fn pack_with_layers(layers: &str) -> Result<(), String> {
         pack(&format!(
             r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
                 "contributes":{{"promptLayers":{layers}}}}}}}"#
         ))
+    }
+
+    #[test]
+    fn a_manifest_written_before_v1_is_extending_and_unranked() {
+        // The default is the load-bearing part: every pack that exists today
+        // predates `kind`, and every one of them would otherwise compete with a
+        // music extension for "next song".
+        let m: ExtensionManifest = serde_json::from_str(
+            r#"{"id":"com.x.p","name":"P","version":"1.0","tier":"pack"}"#,
+        )
+        .unwrap();
+        assert_eq!(m.kind, ExtensionKind::Extending);
+        assert!(!m.kind.is_searchable());
+    }
+
+    #[test]
+    fn a_searchable_extension_declares_what_grain_ranks_it_by() {
+        assert_eq!(searchable(RECOMMEND), Ok(()));
+        // Without it there is nothing to rank, so it could never be offered —
+        // an extension in the pool that can never win is worse than absent.
+        assert!(searchable(r#""description":"P""#).is_err());
+    }
+
+    #[test]
+    fn recommend_belongs_only_to_a_searchable_extension() {
+        // A prompt-layer pack that declares ranking evidence has misunderstood
+        // the model, and saying so beats silently ignoring the block.
+        assert!(pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"scripted",
+                "entry_source":"x","kind":"extending",{RECOMMEND}}}}}"#
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn a_searchable_extension_needs_something_to_hand_the_request_to() {
+        // A tier-A pack has no runtime, so it would be ranked, chosen, and then
+        // silent — a dead end the user cannot diagnose.
+        assert!(pack(&format!(
+            r#"{{"manifest":{{"id":"com.x.p","name":"P","version":"1.0","tier":"pack",
+                "kind":"searchable",{RECOMMEND}}}}}"#
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn the_recommendation_surface_is_bounded() {
+        // Ranking is global: an author who lists every phrase they can think of
+        // gets recommended for everything, and the winner receives the whole
+        // request.
+        let many: Vec<String> = (0..RECOMMEND_EXAMPLES_MAX + 1)
+            .map(|i| format!(r#""say number {i}""#))
+            .collect();
+        assert!(searchable(&format!(
+            r#""recommend":{{"purpose":"P","examples":[{}]}}"#,
+            many.join(",")
+        ))
+        .is_err());
+
+        let fat = "x".repeat(RECOMMEND_PURPOSE_MAX_BYTES + 1);
+        assert!(
+            searchable(&format!(r#""recommend":{{"purpose":"{fat}","examples":["a"]}}"#)).is_err()
+        );
+
+        let aliases: Vec<String> = (0..RECOMMEND_ALIASES_MAX + 1)
+            .map(|i| format!(r#""name{i}""#))
+            .collect();
+        assert!(searchable(&format!(
+            r#""recommend":{{"purpose":"P","examples":["a"],"aliases":[{}]}}"#,
+            aliases.join(",")
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn a_repeated_example_is_rejected_rather_than_deduped() {
+        // Examples are embedded and scored, so a duplicate silently doubles one
+        // phrasing's weight. Fixing it quietly would hide an authoring mistake
+        // that changes ranking.
+        assert!(searchable(
+            r#""recommend":{"purpose":"P","examples":["next song","Next Song"]}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn recommendation_text_may_not_hide_what_a_reviewer_read() {
+        // Same defence as prompt-layer text, and for a sharper reason: this is
+        // the text that decides when an extension is handed everything the user
+        // said.
+        let bidi = format!(
+            r#""recommend":{{"purpose":"Music{}evil","examples":["a"]}}"#,
+            '\u{202E}'
+        );
+        assert!(searchable(&bidi).is_err());
+    }
+
+    #[test]
+    fn auto_send_requires_a_reason_the_user_can_evaluate() {
+        assert!(searchable(&format!(
+            r#"{RECOMMEND},"autoSend":{{"eligible":true}}"#
+        ))
+        .is_err());
+        assert_eq!(
+            searchable(&format!(
+                r#"{RECOMMEND},"autoSend":{{"eligible":true,
+                    "note":"Playback controls are trivially reversible"}}"#
+            )),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn auto_send_needs_a_hand_off_to_skip() {
+        assert!(pack(
+            r#"{"manifest":{"id":"com.x.p","name":"P","version":"1.0","tier":"scripted",
+                "entry_source":"x","autoSend":{"eligible":true,"note":"trust me"}}}"#
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn needs_names_a_known_resource() {
+        assert_eq!(
+            searchable(&format!(r#"{RECOMMEND},"needs":["semantic"]"#)),
+            Ok(())
+        );
+        // A typo here would otherwise be a silent no-op — the extension would
+        // install, declare a need nobody honours, and rank badly for reasons
+        // nothing explains.
+        assert!(searchable(&format!(r#"{RECOMMEND},"needs":["semantics"]"#)).is_err());
     }
 
     #[test]
@@ -1635,7 +2091,7 @@ mod tests {
     }
 
     const NEXT_TRACK: &str = r#"[{"id":"next","title":"Skip to the next track",
-        "domain":"media","risk":"safe",
+        "risk":"safe",
         "utterances":["skip this","next song","play something else"]}]"#;
 
     #[test]
@@ -1662,7 +2118,7 @@ mod tests {
         // action reads the same as one that adds a harmless one.
         assert!(pack_with_actions(
             "[]",
-            r#"[{"id":"next","title":"Next","domain":"media","utterances":["next song"]}]"#
+            r#"[{"id":"next","title":"Next","utterances":["next song"]}]"#
         )
         .is_err());
     }
@@ -1672,7 +2128,7 @@ mod tests {
         // "open {url}" in an extension that can open URLs is "open whatever
         // Grain mishears". The router is not the weak link here; the acoustic
         // model is.
-        let open_anything = r#"[{"id":"open","title":"Open a link","domain":"browser",
+        let open_anything = r#"[{"id":"open","title":"Open a link",
             "risk":"safe","utterances":["open {url}"],
             "params":[{"name":"url","kind":"text"}]}]"#;
         assert!(pack_with_actions(r#"["open:url"]"#, open_anything).is_err());
@@ -1691,7 +2147,7 @@ mod tests {
         // catalogue before anything happens — so the value that reaches the
         // network came from a bounded set, not from the microphone.
         let play_artist = r#"[{"id":"play_artist","title":"Play music by an artist",
-            "domain":"media","risk":"safe","utterances":["play {artist}","put on some {artist}"],
+            "risk":"safe","utterances":["play {artist}","put on some {artist}"],
             "params":[{"name":"artist","kind":"entity","resolve":true}]}]"#;
         assert_eq!(
             pack_with_actions(r#"["net:api.spotify.com"]"#, play_artist),
@@ -1708,7 +2164,7 @@ mod tests {
         // the wild — one greedy utterance degrades every other extension.
         assert!(pack_with_actions(
             "[]",
-            r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+            r#"[{"id":"p","title":"Play","risk":"safe",
                  "utterances":["{anything}"],
                  "params":[{"name":"anything","kind":"text"}]}]"#
         )
@@ -1720,7 +2176,7 @@ mod tests {
         // An undeclared placeholder has no span to fill.
         assert!(pack_with_actions(
             "[]",
-            r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+            r#"[{"id":"p","title":"Play","risk":"safe",
                  "utterances":["play {artist}"]}]"#
         )
         .is_err());
@@ -1728,7 +2184,7 @@ mod tests {
         // so the action would route and then always fall to the chooser.
         assert!(pack_with_actions(
             "[]",
-            r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+            r#"[{"id":"p","title":"Play","risk":"safe",
                  "utterances":["play something"],
                  "params":[{"name":"artist","kind":"entity","resolve":true}]}]"#
         )
@@ -1737,7 +2193,7 @@ mod tests {
         assert_eq!(
             pack_with_actions(
                 "[]",
-                r#"[{"id":"p","title":"Play","domain":"media","risk":"safe",
+                r#"[{"id":"p","title":"Play","risk":"safe",
                      "utterances":["play something"],
                      "params":[{"name":"artist","kind":"entity","resolve":true,
                                 "required":false}]}]"#
@@ -1747,24 +2203,11 @@ mod tests {
     }
 
     #[test]
-    fn a_prompt_layer_category_is_not_an_action_domain() {
-        // The two vocabularies look alike and mean different things: one is the
-        // surface being typed into, the other is which provider performs this.
-        let err = pack_with_actions(
-            "[]",
-            r#"[{"id":"n","title":"Next","domain":"email","risk":"safe",
-                 "utterances":["next song"]}]"#,
-        )
-        .unwrap_err();
-        assert!(err.contains("prompt-layer category"), "{err}");
-    }
-
-    #[test]
     fn actions_are_bounded_in_every_direction() {
         let many: Vec<String> = (0..ACTIONS_MAX_PER_EXTENSION + 1)
             .map(|i| {
                 format!(
-                    r#"{{"id":"a{i}","title":"A","domain":"media","risk":"safe",
+                    r#"{{"id":"a{i}","title":"A","risk":"safe",
                         "utterances":["do the thing {i}"]}}"#
                 )
             })
@@ -1777,7 +2220,7 @@ mod tests {
         assert!(pack_with_actions(
             "[]",
             &format!(
-                r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                r#"[{{"id":"n","title":"Next","risk":"safe",
                      "utterances":[{}]}}]"#,
                 phrasings.join(",")
             )
@@ -1788,7 +2231,7 @@ mod tests {
         assert!(pack_with_actions(
             "[]",
             &format!(
-                r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                r#"[{{"id":"n","title":"Next","risk":"safe",
                      "utterances":["{fat}"]}}]"#
             )
         )
@@ -1798,7 +2241,7 @@ mod tests {
         assert!(pack_with_actions(
             "[]",
             &format!(
-                r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+                r#"[{{"id":"n","title":"Next","risk":"safe",
                      "utterances":["next song"],"agentRules":"{rules}"}}]"#
             )
         )
@@ -1810,7 +2253,7 @@ mod tests {
         // Same equivalence rule as prompt-layer text: what the reviewer read
         // must be what the router matches.
         let bidi = format!(
-            r#"[{{"id":"n","title":"Next","domain":"media","risk":"safe",
+            r#"[{{"id":"n","title":"Next","risk":"safe",
                  "utterances":["skip{}this"]}}]"#,
             '\u{202E}'
         );
@@ -1821,35 +2264,35 @@ mod tests {
     fn action_ids_and_match_values_are_checked() {
         let with = |body: &str| pack_with_actions("[]", body);
         assert!(with(
-            r#"[{"id":"","title":"N","domain":"media","risk":"safe","utterances":["next"]}]"#
+            r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#
         )
         .is_err());
         assert!(with(
-            r#"[{"id":"a:b","title":"N","domain":"media","risk":"safe","utterances":["next"]}]"#
+            r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#
         )
         .is_err());
         assert!(with(
-            r#"[{"id":"n","title":"","domain":"media","risk":"safe","utterances":["next"]}]"#
+            r#"[{"id":"n","title":"","risk":"safe","utterances":["next"]}]"#
         )
         .is_err());
         assert!(
-            with(r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":[]}]"#)
+            with(r#"[{"id":"n","title":"N","risk":"safe","utterances":[]}]"#)
                 .is_err()
         );
         // Duplicate ids, and a repeated utterance within one action.
         assert!(with(
-            r#"[{"id":"n","title":"N","domain":"media","risk":"safe","utterances":["next"]},
-                {"id":"n","title":"M","domain":"media","risk":"safe","utterances":["prev"]}]"#
+            r#"[{"id":"n","title":"N","risk":"safe","utterances":["next"]},
+                {"id":"n","title":"M","risk":"safe","utterances":["prev"]}]"#
         )
         .is_err());
         assert!(with(
-            r#"[{"id":"n","title":"N","domain":"media","risk":"safe",
+            r#"[{"id":"n","title":"N","risk":"safe",
                  "utterances":["Next Song","next song"]}]"#
         )
         .is_err());
         // `when` reuses the prompt-layer vocabulary, so it reuses its checks.
         assert!(with(
-            r#"[{"id":"n","title":"N","domain":"media","risk":"safe",
+            r#"[{"id":"n","title":"N","risk":"safe",
                  "utterances":["next"],"when":{"category":["nope"]}}]"#
         )
         .is_err());
@@ -1866,7 +2309,7 @@ mod tests {
         assert_eq!(
             pack_with_actions(
                 r#"["transform:transcript","open:url","open:app","capture:app","settings"]"#,
-                r#"[{"id":"open","title":"Open an app or site you set up","domain":"system",
+                r#"[{"id":"open","title":"Open an app or site you set up",
                      "risk":"safe",
                      "utterances":["open {target}","launch {target}","go to {target}",
                                    "start up {target}","bring up {target}"],
@@ -1883,8 +2326,8 @@ mod tests {
         // would never see that from their own extension in isolation.
         assert!(pack_with_actions(
             "[]",
-            r#"[{"id":"a","title":"A","domain":"media","risk":"safe","utterances":["skip this"]},
-                {"id":"b","title":"B","domain":"media","risk":"safe","utterances":["Skip This"]}]"#
+            r#"[{"id":"a","title":"A","risk":"safe","utterances":["skip this"]},
+                {"id":"b","title":"B","risk":"safe","utterances":["Skip This"]}]"#
         )
         .is_err());
 
@@ -1892,10 +2335,10 @@ mod tests {
         // hears the same words either way, so these collide too.
         assert!(pack_with_actions(
             "[]",
-            r#"[{"id":"a","title":"A","domain":"media","risk":"safe",
+            r#"[{"id":"a","title":"A","risk":"safe",
                  "utterances":["play {artist}"],
                  "params":[{"name":"artist","kind":"entity","resolve":true}]},
-                {"id":"b","title":"B","domain":"media","risk":"safe",
+                {"id":"b","title":"B","risk":"safe",
                  "utterances":["play {track}"],
                  "params":[{"name":"track","kind":"entity","resolve":true}]}]"#
         )
@@ -1905,9 +2348,9 @@ mod tests {
         assert_eq!(
             pack_with_actions(
                 "[]",
-                r#"[{"id":"a","title":"A","domain":"media","risk":"safe",
+                r#"[{"id":"a","title":"A","risk":"safe",
                      "utterances":["skip this"]},
-                    {"id":"b","title":"B","domain":"media","risk":"safe",
+                    {"id":"b","title":"B","risk":"safe",
                      "utterances":["go back"]}]"#
             ),
             Ok(())

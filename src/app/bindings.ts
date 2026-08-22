@@ -1599,8 +1599,8 @@ async extensionShortcutsStatus(id: string) : Promise<ShortcutStatus[]> {
     return await TAURI_INVOKE("extension_shortcuts_status", { id });
 },
 /**
- * [GRAIN] Start or stop listening for an action
- * (`docs/Action Routing/PLAN.md` §3).
+ * [GRAIN] Start or stop listening for a request
+ * (`docs/Extensions V1/PLAN.md` §3).
  * 
  * The extension surface's own trigger calls this; **Grain registers no
  * shortcut for it here**. What the design depends on is only that the user's
@@ -1621,7 +1621,7 @@ async grainActionListen(phase: string) : Promise<Result<boolean, string>> {
 },
 /**
  * [GRAIN] Read the action log, optionally clearing it first
- * (`docs/Action Routing/PLAN.md` §8.3).
+ * (`docs/Extensions V1/PLAN.md`).
  * 
  * The "why did that happen" surface. It holds what was heard, so it is capped,
  * lives only in memory, and clearing it is one call with no confirmation
@@ -2501,24 +2501,19 @@ updateDownloadProgress: "update-download-progress"
 
 /**
  * [GRAIN] One declared action, as the approval sheet and the extension card
- * need it (`docs/Action Routing/PLAN.md` §5).
+ * need it (`docs/Extensions V1/PLAN.md` §5).
  * 
  * Note what is **absent**: the utterance list. The consent question is "what
  * can this do", not "what words does it listen for" — a list of phrasings is
  * review and `doctor` material, and putting it on a sheet trains people to
- * scroll past the part that matters. What the user decides on is the title, the
- * domain, and whether it will ask before acting.
+ * scroll past the part that matters. What the user decides on is the title and
+ * whether it will ask before acting.
  */
 export type ActionInfo = { id: string; 
 /**
  * One plain line, written for the user.
  */
 title: string; 
-/**
- * The preference group — "media", "messaging" — used as the sheet's
- * heading and as the key for "always use this one".
- */
-domain: string; 
 /**
  * Whether performing this reads the resolved action back first. The single
  * most important thing on the row.
@@ -2543,9 +2538,9 @@ heard: string;
  */
 action: string | null; 
 /**
- * The action's user-facing title, so the log reads without a manifest.
+ * The user-facing title, so the log reads without a manifest.
  */
-title: string | null; domain: string | null; score: number | null; outcome: ActionLogOutcome }
+title: string | null; score: number | null; outcome: ActionLogOutcome }
 /**
  * What became of one routed request. Mirrors the decision layer's outcomes,
  * flattened for display.
@@ -2649,12 +2644,12 @@ export type AgentSource = { note_id: string; title: string; saved_at: number }
  * object, so a partial store can never fail the whole load (upstream #1619).
  * Field-level defaults below take precedence where present.
  */
-export type AppSettings = {
+export type AppSettings = { 
 /**
  * Missing in pre-schema settings files; the field-level default of zero
  * intentionally triggers one-time migrations instead of using `Self::default()`.
  */
-settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme;
+settings_schema_version?: number; bindings: Partial<{ [key in string]: ShortcutBinding }>; push_to_talk: boolean; audio_feedback: boolean; audio_feedback_volume?: number; sound_theme?: SoundTheme; 
 /**
  * [GRAIN] Which panel is visible when the main window opens.
  */
@@ -2737,20 +2732,7 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; 
-/**
- * [GRAIN] Which extension performs each kind of spoken action — domain
- * (`media`, `messaging`, …) to extension id
- * (`docs/Action Routing/PLAN.md` §6, rung 2).
- * 
- * The whole reason a `domain` exists. Without an entry here, installing a
- * second music extension makes *every* media command ambiguous, so the
- * user is asked every time; with one, the request just runs. Empty by
- * default and only ever written by an explicit choice — a routing default
- * the user cannot audit because they were never told about it is a dark
- * pattern, not a convenience.
- */
-action_default_provider?: Partial<{ [key in string]: string }>; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -2762,7 +2744,7 @@ reliable_paste?: boolean; paste_delay_after_ms?: number; typing_tool?: TypingToo
  * `device_id` when available (or its name for backends such as Metal).
  * Never persist process-local registry indices.
  */
-transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number;
+transcribe_gpu_device?: string | null; extra_recording_buffer_ms?: number; 
 /**
  * [GRAIN] Voice conditioning before VAD + STT: 85 Hz high-pass (de-rumble)
  * + boost-only noise-gated AGC for quiet/laptop mics. On by default; helps
@@ -3143,7 +3125,7 @@ slots: string[];
 prompt_layers: PromptLayerInfo[]; 
 /**
  * [GRAIN] What this extension can do when asked out loud
- * (`docs/Action Routing/PLAN.md` §5).
+ * (`docs/Extensions V1/PLAN.md` §5).
  * 
  * Here for the same reason as `prompt_layers`, and a stronger one: the
  * approval sheet is a single moment, and "what can this thing do" is

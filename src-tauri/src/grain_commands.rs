@@ -848,7 +848,7 @@ pub struct ExtensionCard {
     /// go back and read it again without uninstalling anything.
     pub prompt_layers: Vec<PromptLayerInfo>,
     /// [GRAIN] What this extension can do when asked out loud
-    /// (`docs/Action Routing/PLAN.md` §5).
+    /// (`docs/Extensions V1/PLAN.md` §5).
     ///
     /// Here for the same reason as `prompt_layers`, and a stronger one: the
     /// approval sheet is a single moment, and "what can this thing do" is
@@ -888,8 +888,8 @@ impl PromptLayerInfo {
     }
 }
 
-/// [GRAIN] Start or stop listening for an action
-/// (`docs/Action Routing/PLAN.md` §3).
+/// [GRAIN] Start or stop listening for a request
+/// (`docs/Extensions V1/PLAN.md` §3).
 ///
 /// The extension surface's own trigger calls this; **Grain registers no
 /// shortcut for it here**. What the design depends on is only that the user's
@@ -922,7 +922,7 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
 }
 
 /// [GRAIN] Read the action log, optionally clearing it first
-/// (`docs/Action Routing/PLAN.md` §8.3).
+/// (`docs/Extensions V1/PLAN.md`).
 ///
 /// The "why did that happen" surface. It holds what was heard, so it is capped,
 /// lives only in memory, and clearing it is one call with no confirmation
@@ -941,21 +941,18 @@ pub fn grain_action_log(
 }
 
 /// [GRAIN] One declared action, as the approval sheet and the extension card
-/// need it (`docs/Action Routing/PLAN.md` §5).
+/// need it (`docs/Extensions V1/PLAN.md` §5).
 ///
 /// Note what is **absent**: the utterance list. The consent question is "what
 /// can this do", not "what words does it listen for" — a list of phrasings is
 /// review and `doctor` material, and putting it on a sheet trains people to
-/// scroll past the part that matters. What the user decides on is the title, the
-/// domain, and whether it will ask before acting.
+/// scroll past the part that matters. What the user decides on is the title and
+/// whether it will ask before acting.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
 pub struct ActionInfo {
     pub id: String,
     /// One plain line, written for the user.
     pub title: String,
-    /// The preference group — "media", "messaging" — used as the sheet's
-    /// heading and as the key for "always use this one".
-    pub domain: String,
     /// Whether performing this reads the resolved action back first. The single
     /// most important thing on the row.
     pub confirms: bool,
@@ -970,7 +967,6 @@ impl ActionInfo {
         Self {
             id: decl.id.clone(),
             title: decl.title.clone(),
-            domain: decl.domain.clone(),
             confirms: !decl.risk.is_safe(),
             everywhere: decl.when.is_unconditional(),
             app: decl.when.app.clone(),
@@ -1455,6 +1451,12 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
             }),
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
+        recommend_approved: loaded
+            .pack
+            .manifest
+            .kind
+            .is_searchable()
+            .then(|| ext::recommendation_fingerprint(&loaded.pack.manifest)),
         dev: None,
         // Load-unpacked is the `dev` rung: never promotable, never verified.
         trust: grain_sdk::Trust::Dev,
@@ -1908,6 +1910,11 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // declaration changed, this stops matching, the actions go inert, and
         // the enable path shows the user what is different.
         actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
+        // Carried for the same reason, and the stake is higher: what this one
+        // gates is whether the extension is eligible to be handed the user's
+        // words at all. `None` means never approved, so an import that has not
+        // been reviewed under this contract simply is not ranked.
+        recommend_approved: prior.as_ref().and_then(|r| r.recommend_approved.clone()),
         // Phase 5C: variant slots (SPEC §10.2) are declared by the manifest now
         // that they are externalised — the Agent centre layout ships as a real
         // pack rather than a host-synthesised record.
@@ -2075,6 +2082,13 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     // declaration the user never saw.
     rec.actions_approved = (!manifest.contributes.actions.is_empty())
         .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
+    // Same act, same rule: recomputed from disk. Keyed off `kind` rather than a
+    // list being non-empty, because what is being approved here is eligibility
+    // to be handed the whole request — see `recommendation_fingerprint`.
+    rec.recommend_approved = manifest
+        .kind
+        .is_searchable()
+        .then(|| ext::recommendation_fingerprint(&manifest));
     reg.install(rec).map_err(|e| e.to_string())
 }
 

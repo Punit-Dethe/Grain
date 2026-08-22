@@ -111,26 +111,6 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
   }
 }
 
-/**
- * Actions grouped by their preference domain, which is how the sheet reads
- * them: "Media — play, pause, skip" rather than one row per action.
- */
-export function actionsByDomain(
-  actions: ActionInfo[],
-): { domain: string; titles: string[]; confirms: boolean }[] {
-  const groups = new Map<string, { titles: string[]; confirms: boolean }>();
-  for (const action of actions) {
-    const group = groups.get(action.domain) ?? { titles: [], confirms: false };
-    group.titles.push(action.title);
-    group.confirms = group.confirms || action.confirms;
-    groups.set(action.domain, group);
-  }
-  return [...groups.entries()].map(([domain, group]) => ({
-    domain,
-    ...group,
-  }));
-}
-
 /** Plain-language description of when a contributed layer applies. */
 export function promptLayerScope(layer: PromptLayerInfo): string {
   if (layer.everywhere) return "Every dictation";

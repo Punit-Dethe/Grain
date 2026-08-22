@@ -1,10 +1,10 @@
-//! [GRAIN] The action log (`docs/Action Routing/PLAN.md` §8.3).
+//! [GRAIN] The action log (`docs/Extensions V1/PLAN.md`).
 //!
-//! Every routed request, whatever became of it: what was heard, what fired,
-//! which provider, the score, and the outcome. It is three things at once —
-//! the "why did that happen" surface a user needs when an action surprises
-//! them, the corpus the eval harness replays, and the only record that an
-//! irreversible action ran at all.
+//! Every request that reached an extension, whatever became of it: what was
+//! heard, who it went to, the score, and the outcome. It is three things at
+//! once — the "why did that happen" surface a user needs when something
+//! surprises them, the corpus the eval harness replays, and the only record
+//! that an irreversible action ran at all.
 //!
 //! # It is a transcript store, and is treated as one
 //!
@@ -60,9 +60,8 @@ pub struct ActionLogEntry {
     pub heard: String,
     /// `<extension>:<action>`, when one was chosen.
     pub action: Option<String>,
-    /// The action's user-facing title, so the log reads without a manifest.
+    /// The user-facing title, so the log reads without a manifest.
     pub title: Option<String>,
-    pub domain: Option<String>,
     pub score: Option<f32>,
     pub outcome: ActionLogOutcome,
 }
@@ -85,7 +84,6 @@ pub fn record(
     heard: &str,
     action: Option<String>,
     title: Option<String>,
-    domain: Option<String>,
     score: Option<f32>,
     outcome: ActionLogOutcome,
 ) {
@@ -94,7 +92,6 @@ pub fn record(
         heard: heard.to_string(),
         action,
         title,
-        domain,
         score,
         outcome,
     };
@@ -124,12 +121,16 @@ pub fn clear() {
     }
 }
 
-/// How many times this action was offered and declined.
+/// How many times this was offered and declined.
 ///
-/// The misroute signal (PLAN §5): an action the user is repeatedly shown and
-/// repeatedly walks away from is one the ranking has wrong. Counted from the
-/// log rather than kept as its own counter so it clears when the log does —
-/// a quarantine the user cannot reset is a trap.
+/// The misroute signal: something the user is repeatedly shown and repeatedly
+/// walks away from is one the ranking has wrong. Counted from the log rather
+/// than kept as its own counter so it clears when the log does — a quarantine
+/// the user cannot reset is a trap.
+///
+/// Unreferenced until V1-P1 puts a recommendation on screen for the user to
+/// walk away from; the signal is kept because it is the honest one.
+#[allow(dead_code)]
 pub fn declines(qualified: &str) -> usize {
     log()
         .lock()
@@ -142,30 +143,6 @@ pub fn declines(qualified: &str) -> usize {
                 .count()
         })
         .unwrap_or(0)
-}
-
-/// Which extension last successfully performed something in this domain.
-///
-/// Rung 4 of the provider ladder (PLAN §6). A **tie-break only** — it never
-/// overrules an explicit default, because a habit is evidence and a setting is
-/// an instruction.
-///
-/// Only successful runs count. A provider the user picked and then watched fail
-/// is not the one to quietly prefer next time, and a cancelled chooser is the
-/// opposite of a preference.
-pub fn recent_provider(domain: &str) -> Option<String> {
-    let log = log().lock().ok()?;
-    log.iter()
-        .rev()
-        .find(|e| {
-            e.domain.as_deref() == Some(domain) && matches!(e.outcome, ActionLogOutcome::Ran { .. })
-        })
-        .and_then(|e| {
-            e.action
-                .as_deref()
-                .and_then(|q| q.split(':').next())
-                .map(str::to_string)
-        })
 }
 
 #[cfg(test)]
@@ -185,7 +162,6 @@ mod tests {
             heard,
             Some(action.to_string()),
             Some("Skip".into()),
-            Some("media".into()),
             Some(1.0),
             ActionLogOutcome::Ran { confirmed: false },
         );
@@ -221,7 +197,6 @@ mod tests {
                 "skip this",
                 Some("spotify:next".into()),
                 None,
-                None,
                 Some(0.7),
                 ActionLogOutcome::Cancelled,
             );
@@ -229,7 +204,6 @@ mod tests {
         record(
             "skip this",
             Some("apple:next".into()),
-            None,
             None,
             Some(0.7),
             ActionLogOutcome::Cancelled,

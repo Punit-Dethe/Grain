@@ -187,6 +187,10 @@ impl Workers {
     /// Whether a worker has a live connection, which is what [`call`] needs —
     /// stricter than "spawned", because a spawned webview takes a moment to
     /// connect back.
+    ///
+    /// Unreferenced until V1-P1 re-attaches the hand-off; see the note above
+    /// [`ACTION_DEADLINE`].
+    #[allow(dead_code)]
     fn is_connected(&self, ext_id: &str) -> bool {
         self.map
             .lock()
@@ -207,6 +211,7 @@ impl Workers {
     /// interval is short enough to be invisible next to the spawn it is waiting
     /// on, and a condvar threaded through the connection path would be more
     /// machinery than the problem deserves.
+    #[allow(dead_code)]
     async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
         const POLL: Duration = Duration::from_millis(20);
         let started = Instant::now();
@@ -434,15 +439,11 @@ struct Index {
     /// and screened here rather than at render time so a pack whose text was
     /// edited on disk after import never reaches the prompt at all.
     prompt_layers: Vec<CompiledPromptLayer>,
-    /// Declared actions, compiled for routing (`docs/Action Routing/PLAN.md`).
-    /// Same reasoning as the layers above: built here so the route never reads a
+    /// Declared actions, compiled (`docs/Extensions V1/PLAN.md`). Same reasoning
+    /// as the layers above: built here so nothing on a felt path reads a
     /// manifest, and gated by the approval digest on every rebuild rather than
     /// once at import.
     actions: grain_core::action_router::ActionIndex,
-    /// Which declared actions are the same request from different extensions.
-    /// Derived from the index, cached because it is quadratic in the action
-    /// count and completely static between rebuilds.
-    action_classes: grain_core::action_router::EquivalenceMap,
 }
 
 /// An enabled extension's prompt layer, compiled for matching.
@@ -468,29 +469,6 @@ static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
 static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
 /// And for declared actions, so a user with none pays one relaxed load.
 static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
-
-/// Conformal thresholds for action routing.
-///
-/// Held **outside** [`Index`] and behind its own lock because it is the one
-/// piece that cannot be computed on the rebuild path: calibrating a large
-/// installed set takes seconds, and `refresh_index` runs when the user flips a
-/// switch. So the index is rebuilt synchronously, this stays at
-/// [`Calibration::conservative`], and a background task swaps in the real
-/// thresholds when they are ready.
-///
-/// Routing in the meantime is safe rather than absent — a conservative
-/// calibration only lets a near-exact match execute.
-static ACTION_CALIBRATION: OnceLock<RwLock<grain_core::action_decision::Calibration>> =
-    OnceLock::new();
-
-/// Generation counter so a calibration that finishes after a newer rebuild
-/// started is discarded instead of overwriting fresher numbers.
-static CALIBRATION_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-fn calibration_cell() -> &'static RwLock<grain_core::action_decision::Calibration> {
-    ACTION_CALIBRATION
-        .get_or_init(|| RwLock::new(grain_core::action_decision::Calibration::conservative()))
-}
 
 struct HostState {
     app: AppHandle,
@@ -578,7 +556,6 @@ pub fn refresh_index(app: &AppHandle) {
         prompt_layers.into_iter().map(|(l, _)| l).collect();
 
     let action_count = actions.len();
-    let action_classes = grain_core::action_router::equivalence_classes(&actions);
     let action_index = grain_core::action_router::ActionIndex::build(actions);
     HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
 
@@ -601,10 +578,8 @@ pub fn refresh_index(app: &AppHandle) {
         by_event,
         transforms,
         prompt_layers,
-        actions: action_index.clone(),
-        action_classes,
+        actions: action_index,
     };
-    recalibrate_actions(action_index);
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
     // free rather than having to remember a second call. `sync` defers onto
@@ -707,92 +682,6 @@ fn collect_actions(
     }
 }
 
-/// Kick off calibration for a freshly built index, off the rebuild path.
-///
-/// Fire-and-forget on purpose. Until it lands the router uses
-/// `Calibration::conservative`, which only executes a near-exact match — so the
-/// window between a switch being flipped and the thresholds arriving is a window
-/// where Grain asks more, never one where it guesses.
-fn recalibrate_actions(index: grain_core::action_router::ActionIndex) {
-    let generation = CALIBRATION_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
-    if index.is_empty() {
-        *calibration_cell().write().unwrap() =
-            grain_core::action_decision::Calibration::conservative();
-        return;
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let calibration = grain_core::action_decision::calibrate(
-            &index,
-            grain_core::action_decision::DEFAULT_ALPHA,
-        );
-        // A rebuild that started after this one owns the answer. Without the
-        // generation check, a slow calibration for an old extension set could
-        // land on top of fresh thresholds and quietly mis-tune routing.
-        if CALIBRATION_GENERATION.load(Ordering::SeqCst) != generation {
-            log::debug!("[GRAIN] ext-host: discarding stale action calibration (gen {generation})");
-            return;
-        }
-        log::debug!(
-            "[GRAIN] ext-host: action calibration ready — floor {:.3}, slack {:.3}, {} samples",
-            calibration.pooled_floor(),
-            calibration.slack(),
-            calibration.samples
-        );
-        *calibration_cell().write().unwrap() = calibration;
-    });
-}
-
-/// Route one spoken request against the installed actions.
-///
-/// The whole decision, minus execution: which action, whose, with what spans,
-/// and whether to run it, ask, escalate or say nothing can. With no
-/// action-bearing extension installed this is one relaxed atomic load.
-pub fn route_action(
-    spoken: &str,
-    preferences: &grain_core::action_decision::Preferences,
-) -> Option<grain_core::action_decision::Outcome> {
-    if !HAS_ACTIONS.load(Ordering::Relaxed) {
-        return None;
-    }
-    let host = HOST.get()?;
-    let index = host.index.read().unwrap();
-    let calibration = calibration_cell().read().unwrap();
-    Some(grain_core::action_decision::decide(
-        spoken,
-        &index.actions,
-        &index.action_classes,
-        &calibration,
-        preferences,
-    ))
-}
-
-/// Every preference domain the installed actions use.
-///
-/// Needed when an utterance names a provider outright ("…on Spotify"): that
-/// rung outranks every stored default, and pinning each domain to the named
-/// extension applies it *through* the ladder rather than around it, so there is
-/// only one place provider selection can be decided.
-pub fn action_domains() -> Vec<String> {
-    if !HAS_ACTIONS.load(Ordering::Relaxed) {
-        return Vec::new();
-    }
-    let Some(host) = HOST.get() else {
-        return Vec::new();
-    };
-    let mut domains: Vec<String> = host
-        .index
-        .read()
-        .unwrap()
-        .actions
-        .actions()
-        .iter()
-        .map(|a| a.domain.clone())
-        .collect();
-    domains.sort();
-    domains.dedup();
-    domains
-}
-
 /// Every literal word the installed actions declare, for ASR biasing.
 ///
 /// Deduplicated and unordered — the bias set has its own budget and ordering
@@ -821,36 +710,6 @@ pub fn action_vocabulary() -> Vec<String> {
         }
     }
     terms
-}
-
-/// The names an utterance may end with to name a provider ("…on Spotify"),
-/// paired with the extension id they resolve to.
-///
-/// Read from the registry rather than the index because an extension's display
-/// name is not something the router needs to carry.
-pub fn action_provider_names(app: &AppHandle) -> Vec<(String, String)> {
-    if !HAS_ACTIONS.load(Ordering::Relaxed) {
-        return Vec::new();
-    }
-    let Some(host) = HOST.get() else {
-        return Vec::new();
-    };
-    let owners: std::collections::HashSet<String> = host
-        .index
-        .read()
-        .unwrap()
-        .actions
-        .actions()
-        .iter()
-        .map(|a| a.extension_id.clone())
-        .collect();
-    owners
-        .into_iter()
-        .filter_map(|id| {
-            let name = load_manifest(app, &id)?.manifest.name;
-            (!name.trim().is_empty()).then_some((name, id))
-        })
-        .collect()
 }
 
 /// What installed extensions bring to this dictation: the layers that match the
@@ -1678,12 +1537,22 @@ pub async fn run_session_stage(
     parse_session_stage_output(result?)
 }
 
+// ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
+//
+// [GRAIN] V1-P0 retired the decision layer that used to call into this half, so
+// everything below is unreferenced until V1-P1 wires the recommendation and the
+// hand-off back onto it. It is `allow(dead_code)` rather than deleted because
+// the plan keeps it verbatim (§9 "Kept"): waking a cold worker, the deadline
+// pair, and the outcome parse are unchanged by the pivot — what changed is only
+// *who decides* which extension gets called.
+
 /// How long an action may take before the host gives up.
 ///
 /// Generous compared with the transform budget, and deliberately so: an action
 /// is expected to leave the machine (a Spotify call, a Slack post), where the
-/// network grant already allows 15 s. The felt path is not this — routing
+/// network grant already allows 15 s. The felt path is not this — the ranking
 /// decides in milliseconds and the pill says what is happening.
+#[allow(dead_code)]
 const ACTION_DEADLINE: Duration = Duration::from_secs(20);
 
 /// How long to wait for a cold worker to connect before giving up.
@@ -1692,15 +1561,17 @@ const ACTION_DEADLINE: Duration = Duration::from_secs(20);
 /// that, because the cost of being wrong is a failed action the user has to
 /// repeat, while the cost of waiting is a pill that says "working" for another
 /// moment.
+#[allow(dead_code)]
 const ACTION_WAKE_DEADLINE: Duration = Duration::from_secs(3);
 
 /// What performing an action produced.
 #[derive(Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ActionOutcome {
     /// It ran. The optional line is what the pill says instead of the title.
     Done(Option<String>),
     /// The extension resolved a span to several candidates and wants the user
-    /// to pick. Not a failure — the chooser's third use.
+    /// to pick. Not a failure.
     Ambiguous { param: String, options: Vec<String> },
     /// It could not run, with a reason worth showing.
     Failed(String),
@@ -1713,6 +1584,7 @@ pub enum ActionOutcome {
     Unknown,
 }
 
+#[allow(dead_code)]
 fn parse_action_outcome(value: Value) -> ActionOutcome {
     if let Some(options) = value.get("options").and_then(Value::as_array) {
         let param = value
@@ -1739,12 +1611,13 @@ fn parse_action_outcome(value: Value) -> ActionOutcome {
     )
 }
 
-/// Wake the extension that won a route, if it is cold.
+/// Wake the extension the request was handed to, if it is cold.
 ///
-/// Only the winner. Warming every action-bearing extension when the key goes
-/// down is the tempting alternative and it violates destroy-if-not-in-use at
-/// exactly the scale this feature is built for — twenty installed extensions
-/// would mean twenty worker spawns per press.
+/// Only that one. Warming every action-bearing extension when the key goes down
+/// is the tempting alternative and it violates destroy-if-not-in-use at exactly
+/// the scale this feature is built for — twenty installed extensions would mean
+/// twenty worker spawns per press.
+#[allow(dead_code)]
 pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
     if is_running(ext_id) {
         return;
@@ -1766,11 +1639,10 @@ pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
     );
 }
 
-/// Perform one routed action.
+/// Perform one action on the extension the request was handed to.
 ///
-/// The extension receives **only the extracted spans**, never the raw
-/// utterance. Losing the route means learning nothing; winning it means learning
-/// the parameters and no more.
+/// An extension that was not handed the request learns nothing at all.
+#[allow(dead_code)]
 pub async fn perform_action(
     app: &AppHandle,
     ext_id: &str,
@@ -2074,6 +1946,13 @@ pub fn reload_dev_extension(
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
             grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
         }),
+        // And for what the extension is ranked by. Same shortcut, same limit.
+        recommend_approved: loaded
+            .pack
+            .manifest
+            .kind
+            .is_searchable()
+            .then(|| grain_core::extensions::recommendation_fingerprint(&loaded.pack.manifest)),
         dev: prior.dev,
         // A dev hot-reload preserves the record's rung (a load-unpacked project
         // is `dev`); trust is never changed by a reload.

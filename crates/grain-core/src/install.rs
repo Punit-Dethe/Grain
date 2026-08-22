@@ -116,14 +116,29 @@ pub fn stage_artifact(
 ///   update). Empty for a fresh install.
 /// - `prior`: the currently-installed record, if any, so an update that adds
 ///   permissions can be held disabled until the user approves the diff.
+/// - `digests`: what the incoming pack declares, so an update that changed any
+///   of it can be held disabled until the user approves the new declaration.
+///
+/// A struct rather than three positional `Option<String>` arguments: they are
+/// mutually indistinguishable to the compiler, and transposing two of them
+/// would silently approve one declaration against another's fingerprint.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ApprovalDigests {
+    pub prompt_layers: Option<String>,
+    pub actions: Option<String>,
+    /// [GRAIN] The Extension Mode hand-off contract
+    /// (`extensions::recommendation_fingerprint`). Always `Some` for a
+    /// searchable extension, `None` otherwise.
+    pub recommend: Option<String>,
+}
+
 pub fn plan_record(
     entry: &IndexEntry,
     granted: Vec<String>,
     prior: Option<&ExtensionRecord>,
     slots: Vec<String>,
     variant_slots: Vec<String>,
-    prompt_layers: Option<String>,
-    actions: Option<String>,
+    digests: ApprovalDigests,
 ) -> ExtensionRecord {
     let prior_enabled = prior.map(|r| r.enabled).unwrap_or(false);
     // Update with NEW permissions installs but stays disabled until the diff is
@@ -136,14 +151,25 @@ pub fn plan_record(
     // when the user dictates. Approval that does not survive an update is
     // approval of a version nobody is running â€” CVE-2025-54136's exact lesson.
     let approved = prior.and_then(|r| r.prompt_layers_approved.clone());
-    let changes_prompt_layers = prompt_layers.is_some() && prompt_layers != approved;
+    let changes_prompt_layers =
+        digests.prompt_layers.is_some() && digests.prompt_layers != approved;
     // Changed actions are the same event again, and the sharpest of the three:
     // what an update can quietly alter here is not a permission or a sentence
     // but what pressing the key DOES â€” a `confirm` that became `safe`, a scope
     // that widened, a phrase that now captures a request it never used to.
     let approved_actions = prior.and_then(|r| r.actions_approved.clone());
-    let changes_actions = actions.is_some() && actions != approved_actions;
-    let enabled = prior_enabled && !adds_permissions && !changes_prompt_layers && !changes_actions;
+    let changes_actions = digests.actions.is_some() && digests.actions != approved_actions;
+    // [GRAIN] And once more for the Extensions V1 hand-off contract, which is
+    // the widest of the three: what a change here alters is not what the
+    // extension can DO but what it gets to HEAR, since being recommended means
+    // receiving the whole transcript verbatim.
+    let approved_recommend = prior.and_then(|r| r.recommend_approved.clone());
+    let changes_recommend = digests.recommend.is_some() && digests.recommend != approved_recommend;
+    let enabled = prior_enabled
+        && !adds_permissions
+        && !changes_prompt_layers
+        && !changes_actions
+        && !changes_recommend;
 
     ExtensionRecord {
         id: entry.id.clone(),
@@ -162,6 +188,7 @@ pub fn plan_record(
         // the new wording.
         prompt_layers_approved: approved,
         actions_approved: approved_actions,
+        recommend_approved: approved_recommend,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
         // this exact (id, version, sha256): a verified 1.0 confers nothing on
@@ -185,92 +212,75 @@ pub fn install_from_verified_entry(
         .as_ref()
         .map(|r| r.granted.clone())
         .unwrap_or_default();
-    let (slots, variant_slots) = manifest_slots(bytes);
-    let prompt_layers = manifest_prompt_layers(bytes);
-    let actions = manifest_actions(bytes);
+    let manifest = manifest_of(bytes);
+    let (slots, variant_slots) = manifest
+        .as_ref()
+        .map(|m| (m.slots.clone(), m.variant_slots.clone()))
+        .unwrap_or_default();
+    let digests = manifest.as_ref().map(declared_digests).unwrap_or_default();
     let record = plan_record(
         entry,
         granted,
         prior.as_ref(),
         slots,
         variant_slots,
-        prompt_layers,
-        actions,
+        digests,
     );
     reg.install(record)
         .map_err(|e| InstallError::Io(e.to_string()))?;
     Ok(dir)
 }
 
-/// Read the `(slots, variant_slots)` a pack declares, from its bytes. A JSON
-/// pack embeds the manifest; a ZIP pack carries `manifest.json`. Best-effort:
-/// an unreadable manifest yields no claims rather than failing the install
-/// (the artifact already passed hash + extraction).
-fn manifest_slots(bytes: &[u8]) -> (Vec<String>, Vec<String>) {
+/// Read the manifest a pack declares, from its bytes. A JSON pack embeds the
+/// manifest; a ZIP pack carries `manifest.json`.
+///
+/// Best-effort: an unreadable manifest yields `None` rather than failing the
+/// install, because the artifact already passed hash + extraction, so a pack
+/// whose manifest will not parse is one that fails later and louder. Every
+/// caller degrades in the safe direction — no slots claimed, and no approval
+/// digest, which means a declaration that cannot be read is never treated as
+/// approved.
+///
+/// One parse for all four derived values. Three separate readers is three
+/// chances for them to disagree about what the same bytes said.
+fn manifest_of(bytes: &[u8]) -> Option<grain_sdk::ExtensionManifest> {
     use grain_sdk::{ExtensionManifest, GrainPack};
     match pack::detect_shape(bytes) {
         PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
-            .map(|p| (p.manifest.slots, p.manifest.variant_slots))
-            .unwrap_or_default(),
+            .ok()
+            .map(|p| p.manifest),
         PackShape::Zip => {
-            // The manifest.json entry â€” read it out of the archive in-memory.
-            let mut archive = match zip_manifest_json(bytes) {
-                Some(m) => m,
-                None => return (Vec::new(), Vec::new()),
-            };
+            let mut archive = zip_manifest_json(bytes)?;
             let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
             archive.clear();
-            m.map(|m| (m.slots, m.variant_slots)).unwrap_or_default()
+            m.ok()
         }
-        PackShape::Unknown => (Vec::new(), Vec::new()),
+        PackShape::Unknown => None,
     }
 }
 
-/// The fingerprint of the prompt layers a pack declares, or `None` when it
-/// declares none.
+/// The approval digests a manifest's declarations imply.
 ///
-/// Read the same best-effort way as the slots above, and for the same reason:
-/// the artifact already passed hash and extraction, so an unreadable manifest is
-/// a pack that will fail later and louder. Note that unreadable yields `None`,
-/// which reads as "declares no layers" â€” and a record whose approved value does
-/// not match a declaration contributes nothing, so the degraded direction is the
-/// safe one.
-fn manifest_prompt_layers(bytes: &[u8]) -> Option<String> {
-    use grain_sdk::{ExtensionManifest, GrainPack};
-    let layers = match pack::detect_shape(bytes) {
-        PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
-            .ok()
-            .map(|p| p.manifest.contributes.prompt_layers),
-        PackShape::Zip => {
-            let mut archive = zip_manifest_json(bytes)?;
-            let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
-            archive.clear();
-            m.ok().map(|m| m.contributes.prompt_layers)
-        }
-        PackShape::Unknown => None,
-    }?;
-    (!layers.is_empty()).then(|| crate::extensions::prompt_layers_fingerprint(&layers))
-}
-
-/// The fingerprint of the actions a pack declares, or `None` when it declares
-/// none. Read exactly like [`manifest_prompt_layers`], and degrades the same
-/// safe direction: unreadable reads as "declares no actions", and a record whose
-/// approved value does not match a declaration contributes nothing.
-fn manifest_actions(bytes: &[u8]) -> Option<String> {
-    use grain_sdk::{ExtensionManifest, GrainPack};
-    let actions = match pack::detect_shape(bytes) {
-        PackShape::Json => serde_json::from_slice::<GrainPack>(bytes)
-            .ok()
-            .map(|p| p.manifest.contributes.actions),
-        PackShape::Zip => {
-            let mut archive = zip_manifest_json(bytes)?;
-            let m: Result<ExtensionManifest, _> = serde_json::from_slice(&archive);
-            archive.clear();
-            m.ok().map(|m| m.contributes.actions)
-        }
-        PackShape::Unknown => None,
-    }?;
-    (!actions.is_empty()).then(|| crate::extensions::actions_fingerprint(&actions))
+/// `None` per digest means "declares nothing of this kind", which is what makes
+/// the check one-sided in the right direction: a record whose approved value
+/// does not match a live declaration contributes nothing, so a missing digest
+/// can only ever withhold, never grant.
+fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
+    use crate::extensions as ext;
+    ApprovalDigests {
+        prompt_layers: (!m.contributes.prompt_layers.is_empty())
+            .then(|| ext::prompt_layers_fingerprint(&m.contributes.prompt_layers)),
+        actions: (!m.contributes.actions.is_empty())
+            .then(|| ext::actions_fingerprint(&m.contributes.actions)),
+        // [GRAIN] Unlike the other two this is keyed off `kind`, not off a list
+        // being non-empty: what needs approving is being ELIGIBLE to receive the
+        // user's words at all, and validation already guarantees a searchable
+        // extension carries a `recommend` block.
+        recommend: m
+            .kind
+            .is_searchable()
+            .then(|| ext::recommendation_fingerprint(m)),
+    }
 }
 
 /// Extract just the `manifest.json` bytes from a ZIP pack, in memory.
@@ -341,6 +351,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
+            recommend_approved: None,
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -356,7 +367,7 @@ mod tests {
         // Property 2: trust flows from a verified entry through plan_record.
         let bytes = b"{\"id\":\"com.example.ok\"}";
         let e = entry("com.example.ok", "1.0.0", Trust::Verified, &[], bytes);
-        let record = plan_record(&e, vec![], None, vec![], vec![], None, None);
+        let record = plan_record(&e, vec![], None, vec![], vec![], ApprovalDigests::default());
         assert_eq!(record.trust, Trust::Verified);
         assert_eq!(record.installed_version, "1.0.0");
     }
@@ -368,12 +379,26 @@ mod tests {
         // record is untrusted even though the prior 1.0 was verified.
         let prior_bytes = b"{\"v\":\"1.0\"}";
         let prior_entry = entry("com.example.x", "1.0.0", Trust::Verified, &[], prior_bytes);
-        let prior = plan_record(&prior_entry, vec![], None, vec![], vec![], None, None);
+        let prior = plan_record(
+            &prior_entry,
+            vec![],
+            None,
+            vec![],
+            vec![],
+            ApprovalDigests::default(),
+        );
         assert_eq!(prior.trust, Trust::Verified);
 
         let new_bytes = b"{\"v\":\"1.1\"}";
         let new_entry = entry("com.example.x", "1.1.0", Trust::Dev, &[], new_bytes);
-        let updated = plan_record(&new_entry, vec![], Some(&prior), vec![], vec![], None, None);
+        let updated = plan_record(
+            &new_entry,
+            vec![],
+            Some(&prior),
+            vec![],
+            vec![],
+            ApprovalDigests::default(),
+        );
         assert_eq!(
             updated.trust,
             Trust::Dev,
@@ -454,6 +479,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: Some("fingerprint-of-1.0".into()),
             actions_approved: None,
+            recommend_approved: None,
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -467,8 +493,10 @@ mod tests {
             Some(&approved),
             vec![],
             vec![],
-            Some("fingerprint-of-1.0".into()),
-            None,
+            ApprovalDigests {
+                prompt_layers: Some("fingerprint-of-1.0".into()),
+                ..Default::default()
+            },
         );
         assert!(
             unchanged.enabled,
@@ -481,8 +509,10 @@ mod tests {
             Some(&approved),
             vec![],
             vec![],
-            Some("fingerprint-of-1.1".into()),
-            None,
+            ApprovalDigests {
+                prompt_layers: Some("fingerprint-of-1.1".into()),
+                ..Default::default()
+            },
         );
         assert!(
             !changed.enabled,
@@ -508,6 +538,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: Some("actions-of-1.0".into()),
+            recommend_approved: None,
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -521,8 +552,10 @@ mod tests {
             Some(&approved),
             vec![],
             vec![],
-            None,
-            Some("actions-of-1.0".into()),
+            ApprovalDigests {
+                actions: Some("actions-of-1.0".into()),
+                ..Default::default()
+            },
         );
         assert!(
             unchanged.enabled,
@@ -535,8 +568,10 @@ mod tests {
             Some(&approved),
             vec![],
             vec![],
-            None,
-            Some("actions-of-1.1".into()),
+            ApprovalDigests {
+                actions: Some("actions-of-1.1".into()),
+                ..Default::default()
+            },
         );
         assert!(
             !changed.enabled,
@@ -549,11 +584,71 @@ mod tests {
         );
     }
 
-    /// The two approvals are independent on purpose: re-asking about what an
-    /// extension can DO because it reworded a prompt layer is how a user learns
-    /// to click through both.
+    /// The rug pull once more, on the declaration that decides **who hears the
+    /// user's words**. A searchable extension is ranked by text it wrote itself;
+    /// rewriting that text after approval is how an installed extension quietly
+    /// starts receiving requests it was never reviewed to receive.
     #[test]
-    fn the_two_approvals_do_not_drag_each_other() {
+    fn update_with_changed_recommendation_holds_disabled() {
+        let approved = ExtensionRecord {
+            id: "com.example.x".into(),
+            enabled: true,
+            toggle_seq: 1,
+            installed_version: "1.0.0".into(),
+            granted: vec![],
+            prompt_layers_approved: None,
+            actions_approved: None,
+            recommend_approved: Some("recommend-of-1.0".into()),
+            slots: vec![],
+            variant_slots: vec![],
+            dev: None,
+            trust: Trust::Verified,
+        };
+        let e = entry("com.example.x", "1.1.0", Trust::Verified, &[], b"{}");
+
+        let unchanged = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            ApprovalDigests {
+                recommend: Some("recommend-of-1.0".into()),
+                ..Default::default()
+            },
+        );
+        assert!(
+            unchanged.enabled,
+            "an update that leaves what it is ranked by alone stays enabled"
+        );
+
+        let changed = plan_record(
+            &e,
+            vec![],
+            Some(&approved),
+            vec![],
+            vec![],
+            ApprovalDigests {
+                recommend: Some("recommend-of-1.1".into()),
+                ..Default::default()
+            },
+        );
+        assert!(
+            !changed.enabled,
+            "a rewritten recommendation must hold the update until the user reads it"
+        );
+        assert_eq!(
+            changed.recommend_approved.as_deref(),
+            Some("recommend-of-1.0"),
+            "installing is not approving — the prior approval is carried, not overwritten"
+        );
+    }
+
+    /// The three approvals are independent on purpose: re-asking about what an
+    /// extension can DO because it reworded a prompt layer is how a user learns
+    /// to click through all of them.
+    #[test]
+    fn the_three_approvals_do_not_drag_each_other() {
         let approved = ExtensionRecord {
             id: "com.example.x".into(),
             enabled: true,
@@ -562,6 +657,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: Some("layers-of-1.0".into()),
             actions_approved: Some("actions-of-1.0".into()),
+            recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
             variant_slots: vec![],
             dev: None,
@@ -575,14 +671,22 @@ mod tests {
             Some(&approved),
             vec![],
             vec![],
-            Some("layers-of-1.1".into()),
-            Some("actions-of-1.0".into()),
+            ApprovalDigests {
+                prompt_layers: Some("layers-of-1.1".into()),
+                actions: Some("actions-of-1.0".into()),
+                recommend: Some("recommend-of-1.0".into()),
+            },
         );
         assert!(!reworded.enabled);
         assert_eq!(
             reworded.actions_approved.as_deref(),
             Some("actions-of-1.0"),
             "the untouched approval is preserved, not reset by its neighbour"
+        );
+        assert_eq!(
+            reworded.recommend_approved.as_deref(),
+            Some("recommend-of-1.0"),
+            "nor by its other neighbour"
         );
     }
 

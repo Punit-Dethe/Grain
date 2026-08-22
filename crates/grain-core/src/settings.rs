@@ -787,18 +787,6 @@ pub struct AppSettings {
     /// When today differs, quotas roll back to 0 (checked lazily at routing time).
     #[serde(default)]
     pub stt_quota_reset_date: String,
-    /// [GRAIN] Which extension performs each kind of spoken action — domain
-    /// (`media`, `messaging`, …) to extension id
-    /// (`docs/Action Routing/PLAN.md` §6, rung 2).
-    ///
-    /// The whole reason a `domain` exists. Without an entry here, installing a
-    /// second music extension makes *every* media command ambiguous, so the
-    /// user is asked every time; with one, the request just runs. Empty by
-    /// default and only ever written by an explicit choice — a routing default
-    /// the user cannot audit because they were never told about it is a dark
-    /// pattern, not a convenience.
-    #[serde(default)]
-    pub action_default_provider: HashMap<String, String>,
     #[serde(default = "default_post_process_models")]
     pub post_process_models: HashMap<String, String>,
     #[serde(default = "default_post_process_prompts")]
@@ -1904,10 +1892,6 @@ pub fn get_default_settings() -> AppSettings {
         stt_smart_rotation: false,
         stt_api_keys: default_stt_api_keys(),
         stt_quota_reset_date: String::new(),
-        // Empty on purpose: a provider default is only ever written by an
-        // explicit choice. Shipping one would decide for the user which
-        // extension owns their music before they have installed two.
-        action_default_provider: HashMap::new(),
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: Some(DEFAULT_POST_PROCESS_PROMPT_ID.to_string()),

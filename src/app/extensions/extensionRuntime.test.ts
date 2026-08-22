@@ -6,7 +6,6 @@ import type {
   StoreEntry,
 } from "@/bindings";
 import {
-  actionsByDomain,
   extensionDestination,
   filterExtensions,
   matchToolRecommendations,
@@ -230,50 +229,10 @@ describe("extension collection helpers", () => {
     // because an extension can declare one while asking for no capability the
     // sheet would otherwise mention.
     const parsed = parseApprovalRequest(
-      '{"needsPermissions":[],"needsActions":[{"id":"next","title":"Skip to the next track","domain":"media","confirms":false,"everywhere":true,"app":[],"website":[]}]}',
+      '{"needsPermissions":[],"needsActions":[{"id":"next","title":"Skip to the next track","confirms":false,"everywhere":true,"app":[],"website":[]}]}',
     );
     expect(parsed?.actions).toHaveLength(1);
     expect(parsed?.actions[0]?.title).toBe("Skip to the next track");
-  });
-
-  it("groups actions by domain, and a group asks first if any member does", () => {
-    // The sheet reads "Messaging — send a message, set away · asks you first",
-    // so one destructive action has to mark the whole group. Losing that would
-    // show a read-back as optional when it is not.
-    const grouped = actionsByDomain([
-      {
-        id: "next",
-        title: "Skip",
-        domain: "media",
-        confirms: false,
-        everywhere: true,
-        app: [],
-        website: [],
-      },
-      {
-        id: "away",
-        title: "Set away",
-        domain: "messaging",
-        confirms: false,
-        everywhere: true,
-        app: [],
-        website: [],
-      },
-      {
-        id: "dm",
-        title: "Send a message",
-        domain: "messaging",
-        confirms: true,
-        everywhere: true,
-        app: [],
-        website: [],
-      },
-    ]);
-    expect(grouped).toHaveLength(2);
-    const messaging = grouped.find((g) => g.domain === "messaging");
-    expect(messaging?.titles).toEqual(["Set away", "Send a message"]);
-    expect(messaging?.confirms).toBe(true);
-    expect(grouped.find((g) => g.domain === "media")?.confirms).toBe(false);
   });
 
   it("describes when a contributed layer applies", () => {
