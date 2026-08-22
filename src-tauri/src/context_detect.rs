@@ -1621,15 +1621,16 @@ pub fn compose_prompt(
     // The user's edited instruction when there is one, otherwise the shipped
     // default. Profile selection happens here; prompt composition deliberately
     // does not distinguish built-in, edited and custom origins.
-    let rule = ctx
-        .and_then(|c| instruction_for(c, settings))
-        // The `prompt.context` slot. Its holder has taken responsibility for
-        // saying how to write for this surface, so Grain says nothing — but
-        // only about ITS OWN guess. A custom profile is the user naming this
-        // app and writing a rule for it, which outranks any extension and is
-        // exactly what the ladder exists to protect.
-        .filter(|(_, user_authored)| *user_authored || contributed.context_owner.is_none());
-    let has_ctx = rule.is_some();
+    let extension_context = ctx.and_then(|_| contributed.context.as_ref());
+    // A valid, approved matching context plug replaces the whole provider for
+    // this dictation. If it has no matching rule, Grain safely falls back to
+    // its own selected profile rather than allowing a broken extension to erase
+    // context by merely occupying a slot.
+    let rule = extension_context
+        .is_none()
+        .then(|| ctx.and_then(|c| instruction_for(c, settings)))
+        .flatten();
+    let has_ctx = extension_context.is_some() || rule.is_some();
 
     if spoken.is_none() && !has_ctx && contributed.layers.is_empty() {
         // The quiet case that most looks like a bug: the feature is on,
@@ -1673,7 +1674,14 @@ pub fn compose_prompt(
             }
             stack.push_surface_facts(facts);
         }
-        if let Some((line, _user_selected_target)) = rule {
+        if let Some(layer) = extension_context {
+            if !stack.push_extension_context(&layer.ext_id, &layer.text) {
+                log::warn!(
+                    "[GRAIN] prompt: refused context replacement from {}",
+                    layer.ext_id
+                );
+            }
+        } else if let Some((line, _user_selected_target)) = rule {
             stack.push_rule(line);
         }
     }
@@ -1689,12 +1697,26 @@ pub fn compose_prompt(
     // never dependent on which extension happened to load first.
     let mut spent = 0usize;
     let mut used = 0usize;
+    let mut used_by_extension: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
     for layer in &contributed.layers {
         if used >= prompt_stack::MAX_CONTRIBUTED_LAYERS {
             log::warn!(
                 "[GRAIN] prompt: dropped layer from {} — at the {} layer ceiling",
                 layer.ext_id,
                 prompt_stack::MAX_CONTRIBUTED_LAYERS
+            );
+            continue;
+        }
+        let extension_used = used_by_extension
+            .get(layer.ext_id.as_str())
+            .copied()
+            .unwrap_or_default();
+        if extension_used >= prompt_stack::MAX_CONTRIBUTED_LAYERS_PER_EXTENSION {
+            log::warn!(
+                "[GRAIN] prompt: dropped layer from {} — at the per-extension {} layer ceiling",
+                layer.ext_id,
+                prompt_stack::MAX_CONTRIBUTED_LAYERS_PER_EXTENSION
             );
             continue;
         }
@@ -1709,6 +1731,7 @@ pub fn compose_prompt(
         if stack.push_extension_layer(&layer.ext_id, &layer.text) {
             spent += layer.text.len();
             used += 1;
+            used_by_extension.insert(layer.ext_id.as_str(), extension_used + 1);
         } else {
             log::warn!(
                 "[GRAIN] prompt: refused layer from {} — text failed the contribution screen",
@@ -1717,7 +1740,17 @@ pub fn compose_prompt(
         }
     }
 
-    stack.push_base(base);
+    if let Some(layer) = &contributed.main {
+        if !stack.push_extension_main(&layer.ext_id, &layer.text) {
+            log::warn!(
+                "[GRAIN] prompt: refused main replacement from {}; using Grain's main prompt",
+                layer.ext_id
+            );
+            stack.push_base(base);
+        }
+    } else {
+        stack.push_base(base);
+    }
     // Host-owned response envelope: always last and independent of every
     // replaceable/user-editable prompt source.
     stack.push_contract();
@@ -3154,7 +3187,7 @@ mod tests {
             None,
             &Contributions {
                 layers,
-                context_owner: None,
+                ..Default::default()
             },
         )
     }
@@ -3772,6 +3805,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn one_extension_cannot_consume_the_global_additive_budget() {
+        let layers = (0..4)
+            .map(|index| ContributedLayer {
+                ext_id: "com.acme.greedy".into(),
+                text: format!("Narrow rule {index}."),
+            })
+            .chain(std::iter::once(ContributedLayer {
+                ext_id: "com.acme.other".into(),
+                text: "Use British spelling.".into(),
+            }))
+            .collect();
+        let out = compose_with("BASE", &AppSettings::default(), None, layers);
+        assert_eq!(
+            out.matches("(com.acme.greedy)").count(),
+            prompt_stack::MAX_CONTRIBUTED_LAYERS_PER_EXTENSION
+        );
+        assert!(out.contains("(com.acme.other)"));
+    }
+
     /// Door 2. The slot governs Grain's OPINION about the surface and nothing
     /// else — claiming it is taking responsibility for that one line.
     #[test]
@@ -3782,11 +3835,11 @@ mod tests {
         c.field = FieldKind::SingleLine;
 
         let held = Contributions {
-            layers: vec![ContributedLayer {
+            context: Some(ContributedLayer {
                 ext_id: "com.acme.ctx".into(),
                 text: "Match the file's existing style.".into(),
-            }],
-            context_owner: Some("com.acme.ctx".into()),
+            }),
+            ..Default::default()
         };
         let out = compose_prompt("BASE", &s, Some(&c), None, &held);
 
@@ -3794,13 +3847,14 @@ mod tests {
             !out.contains("exactly as spoken"),
             "the claimant speaks for the surface now"
         );
-        assert!(out.contains("(com.acme.ctx) Match the file's existing style."));
+        assert!(out.contains(
+            "Profile instruction from extension (com.acme.ctx): Match the file's existing style."
+        ));
         assert!(out.contains("Return only the final output"));
     }
 
     #[test]
-    fn the_context_slot_never_touches_the_users_own_rule() {
-        // The invariant, at the one place an extension gets closest to it.
+    fn the_context_slot_replaces_the_selected_context_provider() {
         let mut s = AppSettings::default();
         s.context_awareness_enabled = true;
         s.context_custom_profiles.push(custom(
@@ -3811,8 +3865,11 @@ mod tests {
         ));
 
         let held = Contributions {
-            layers: vec![],
-            context_owner: Some("com.acme.ctx".into()),
+            context: Some(ContributedLayer {
+                ext_id: "com.acme.ctx".into(),
+                text: "Use the project's design vocabulary.".into(),
+            }),
+            ..Default::default()
         };
         let out = compose_prompt(
             "BASE",
@@ -3821,23 +3878,17 @@ mod tests {
             None,
             &held,
         );
-        assert!(out.contains("Profile instruction"));
-        assert!(out.contains("Bullet points only."));
+        assert!(out.contains("Use the project's design vocabulary."));
+        assert!(!out.contains("Bullet points only."));
     }
 
     #[test]
-    fn a_claimant_that_says_nothing_leaves_the_surface_silent() {
-        // Taking the slot and contributing no matching layer is legal, and the
-        // result is no active profile at all rather than a fallback to Grain's —
-        // a fallback would mean the takeover was never real.
+    fn an_invalid_or_nonmatching_context_replacement_falls_back_to_grain() {
         let s = AppSettings {
             context_awareness_enabled: true,
             ..Default::default()
         };
-        let held = Contributions {
-            layers: vec![],
-            context_owner: Some("com.acme.ctx".into()),
-        };
+        let held = Contributions::default();
         let out = compose_prompt(
             "BASE",
             &s,
@@ -3845,8 +3896,30 @@ mod tests {
             None,
             &held,
         );
-        assert!(!out.contains("[Active context profile]"));
-        assert!(!out.contains("[Extension rules]"));
+        assert!(out.contains("[Active context profile]"));
+        assert!(out.contains("A technical surface"));
+    }
+
+    #[test]
+    fn the_main_slot_replaces_only_the_main_prompt() {
+        let held = Contributions {
+            main: Some(ContributedLayer {
+                ext_id: "com.acme.main".into(),
+                text: "Preserve the speaker's wording.".into(),
+            }),
+            ..Default::default()
+        };
+        let out = compose_prompt(
+            "GRAIN BASE",
+            &AppSettings::default(),
+            None,
+            Some("make it a haiku"),
+            &held,
+        );
+        assert!(!out.contains("GRAIN BASE"));
+        assert!(out.contains("[Main dictation prompt from extension: com.acme.main]"));
+        assert!(out.contains("make it a haiku"));
+        assert!(out.ends_with("no labels, notes, explanations, or surrounding text."));
     }
 
     #[test]

@@ -908,6 +908,8 @@ impl RecommendInfo {
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
 pub struct PromptLayerInfo {
     pub id: String,
+    /// `additive` | `main` | `context`.
+    pub target: String,
     /// The instruction, verbatim. Never summarised anywhere it is displayed.
     pub text: String,
     /// No conditions at all — it applies to every dictation.
@@ -921,6 +923,12 @@ impl PromptLayerInfo {
     fn from_decl(decl: &grain_sdk::manifest::PromptLayerDecl) -> Self {
         Self {
             id: decl.id.clone(),
+            target: match decl.target {
+                grain_sdk::manifest::PromptTarget::Additive => "additive",
+                grain_sdk::manifest::PromptTarget::Main => "main",
+                grain_sdk::manifest::PromptTarget::Context => "context",
+            }
+            .to_string(),
             text: decl.text.clone(),
             everywhere: decl.when.is_unconditional(),
             app: decl.when.app.clone(),
@@ -1316,7 +1324,18 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         .unwrap_or_default();
                     approved != ext::actions_fingerprint(declared_actions)
                 };
-                if !missing.is_empty() || unapproved || actions_unapproved {
+                let recommendation_unapproved = pack.manifest.kind.is_searchable() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|record| record.recommend_approved)
+                        .unwrap_or_default();
+                    approved != ext::recommendation_fingerprint(&pack.manifest)
+                };
+                if !missing.is_empty()
+                    || unapproved
+                    || actions_unapproved
+                    || recommendation_unapproved
+                {
                     let layers: Vec<PromptLayerInfo> = if unapproved {
                         declared.iter().map(PromptLayerInfo::from_decl).collect()
                     } else {
@@ -1333,6 +1352,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         "needsPermissions": missing,
                         "needsPromptLayers": layers,
                         "needsActions": actions,
+                        "needsRecommendation": recommendation_unapproved,
                     })
                     .to_string());
                 }
@@ -1380,6 +1400,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
 
 /// Where imported `.grainpack` files live: `<data>/extensions/<id>.grainpack.json`.
 fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
+    grain_sdk::validate_extension_id(id)?;
     let ctx = app
         .try_state::<std::sync::Arc<grain_core::AppContext>>()
         .ok_or("app context unavailable")?;

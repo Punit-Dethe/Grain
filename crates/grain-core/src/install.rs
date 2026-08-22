@@ -69,6 +69,8 @@ pub fn stage_artifact(
     bytes: &[u8],
     limits: ExtractLimits,
 ) -> Result<PathBuf, InstallError> {
+    grain_sdk::validate_extension_id(&entry.id).map_err(InstallError::Io)?;
+    grain_sdk::validate_extension_version(&entry.version).map_err(InstallError::Io)?;
     trust::verify_artifact(bytes, &entry.sha256).map_err(InstallError::Hash)?;
 
     let staging = staging_dir(root, &entry.id, &entry.version);

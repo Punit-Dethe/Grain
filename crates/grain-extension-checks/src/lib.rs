@@ -496,7 +496,7 @@ fn check_activations(project: &ExtensionProjectManifest, report: &mut DoctorRepo
             "onTransform" => {
                 require_activation_capability(project, activation, "transform:transcript", report)
             }
-            "onStartup" => {}
+            "onStartup" => require_activation_capability(project, activation, "resident", report),
             value if value.starts_with("onEvent:") => {
                 let event = &value["onEvent:".len()..];
                 if !DAEMON_EVENT_VARIANTS.contains(&event) {
@@ -909,7 +909,8 @@ mod tests {
             directory.path().join("manifest.json"),
             r#"{
               "id":"com.example.native","name":"Native","version":"0.1.0",
-              "grainApi":"^1.0","tier":"native","activation":["onStartup"],
+              "grainApi":"^1.0","tier":"native","permissions":["resident"],
+              "activation":["onStartup"],
               "companion":{"windows":"bin/native.exe","macos":"bin/native","linux":"bin/native"}
             }"#,
         )

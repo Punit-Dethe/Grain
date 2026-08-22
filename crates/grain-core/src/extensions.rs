@@ -179,6 +179,14 @@ pub fn prompt_layers_fingerprint(layers: &[grain_sdk::manifest::PromptLayerDecl]
     hasher.update((layers.len() as u64).to_le_bytes());
     for layer in layers {
         field(&mut hasher, layer.id.trim());
+        field(
+            &mut hasher,
+            match layer.target {
+                grain_sdk::manifest::PromptTarget::Additive => "additive",
+                grain_sdk::manifest::PromptTarget::Main => "main",
+                grain_sdk::manifest::PromptTarget::Context => "context",
+            },
+        );
         field(&mut hasher, layer.text.trim());
         // Each list is framed by its own length and closed with a separator, so
         // moving a value from `app` to `website` — which changes which surfaces
@@ -425,6 +433,7 @@ mod prompt_layer_fingerprint_tests {
     fn layer(id: &str, text: &str, when: LayerWhen) -> PromptLayerDecl {
         PromptLayerDecl {
             id: id.into(),
+            target: Default::default(),
             when,
             text: text.into(),
         }
@@ -530,6 +539,17 @@ mod prompt_layer_fingerprint_tests {
         assert_ne!(
             super::prompt_layers_fingerprint(&as_app),
             super::prompt_layers_fingerprint(&as_site)
+        );
+    }
+
+    #[test]
+    fn turning_an_additive_rule_into_a_replacement_requires_approval() {
+        let additive = vec![layer("a", "Write tersely.", LayerWhen::default())];
+        let mut replacement = additive.clone();
+        replacement[0].target = grain_sdk::manifest::PromptTarget::Main;
+        assert_ne!(
+            super::prompt_layers_fingerprint(&additive),
+            super::prompt_layers_fingerprint(&replacement)
         );
     }
 }

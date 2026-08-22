@@ -298,8 +298,9 @@ function useInstalledExtensions(): InstalledController {
               elsewhere.
             */}
             <p>
-              It adds these instructions to what Grain sends the AI when you
-              dictate. They rank below your own prompt.
+              It supplies these reviewed prompt instructions when you dictate.
+              Replacement entries take only the named prompt position; Prompt
+              Record remains private to Grain and always has higher priority.
             </p>
             <ul className="extension-prompt-layers">
               {pending.promptLayers.map((layer) => (

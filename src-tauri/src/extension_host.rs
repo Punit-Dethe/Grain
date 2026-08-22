@@ -450,6 +450,7 @@ struct Index {
 struct CompiledPromptLayer {
     ext_id: String,
     layer_id: String,
+    target: grain_sdk::manifest::PromptTarget,
     when: grain_sdk::manifest::LayerWhen,
     text: String,
 }
@@ -463,10 +464,10 @@ static HAS_TRANSFORMS: AtomicBool = AtomicBool::new(false);
 /// Same guard for prompt layers: with none installed, a dictation pays one
 /// relaxed atomic load and never takes the index lock.
 static HAS_PROMPT_LAYERS: AtomicBool = AtomicBool::new(false);
-/// And for the `prompt.context` slot, which changes the prompt by SUBTRACTION —
-/// an extension can hold it while contributing no layer at all, so it needs its
-/// own guard or that case would read as "nothing installed".
+/// And for the `prompt.context` slot. A missing/invalid matching replacement
+/// falls back to Grain, but slot state still belongs in the prebuilt index path.
 static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
+static HAS_MAIN_SLOT: AtomicBool = AtomicBool::new(false);
 /// And for declared actions, so a user with none pays one relaxed load.
 static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
 
@@ -542,8 +543,17 @@ pub fn refresh_index(app: &AppHandle) {
             for variant in granted_variants {
                 by_event.entry(variant).or_default().push(rec.id.clone());
             }
-            if declares_startup(&pack.manifest.activation) && !is_running(&rec.id) {
+            if has_resident_grant(&pack.manifest.activation, &rec.granted)
+                && !is_running(&rec.id)
+            {
                 startup_workers.push((rec.id.clone(), pack, rec.granted.clone()));
+            } else if declares_startup(&pack.manifest.activation)
+                && !has_grant(&rec.granted, "resident")
+            {
+                log::warn!(
+                    "[ext:{}] deny onStartup missing capability resident",
+                    rec.id
+                );
             }
         }
     }
@@ -565,6 +575,12 @@ pub fn refresh_index(app: &AppHandle) {
     HAS_CONTEXT_SLOT.store(
         app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
             .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
+            .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
+        Ordering::Relaxed,
+    );
+    HAS_MAIN_SLOT.store(
+        app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+            .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_MAIN_SLOT))
             .is_some_and(|occupant| occupant != grain_core::extensions::CORE_DEFAULT),
         Ordering::Relaxed,
     );
@@ -643,6 +659,7 @@ fn collect_prompt_layers(
             CompiledPromptLayer {
                 ext_id: rec.id.clone(),
                 layer_id: layer.id.clone(),
+                target: layer.target,
                 when: layer.when.clone(),
                 text: text.to_string(),
             },
@@ -734,8 +751,8 @@ pub fn action_vocabulary() -> Vec<String> {
     terms
 }
 
-/// What installed extensions bring to this dictation: the layers that match the
-/// surface, in toggle order, and whether one of them holds `prompt.context`.
+/// What installed extensions bring to this dictation: additive layers in toggle
+/// order plus the approved replacements supplied by current slot occupants.
 ///
 /// Called once per finalized transcript, off the paste path. With nothing
 /// installed — the overwhelmingly common case — this is one relaxed atomic load
@@ -746,12 +763,12 @@ pub fn prompt_contributions(
 ) -> crate::context_detect::prompt_stack::Contributions {
     use crate::context_detect::prompt_stack::{ContributedLayer, Contributions};
 
-    // The slot is checked behind the same guard: an extension cannot hold
-    // `prompt.context` without being enabled, and an enabled extension with no
-    // prompt layers has taken over a line it then never writes — legal, but it
-    // still has to be an extension, and every path that claims a slot also
-    // rebuilds this index.
-    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed) && !HAS_CONTEXT_SLOT.load(Ordering::Relaxed) {
+    // Slot changes rebuild this index, and invalid/missing replacement text
+    // falls back to Grain rather than erasing a host prompt position.
+    if !HAS_PROMPT_LAYERS.load(Ordering::Relaxed)
+        && !HAS_CONTEXT_SLOT.load(Ordering::Relaxed)
+        && !HAS_MAIN_SLOT.load(Ordering::Relaxed)
+    {
         return Contributions::default();
     }
     let Some(host) = HOST.get() else {
@@ -761,13 +778,15 @@ pub fn prompt_contributions(
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_CONTEXT_SLOT))
         .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
-    if let Some(owner) = &context_owner {
-        log::info!("[ext:{owner}] holds prompt.context — Grain's soft context is suppressed");
-    }
+    let main_owner = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|reg| reg.slot_occupant(grain_sdk::manifest::PROMPT_MAIN_SLOT))
+        .filter(|occupant| occupant != grain_core::extensions::CORE_DEFAULT);
     let index = host.index.read().unwrap();
     let layers = index
         .prompt_layers
         .iter()
+        .filter(|layer| layer.target == grain_sdk::manifest::PromptTarget::Additive)
         .filter(|l| crate::context_detect::layer_matches(&l.when, ctx))
         .map(|l| {
             log::info!("[ext:{}] prompt layer '{}' applies", l.ext_id, l.layer_id);
@@ -777,9 +796,42 @@ pub fn prompt_contributions(
             }
         })
         .collect();
+    let main = main_owner.as_ref().and_then(|owner| {
+        index
+            .prompt_layers
+            .iter()
+            .find(|layer| {
+                layer.ext_id == *owner && layer.target == grain_sdk::manifest::PromptTarget::Main
+            })
+            .map(|layer| ContributedLayer {
+                ext_id: layer.ext_id.clone(),
+                text: layer.text.clone(),
+            })
+    });
+    let context = context_owner.as_ref().and_then(|owner| {
+        index
+            .prompt_layers
+            .iter()
+            .find(|layer| {
+                layer.ext_id == *owner
+                    && layer.target == grain_sdk::manifest::PromptTarget::Context
+                    && crate::context_detect::layer_matches(&layer.when, ctx)
+            })
+            .map(|layer| ContributedLayer {
+                ext_id: layer.ext_id.clone(),
+                text: layer.text.clone(),
+            })
+    });
+    if let Some(layer) = &main {
+        log::info!("[ext:{}] prompt.main replacement applies", layer.ext_id);
+    }
+    if let Some(layer) = &context {
+        log::info!("[ext:{}] prompt.context replacement applies", layer.ext_id);
+    }
     Contributions {
         layers,
-        context_owner,
+        main,
+        context,
     }
 }
 
@@ -1013,6 +1065,10 @@ fn declares_startup(activation: &[String]) -> bool {
     activation.iter().any(|a| a == "onStartup")
 }
 
+fn has_resident_grant(activation: &[String], granted: &[String]) -> bool {
+    declares_startup(activation) && has_grant(granted, "resident")
+}
+
 fn has_grant(granted: &[String], capability: &str) -> bool {
     granted.iter().any(|grant| grant == capability)
 }
@@ -1101,7 +1157,10 @@ fn spawn_worker(
     // Mint a per-worker token bound to exactly the granted caps (SPEC §7.1): the
     // same server-side filter that gates the pill now gates this worker.
     let token = crate::events_server::mint_worker_token(ext_id, caps.iter().cloned().collect());
-    let resident = pack.manifest.activation.iter().any(|a| a == "onStartup");
+    // The declaration alone is not authority. Every spawn path (including a
+    // shortcut/event that happens to wake this worker) re-checks the grant so a
+    // stale/tampered registry cannot turn a denied worker into an immortal one.
+    let resident = has_resident_grant(&pack.manifest.activation, &caps);
     let dev_source = dev_project.and_then(|project| {
         project.entry_path.map(|entry| DevSource {
             root: project.root,
@@ -1868,6 +1927,7 @@ pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
 /// Load the effective extension source. A dev project is re-read from its
 /// canonical folder; otherwise this reads the installed `.grainpack.json`.
 pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, String> {
+    grain_sdk::validate_extension_id(id)?;
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         if let Some(path) = reg.dev_path(id) {
             if !crate::settings::get_settings(app).extension_developer_mode {
@@ -1891,6 +1951,7 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
     // retained). Resolve it from the record's installed version.
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
         if let Some(rec) = reg.record(id) {
+            grain_sdk::validate_extension_version(&rec.installed_version)?;
             let versioned = grain_core::install::version_dir(&ext_dir, id, &rec.installed_version)
                 .join("pack.grainpack.json");
             if versioned.exists() {
@@ -2133,6 +2194,12 @@ mod tests {
         assert!(has_grant(&granted, "events:sessions"));
         assert!(!has_grant(&granted, "events:transcripts"));
         assert!(!has_grant(&granted, "transform:transcript"));
+        let startup = vec!["onStartup".to_string()];
+        assert!(!has_resident_grant(&startup, &granted));
+        assert!(has_resident_grant(
+            &startup,
+            &["resident".to_string()]
+        ));
     }
 
     /// The whole point of the index: with nothing enabled, the paste path and

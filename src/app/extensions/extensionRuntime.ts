@@ -13,6 +13,7 @@ const CAPABILITY_LABELS: Record<string, string> = {
   "events:sessions": "See when recording starts and stops",
   "events:transcripts": "Read what you dictate",
   "events:audio-levels": "See live microphone levels",
+  resident: "Keep its worker running while Grain is open",
   "transform:transcript": "Rewrite your text before it is pasted",
   "session:start": "Start a recording session itself",
   storage: "Store its own data on this device",
@@ -34,6 +35,7 @@ const SLOT_LABELS: Record<string, string> = {
   "pill.theme": "the pill's look",
   "agent.reply-surface": "the Agent's reply panel",
   "output.destination": "where your text is sent",
+  "prompt.main": "the main dictation prompt sent to the AI",
   "prompt.context": "what Grain tells the AI about the app you are typing in",
 };
 
@@ -78,6 +80,7 @@ export interface ApprovalRequest {
   permissions: string[];
   promptLayers: PromptLayerInfo[];
   actions: ActionInfo[];
+  recommendation: boolean;
 }
 
 /**
@@ -93,6 +96,7 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       needsPermissions?: unknown;
       needsPromptLayers?: unknown;
       needsActions?: unknown;
+      needsRecommendation?: unknown;
     };
     const permissions = Array.isArray(parsed.needsPermissions)
       ? (parsed.needsPermissions as string[])
@@ -103,9 +107,15 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
     const actions = Array.isArray(parsed.needsActions)
       ? (parsed.needsActions as ActionInfo[])
       : [];
-    if (!permissions.length && !promptLayers.length && !actions.length)
+    const recommendation = parsed.needsRecommendation === true;
+    if (
+      !permissions.length &&
+      !promptLayers.length &&
+      !actions.length &&
+      !recommendation
+    )
       return null;
-    return { permissions, promptLayers, actions };
+    return { permissions, promptLayers, actions, recommendation };
   } catch {
     return null;
   }
@@ -113,12 +123,20 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
 
 /** Plain-language description of when a contributed layer applies. */
 export function promptLayerScope(layer: PromptLayerInfo): string {
-  if (layer.everywhere) return "Every dictation";
+  const role =
+    layer.target === "main"
+      ? "Replaces Main prompt"
+      : layer.target === "context"
+        ? "Replaces Context provider"
+        : "Adds a rule";
+  if (layer.everywhere) return `${role} · Every dictation`;
   const parts: string[] = [];
   if (layer.website.length) parts.push(layer.website.join(", "));
   if (layer.app.length) parts.push(layer.app.join(", "));
   if (layer.category.length) parts.push(layer.category.join(", "));
-  return parts.length ? `In ${parts.join(" · ")}` : "Every dictation";
+  return parts.length
+    ? `${role} · In ${parts.join(" · ")}`
+    : `${role} · Every dictation`;
 }
 
 export function parseSlotConflict(error: unknown): SlotConflict | null {

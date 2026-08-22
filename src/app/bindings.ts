@@ -3514,7 +3514,7 @@ export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvid
  * drifting apart would mean the user approved one wording and can later only
  * review another.
  */
-export type PromptLayerInfo = { id: string; 
+export type PromptLayerInfo = { id: string; target: string;
 /**
  * The instruction, verbatim. Never summarised anywhere it is displayed.
  */

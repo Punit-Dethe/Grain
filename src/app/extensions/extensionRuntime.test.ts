@@ -193,6 +193,7 @@ describe("extension collection helpers", () => {
       permissions: ["storage", "open:url"],
       promptLayers: [],
       actions: [],
+      recommendation: false,
     });
     expect(
       parseSlotConflict(
@@ -207,13 +208,14 @@ describe("extension collection helpers", () => {
     // would fail with a raw JSON string.
     expect(
       parseApprovalRequest(
-        '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
+        '{"needsPermissions":[],"needsPromptLayers":[{"id":"jira","target":"additive","text":"Be terse.","everywhere":false,"app":[],"website":["jira."],"category":[]}]}',
       ),
     ).toEqual({
       permissions: [],
       promptLayers: [
         {
           id: "jira",
+          target: "additive",
           text: "Be terse.",
           everywhere: false,
           app: [],
@@ -222,6 +224,7 @@ describe("extension collection helpers", () => {
         },
       ],
       actions: [],
+      recommendation: false,
     });
     expect(parseApprovalRequest('{"needsPermissions":[]}')).toBeNull();
     expect(parseApprovalRequest("not json")).toBeNull();
@@ -238,18 +241,28 @@ describe("extension collection helpers", () => {
     expect(parsed?.actions[0]?.title).toBe("Skip to the next track");
   });
 
+  it("opens approval for recommendation disclosure alone", () => {
+    expect(parseApprovalRequest('{"needsRecommendation":true}')).toEqual({
+      permissions: [],
+      promptLayers: [],
+      actions: [],
+      recommendation: true,
+    });
+  });
+
   it("describes when a contributed layer applies", () => {
     const layer = {
       id: "a",
+      target: "additive",
       text: "Be terse.",
       everywhere: false,
       app: ["code"],
       website: [],
       category: [],
     };
-    expect(promptLayerScope(layer)).toBe("In code");
+    expect(promptLayerScope(layer)).toBe("Adds a rule · In code");
     expect(promptLayerScope({ ...layer, everywhere: true })).toBe(
-      "Every dictation",
+      "Adds a rule · Every dictation",
     );
   });
 });

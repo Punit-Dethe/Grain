@@ -42,9 +42,10 @@ pub use event::{
 };
 pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use manifest::{
-    CompanionDecl, Contributes, ExtensionManifest, GrainPack, OverlayDecl, PackPayloads,
-    PromptPackEntry, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier,
-    WorkspaceDecl, ANCHORS, KNOWN_CAPABILITIES, KNOWN_SLOTS, SURFACE_PROMPTS,
+    validate_extension_id, validate_extension_version, CompanionDecl, Contributes,
+    ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry, PromptTarget,
+    SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
+    KNOWN_CAPABILITIES, KNOWN_SLOTS, PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
 };
 pub use pill_skin::PillSkin;
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
