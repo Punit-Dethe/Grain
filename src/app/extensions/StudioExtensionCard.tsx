@@ -6,13 +6,13 @@ import {
   Code2,
   Cpu,
   FileText,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
   WandSparkles,
 } from "lucide-react";
 
 const BROWSE_EXTENSIONS_LABEL = "Browse extensions for this feature";
+const BROWSE_EXTENSIONS_ACTION = "Browse extensions";
 
 function SurfaceIcon({ surface }: { surface: string }) {
   const Icon = surface.startsWith("snippets")
@@ -48,7 +48,7 @@ export function StudioExtensionCard({
   description: string;
   meta: string;
   badge: string;
-  badgeTone?: "verified" | "community" | "core" | "dev";
+  badgeTone?: "verified" | "community" | "experimental" | "core" | "dev";
   surface: string;
   primaryLabel: string;
   primaryDisabled?: boolean;
@@ -117,21 +117,21 @@ export function StudioExtensionMoreCard({
       type="button"
       onClick={onClick}
     >
-      <span className="studio-extension-more-icon">
-        <SlidersHorizontal size={20} strokeWidth={1.75} aria-hidden="true" />
+      <span className="studio-extension-card-head">
+        <span className="studio-extension-more-icon">
+          <SurfaceIcon surface={surface} />
+        </span>
+        <span className="studio-extension-identity">
+          <strong>{title}</strong>
+          <span>{detail ?? "Extension Store"}</span>
+        </span>
       </span>
-      <span className="studio-extension-more-copy">
-        <strong>{title}</strong>
-        <span>{description}</span>
-      </span>
+      <span className="studio-extension-more-description">{description}</span>
       <span className="studio-extension-more-footer">
-        {detail ?? "Extension Store"}
+        {BROWSE_EXTENSIONS_ACTION}
         <ArrowUpRight size={15} aria-hidden="true" />
       </span>
       <span className="sr-only">{BROWSE_EXTENSIONS_LABEL}</span>
-      <span className="studio-extension-more-surface" aria-hidden="true">
-        <SurfaceIcon surface={surface} />
-      </span>
     </button>
   );
 }

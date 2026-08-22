@@ -14,6 +14,7 @@ import {
   parseApprovalRequest,
   promptLayerScope,
   parseSlotConflict,
+  studioShelfMode,
 } from "./extensionRuntime";
 
 const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
@@ -109,6 +110,19 @@ describe("extension destination routing", () => {
 });
 
 describe("tool recommendations", () => {
+  it.each([
+    [0, "recommendations"],
+    [1, "installed-with-more"],
+    [2, "installed-with-more"],
+    [3, "installed"],
+    [8, "installed"],
+  ] as const)(
+    "uses the correct Studio shelf for %i installed",
+    (count, mode) => {
+      expect(studioShelfMode(count)).toBe(mode);
+    },
+  );
+
   it("recommends by the surface an extension declares, not by its wording", () => {
     // App Modes anchors itself to `context.after` and never uses the word
     // "context"; Starter Prompts feeds the prompt list and says "prompts" in

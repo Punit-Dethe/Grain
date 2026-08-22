@@ -272,6 +272,24 @@ export function matchToolRecommendations(
     .slice(0, limit);
 }
 
+export type StudioShelfMode =
+  | "recommendations"
+  | "installed-with-more"
+  | "installed";
+
+/** The Studio shelf has one deliberately small state table.
+ *
+ * - No installed extension: recommend up to two and link to the store.
+ * - One or two installed: show those cards and keep one Get more card.
+ * - Three or more installed: every tile is real inventory, so the store card
+ *   gets out of the way.
+ */
+export function studioShelfMode(installedCount: number): StudioShelfMode {
+  if (installedCount <= 0) return "recommendations";
+  if (installedCount <= 2) return "installed-with-more";
+  return "installed";
+}
+
 export function filterExtensions<
   T extends { id: string; name: string; description: string },
 >(entries: T[], query: string): T[] {

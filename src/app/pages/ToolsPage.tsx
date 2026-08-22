@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import {
   commands,
-  type ExtensionCard,
   type Snippet,
   type StoreEntry,
   type StoreView,
@@ -35,6 +34,7 @@ import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
 import {
   matchToolRecommendations,
+  studioShelfMode,
   unwrapResult,
   type ToolSection,
 } from "../extensions/extensionRuntime";
@@ -116,33 +116,20 @@ function openToolStore(title: string) {
   window.location.hash = `${hashForRoute({ page: "extensions", view: "store" })}?q=${encodeURIComponent(title)}`;
 }
 
+type ToolCatalogue = ReturnType<typeof useToolCatalogue>;
+
 function ToolRecommendations({
   tool,
-  installedCards,
+  catalogue,
   onInstalled,
 }: {
   tool: ToolSection;
-  installedCards: ExtensionCard[];
+  catalogue: ToolCatalogue;
   onInstalled: () => void;
 }) {
-  const catalogue = useToolCatalogue();
-  const installedIds = useMemo(
-    () => new Set(installedCards.map((card) => card.id)),
-    [installedCards],
-  );
   const recommendations = useMemo(
-    () => matchToolRecommendations(catalogue.entries, tool, installedIds, 2),
-    [catalogue.entries, installedIds, tool],
-  );
-  const hasInstalledForTool = useMemo(
-    () =>
-      matchToolRecommendations(
-        catalogue.entries,
-        tool,
-        new Set(),
-        catalogue.entries.length,
-      ).some((entry) => installedIds.has(entry.id)),
-    [catalogue.entries, installedIds, tool],
+    () => matchToolRecommendations(catalogue.entries, tool, new Set(), 2),
+    [catalogue.entries, tool],
   );
   const title = TOOL_COPY[tool].title;
   const storeSurface =
@@ -151,8 +138,6 @@ function ToolRecommendations({
       : tool === "context"
         ? "context.after"
         : "agent.after";
-
-  if (!catalogue.loading && hasInstalledForTool) return null;
 
   return (
     <section
@@ -184,7 +169,10 @@ function ToolRecommendations({
           Loading recommendations…
         </div>
       ) : (
-        <div className="studio-extension-grid" data-visible-count="0">
+        <div
+          className="studio-extension-grid"
+          data-card-count={recommendations.length + 1}
+        >
           {recommendations.map((entry) => (
             <StudioExtensionCard
               key={`${entry.id}@${entry.version}`}
@@ -241,6 +229,7 @@ function StudioExtensionArea({
   anchor: Anchor;
   tool: ToolSection;
 }) {
+  const catalogue = useToolCatalogue();
   const [snapshot, setSnapshot] = useState<ExtensionAnchorSnapshot | null>(
     null,
   );
@@ -259,16 +248,17 @@ function StudioExtensionArea({
       <ExtensionAnchor
         key={refreshKey}
         anchor={anchor}
+        catalogueEntries={catalogue.entries}
         onSnapshot={handleSnapshot}
       />
       {import.meta.env.DEV &&
         snapshot &&
         !snapshot.loading &&
         !snapshot.error &&
-        snapshot.installedCount === 0 && (
+        studioShelfMode(snapshot.installedCount) === "recommendations" && (
           <ToolRecommendations
             tool={tool}
-            installedCards={snapshot.allCards}
+            catalogue={catalogue}
             onInstalled={handleInstalled}
           />
         )}
