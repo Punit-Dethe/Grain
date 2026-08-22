@@ -21,11 +21,8 @@ import {
 } from "@/bindings";
 import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
-import {
-  FeaturePanel,
-  useFeatureEnabled,
-} from "@/components/settings/experimentations/FeaturePanel";
 import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
+import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
 import { StoreCard } from "../extensions/StoreCard";
@@ -658,6 +655,27 @@ function ContextMasterToggle() {
   );
 }
 
+function AgentMasterToggle() {
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const enabled = getSetting("agent_enabled") ?? false;
+  const busy = isUpdating("agent_enabled");
+
+  return (
+    <label className="tool-master-toggle" title="Turn Agent on or off">
+      <span className="sr-only">Enable Agent</span>
+      <input
+        type="checkbox"
+        checked={enabled}
+        disabled={busy}
+        onChange={(event) =>
+          void updateSetting("agent_enabled", event.target.checked)
+        }
+      />
+      <span className="tool-master-toggle-track" aria-hidden="true" />
+    </label>
+  );
+}
+
 function SnippetsTool() {
   const { getSetting, updateSetting, isUpdating } = useSettings();
   const enabled = getSetting("snippets_enabled") ?? false;
@@ -826,7 +844,8 @@ function SnippetsTool() {
 }
 
 function ContextTool() {
-  const enabled = useFeatureEnabled("context_awareness_enabled");
+  const { getSetting } = useSettings();
+  const enabled = getSetting("context_awareness_enabled") ?? false;
 
   return (
     <>
@@ -844,29 +863,21 @@ function ContextTool() {
 }
 
 function AgentTool() {
-  const enabled = useFeatureEnabled("agent_enabled");
+  const { getSetting } = useSettings();
+  const enabled = getSetting("agent_enabled") ?? false;
 
   return (
     <>
-      <section className="tool-section">
-        <div className="tool-section-head">
-          <div>
-            <h2>Agent behaviour</h2>
-            <p>Choose how Agent opens, responds, and uses the current app.</p>
-          </div>
-        </div>
-        <div className="tool-component-host space-y-6">
-          <FeaturePanel
-            settingKey="agent_enabled"
-            title="Agent"
-            info="Summon a voice-first assistant over the current selection without leaving the active app."
-          >
-            <AgentSection />
-          </FeaturePanel>
-        </div>
-      </section>
+      {/* The page title and its master switch already name the feature and turn
+          it on (see the heading above); the settings simply appear below them,
+          the same way Snippets and Context awareness do. */}
       {enabled && (
         <>
+          <section className="agent-workspace tool-component-host">
+            <SettingsGroup>
+              <AgentSection />
+            </SettingsGroup>
+          </section>
           <ExtensionAnchor anchor="agent.after" />
           {import.meta.env.DEV && <ToolRecommendations tool="agent" />}
         </>
@@ -935,7 +946,7 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
             <div className="tools-scroll">
               <div className="tools-content next-settings-content">
                 <header
-                  className={`tool-main-heading ${section === "snippets" || section === "context" ? "has-toggle" : ""}`}
+                  className={`tool-main-heading ${section === "snippets" || section === "context" || section === "agent" ? "has-toggle" : ""}`}
                 >
                   <div>
                     <h1 id="next-tool-title">
@@ -947,6 +958,7 @@ export function ToolsPage({ section }: { section: ToolSectionId }) {
                   </div>
                   {section === "snippets" && <SnippetsMasterToggle />}
                   {section === "context" && <ContextMasterToggle />}
+                  {section === "agent" && <AgentMasterToggle />}
                 </header>
                 {section === "dictionary" ? (
                   <DictionaryTool />

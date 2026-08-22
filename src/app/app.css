@@ -60,14 +60,20 @@
   --radius-md: 13px;
   --radius-lg: 18px;
   --hero-radius: 18px;
-  --sidebar: 242px;
-  --titlebar: 48px;
+  --sidebar: 224px;
+  --titlebar: 38px;
+  /* Gap between the content bubble and the window/sidebar edges. */
+  --shell-gutter: 8px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-soft: cubic-bezier(0.2, 0.75, 0.25, 1);
   --shadow-float:
     0 22px 70px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.3);
   --glass-fill: rgba(20, 24, 29, 0.62);
   --glass-highlight: rgba(255, 255, 255, 0.06);
+  /* Toggle OFF-track color. The only knob the settings switch needs from CSS;
+     everything else (geometry, thumb, ON-track = --color-accent) lives in the
+     ToggleSwitch/Switch components. */
+  --toggle-off: #444a52;
 }
 
 /* The extension seam (PLAN.md §2.1): these eight names are the public
@@ -124,6 +130,7 @@ html[data-theme="light"] {
   --text-4: #9aa0a9;
   --hairline: rgba(24, 29, 37, 0.1);
   --hairline-soft: rgba(24, 29, 37, 0.065);
+  --toggle-off: #cbd2dc;
   --accent: #637bd1;
   --accent-strong: #536bc2;
   --accent-hover: #536bc2;
@@ -263,7 +270,9 @@ html[data-theme="light"] body {
       rgba(168, 201, 168, 0.045),
       transparent 65%
     ),
-    var(--bg-1);
+    /* One step below the content bubble, so the bubble reads as a raised
+       plane rather than a border drawn on the same colour. */
+      var(--bg-0);
   transition: grid-template-columns 0.32s var(--ease-out);
 }
 
@@ -294,80 +303,61 @@ html[data-theme="light"] .app {
   mix-blend-mode: soft-light;
 }
 
-/* The header owns the full top row. Its first track follows the responsive
-   sidebar width, while navigation starts cleanly below the window chrome. */
+/* The sidebar spans both rows (see `.sidebar`), so the titlebar covers only the
+   main column. It carries nothing but the window controls now: no fill, no
+   hairline, so the strip and the rail read as one continuous surface and the
+   content bubble below is the only drawn plane. */
 .titlebar {
-  grid-column: 1 / -1;
+  grid-column: 2 / -1;
   grid-row: 1;
-  display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr) auto;
-  align-items: center;
+  /* Flex, not a two-column grid: the window controls are the strip's only
+     child now, so they must be pushed to the right rather than dropped into
+     a leading column. */
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
   position: relative;
   z-index: 35;
-  background: rgba(11, 12, 15, 0.82);
-  backdrop-filter: blur(18px) saturate(115%);
-  -webkit-backdrop-filter: blur(18px) saturate(115%);
+  background: transparent;
   -webkit-app-region: drag;
 }
 
-.titlebar::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 1px;
-  background: var(--hairline-soft);
-}
-
-/* The wordmark is the first row inside the sidebar, immediately below the
-   full-width window header. */
+/* The brand belongs to the rail below the 38px window-control row. The extra
+   8px keeps its cap height visibly clear of the header instead of straddling
+   that boundary. Inline padding preserves the nav icon axis. */
 .sidebar-brand {
-  height: var(--titlebar);
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  padding-inline: 7px;
-  margin-bottom: 4px;
+  padding: calc(var(--titlebar) + 8px) 11px 16px;
   color: var(--text-1);
+  -webkit-app-region: drag;
 }
 
 .grain-wordmark {
   display: flex;
   align-items: baseline;
-  gap: 7px;
-  letter-spacing: 0.075em;
-  /* A barely-there vertical rule to the right of the wordmark. Placeholder
-     treatment — the brand area is not designed yet. */
-  padding-right: 11px;
-  border-right: 1px solid var(--hairline);
+  gap: 8px;
 }
 
 .grain-wordmark strong {
-  font-size: 12px;
-  font-weight: 760;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.005em;
 }
 
-/* Sits to the right of the wordmark's divider. Dim, so it reads as a status
-   tag rather than part of the brand. */
+/* Rides the wordmark's baseline. Dim and small, so it reads as a status tag
+   rather than part of the brand. */
 .grain-beta {
-  margin-left: 10px;
   color: var(--text-4);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.05em;
-}
-
-.workspace-title {
-  grid-column: 2;
-  justify-self: start;
-  padding-left: 20px;
-  color: var(--text-3);
-  font-size: 12px;
+  text-transform: uppercase;
 }
 
 .window-actions {
-  grid-column: 3;
   height: 100%;
   display: flex;
   align-items: stretch;
@@ -399,9 +389,9 @@ html[data-theme="light"] .app {
 .theme-toggle::after {
   content: "";
   position: absolute;
-  top: 13px;
+  top: 10px;
   right: 0;
-  bottom: 13px;
+  bottom: 10px;
   width: 1px;
   background: var(--hairline-soft);
 }
@@ -431,26 +421,16 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 
 .sidebar {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 1 / -1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 0 11px 14px;
   position: relative;
   z-index: 25;
-  background: rgba(9, 10, 13, 0.7);
-  backdrop-filter: blur(18px) saturate(112%);
-  -webkit-backdrop-filter: blur(18px) saturate(112%);
-}
-
-.sidebar::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  background: var(--hairline-soft);
+  /* No fill and no edge: the rail sits directly on the window wash, and the
+     content bubble to its right supplies the only boundary. */
+  background: transparent;
 }
 
 .nav-section {
@@ -461,8 +441,10 @@ html[data-theme="light"] .theme-toggle .moon-icon {
   margin-top: 0;
 }
 
+/* 11px inline, like the nav item and the wordmark: one left axis down the
+   whole rail. */
 .nav-label {
-  padding: 9px 10px 7px;
+  padding: 9px 11px 7px;
   color: var(--text-4);
   font-size: 10px;
   font-weight: 650;
@@ -535,7 +517,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
 }
 
 .model-status {
-  margin: 10px 6px 8px;
+  margin: 10px 0 8px;
   padding: 12px;
   border-radius: 10px;
   background: #151618;
@@ -561,7 +543,7 @@ html[data-theme="light"] .theme-toggle .moon-icon {
  * The card stays quiet until asked; the modal carries release notes and the
  * protected install action. */
 .update-notice {
-  margin: 10px 6px 0;
+  margin: 10px 0 0;
   overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
@@ -1062,7 +1044,6 @@ html[data-theme="light"] .update-progress {
   display: flex;
   align-items: center;
   gap: 11px;
-  margin: 0 6px;
   padding-inline: 11px;
   border-radius: 8px;
   color: var(--text-2);
@@ -1090,6 +1071,8 @@ kbd,
   white-space: nowrap;
 }
 
+/* The content plane is a contained bubble: inset from the window edges, its own
+   surface, rounded, with the chrome around it left as bare background. */
 .main {
   grid-column: 2;
   grid-row: 2;
@@ -1097,7 +1080,11 @@ kbd,
   min-height: 0;
   overflow: hidden;
   position: relative;
-  background: transparent;
+  margin: 0 var(--shell-gutter) var(--shell-gutter) 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--bg-1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
 }
 
 .page {
@@ -1105,7 +1092,8 @@ kbd,
   inset: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 30px clamp(24px, 3.8vw, 56px) 56px clamp(28px, 4.2vw, 64px);
+  /* The bubble supplies part of the inset now, so the page breathes less. */
+  padding: 26px clamp(24px, 3.4vw, 52px) 56px;
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
@@ -1392,80 +1380,26 @@ h3 {
   isolation: isolate;
   border-radius: var(--hero-radius);
   clip-path: inset(0 round var(--hero-radius));
-  background: transparent;
+  background: var(--bg-2, #15171c);
+  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.07));
+}
+
+html[data-theme="light"] .hero {
+  background: #fbfbfc;
+  border-color: #e1e3e8;
 }
 
 .hero canvas {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   display: block;
-  image-rendering: pixelated;
-  filter: saturate(0.72) contrast(1.03) brightness(0.82);
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 61%,
-    rgba(0, 0, 0, 0.78) 76%,
-    rgba(0, 0, 0, 0.24) 92%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 61%,
-    rgba(0, 0, 0, 0.78) 76%,
-    rgba(0, 0, 0, 0.24) 92%,
-    transparent 100%
-  );
 }
 
 .hero::before,
 .hero::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.hero::before {
-  z-index: 2;
-  border-radius: inherit;
-  background:
-    radial-gradient(
-      74% 108% at 0% 12%,
-      rgba(143, 170, 255, 0.12),
-      transparent 67%
-    ),
-    radial-gradient(
-      70% 100% at 100% 24%,
-      rgba(230, 160, 128, 0.1),
-      transparent 71%
-    ),
-    linear-gradient(
-      180deg,
-      rgba(6, 8, 12, 0) 15%,
-      rgba(7, 9, 13, 0.12) 47%,
-      rgba(12, 14, 17, 0.78) 79%,
-      var(--bg-1) 100%
-    );
-}
-
-.hero::after {
-  z-index: 3;
-  opacity: 0.07;
-  background-image: radial-gradient(
-    rgba(255, 255, 255, 0.6) 0.45px,
-    transparent 0.55px
-  );
-  background-size: 4px 4px;
-  mix-blend-mode: soft-light;
-  -webkit-mask-image: linear-gradient(
-    to bottom,
-    #000 0%,
-    #000 68%,
-    transparent 100%
-  );
-  mask-image: linear-gradient(to bottom, #000 0%, #000 68%, transparent 100%);
+  display: none;
 }
 
 .hero-design-trigger {
@@ -1501,7 +1435,7 @@ h3 {
   position: absolute;
   z-index: 5;
   right: 22px;
-  bottom: 52px;
+  bottom: 32px;
   left: 22px;
   display: flex;
   align-items: flex-end;
@@ -1560,7 +1494,8 @@ h3 {
 }
 
 .compact-section-head {
-  margin-top: 44px;
+  margin-top: 56px;
+  margin-bottom: 14px;
 }
 
 .section-head p {
@@ -1653,112 +1588,176 @@ h3 {
 }
 
 /* ---------------------------------------------------------------------------
- * Overview cards
+ * Overview cards (Start here)
  *
- * Four cards on one grid, but only two of them are clickable. The shared shell
- * keeps them visually a set; `--static` withdraws every affordance from the two
- * that are a surface to read or type into, not a target to hit.
- *
- * Alignment: the copy block is a flex column and each card's bottom element
- * (add field, shortcut list, press hint) is pushed down with `margin-top:auto`,
- * so those rows line up across all four cards no matter how long the prose
- * above them runs. Grid stretch then makes every card exactly the same height.
+ * Refined 4-card grid with seamless borderless surfaces, natural icon placement,
+ * balanced 2-line typography, and clean horizontal baseline across all four cards.
  * ------------------------------------------------------------------------- */
 
 .overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
   align-items: stretch;
 }
 
 .overview-card {
-  min-height: 0;
-  padding: 15px;
-  grid-template-rows: auto 1fr;
-  gap: 10px;
-}
-
-.overview-card .action-icon {
-  width: 26px;
-  height: 26px;
-}
-
-.overview-card .action-svg {
-  width: 22px;
-  height: 22px;
-}
-
-.overview-card .action-copy {
-  min-height: 0;
-  height: 100%;
+  min-width: 0;
+  min-height: 160px;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
+  position: relative;
+  border-radius: var(--radius-md, 12px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--bg-2, #15181d);
+  color: var(--text-1);
+  text-align: left;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.2s var(--ease-out),
+    box-shadow 0.2s ease;
 }
 
-.overview-card .action-copy strong {
-  margin-bottom: 3px;
-  font-size: 13px;
+button.overview-card {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  outline: none;
+  cursor: pointer;
 }
 
-/* One line of prose per card, clipped rather than wrapped — a card that grows a
- * second line would break the shared bottom alignment. */
-.overview-card .action-copy small {
-  overflow: hidden;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.overview-card--interactive {
+  cursor: pointer;
 }
 
-/* Reference and input cards: no lift, no pointer, no hover tint. Nothing here
- * should suggest the card itself does something when clicked. */
+.overview-card--interactive:hover {
+  background: #1a1e24;
+  border-color: rgba(255, 255, 255, 0.12);
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
 .overview-card--static {
   cursor: default;
 }
 
-.overview-card--static:hover {
-  background: #18191b;
-  transform: none;
-  box-shadow: none;
+/* Light theme: clean seamless floating card surface without harsh borders */
+html[data-theme="light"] .overview-card,
+html[data-theme="light"] button.overview-card {
+  border: 0;
+  background: #ffffff;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 3px 8px rgba(0, 0, 0, 0.03);
 }
 
-html[data-theme="light"] .overview-card--static:hover {
-  border-color: #e0e0e3;
-  background: #fff;
+html[data-theme="light"] .overview-card--interactive:hover {
+  background: #ffffff;
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.07),
+    0 1px 3px rgba(0, 0, 0, 0.03);
+  transform: translateY(-1.5px);
 }
 
-.overview-card-chev {
-  position: absolute;
-  top: 15px;
-  right: 14px;
-  color: var(--text-4);
-  transition:
-    transform 0.18s var(--ease-out),
-    color 0.18s ease;
+/* Card Header */
+.overview-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 6px;
 }
 
-.overview-card:hover .overview-card-chev {
-  color: var(--text-2);
-  transform: translateX(2px);
+.overview-card-icon {
+  flex: none;
+  color: var(--text-2, #b4b8b8);
+  transition: color 0.18s ease;
 }
 
-.overview-card-cta {
-  margin-top: auto;
-  color: var(--accent, #6ea8fe);
-  font-size: 11px;
+.overview-agent-svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.overview-agent-svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+
+.overview-card--interactive:hover .overview-card-icon {
+  color: var(--accent, #8faaff);
+}
+
+html[data-theme="light"] .overview-card-icon {
+  color: #555b66;
+}
+
+html[data-theme="light"] .overview-card--interactive:hover .overview-card-icon {
+  color: var(--accent, #637bd1);
+}
+
+.overview-card-title {
+  display: block;
+  font-size: 13.5px;
   font-weight: 600;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* -- Shortcuts card -- */
+html[data-theme="light"] .overview-card-title {
+  color: #17191d;
+}
 
+/* Card Description (Multi-line flowing prose) */
+.overview-card-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-3, #7d8385);
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+html[data-theme="light"] .overview-card-desc {
+  color: #737a84;
+}
+
+/* Card Footer / Accessory */
+.overview-card-footer {
+  margin-top: auto;
+  padding-top: 14px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* -- Shortcuts list -- */
 .overview-shortcut-list {
   margin-top: auto;
   padding-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
 .overview-shortcut-row {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   min-width: 0;
 }
@@ -1767,124 +1766,113 @@ html[data-theme="light"] .overview-card--static:hover {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-3);
-  font-size: 11px;
+  color: var(--text-3, #7d8385);
+  font-size: 11.5px;
+  font-weight: 450;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+html[data-theme="light"] .overview-shortcut-label {
+  color: #737a84;
+}
+
 .overview-shortcut-off {
   flex: none;
-  color: var(--text-4);
-  font-size: 10px;
+  color: var(--text-4, #5c6265);
+  font-size: 11px;
   font-style: italic;
 }
 
-/* A chord shown as one small cap per key. The group wraps to a second line
- * within the card instead of a single wide cap truncating and spilling toward
- * the card edge. Right-aligned so the caps sit under the row's trailing edge. */
+/* Keycaps */
 .overview-keys {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 72%;
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 3px;
   justify-content: flex-end;
 }
 
-/* A keycap, not a button: raised surface and mono type so it reads as the key
- * you press, with no hover or press state because it is never clickable. */
 .overview-key {
   flex: none;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
   border-radius: 5px;
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.28);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
   color: var(--text-1);
   background: rgba(255, 255, 255, 0.06);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 10px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 550;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
 html[data-theme="light"] .overview-key {
-  border-color: #d7d7da;
-  background: #fafafb;
+  border-color: #d2d5dc;
+  background: #f4f5f7;
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.06);
+  color: #1e2229;
 }
 
-/* -- Agent card -- */
+/* -- Agent row & CTA row -- */
+.overview-agent-row {
+  width: 100%;
+}
 
-/* The caps ride the right edge, so they line up with the caps in the
- * Shortcuts card two along rather than floating mid-card. */
-.overview-agent-press {
-  margin-top: auto;
-  padding-top: 10px;
+.overview-cta-row {
   display: flex;
   align-items: center;
-  gap: 7px;
-  color: var(--text-4);
-  font-size: 10.5px;
+  justify-content: space-between;
+  width: 100%;
+  gap: 6px;
 }
 
-.overview-agent-press .overview-keys {
-  margin-left: 0;
-  max-width: 100%;
-  justify-content: flex-start;
-}
-
-/* -- Extensions card -- */
-
-.overview-chips {
-  margin-top: auto;
-  padding-top: 10px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.overview-chip {
-  padding: 2px 7px;
-  border: 1px solid var(--hairline, rgba(255, 255, 255, 0.1));
-  border-radius: 5px;
-  color: var(--text-4);
-  font-size: 10px;
+.overview-card-cta {
+  font-size: 12px;
   font-weight: 550;
-  white-space: nowrap;
+  color: var(--accent, #8faaff);
+  transition: color 0.15s ease;
 }
 
-html[data-theme="light"] .overview-chip {
-  border-color: #e0e0e3;
-  background: #fafafb;
+html[data-theme="light"] .overview-card-cta {
+  color: #4b68c8;
 }
 
-/* -- Dictionary card --
- *
- * One control, not two: the field and its add button share a single bordered
- * pill and the button is INSET, so it can never read as crowding the card edge.
- */
+.overview-cta-arrow {
+  color: var(--accent, #8faaff);
+  transition: transform 0.18s var(--ease-out);
+}
 
+html[data-theme="light"] .overview-cta-arrow {
+  color: #4b68c8;
+}
+
+.overview-card--interactive:hover .overview-cta-arrow {
+  transform: translateX(3px);
+}
+
+/* -- Dictionary card input -- */
 .overview-add-row {
   margin-top: auto;
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
+  height: 30px;
+  width: 100%;
   padding-right: 3px;
   border: 1px solid var(--hairline, rgba(255, 255, 255, 0.12));
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.2);
   transition:
     border-color 0.15s ease,
     background 0.15s ease;
 }
 
 .overview-add-row:focus-within {
-  border-color: var(--accent, #6ea8fe);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--accent, #8faaff);
+  background: rgba(0, 0, 0, 0.35);
 }
 
 .overview-add-input {
@@ -1895,12 +1883,12 @@ html[data-theme="light"] .overview-chip {
   border: 0;
   color: var(--text-1);
   background: none;
-  font-size: 11px;
+  font-size: 11.5px;
   outline: none;
 }
 
 .overview-add-input::placeholder {
-  color: var(--text-4);
+  color: var(--text-4, #5c6265);
 }
 
 .overview-add-btn {
@@ -1911,31 +1899,100 @@ html[data-theme="light"] .overview-chip {
   place-items: center;
   border: 0;
   border-radius: 5px;
-  color: var(--text-2);
+  color: var(--text-3);
   background: rgba(255, 255, 255, 0.07);
   cursor: pointer;
   transition:
     background 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    transform 0.1s ease;
 }
 
 .overview-add-btn:hover:not(:disabled) {
-  color: var(--text-1);
-  background: rgba(255, 255, 255, 0.13);
+  color: #ffffff;
+  background: var(--accent, #8faaff);
+  transform: scale(1.05);
 }
 
 .overview-add-btn:disabled {
-  opacity: 0.35;
+  opacity: 0.3;
   cursor: default;
 }
 
 html[data-theme="light"] .overview-add-row {
-  border-color: #e0e0e3;
-  background: #fafafb;
+  border-color: #dcdfe4;
+  background: #f7f8fa;
+}
+
+html[data-theme="light"] .overview-add-row:focus-within {
+  border-color: var(--accent, #637bd1);
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(99, 123, 209, 0.12);
+}
+
+html[data-theme="light"] .overview-add-input {
+  color: #17191d;
+}
+
+html[data-theme="light"] .overview-add-input::placeholder {
+  color: #9aa0a9;
+}
+
+.overview-add-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-3);
+  background: rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.1s ease;
+}
+
+.overview-add-btn:hover:not(:disabled) {
+  color: #ffffff;
+  background: var(--accent, #8faaff);
+  transform: scale(1.05);
+}
+
+.overview-add-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+html[data-theme="light"] .overview-add-row {
+  border-color: #dcdfe4;
+  background: #f7f8fa;
+}
+
+html[data-theme="light"] .overview-add-row:focus-within {
+  border-color: var(--accent, #637bd1);
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(99, 123, 209, 0.12);
+}
+
+html[data-theme="light"] .overview-add-input {
+  color: #17191d;
+}
+
+html[data-theme="light"] .overview-add-input::placeholder {
+  color: #9aa0a9;
 }
 
 html[data-theme="light"] .overview-add-btn {
-  background: #ebebee;
+  background: #e6e8ec;
+  color: #555b66;
+}
+
+html[data-theme="light"] .overview-add-btn:hover:not(:disabled) {
+  background: var(--accent, #637bd1);
+  color: #ffffff;
 }
 
 .section-head-actions {
@@ -1945,7 +2002,7 @@ html[data-theme="light"] .overview-add-btn {
 }
 
 .transcript-section-head {
-  margin-top: 26px;
+  margin-top: 42px;
 }
 
 .view-switch {
@@ -2283,8 +2340,6 @@ html[data-theme="light"] .overview-add-btn {
 
 .app.notes-mode .grain-wordmark {
   gap: 0;
-  padding-right: 0;
-  border-right: none;
 }
 
 .app.notes-mode .grain-beta {
@@ -2297,8 +2352,8 @@ html[data-theme="light"] .overview-add-btn {
 
 .app.notes-mode .grain-wordmark strong::after {
   content: "G";
-  font-size: 13px;
-  letter-spacing: 0.03em;
+  font-size: 17px;
+  letter-spacing: 0;
 }
 
 .app.notes-mode .grain-wordmark span,
@@ -2523,58 +2578,26 @@ html[data-theme="light"] .model-role-tabs {
 .capture-mode-picker {
   display: grid;
   gap: 6px;
-  padding: 4px 14px 12px;
+  padding: 12px 14px;
 }
 
+/* All three capture modes are always live. Each is a static row — name and
+   description on the left, its shortcut keycap on the right edge. No selection
+   state: there is nothing to pick any more. */
 .capture-mode-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
   padding: 11px 12px;
   border-radius: 9px;
   color: inherit;
   background: rgba(255, 255, 255, 0.022);
   text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-.capture-mode-option:hover {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-.capture-mode-option.selected {
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--accent-focus);
-}
-
-.capture-mode-option:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-focus);
-}
-
-.capture-mode-mark {
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1.5px var(--text-4);
-  transition:
-    box-shadow 0.15s ease,
-    background 0.15s ease;
-}
-
-.capture-mode-option.selected .capture-mode-mark {
-  background: var(--accent);
-  box-shadow:
-    inset 0 0 0 1.5px var(--accent),
-    inset 0 0 0 4px var(--bg-1);
 }
 
 .capture-mode-copy {
+  flex: 1;
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -2592,16 +2615,13 @@ html[data-theme="light"] .model-role-tabs {
   line-height: 1.45;
 }
 
+/* The bare keycap control sits flush to the right edge and never shrinks. */
+.capture-mode-shortcut {
+  flex: none;
+}
+
 html[data-theme="light"] .capture-mode-option {
   background: rgba(24, 29, 37, 0.035);
-}
-
-html[data-theme="light"] .capture-mode-option:hover {
-  background: rgba(24, 29, 37, 0.055);
-}
-
-html[data-theme="light"] .capture-mode-option.selected {
-  background: var(--accent-soft);
 }
 
 /* About has no section rail of its own — it is one surface, not a set. */
@@ -2686,7 +2706,7 @@ html[data-theme="light"] .capture-mode-option.selected {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 56px clamp(32px, 4.5vw, 68px) 72px clamp(36px, 5vw, 78px);
+  padding: 56px clamp(36px, 5vw, 78px) 84px;
   scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
   scrollbar-width: thin;
 }
@@ -2839,6 +2859,14 @@ html[data-theme="light"] .capture-mode-option.selected {
   font-size: 13px !important;
 }
 
+/* The prompt-instruction editor is the main workspace for writing a prompt —
+   give it a tall default. Needs !important + extra specificity to clear the
+   36px floor the rule above forces on every settings textarea. Still resize-y,
+   so the user can drag it taller. */
+.next-settings-content textarea.prompt-instructions-input {
+  min-height: 240px !important;
+}
+
 .next-settings-content .app-select__value-container {
   padding-block: 0 !important;
 }
@@ -2848,45 +2876,11 @@ html[data-theme="light"] .capture-mode-option.selected {
   border-radius: 8px;
 }
 
-.next-settings-content label:has(> input[type="checkbox"]) > div {
-  width: 38px !important;
-  height: 22px !important;
-  padding: 2px !important;
-  border-radius: 999px !important;
-  position: relative !important;
-  background: #444a52 !important;
-}
-
-.next-settings-content
-  label:has(> input[type="checkbox"])
-  > input:checked
-  + div {
-  background: var(--accent) !important;
-}
-
-/* [GRAIN] Settings toggle — iOS style (accent track, white thumb), defined
-   explicitly and completely here. It does NOT rely on the component's Tailwind
-   `peer-checked:after:translate-x` (that pseudo-element translate never fired
-   reliably, which is why the thumb sat still). The three numbers are a matched
-   set for the 32×18 track (w-8 h-[18px] on the component): a 14px thumb inset
-   2px travels 14px → even 2px margins, slides cleanly, never overflows. If you
-   ever resize it, change track width, thumb size, and travel together:
-   travel = trackWidth − thumb − 2·inset. */
-.next-settings-content label:has(> input[type="checkbox"]) > div::after {
-  width: 14px !important;
-  height: 14px !important;
-  top: 2px !important;
-  left: 2px !important;
-  border-radius: 50% !important;
-  background: #fff !important;
-  transform: translateX(0) !important;
-}
-.next-settings-content
-  label:has(> input[type="checkbox"])
-  > input:checked
-  + div::after {
-  transform: translateX(14px) !important;
-}
+/* The settings toggle is defined entirely by the ToggleSwitch/Switch
+   components (self-consistent geometry, accent track ON, --toggle-off track
+   OFF). No CSS override here — a prior `:has()` override forced `transform`
+   with `!important`, which clobbered the component's own thumb translate and
+   was the actual cause of the "thumb won't slide / overflows" bug. */
 
 .next-settings-loading {
   min-height: 160px;
@@ -2908,9 +2902,14 @@ html[data-theme="light"] .capture-mode-option.selected {
 
 /* Light final cascade */
 html[data-theme="light"] .app,
-html[data-theme="light"] .main,
 html[data-theme="light"] .page {
   background: transparent;
+}
+
+/* Grey shell, white bubble. */
+html[data-theme="light"] .main {
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(24, 29, 37, 0.05);
 }
 
 html[data-theme="light"] .app {
@@ -2925,26 +2924,14 @@ html[data-theme="light"] .app {
       rgba(111, 169, 158, 0.045),
       transparent 65%
     ),
-    #fafafa;
+    #f0f1f3;
 }
 
-html[data-theme="light"] .titlebar {
-  background: rgba(238, 238, 239, 0.84);
-}
-
-html[data-theme="light"] .titlebar::after {
-  background: #dcdcdf;
-}
-
+html[data-theme="light"] .titlebar,
 html[data-theme="light"] .sidebar {
-  background: rgba(234, 234, 235, 0.78);
+  background: transparent;
 }
 
-html[data-theme="light"] .sidebar::after {
-  background: #d7d7da;
-}
-
-html[data-theme="light"] .workspace-title,
 html[data-theme="light"] .window-button,
 html[data-theme="light"] .theme-toggle {
   color: #77787e;
@@ -2984,40 +2971,6 @@ html[data-theme="light"] .model-status {
 html[data-theme="light"] .window-button:hover,
 html[data-theme="light"] .theme-toggle:hover {
   background: rgba(28, 34, 43, 0.055);
-}
-
-html[data-theme="light"] .refined-hero canvas {
-  filter: saturate(0.68) contrast(0.97) brightness(1.04);
-}
-
-html[data-theme="light"] .refined-hero::before {
-  background:
-    radial-gradient(
-      74% 108% at 0% 12%,
-      rgba(99, 123, 209, 0.13),
-      transparent 67%
-    ),
-    radial-gradient(
-      70% 100% at 100% 24%,
-      rgba(217, 150, 120, 0.11),
-      transparent 71%
-    ),
-    linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0) 13%,
-      rgba(245, 247, 250, 0.04) 45%,
-      rgba(245, 246, 248, 0.76) 80%,
-      var(--bg-1) 100%
-    );
-}
-
-html[data-theme="light"] .refined-hero::after {
-  opacity: 0.08;
-  background-image: radial-gradient(
-    rgba(25, 31, 42, 0.42) 0.42px,
-    transparent 0.54px
-  );
-  mix-blend-mode: multiply;
 }
 
 html[data-theme="light"] .hero h2 {
@@ -3202,20 +3155,7 @@ html[data-theme="light"] .next-settings-content .app-select__control {
   box-shadow: inset 0 0 0 1px #dcdcdf !important;
 }
 
-html[data-theme="light"]
-  .next-settings-content
-  label:has(> input[type="checkbox"])
-  > div {
-  background: #cbd2dc !important;
-}
-
-html[data-theme="light"]
-  .next-settings-content
-  label:has(> input[type="checkbox"])
-  > input:checked
-  + div {
-  background: var(--accent) !important;
-}
+/* (light-theme toggle track handled by --toggle-off; no override needed) */
 
 /* Notes: the real Grain Space engine hosted in the prototype workspace. */
 .notes-workspace-page {
@@ -3939,8 +3879,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
   .grain-wordmark {
     gap: 0;
-    padding-right: 0;
-    border-right: none;
   }
 
   .grain-wordmark strong {
@@ -3949,8 +3887,8 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 
   .grain-wordmark strong::after {
     content: "G";
-    font-size: 13px;
-    letter-spacing: 0.03em;
+    font-size: 17px;
+    letter-spacing: 0;
   }
 
   .grain-wordmark span,
@@ -4210,7 +4148,7 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   height: 100%;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 42px clamp(30px, 4.5vw, 64px) 68px clamp(34px, 5vw, 72px);
+  padding: 42px clamp(34px, 5vw, 72px) 80px;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
@@ -4333,13 +4271,19 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   max-width: none;
 }
 
-.context-awareness-workspace {
+.context-awareness-workspace,
+.agent-workspace {
   margin-bottom: 34px;
   display: grid;
   gap: 26px;
 }
 
 .context-profile-settings {
+  /* One tile geometry for every icon stack in this section, so the faces on a
+     profile card and the faces in its opened panel are the same size and
+     weight. Only the direction differs, and that is set per stack. */
+  --profile-tile: 32px;
+  --profile-tile-img: 20px;
   display: grid;
   gap: 20px;
 }
@@ -4413,6 +4357,18 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   cursor: default;
 }
 
+/* Wraps the back row and the card, so navigation sits ABOVE the border rather
+   than inside it. */
+.context-profile-panel {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.context-profile-panel > .context-profile-card {
+  width: 100%;
+}
+
 .context-profile-card {
   overflow: hidden;
   border-radius: 14px;
@@ -4425,20 +4381,23 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   padding: 15px 16px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 16px;
 }
 
+/* Fanned sideways: the header is wide and short, so a horizontal stack reads
+   without stealing height from the copy beside it. */
 .context-profile-apps {
-  min-width: 82px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
 }
 
-.context-profile-apps span {
-  width: 32px;
-  height: 32px;
+.context-profile-apps > span {
+  width: var(--profile-tile);
+  height: var(--profile-tile);
   display: grid;
   place-items: center;
+  overflow: hidden;
   border-radius: 50%;
   color: var(--text-2);
   background: var(--bg-2);
@@ -4447,16 +4406,28 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     inset 0 0 0 1px var(--hairline);
 }
 
-.context-profile-apps span + span {
-  margin-left: -7px;
+/* Later tiles ride over earlier ones, so the stack reads front-to-back
+   left-to-right — the same order the eye takes them in. */
+.context-profile-apps > span + span {
+  margin-left: -8px;
 }
 
-.context-profile-apps span:nth-child(2) {
-  color: var(--sky);
+.context-profile-apps > span:nth-child(2) {
+  z-index: 1;
 }
 
-.context-profile-apps span:nth-child(3) {
-  color: var(--accent-strong);
+.context-profile-apps > span:nth-child(3) {
+  z-index: 2;
+}
+
+/* `contain`, never `cover`: these are real brand marks, and cropping one to
+   fill a circle is how a recognisable logo stops being recognisable. */
+.context-profile-apps img,
+.context-custom-profile-icons img {
+  width: var(--profile-tile-img);
+  height: var(--profile-tile-img);
+  border-radius: 5px;
+  object-fit: contain;
 }
 
 .context-profile-copy {
@@ -4520,9 +4491,84 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-profile-prompt-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   color: var(--text-3);
   font-size: 11px;
   font-weight: 620;
+}
+
+/* Only rendered when a profile has actually been edited, so it doubles as the
+   indicator that this profile no longer tracks the shipped wording. */
+.context-profile-reset {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 560;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.context-profile-reset:hover {
+  color: var(--text-1);
+}
+
+/* Returns from a profile that lives inside the Other tab (AI chat) to the grid
+   it was opened from. Its own row ABOVE the card, with the arrow doing the
+   explaining — so it reads as navigation rather than as part of the profile's
+   copy, which is where it sat before.
+ *
+ * The negative inset pulls its label's optical left edge into line with the
+ * card below, since its padding is what gives the hover pill its shape rather
+ * than anything the eye should see. Spacing to the card comes from the panel
+ * grid's gap, not a margin here, so there is one number to change. */
+.context-profile-back {
+  margin-left: -6px;
+  padding: 5px 9px 5px 6px;
+  border: 0;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 560;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.context-profile-back:hover,
+.context-profile-back:focus-visible {
+  color: var(--text-1);
+  background: var(--bg-2);
+}
+
+.context-profile-delete {
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--danger, #e5484d);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 560;
+  cursor: pointer;
+}
+
+.context-profile-delete:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .context-profile-prompt p,
@@ -4533,9 +4579,6 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   font: inherit;
   font-size: 12.5px;
   line-height: 1.62;
-}
-
-.context-profile-prompt textarea {
   min-height: 68px;
   max-height: 184px;
   padding: 0 0 5px;
@@ -4582,16 +4625,31 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   gap: 12px;
 }
 
+/* Every card in this grid is sized to ONE shape: a title of any length on one
+   line, and exactly two lines of description. Two lines is the design target
+   rather than an accident of content — a one-line description still reserves
+   the second, so a row of cards keeps a common baseline instead of each card
+   being as tall as whatever text it happened to get. The height below is that
+   shape plus padding, so nothing has to be measured to stay aligned. */
 .context-custom-profile-card {
+  --card-pad-y: 15px;
+  --card-title-size: 13px;
+  --card-desc-size: 12px;
+  --card-desc-leading: 1.5;
+  /* Reserved for the description, always: two lines at its own leading. */
+  --card-desc-block: calc(var(--card-desc-size) * var(--card-desc-leading) * 2);
   min-width: 0;
-  min-height: 112px;
-  padding: 16px;
+  min-height: calc(
+    var(--card-pad-y) * 2 + var(--card-title-size) * 1.35 + 6px +
+      var(--card-desc-block)
+  );
+  padding: var(--card-pad-y) 15px;
   border-radius: 16px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-content: center;
   align-items: center;
-  gap: 14px;
+  gap: 15px;
   overflow: hidden;
   color: var(--text-1);
   background: transparent;
@@ -4618,15 +4676,20 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   transform: scale(0.99);
 }
 
+/* Clamped to the two lines the card is built around, and reserving them even
+   when the text is shorter — that reservation is what keeps a one-line profile
+   the same height as its neighbours. */
 .context-custom-profile-instruction {
   width: 100%;
+  min-height: var(--card-desc-block);
   display: -webkit-box;
   overflow: hidden;
   color: var(--text-2);
-  font-size: 12px;
-  line-height: 1.52;
+  font-size: var(--card-desc-size);
+  line-height: var(--card-desc-leading);
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   white-space: pre-wrap;
 }
 
@@ -4643,27 +4706,44 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 .context-custom-profile-create-copy {
   min-width: 0;
   display: grid;
-  gap: 5px;
+  align-content: center;
+  gap: 6px;
 }
 
+/* One line, ellipsised. A title is allowed to be long; it is not allowed to
+   change the card's height, which is what wrapping it would do. */
 .context-custom-profile-create-copy strong {
   width: 100%;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--card-title-size);
   font-weight: 620;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* The Create card's own copy sits on the same two-line reservation as a real
+   profile's instruction, so the two never disagree about how tall a card is. */
 .context-custom-profile-create-copy > span {
+  min-height: var(--card-desc-block);
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--text-3);
-  font-size: 11.5px;
-  line-height: 1.5;
+  font-size: var(--card-desc-size);
+  line-height: var(--card-desc-leading);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
+/* Vertically stacked, overlapping tiles — the real favicons of what a profile
+   covers. 60% overlap: enough that three fit the card's height, still enough of
+   each tile showing to recognise it. Max three is enforced in the component;
+   past that the stack reads as a smudge rather than as icons. */
 .context-custom-profile-icons {
-  min-width: 38px;
-  min-height: 34px;
+  --icon-overlap: 0.58;
+  flex: 0 0 auto;
+  min-width: var(--profile-tile);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -4671,11 +4751,12 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
 }
 
 .context-custom-profile-icons > span {
-  width: 34px;
-  height: 34px;
+  width: var(--profile-tile);
+  height: var(--profile-tile);
   border-radius: 50%;
   display: grid;
   place-items: center;
+  overflow: hidden;
   color: var(--text-2);
   background: var(--bg-2);
   box-shadow:
@@ -4683,21 +4764,31 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
     inset 0 0 0 1px var(--hairline);
 }
 
+/* Each tile after the first rides up over the one before. Later tiles sit on
+   top, so the stack reads front-to-back downward.
+ *
+ * A duplicate of this rule used to follow with a hard `-12px`, which won on
+ * source order and quietly held the overlap at 43% however this was set. */
 .context-custom-profile-icons > span + span {
-  margin-top: -12px;
+  margin-top: calc(var(--profile-tile) * var(--icon-overlap) * -1);
 }
 
 .context-custom-profile-icons > span:nth-child(2) {
-  color: var(--sky);
+  z-index: 1;
 }
 
 .context-custom-profile-icons > span:nth-child(3) {
-  color: var(--accent-strong);
+  z-index: 2;
 }
 
+/* Tall enough that opening the app picker does not push the whole dialog into a
+   scrollbar — the list inside it has its own, and two nested scroll regions is
+   the thing that felt broken. The bottom padding is trimmed for the same
+   reason: it was the last few pixels over the line. */
 .context-profile-editor-dialog {
   width: min(540px, 100%);
-  max-height: min(720px, calc(100vh - 48px));
+  max-height: min(788px, calc(100vh - 40px));
+  padding-bottom: 24px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--text-4) transparent;
@@ -4752,6 +4843,24 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+}
+
+/* A website chip shows the site's real favicon once it resolves, which is also
+   how the user knows the site was understood. Fixed box so the chip does not
+   reflow when the glyph is replaced by the image. */
+.context-profile-target-icon {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+}
+
+.context-profile-target-icon img {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  object-fit: contain;
 }
 
 .context-profile-target {
@@ -4854,6 +4963,126 @@ html[data-theme="light"] .grain-root .gs-next .gs-chat-bubble--user {
   min-width: 0;
   height: 38px;
   min-height: 38px !important;
+}
+
+/* [GRAIN] The installed-application picker. Sized so the list is obviously
+   scrollable rather than looking like it ends at the last visible row — the
+   catalogue is a few hundred entries and search is the intended way through
+   it. */
+.context-app-picker {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-soft);
+}
+
+.context-app-picker-search {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.context-app-picker-search > svg {
+  color: var(--text-3);
+}
+
+.next-settings-content
+  .context-app-picker-search
+  input.dictionary-dialog-input {
+  min-width: 0;
+  height: 34px;
+  min-height: 34px !important;
+}
+
+/* Sized to show five rows and clip the sixth, so it is visibly a list you
+   scroll rather than one that looks complete at whatever fits. */
+.context-app-picker-list {
+  max-height: 196px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  gap: 2px;
+}
+
+.context-app-picker-empty {
+  margin: 0;
+  padding: 14px 10px;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.context-app-picker-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.next-settings-content .context-app-picker-row {
+  border-radius: 8px !important;
+}
+
+.context-app-picker-row:hover:not(:disabled) {
+  background: var(--bg-3);
+}
+
+.context-app-picker-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.context-app-picker-icon {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: var(--text-3);
+}
+
+.context-app-picker-icon img {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.context-app-picker-name {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.context-app-picker-name strong {
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-app-picker-name span {
+  color: var(--text-3);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-app-picker-added {
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 
 html[data-theme="light"] .context-custom-profile-card {
@@ -5447,6 +5676,7 @@ html[data-theme="light"] .context-profile-mode {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   white-space: pre-wrap;
 }
 
@@ -6098,13 +6328,15 @@ html[data-theme="light"] .installed-extension-actions {
   background: rgba(201, 70, 70, 0.08);
 }
 
+/* Anchored to the content bubble, not the window, so its edges line up. */
 .extension-panel,
 .developer-drawer {
   position: fixed;
   z-index: 70;
   top: var(--titlebar);
-  right: 0;
-  bottom: 0;
+  right: var(--shell-gutter);
+  bottom: var(--shell-gutter);
+  border-radius: var(--radius-lg);
   width: min(470px, 94vw);
   padding: 18px 20px;
   display: flex;
@@ -6353,6 +6585,89 @@ html[data-theme="light"] .installed-extension-actions {
 .extension-confirm ul {
   margin: 0 0 14px 18px;
   list-style: disc;
+}
+
+/* Contributed prompt text is quoted, not bulleted: the user is reading the
+   exact words that will be sent to the model, so it needs to look like a
+   quotation rather than like our own copy. Scrolls rather than growing, so a
+   pack with several rules cannot push the Cancel button off screen. */
+.extension-confirm ul.extension-prompt-layers {
+  margin-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.extension-prompt-layers li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+}
+
+.extension-prompt-layer-scope {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-4, var(--text-3));
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.extension-prompt-layers q {
+  color: var(--text-2);
+  font-style: italic;
+}
+
+/* Declared actions on the approval sheet: one row per preference domain, so
+   "what can this do" reads as a short list rather than a scroll. Shares the
+   prompt-layer row shape — they are answering the same kind of question. */
+.extension-confirm ul.extension-actions {
+  margin-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.extension-actions li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-1);
+}
+
+.extension-action-domain {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-4, var(--text-3));
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.extension-action-titles {
+  color: var(--text-2);
+}
+
+/* The one thing on the row that must not be skimmed past. */
+.extension-action-confirms {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-1);
+  color: var(--text-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .extension-confirm-actions {
   justify-content: flex-end;

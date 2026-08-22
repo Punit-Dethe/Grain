@@ -580,7 +580,7 @@ fn initialize_core_logic(app_handle: &AppHandle) {
     // [GRAIN] The Handy webview recording overlay is retired — the winit
     // grain-pill is now the SINGLE overlay surface for both batch and rolling
     // (driven by DaemonEvents over the local WS). Nothing to create here; the
-    // pill is launched + supervised separately (events_server::spawn_pill_supervisor).
+    // event server launches the supervisor after its listener owns the port.
 }
 
 #[tauri::command]
