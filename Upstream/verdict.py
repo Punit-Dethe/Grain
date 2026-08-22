@@ -25,7 +25,7 @@ import sync_upstream as sync
 
 STATUSES = ("Merged", "Ignored", "Pending")
 PORT_OUTCOMES = ("ported", "not-applicable")
-FRONTEND_OUTCOMES = ("ported", "no-backend-impact")
+REVIEW_OUTCOMES = ("adapted", "already-covered", "not-applicable")
 RELOCATIONS_FILE = os.path.join(os.path.dirname(__file__), "relocations.json")
 
 
@@ -130,13 +130,24 @@ def main(argv):
             "evidence": evidence,
         }
         entry["ports"] = ports
-    elif rest[0] == "--frontend-review":
-        if len(rest) < 3:
-            raise SystemExit("--frontend-review needs an outcome and evidence.")
-        outcome, evidence = rest[1].lower(), rest[2].strip()
-        if outcome not in FRONTEND_OUTCOMES or not evidence:
-            raise SystemExit("Frontend review outcome/evidence is invalid or empty.")
-        entry["frontend_review"] = {"outcome": outcome, "evidence": evidence}
+    elif rest[0] in {"--frontend-review", "--suppressed-review"}:
+        if len(rest) < 4:
+            raise SystemExit(
+                f"{rest[0]} needs <outcome> <problem> <evidence> [Grain paths...]."
+            )
+        outcome, problem, evidence = rest[1].lower(), rest[2].strip(), rest[3].strip()
+        destinations = [path.strip() for path in rest[4:] if path.strip() and path != "-"]
+        if outcome not in REVIEW_OUTCOMES or not problem or not evidence:
+            raise SystemExit("Review outcome/problem/evidence is invalid or empty.")
+        if outcome in {"adapted", "already-covered"} and not destinations:
+            raise SystemExit(f"{outcome} needs at least one Grain destination path.")
+        key = "frontend_review" if rest[0] == "--frontend-review" else "suppressed_review"
+        entry[key] = {
+            "outcome": outcome,
+            "problem": problem,
+            "destinations": destinations,
+            "evidence": evidence,
+        }
     else:
         status = rest[0].capitalize()
         if status not in STATUSES:

@@ -24,6 +24,7 @@ import { ContextAwareSection } from "@/components/settings/experimentations/Cont
 import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
 import { useSettings } from "@/hooks/useSettings";
+import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 import { hashForRoute, type ToolSectionId } from "../navigation";
 import { StoreCard } from "../extensions/StoreCard";
 import {
@@ -382,10 +383,11 @@ function DictionaryTool() {
   }, [query, words]);
 
   const saveTerm = async (value: string) => {
-    const candidate = value.trim().replace(/[<>"']/g, "");
+    const candidate = normalizeCustomWord(value);
     if (!candidate) return "Enter a term to continue.";
-    if (/\s/.test(candidate)) return "Use one word or a hyphenated term.";
-    if (candidate.length > 50) return "Keep the term under 50 characters.";
+    if (candidate.length > MAX_CUSTOM_WORD_LENGTH) {
+      return `Keep the term under ${MAX_CUSTOM_WORD_LENGTH} characters.`;
+    }
 
     const original = dialog?.mode === "edit" ? dialog.original : null;
     const duplicate = words.some(

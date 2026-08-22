@@ -16,6 +16,19 @@ done, the commit list in the body, and the divergence ratchet already run.
 Review it, merge it. Done — merged commits file themselves as `Merged` in the
 ledger, because being in our ancestry _is_ the record.
 
+`merge=ours` decides file ownership, not whether an upstream fix matters. Every
+upstream change under the frozen frontend or another suppressed Grain-owned
+path must be reviewed as a problem report: state the failure mode, decide
+whether Grain shares it, name the Grain paths adapted/already covering it, and
+record verification evidence. `frontend_freeze.py --review-audit` and
+`suppressed_review.py` enforce those records, including upstream merge commits.
+For transcribe.cpp changes, `vendor/TRANSCRIBE-CPP.md` is an additional binding
+contract for the pristine baseline and Grain's isolated rolling/TDT patch.
+When closing out manually adapted commits, `closeout.py` defers the divergence
+ratchet until after its tree-preserving ancestry merge, because only then does
+the ratchet compare Grain against the newly assessed upstream baseline. Use
+`--accept-growth` only after reviewing every reported Handy-tree increase.
+
 Working locally? One command answers everything:
 
 ```bash

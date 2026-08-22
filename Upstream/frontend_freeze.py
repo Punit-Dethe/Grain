@@ -39,6 +39,8 @@ import os
 import subprocess
 import sys
 
+from review_evidence import validation_failures
+
 SCOPE = "src/"
 ALLOW_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "frontend_allow.json"
@@ -201,9 +203,15 @@ def report() -> int:
     return 0
 
 
-def frontend_review_audit(base: str) -> int:
-    """Require explicit backend-knowledge review for new upstream UI commits."""
-    shas = git("rev-list", "--reverse", "--no-merges", f"{base}..HEAD", "--", SCOPE).splitlines()
+def frontend_review_audit(base: str, head: str = "HEAD") -> int:
+    """Require problem-level review for every upstream UI change, including merges."""
+    candidates = git("rev-list", "--reverse", f"{base}..{head}").splitlines()
+    shas = [
+        sha for sha in candidates
+        if git(
+            "diff-tree", "-m", "--no-commit-id", "--name-only", "-r", sha, "--", SCOPE
+        ).strip()
+    ]
     upstream_shas = [
         sha
         for sha in shas
@@ -216,17 +224,19 @@ def frontend_review_audit(base: str) -> int:
         verdicts = json.load(handle)
     missing = []
     for sha in upstream_shas:
-        review = (verdicts.get(sha) or {}).get("frontend_review") or {}
-        if review.get("outcome") not in {"ported", "no-backend-impact"} or not str(
-            review.get("evidence", "")
-        ).strip():
-            missing.append((sha, git("show", "-s", "--format=%s", sha).strip()))
+        review = (verdicts.get(sha) or {}).get("frontend_review")
+        failures = validation_failures(review, os.path.dirname(os.path.dirname(__file__)))
+        if failures:
+            missing.append(
+                (sha, git("show", "-s", "--format=%s", sha).strip(), failures)
+            )
     if missing:
-        for sha, subject in missing:
-            print(f"[freeze] FAIL: frontend knowledge not reviewed: {sha[:8]} {subject}")
+        for sha, subject, failures in missing:
+            print(f"[freeze] FAIL: frontend problem not reviewed: {sha[:8]} {subject}")
+            print(f"  review: {', '.join(failures)}")
         print(
             "[freeze] Use: verdict.py <sha> --frontend-review "
-            "<ported|no-backend-impact> \"Rust path/test or reason\""
+            "<adapted|already-covered|not-applicable> \"problem\" \"evidence\" [Grain paths...]"
         )
         return 1
     print(f"[freeze] OK: {len(upstream_shas)} upstream frontend review(s) recorded")
@@ -280,7 +290,8 @@ def main() -> int:
         if len(sys.argv) <= i + 1:
             print("[freeze] --review-audit needs a base ref", file=sys.stderr)
             return 2
-        return frontend_review_audit(sys.argv[i + 1])
+        head = sys.argv[i + 2] if len(sys.argv) > i + 2 else "HEAD"
+        return frontend_review_audit(sys.argv[i + 1], head)
 
     rc = census()
     # Path-based and content-based checks answer different questions; the second

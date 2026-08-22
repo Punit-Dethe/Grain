@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "@/hooks/useSettings";
 import { formatKeyPart } from "@/lib/utils/keyboard";
+import { MAX_CUSTOM_WORD_LENGTH, normalizeCustomWord } from "@/lib/customWords";
 import { hashForRoute } from "../navigation";
 
 const COPY = {
@@ -117,8 +118,8 @@ function DictionaryCard() {
   const busy = isUpdating("custom_words");
 
   const submit = () => {
-    const candidate = word.trim().replace(/[<>"']/g, "");
-    if (!candidate || candidate.includes(" ") || candidate.length > 50) return;
+    const candidate = normalizeCustomWord(word);
+    if (!candidate || candidate.length > MAX_CUSTOM_WORD_LENGTH) return;
     if (words.includes(candidate)) {
       toast.error(`"${candidate}" is already in your dictionary.`);
       return;
@@ -141,7 +142,7 @@ function DictionaryCard() {
             className="overview-add-input"
             value={word}
             spellCheck={false}
-            maxLength={50}
+            maxLength={MAX_CUSTOM_WORD_LENGTH}
             disabled={busy}
             placeholder={COPY.dictionary.placeholder}
             aria-label={COPY.dictionary.add}
@@ -252,6 +253,7 @@ function AgentGlyph() {
   );
 }
 
+
 export function OverviewCards() {
   return (
     <div className="overview-grid">
@@ -262,4 +264,3 @@ export function OverviewCards() {
     </div>
   );
 }
-

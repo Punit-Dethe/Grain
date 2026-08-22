@@ -158,6 +158,8 @@ jobs:
           # Capture semantic-review inputs before the merge advances the base.
           python Upstream/port_audit.py --pending --no-fetch > /tmp/ports.txt
           python Upstream/frontend_freeze.py --report > /tmp/frontend.txt
+          python Upstream/frontend_freeze.py --review-audit HEAD upstream/main > /tmp/frontend-review.txt || true
+          python Upstream/suppressed_review.py HEAD upstream/main > /tmp/suppressed-review.txt || true
           git log --format='%h %s' --name-only HEAD..upstream/main -- \
             README.md AGENTS.md CLAUDE.md CRUSH.md BUILD.md CONTRIBUTING.md \
             CONTRIBUTING_TRANSLATIONS.md docs website Upstream .github/workflows \
@@ -198,6 +200,16 @@ jobs:
             cat /tmp/frontend.txt
             echo '```'
             echo
+            echo "### Required problem-level frontend decisions"
+            echo '```'
+            cat /tmp/frontend-review.txt
+            echo '```'
+            echo
+            echo "### Required suppressed-path decisions"
+            echo '```'
+            cat /tmp/suppressed-review.txt
+            echo '```'
+            echo
             if [ -s /tmp/protected.txt ]; then
               echo "### Upstream changes suppressed by Grain-owned paths"
               echo '```'
@@ -220,8 +232,8 @@ jobs:
             echo "      Merged commits need nothing — ancestry files them itself."
             echo "- [ ] New settings/bindings? Regenerate \`src/bindings.ts\` on a dev run"
             echo "- [ ] Every runtime-port item has structured \`--port\` evidence"
-            echo "- [ ] Every frontend commit has a \`--frontend-review\` outcome"
-            echo "- [ ] Every suppressed Grain-owned path above was inspected"
+            echo "- [ ] Every frontend commit records problem/applicability/destination/evidence"
+            echo "- [ ] Every suppressed Grain-owned change has a \`--suppressed-review\` record"
             echo
             echo "Merge with a merge commit — **never squash** (squashing discards the"
             echo "ancestry and the next sync re-fights these commits)."

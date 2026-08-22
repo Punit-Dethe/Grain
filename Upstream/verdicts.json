@@ -3,8 +3,8 @@
     "notes": "logging-only change to transcription.rs; no behavioral effect on Grain's path."
   },
   "09a6a71015db794b47dd4916333be1a8b3ad2dac": {
-    "status": "Merged",
-    "notes": "Cherry-picked (2c17bfbd); conflicts resolved per divergence map: kept Grain keys (multiLanguage, flat overlay, whisper ack, snippets), took selectModel/languageCount/VAD translations, dropped unreferenced model-list keys. Cherry-pick — needs close-out with the batch."
+    "notes": "Cherry-picked (2c17bfbd); conflicts resolved per divergence map: kept Grain keys (multiLanguage, flat overlay, whisper ack, snippets), took selectModel/languageCount/VAD translations, dropped unreferenced model-list keys. Cherry-pick — needs close-out with the batch.",
+    "status": "Merged"
   },
   "09aaf4d303334ea80b616c46e860f6bf51b4c0ba": {
     "notes": "moonshine stream.text().full fix merged clean into Grain's transcription.rs (~line 935). Verified in v0.9.5 sync."
@@ -12,9 +12,33 @@
   "0a59e1f3001c64dc4afc955f376508b1a11061c0": {
     "notes": "Clean cherry-pick"
   },
+  "0e5036721ef6f26c3b89ab31bc10cd2ffd6096fb": {
+    "frontend_review": {
+      "destinations": [
+        "src/app/components/settings/AccelerationSelector.tsx",
+        "src-tauri/src/handy/managers/transcription.rs",
+        "crates/grain-core/src/settings.rs"
+      ],
+      "evidence": "Repository-wide conflict-marker scan is clean; accelerator selection uses Auto, exact opaque GPU devices, or CPU.",
+      "outcome": "already-covered",
+      "problem": "The first parent contained unresolved conflict markers and an inconsistent accelerator UI after parallel transcribe.cpp work."
+    },
+    "notes": "Audited the final repaired tree from both parents; this merge removes d55ea7ef's accidentally committed conflict markers. Never replay d55ea7ef without this repair.",
+    "status": "Merged",
+    "suppressed_review": {
+      "destinations": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "vendor/TRANSCRIBE-CPP.md"
+      ],
+      "evidence": "Exact 0.2.0 manifest declarations, vendored baseline provenance, and regenerated lockfile are checked by policy_check.py and Cargo.",
+      "outcome": "already-covered",
+      "problem": "The repair merge reconciled dependency, build, workflow, and lockfile state after the transcribe.cpp 0.2.0 integration."
+    }
+  },
   "11c2bb1eb8eab5b0472e03d49a908a60010d8777": {
-    "status": "Ignored",
-    "notes": "n/a - Grain kept its own bindings.ts typings, no optional bindings"
+    "notes": "n/a - Grain kept its own bindings.ts typings, no optional bindings",
+    "status": "Ignored"
   },
   "12f02e2a9645295c95a156b83bbb2f054df2aea4": {
     "notes": "Backend plumbing merged; selected_channel setting ported into crates/grain-core AppSettings (upstream settings.rs inert). Upstream ChannelSelector.tsx dropped (frontend frozen); set_selected_channel command kept + registered for Grain's own UI."
@@ -26,8 +50,8 @@
     "notes": "Added Windows prerequisites, MAX_PATH fixes, and code-signing bypass instructions to BUILD.md."
   },
   "17d6c763413e3e29ec5cee76aa19ad01eccb73b2": {
-    "status": "Ignored",
-    "notes": "Upstream version bump; Grain versions independently"
+    "notes": "Upstream version bump; Grain versions independently",
+    "status": "Ignored"
   },
   "1c4f21acd2bab81f75a0cd7556cd3bb7399ffd9a": {
     "notes": "Bumped version to 0.9.1 in Cargo.toml, tauri.conf.json, and package.json."
@@ -41,6 +65,30 @@
   "2211da652ea408191c6ab74e850d1155360d7304": {
     "notes": "Ported stream:false into grain_llm_client ChatCompletionRequest (all 4 call sites); upstream's llm_client.rs is inert. Grain parses full JSON on every path."
   },
+  "2cf157d96290056fe07b4a2a42c26584c00655b8": {
+    "frontend_review": {
+      "destinations": [
+        "src/app/lib/customWords.ts",
+        "src/app/components/settings/CustomWords.tsx",
+        "src/app/pages/ToolsPage.tsx",
+        "src/app/overview/OverviewCards.tsx"
+      ],
+      "evidence": "Shared normalization unit test preserves phrases; backend test now requires the exact 'using MacBook Pro' result.",
+      "outcome": "adapted",
+      "problem": "Frontend validation rejected spaces even though backend custom-word matching supports multi-word phrases."
+    },
+    "notes": "Adapted phrase support across all three Grain-owned dictionary entry points and strengthened the backend n-gram assertion.",
+    "ports": {
+      "src-tauri/src/audio_toolkit/text.rs": {
+        "destinations": [
+          "src-tauri/src/handy/audio_toolkit/grain_text.rs"
+        ],
+        "evidence": "Grain finalization calls the shared apply_custom_words implementation; its exact multi-word n-gram regression test passes.",
+        "outcome": "ported"
+      }
+    },
+    "status": "Merged"
+  },
   "2dd35bbb5a85a0fa46f539a0c2a06d1a246c88fa": {
     "notes": "Safely merged into `tray.rs`"
   },
@@ -51,8 +99,8 @@
     "notes": "Adapted to Grain flat onboarding layout; store/ModelCard infra already present"
   },
   "390729a8007a9c09be38416bc7755e4fa04165c3": {
-    "status": "Merged",
-    "notes": "Applied handy-keys 0.3.2; lockfile already resolved this version."
+    "notes": "Applied handy-keys 0.3.2; lockfile already resolved this version.",
+    "status": "Merged"
   },
   "3cbbe58272e2067b05645f42a65b7b79b36a83dc": {
     "notes": "Clean cherry-pick. Grain PasteMethod.tsx matched upstream pre-fix structure; Grain Dropdown already supported DropdownOption.disabled, so the macOS hide-but-keep-manual-selection logic works as-is."
@@ -64,8 +112,8 @@
     "notes": "ADOPTED (re-evaluated 2026-08-08): the reqwest source-chain diagnostics are useful — grain_llm_client swallowed transport causes at post_chat/.send() and fetch_models, the same gap. Ported the helper into a shared crate::net_diag module (payload-safe: sanitized URLs, decode errors keep only classification) and applied it to BOTH cloud clients — grain_llm_client AND the Grain-only stt_client (5 send sites), which the merge could never reach."
   },
   "4357c728d9670381b1acabb6a92d937ceb629ad3": {
-    "status": "Ignored",
-    "notes": "Grain's ModelCard shows no quant label at all"
+    "notes": "Grain's ModelCard shows no quant label at all",
+    "status": "Ignored"
   },
   "438582fc64321a8a17838db6703079ccdcc15982": {
     "notes": "Deferral gate auto-threaded ahead of Grain debounce/send-to-AI; 7 new tests pass"
@@ -74,8 +122,8 @@
     "notes": "Updated `it` translations."
   },
   "468129fdf1f7b1b8275f4b40c572f28b91d7f701": {
-    "status": "Merged",
-    "notes": "Superseded by and absorbed into handy-keys 0.3.2."
+    "notes": "Superseded by and absorbed into handy-keys 0.3.2.",
+    "status": "Merged"
   },
   "46d6a2aec85560b1a5f627a17423d2f0dbf94960": {
     "notes": "Vulkan host-gating kept in Grain's get_available_accelerators (verified v0.9.5 sync); dropped only the ORT branch (no ONNX engine behind it)."
@@ -102,14 +150,27 @@
     "notes": "Kept Grain non-panicking icon load; menu now reflects real state"
   },
   "549cbde3ebb72459f7f7230783931a45222018a1": {
-    "status": "Ignored",
-    "notes": "Handy webview arming visualization is retired in Grain; recorder readiness API was not adopted across Grain-native capture paths."
+    "notes": "Handy webview arming visualization is retired in Grain; recorder readiness API was not adopted across Grain-native capture paths.",
+    "status": "Ignored"
   },
   "58760b22cd13e709384a617a6d86b7df506a65ae": {
     "notes": "Added `ne` translation."
   },
   "5a7c0eac1ac250142b9fe58a898cbf79cf9f1814": {
     "notes": "tauri 2.11.5 + api/cli ^2.11; cjpais runtime fork replaced by tao rev pin; overlay Dock fix n/a (native pill)"
+  },
+  "5c77861f17a51996070b6b5e0a688d08a652e1e0": {
+    "notes": "Bumped handy-keys to 0.3.4 for Pause/Break, PrintScreen/SysRq, and ContextMenu/Application key support on supported platforms.",
+    "status": "Merged",
+    "suppressed_review": {
+      "destinations": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock"
+      ],
+      "evidence": "cargo update resolved handy-keys 0.3.4 and its published checksum.",
+      "outcome": "adapted",
+      "problem": "Keeping the merge-owned lockfile at 0.3.3 would silently omit newly supported physical shortcut keys."
+    }
   },
   "5f54e17cfca5fd8fd5c61b3dd8aeb37ae45edbbc": {
     "notes": "Bumped transcribe-cpp to 0.1.1."
@@ -120,9 +181,33 @@
   "6d92e2cc6902c18d8d3362872fda889172bdb261": {
     "notes": "Improved `nl` translations."
   },
-  "86616891af0f1ba43620f4f9601593a38e71f320": {
+  "8282c4001d61aa9ee1fc0b7c63e81ea83529d068": {
+    "notes": "Adapted the Apple-only fn/Globe shortcut limitation to Grain's user documentation.",
     "status": "Merged",
-    "notes": "Applied upstream portable-update dialog theme tokens verbatim."
+    "suppressed_review": {
+      "destinations": [
+        "README.md"
+      ],
+      "evidence": "Known input/audio behavior explains the hardware boundary and recommends portable standard modifiers.",
+      "outcome": "adapted",
+      "problem": "Third-party keyboard Fn keys are often firmware-only, so macOS emits no event and the shortcut can never trigger."
+    }
+  },
+  "86616891af0f1ba43620f4f9601593a38e71f320": {
+    "notes": "Applied upstream portable-update dialog theme tokens verbatim.",
+    "status": "Merged"
+  },
+  "8758dccb04eada6808158ade255dd663b30e4d43": {
+    "notes": "Adapted Handy's local-rebuild Accessibility recovery instructions to Grain's bundle id and app path.",
+    "status": "Merged",
+    "suppressed_review": {
+      "destinations": [
+        "BUILD.md"
+      ],
+      "evidence": "Troubleshooting uses com.grain.app, /Applications/Grain.app, and resets only the Accessibility TCC service.",
+      "outcome": "adapted",
+      "problem": "A macOS ad-hoc rebuild can retain a visibly enabled but stale Accessibility grant and stop global input."
+    }
   },
   "87c45f814be4b7e7ee9b0783c1fe74e2c74d99c6": {
     "notes": "Bumped `transcribe-cpp` to 0.1.2."
@@ -131,11 +216,15 @@
     "notes": "AUDIT 2026-07-17: was NOT actually applied - all 12 Moonshine models still read \"English speech-to-text\". Fixed by taking upstream catalog.json verbatim (also converged its hand-reformatting)."
   },
   "8f72266842d759af385f812fc093ea829fbdf9f1": {
-    "status": "Ignored",
-    "notes": "Irrelevant (Grain is an independent fork)."
+    "notes": "Irrelevant (Grain is an independent fork).",
+    "status": "Ignored"
   },
   "96afb0cf335d0c6b5d6d92c9af9e14f4c3f4ef0b": {
     "notes": "memory.rs (glibc allocator tuning) git mv'd into handy/ with #[path]; trim_freed_memory() hook ported by hand into Grain's diverged FinishGuard::drop (merge left actions.rs untouched)."
+  },
+  "99052eefa6c15c32d11d7ccc29f3d14b6ae26cb8": {
+    "notes": "Already covered: both Grain xdotool type and paste invocations use --clearmodifiers, preventing a stale modifier latch.",
+    "status": "Merged"
   },
   "99ac7ebb23473d8ce5b63e6578f37e239b89e738": {
     "notes": "Fixed encoding and translated English strings in `ja`."
@@ -161,6 +250,51 @@
   "afbe763dcac5a2c14d5c6d1b8215639a563ffbef": {
     "notes": "Batch path only; rolling keeps Word timestamps + coarse fallback"
   },
+  "afbf44cd5f828bd48ca49588c0cf25dc6d0fc451": {
+    "frontend_review": {
+      "destinations": [
+        "src/app/components/settings/AccelerationSelector.tsx",
+        "crates/grain-core/src/settings.rs",
+        "src-tauri/src/handy/managers/transcription.rs"
+      ],
+      "evidence": "Settings migration tests cover legacy indices and generic GPU fallback; the selector encodes only Auto, CPU, or an exact stable GPU key.",
+      "outcome": "adapted",
+      "problem": "The 0.2.0 API replaces process-local integer GPU indices with opaque devices and stable identities, requiring the UI to persist an exact device rather than a generic GPU choice."
+    },
+    "notes": "Completed the prior manual transcribe.cpp 0.2.0 port: exact opaque-device lifecycle, settings migration, build/ABI staging, generated catalog additions, architecture allowlist, and Grain-owned selector are all audited under vendor/TRANSCRIBE-CPP.md.",
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "crates/rolling-window/src"
+        ],
+        "evidence": "Opaque device selection stays in the shared engine manager; rolling/TDT policy remains isolated and consumes the same checked session ownership hooks under vendor/TRANSCRIBE-CPP.md.",
+        "outcome": "ported"
+      },
+      "src-tauri/src/settings.rs": {
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs"
+        ],
+        "evidence": "grain-core schema v3 stores stable string device keys and tests migration away from process-local integer indices.",
+        "outcome": "ported"
+      }
+    },
+    "status": "Merged",
+    "suppressed_review": {
+      "destinations": [
+        "src-tauri/Cargo.toml",
+        "src-tauri/Cargo.lock",
+        "src-tauri/build.rs",
+        "src-tauri/src/handy/catalog/catalog.json",
+        "src-tauri/src/handy/catalog/mod.rs",
+        "vendor/TRANSCRIBE-CPP.md"
+      ],
+      "evidence": "All four requirements are exact =0.2.0, both vendored crates identify commit 93151602, policy_check.py enforces the contract, and the catalog blob is byte-identical to upstream.",
+      "outcome": "adapted",
+      "problem": "Suppressed dependency/workflow files and Grain's deleted catalog generator could leave the Rust API, packaged native ABI, and generated model catalog on different transcribe.cpp baselines."
+    }
+  },
   "b00ae666c57e972b2d3494fc76d8166ffa59032e": {
     "notes": "hf-hub fork pin bumped 63b6034->9918f11"
   },
@@ -170,9 +304,21 @@
   "b4453a297f60d2688f9663908c0e92071b0f7641": {
     "notes": "Adopted set_state()/recording_active lock-free mirror; kept Grain's prompt_mark reset alongside it."
   },
+  "b8ad109dfa2b2d6dd8ec66ffdc8bdd6e0d7f3983": {
+    "notes": "Adapted the macOS Bluetooth microphone tradeoff to Grain's user documentation.",
+    "status": "Merged",
+    "suppressed_review": {
+      "destinations": [
+        "README.md"
+      ],
+      "evidence": "Known input/audio behavior tells users to keep Bluetooth output while selecting a built-in or external microphone.",
+      "outcome": "adapted",
+      "problem": "Bluetooth bidirectional recording can reduce headset playback quality or volume and looks like an application audio bug."
+    }
+  },
   "b9925d01972a933544d0344a2e62360580368f18": {
-    "status": "Ignored",
-    "notes": "Upstream version bump; Grain versions independently"
+    "notes": "Upstream version bump; Grain versions independently",
+    "status": "Ignored"
   },
   "bc6a41e418dda66a1f8d0b123e6a83880a66b6a1": {
     "notes": "Ported silently during Dark Mode / UI overhaul. Grain's `Dropdown` already uses the identical grid fix."
@@ -181,14 +327,27 @@
     "notes": "Conflict reconciled against Grain en structure: kept Grain-only keys (loadModels/downloadModel, multiLanguage, acceleration.whisper, flat overlay, translateToEnglish.descriptionUnsupported, acknowledgments.whisper, footer downloadUpdate/restart), skipped upstream-only keys absent from en (existingModelsTitle/showAllModels/showFewerModels, languageCount, selectModel, voiceActivityDetection, ggml ack, overlay.style/position split), took upstream's sentence-case Spanish corrections + liveLogs block (present in Grain en)."
   },
   "bf258d10fbdb15cac57e5d26318228ae01641fc1": {
-    "status": "Ignored",
-    "notes": "Grain uses a single branded tray icon by design"
+    "notes": "Grain uses a single branded tray icon by design",
+    "status": "Ignored"
   },
   "bff4db7e757125b00ca5d93afacb902c19e3eb8c": {
     "notes": "Ported live log viewer and perf cli."
   },
   "c06cce72f61ef1eb8b3565121825a5d57a72033a": {
     "notes": "Fixed VAD crash on Cyrillic paths."
+  },
+  "c89b7bf38974ad317177389f5bfe28236f0d64e3": {
+    "frontend_review": {
+      "destinations": [
+        "src-tauri/src/handy/managers/audio.rs",
+        "src/app/stores/settingsStore.ts"
+      ],
+      "evidence": "Persistence occurs only after successful default stream open and only if the unavailable selection is still current; settings-changed refreshes settings and microphones.",
+      "outcome": "adapted",
+      "problem": "After a selected microphone disconnects, the backend can recover on the system default while the UI and persisted setting still name the missing device."
+    },
+    "notes": "Ported successful default-microphone fallback, race-safe persistence, and frontend settings/device refresh after disconnect.",
+    "status": "Merged"
   },
   "c8eb33bc59bd6e1a3959c40c4b435c6e18d633bf": {
     "notes": "Applied upstream check."
@@ -203,15 +362,15 @@
     "notes": "Reimplemented in grain-core AppContext (headless store); secrets file protected; +4 tests"
   },
   "cdb46339cd2dcd82f5a82aeed0b759096c66fb0b": {
-    "status": "Ignored",
-    "notes": "Irrelevant (Grain uses a native Rust pill architecture)."
+    "notes": "Irrelevant (Grain uses a native Rust pill architecture).",
+    "status": "Ignored"
   },
   "cdbc22390987643237756382ef367f7244b2844f": {
     "notes": "it: 3 keys translated (capabilities.languageCount, modelUnload.title, clamshellMicrophone.title) — clean apply. de/fr: all 5 hunks targeted upstream-only keys Grain already removed (existingModelsTitle/showAllModels/showFewerModels, selectModel, languageCount, overlay.style/position, voiceActivityDetection) → conflicts resolved by keeping Grain HEAD; de/fr unchanged (nothing to translate)."
   },
   "cdf5028b5a8f2e66bf41d2fc5401c313d6900d16": {
-    "status": "Ignored",
-    "notes": "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead."
+    "notes": "Grain has custom sidebar structure with additional tabs (Speech to Text, Grain Space, Experimentations). Applied custom ordering instead.",
+    "status": "Ignored"
   },
   "cf49ab3543a3e4d1fdcc318014393975b4a3306a": {
     "notes": "overlay.rs inert; run-on-main-thread targets the webview overlay's GTK/NSScreen access. Grain's native grain-pill runs its own winit event loop (main-thread-correct by construction). n/a."
@@ -220,18 +379,49 @@
     "notes": "Model sizes already visible in Grain UI with dynamic icons (ported during UI overhaul)."
   },
   "d1180c42ceb344c8219ac419ba6a71c7c938d15c": {
-    "status": "Merged",
-    "notes": "Adapted app-private Linux runtime libraries to /usr/lib/Grain, with SONAME staging and rpath."
+    "notes": "Adapted app-private Linux runtime libraries to /usr/lib/Grain, with SONAME staging and rpath.",
+    "status": "Merged"
   },
   "d1bc82a0ee5be3ab0e84c834c472ee559847c627": {
     "notes": "Upstream branch merge. No code to port."
+  },
+  "d55ea7ef12b82176239264d0b5078cd07b114687": {
+    "frontend_review": {
+      "destinations": [
+        "src/app/components/settings/AccelerationSelector.tsx",
+        "crates/grain-core/src/settings.rs"
+      ],
+      "evidence": "The UI offers exact GPU devices and migrations normalize generic GPU-without-device to Auto; tests cover both legacy and current settings.",
+      "outcome": "already-covered",
+      "problem": "A standalone generic GPU accelerator selection is ambiguous under transcribe.cpp 0.2.0 without a stable device identity."
+    },
+    "notes": "Semantic intent is covered by Grain's exact-device selector and schema migration; this upstream commit itself contains conflict markers and is valid only together with repair merge 0e503672.",
+    "ports": {
+      "src-tauri/src/managers/transcription.rs": {
+        "destinations": [
+          "src-tauri/src/rolling.rs",
+          "crates/rolling-window/src"
+        ],
+        "evidence": "This change only removes an ambiguous load selector; rolling shares the central engine selection and has no parallel accelerator setting.",
+        "outcome": "not-applicable"
+      },
+      "src-tauri/src/settings.rs": {
+        "destinations": [
+          "src-tauri/src/grain_settings.rs",
+          "crates/grain-core/src/settings.rs"
+        ],
+        "evidence": "grain-core migration converts generic GPU without an exact device to Auto and preserves a stable keyed device.",
+        "outcome": "ported"
+      }
+    },
+    "status": "Merged"
   },
   "d861e24bc825c699ccf7215a430684c6e322131c": {
     "notes": "Clean cherry-pick. New file taken verbatim per Grain precedent (cf. ne): upstream-only keys (whatsNew, selectModel, languageCount, overlay.style, ggml, voiceActivityDetection) sit unused; Grain-only sections (agent, grainSpace, grainSpaceOverlay, experimentations.snippets, settings.speechToText cloud) fall back to en at runtime. languages.ts hi entry added at priority 23."
   },
   "d929a9468aad8cfecf5b175c4383cea942fe5399": {
-    "status": "Ignored",
-    "notes": "Ignored. Grain has a highly custom, split-theme architecture via ThemeContext.tsx (allowing dark Quick Panel with light Settings). Upstream's implementation is a global document.documentElement override, which is incompatible with Grain's per-panel toggles."
+    "notes": "Ignored. Grain has a highly custom, split-theme architecture via ThemeContext.tsx (allowing dark Quick Panel with light Settings). Upstream's implementation is a global document.documentElement override, which is incompatible with Grain's per-panel toggles.",
+    "status": "Ignored"
   },
   "d961593721b6643d8fe94b6ae28f5dc3fa63edd8": {
     "notes": "js-yaml 4.1.1->4.3.1 is a dev-only transitive dep (@eslint/eslintrc); bun.lock is merge=ours and Grain regenerates independently. No runtime exposure; not force-bumped."
@@ -258,12 +448,12 @@
     "notes": "AUDIT 2026-07-17: startup WEBVIEW_LOG_STREAMING.store was missing, so the live log viewer was empty until debug mode was toggled. Fixed."
   },
   "ea10f7454e86f893581f5a380a15866476aa6423": {
-    "status": "Ignored",
-    "notes": "Upstream version bump; Grain versions independently"
+    "notes": "Upstream version bump; Grain versions independently",
+    "status": "Ignored"
   },
   "ea3c20a3a67c7401d8b19198723760da9d40ac45": {
-    "status": "Merged",
-    "notes": "Cherry-picked as 0eac7cab; rename-conflict resolved into handy/tray_i18n.rs (blob byte-identical to upstream 2bdc84ca)."
+    "notes": "Cherry-picked as 0eac7cab; rename-conflict resolved into handy/tray_i18n.rs (blob byte-identical to upstream 2bdc84ca).",
+    "status": "Merged"
   },
   "eb9301e01c8f53383eea5d5252035c4aabe75bc3": {
     "notes": "Added `reset()` to `FrameResampler` on `Cmd::Start`."
@@ -275,8 +465,8 @@
     "notes": "build.rs staging cherry-picked; redist locator wired into grain-release.yml (x64) instead of upstream build.yml"
   },
   "f4e3587bac44eead5896bb8809076e4ce59caf00": {
-    "status": "Merged",
-    "notes": "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24."
+    "notes": "Clean cherry-pick. Danish translation file taken verbatim; languages.ts updated with da entry at priority 24.",
+    "status": "Merged"
   },
   "f79a907fc0d3a1ef689bc338de35ab0bcab68029": {
     "notes": "Added the cancel-generation infra Grain lacked; cancel now aborts in-flight LLM/paste"
@@ -285,7 +475,7 @@
     "notes": "AUDIT 2026-07-17: was HALF-applied - run-extension gate was correct but the fuzzy-correction gate still used Feature::InitialPrompt, so custom words were silently dropped for non-whisper models advertising it. Fixed, and the same root cause fixed in the Grain-only rolling path (upstream fix could not reach it)."
   },
   "fc465b49f0522ca359b36a784a325db8521dfb1c": {
-    "status": "Ignored",
-    "notes": "Irrelevant (Grain manages its own custom prompts)."
+    "notes": "Irrelevant (Grain manages its own custom prompts).",
+    "status": "Ignored"
   }
 }

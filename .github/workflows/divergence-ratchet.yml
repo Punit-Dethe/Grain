@@ -119,3 +119,7 @@ jobs:
       - name: Check frontend-carried backend knowledge
         if: github.event_name == 'pull_request'
         run: python Upstream/frontend_freeze.py --review-audit "origin/${{ github.base_ref }}"
+
+      - name: Check suppressed Grain-owned changes
+        if: github.event_name == 'pull_request'
+        run: python Upstream/suppressed_review.py "origin/${{ github.base_ref }}"

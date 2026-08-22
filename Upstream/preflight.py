@@ -99,6 +99,7 @@ def trial_merge_conflicts() -> list[str] | None:
 
 def main() -> int:
     committed = "--committed" in sys.argv
+    skip_ratchet = "--skip-ratchet" in sys.argv
     print("=== upstream preflight ===")
 
     if ensure_fresh() is None:
@@ -128,12 +129,15 @@ def main() -> int:
     if not committed:
         ratchet.append("--worktree")
     ok = [
-        run_gate("ratchet", ratchet),
         run_gate("divergence audit", ["Upstream/audit_divergence.py", "--check", "--no-fetch"]),
         run_gate("frontend freeze", ["Upstream/frontend_freeze.py"]),
         run_gate("port audit", ["Upstream/port_audit.py", "--no-fetch"]),
         run_gate("policy consistency", ["Upstream/policy_check.py"]),
     ]
+    if skip_ratchet:
+        print("  SKIP  ratchet: close-out moves the merge base; checked after ancestry")
+    else:
+        ok.insert(0, run_gate("ratchet", ratchet))
 
     if all(ok):
         print("=== preflight OK ===")

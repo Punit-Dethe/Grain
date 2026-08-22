@@ -20,6 +20,8 @@ ROOT = os.path.dirname(HERE)
 RELOCATIONS_PATH = os.path.join(HERE, "relocations.json")
 DIVERGENCE_PATH = os.path.join(HERE, "UPSTREAM-DIVERGENCE.md")
 LIB_PATH = os.path.join(ROOT, "src-tauri", "src", "lib.rs")
+TRANSCRIBE_CONTRACT_PATH = os.path.join(ROOT, "vendor", "TRANSCRIBE-CPP.md")
+TAURI_MANIFEST_PATH = os.path.join(ROOT, "src-tauri", "Cargo.toml")
 BEGIN = "<!-- BEGIN GENERATED RELOCATION POLICY -->"
 END = "<!-- END GENERATED RELOCATION POLICY -->"
 KINDS = {"inert", "relocated", "parallel"}
@@ -65,6 +67,48 @@ def aliased_replacements() -> dict[str, str]:
 def main() -> int:
     relocations = load_relocations()
     failures: list[str] = []
+
+    # transcribe.cpp is upstream-owned at its pristine baseline but carries a
+    # narrowly-scoped Grain TDT patch. Its contract is therefore part of
+    # upstream management, not optional vendor prose.
+    if not os.path.exists(TRANSCRIBE_CONTRACT_PATH):
+        failures.append("missing vendor/TRANSCRIBE-CPP.md upstream contract")
+    else:
+        with open(TRANSCRIBE_CONTRACT_PATH, encoding="utf-8") as handle:
+            contract = handle.read()
+        baseline = re.search(r"Published crates: `transcribe-cpp ([^`]+)`", contract)
+        commit = re.search(r"Upstream commit: `([0-9a-f]{40})`", contract)
+        with open(TAURI_MANIFEST_PATH, encoding="utf-8") as handle:
+            manifest = handle.read()
+        if not baseline:
+            failures.append("transcribe contract lacks a published-crate baseline")
+        else:
+            declarations = re.findall(r'transcribe-cpp\s*=\s*\{[^\n]*version\s*=\s*"=([^\"]+)"', manifest)
+            if not declarations or any(value != baseline.group(1) for value in declarations):
+                failures.append(
+                    "every transcribe-cpp dependency must exactly match the contract baseline"
+                )
+            for package in ("transcribe-cpp", "transcribe-cpp-sys"):
+                vendor_dir = os.path.join(ROOT, "vendor", f"{package}-{baseline.group(1)}")
+                if not os.path.isdir(vendor_dir):
+                    failures.append(f"missing vendored contract baseline: {package}-{baseline.group(1)}")
+                    continue
+                vcs_path = os.path.join(vendor_dir, ".cargo_vcs_info.json")
+                try:
+                    with open(vcs_path, encoding="utf-8") as handle:
+                        vendor_commit = json.load(handle)["git"]["sha1"]
+                except (FileNotFoundError, KeyError, json.JSONDecodeError):
+                    failures.append(f"{package}: invalid .cargo_vcs_info.json")
+                    continue
+                if commit and vendor_commit != commit.group(1):
+                    failures.append(
+                        f"{package}: vendored commit {vendor_commit} differs from contract"
+                    )
+                expected_path = f'../vendor/{package}-{baseline.group(1)}'
+                if expected_path not in manifest:
+                    failures.append(f"{package}: Cargo patch does not select {expected_path}")
+        if not commit:
+            failures.append("transcribe contract lacks its exact upstream commit")
     upstream_files = set(
         git("ls-tree", "-r", "--name-only", "upstream/main", "--", "src-tauri/src/")
         .stdout.splitlines()
@@ -114,8 +158,8 @@ def main() -> int:
             print(f"[policy] FAIL: {failure}", file=sys.stderr)
         return 1
     print(
-        f"[policy] OK: {len(relocations)} relocation rules; alias coverage and "
-        "human policy agree"
+        f"[policy] OK: {len(relocations)} relocation rules; alias coverage, "
+        "transcribe.cpp contract, and human policy agree"
     )
     return 0
 

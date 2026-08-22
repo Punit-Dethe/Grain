@@ -14,6 +14,8 @@ import type {
 } from "@/bindings";
 import { commands } from "@/bindings";
 
+let settingsEventsInitialized = false;
+
 interface SettingsStore {
   settings: Settings | null;
   defaultSettings: Settings | null;
@@ -674,11 +676,39 @@ export const useSettingsStore = create<SettingsStore>()(
         checkCustomSounds(),
       ]);
 
-      // Re-fetch settings when the backend changes them (e.g. language
-      // reset during model switch). The backend is the source of truth.
-      listen("model-state-changed", () => {
-        get().refreshSettings();
-      });
+      if (!settingsEventsInitialized) {
+        settingsEventsInitialized = true;
+        try {
+          const listenerResults = await Promise.allSettled([
+            // Re-fetch settings when the backend changes them (e.g. language
+            // reset during model switch). The backend is the source of truth.
+            listen("model-state-changed", () => {
+              get().refreshSettings();
+            }),
+            // Recovery can replace an unplugged selected microphone with the
+            // system default. Refresh its setting and the live device list.
+            listen<{ setting?: string }>("settings-changed", (event) => {
+              get().refreshSettings();
+              if (event.payload.setting === "selected_microphone") {
+                get().refreshAudioDevices();
+              }
+            }),
+          ]);
+          const failed = listenerResults.find(
+            (result): result is PromiseRejectedResult =>
+              result.status === "rejected",
+          );
+          if (failed) {
+            for (const result of listenerResults) {
+              if (result.status === "fulfilled") result.value();
+            }
+            throw failed.reason;
+          }
+        } catch (error) {
+          settingsEventsInitialized = false;
+          throw error;
+        }
+      }
     },
   })),
 );

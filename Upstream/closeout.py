@@ -32,7 +32,10 @@ def git(*args: str) -> subprocess.CompletedProcess:
 def main() -> int:
     args = [arg for arg in sys.argv[1:] if not arg.startswith("--")]
     if not args or "--help" in sys.argv:
-        print("python Upstream/closeout.py <upstream-tag-or-sha> [--execute]")
+        print(
+            "python Upstream/closeout.py <upstream-tag-or-sha> "
+            "[--execute] [--accept-growth]"
+        )
         return 0 if "--help" in sys.argv else 2
     target = args[0]
     if ensure_fresh() is None:
@@ -61,6 +64,17 @@ def main() -> int:
             subject = git("show", "-s", "--format=%s", sha).stdout.strip()
             print(f"  {sha[:8]} {subject}", file=sys.stderr)
         return 1
+    semantic_gates = [
+        [sys.executable, "Upstream/frontend_freeze.py", "--review-audit", "HEAD", target_sha],
+        [sys.executable, "Upstream/suppressed_review.py", "HEAD", target_sha],
+    ]
+    semantic_results = [subprocess.run(argv, cwd=ROOT).returncode for argv in semantic_gates]
+    if not all(result == 0 for result in semantic_results):
+        print(
+            "[closeout] FAIL: frozen/suppressed upstream changes lack semantic review",
+            file=sys.stderr,
+        )
+        return 1
     print(f"[closeout] OK: {len(commits)} commit(s) explicitly assessed through {target}")
     if "--execute" not in sys.argv:
         print("[closeout] read-only check complete; add --execute to record ancestry")
@@ -69,7 +83,13 @@ def main() -> int:
         print("[closeout] FAIL: working tree is dirty", file=sys.stderr)
         return 1
     preflight = subprocess.run(
-        [sys.executable, "Upstream/preflight.py", "--committed", "--no-fetch"],
+        [
+            sys.executable,
+            "Upstream/preflight.py",
+            "--committed",
+            "--no-fetch",
+            "--skip-ratchet",
+        ],
         cwd=ROOT,
     )
     if preflight.returncode != 0:
@@ -87,9 +107,10 @@ def main() -> int:
     if before_tree != after_tree:
         print("[closeout] FAIL: ours merge changed the tree; stop and inspect", file=sys.stderr)
         return 1
-    update = subprocess.run(
-        [sys.executable, "Upstream/ratchet.py", "--update", "--no-fetch"], cwd=ROOT
-    )
+    ratchet_args = [sys.executable, "Upstream/ratchet.py", "--update", "--no-fetch"]
+    if "--accept-growth" in sys.argv:
+        ratchet_args.append("--accept-growth")
+    update = subprocess.run(ratchet_args, cwd=ROOT)
     if update.returncode != 0:
         print(
             "[closeout] ancestry recorded, but budget growth needs semantic review; "

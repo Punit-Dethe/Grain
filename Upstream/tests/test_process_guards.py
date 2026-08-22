@@ -14,6 +14,8 @@ import frontend_freeze  # noqa: E402
 import merge_upstream  # noqa: E402
 import port_audit  # noqa: E402
 import ratchet  # noqa: E402
+import review_evidence  # noqa: E402
+import suppressed_review  # noqa: E402
 
 
 class MergeFrontendTests(unittest.TestCase):
@@ -64,6 +66,8 @@ class FrontendFreezeTests(unittest.TestCase):
         def fake_git(*args: str) -> str:
             if args[0] == "rev-list":
                 return sha + "\n"
+            if args[0] == "diff-tree":
+                return "src/components/Fix.tsx\n"
             if args[0] == "show":
                 return "frontend change\n"
             raise AssertionError(args)
@@ -78,6 +82,26 @@ class FrontendFreezeTests(unittest.TestCase):
             patch("builtins.open", mock_open(read_data=json.dumps({}))),
         ):
             self.assertEqual(frontend_freeze.frontend_review_audit("main"), 1)
+
+    def test_frontend_review_requires_problem_and_real_destination(self) -> None:
+        failures = review_evidence.validation_failures(
+            {
+                "outcome": "adapted",
+                "problem": "phrases were rejected",
+                "destinations": ["src/app/lib/customWords.ts"],
+                "evidence": "unit test",
+            },
+            os.path.dirname(UPSTREAM_DIR),
+        )
+        self.assertEqual(failures, [])
+
+
+class SuppressedReviewTests(unittest.TestCase):
+    def test_matches_only_grain_owned_suppressed_paths(self) -> None:
+        self.assertTrue(suppressed_review.is_suppressed("BUILD.md"))
+        self.assertTrue(suppressed_review.is_suppressed("docs/guide.md"))
+        self.assertTrue(suppressed_review.is_suppressed("scripts/gen_catalog.py"))
+        self.assertFalse(suppressed_review.is_suppressed("src-tauri/src/managers/audio.rs"))
 
 
 if __name__ == "__main__":
