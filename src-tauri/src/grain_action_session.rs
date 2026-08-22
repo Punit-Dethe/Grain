@@ -377,18 +377,17 @@ pub async fn decline(app: &AppHandle, request: &str, extension_id: &str) {
     present(app, request.to_string(), declined).await;
 }
 
-/// The user accepted an extension: the full request is handed to it
+/// The user accepted an extension: hand it the full request
 /// (`docs/Extensions V1/PLAN.md` §3).
 ///
-/// **The hand-off itself is V1-P2.** What an extension does with a handed-over
-/// request — receive it, rank its own commands, call a model with its own tool
-/// schema (§4) — is the extension-facing request API, and defining the wire
-/// contract from the host side here while P2 defines it from the extension side
-/// would invite two versions of one protocol. So this closes out the pending
-/// request and records the acceptance; wiring it to wake the worker and deliver
-/// the transcript lands with that API. Recorded now so the decision is not lost
-/// in the gap.
-pub fn accept(extension_id: &str) {
+/// The whole transcript goes to the extension, which owns what happens next —
+/// interpretation, any `match.*` ranking, clarification, the result. Grain wakes
+/// it, delivers the request, and records the outcome; it resolves nothing first.
+///
+/// Spawned rather than awaited because the caller is a Tauri command that must
+/// return at once — the extension may call a model or the network, which is
+/// exactly what [`crate::extension_host::hand_off`]'s generous deadline is for.
+pub fn accept(app: &AppHandle, extension_id: &str) {
     let request = {
         let mut slot = pending().lock().unwrap();
         match slot.take() {
@@ -396,7 +395,7 @@ pub fn accept(extension_id: &str) {
             None => return,
         }
     };
-    log::info!("[GRAIN] extension mode: accepted {extension_id} (hand-off lands in V1-P2)");
+    log::info!("[GRAIN] extension mode: accepted {extension_id}");
     action_log::record(
         &request,
         Some(extension_id.to_string()),
@@ -404,6 +403,51 @@ pub fn accept(extension_id: &str) {
         None,
         ActionLogOutcome::Chose,
     );
+
+    let app = app.clone();
+    let extension_id = extension_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        use crate::extension_host::HandOffOutcome;
+        match crate::extension_host::hand_off(&app, &extension_id, &request).await {
+            HandOffOutcome::Done(message) => {
+                log::info!(
+                    "[GRAIN] extension mode: {extension_id} handled the request{}",
+                    message
+                        .as_deref()
+                        .map(|m| format!(" — {m}"))
+                        .unwrap_or_default()
+                );
+                action_log::record(
+                    &request,
+                    Some(extension_id.clone()),
+                    None,
+                    None,
+                    ActionLogOutcome::Ran { confirmed: false },
+                );
+            }
+            HandOffOutcome::Failed(reason) => {
+                log::warn!("[GRAIN] extension mode: {extension_id} failed — {reason}");
+                action_log::record(
+                    &request,
+                    Some(extension_id.clone()),
+                    None,
+                    None,
+                    ActionLogOutcome::Failed { reason },
+                );
+            }
+            // Reported as its own thing, never as failure: for anything that
+            // left the machine a timeout does not mean it did not happen.
+            HandOffOutcome::Unknown => {
+                action_log::record(
+                    &request,
+                    Some(extension_id.clone()),
+                    None,
+                    None,
+                    ActionLogOutcome::Unknown,
+                );
+            }
+        }
+    });
 }
 
 fn complete(generation: u64) {

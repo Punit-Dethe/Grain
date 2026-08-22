@@ -1038,13 +1038,12 @@ pub async fn grain_extension_mode_decline(
 }
 
 /// [GRAIN] The user accepted an extension; the full request is handed to it
-/// (`docs/Extensions V1/PLAN.md` §3). The hand-off into the extension's request
-/// API lands in V1-P2; this closes out the pending request and records the
-/// choice so it is not lost in the gap.
+/// (`docs/Extensions V1/PLAN.md` §3). Wakes the extension, delivers the whole
+/// transcript, and records the outcome; the extension owns what happens next.
 #[tauri::command]
 #[specta::specta]
-pub fn grain_extension_mode_accept(extension_id: String) -> Result<(), String> {
-    crate::grain_actions::action_session::accept(&extension_id);
+pub fn grain_extension_mode_accept(app: AppHandle, extension_id: String) -> Result<(), String> {
+    crate::grain_actions::action_session::accept(&app, &extension_id);
     Ok(())
 }
 
@@ -1636,10 +1635,9 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         // and the alternative is a permission sheet on every iteration of a
         // sentence the author is actively writing. Store and manual-import
         // packs get no such shortcut — see `extension_import_pack`.
-        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
-            .then(|| {
-                ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers)
-            }),
+        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
+            || ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers),
+        ),
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
         recommend_approved: loaded
@@ -2096,7 +2094,9 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // and a re-import with changed wording therefore stops matching, holds
         // the enable, and shows the user what changed. This is the update path
         // the rug-pull incidents of 2025 walked through.
-        prompt_layers_approved: prior.as_ref().and_then(|r| r.prompt_layers_approved.clone()),
+        prompt_layers_approved: prior
+            .as_ref()
+            .and_then(|r| r.prompt_layers_approved.clone()),
         // Carried, never recomputed. Importing is not approving: if the
         // declaration changed, this stops matching, the actions go inert, and
         // the enable path shows the user what is different.

@@ -187,6 +187,20 @@ export interface GrainApi {
   ): void;
   onShortcut(handler: (id: string) => void | Promise<void>): void;
   onEvent(handler: (event: DaemonEvent) => void): void;
+  /** The user accepted this extension in Extension Mode (Extensions V1 §3): the
+   * WHOLE request is handed over, verbatim. The extension owns what happens next
+   * — interpret it with `match.*` or `llm.complete` and its own tool schema, ask
+   * or confirm as needed, and return an optional short result. Return `{ error }`
+   * if it could not be handled. */
+  onRequest(
+    handler: (
+      request: string,
+    ) =>
+      | void
+      | { message?: string }
+      | { error: string }
+      | Promise<void | { message?: string } | { error: string }>,
+  ): void;
 }
 
 declare global {

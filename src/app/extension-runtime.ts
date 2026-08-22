@@ -302,24 +302,18 @@ export const GRAIN_RUNTIME_JS = `(function () {
     onSessionResult: function (fn) {
       grain.onSessionStage(function (text) { return fn(text); });
     },
-    // A routed action (docs/Action Routing/PLAN.md). The handler receives the
-    // action id and the extracted spans — never the raw utterance, and never
-    // anything about requests that went to somebody else.
+    // The user accepted this extension in Extension Mode (Extensions V1, sec 3),
+    // and the WHOLE request is handed over — the full transcript, verbatim, not
+    // extracted parameters. The extension owns everything from here:
+    // interpretation (reach for grain.match.* or call llm() with its own tool
+    // schema), any clarification, and the result.
     //
-    // Three shapes may be returned, and the second is the interesting one:
-    //   undefined / { message }         it ran
-    //   { param, options: [...] }       the span resolved to several candidates
-    //                                   and the user should pick
-    //   { error }                       it could not run, with a reason
-    //
-    // Resolution belongs here rather than in the host because the extension is
-    // the only party that knows its own catalogue. Grain hands over the words
-    // it heard; what "gym" means is Spotify's question, not Grain's.
-    onAction: function (fn) {
-      handlers.action = function (p) {
-        return Promise.resolve(
-          fn(String((p && p.action) || ""), (p && p.params) || {}),
-        ).then(function (out) {
+    // Two shapes may be returned:
+    //   undefined / { message }   it was handled ({ message } is a short result)
+    //   { error }                 it could not, with a reason to show
+    onRequest: function (fn) {
+      handlers.request = function (p) {
+        return Promise.resolve(fn(String((p && p.request) || ""))).then(function (out) {
           return out == null ? {} : out;
         });
       };

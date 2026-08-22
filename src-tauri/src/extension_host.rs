@@ -188,9 +188,6 @@ impl Workers {
     /// stricter than "spawned", because a spawned webview takes a moment to
     /// connect back.
     ///
-    /// Unreferenced until V1-P1 re-attaches the hand-off; see the note above
-    /// [`ACTION_DEADLINE`].
-    #[allow(dead_code)]
     fn is_connected(&self, ext_id: &str) -> bool {
         self.map
             .lock()
@@ -211,7 +208,6 @@ impl Workers {
     /// interval is short enough to be invisible next to the spawn it is waiting
     /// on, and a condvar threaded through the connection path would be more
     /// machinery than the problem deserves.
-    #[allow(dead_code)]
     async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
         const POLL: Duration = Duration::from_millis(20);
         let started = Instant::now();
@@ -1862,71 +1858,49 @@ pub async fn run_session_stage(
 
 // ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
 //
-// [GRAIN] V1-P0 retired the decision layer that used to call into this half, so
-// everything below is unreferenced until V1-P1 wires the recommendation and the
-// hand-off back onto it. It is `allow(dead_code)` rather than deleted because
-// the plan keeps it verbatim (§9 "Kept"): waking a cold worker, the deadline
-// pair, and the outcome parse are unchanged by the pivot — what changed is only
-// *who decides* which extension gets called.
+// [GRAIN] V1-P0 kept this machinery `allow(dead_code)` through the recommendation
+// work; V1-P2 wires it back on. The pivot changed only *who decides* which
+// extension is called (the user accepting a recommendation, not a router), and
+// *what* it is handed (the full transcript, not extracted spans). Waking a cold
+// worker, the deadline pair, and the call/outcome shape are unchanged.
 
-/// How long an action may take before the host gives up.
+/// How long a handed-off request may take before the host gives up.
 ///
-/// Generous compared with the transform budget, and deliberately so: an action
-/// is expected to leave the machine (a Spotify call, a Slack post), where the
-/// network grant already allows 15 s. The felt path is not this — the ranking
-/// decides in milliseconds and the pill says what is happening.
-#[allow(dead_code)]
-const ACTION_DEADLINE: Duration = Duration::from_secs(20);
+/// Generous compared with the transform budget, and deliberately so: the
+/// extension is expected to leave the machine (a Spotify call, a Slack post) and
+/// may call a model — the network grant already allows 15 s. The felt path is
+/// not this; the pill says what is happening while the extension works.
+const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
 
 /// How long to wait for a cold worker to connect before giving up.
 ///
 /// The plan budgets ~300 ms for a cold wake; this is deliberately several times
-/// that, because the cost of being wrong is a failed action the user has to
+/// that, because the cost of being wrong is a failed request the user has to
 /// repeat, while the cost of waiting is a pill that says "working" for another
 /// moment.
-#[allow(dead_code)]
-const ACTION_WAKE_DEADLINE: Duration = Duration::from_secs(3);
+const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
 
-/// What performing an action produced.
+/// What a handed-off request produced.
 #[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ActionOutcome {
-    /// It ran. The optional line is what the pill says instead of the title.
+pub enum HandOffOutcome {
+    /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
-    /// The extension resolved a span to several candidates and wants the user
-    /// to pick. Not a failure.
-    Ambiguous { param: String, options: Vec<String> },
-    /// It could not run, with a reason worth showing.
+    /// It could not, with a reason worth showing.
     Failed(String),
     /// The deadline passed after the call was already in flight.
     ///
     /// **Distinct from `Failed` on purpose.** For anything that leaves the
-    /// machine, a timeout does not mean it did not happen — the message may
-    /// well have been sent. Reporting that as failure is a lie, and the one a
+    /// machine, a timeout does not mean it did not happen — the request may well
+    /// have been carried out. Reporting that as failure is a lie, and the one a
     /// user is least able to recover from.
     Unknown,
 }
 
-#[allow(dead_code)]
-fn parse_action_outcome(value: Value) -> ActionOutcome {
-    if let Some(options) = value.get("options").and_then(Value::as_array) {
-        let param = value
-            .get("param")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let options: Vec<String> = options
-            .iter()
-            .filter_map(|o| o.as_str().map(str::to_string))
-            .collect();
-        if !param.is_empty() && !options.is_empty() {
-            return ActionOutcome::Ambiguous { param, options };
-        }
-    }
+fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
     if let Some(error) = value.get("error").and_then(Value::as_str) {
-        return ActionOutcome::Failed(error.to_string());
+        return HandOffOutcome::Failed(error.to_string());
     }
-    ActionOutcome::Done(
+    HandOffOutcome::Done(
         value
             .get("message")
             .and_then(Value::as_str)
@@ -1936,12 +1910,12 @@ fn parse_action_outcome(value: Value) -> ActionOutcome {
 
 /// Wake the extension the request was handed to, if it is cold.
 ///
-/// Only that one. Warming every action-bearing extension when the key goes down
-/// is the tempting alternative and it violates destroy-if-not-in-use at exactly
-/// the scale this feature is built for — twenty installed extensions would mean
-/// twenty worker spawns per press.
-#[allow(dead_code)]
-pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
+/// Only that one. Warming every searchable extension when the key goes down is
+/// the tempting alternative and it violates destroy-if-not-in-use at exactly the
+/// scale this feature is built for — twenty installed extensions would mean
+/// twenty worker spawns per press. Spawned with no activation payload: the
+/// request arrives as an explicit host call, not as a wake event.
+fn wake_for_request(app: &AppHandle, ext_id: &str) {
     if is_running(ext_id) {
         return;
     }
@@ -1953,71 +1927,63 @@ pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
         .and_then(|registry| registry.record(ext_id))
         .map(|record| record.granted)
         .unwrap_or_default();
-    spawn_worker(
-        app,
-        ext_id,
-        &pack,
-        granted,
-        Some(json!({ "Action": { "action": action_id } })),
-    );
+    spawn_worker(app, ext_id, &pack, granted, None);
 }
 
-/// Perform one action on the extension the request was handed to.
+/// Hand the full request to the extension the user accepted (§3).
 ///
-/// An extension that was not handed the request learns nothing at all.
-#[allow(dead_code)]
-pub async fn perform_action(
-    app: &AppHandle,
-    ext_id: &str,
-    action_id: &str,
-    spans: &std::collections::BTreeMap<String, String>,
-) -> ActionOutcome {
+/// The extension receives the whole transcript, verbatim, and owns what happens
+/// next — interpretation, any `match.*` ranking, clarification, the result. Grain
+/// does not resolve anything first; that was the old routing model. What it does
+/// guarantee is that the extension is still enabled and awake.
+pub async fn hand_off(app: &AppHandle, ext_id: &str, request: &str) -> HandOffOutcome {
     let Some(host) = HOST.get() else {
-        return ActionOutcome::Failed("extension host unavailable".into());
+        return HandOffOutcome::Failed("extension host unavailable".into());
     };
-    // Re-check enablement at execute, not only at route. A user can disable an
-    // extension while the confirmation sheet is open, and the read-back they
-    // agreed to would then run against something they just turned off.
+    // Re-check enablement at hand-off, not only at ranking. A user can disable an
+    // extension between speaking and accepting, and the request would then run
+    // against something they just turned off.
     let enabled = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.record(ext_id))
         .is_some_and(|record| record.enabled);
     if !enabled {
-        return ActionOutcome::Failed("that extension is no longer enabled".into());
+        return HandOffOutcome::Failed("that extension is no longer enabled".into());
     }
-    // The winner was almost certainly cold — a routed action is usually the only
-    // reason to wake it. Give the spawn a bounded moment to connect rather than
-    // failing instantly.
+    // The chosen extension was almost certainly cold — being handed a request is
+    // usually the only reason to wake it. Give the spawn a bounded moment to
+    // connect rather than failing instantly.
+    wake_for_request(app, ext_id);
     if !host
         .workers
-        .wait_connected(ext_id, ACTION_WAKE_DEADLINE)
+        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
         .await
     {
-        log::warn!("[ext:{ext_id}] action '{action_id}' — worker did not start in time");
-        return ActionOutcome::Failed("that extension did not start in time".into());
+        log::warn!("[ext:{ext_id}] request — worker did not start in time");
+        return HandOffOutcome::Failed("that extension did not start in time".into());
     }
     match host
         .workers
         .call(
             ext_id,
-            "action",
-            json!({ "action": action_id, "params": spans }),
-            ACTION_DEADLINE,
+            "request",
+            json!({ "request": request }),
+            HANDOFF_DEADLINE,
         )
         .await
     {
         Ok(value) => {
             clear_strikes(ext_id);
-            parse_action_outcome(value)
+            parse_handoff_outcome(value)
         }
         Err(error) if error == "deadline exceeded" => {
             record_strike(app, ext_id);
-            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {ACTION_DEADLINE:?}");
-            ActionOutcome::Unknown
+            log::warn!("[ext:{ext_id}] request timed out after {HANDOFF_DEADLINE:?}");
+            HandOffOutcome::Unknown
         }
         Err(error) => {
             record_strike(app, ext_id);
-            ActionOutcome::Failed(error)
+            HandOffOutcome::Failed(error)
         }
     }
 }
@@ -2581,6 +2547,22 @@ mod tests {
         let mut stale = record_for(&pack);
         stale.recommend_approved = Some("a-version-the-user-never-read".into());
         assert!(pool_of(&pack, &stale).is_empty());
+    }
+
+    #[test]
+    fn a_handoff_reply_reads_as_done_error_or_bare() {
+        // An extension's onRequest reply: `{message}` and a bare `{}` are both
+        // "handled"; only an explicit `{error}` is a failure. A timeout is
+        // Unknown and is decided by the caller, never parsed from a reply.
+        assert_eq!(
+            parse_handoff_outcome(json!({ "message": "opened your dashboard" })),
+            HandOffOutcome::Done(Some("opened your dashboard".into()))
+        );
+        assert_eq!(parse_handoff_outcome(json!({})), HandOffOutcome::Done(None));
+        assert_eq!(
+            parse_handoff_outcome(json!({ "error": "no such site" })),
+            HandOffOutcome::Failed("no such site".into())
+        );
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {
