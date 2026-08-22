@@ -1,7 +1,19 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { ChevronDown, X } from "lucide-react";
+import type { ExtensionCard } from "@/bindings";
 import { useTheme } from "../../../contexts/ThemeContext";
 import { serializeExtensionPalette } from "@/lib/extensionTheme";
+import {
+  StudioExtensionCard,
+  StudioExtensionMoreCard,
+} from "@/extensions/StudioExtensionCard";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
  * until the next dev run regenerates bindings.ts — never hand-edit bindings. */
@@ -77,6 +89,25 @@ export const ANCHORS = [
 ] as const;
 
 export type Anchor = (typeof ANCHORS)[number];
+
+export interface ExtensionAnchorSnapshot {
+  allCards: ExtensionCard[];
+  installedCount: number;
+  loading: boolean;
+  error: string | null;
+}
+
+const ANCHOR_LABELS: Record<Anchor, string> = {
+  "snippets.after": "Snippets",
+  "dictation.pipeline.after": "Dictation",
+  "context.after": "Context awareness",
+  "agent.after": "Agent",
+  "grainspace.after": "Grain Space",
+  "models.after": "Speech models",
+};
+const CONFIGURE_DONE_LABEL = "Done";
+const CONFIGURE_SAVED_LABEL = "Changes are saved as you make them.";
+const INSTALLED_EXTENSIONS_LABEL = "Installed extensions";
 
 const INPUT_CLASS =
   "px-2 py-1 rounded-lg bg-paper-sunken border border-line text-sm text-ink outline-none focus:border-accent/50 disabled:opacity-50";
@@ -994,61 +1025,303 @@ export const ExtensionShortcuts: React.FC<{ id: string }> = ({ id }) => {
  *
  * Renders nothing at all when no enabled extension anchors here, so a core
  * section is untouched by the platform until an extension actually uses it. */
-export const ExtensionAnchor: React.FC<{ anchor: Anchor }> = ({ anchor }) => {
+interface AnchoredExtension {
+  section: SettingsSection;
+  rows: SettingRow[];
+  card?: ExtensionCard;
+}
+
+function trustPresentation(trust?: string): {
+  label: string;
+  tone: "verified" | "community" | "core" | "dev";
+} {
+  if (trust === "core") return { label: "Built in", tone: "core" };
+  if (trust === "dev") return { label: "Development", tone: "dev" };
+  return { label: "Community", tone: "community" };
+}
+
+function openAnchorStore(anchor: Anchor) {
+  window.location.hash = `/extensions/store?q=${encodeURIComponent(ANCHOR_LABELS[anchor])}`;
+}
+
+function ExtensionConfigureDialog({
+  extension,
+  anchor,
+  onClose,
+}: {
+  extension: AnchoredExtension;
+  anchor: Anchor;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    closeRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      previouslyFocused?.focus();
+    };
+  }, [onClose]);
+
+  const name = extension.card?.name ?? extension.section.name;
+  const description =
+    extension.card?.description ||
+    `Configure how this extension works with ${ANCHOR_LABELS[anchor]}.`;
+  const trust = trustPresentation(extension.card?.trust);
+  const contextLabel = `${ANCHOR_LABELS[anchor]} extension`;
+  const versionLabel = extension.card?.version
+    ? `Version ${extension.card.version}`
+    : null;
+
+  return (
+    <div
+      className="extension-configure-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        ref={dialogRef}
+        className="extension-configure-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="extension-configure-title"
+        aria-describedby="extension-configure-description"
+      >
+        <header className="extension-configure-header">
+          <div>
+            <span className="extension-configure-context">{contextLabel}</span>
+            <h2 id="extension-configure-title">{name}</h2>
+            <p id="extension-configure-description">{description}</p>
+          </div>
+          <button
+            ref={closeRef}
+            className="extension-configure-close"
+            type="button"
+            aria-label={`Close ${name} settings`}
+            onClick={onClose}
+          >
+            <X size={17} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="extension-configure-meta">
+          <span className="studio-extension-badge" data-tone={trust.tone}>
+            {trust.label}
+          </span>
+          {versionLabel && <span>{versionLabel}</span>}
+        </div>
+        <div className="extension-configure-content">
+          <ExtensionSettings
+            section={extension.section}
+            rows={extension.rows}
+          />
+        </div>
+        <footer className="extension-configure-footer">
+          <span>{CONFIGURE_SAVED_LABEL}</span>
+          <button type="button" onClick={onClose}>
+            {CONFIGURE_DONE_LABEL}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+/** [GRAIN] A host-owned shelf for extensions anchored next to a core feature.
+ * Third-party settings never render directly in the page: each extension gets
+ * a consistent card, and Configure opens its controls in an isolated dialog. */
+export const ExtensionAnchor: React.FC<{
+  anchor: Anchor;
+  onSnapshot?: (snapshot: ExtensionAnchorSnapshot) => void;
+}> = ({ anchor, onSnapshot }) => {
   const [sections, setSections] = useState<SettingsSection[]>([]);
+  const [cards, setCards] = useState<ExtensionCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const aliveRef = useRef(true);
 
   const refresh = useCallback(async () => {
     try {
-      setSections(
-        await invoke<SettingsSection[]>("extension_settings_sections"),
-      );
-    } catch {
-      // A settings page must never fail to render because of an extension.
+      const [nextSections, nextCards] = await Promise.all([
+        invoke<SettingsSection[]>("extension_settings_sections"),
+        invoke<ExtensionCard[]>("extensions_overview"),
+      ]);
+      if (!aliveRef.current) return;
+      setSections(nextSections);
+      setCards(nextCards);
+      setError(null);
+    } catch (reason) {
+      if (!aliveRef.current) return;
       setSections([]);
+      setCards([]);
+      setError(String(reason));
+    } finally {
+      if (aliveRef.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    aliveRef.current = true;
     void refresh();
+    return () => {
+      aliveRef.current = false;
+    };
   }, [refresh]);
 
-  const anchored = sections
-    .map((s) => ({ s, rows: s.rows.filter((r) => r.anchor === anchor) }))
-    .filter((g) => g.rows.length > 0);
+  const anchored = useMemo<AnchoredExtension[]>(() => {
+    const cardsById = new Map(cards.map((card) => [card.id, card]));
+    return sections
+      .map((section) => ({
+        section,
+        rows: section.rows.filter((row) => row.anchor === anchor),
+        card: cardsById.get(section.id),
+      }))
+      .filter((extension) => extension.rows.length > 0);
+  }, [anchor, cards, sections]);
 
-  if (anchored.length === 0) return null;
+  useEffect(() => {
+    onSnapshot?.({
+      allCards: cards,
+      installedCount: anchored.length,
+      loading,
+      error,
+    });
+  }, [anchored.length, cards, error, loading, onSnapshot]);
+
+  const uninstall = useCallback(
+    async (extension: AnchoredExtension) => {
+      const card = extension.card;
+      if (!card) return;
+      if (
+        !window.confirm(
+          `Uninstall "${card.name}"?\n\nIts saved data is kept for a future reinstall.`,
+        )
+      ) {
+        return;
+      }
+      setBusy(card.id);
+      setError(null);
+      try {
+        await invoke("extension_uninstall", { id: card.id, purge: false });
+        if (activeId === card.id) setActiveId(null);
+        await refresh();
+      } catch (reason) {
+        if (aliveRef.current) setError(String(reason));
+      } finally {
+        if (aliveRef.current) setBusy(null);
+      }
+    },
+    [activeId, refresh],
+  );
+
+  const closeDialog = useCallback(() => setActiveId(null), []);
+  const active = anchored.find(
+    (extension) => extension.section.id === activeId,
+  );
+  const visible = expanded ? anchored : anchored.slice(0, 2);
+  const installedDescription = `Focused additions for ${ANCHOR_LABELS[anchor]}.`;
+
+  if (loading || anchored.length === 0) return null;
 
   return (
-    <div className="space-y-6">
-      {/* The heading is the SAME eyebrow the core groups above it use — same
-          mono face, same weight, same ink, same rule out to a patch jack. An
-          extension's settings are settings; typography that whispers next to
-          "SNIPPETS" made the section look half-loaded rather than deliberate.
-          What it adds is the EXT tag after a divider, which says where the
-          settings came from without demoting them. */}
-      {anchored.map(({ s, rows }) => (
-        <div key={s.id} className="space-y-2.5">
-          <div className="flex items-center gap-2.5 px-1">
-            <h3 className="font-mono text-[0.68rem] font-semibold text-ink uppercase tracking-[0.18em]">
-              {s.name}
-            </h3>
-            <span className="h-3 w-px bg-[var(--line-strong)] shrink-0" />
-            <span
-              title="Provided by an extension"
-              className="font-mono text-[0.6rem] font-semibold uppercase tracking-[0.14em] leading-none text-ink-soft bg-paper-sunken border border-line rounded-[3px] px-1.5 py-[3px] shrink-0"
-            >
-              EXT
-            </span>
-            <div className="flex-1 flex items-center gap-2 translate-y-[-1px]">
-              <span className="flex-1 border-t border-line" />
-              <span className="grid place-items-center w-2.5 h-2.5 rounded-full border border-[var(--line-strong)] bg-paper shrink-0">
-                <span className="w-1 h-1 rounded-full bg-ink-faint/60" />
-              </span>
-            </div>
-          </div>
-          <ExtensionSettings section={s} rows={rows} />
+    <section className="studio-installed-extensions">
+      <div className="studio-extension-section-heading">
+        <div>
+          <h2>{INSTALLED_EXTENSIONS_LABEL}</h2>
+          <p>{installedDescription}</p>
         </div>
-      ))}
-    </div>
+        {anchored.length > 2 && (
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "Show less" : `Show all ${anchored.length}`}
+            <ChevronDown aria-hidden="true" size={14} />
+          </button>
+        )}
+      </div>
+      {error && <div className="tool-inline-error">{error}</div>}
+      <div
+        className="studio-extension-grid"
+        data-visible-count={visible.length}
+      >
+        {visible.map((extension) => {
+          const card = extension.card;
+          const name = card?.name ?? extension.section.name;
+          const trust = trustPresentation(card?.trust);
+          return (
+            <StudioExtensionCard
+              key={extension.section.id}
+              name={name}
+              description={
+                card?.description ||
+                `Adds focused controls to ${ANCHOR_LABELS[anchor]}.`
+              }
+              meta={card?.version ? `Version ${card.version}` : "Extension"}
+              badge={trust.label}
+              badgeTone={trust.tone}
+              surface={anchor}
+              primaryLabel="Configure"
+              primaryDisabled={busy === extension.section.id}
+              onPrimary={() => setActiveId(extension.section.id)}
+              onRemove={
+                card && card.trust !== "dev"
+                  ? () => void uninstall(extension)
+                  : undefined
+              }
+            />
+          );
+        })}
+        <StudioExtensionMoreCard
+          title="Find more extensions"
+          description={`Browse additions made for ${ANCHOR_LABELS[anchor]}.`}
+          surface={anchor}
+          onClick={() => openAnchorStore(anchor)}
+        />
+      </div>
+      {active && (
+        <ExtensionConfigureDialog
+          extension={active}
+          anchor={anchor}
+          onClose={closeDialog}
+        />
+      )}
+    </section>
   );
 };

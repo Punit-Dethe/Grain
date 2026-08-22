@@ -158,6 +158,19 @@ describe("tool recommendations", () => {
     ).toEqual([]);
   });
 
+  it("limits Studio to the two most-installed matching extensions", () => {
+    const entries = [
+      entry({ id: "context.one", installs: 10, extends: ["context.after"] }),
+      entry({ id: "context.two", installs: 80, extends: ["context.after"] }),
+      entry({ id: "context.three", installs: 40, extends: ["context.after"] }),
+    ];
+
+    expect(matchToolRecommendations(entries, "context", new Set(), 2)).toEqual([
+      entries[1],
+      entries[2],
+    ]);
+  });
+
   it("declares nothing for a tool no surface maps to", () => {
     expect(
       matchToolRecommendations(

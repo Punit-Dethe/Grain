@@ -21,11 +21,18 @@ import {
 } from "@/bindings";
 import { AgentSection } from "@/components/settings/experimentations/AgentSection";
 import { ContextAwareSection } from "@/components/settings/experimentations/ContextAwareSection";
-import { ExtensionAnchor } from "@/components/settings/experimentations/ExtensionSettings";
+import {
+  ExtensionAnchor,
+  type Anchor,
+  type ExtensionAnchorSnapshot,
+} from "@/components/settings/experimentations/ExtensionSettings";
 import { SettingsGroup } from "@/components/ui/SettingsGroup";
+import {
+  StudioExtensionCard,
+  StudioExtensionMoreCard,
+} from "@/extensions/StudioExtensionCard";
 import { useSettings } from "@/hooks/useSettings";
 import { hashForRoute, type ToolSectionId } from "../navigation";
-import { StoreCard } from "../extensions/StoreCard";
 import {
   matchToolRecommendations,
   unwrapResult,
@@ -64,70 +71,88 @@ const TOOL_COPY: Record<
 function useToolCatalogue() {
   const [entries, setEntries] = useState<StoreEntry[]>([]);
   const [view, setView] = useState<StoreView | null>(null);
-  const [cards, setCards] = useState<ExtensionCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
+  const aliveRef = useRef(true);
 
   const refresh = useCallback(async () => {
-    const [nextView, overview] = await Promise.all([
-      commands.storeBrowse().then(unwrapResult),
-      commands.extensionsOverview().then(unwrapResult),
-    ]);
+    const nextView = await commands.storeBrowse().then(unwrapResult);
+    if (!aliveRef.current) return false;
     setView(nextView);
     setEntries(nextView.entries);
-    setCards(overview);
+    return true;
   }, []);
 
   useEffect(() => {
-    let alive = true;
+    aliveRef.current = true;
     void refresh()
-      .catch((reason) => alive && setError(String(reason)))
-      .finally(() => alive && setLoading(false));
+      .catch((reason) => aliveRef.current && setError(String(reason)))
+      .finally(() => aliveRef.current && setLoading(false));
     return () => {
-      alive = false;
-      setEntries([]);
-      setView(null);
-      setCards([]);
+      aliveRef.current = false;
       void commands.storeClose();
     };
   }, [refresh]);
 
-  const install = useCallback(
-    async (entry: StoreEntry) => {
-      setInstalling(entry.id);
-      setError(null);
-      try {
-        unwrapResult(await commands.storeInstall(entry.id, entry.version));
-        await refresh();
-      } catch (reason) {
-        setError(String(reason));
-      } finally {
-        setInstalling(null);
-      }
-    },
-    [refresh],
-  );
+  const install = useCallback(async (entry: StoreEntry) => {
+    setInstalling(entry.id);
+    setError(null);
+    try {
+      unwrapResult(await commands.storeInstall(entry.id, entry.version));
+      return aliveRef.current;
+    } catch (reason) {
+      if (aliveRef.current) setError(String(reason));
+      return false;
+    } finally {
+      if (aliveRef.current) setInstalling(null);
+    }
+  }, []);
 
-  return { entries, cards, view, loading, error, installing, install };
+  return { entries, view, loading, error, installing, install };
 }
 
-function ToolRecommendations({ tool }: { tool: ToolSection }) {
+function openToolStore(title: string) {
+  window.location.hash = `${hashForRoute({ page: "extensions", view: "store" })}?q=${encodeURIComponent(title)}`;
+}
+
+function ToolRecommendations({
+  tool,
+  installedCards,
+  onInstalled,
+}: {
+  tool: ToolSection;
+  installedCards: ExtensionCard[];
+  onInstalled: () => void;
+}) {
   const catalogue = useToolCatalogue();
-  const installed = useMemo(
-    () => new Map(catalogue.cards.map((card) => [card.id, card.version])),
-    [catalogue.cards],
+  const installedIds = useMemo(
+    () => new Set(installedCards.map((card) => card.id)),
+    [installedCards],
   );
   const recommendations = useMemo(
+    () => matchToolRecommendations(catalogue.entries, tool, installedIds, 2),
+    [catalogue.entries, installedIds, tool],
+  );
+  const hasInstalledForTool = useMemo(
     () =>
       matchToolRecommendations(
         catalogue.entries,
         tool,
-        new Set(installed.keys()),
-      ),
-    [catalogue.entries, installed, tool],
+        new Set(),
+        catalogue.entries.length,
+      ).some((entry) => installedIds.has(entry.id)),
+    [catalogue.entries, installedIds, tool],
   );
   const title = TOOL_COPY[tool].title;
+  const storeSurface =
+    tool === "snippets"
+      ? "snippets.after"
+      : tool === "context"
+        ? "context.after"
+        : "agent.after";
+
+  if (!catalogue.loading && hasInstalledForTool) return null;
 
   return (
     <section
@@ -139,19 +164,9 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
         <div>
           <h2>Enhance {title}</h2>
           <p>
-            Focused extensions that add capability without changing where this
-            tool lives.
+            Add a focused capability without changing where this tool lives.
           </p>
         </div>
-        <button
-          className="text-button"
-          type="button"
-          onClick={() => {
-            window.location.hash = `${hashForRoute({ page: "extensions", view: "store" })}?q=${encodeURIComponent(title)}`;
-          }}
-        >
-          Browse all
-        </button>
       </div>
 
       {catalogue.error && (
@@ -168,32 +183,96 @@ function ToolRecommendations({ tool }: { tool: ToolSection }) {
         <div className="tool-muted-state" role="status">
           Loading recommendations…
         </div>
-      ) : recommendations.length === 0 ? (
-        <div className="tool-muted-state">
-          No matching store extensions are available.
-        </div>
       ) : (
-        <div
-          className="recommendation-grid"
-          data-recommendation-count={recommendations.length}
-        >
+        <div className="studio-extension-grid" data-visible-count="0">
           {recommendations.map((entry) => (
-            <StoreCard
+            <StudioExtensionCard
               key={`${entry.id}@${entry.version}`}
-              entry={entry}
-              busy={catalogue.installing === entry.id}
-              canInstall={Boolean(catalogue.view?.can_install)}
-              onInstall={(target) => void catalogue.install(target)}
-              onPreview={() => {
-                // Studio has no drawer of its own; the store page is where an
-                // extension is read about in full.
-                window.location.hash = "/extensions/store";
+              name={entry.name}
+              description={entry.description}
+              meta={`${entry.author || "Community"} · ${entry.installs.toLocaleString()} installs`}
+              badge={
+                entry.trust === "core"
+                  ? "Built in"
+                  : entry.trust === "dev"
+                    ? "Development"
+                    : "Verified"
+              }
+              badgeTone={
+                entry.trust === "core"
+                  ? "core"
+                  : entry.trust === "dev"
+                    ? "dev"
+                    : "verified"
+              }
+              surface={storeSurface}
+              primaryLabel={
+                catalogue.installing === entry.id ? "Installing…" : "Install"
+              }
+              primaryDisabled={
+                catalogue.installing !== null || !catalogue.view?.can_install
+              }
+              onPrimary={() => {
+                void catalogue
+                  .install(entry)
+                  .then((installed) => installed && onInstalled());
               }}
             />
           ))}
+          <StudioExtensionMoreCard
+            title="View more extensions"
+            description={`Explore everything made for ${title}.`}
+            surface={storeSurface}
+            detail={
+              recommendations.length === 0 ? "Browse the store" : undefined
+            }
+            onClick={() => openToolStore(title)}
+          />
         </div>
       )}
     </section>
+  );
+}
+
+function StudioExtensionArea({
+  anchor,
+  tool,
+}: {
+  anchor: Anchor;
+  tool: ToolSection;
+}) {
+  const [snapshot, setSnapshot] = useState<ExtensionAnchorSnapshot | null>(
+    null,
+  );
+  const [refreshKey, setRefreshKey] = useState(0);
+  const handleSnapshot = useCallback(
+    (nextSnapshot: ExtensionAnchorSnapshot) => setSnapshot(nextSnapshot),
+    [],
+  );
+  const handleInstalled = useCallback(
+    () => setRefreshKey((value) => value + 1),
+    [],
+  );
+
+  return (
+    <>
+      <ExtensionAnchor
+        key={refreshKey}
+        anchor={anchor}
+        onSnapshot={handleSnapshot}
+      />
+      {import.meta.env.DEV &&
+        snapshot &&
+        !snapshot.loading &&
+        !snapshot.error &&
+        snapshot.installedCount === 0 && (
+          <ToolRecommendations
+            tool={tool}
+            installedCards={snapshot.allCards}
+            onInstalled={handleInstalled}
+          />
+        )}
+    </>
   );
 }
 
@@ -837,8 +916,7 @@ function SnippetsTool() {
           />
         )}
       </section>
-      <ExtensionAnchor anchor="snippets.after" />
-      {import.meta.env.DEV && <ToolRecommendations tool="snippets" />}
+      <StudioExtensionArea anchor="snippets.after" tool="snippets" />
     </>
   );
 }
@@ -854,8 +932,7 @@ function ContextTool() {
           <section className="context-awareness-workspace">
             <ContextAwareSection />
           </section>
-          <ExtensionAnchor anchor="context.after" />
-          {import.meta.env.DEV && <ToolRecommendations tool="context" />}
+          <StudioExtensionArea anchor="context.after" tool="context" />
         </>
       )}
     </>
@@ -878,8 +955,7 @@ function AgentTool() {
               <AgentSection />
             </SettingsGroup>
           </section>
-          <ExtensionAnchor anchor="agent.after" />
-          {import.meta.env.DEV && <ToolRecommendations tool="agent" />}
+          <StudioExtensionArea anchor="agent.after" tool="agent" />
         </>
       )}
     </>
