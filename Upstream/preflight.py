@@ -132,6 +132,7 @@ def main() -> int:
         run_gate("divergence audit", ["Upstream/audit_divergence.py", "--check", "--no-fetch"]),
         run_gate("frontend freeze", ["Upstream/frontend_freeze.py"]),
         run_gate("port audit", ["Upstream/port_audit.py", "--no-fetch"]),
+        run_gate("policy consistency", ["Upstream/policy_check.py"]),
     ]
 
     if all(ok):

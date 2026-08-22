@@ -43,6 +43,9 @@ SCOPE = "src/"
 ALLOW_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "frontend_allow.json"
 )
+VERDICTS_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "verdicts.json"
+)
 
 
 def git(*args: str) -> str:
@@ -198,24 +201,71 @@ def report() -> int:
     return 0
 
 
+def frontend_review_audit(base: str) -> int:
+    """Require explicit backend-knowledge review for new upstream UI commits."""
+    shas = git("rev-list", "--reverse", "--no-merges", f"{base}..HEAD", "--", SCOPE).splitlines()
+    upstream_shas = [
+        sha
+        for sha in shas
+        if subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, "upstream/main"],
+            capture_output=True,
+        ).returncode == 0
+    ]
+    with open(VERDICTS_PATH, encoding="utf-8") as handle:
+        verdicts = json.load(handle)
+    missing = []
+    for sha in upstream_shas:
+        review = (verdicts.get(sha) or {}).get("frontend_review") or {}
+        if review.get("outcome") not in {"ported", "no-backend-impact"} or not str(
+            review.get("evidence", "")
+        ).strip():
+            missing.append((sha, git("show", "-s", "--format=%s", sha).strip()))
+    if missing:
+        for sha, subject in missing:
+            print(f"[freeze] FAIL: frontend knowledge not reviewed: {sha[:8]} {subject}")
+        print(
+            "[freeze] Use: verdict.py <sha> --frontend-review "
+            "<ported|no-backend-impact> \"Rust path/test or reason\""
+        )
+        return 1
+    print(f"[freeze] OK: {len(upstream_shas)} upstream frontend review(s) recorded")
+    return 0
+
+
+def update_allow(accept_growth: bool) -> int:
+    existing = load_allow() if os.path.exists(ALLOW_PATH) else {}
+    current_shared = shared()
+    current_adopted = adopted_from_upstream()
+    growth = sorted(
+        (set(current_shared) - set(existing.get("shared", [])))
+        | (set(current_adopted) - set(existing.get("adopted", [])))
+    )
+    if growth and not accept_growth:
+        for path in growth:
+            print(f"[freeze] FAIL: refusing allowlist growth: {path}", file=sys.stderr)
+        print("[freeze] Revert it or use --update --accept-growth after review.", file=sys.stderr)
+        return 1
+    if existing.get("strict", False) and current_shared:
+        print("[freeze] FAIL: strict freeze cannot contain shared paths.", file=sys.stderr)
+        return 1
+    with open(ALLOW_PATH, "w", newline="\n") as f:
+        json.dump(
+            {
+                "note": existing.get("note", "Frontend freeze allowlist."),
+                "strict": existing.get("strict", False),
+                "shared": current_shared,
+                "adopted": current_adopted,
+            }, f, indent=2,
+        )
+        f.write("\n")
+    print(f"frontend_allow.json updated: {len(current_shared)} shared file(s)")
+    return 0
+
+
 def main() -> int:
     if "--update" in sys.argv:
-        existing = load_allow() if os.path.exists(ALLOW_PATH) else {}
-        current = shared()
-        with open(ALLOW_PATH, "w", newline="\n") as f:
-            json.dump(
-                {
-                    "note": "Files still shared with upstream under src/. May shrink, never grow. See docs/UI 2.0/PLAN.md.",
-                    "strict": existing.get("strict", False),
-                    "shared": current,
-                    "adopted": adopted_from_upstream(),
-                },
-                f,
-                indent=2,
-            )
-            f.write("\n")
-        print(f"frontend_allow.json updated: {len(current)} shared file(s)")
-        return 0
+        return update_allow("--accept-growth" in sys.argv)
 
     if "--sync-purity" in sys.argv:
         i = sys.argv.index("--sync-purity")
@@ -224,6 +274,13 @@ def main() -> int:
 
     if "--report" in sys.argv:
         return report()
+
+    if "--review-audit" in sys.argv:
+        i = sys.argv.index("--review-audit")
+        if len(sys.argv) <= i + 1:
+            print("[freeze] --review-audit needs a base ref", file=sys.stderr)
+            return 2
+        return frontend_review_audit(sys.argv[i + 1])
 
     rc = census()
     # Path-based and content-based checks answer different questions; the second

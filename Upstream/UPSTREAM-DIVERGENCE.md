@@ -8,16 +8,54 @@ comm -12 <(git diff --name-only 0392b7b main | sort) \
          <(git diff --name-only 0392b7b upstream/main | sort)
 ```
 
-Audited 2026-07-16 against upstream v0.9.3. Sizes are `git diff upstream/main
-main -- <file>`. When you resolve a conflict in one of these files, this table
-tells you which side is authoritative. Files not listed here follow the
-default: 3-way merge normally, prefer upstream in the STT core.
+The authoritative policy was audited 2026-08-22. Historical sizes and decisions
+below retain their original dates. Files absent from the current rules follow
+the default: normal 3-way merge, preferring upstream in the STT core.
 
 > **Paths below are upstream's.** Since the phase-7 folder move the same files
 > live at `src-tauri/src/handy/…` in Grain (declared via `#[path]`, contents
 > unchanged). `Upstream/ratchet.py` maps between the two.
 
-## Rust backend
+## Current conflict rules (authoritative; audited 2026-08-22)
+
+Never copy a static merge-base claim from this document. Query
+`git merge-base HEAD upstream/main` and `git describe --tags --always <sha>`.
+The rules here supersede repeated dated rows in the audit history below.
+
+| Area | Current rule |
+| --- | --- |
+| `actions.rs` | Preserve Grain's compiled structure/hooks; port post-processing fixes to `grain_post_process.rs` and `grain_actions.rs`. Do not restore Handy web-overlay policy. |
+| `shortcut/mod.rs` | Merge upstream key fixes; preserve Grain binding IDs and both bulk/per-binding suspension APIs. Keep retired theme/VAD bindings absent. |
+| `managers/transcription.rs` | Preserve Grain engine ownership, routing, context-bias, and narrow TDT hooks; re-thread upstream decode/device/language fixes and assess rolling in parallel. |
+| `audio_toolkit/text.rs` | Merge upstream algorithms; port finalization and word-boundary changes into `handy/audio_toolkit/grain_text.rs`. |
+| `audio_toolkit/audio/resampler.rs` | Keep the tail-drain fix while merging upstream; never restore an upstream `finish()` that drops delayed frames. |
+| recorder / audio manager | Preserve marked rolling/conditioning hooks and Grain's capture contract; do not partially add Handy's retired webview arming API. |
+| tray / Secure Input | Preserve Grain's branded single-icon/menu model; take upstream state-transition, platform, and race fixes. |
+| `Cargo.toml`, `build.rs` | Keep Grain dependencies, reviewed transcribe-cpp/TDT baseline, and Grain packaging paths; take upstream fixes after lockfile/ABI checks. |
+| `lib.rs` | Keep the marked Grain composition/registration block; merge upstream initialization and compatibility fixes around it. |
+| `.gitignore` | Merge normally; inspect final rule order and both forks' `!path` negations. `merge=union` is disabled because it can preserve contradictory intent. |
+| `src/**` | Grain-owned; discard upstream UI code, but complete the frontend-knowledge review and port host facts into Rust. |
+
+### Runtime relocation policy (generated from `relocations.json`)
+
+`policy_check.py` requires this block to match the JSON exactly and also derives
+coverage for `grain_* as upstream_name` inert module aliases.
+
+<!-- BEGIN GENERATED RELOCATION POLICY -->
+| Upstream source | Kind | Grain runtime destinations |
+| --- | --- | --- |
+| `src-tauri/src/actions.rs` | relocated | `src-tauri/src/grain_post_process.rs`<br>`src-tauri/src/grain_actions.rs` |
+| `src-tauri/src/audio_toolkit/text.rs` | relocated | `src-tauri/src/handy/audio_toolkit/grain_text.rs` |
+| `src-tauri/src/llm_client.rs` | inert | `src-tauri/src/grain_llm_client.rs`<br>`src-tauri/src/net_diag.rs`<br>`src-tauri/src/stt_client.rs` |
+| `src-tauri/src/managers/transcription.rs` | parallel | `src-tauri/src/rolling.rs`<br>`crates/rolling-window/src` |
+| `src-tauri/src/overlay.rs` | inert | `crates/grain-pill/src/lib.rs`<br>`src-tauri/src/grain_overlay.rs` |
+| `src-tauri/src/settings.rs` | inert | `src-tauri/src/grain_settings.rs`<br>`crates/grain-core/src/settings.rs` |
+<!-- END GENERATED RELOCATION POLICY -->
+
+## Historical backend audit log (non-authoritative)
+
+Repeated rows below preserve architectural history; they are not current
+conflict rules.
 
 | File                                                                              | Divergence                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Merge guidance                                                                                                                                                                                                     |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
@@ -94,10 +132,10 @@ for features Grain deleted, two carrying backend facts that belong in Rust, wher
 we still merge everything. The freeze does not touch the backend relationship in
 any way.
 
-`frontend_allow.json` records the files still shared with upstream (140 at the
-freeze). That number may shrink, never grow; it reaches zero at the UI 2.0
-cutover, when `"strict": true` makes any frontend change in a sync a hard
-failure.
+`frontend_allow.json` now has zero shared paths and `"strict": true`. Its
+allowlists may only shrink; `--update` refuses growth without the explicit
+`--accept-growth` review override, and strict mode never permits a shared path.
+Any frontend change in a sync is a hard failure.
 
 ## Repo meta (all `merge=ours` via .gitattributes)
 

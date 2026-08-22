@@ -11,7 +11,7 @@
   },
   "src-tauri/src/settings.rs": {
     "kind": "inert",
-    "grain": ["crates/grain-core/src/settings.rs"],
+    "grain": ["src-tauri/src/grain_settings.rs", "crates/grain-core/src/settings.rs"],
     "why": "Inert (no `mod settings;`). Grain's settings are grain-core AppContext; a NEW upstream setting must be added there and to its Default, or `get_settings().<field>` in merged handy code fails to compile. (#1254 selected_channel needed this.)"
   },
   "src-tauri/src/overlay.rs": {
@@ -29,7 +29,7 @@
   },
   "src-tauri/src/audio_toolkit/text.rs": {
     "kind": "relocated",
-    "grain": ["src-tauri/src/audio_toolkit/grain_text.rs"],
+    "grain": ["src-tauri/src/handy/audio_toolkit/grain_text.rs"],
     "why": "finalize_transcript relocated to grain_text.rs; final-text / word-boundary fixes may belong there rather than the merged handy text.rs."
   },
   "src-tauri/src/managers/transcription.rs": {

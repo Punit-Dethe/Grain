@@ -16,7 +16,13 @@ on:
     branches: [main]
     paths:
       - "src-tauri/**"
+      - "crates/**"
       - "src/**"
+      - "Upstream/relocations.json"
+      - "Upstream/verdicts.json"
+      - "Upstream/port_audit.py"
+      - "Upstream/policy_check.py"
+      - "Upstream/UPSTREAM-DIVERGENCE.md"
       - "Upstream/budget.json"
       - "Upstream/ratchet.py"
       - "Upstream/frontend_allow.json"
@@ -24,7 +30,13 @@ on:
   pull_request:
     paths:
       - "src-tauri/**"
+      - "crates/**"
       - "src/**"
+      - "Upstream/relocations.json"
+      - "Upstream/verdicts.json"
+      - "Upstream/port_audit.py"
+      - "Upstream/policy_check.py"
+      - "Upstream/UPSTREAM-DIVERGENCE.md"
       - "Upstream/budget.json"
       - "Upstream/ratchet.py"
       - "Upstream/frontend_allow.json"
@@ -76,3 +88,34 @@ jobs:
 
       - name: Check the frontend freeze
         run: python Upstream/frontend_freeze.py
+
+  runtime-port-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Fetch Upstream
+        run: |
+          git remote add upstream https://github.com/cjpais/handy.git
+          git fetch upstream --tags
+
+      - name: Check relocation policy consistency
+        run: python Upstream/policy_check.py
+
+      - name: Test upstream process guards
+        run: python -m unittest discover -s Upstream/tests -p "test_*.py"
+
+      - name: Check runtime port evidence
+        run: python Upstream/port_audit.py --no-fetch
+
+      - name: Check frontend-carried backend knowledge
+        if: github.event_name == 'pull_request'
+        run: python Upstream/frontend_freeze.py --review-audit "origin/${{ github.base_ref }}"

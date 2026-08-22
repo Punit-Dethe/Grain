@@ -63,6 +63,10 @@ def is_frozen_frontend(path: str) -> bool:
     return path.startswith(FROZEN_PREFIX) and not path.startswith(FROZEN_EXEMPT)
 
 
+def exists_at(ref: str, path: str) -> bool:
+    return git("cat-file", "-e", f"{ref}:{path}").returncode == 0
+
+
 def frontend_adopted_from_upstream() -> list[str]:
     """Frontend paths this merge changed that upstream, not Grain, authored.
 
@@ -110,7 +114,9 @@ def start(dry_run: bool) -> int:
         print("[merge] working tree is dirty; commit or stash first")
         return 1
 
-    git("merge", "--no-commit", "--no-ff", "upstream/main")
+    # Reused rerere content is review input, never an auto-staged decision.
+    # Force this even on clones carrying the old autoupdate=true setup.
+    git("-c", "rerere.autoupdate=false", "merge", "--no-commit", "--no-ff", "upstream/main")
 
     conflicts = conflicted_paths()
     frozen = [p for p in conflicts if is_frozen_frontend(p)]
@@ -135,8 +141,8 @@ def start(dry_run: bool) -> int:
     # into src/app/ on the 08-02 sync; the build caught it, but only by luck.
     adopted = frontend_adopted_from_upstream()
     for path in adopted:
-        if os.path.exists(os.path.join(ROOT, path)):
-            git("checkout", "HEAD", "--", path)   # our version wins
+        if exists_at("HEAD", path):
+            git("checkout", "HEAD", "--", path)  # our version wins
         else:
             git("rm", "--force", "--quiet", path)
     if adopted:
@@ -170,23 +176,43 @@ def finish() -> int:
         print("[merge]   git commit --no-edit")
         return 2
 
-    # Budgets are measured against HEAD, so this only means anything after the
-    # merge commit exists.
-    print("[merge] re-baselining divergence budgets")
-    result = subprocess.run(
-        [sys.executable, "Upstream/ratchet.py", "--update", "--no-fetch"],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-    )
-    print("  " + (result.stdout or result.stderr).strip())
+    parents = git("rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
+    if len(parents) < 3 or not any(
+        git("merge-base", "--is-ancestor", parent, "upstream/main").returncode == 0
+        for parent in parents[2:]
+    ):
+        print("[merge] HEAD is not an upstream merge commit; refusing --finish")
+        return 1
+    pre_merge_head = parents[1]
 
-    print("[merge] running preflight")
+    frontend_review = subprocess.run(
+        [sys.executable, "Upstream/frontend_freeze.py", "--review-audit", pre_merge_head],
+        cwd=ROOT,
+    )
+    if frontend_review.returncode != 0:
+        print("[merge] frontend knowledge review incomplete; budgets were NOT changed")
+        return 1
+
+    print("[merge] running preflight before changing any baseline")
     check = subprocess.run(
         [sys.executable, "Upstream/preflight.py", "--committed", "--no-fetch"],
         cwd=ROOT,
     )
     if check.returncode != 0:
+        print("[merge] gates failed; Upstream/budget.json was NOT changed")
+        return 1
+
+    print("[merge] gates passed; tightening divergence budgets")
+    result = subprocess.run(
+        [sys.executable, "Upstream/ratchet.py", "--update", "--no-fetch"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    print("  " + (result.stdout or result.stderr).strip())
+    if result.returncode != 0:
         return 1
 
     print("\n[merge] Done. Remaining by hand:")

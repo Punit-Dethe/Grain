@@ -18,11 +18,15 @@ derived from it.
 """
 
 import json
+import os
 import sys
 
 import sync_upstream as sync
 
 STATUSES = ("Merged", "Ignored", "Pending")
+PORT_OUTCOMES = ("ported", "not-applicable")
+FRONTEND_OUTCOMES = ("ported", "no-backend-impact")
+RELOCATIONS_FILE = os.path.join(os.path.dirname(__file__), "relocations.json")
 
 
 def load_ledger():
@@ -109,6 +113,30 @@ def main(argv):
         if len(rest) < 2:
             raise SystemExit("--note needs the note text.")
         entry["notes"] = rest[1]
+    elif rest[0] == "--port":
+        if len(rest) < 4:
+            raise SystemExit("--port needs <source> <ported|not-applicable> and evidence.")
+        source, outcome, evidence = rest[1], rest[2].lower(), rest[3].strip()
+        with open(RELOCATIONS_FILE, encoding="utf-8") as handle:
+            relocations = json.load(handle)
+        if source not in relocations or source.startswith("_"):
+            raise SystemExit(f"'{source}' is not a source in relocations.json.")
+        if outcome not in PORT_OUTCOMES or not evidence:
+            raise SystemExit("Port outcome/evidence is invalid or empty.")
+        ports = dict(entry.get("ports") or {})
+        ports[source] = {
+            "outcome": outcome,
+            "destinations": relocations[source]["grain"],
+            "evidence": evidence,
+        }
+        entry["ports"] = ports
+    elif rest[0] == "--frontend-review":
+        if len(rest) < 3:
+            raise SystemExit("--frontend-review needs an outcome and evidence.")
+        outcome, evidence = rest[1].lower(), rest[2].strip()
+        if outcome not in FRONTEND_OUTCOMES or not evidence:
+            raise SystemExit("Frontend review outcome/evidence is invalid or empty.")
+        entry["frontend_review"] = {"outcome": outcome, "evidence": evidence}
     else:
         status = rest[0].capitalize()
         if status not in STATUSES:

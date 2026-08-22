@@ -48,7 +48,8 @@ never compiled (no `mod` declaration): `settings.rs`, `llm_client.rs`,
 `overlay.rs`. Grain's replacements are `grain_settings.rs`,
 `grain_llm_client.rs`, `grain_overlay.rs`, aliased in `lib.rs` so
 `crate::settings::…` etc. still resolve. Upstream edits to inert files merge
-with **zero risk**.
+with low conflict risk but high silent-port risk. `port_audit.py` therefore
+requires a structured outcome and evidence for every mapped runtime destination.
 
 Because git recorded the folder move as 100% renames, merges map upstream's
 `src-tauri/src/X` into our `src-tauri/src/handy/X` automatically (verified
@@ -63,7 +64,9 @@ a huge upstream refactor, fall back to `git merge -s subtree` or map by hand.
 
 - **Grafted ancestry** (`33638cc`, an `ours`-merge of upstream `0392b7b`):
   3-way merges work; upstream-only changes land automatically. The merge base
-  advances only at release close-outs; it currently sits at **v0.9.3**.
+  advances only at real merges or assessed release close-outs. Never trust a
+  version written in docs; query `git merge-base HEAD upstream/main` and
+  `git describe --tags --always <sha>` (audit 2026-08-22: v0.9.5 ancestry).
 - **`merge=ours` attributes** (`.gitattributes`): docs, workflows, identity
   configs, lockfiles auto-keep Grain's side.
 - **rerere, shared**: every conflict resolution is recorded, and — via
@@ -78,7 +81,7 @@ One-time per clone:
 ```bash
 git config merge.ours.driver true
 git config rerere.enabled true
-git config rerere.autoupdate true
+git config rerere.autoupdate false
 git config merge.directoryRenames true
 python Upstream/rerere_cache.py restore
 ```
@@ -203,7 +206,7 @@ git checkout -b sync/upstream-YYYY-MM-DD
 python Upstream/merge_upstream.py       # merges; auto-resolves the frozen frontend
 # resolve ONLY what it lists, per UPSTREAM-DIVERGENCE.md
 git commit --no-edit
-python Upstream/merge_upstream.py --finish   # re-baselines budgets + runs every gate
+python Upstream/merge_upstream.py --finish   # gates first; then tightens budgets
 python Upstream/rerere_cache.py save    # share NEW resolutions; commit them
 bun install && cargo check              # regenerate lockfiles
 python Upstream/verdict.py --pending    # anything left unassessed? record it
@@ -229,6 +232,11 @@ Three things `merge_upstream.py` does that hand-merging misses:
 - **Strays are surfaced.** New upstream modules land at the `src-tauri/src/`
   root and must be `git mv`'d into `handy/` with a `#[path]` declaration.
 
+`--finish` is deliberately ordered **gate first, budget update second**. A
+failed gate leaves `budget.json` untouched. `ratchet.py --update` only tightens;
+new/grown budgets require `--update --accept-growth` after semantic review and
+an explanation in the commit.
+
 ### B1. Before you commit anything in the Handy tree
 
 ```bash
@@ -251,12 +259,13 @@ Once every commit of a release has a verdict (`python Upstream/verdict.py
 --pending` comes back empty for it):
 
 ```bash
-git merge -s ours vX.Y.Z              # tree untouched; ancestry says "assessed"
-python Upstream/ratchet.py --update   # budgets re-baseline to the new merge base
+python Upstream/closeout.py vX.Y.Z              # read-only assessment check
+python Upstream/closeout.py vX.Y.Z --execute    # checked close-out + tree proof
 ```
 
-Verify the tree is unchanged (`git diff HEAD~1 --stat` must be empty) and
-commit the regenerated `budget.json` with the close-out. **Never** run
+`closeout.py` verifies the tree hash is unchanged and refuses unassessed ranges,
+dirty worktrees, non-upstream targets, or a failing preflight. Commit the
+regenerated `budget.json` with the close-out. **Never** run raw
 `-s ours` over commits you have not assessed — it silently locks their fixes
 out forever, with no conflict to warn you. Cherry-picks record no ancestry
 (measured 2026-07-17: 13 cherry-picks, conflict surface unchanged at 57) —
@@ -279,8 +288,8 @@ replays them (and re-raises their conflicts) into every future merge, forever.
 `git cherry` won't spot it either: an adapted cherry-pick has a different
 patch-id, so it reports the commit as missing.
 
-**Detection (automatic):** `python Upstream/sync_upstream.py` matches unmerged
-upstream commits against our own subjects since the merge base and prints a
+**Detection (automatic):** `python Upstream/sync_upstream.py` checks exact
+patch IDs, explicit `Upstream-Commit` trailers, and then subject heuristics; it prints a
 loud `ALREADY APPLIED` block. CI runs this every 2 hours, surfaces it in the
 job summary, and — importantly — **suppresses the auto-sync PR** while drift
 exists, because auto-merging in that state would replay resolved work.
@@ -289,9 +298,8 @@ exists, because auto-merging in that state would replay resolved work.
 commit touched), then record it:
 
 ```bash
-git merge -s ours upstream/main      # tree untouched; ancestry says "assessed"
-git diff HEAD~1 --stat               # MUST be empty
-python Upstream/ratchet.py --update  # budgets re-baseline to the new base
+python Upstream/closeout.py upstream/main
+python Upstream/closeout.py upstream/main --execute
 ```
 
 Measured 2026-07-20: four i18n commits (#1697, #1701, #1708, #1709) sat
@@ -299,13 +307,22 @@ applied-but-unrecorded. Recording them took the trial merge from "1 conflict,
 4 behind" to **clean, 0 behind** without changing a single line of code.
 
 **Prevention:** prefer `git merge` over `git cherry-pick` for upstream work.
-If you must cherry-pick (a single urgent fix), close it out afterwards.
+If an urgent fix must be cherry-picked or adapted, put the exact full SHA in
+the commit body as `Upstream-Commit: <sha>`, then close it out afterwards.
+Patch IDs catch exact cherry-picks; the trailer catches adapted ports; subject
+matching remains only a heuristic signal.
 
 ### Verification (every sync)
 
 - Rust: `cargo check --lib` then `cargo test --lib` in `src-tauri/`
 - Frontend: `./node_modules/.bin/tsc --noEmit`
 - Boundary: `python Upstream/ratchet.py`
+- Runtime ports/policy: `python Upstream/port_audit.py` and
+  `python Upstream/policy_check.py`
+- Dependencies: `bun install --frozen-lockfile`; regenerate intentionally if
+  `package.json` changed, then run the existing Nix lock-derivative check
+- Platform fixes: run the native CI target where available; otherwise record
+  the unvalidated OS explicitly in the verdict and PR checklist
 - Windows quirks on the primary dev machine: unset `LOCALAPPDATA` and `TEMP`,
   set `TMP=C:\Windows\Temp` (transcribe-cpp-sys junction workaround), and
   build with `CARGO_TARGET_DIR=C:\gtc` — the running Grain app locks the

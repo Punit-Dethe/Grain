@@ -71,7 +71,9 @@ jobs:
           git config merge.directoryRenames true
           # Reuse every conflict resolution ever recorded by this repo.
           git config rerere.enabled true
-          git config rerere.autoupdate true
+          # Reuse known resolution text, but leave it unstaged for semantic
+          # review; an old resolution is not automatically correct forever.
+          git config rerere.autoupdate false
           python Upstream/rerere_cache.py restore || true
 
       - name: Trial Merge Report
@@ -153,6 +155,14 @@ jobs:
         run: |
           set -e
           git checkout -B "$SYNC_BRANCH" HEAD
+          # Capture semantic-review inputs before the merge advances the base.
+          python Upstream/port_audit.py --pending --no-fetch > /tmp/ports.txt
+          python Upstream/frontend_freeze.py --report > /tmp/frontend.txt
+          git log --format='%h %s' --name-only HEAD..upstream/main -- \
+            README.md AGENTS.md CLAUDE.md CRUSH.md BUILD.md CONTRIBUTING.md \
+            CONTRIBUTING_TRANSLATIONS.md docs website Upstream .github/workflows \
+            src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json \
+            bun.lock Cargo.lock src-tauri/Cargo.lock .nix > /tmp/protected.txt
           git merge --no-ff upstream/main \
             -m "merge: upstream/main $(git rev-parse --short upstream/main) (auto-sync)"
           # Any conflict rerere replayed during that merge is knowledge this
@@ -178,6 +188,23 @@ jobs:
             cat /tmp/commits.txt
             echo '```'
             echo
+            echo "### Runtime-port review"
+            echo '```'
+            cat /tmp/ports.txt
+            echo '```'
+            echo
+            echo "### Frozen-frontend knowledge review"
+            echo '```'
+            cat /tmp/frontend.txt
+            echo '```'
+            echo
+            if [ -s /tmp/protected.txt ]; then
+              echo "### Upstream changes suppressed by Grain-owned paths"
+              echo '```'
+              cat /tmp/protected.txt
+              echo '```'
+              echo
+            fi
             if grep -q 'WARN\|FAIL' /tmp/freeze.txt; then
               echo "**Frontend freeze:** this merge touches \`src/\`, which is frozen."
               echo
@@ -192,6 +219,9 @@ jobs:
             echo "      \`python Upstream/verdict.py <sha> Ignored \"why\"\`."
             echo "      Merged commits need nothing — ancestry files them itself."
             echo "- [ ] New settings/bindings? Regenerate \`src/bindings.ts\` on a dev run"
+            echo "- [ ] Every runtime-port item has structured \`--port\` evidence"
+            echo "- [ ] Every frontend commit has a \`--frontend-review\` outcome"
+            echo "- [ ] Every suppressed Grain-owned path above was inspected"
             echo
             echo "Merge with a merge commit — **never squash** (squashing discards the"
             echo "ancestry and the next sync re-fights these commits)."

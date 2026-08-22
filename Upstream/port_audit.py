@@ -58,6 +58,7 @@ VERDICTS_PATH = os.path.join(HERE, "verdicts.json")
 # The import baseline (grafted). Everything upstream has done since lives in
 # `IMPORT_BASELINE..upstream/main`.
 IMPORT_BASELINE = "0392b7b"
+STRUCTURED_AUDIT_BASE = "98a4d80cce8ad41efec2a419b59d9e81229a35d7"
 # ...but only commits at or after the ledger's tracking floor can be annotated
 # with verdict.py, so the audit floors here too — older commits are the settled
 # import baseline, outside the ongoing-sync verdict system. Kept in step with
@@ -100,6 +101,25 @@ def is_merged(sha: str) -> bool:
         ).returncode
         == 0
     )
+
+
+def requires_structured_audit(sha: str) -> bool:
+    return subprocess.run(
+        ["git", "merge-base", "--is-ancestor", sha, STRUCTURED_AUDIT_BASE],
+        cwd=ROOT, capture_output=True,
+    ).returncode != 0
+
+
+def valid_port_records(verdict: dict, touched: list[str]) -> tuple[bool, list[str]]:
+    ports = verdict.get("ports") or {}
+    missing = []
+    for source in touched:
+        record = ports.get(source) or {}
+        if record.get("outcome") not in {"ported", "not-applicable"} or not str(
+            record.get("evidence", "")
+        ).strip():
+            missing.append(source)
+    return not missing, missing
 
 
 def commits_touching(sources: set[str]) -> list[tuple[str, str, list[str]]]:
@@ -162,16 +182,19 @@ def main() -> int:
         verdict = verdicts.get(sha, {})
         note = (verdict.get("notes") or "").strip()
         status = verdict.get("status")
-        entry = (sha, subject, touched, note, status)
+        structured = requires_structured_audit(sha)
+        ports_ok, missing_ports = valid_port_records(verdict, touched)
+        acknowledged_port = ports_ok if structured else bool(note or status == "Ignored")
+        entry = (sha, subject, touched, note, status, missing_ports, structured)
         if not merged:
             pending.append(entry)
-        elif note or status == "Ignored":
+        elif acknowledged_port:
             acknowledged.append(entry)
         else:
             review.append(entry)
 
     def render(entry) -> None:
-        sha, subject, touched, note, status = entry
+        sha, subject, touched, note, status, missing_ports, structured = entry
         print(f"  {sha[:8]}  {subject[:60]}")
         for src in touched:
             dests = ", ".join(relocations[src]["grain"])
@@ -180,6 +203,8 @@ def main() -> int:
             print(f"            note: {note[:100]}")
         elif status:
             print(f"            verdict: {status}")
+        if structured and missing_ports:
+            print(f"            structured port evidence missing: {', '.join(missing_ports)}")
 
     print("=== port audit (relocated / inert / parallel files) ===")
     print(
@@ -198,9 +223,10 @@ def main() -> int:
                 render(e)
         if review:
             print(
-                f"\n  !! REVIEW ({len(review)}) -- merged, but NO note records whether the "
+                f"\n  !! REVIEW ({len(review)}) -- merged, but NO required evidence records whether the "
                 f"fix reached the Grain destination. Verify each, then record it:\n"
-                f"      python Upstream/verdict.py <sha> --note \"ported to <file> / n/a because ...\""
+                f"      python Upstream/verdict.py <sha> --port <source> "
+                f"<ported|not-applicable> \"test/review evidence\""
             )
             for e in review:
                 render(e)

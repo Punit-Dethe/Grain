@@ -230,6 +230,16 @@ def check_ancestry_drift(recorded_shas):
         ours = {
             normalize(s) for s in git("log", "--format=%s", f"{base}..HEAD").splitlines()
         }
+        # Adapted ports must carry an explicit provenance trailer. Unlike a
+        # subject, this remains exact even when the patch shape changes:
+        #     Upstream-Commit: <full upstream SHA>
+        trailers = {
+            match.lower()
+            for match in re.findall(
+                r"(?im)^Upstream-Commit:\s*([0-9a-f]{7,40})\s*$",
+                git("log", "--format=%B%x00", f"{base}..HEAD"),
+            )
+        }
     except (subprocess.CalledProcessError, FileNotFoundError):
         # No upstream remote (fresh clone, or a local run) — the ledger is
         # still valid, so never let this take the whole job down.
@@ -239,7 +249,8 @@ def check_ancestry_drift(recorded_shas):
     applied = [
         (sha, subj)
         for sha, subj in unmerged
-        if normalize(subj) in ours and sha not in recorded_shas
+        if (normalize(subj) in ours or any(t.startswith(sha.lower()) for t in trailers))
+        and sha not in recorded_shas
     ]
     return len(unmerged), applied, True
 
