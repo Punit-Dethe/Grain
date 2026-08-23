@@ -1036,6 +1036,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::grain_extension_mode_download_model,
             grain_commands::grain_extension_mode_decline,
             grain_commands::grain_extension_mode_accept,
+            grain_commands::change_auto_send_setting,
+            grain_commands::change_auto_send_for_extension,
             grain_commands::extension_setting_set,
             grain_commands::extension_surface_init,
             grain_commands::extension_surface_ui_ready,

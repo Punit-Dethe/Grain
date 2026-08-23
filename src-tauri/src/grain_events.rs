@@ -105,6 +105,11 @@ pub struct ExtensionRecommendation {
     /// the surface may offer the download. Named candidates still populate the
     /// list.
     pub name_only: bool,
+    /// [GRAIN] Set to the extension id when Auto-send fired (§5): Grain already
+    /// handed the request over, so the surface shows a **Notice** naming it
+    /// rather than a chooser — frictionless, but afterwards obvious. `None` is the
+    /// normal chooser flow. Never set on a named hit, or when the model is absent.
+    pub auto_sent: Option<String>,
 }
 
 /// One extension Extension Mode would offer, enriched for display.

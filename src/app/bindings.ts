@@ -1689,6 +1689,31 @@ async grainExtensionModeAccept(extensionId: string) : Promise<Result<null, strin
 }
 },
 /**
+ * [GRAIN] Flip the global Auto-send toggle (`docs/Extensions V1/PLAN.md` §5).
+ * Off by default and beta-gated — Auto-send only actually fires while
+ * `experimental_enabled` is also on.
+ */
+async changeAutoSendSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_send_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Turn Auto-send off (or back on) for one extension (§5). The user may
+ * only make Auto-send stricter than the author allows.
+ */
+async changeAutoSendForExtension(id: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_send_for_extension", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Write one schema-declared setting from the host's own control.
  * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
@@ -2786,7 +2811,7 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; auto_send_enabled?: boolean; auto_send_disabled?: string[]; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -3630,7 +3655,14 @@ candidates: RecommendationCandidate[];
  * the surface may offer the download. Named candidates still populate the
  * list.
  */
-name_only: boolean }
+name_only: boolean;
+/**
+ * [GRAIN] Set to the extension id when Auto-send fired (§5): Grain already
+ * handed the request over, so the surface shows a **Notice** naming it
+ * rather than a chooser — frictionless, but afterwards obvious. `None` is the
+ * normal chooser flow. Never set on a named hit, or when the model is absent.
+ */
+auto_sent: string | null }
 /**
  * One extension Extension Mode would offer, enriched for display.
  */

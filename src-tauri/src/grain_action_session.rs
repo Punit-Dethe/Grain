@@ -262,13 +262,15 @@ pub async fn deliver(app: &AppHandle, heard: &str) {
         request: heard.to_string(),
         declined: Vec::new(),
     });
-    present(app, heard.to_string(), Vec::new()).await;
+    // Auto-send may fire only on this first presentation (§5) — never on a
+    // decline-and-reopen, where the user is already actively choosing.
+    present(app, heard.to_string(), Vec::new(), true).await;
 }
 
 /// Rank `request` (excluding `declined`), emit the recommendation event, and
 /// record the outcome. The one place ranking is turned into a surface event, so
 /// deliver and decline present identically.
-async fn present(app: &AppHandle, request: String, declined: Vec<String>) {
+async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_auto_send: bool) {
     // Each ranking is a semantic use — refresh the warmth so an accept or a
     // decline-and-reopen right after does not race the reaper (§6).
     crate::grain_space::embed::touch_extension_mode(app);
@@ -308,6 +310,16 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>) {
         })
         .collect();
 
+    // Auto-send (§5): a clear semantic top to an eligible extension is handed
+    // over WITHOUT a chooser — but the event still carries who it went to, so the
+    // surface shows a Notice ("frictionless and afterwards obvious"). Only on the
+    // first presentation, and never on a named hit (enforced in `auto_send_target`).
+    let auto_sent = if allow_auto_send {
+        auto_send_decision(app, &ranked)
+    } else {
+        None
+    };
+
     // The surface consumes this; the backend draws nothing. Empty candidates is
     // the "nothing matched" state, not a separate event.
     let _ = app.emit(
@@ -316,8 +328,26 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>) {
             request: request.clone(),
             candidates: candidates.clone(),
             name_only: !semantic_available,
+            auto_sent: auto_sent.clone(),
         },
     );
+
+    if let Some(extension_id) = auto_sent {
+        log::info!("[GRAIN] extension mode: auto-sent to {extension_id}");
+        let score = ranked.first().map(|r| r.score);
+        action_log::record(
+            &request,
+            Some(extension_id.clone()),
+            None,
+            score,
+            ActionLogOutcome::Chose,
+        );
+        // No accept is coming — Grain chose. Clear the pending request and hand
+        // off now.
+        *pending().lock().unwrap() = None;
+        run_hand_off(app, extension_id, request);
+        return;
+    }
 
     match ranked.first() {
         None => {
@@ -353,6 +383,33 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>) {
     }
 }
 
+/// Whether this ranking should Auto-send, and to whom (§5). Applies the
+/// *configuration* half of the four conditions — beta gate, global toggle, the
+/// user's per-extension deny-list — then defers the match half (semantic, clear
+/// of the runner-up, never named) to [`grain_core::recommend::auto_send_target`].
+fn auto_send_decision(
+    app: &AppHandle,
+    ranked: &[grain_core::recommend::Recommendation],
+) -> Option<String> {
+    let settings = crate::settings::get_settings(app);
+    // Off by default AND beta-gated: Auto-send stays behind the experimental flag
+    // until it is proven (§1, §5).
+    if !settings.experimental_enabled || !settings.auto_send_enabled {
+        return None;
+    }
+    let mut eligible = crate::extension_host::auto_send_eligible();
+    // The user may only make it stricter — remove what they turned off; they
+    // can never add an extension the author did not mark eligible.
+    for id in &settings.auto_send_disabled {
+        eligible.remove(id);
+    }
+    grain_core::recommend::auto_send_target(
+        ranked,
+        &eligible,
+        grain_core::recommend::AUTO_SEND_MIN_MARGIN,
+    )
+}
+
 /// The user declined an extension on the surface; reopen the chooser with it
 /// struck out (G2). One keypress, not one re-recording — the request is the one
 /// [`deliver`] already captured.
@@ -374,7 +431,7 @@ pub async fn decline(app: &AppHandle, request: &str, extension_id: &str) {
         }
         p.declined.clone()
     };
-    present(app, request.to_string(), declined).await;
+    present(app, request.to_string(), declined, false).await;
 }
 
 /// The user accepted an extension: hand it the full request
@@ -403,9 +460,19 @@ pub fn accept(app: &AppHandle, extension_id: &str) {
         None,
         ActionLogOutcome::Chose,
     );
+    run_hand_off(app, extension_id.to_string(), request);
+}
 
+/// Wake the chosen extension, deliver the request, and record the outcome. Shared
+/// by [`accept`] (the user chose) and Auto-send (Grain chose) — the hand-off is
+/// identical; only how the choice was made differs, and that is recorded before
+/// this is called.
+///
+/// Spawned rather than awaited because the callers must return at once — the
+/// extension may call a model or the network, which is what
+/// [`crate::extension_host::hand_off`]'s generous deadline is for.
+fn run_hand_off(app: &AppHandle, extension_id: String, request: String) {
     let app = app.clone();
-    let extension_id = extension_id.to_string();
     tauri::async_runtime::spawn(async move {
         use crate::extension_host::HandOffOutcome;
         match crate::extension_host::hand_off(&app, &extension_id, &request).await {

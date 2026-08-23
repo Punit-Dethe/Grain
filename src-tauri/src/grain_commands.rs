@@ -1022,6 +1022,42 @@ pub async fn grain_extension_mode_download_model(app: AppHandle) -> Result<(), S
     crate::grain_space::embed::download_model(app).await
 }
 
+/// [GRAIN] Flip the global Auto-send toggle (`docs/Extensions V1/PLAN.md` §5).
+/// Off by default and beta-gated — Auto-send only actually fires while
+/// `experimental_enabled` is also on. Turning it on authorises nothing by
+/// itself: a clear semantic match to an *author-eligible* extension the user has
+/// not individually disabled still has to happen.
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_send_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.auto_send_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Turn Auto-send off (or back on) for one extension (§5). The user may
+/// only make Auto-send *stricter* than the author allows: `enabled=false` adds
+/// the extension to the deny-list; `enabled=true` merely removes it, and has no
+/// effect on an extension the author never marked eligible.
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_send_for_extension(
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings
+        .auto_send_disabled
+        .retain(|existing| existing != &id);
+    if !enabled {
+        settings.auto_send_disabled.push(id);
+    }
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
 /// [GRAIN] The user declined the recommended extension; reopen with it struck
 /// out (`docs/Extensions V1/PLAN.md` §8 G2). The chooser re-ranks the same
 /// captured request and emits a fresh `extension-recommendation` — one keypress,

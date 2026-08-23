@@ -106,6 +106,45 @@ pub const TOPICAL_FLOOR: f32 = 0.50;
 /// precedence: if the user said the name, that is what they meant.
 const NAMED_SCORE: f32 = 1.0;
 
+/// The clarity margin a Topical top must lead the runner-up by to Auto-send
+/// (§5). A beta starting point — tune against `grain-ext eval`'s operating
+/// points, which report exactly the wrong-fire rate this guards.
+pub const AUTO_SEND_MIN_MARGIN: f32 = 0.15;
+
+/// Decide whether a ranking may **Auto-send**, and to whom (§5).
+///
+/// `eligible` is the set the host has already reduced to author-eligible ∩
+/// user-not-disabled with the global toggle on — the *configuration* half of the
+/// four conditions. This function enforces the two rules that are about the
+/// MATCH, and both are structural, not tuning:
+///
+/// - **Never on a lexical / named hit.** A lexical hit on speech proves a
+///   phrasing occurred, not that the intent is certain — so a named top is never
+///   auto-sent, however high it scored.
+/// - **Clear of the runner-up.** A top that does not lead by `min_margin` is the
+///   ambiguous case Auto-send must ask about, not fire on.
+///
+/// Above-the-floor is already guaranteed — [`rank`] only returns above-floor
+/// candidates. Returns the extension to hand to, or `None` to fall back to the
+/// chooser.
+pub fn auto_send_target(
+    ranked: &[Recommendation],
+    eligible: &std::collections::HashSet<String>,
+    min_margin: f32,
+) -> Option<String> {
+    let top = ranked.first()?;
+    if top.signal != Signal::Topical {
+        return None;
+    }
+    if !eligible.contains(&top.extension_id) {
+        return None;
+    }
+    if top.margin < min_margin {
+        return None;
+    }
+    Some(top.extension_id.clone())
+}
+
 /// Rank the searchable extensions for one spoken request.
 ///
 /// `semantic` is the host's verdict from the embedder: best similarity per
@@ -388,6 +427,70 @@ mod tests {
             "a declined extension must not reappear"
         );
         assert_eq!(reopened[0].extension_id, "apple");
+    }
+
+    fn eligible(ids: &[&str]) -> std::collections::HashSet<String> {
+        ids.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn auto_send_fires_on_a_clear_eligible_topical_top() {
+        let recs = [rec("spotify", &["spotify"]), rec("notes", &["notes"])];
+        let ranked = rank(
+            &recs,
+            "put on some jazz",
+            Some(&scores(&[("spotify", 0.82), ("notes", 0.55)])),
+            &[],
+        );
+        assert_eq!(
+            auto_send_target(&ranked, &eligible(&["spotify"]), AUTO_SEND_MIN_MARGIN),
+            Some("spotify".to_string())
+        );
+    }
+
+    #[test]
+    fn auto_send_never_fires_on_a_named_hit() {
+        // The whole §5 rule: a lexical hit on speech is not evidence of certain
+        // intent, so however cleanly the name won, Auto-send declines.
+        let recs = [rec("spotify", &["spotify"])];
+        let ranked = rank(&recs, "spotify play something", None, &[]);
+        assert_eq!(ranked[0].signal, Signal::Named);
+        assert_eq!(
+            auto_send_target(&ranked, &eligible(&["spotify"]), AUTO_SEND_MIN_MARGIN),
+            None
+        );
+    }
+
+    #[test]
+    fn auto_send_declines_an_ineligible_extension() {
+        let recs = [rec("spotify", &["spotify"])];
+        let ranked = rank(
+            &recs,
+            "put on some jazz",
+            Some(&scores(&[("spotify", 0.82)])),
+            &[],
+        );
+        assert_eq!(
+            auto_send_target(&ranked, &eligible(&[]), AUTO_SEND_MIN_MARGIN),
+            None,
+            "eligible is empty — nothing may auto-send"
+        );
+    }
+
+    #[test]
+    fn auto_send_declines_an_ambiguous_top() {
+        let recs = [rec("spotify", &["spotify"]), rec("notes", &["notes"])];
+        let ranked = rank(
+            &recs,
+            "put on some jazz",
+            Some(&scores(&[("spotify", 0.72), ("notes", 0.68)])),
+            &[],
+        );
+        assert_eq!(
+            auto_send_target(&ranked, &eligible(&["spotify"]), AUTO_SEND_MIN_MARGIN),
+            None,
+            "a 0.04 lead is exactly the case to ask about"
+        );
     }
 
     #[test]

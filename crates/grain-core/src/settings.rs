@@ -797,6 +797,19 @@ pub struct AppSettings {
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
+    /// [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
+    /// global opt-in, **off by default** and beta-gated (only active while
+    /// `experimental_enabled`). When on, a clear semantic recommendation to an
+    /// author-eligible extension is handed over without a chooser — and a Notice
+    /// says so afterwards. Never fires on a name match.
+    #[serde(default)]
+    pub auto_send_enabled: bool,
+    /// [GRAIN] Extensions the user has switched Auto-send OFF for individually.
+    /// The user may only make Auto-send *stricter* than the author allows —
+    /// disabling one an author marked eligible — never enable one the author
+    /// excluded, so this is a deny-list, not an allow-list.
+    #[serde(default)]
+    pub auto_send_disabled: Vec<String>,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default)]
@@ -1897,6 +1910,8 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: Some(DEFAULT_POST_PROCESS_PROMPT_ID.to_string()),
         mute_while_recording: false,
         append_trailing_space: false,
+        auto_send_enabled: false,
+        auto_send_disabled: Vec::new(),
         app_language: default_app_language(),
         experimental_enabled: false,
         lazy_stream_close: false,

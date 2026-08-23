@@ -446,6 +446,11 @@ struct Index {
     /// path — see [`RECOMMEND_VECTORS`] — so what lives here is only what ranking
     /// needs synchronously.
     recommendations: Vec<grain_core::recommend::IndexedRecommendation>,
+    /// [GRAIN] Pooled extensions whose author marked them Auto-send eligible
+    /// (`autoSend.eligible`, §5). Only the *author* half — the global toggle and
+    /// the user's per-extension deny-list are applied at decision time, because
+    /// those change without an index rebuild.
+    auto_send_eligible: std::collections::HashSet<String>,
 }
 
 /// An enabled extension's prompt layer, compiled for matching.
@@ -526,6 +531,8 @@ pub fn refresh_index(app: &AppHandle) {
     let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
     let mut recommendations: Vec<grain_core::recommend::IndexedRecommendation> = Vec::new();
     let mut recommend_examples: Vec<(String, Vec<String>)> = Vec::new();
+    let mut auto_send_eligible: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -550,7 +557,13 @@ pub fn refresh_index(app: &AppHandle) {
             // The Extension Mode pool. Gated on searchable + recommendation
             // approval, NOT on declaring any action — a translator is a real
             // searchable extension with no command catalogue at all (§3.1).
-            collect_recommendation(&rec, &pack, &mut recommendations, &mut recommend_examples);
+            collect_recommendation(
+                &rec,
+                &pack,
+                &mut recommendations,
+                &mut recommend_examples,
+                &mut auto_send_eligible,
+            );
             let mut granted_variants = Vec::new();
             for variant in declared_event_variants(&pack.manifest.activation) {
                 let Some(capability) = daemon_event_capability(&variant) else {
@@ -633,6 +646,7 @@ pub fn refresh_index(app: &AppHandle) {
         prompt_layers,
         actions: action_index,
         recommendations,
+        auto_send_eligible,
     };
     // Embed the pool's examples off this path, generation-guarded, so a slow
     // rebuild never blocks a switch and a stale embed never lands on a newer
@@ -780,6 +794,7 @@ fn collect_recommendation(
     pack: &GrainPack,
     recommendations: &mut Vec<grain_core::recommend::IndexedRecommendation>,
     examples: &mut Vec<(String, Vec<String>)>,
+    auto_send_eligible: &mut std::collections::HashSet<String>,
 ) {
     if !pack.manifest.kind.is_searchable() {
         return;
@@ -798,6 +813,22 @@ fn collect_recommendation(
         &decl.aliases,
     ));
     examples.push((rec.id.clone(), decl.examples.clone()));
+    // Author-declared Auto-send eligibility (§5). The user's deny-list and the
+    // global toggle are applied at decision time, not here.
+    if pack.manifest.auto_send.as_ref().is_some_and(|a| a.eligible) {
+        auto_send_eligible.insert(rec.id.clone());
+    }
+}
+
+/// The pooled extensions whose author marked them Auto-send eligible (§5). The
+/// caller intersects this with the user's deny-list and the global toggle.
+pub fn auto_send_eligible() -> std::collections::HashSet<String> {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return std::collections::HashSet::new();
+    }
+    HOST.get()
+        .map(|host| host.index.read().unwrap().auto_send_eligible.clone())
+        .unwrap_or_default()
 }
 
 /// Embed the pool's example phrases and cache the vectors, off the rebuild path.
@@ -2494,7 +2525,14 @@ mod tests {
     fn pool_of(pack: &GrainPack, rec: &grain_core::extensions::ExtensionRecord) -> Vec<String> {
         let mut recommendations = Vec::new();
         let mut examples = Vec::new();
-        collect_recommendation(rec, pack, &mut recommendations, &mut examples);
+        let mut eligible = std::collections::HashSet::new();
+        collect_recommendation(
+            rec,
+            pack,
+            &mut recommendations,
+            &mut examples,
+            &mut eligible,
+        );
         recommendations
             .into_iter()
             .map(|r| r.extension_id)
@@ -2528,7 +2566,14 @@ mod tests {
         rec.id = "com.x.t".into();
         let mut recommendations = Vec::new();
         let mut examples = Vec::new();
-        collect_recommendation(&rec, &pack, &mut recommendations, &mut examples);
+        let mut eligible = std::collections::HashSet::new();
+        collect_recommendation(
+            &rec,
+            &pack,
+            &mut recommendations,
+            &mut examples,
+            &mut eligible,
+        );
         assert_eq!(
             recommendations.len(),
             1,
