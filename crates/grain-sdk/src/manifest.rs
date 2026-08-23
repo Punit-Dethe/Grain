@@ -66,6 +66,17 @@ pub struct ExtensionManifest {
     /// One line, shown in Overview; full text on hover.
     #[serde(default)]
     pub description: String,
+    /// [GRAIN] Pack-relative path to the extension's icon — a square PNG at
+    /// exactly [`ICON_MASTER_DIM`]² (`docs/Extensions V1/PLAN.md` §13.3). One
+    /// master the author supplies; Grain downscales to every size it shows
+    /// (pill row, card, store), so consistency is Grain's, not the author's.
+    ///
+    /// **Required to submit to the store**, enforced by `doctor` / the registry
+    /// checks — not by [`validate`], so a pack built before this contract still
+    /// installs. Empty means "declares none", which only the submission path
+    /// rejects.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icon: String,
     #[serde(default)]
     pub repository: Option<String>,
     /// Capability names (SPEC §1.3). Tier-A-inert packs must have none — the
@@ -653,6 +664,16 @@ pub struct AutoSendDecl {
 /// extension's card in those terms.
 pub const KNOWN_NEEDS: &[&str] = &["semantic"];
 
+/// The edge of the icon master an extension submits (`ExtensionManifest::icon`,
+/// §13.3): a square PNG at exactly this many pixels each side. One high-res
+/// master; Grain downscales to the sizes it shows and never upscales, so 512 is
+/// comfortably above every surface (a pill row is tens of px, a card ~100).
+pub const ICON_MASTER_DIM: u32 = 512;
+
+/// Hard cap on the icon PNG's byte length. Bounds the pack and stops a tiny
+/// 512×512 header from hiding megabytes of IDAT (a decompression bomb).
+pub const ICON_MAX_BYTES: u64 = 512 * 1024;
+
 /// Hard ceiling on the one-line purpose.
 pub const RECOMMEND_PURPOSE_MAX_BYTES: usize = 120;
 
@@ -757,8 +778,9 @@ fn validate_classification(m: &ExtensionManifest) -> Result<(), String> {
 fn validate_recommend(r: &RecommendDecl) -> Result<(), String> {
     let purpose = r.purpose.trim();
     if purpose.is_empty() {
-        return Err("recommend.purpose is required — one line saying what this extension is for"
-            .into());
+        return Err(
+            "recommend.purpose is required — one line saying what this extension is for".into(),
+        );
     }
     if purpose.len() > RECOMMEND_PURPOSE_MAX_BYTES {
         return Err(format!(
@@ -2075,10 +2097,9 @@ mod tests {
         // The default is the load-bearing part: every pack that exists today
         // predates `kind`, and every one of them would otherwise compete with a
         // music extension for "next song".
-        let m: ExtensionManifest = serde_json::from_str(
-            r#"{"id":"com.x.p","name":"P","version":"1.0","tier":"pack"}"#,
-        )
-        .unwrap();
+        let m: ExtensionManifest =
+            serde_json::from_str(r#"{"id":"com.x.p","name":"P","version":"1.0","tier":"pack"}"#)
+                .unwrap();
         assert_eq!(m.kind, ExtensionKind::Extending);
         assert!(!m.kind.is_searchable());
     }
@@ -2128,9 +2149,10 @@ mod tests {
         .is_err());
 
         let fat = "x".repeat(RECOMMEND_PURPOSE_MAX_BYTES + 1);
-        assert!(
-            searchable(&format!(r#""recommend":{{"purpose":"{fat}","examples":["a"]}}"#)).is_err()
-        );
+        assert!(searchable(&format!(
+            r#""recommend":{{"purpose":"{fat}","examples":["a"]}}"#
+        ))
+        .is_err());
 
         let aliases: Vec<String> = (0..RECOMMEND_ALIASES_MAX + 1)
             .map(|i| format!(r#""name{i}""#))
@@ -2147,10 +2169,10 @@ mod tests {
         // Examples are embedded and scored, so a duplicate silently doubles one
         // phrasing's weight. Fixing it quietly would hide an authoring mistake
         // that changes ranking.
-        assert!(searchable(
-            r#""recommend":{"purpose":"P","examples":["next song","Next Song"]}"#
-        )
-        .is_err());
+        assert!(
+            searchable(r#""recommend":{"purpose":"P","examples":["next song","Next Song"]}"#)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2167,10 +2189,7 @@ mod tests {
 
     #[test]
     fn auto_send_requires_a_reason_the_user_can_evaluate() {
-        assert!(searchable(&format!(
-            r#"{RECOMMEND},"autoSend":{{"eligible":true}}"#
-        ))
-        .is_err());
+        assert!(searchable(&format!(r#"{RECOMMEND},"autoSend":{{"eligible":true}}"#)).is_err());
         assert_eq!(
             searchable(&format!(
                 r#"{RECOMMEND},"autoSend":{{"eligible":true,
@@ -2573,22 +2592,10 @@ mod tests {
     #[test]
     fn action_ids_and_match_values_are_checked() {
         let with = |body: &str| pack_with_actions("[]", body);
-        assert!(with(
-            r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#
-        )
-        .is_err());
-        assert!(with(
-            r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#
-        )
-        .is_err());
-        assert!(with(
-            r#"[{"id":"n","title":"","risk":"safe","utterances":["next"]}]"#
-        )
-        .is_err());
-        assert!(
-            with(r#"[{"id":"n","title":"N","risk":"safe","utterances":[]}]"#)
-                .is_err()
-        );
+        assert!(with(r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
+        assert!(with(r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
+        assert!(with(r#"[{"id":"n","title":"","risk":"safe","utterances":["next"]}]"#).is_err());
+        assert!(with(r#"[{"id":"n","title":"N","risk":"safe","utterances":[]}]"#).is_err());
         // Duplicate ids, and a repeated utterance within one action.
         assert!(with(
             r#"[{"id":"n","title":"N","risk":"safe","utterances":["next"]},

@@ -266,6 +266,12 @@ fn scaffold_manifest(name: &str, id: &str) -> ExtensionProjectManifest {
             auto_send: None,
             needs: Vec::new(),
             description: format!("A Grain extension by {name}"),
+            // [GRAIN] Point at where the icon belongs so `doctor` guides the
+            // author to drop in a 512×512 icon.png rather than leaving them to
+            // discover the field. An icon is required to submit (§13.3); the
+            // scaffold cannot invent art, so `doctor` reports the missing file
+            // until the author adds it.
+            icon: "icon.png".into(),
             repository: None,
             permissions: Vec::new(),
             activation: vec!["onShortcut:open".into()],
@@ -742,11 +748,26 @@ mod tests {
         assert_eq!(project.manifest.id, "dev.example.my-tool");
     }
 
+    /// A header-only 512×512 PNG — enough for the icon check, which reads only
+    /// the IHDR (see `grain_extension_checks`), without pulling in an encoder.
+    fn write_fake_icon(dir: &Path) {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        bytes.extend_from_slice(&[0, 0, 0, 13]);
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&512u32.to_be_bytes());
+        bytes.extend_from_slice(&512u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
+        fs::write(dir.join("icon.png"), bytes).unwrap();
+    }
+
     #[test]
     fn submit_writes_a_valid_submission_into_the_registry() {
         let temp = tempfile::tempdir().unwrap();
         let project =
             init_project(temp.path(), "Hello Ext", Some("com.example.hello-ext")).unwrap();
+        // A submittable extension must carry its icon (§13.3); the scaffold
+        // declares the path, the author supplies the file.
+        write_fake_icon(&project.root);
         let registry = tempfile::tempdir().unwrap();
         let output = run(
             [
@@ -779,11 +800,26 @@ mod tests {
     }
 
     #[test]
-    fn doctor_accepts_a_fresh_unbuilt_scaffold() {
+    fn doctor_flags_a_fresh_scaffold_missing_its_icon() {
+        // The scaffold declares "icon.png" but cannot invent the art, so a fresh
+        // project is not yet submittable — doctor says exactly why (§13.3).
+        // Everything else about the scaffold is clean.
         let temp = tempfile::tempdir().unwrap();
         let project = init_project(temp.path(), "Doctor Test", None).unwrap();
+        let error = run(["doctor".into()], &project.root)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("E_ICON"), "{error}");
+        assert!(error.contains("icon"), "{error}");
+    }
+
+    #[test]
+    fn doctor_accepts_a_scaffold_once_its_icon_is_added() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = init_project(temp.path(), "Doctor Test", None).unwrap();
+        write_fake_icon(&project.root);
         let output = run(["doctor".into()], &project.root).unwrap();
-        assert!(output.starts_with("doctor: 0 findings"));
+        assert!(output.starts_with("doctor: 0 findings"), "{output}");
     }
 
     #[test]
