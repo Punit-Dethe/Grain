@@ -950,6 +950,30 @@ pub fn searchable_count() -> usize {
         .unwrap_or(0)
 }
 
+/// Every searchable extension id in the pool, in index order.
+///
+/// The chooser surface lists **all** installed searchable extensions, not only
+/// the ranked picks: the recommendations sit highlighted at the top, and the
+/// rest are there so the user can always find and choose the right one by hand
+/// (or by typing to filter) when ranking withheld it. One relaxed atomic load
+/// when nothing searchable is installed.
+pub fn searchable_ids() -> Vec<String> {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    HOST.get()
+        .map(|host| {
+            host.index
+                .read()
+                .unwrap()
+                .recommendations
+                .iter()
+                .map(|r| r.extension_id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The semantic leg: embed the query and score it against each pooled
 /// extension's cached example vectors, best example wins.
 ///

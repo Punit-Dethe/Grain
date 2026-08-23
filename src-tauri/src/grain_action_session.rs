@@ -342,12 +342,78 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_
             score,
             ActionLogOutcome::Chose,
         );
-        // No accept is coming — Grain chose. Clear the pending request and hand
-        // off now.
+        // Grain chose — no chooser is shown. Make sure any surface still up from
+        // an earlier presentation is torn down before the hand-off.
+        crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
+        // No accept is coming — clear the pending request and hand off now.
         *pending().lock().unwrap() = None;
         run_hand_off(app, extension_id, request);
         return;
     }
+
+    // Not auto-sending: raise the chooser on the native pill (§6b). It lists
+    // every searchable extension — the ranked picks first and highlighted, then
+    // the remainder by display name so the user can always find the right one by
+    // hand or by typing to filter. Icons are wired through the contract but not
+    // yet populated (deferred with the pill icon pipeline).
+    let pill_candidates: Vec<grain_core::RecommendCandidate> = {
+        let ranked_ids: std::collections::HashSet<&str> =
+            ranked.iter().map(|r| r.extension_id.as_str()).collect();
+        let display = |id: &str| {
+            crate::extension_host::recommendation_display(app, id)
+                .unwrap_or_else(|| (id.to_string(), String::new()))
+        };
+        let mut picks: Vec<grain_core::RecommendCandidate> = ranked
+            .iter()
+            .map(|r| {
+                let (name, purpose) = display(&r.extension_id);
+                grain_core::RecommendCandidate {
+                    extension_id: r.extension_id.clone(),
+                    name,
+                    purpose,
+                    signal: match r.signal {
+                        grain_core::recommend::Signal::Named => "named",
+                        grain_core::recommend::Signal::Topical => "topical",
+                    }
+                    .to_string(),
+                    score: r.score,
+                    icon: None,
+                }
+            })
+            .collect();
+        let mut rest: Vec<grain_core::RecommendCandidate> =
+            crate::extension_host::searchable_ids()
+                .into_iter()
+                .filter(|id| !ranked_ids.contains(id.as_str()) && !declined.contains(id))
+                .map(|id| {
+                    let (name, purpose) = display(&id);
+                    grain_core::RecommendCandidate {
+                        extension_id: id,
+                        name,
+                        purpose,
+                        signal: "none".to_string(),
+                        score: 0.0,
+                        icon: None,
+                    }
+                })
+                .collect();
+        rest.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.extension_id.cmp(&b.extension_id))
+        });
+        picks.append(&mut rest);
+        picks
+    };
+    crate::bridge::emit(
+        app,
+        grain_core::DaemonEvent::ExtensionRecommend {
+            request: request.clone(),
+            candidates: pill_candidates,
+            name_only: !semantic_available,
+        },
+    );
 
     match ranked.first() {
         None => {
@@ -453,6 +519,8 @@ pub fn accept(app: &AppHandle, extension_id: &str) {
         }
     };
     log::info!("[GRAIN] extension mode: accepted {extension_id}");
+    // The user chose from the surface — tear it down before the hand-off.
+    crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
     action_log::record(
         &request,
         Some(extension_id.to_string()),
@@ -461,6 +529,17 @@ pub fn accept(app: &AppHandle, extension_id: &str) {
         ActionLogOutcome::Chose,
     );
     run_hand_off(app, extension_id.to_string(), request);
+}
+
+/// The user dismissed the recommendation surface without choosing (§8). Clears
+/// the pending request so a later stale click does nothing and hides the
+/// surface. No-op past the first dismissal.
+pub fn dismiss(app: &AppHandle) {
+    let had = pending().lock().unwrap().take().is_some();
+    crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
+    if had {
+        log::info!("[GRAIN] extension mode: surface dismissed");
+    }
 }
 
 /// Wake the chosen extension, deliver the request, and record the outcome. Shared

@@ -41,6 +41,8 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AgentInputHide",
     "AgentInputSaved",
     "AgentInputSubmitRequest",
+    "ExtensionRecommend",
+    "ExtensionRecommendClear",
     "ShowOverlay",
     "HideOverlay",
     "PasteError",
@@ -80,6 +82,11 @@ pub fn daemon_event_capability(variant: &str) -> Option<&'static str> {
         | "AsrSegmentFinal"
         | "AsrSessionFinal" => Some("events:transcripts"),
         "AudioLevel" => Some("events:audio-levels"),
+        // The recommendation surface carries the captured request text (the
+        // whole point is to route what was said) — transcript-grade, so it takes
+        // the strongest existing grant. Its consumer is the pill, which holds
+        // `All`; no ordinary extension worker subscribes to it.
+        "ExtensionRecommend" | "ExtensionRecommendClear" => Some("events:transcripts"),
         known if DAEMON_EVENT_VARIANTS.contains(&known) => Some("events:sessions"),
         _ => None,
     }
@@ -148,6 +155,36 @@ pub enum SessionMode {
     /// only this mode has a stabilized live-text stream (`Asr*` events) worth
     /// displaying.
     NativeAsr,
+}
+
+/// [GRAIN] One row on the Extension Mode selection surface
+/// (`docs/Extensions V1/PLAN.md` §3, §6b): a candidate extension the user may
+/// hand the request to. Carried in [`DaemonEvent::ExtensionRecommend`] so the
+/// pill can draw the ranked list without reaching back into the host.
+///
+/// The list the pill receives is the WHOLE installed searchable pool, ordered by
+/// confidence — the recommended ones first (a real `signal`), then the rest so
+/// the user can scroll to any installed extension and pick it by hand. `signal`
+/// is `"named"`, `"topical"`, or `"none"` (an unranked pool member shown only so
+/// it is reachable); `score` is the recommendation score, `0.0` for `"none"`.
+#[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
+pub struct RecommendCandidate {
+    pub extension_id: String,
+    /// The extension's display name (already resolved from its manifest).
+    pub name: String,
+    /// The one-line purpose from its `recommend` block, or empty.
+    pub purpose: String,
+    /// `"named"` | `"topical"` | `"none"` — how (or whether) it was ranked.
+    pub signal: String,
+    /// The recommendation score, or `0.0` for an unranked (`"none"`) row.
+    pub score: f32,
+    /// Pre-downscaled icon (premultiplied RGBA, `PILL_ICON_PX`², base64), or
+    /// `None` — the pill draws an initial badge instead. The icon runtime that
+    /// populates this (embed the 512² master in the built pack, write it at
+    /// install, host-downscale) lands after the surface; the field flows through
+    /// now so no wire change is needed when it does (§13.3 deferral).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// One event broadcast by the daemon. `Clone` so every subscriber gets a copy;
@@ -294,6 +331,25 @@ pub enum DaemonEvent {
     /// up. The pill owns the typed text, so it answers with
     /// `AgentInputSubmitText` (typing) or `AgentInputSubmitVoice` (recording).
     AgentInputSubmitRequest,
+
+    /// [GRAIN] Extension Mode (`docs/Extensions V1/PLAN.md` §3, §6b): a captured
+    /// request has been ranked — bring up the native selection surface. The pill
+    /// presents the ranked list (`candidates`, whole searchable pool, best
+    /// first), a type bar to search it, and a clean border on the top pick; a
+    /// click hands that extension the request (`PillAction::ExtensionChoose`),
+    /// Esc cancels (`PillAction::ExtensionCancel`). `name_only` is true when the
+    /// embedding model is absent (ranking was lexical-only, §5) so the surface
+    /// can say so and offer the download.
+    ExtensionRecommend {
+        request: String,
+        candidates: Vec<RecommendCandidate>,
+        #[serde(default)]
+        name_only: bool,
+    },
+    /// [GRAIN] Withdraw the Extension Mode selection surface: the user chose or
+    /// cancelled, Grain auto-sent (§5), or a new session superseded it. Emitted
+    /// exactly once per [`DaemonEvent::ExtensionRecommend`] that reached the pill.
+    ExtensionRecommendClear,
 
     // -- Misc UI signals --
     ShowOverlay,
@@ -463,6 +519,8 @@ impl DaemonEvent {
             AgentInputHide => "AgentInputHide",
             AgentInputSaved => "AgentInputSaved",
             AgentInputSubmitRequest => "AgentInputSubmitRequest",
+            ExtensionRecommend { .. } => "ExtensionRecommend",
+            ExtensionRecommendClear => "ExtensionRecommendClear",
             ShowOverlay => "ShowOverlay",
             HideOverlay => "HideOverlay",
             PasteError { .. } => "PasteError",
@@ -583,4 +641,13 @@ pub enum PillAction {
     /// (core cancels the voice capture); `false` = the user tabbed back to voice
     /// (core restarts dictation).
     AgentInputTyping { active: bool },
+
+    /// [GRAIN] Extension Mode: the user picked a row on the selection surface —
+    /// hand this extension the whole captured request
+    /// (`docs/Extensions V1/PLAN.md` §3). The core wakes it, delivers the
+    /// request, and clears the surface.
+    ExtensionChoose { extension_id: String },
+    /// [GRAIN] Extension Mode: the user dismissed the selection surface (Esc /
+    /// clicked away) without choosing. The core drops the pending request.
+    ExtensionCancel,
 }
