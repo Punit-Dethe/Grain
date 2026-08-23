@@ -3207,7 +3207,12 @@ export type EngineType =
  * state to core settings flags (manifest-first, PLAN.md D4); installed packs
  * read the registry.
  */
-export type ExtensionCard = { id: string; name: string; description: string; version: string; 
+export type ExtensionCard = { id: string; name: string; description: string;
+/**
+ * Grain-derived 128² PNG for settings. Never the resident 512² master.
+ */
+icon: string | null;
+version: string;
 /**
  * "pack" | "scripted" | "native"
  */
@@ -3285,7 +3290,12 @@ recommend: RecommendInfo | null;
  * a capability governs *reach* and this governs *cost*, and hiding the
  * second is how a lightweight-looking install turns out not to be.
  */
-needs: string[] }
+needs: string[];
+/**
+ * The author permits Auto-send and explains why. The user's setting can
+ * only remove this eligibility, never grant it to another extension.
+ */
+auto_send_eligible: boolean; auto_send_note: string | null }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
 /**
  * [GRAIN] Whether Extension Mode can recommend, and how well
@@ -3413,7 +3423,7 @@ ui_source: string | null }
  */
 export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
 export type ExtensionView = { version?: number; title: string; description?: string | null; root: ViewNode; actions?: ViewAction[] }
-export type ExtensionViewContent = { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone }
+export type ExtensionViewContent = { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone; can_insert: boolean; can_replace: boolean }
 export type ExtensionViewEvent = { kind: "change"; target: string; value: ViewValue; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "submit"; target: string; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "cancel" }
 export type ExtensionViewEventResult = {
 /**

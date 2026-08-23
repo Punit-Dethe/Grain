@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use base64::Engine as _;
 use grain_sdk::{
     daemon_event_capability, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
     DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
@@ -171,6 +172,78 @@ pub fn doctor(root: &Path) -> DoctorReport {
     report
 }
 
+/// Build the single-file artifact registry CI and local imports consume.
+/// Compilation is intentionally the caller's job; this function is the shared,
+/// deterministic packaging boundary used after a scripted entry has been built.
+pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("open project root: {error}"))?;
+    let report = doctor(&root);
+    if !report.is_clean() {
+        return Err(format!("doctor found problems:\n{report}"));
+    }
+    let raw = fs::read_to_string(root.join("manifest.json"))
+        .map_err(|error| format!("read manifest.json: {error}"))?;
+    let project: ExtensionProjectManifest =
+        serde_json::from_str(&raw).map_err(|error| format!("parse manifest.json: {error}"))?;
+    if project.manifest.tier == Tier::Native {
+        return Err("native developer projects cannot be packaged in V1".into());
+    }
+
+    let mut manifest = project.manifest;
+    if manifest.tier == Tier::Scripted {
+        let entry = safe_project_file(&root, &project.entry, "entry")?;
+        let metadata = fs::metadata(&entry).map_err(|error| {
+            format!(
+                "read built entry '{}': {error}; run the project build first",
+                project.entry
+            )
+        })?;
+        if !metadata.is_file() || metadata.len() > MAX_ENTRY_BYTES {
+            return Err("built entry must be a file no larger than 5 MB".into());
+        }
+        manifest.entry_source = fs::read_to_string(&entry)
+            .map_err(|error| format!("read built entry '{}': {error}", project.entry))?;
+    }
+
+    let icon = safe_project_file(&root, &manifest.icon, "icon")?;
+    let icon_bytes =
+        fs::read(&icon).map_err(|error| format!("read icon '{}': {error}", manifest.icon))?;
+    let pack = GrainPack {
+        manifest,
+        payloads: PackPayloads {
+            icon_png: Some(base64::engine::general_purpose::STANDARD.encode(icon_bytes)),
+            ..PackPayloads::default()
+        },
+    };
+    pack.validate()?;
+    Ok(pack)
+}
+
+fn safe_project_file(root: &Path, relative: &str, label: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if path.as_os_str().is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!("{label} must be a project-relative file"));
+    }
+    let joined = root.join(path);
+    if let Ok(canonical) = joined.canonicalize() {
+        if !canonical.starts_with(root) {
+            return Err(format!("{label} resolves outside the project"));
+        }
+        Ok(canonical)
+    } else {
+        Ok(joined)
+    }
+}
+
 fn check_manifest(root: &Path, report: &mut DoctorReport) {
     let manifest_path = root.join("manifest.json");
     let relative = PathBuf::from("manifest.json");
@@ -233,9 +306,8 @@ fn check_manifest(root: &Path, report: &mut DoctorReport) {
 /// file and consistency is Grain's.
 ///
 /// Errors (blocks submission), never warns: an extension with no recognisable
-/// icon is exactly what the store must not list. Dimensions are read from the PNG
-/// header directly — no image-decode dependency in this checks crate, and a
-/// truncated or non-PNG file fails at the signature.
+/// icon is exactly what the store must not list. The cheap header check rejects
+/// the wrong format or dimensions before a full decode proves the PNG is intact.
 fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut DoctorReport) {
     use grain_sdk::{ICON_MASTER_DIM, ICON_MAX_BYTES};
 
@@ -290,8 +362,16 @@ fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut Doct
         ));
         return;
     }
-    match png_dimensions(&bytes) {
-        Some((width, height)) if width == ICON_MASTER_DIM && height == ICON_MASTER_DIM => {}
+    match grain_sdk::png_dimensions(&bytes) {
+        Some((width, height)) if width == ICON_MASTER_DIM && height == ICON_MASTER_DIM => {
+            if image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).is_err() {
+                report.findings.push(Finding::project(
+                    "E_ICON",
+                    PathBuf::from(declared),
+                    "icon PNG is corrupt or truncated",
+                ));
+            }
+        }
         Some((width, height)) => report.findings.push(Finding::project(
             "E_ICON",
             PathBuf::from(declared),
@@ -305,19 +385,6 @@ fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut Doct
             "icon is not a PNG",
         )),
     }
-}
-
-/// Width and height from a PNG's IHDR, or `None` if the bytes are not a PNG. The
-/// 8-byte signature is followed by the IHDR chunk whose first two big-endian u32s
-/// are width and height — so 24 bytes is enough, no decoder needed.
-fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
-    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-    if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
-        return None;
-    }
-    let width = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
-    let height = u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]);
-    Some((width, height))
 }
 
 /// [GRAIN] Advice on the recommendation surface (`docs/Extensions V1/PLAN.md`
@@ -724,6 +791,13 @@ fn scan_submitted_files(root: &Path, report: &mut DoctorReport) {
             if !file_type.is_file() {
                 continue;
             }
+            // `grain-ext pack` writes its generated deliverable in the project
+            // root by default. It is not submitted source and can legitimately
+            // exceed the per-source-file ceiling once entry + base64 icon are
+            // combined; repeated doctor/pack runs must remain idempotent.
+            if path.extension().and_then(|value| value.to_str()) == Some("grainpack") {
+                continue;
+            }
 
             report.files_checked += 1;
             let relative = relative_path(root, &path);
@@ -870,18 +944,12 @@ fn sort_findings(findings: &mut [Finding]) {
 mod tests {
     use super::*;
 
-    /// A header-only PNG at `dim`×`dim`. `check_icon` reads dimensions from the
-    /// IHDR alone, so this is a valid fixture without a real encoder — and it
-    /// contains NUL bytes, so `scan_submitted_files` treats it as binary and
-    /// never flags it for unicode.
     fn fake_png(dim: u32) -> Vec<u8> {
-        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        bytes.extend_from_slice(&[0, 0, 0, 13]); // IHDR length
-        bytes.extend_from_slice(b"IHDR");
-        bytes.extend_from_slice(&dim.to_be_bytes());
-        bytes.extend_from_slice(&dim.to_be_bytes());
-        bytes.extend_from_slice(&[8, 6, 0, 0, 0]); // bit depth, colour type, …
-        bytes
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(dim, dim))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
     }
 
     fn write_icon(dir: &Path) {
@@ -1230,6 +1298,46 @@ mod tests {
     }
 
     #[test]
+    fn a_truncated_png_with_a_valid_ihdr_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        let mut bytes = vec![0u8; 24];
+        bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        bytes[12..16].copy_from_slice(b"IHDR");
+        bytes[16..20].copy_from_slice(&grain_sdk::ICON_MASTER_DIM.to_be_bytes());
+        bytes[20..24].copy_from_slice(&grain_sdk::ICON_MASTER_DIM.to_be_bytes());
+        fs::write(directory.path().join("icon.png"), bytes).unwrap();
+
+        let report = doctor(directory.path());
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "E_ICON" && finding.message.contains("corrupt")));
+    }
+
+    #[test]
+    fn build_pack_embeds_the_checked_icon_and_built_entry() {
+        let directory = scaffold();
+        fs::create_dir(directory.path().join("dist")).unwrap();
+        fs::write(
+            directory.path().join("dist/main.js"),
+            "globalThis.grainExtension = {};",
+        )
+        .unwrap();
+
+        let pack = build_pack(directory.path()).unwrap();
+        assert_eq!(
+            pack.manifest.entry_source,
+            "globalThis.grainExtension = {};"
+        );
+        let icon = pack.embedded_icon_png().unwrap().unwrap();
+        assert_eq!(
+            grain_sdk::png_dimensions(&icon),
+            Some((grain_sdk::ICON_MASTER_DIM, grain_sdk::ICON_MASTER_DIM))
+        );
+    }
+
+    #[test]
     fn a_blocking_finding_sorts_above_advice() {
         // The author has to read what stops the submission before advice about
         // phrasing, however the paths happen to sort.
@@ -1258,6 +1366,18 @@ mod tests {
             fs::create_dir(directory.path().join(ignored)).unwrap();
             fs::write(directory.path().join(ignored).join("hidden.js"), "\u{200b}").unwrap();
         }
+        assert!(doctor(directory.path()).is_clean());
+    }
+
+    #[test]
+    fn generated_grainpack_artifacts_are_not_rescanned_as_source() {
+        let directory = scaffold();
+        fs::write(
+            directory.path().join("com.example.clean-0.1.0.grainpack"),
+            vec![b'x'; MAX_PROJECT_FILE_BYTES as usize + 1],
+        )
+        .unwrap();
+
         assert!(doctor(directory.path()).is_clean());
     }
 }

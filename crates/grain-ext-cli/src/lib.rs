@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
@@ -16,10 +17,12 @@ Usage:
   grain-ext init <name> [--id <reverse-dns-id>]
   grain-ext dev [--token-file <path>]
   grain-ext doctor
+  grain-ext pack [--output <path>]
   grain-ext submit --registry <path> --repo <url> --tag <tag> --commit <sha>
                    [--license <spdx>] [--contact <c>] [--category <c>]...
   grain-ext --help
   grain-ext --version";
+static NEXT_ARTIFACT_TEMP: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug)]
 pub struct InitResult {
@@ -91,9 +94,88 @@ where
                 bail!(report.to_string())
             }
         }
+        "pack" => pack_project(cwd, args),
         "submit" => submit_project(cwd, args),
         _ => bail!("unknown command '{command}'\n\n{HELP}"),
     }
+}
+
+/// Compile (when scripted), run the same checks as registry CI, and emit the
+/// single-file artifact Grain installs. The verified 512² icon master is
+/// embedded, so an installed pack never depends on the author's source tree.
+fn pack_project<I>(cwd: &Path, mut args: I) -> Result<String>
+where
+    I: Iterator<Item = String>,
+{
+    let mut output: Option<PathBuf> = None;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--output" => {
+                if output.is_some() {
+                    bail!("--output may be supplied only once");
+                }
+                output = Some(PathBuf::from(
+                    args.next().context("--output requires a path")?,
+                ));
+            }
+            other => bail!("unknown pack option '{other}'"),
+        }
+    }
+
+    let raw = fs::read_to_string(cwd.join("manifest.json"))
+        .context("read manifest.json (run pack from the project root)")?;
+    let project: ExtensionProjectManifest =
+        serde_json::from_str(&raw).context("parse manifest.json")?;
+    if project.manifest.tier == Tier::Scripted {
+        build_project(cwd)?;
+    }
+    let pack = grain_extension_checks::build_pack(cwd).map_err(anyhow::Error::msg)?;
+    let default_name = format!("{}-{}.grainpack", pack.manifest.id, pack.manifest.version);
+    let output = output.unwrap_or_else(|| PathBuf::from(default_name));
+    let output = if output.is_absolute() {
+        output
+    } else {
+        cwd.join(output)
+    };
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create output directory {}", parent.display()))?;
+    }
+    let bytes = serde_json::to_vec(&pack).context("serialize .grainpack")?;
+    replace_artifact(&output, &bytes)?;
+    Ok(format!("Built {}", output.display()))
+}
+
+fn replace_artifact(output: &Path, bytes: &[u8]) -> Result<()> {
+    let parent = output.parent().context("artifact path has no parent")?;
+    let sequence = NEXT_ARTIFACT_TEMP.fetch_add(1, Ordering::Relaxed);
+    let name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("artifact name is not valid Unicode")?;
+    let temp = parent.join(format!(".{name}.{}-{sequence}.tmp", std::process::id()));
+    let backup = parent.join(format!(
+        ".{name}.{}-{sequence}.previous",
+        std::process::id()
+    ));
+    fs::write(&temp, bytes).with_context(|| format!("write {}", temp.display()))?;
+
+    let had_output = output.exists();
+    if had_output {
+        fs::rename(output, &backup)
+            .with_context(|| format!("prepare replacement for {}", output.display()))?;
+    }
+    if let Err(error) = fs::rename(&temp, output) {
+        let _ = fs::remove_file(&temp);
+        if had_output {
+            let _ = fs::rename(&backup, output);
+        }
+        return Err(error).with_context(|| format!("finish {}", output.display()));
+    }
+    if had_output {
+        let _ = fs::remove_file(backup);
+    }
+    Ok(())
 }
 
 /// Create a scripted extension project without overwriting an existing path.
@@ -748,16 +830,10 @@ mod tests {
         assert_eq!(project.manifest.id, "dev.example.my-tool");
     }
 
-    /// A header-only 512×512 PNG — enough for the icon check, which reads only
-    /// the IHDR (see `grain_extension_checks`), without pulling in an encoder.
-    fn write_fake_icon(dir: &Path) {
-        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
-        bytes.extend_from_slice(&[0, 0, 0, 13]);
-        bytes.extend_from_slice(b"IHDR");
-        bytes.extend_from_slice(&512u32.to_be_bytes());
-        bytes.extend_from_slice(&512u32.to_be_bytes());
-        bytes.extend_from_slice(&[8, 6, 0, 0, 0]);
-        fs::write(dir.join("icon.png"), bytes).unwrap();
+    fn write_test_icon(dir: &Path) {
+        image::RgbaImage::new(512, 512)
+            .save_with_format(dir.join("icon.png"), image::ImageFormat::Png)
+            .unwrap();
     }
 
     #[test]
@@ -767,7 +843,7 @@ mod tests {
             init_project(temp.path(), "Hello Ext", Some("com.example.hello-ext")).unwrap();
         // A submittable extension must carry its icon (§13.3); the scaffold
         // declares the path, the author supplies the file.
-        write_fake_icon(&project.root);
+        write_test_icon(&project.root);
         let registry = tempfile::tempdir().unwrap();
         let output = run(
             [
@@ -817,7 +893,7 @@ mod tests {
     fn doctor_accepts_a_scaffold_once_its_icon_is_added() {
         let temp = tempfile::tempdir().unwrap();
         let project = init_project(temp.path(), "Doctor Test", None).unwrap();
-        write_fake_icon(&project.root);
+        write_test_icon(&project.root);
         let output = run(["doctor".into()], &project.root).unwrap();
         assert!(output.starts_with("doctor: 0 findings"), "{output}");
     }
@@ -836,6 +912,18 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("src/main.ts:2:17"));
         assert!(message.contains("U+200B"));
+    }
+
+    #[test]
+    fn artifact_replacement_keeps_only_the_complete_new_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("tool.grainpack");
+        fs::write(&output, b"old").unwrap();
+
+        replace_artifact(&output, b"complete-new-pack").unwrap();
+
+        assert_eq!(fs::read(&output).unwrap(), b"complete-new-pack");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
     }
 
     #[test]

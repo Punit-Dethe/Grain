@@ -40,9 +40,11 @@ mod events_auth; // [GRAIN] token identity + capability filter for the events WS
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
-mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
+mod extension_icons; // [GRAIN] verified master icon -> installed 64px recommendation asset
+mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative topical rerank
 mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
+mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
@@ -1048,6 +1050,7 @@ pub fn run(cli_args: CliArgs) {
             extension_view::extension_view_ready,
             extension_view::extension_view_event,
             extension_view::extension_view_copy,
+            extension_view::extension_view_output,
             extension_view::extension_view_close,
             grain_commands::extension_import_pack,
             grain_commands::extension_export_pack,

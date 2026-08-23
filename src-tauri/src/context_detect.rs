@@ -1834,6 +1834,19 @@ pub fn read_focused_text() -> Option<String> {
     }
 }
 
+/// Whether the focused text range is non-empty, without reading its contents.
+/// Used only to label a finite result action honestly as Replace vs Insert.
+pub fn focused_has_selection() -> bool {
+    #[cfg(windows)]
+    {
+        uia::focused_has_selection()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 #[cfg(windows)]
 mod windows_impl {
     use super::{category_for_exe, is_browser_exe, ActiveContext, Confidence};
@@ -2675,6 +2688,42 @@ mod uia {
                 return None;
             }
             read_text_content(&el)
+        }
+    }
+
+    pub(in crate::context_detect) fn focused_has_selection() -> bool {
+        unsafe {
+            let _com = ComGuard::init();
+            let automation: IUIAutomation =
+                match CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) {
+                    Ok(automation) => automation,
+                    Err(_) => return false,
+                };
+            let Ok(element) = automation.GetFocusedElement() else {
+                return false;
+            };
+            if is_password(&element) {
+                return false;
+            }
+            let Ok(pattern) =
+                element.GetCurrentPatternAs::<IUIAutomationTextPattern>(UIA_TextPatternId)
+            else {
+                return false;
+            };
+            let Ok(selection) = pattern.GetSelection() else {
+                return false;
+            };
+            let Ok(range) = selection.GetElement(0) else {
+                return false;
+            };
+            range
+                .CompareEndpoints(
+                    TextPatternRangeEndpoint_Start,
+                    &range,
+                    TextPatternRangeEndpoint_End,
+                )
+                .map(|comparison| comparison != 0)
+                .unwrap_or(false)
         }
     }
 

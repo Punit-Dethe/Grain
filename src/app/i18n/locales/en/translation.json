@@ -1342,7 +1342,12 @@
       "group": "Capture",
       "extensionMode": {
         "group": "Extension Mode",
-        "info": "A separate recording path for requests that Grain recommends to approved searchable extensions. The request is never pasted as dictation."
+        "info": "A separate recording path for requests that Grain recommends to approved searchable extensions. The request is never pasted as dictation.",
+        "autoSend": {
+          "title": "Auto-send clear matches (beta)",
+          "description": "Skip the chooser only for an author-approved extension with a clear semantic lead. Named matches always ask first.",
+          "paused": "Turn on Experimental features in Settings → Application to enable this beta."
+        }
       },
       "set": {
         "title": "Capture modes",

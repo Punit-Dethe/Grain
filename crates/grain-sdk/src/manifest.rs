@@ -12,6 +12,7 @@
 //! is trivially shareable. Multi-file bundles (tier B/C) arrive with their
 //! tiers.
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -673,6 +674,20 @@ pub const ICON_MASTER_DIM: u32 = 512;
 /// Hard cap on the icon PNG's byte length. Bounds the pack and stops a tiny
 /// 512×512 header from hiding megabytes of IDAT (a decompression bomb).
 pub const ICON_MAX_BYTES: u64 = 512 * 1024;
+
+/// Read PNG dimensions from the mandatory IHDR header. This intentionally does
+/// not claim the image is decodable; authoring checks and the host perform a
+/// full decode before accepting/materialising artwork.
+pub fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+        u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+    ))
+}
 
 /// Hard ceiling on the one-line purpose.
 pub const RECOMMEND_PURPOSE_MAX_BYTES: usize = 120;
@@ -1717,6 +1732,16 @@ pub struct PackPayloads {
     /// schema can evolve without an sdk release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pill_theme: Option<serde_json::Value>,
+    /// The submission-validated 512² PNG master, embedded in the single-file
+    /// pack. The manifest path remains the authoring/source identity; installed
+    /// packs cannot safely depend on that source tree still existing.
+    #[serde(
+        default,
+        rename = "iconPng",
+        alias = "icon_png",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub icon_png: Option<String>,
 }
 
 impl ExtensionManifest {
@@ -1757,6 +1782,44 @@ pub struct GrainPack {
 }
 
 impl GrainPack {
+    /// Decode the optional icon master with a strict allocation bound. Full PNG
+    /// decoding belongs to the host/checker; the SDK cheaply enforces the wire
+    /// shape and advertised dimensions at every pack-validation boundary.
+    pub fn embedded_icon_png(&self) -> Result<Option<Vec<u8>>, String> {
+        let Some(encoded) = self.payloads.icon_png.as_deref() else {
+            return Ok(None);
+        };
+        if self.manifest.icon.trim().is_empty() {
+            return Err("payloads.iconPng requires manifest.icon".into());
+        }
+        let max_encoded = (ICON_MAX_BYTES as usize).div_ceil(3) * 4;
+        if encoded.len() > max_encoded {
+            return Err(format!(
+                "payloads.iconPng is larger than {} KB",
+                ICON_MAX_BYTES / 1024
+            ));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| "payloads.iconPng is not valid base64".to_string())?;
+        if bytes.len() as u64 > ICON_MAX_BYTES {
+            return Err(format!(
+                "payloads.iconPng is larger than {} KB",
+                ICON_MAX_BYTES / 1024
+            ));
+        }
+        match png_dimensions(&bytes) {
+            Some((width, height)) if width == ICON_MASTER_DIM && height == ICON_MASTER_DIM => {
+                Ok(Some(bytes))
+            }
+            Some((width, height)) => Err(format!(
+                "payloads.iconPng is {width}×{height}; it must be exactly \
+                 {ICON_MASTER_DIM}×{ICON_MASTER_DIM}"
+            )),
+            None => Err("payloads.iconPng is not a PNG".into()),
+        }
+    }
+
     /// [`ExtensionManifest::extends`] plus the surfaces this pack's payloads
     /// feed — a tier-A pack contributes by shipping data, not by declaring.
     pub fn extends(&self) -> Vec<String> {
@@ -1852,6 +1915,7 @@ impl GrainPack {
                 return Err(format!("prompt entry '{}' is incomplete", p.id));
             }
         }
+        self.embedded_icon_png()?;
         self.validate_phase3()?;
         Ok(())
     }

@@ -812,6 +812,8 @@ pub struct ExtensionCard {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// Grain-derived 128² PNG for settings. Never the resident 512² master.
+    pub icon: Option<String>,
     pub version: String,
     /// "pack" | "scripted" | "native"
     pub tier: String,
@@ -870,6 +872,10 @@ pub struct ExtensionCard {
     /// a capability governs *reach* and this governs *cost*, and hiding the
     /// second is how a lightweight-looking install turns out not to be.
     pub needs: Vec<String>,
+    /// The author permits Auto-send and explains why. The user's setting can
+    /// only remove this eligibility, never grant it to another extension.
+    pub auto_send_eligible: bool,
+    pub auto_send_note: Option<String>,
 }
 
 /// [GRAIN] The recommendation surface an extension declares
@@ -1046,6 +1052,16 @@ pub fn change_auto_send_for_extension(
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
+    grain_sdk::validate_extension_id(&id)?;
+    let pack = load_pack(&app, &id)?;
+    if !pack
+        .manifest
+        .auto_send
+        .as_ref()
+        .is_some_and(|declaration| declaration.eligible)
+    {
+        return Err("this extension does not declare Auto-send eligibility".into());
+    }
     let mut settings = settings::get_settings(&app);
     settings
         .auto_send_disabled
@@ -1053,6 +1069,8 @@ pub fn change_auto_send_for_extension(
     if !enabled {
         settings.auto_send_disabled.push(id);
     }
+    settings.auto_send_disabled.sort();
+    settings.auto_send_disabled.dedup();
     settings::write_settings(&app, settings);
     Ok(())
 }
@@ -1204,6 +1222,16 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     kind: p.manifest.kind.as_str(),
                     recommend: p.manifest.recommend.as_ref().map(RecommendInfo::from_decl),
                     needs: p.manifest.needs,
+                    auto_send_eligible: p
+                        .manifest
+                        .auto_send
+                        .as_ref()
+                        .is_some_and(|declaration| declaration.eligible),
+                    auto_send_note: p
+                        .manifest
+                        .auto_send
+                        .as_ref()
+                        .and_then(|declaration| declaration.note.clone()),
                 }
             }
             // SPEC §6 last row: a broken/missing pack file renders an error
@@ -1226,11 +1254,14 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind,
             recommend,
             needs,
+            auto_send_eligible,
+            auto_send_note,
         } = facts;
         cards.push(ExtensionCard {
             id: rec.id.clone(),
             name,
             description,
+            icon: crate::extension_icons::ui_icon(&app, &rec.id),
             version: rec.installed_version.clone(),
             tier: tier.to_string(),
             // Load-unpacked is always shown as `dev`; otherwise the rung comes
@@ -1263,6 +1294,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind: kind.to_string(),
             recommend,
             needs,
+            auto_send_eligible,
+            auto_send_note,
             has_detail,
             slots: rec
                 .slots
@@ -1291,6 +1324,8 @@ struct PackFacts {
     kind: &'static str,
     recommend: Option<RecommendInfo>,
     needs: Vec<String>,
+    auto_send_eligible: bool,
+    auto_send_note: Option<String>,
 }
 
 impl Default for PackFacts {
@@ -1310,6 +1345,8 @@ impl Default for PackFacts {
             kind: grain_sdk::manifest::ExtensionKind::Extending.as_str(),
             recommend: None,
             needs: Vec::new(),
+            auto_send_eligible: false,
+            auto_send_note: None,
         }
     }
 }
@@ -2102,6 +2139,9 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
     let pack: grain_sdk::GrainPack =
         serde_json::from_str(&raw).map_err(|e| format!("not a valid .grainpack: {e}"))?;
     pack.validate()?;
+    // A declared embedded icon must fully decode before the import mutates the
+    // registry. This also writes the one fixed-size recommendation derivative.
+    crate::extension_icons::materialize_pack(&app, &pack)?;
 
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
@@ -2392,9 +2432,20 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
         return Err("not installed".into());
     }
     crate::extension_host::refresh_index(&app);
+    if purge {
+        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+            let _ = ctx.update_settings(|settings| {
+                settings
+                    .auto_send_disabled
+                    .retain(|disabled| disabled != &id);
+            });
+        }
+    }
     if dev_active {
         if purge {
             let _ = std::fs::remove_file(pack_path(&app, &id)?);
+            crate::extension_icons::purge(&app, &id)?;
+            crate::extension_misroutes::purge(&app, &id);
         }
         return Ok(());
     }
@@ -2421,6 +2472,8 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     crate::surfaces::overlay::dismiss(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
+        crate::extension_icons::purge(&app, &id)?;
+        crate::extension_misroutes::purge(&app, &id);
     }
     crate::extension_host::refresh_index(&app);
     Ok(())

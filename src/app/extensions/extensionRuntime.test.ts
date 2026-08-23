@@ -19,6 +19,7 @@ const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
   id: "example.pack",
   name: "Example Pack",
   description: "An example extension",
+  icon: null,
   version: "1.0.0",
   tier: "scripted",
   trust: "community",
@@ -35,6 +36,8 @@ const card = (overrides: Partial<ExtensionCard> = {}): ExtensionCard => ({
   kind: "extending",
   recommend: null,
   needs: [],
+  auto_send_eligible: false,
+  auto_send_note: null,
   ...overrides,
 });
 

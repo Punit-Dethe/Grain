@@ -34,6 +34,33 @@ struct ActiveView {
     busy: bool,
 }
 
+#[derive(Clone, Copy, Default)]
+struct OutputTarget {
+    hwnd: Option<isize>,
+    has_selection: bool,
+}
+
+fn output_target() -> &'static Mutex<Option<OutputTarget>> {
+    static TARGET: OnceLock<Mutex<Option<OutputTarget>>> = OnceLock::new();
+    TARGET.get_or_init(|| Mutex::new(None))
+}
+
+/// Snapshot the destination before the recommendation UI takes focus. Windows
+/// can inspect selection length without reading it; other platforms reuse
+/// Grain's existing transient copy-and-restore probe so Insert/Replace remain
+/// honestly labelled without retaining the selected text.
+pub fn capture_output_target(_app: &AppHandle) {
+    #[cfg(windows)]
+    let has_selection = crate::context_detect::focused_has_selection();
+    #[cfg(not(windows))]
+    let has_selection = crate::agent::capture_selection(_app).is_some();
+
+    *output_target().lock().unwrap() = Some(OutputTarget {
+        hwnd: crate::agent::foreground_hwnd(),
+        has_selection,
+    });
+}
+
 fn active() -> &'static Mutex<Option<ActiveView>> {
     static ACTIVE: OnceLock<Mutex<Option<ActiveView>>> = OnceLock::new();
     ACTIVE.get_or_init(|| Mutex::new(None))
@@ -46,16 +73,45 @@ fn bounded_message(message: &str) -> String {
 #[derive(Clone, Debug, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionViewContent {
-    View { view: ExtensionView },
-    Result { message: String, tone: ResultTone },
+    View {
+        view: ExtensionView,
+    },
+    Result {
+        message: String,
+        tone: ResultTone,
+        can_insert: bool,
+        can_replace: bool,
+    },
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Type)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Type)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultTone {
     Success,
     Warning,
     Danger,
+}
+
+fn result_content(message: String, tone: ResultTone, allow_output: bool) -> ExtensionViewContent {
+    let target = *output_target().lock().unwrap();
+    ExtensionViewContent::Result {
+        message,
+        tone,
+        can_insert: allow_output && target.is_some_and(target_is_usable),
+        can_replace: allow_output && target.is_some_and(|target| target.has_selection),
+    }
+}
+
+fn target_is_usable(target: OutputTarget) -> bool {
+    #[cfg(windows)]
+    {
+        target.hwnd.is_some()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        true
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -119,9 +175,12 @@ pub fn warm(app: &AppHandle) -> Result<(), String> {
     window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
             let removed = active().lock().unwrap().take();
-            if let Some(removed) = removed.filter(|removed| {
-                matches!(&removed.content, ExtensionViewContent::View { .. })
-            }) {
+            if removed.is_some() {
+                output_target().lock().unwrap().take();
+            }
+            if let Some(removed) = removed
+                .filter(|removed| matches!(&removed.content, ExtensionViewContent::View { .. }))
+            {
                 action_log::record(
                     &removed.request,
                     Some(removed.extension_id.clone()),
@@ -200,7 +259,28 @@ pub fn present_result(
             extension_name: name,
             // The hand-off path has already logged the request and outcome.
             request: String::new(),
-            content: ExtensionViewContent::Result { message, tone },
+            content: result_content(message, tone, tone == ResultTone::Success),
+            busy: false,
+        },
+    )
+}
+
+/// Show a host-owned success notice that is not extension output and therefore
+/// must never expose Insert/Replace (the Auto-send disclosure uses this).
+pub fn present_notice(app: &AppHandle, extension_id: &str, message: String) -> Result<u64, String> {
+    let message = bounded_message(&message);
+    if message.is_empty() {
+        return Err("notice message must not be empty".into());
+    }
+    let name = extension_name(app, extension_id);
+    store_and_emit(
+        app,
+        ActiveView {
+            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            extension_id: extension_id.to_string(),
+            extension_name: name,
+            request: String::new(),
+            content: result_content(message, ResultTone::Success, false),
             busy: false,
         },
     )
@@ -210,6 +290,7 @@ pub fn present_result(
 /// capture/cancel path; the hidden warm renderer must never become residency.
 pub fn destroy(app: &AppHandle) {
     active().lock().unwrap().take();
+    output_target().lock().unwrap().take();
     if let Some(window) = app.get_webview_window(LABEL) {
         let _ = window.destroy();
     }
@@ -218,14 +299,10 @@ pub fn destroy(app: &AppHandle) {
 /// Keep the owning worker out of the idle reaper while its standard view is
 /// visible. Closing the finite view restores the normal idle policy.
 pub fn owns_extension(extension_id: &str) -> bool {
-    active()
-        .lock()
-        .unwrap()
-        .as_ref()
-        .is_some_and(|active| {
-            active.extension_id == extension_id
-                && matches!(&active.content, ExtensionViewContent::View { .. })
-        })
+    active().lock().unwrap().as_ref().is_some_and(|active| {
+        active.extension_id == extension_id
+            && matches!(&active.content, ExtensionViewContent::View { .. })
+    })
 }
 
 /// Drop a standard view whose worker is being disabled, removed, or reloaded.
@@ -253,12 +330,13 @@ pub fn fail_interactive_for_extension(app: &AppHandle, extension_id: &str, reaso
             return;
         };
         let bounded_reason = bounded_message(reason);
-        active.content = ExtensionViewContent::Result {
-            message: bounded_message(&format!(
+        active.content = result_content(
+            bounded_message(&format!(
                 "The extension stopped before it finished: {bounded_reason}"
             )),
-            tone: ResultTone::Danger,
-        };
+            ResultTone::Danger,
+            false,
+        );
         active.busy = false;
         action_log::record(
             &active.request,
@@ -294,10 +372,7 @@ pub fn extension_view_init(window: WebviewWindow) -> Option<ExtensionViewInit> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn extension_view_ready(
-    window: WebviewWindow,
-    session_id: u64,
-) -> Result<(), String> {
+pub fn extension_view_ready(window: WebviewWindow, session_id: u64) -> Result<(), String> {
     if !caller_is_view(&window) {
         return Err("extension view command called from the wrong window".into());
     }
@@ -342,7 +417,8 @@ pub async fn extension_view_event(
         active.extension_id.clone()
     };
 
-    let outcome = crate::extension_host::surface_event(&app, &extension_id, session_id, event).await;
+    let outcome =
+        crate::extension_host::surface_event(&app, &extension_id, session_id, event).await;
     let mut slot = active().lock().unwrap();
     let active = slot
         .as_mut()
@@ -371,10 +447,7 @@ pub async fn extension_view_event(
                 .filter(|message| !message.trim().is_empty())
                 .map(|message| bounded_message(&message))
                 .unwrap_or_else(|| "Done".into());
-            active.content = ExtensionViewContent::Result {
-                message,
-                tone: ResultTone::Success,
-            };
+            active.content = result_content(message, ResultTone::Success, true);
             action_log::record(
                 &active.request,
                 Some(active.extension_id.clone()),
@@ -386,10 +459,7 @@ pub async fn extension_view_event(
         }
         crate::extension_host::SurfaceEventOutcome::Failed(reason) => {
             let reason = bounded_message(&reason);
-            active.content = ExtensionViewContent::Result {
-                message: reason.clone(),
-                tone: ResultTone::Danger,
-            };
+            active.content = result_content(reason.clone(), ResultTone::Danger, false);
             action_log::record(
                 &active.request,
                 Some(active.extension_id.clone()),
@@ -400,11 +470,11 @@ pub async fn extension_view_event(
             active.request.clear();
         }
         crate::extension_host::SurfaceEventOutcome::Unknown => {
-            active.content = ExtensionViewContent::Result {
-                message: "Grain stopped waiting, so the extension's final outcome is unknown."
-                    .into(),
-                tone: ResultTone::Warning,
-            };
+            active.content = result_content(
+                "Grain stopped waiting, so the extension's final outcome is unknown.".into(),
+                ResultTone::Warning,
+                false,
+            );
             action_log::record(
                 &active.request,
                 Some(active.extension_id.clone()),
@@ -446,12 +516,90 @@ pub fn extension_view_copy(
         .map_err(|error| format!("failed to copy result: {error}"))
 }
 
+/// Insert a successful finite result back into the app Extension Mode was
+/// started from. Replace is exposed only when Grain observed a non-empty text
+/// selection at capture; Insert collapses that selection to its trailing edge.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_view_close(
+pub fn extension_view_output(
+    app: AppHandle,
     window: WebviewWindow,
     session_id: u64,
+    action: String,
 ) -> Result<(), String> {
+    if !caller_is_view(&window) {
+        return Err("extension view command called from the wrong window".into());
+    }
+    let replace = match action.as_str() {
+        "insert" => false,
+        "replace" => true,
+        _ => return Err("unknown result output action".into()),
+    };
+    let (message, target, removed) = {
+        let mut slot = active().lock().unwrap();
+        let current = slot
+            .as_ref()
+            .filter(|active| active.session_id == session_id)
+            .ok_or("stale extension view session")?;
+        let ExtensionViewContent::Result {
+            message,
+            tone: ResultTone::Success,
+            can_insert: true,
+            can_replace,
+        } = &current.content
+        else {
+            return Err("this result cannot be inserted".into());
+        };
+        if replace && !*can_replace {
+            return Err("there is no captured selection to replace".into());
+        }
+        let target = output_target()
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or("the original output target is no longer available")?;
+        let message = message.clone();
+        let removed = slot.take().ok_or("stale extension view session")?;
+        (message, target, removed)
+    };
+    if let Err(error) = window.destroy() {
+        *active().lock().unwrap() = Some(removed);
+        *output_target().lock().unwrap() = Some(target);
+        return Err(error.to_string());
+    }
+
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(120));
+        #[cfg(windows)]
+        if !target.hwnd.is_some_and(crate::agent::refocus_window) {
+            crate::bridge::emit(
+                &app,
+                grain_core::DaemonEvent::PasteError {
+                    error: "The app selected for this result is no longer open.".into(),
+                },
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
+
+        if !replace && target.has_selection {
+            use enigo::{Enigo, Key, Keyboard, Settings};
+            if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
+                crate::input::release_modifiers(&mut enigo);
+                let _ = enigo.key(Key::RightArrow, enigo::Direction::Click);
+                std::thread::sleep(std::time::Duration::from_millis(35));
+            }
+        }
+        if let Err(error) = crate::clipboard::paste(message, app.clone()) {
+            crate::bridge::emit(&app, grain_core::DaemonEvent::PasteError { error });
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn extension_view_close(window: WebviewWindow, session_id: u64) -> Result<(), String> {
     if !caller_is_view(&window) {
         return Err("extension view command called from the wrong window".into());
     }

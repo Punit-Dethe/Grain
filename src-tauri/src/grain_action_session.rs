@@ -126,6 +126,7 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     // the microphone. `try_start_recording` is the singleton reservation, so no
     // second starter can enter between this point and publishing `active`.
     supersede(app);
+    crate::extension_view::capture_output_target(app);
     let pill_session_id = crate::grain_actions::extension_mode_started(app);
 
     let mut slot = active().lock().unwrap();
@@ -362,15 +363,17 @@ async fn present(
         let request = request.clone();
         let declined = declined.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            let (ranked, semantic_available) =
+            let (mut ranked, semantic_available) =
                 crate::extension_host::recommend(&request, &declined);
+            crate::extension_misroutes::apply(&app, &mut ranked);
             let pool = crate::extension_host::searchable_ids()
                 .into_iter()
                 .filter(|id| !declined.contains(id))
                 .map(|id| {
                     let (name, purpose) = crate::extension_host::recommendation_display(&app, &id)
                         .unwrap_or_else(|| (id.clone(), String::new()));
-                    (id, name, purpose)
+                    let icon = crate::extension_icons::recommendation_icon(&app, &id);
+                    (id, name, purpose, icon)
                 })
                 .collect();
             (ranked, semantic_available, pool)
@@ -378,19 +381,20 @@ async fn present(
         .await
         .unwrap_or_else(|_| (Vec::new(), false, Vec::new()))
     };
-    let (ranked, semantic_available, pool): (_, _, Vec<(String, String, String)>) = ranked;
+    let (ranked, semantic_available, pool): (_, _, Vec<(String, String, String, Option<String>)>) =
+        ranked;
 
     let display = |id: &str| {
         pool.iter()
-            .find(|(candidate_id, _, _)| candidate_id == id)
-            .map(|(_, name, purpose)| (name.clone(), purpose.clone()))
-            .unwrap_or_else(|| (id.to_string(), String::new()))
+            .find(|(candidate_id, _, _, _)| candidate_id == id)
+            .map(|(_, name, purpose, icon)| (name.clone(), purpose.clone(), icon.clone()))
+            .unwrap_or_else(|| (id.to_string(), String::new(), None))
     };
 
     let candidates: Vec<RecommendationCandidate> = ranked
         .iter()
         .map(|r| {
-            let (name, purpose) = display(&r.extension_id);
+            let (name, purpose, _) = display(&r.extension_id);
             RecommendationCandidate {
                 extension_id: r.extension_id.clone(),
                 name,
@@ -459,11 +463,10 @@ async fn present(
             .find(|candidate| candidate.extension_id == extension_id)
             .map(|candidate| candidate.name.as_str())
             .unwrap_or(extension_id.as_str());
-        if let Err(error) = crate::extension_view::present_result(
+        if let Err(error) = crate::extension_view::present_notice(
             app,
             &extension_id,
             format!("Sent to {extension_name} automatically."),
-            crate::extension_view::ResultTone::Success,
         ) {
             log::warn!("[GRAIN] extension mode: could not show auto-send notice: {error}");
         }
@@ -483,7 +486,7 @@ async fn present(
         let mut picks: Vec<grain_core::RecommendCandidate> = ranked
             .iter()
             .map(|r| {
-                let (name, purpose) = display(&r.extension_id);
+                let (name, purpose, icon) = display(&r.extension_id);
                 grain_core::RecommendCandidate {
                     extension_id: r.extension_id.clone(),
                     name,
@@ -494,24 +497,22 @@ async fn present(
                     }
                     .to_string(),
                     score: r.score,
-                    icon: None,
+                    icon,
                 }
             })
             .collect();
         let mut rest: Vec<grain_core::RecommendCandidate> = pool
-                .into_iter()
-                .filter(|(id, _, _)| !ranked_ids.contains(id.as_str()))
-                .map(|(id, name, purpose)| {
-                    grain_core::RecommendCandidate {
-                        extension_id: id,
-                        name,
-                        purpose,
-                        signal: "none".to_string(),
-                        score: 0.0,
-                        icon: None,
-                    }
-                })
-                .collect();
+            .into_iter()
+            .filter(|(id, _, _, _)| !ranked_ids.contains(id.as_str()))
+            .map(|(id, name, purpose, icon)| grain_core::RecommendCandidate {
+                extension_id: id,
+                name,
+                purpose,
+                signal: "none".to_string(),
+                score: 0.0,
+                icon,
+            })
+            .collect();
         rest.sort_by(|a, b| {
             a.name
                 .to_lowercase()
@@ -632,9 +633,7 @@ pub async fn decline(app: &AppHandle, presentation_id: u64, extension_id: &str) 
         let Some(p) = slot.as_mut() else {
             return;
         };
-        if p.presentation_id != presentation_id
-            || !p.allowed.iter().any(|id| id == extension_id)
-        {
+        if p.presentation_id != presentation_id || !p.allowed.iter().any(|id| id == extension_id) {
             return;
         }
         if !p.declined.iter().any(|id| id == extension_id) {
@@ -653,6 +652,7 @@ pub async fn decline(app: &AppHandle, presentation_id: u64, extension_id: &str) 
         None,
         ActionLogOutcome::Cancelled,
     );
+    crate::extension_misroutes::record_decline(app, extension_id);
     present(app, request_id, request, declined, false).await;
 }
 
@@ -675,9 +675,7 @@ pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) {
         if pending.presentation_id != presentation_id
             || !pending.allowed.iter().any(|id| id == extension_id)
         {
-            log::warn!(
-                "[GRAIN] extension mode: ignored stale or invalid choice {extension_id}"
-            );
+            log::warn!("[GRAIN] extension mode: ignored stale or invalid choice {extension_id}");
             return;
         }
         slot.take().unwrap()
@@ -779,6 +777,7 @@ fn run_hand_off(
         use crate::extension_host::HandOffOutcome;
         match crate::extension_host::hand_off(&app, &extension_id, &request).await {
             HandOffOutcome::Done(message) => {
+                crate::extension_misroutes::record_accepted_route(&app, &extension_id);
                 log::info!(
                     "[GRAIN] extension mode: {extension_id} handled the request{}",
                     message
@@ -803,8 +802,7 @@ fn run_hand_off(
                         &extension_id,
                         message,
                         crate::extension_view::ResultTone::Success,
-                    )
-                    {
+                    ) {
                         log::warn!("[GRAIN] extension mode: could not show result: {error}");
                         crate::extension_view::destroy(&app);
                     }
@@ -813,6 +811,7 @@ fn run_hand_off(
                 }
             }
             HandOffOutcome::View(view) => {
+                crate::extension_misroutes::record_accepted_route(&app, &extension_id);
                 let _gate = request_gate().lock().unwrap();
                 if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
                     return;
@@ -834,6 +833,7 @@ fn run_hand_off(
                 }
             }
             HandOffOutcome::Declined(reason) => {
+                crate::extension_misroutes::record_decline(&app, &extension_id);
                 log::info!(
                     "[GRAIN] extension mode: {extension_id} declined the request — {reason}"
                 );
@@ -874,6 +874,7 @@ fn run_hand_off(
                 }
             }
             HandOffOutcome::Failed(reason) => {
+                crate::extension_misroutes::record_accepted_route(&app, &extension_id);
                 log::warn!("[GRAIN] extension mode: {extension_id} failed — {reason}");
                 action_log::record(
                     &request,
@@ -891,8 +892,7 @@ fn run_hand_off(
                         &extension_id,
                         reason,
                         crate::extension_view::ResultTone::Danger,
-                    )
-                    {
+                    ) {
                         log::warn!("[GRAIN] extension mode: could not show failure: {error}");
                         crate::extension_view::destroy(&app);
                     }
@@ -901,6 +901,7 @@ fn run_hand_off(
             // Reported as its own thing, never as failure: for anything that
             // left the machine a timeout does not mean it did not happen.
             HandOffOutcome::Unknown => {
+                crate::extension_misroutes::record_accepted_route(&app, &extension_id);
                 action_log::record(
                     &request,
                     Some(extension_id.clone()),
@@ -916,9 +917,10 @@ fn run_hand_off(
                         "Grain stopped waiting, so the extension's final outcome is unknown."
                             .into(),
                         crate::extension_view::ResultTone::Warning,
-                    )
-                    {
-                        log::warn!("[GRAIN] extension mode: could not show unknown result: {error}");
+                    ) {
+                        log::warn!(
+                            "[GRAIN] extension mode: could not show unknown result: {error}"
+                        );
                         crate::extension_view::destroy(&app);
                     }
                 }

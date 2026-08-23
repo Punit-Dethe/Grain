@@ -330,6 +330,10 @@ async fn fetch_text(client: &reqwest::Client, base: &str, name: &str) -> Option<
 /// verifying each, caching on success, and applying revocations. Returns the
 /// resulting [`StoreView`]; on total network failure it falls back to cache.
 pub async fn refresh(state: &StoreState, client: &reqwest::Client) -> StoreView {
+    refresh_at(state, client, now_unix()).await
+}
+
+async fn refresh_at(state: &StoreState, client: &reqwest::Client, now: i64) -> StoreView {
     let bases: Vec<String> = {
         let roots = state.roots.read().unwrap();
         roots
@@ -364,8 +368,7 @@ pub async fn refresh(state: &StoreState, client: &reqwest::Client) -> StoreView 
         ) else {
             continue;
         };
-        let Ok((index, status)) =
-            trust::verify_index(&roots, &idoc, &isig, stored, now_unix(), false)
+        let Ok((index, status)) = trust::verify_index(&roots, &idoc, &isig, stored, now, false)
         else {
             continue;
         };
@@ -706,6 +709,14 @@ pub async fn store_install(app: AppHandle, id: String, version: String) -> Resul
         .ok_or("http client unavailable")?;
     let root = ext_root(&app)?;
     install_entry(&state, &reg, &root, &client, &id, &version).await?;
+    // Store artifacts were registry-built, but decoding still fails closed at
+    // the consumer boundary. A bad icon degrades the card rather than undoing a
+    // cryptographically valid extension install.
+    if let Ok(pack) = crate::extension_host::load_manifest_result(&app, &id) {
+        if let Err(error) = crate::extension_icons::materialize_pack(&app, &pack) {
+            log::warn!("[GRAIN] store: could not materialize icon for {id}: {error}");
+        }
+    }
     crate::extension_host::refresh_index(&app);
     Ok(())
 }
@@ -914,7 +925,9 @@ mod tests {
         let client = reqwest::Client::new();
 
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let view = rt.block_on(refresh(&state, &client));
+        // Verify the immutable signed fixture at a time inside its validity
+        // window. Production refreshes always pass the real wall clock.
+        let view = rt.block_on(refresh_at(&state, &client, 1_787_270_400));
         assert_eq!(view.status, "fresh", "index verified + fresh over HTTP");
         assert_eq!(view.entries.len(), 1);
         assert!(view.can_install);

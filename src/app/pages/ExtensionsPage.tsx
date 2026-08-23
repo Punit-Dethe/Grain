@@ -461,6 +461,7 @@ function ExtensionDrawer({
   installing: string | null;
   canInstall: boolean;
 }) {
+  const { getSetting, refreshSettings } = useSettings();
   const [catalogueEntry, setCatalogueEntry] = useState<StoreEntry | null>(
     selection.source === "store" ? selection.entry : null,
   );
@@ -468,6 +469,8 @@ function ExtensionDrawer({
   const [readme, setReadme] = useState<string | null>(null);
   const [readmeLoading, setReadmeLoading] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
+  const [autoSendBusy, setAutoSendBusy] = useState(false);
+  const [autoSendError, setAutoSendError] = useState<string | null>(null);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -512,6 +515,29 @@ function ExtensionDrawer({
   const destination = card
     ? extensionDestination(card, controller.sections)
     : null;
+  const autoSendDisabled = getSetting("auto_send_disabled") ?? [];
+  const autoSendForCard = Boolean(
+    card?.auto_send_eligible && !autoSendDisabled.includes(card.id),
+  );
+  const autoSendActive = Boolean(
+    getSetting("experimental_enabled") && getSetting("auto_send_enabled"),
+  );
+
+  const changeAutoSend = async () => {
+    if (!card?.auto_send_eligible) return;
+    setAutoSendBusy(true);
+    setAutoSendError(null);
+    try {
+      unwrapResult(
+        await commands.changeAutoSendForExtension(card.id, !autoSendForCard),
+      );
+      await refreshSettings();
+    } catch (reason) {
+      setAutoSendError(String(reason));
+    } finally {
+      setAutoSendBusy(false);
+    }
+  };
 
   // Fetch as soon as there is a README to fetch. It is still lazy in the sense
   // that matters — nothing is fetched until a drawer actually opens, and the
@@ -571,6 +597,7 @@ function ExtensionDrawer({
           <div className="drawer-media-wrap">
             <MediaArtwork
               media={media[mediaIndex]}
+              icon={card?.icon}
               name={name}
               className="extension-panel-hero refined-panel-hero preview-media"
             />
@@ -671,6 +698,42 @@ function ExtensionDrawer({
               </div>
             )}
           </div>
+
+          {card?.auto_send_eligible && (
+            <>
+              <div className="panel-section-label">Auto-send</div>
+              <div className="extension-auto-send">
+                <div>
+                  <strong>Allow this extension</strong>
+                  <p>
+                    {card.auto_send_note ??
+                      "The author marked this extension safe for clear matches."}
+                  </p>
+                  {!autoSendActive && (
+                    <span>
+                      Paused until Auto-send and Experimental features are on.
+                    </span>
+                  )}
+                </div>
+                <button
+                  aria-checked={autoSendForCard}
+                  aria-label={`${autoSendForCard ? "Disable" : "Enable"} Auto-send for ${card.name}`}
+                  className={`toggle${autoSendForCard ? " on" : ""}`}
+                  disabled={autoSendBusy}
+                  onClick={() => void changeAutoSend()}
+                  role="switch"
+                  type="button"
+                >
+                  <span />
+                </button>
+              </div>
+              {autoSendError && (
+                <div className="extension-inline-error" role="alert">
+                  {autoSendError}
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         <div className="extension-drawer-actions">
@@ -833,6 +896,7 @@ function InstalledList({
           >
             <MediaArtwork
               media={controller.covers[card.id]}
+              icon={card.icon}
               name={card.name}
               className="extension-artwork"
             />

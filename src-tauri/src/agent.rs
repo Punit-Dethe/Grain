@@ -578,7 +578,7 @@ fn force_foreground(win: &tauri::WebviewWindow) {
 /// The current foreground window, as a raw HWND — the paste target snapshot
 /// taken at summon. `None` off Windows (macOS restores focus to the previous
 /// app by itself when our window closes).
-fn foreground_hwnd() -> Option<isize> {
+pub(crate) fn foreground_hwnd() -> Option<isize> {
     #[cfg(windows)]
     unsafe {
         let h = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
@@ -597,7 +597,7 @@ fn foreground_hwnd() -> Option<isize> {
 /// Bring an arbitrary window (by raw HWND) back to the foreground so a
 /// synthesised paste lands in it. Same input-queue bridge as `force_foreground`.
 #[cfg(windows)]
-fn force_foreground_raw(raw: isize) {
+pub(crate) fn force_foreground_raw(raw: isize) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -625,6 +625,21 @@ fn force_foreground_raw(raw: isize) {
             let _ = AttachThreadInput(fg_tid, our_tid, false);
         }
     }
+}
+
+/// Restore a captured window only while it is still a real OS target. Finite
+/// extension results use the boolean to avoid pasting into whichever unrelated
+/// app happened to become foreground after the original target closed.
+#[cfg(windows)]
+pub(crate) fn refocus_window(raw: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+
+    let valid = unsafe { IsWindow(Some(HWND(raw as _))).as_bool() };
+    if valid {
+        force_foreground_raw(raw);
+    }
+    valid
 }
 
 /// Build a frameless, transparent, always-on-top Agent surface (hidden until

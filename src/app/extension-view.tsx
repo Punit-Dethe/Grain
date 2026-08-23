@@ -11,8 +11,10 @@ import {
   Clipboard,
   LoaderCircle,
   ShieldCheck,
+  TextCursorInput,
   X,
   XCircle,
+  Replace as ReplaceIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
@@ -38,6 +40,8 @@ const COPY = {
   close: "Close",
   copied: "Copied",
   copy: "Copy result",
+  insert: "Insert",
+  replace: "Replace selection",
   empty: "This extension did not provide anything to review.",
   error: "The extension surface could not be loaded.",
   retry: "Close this window and try the request again.",
@@ -251,10 +255,12 @@ function NodeRenderer(props: RendererProps): ReactNode {
 function ResultView({
   content,
   onCopy,
+  onOutput,
   copied,
 }: {
   content: Extract<ExtensionViewContent, { kind: "result" }>;
   onCopy: () => void;
+  onOutput: (action: "insert" | "replace") => void;
   copied: boolean;
 }) {
   const Icon =
@@ -269,14 +275,36 @@ function ResultView({
         <Icon aria-hidden="true" size={23} strokeWidth={1.8} />
       </div>
       <p>{content.message}</p>
-      <button className="ev-copy" onClick={onCopy} type="button">
-        {copied ? (
-          <Check aria-hidden="true" size={15} />
-        ) : (
-          <Clipboard aria-hidden="true" size={15} />
-        )}
-        {copied ? COPY.copied : COPY.copy}
-      </button>
+      <div className="ev-result-actions">
+        <button className="ev-copy" onClick={onCopy} type="button">
+          {copied ? (
+            <Check aria-hidden="true" size={15} />
+          ) : (
+            <Clipboard aria-hidden="true" size={15} />
+          )}
+          {copied ? COPY.copied : COPY.copy}
+        </button>
+        {content.tone === "success" && content.can_insert ? (
+          <button
+            className="ev-copy ev-output"
+            onClick={() => onOutput("insert")}
+            type="button"
+          >
+            <TextCursorInput aria-hidden="true" size={15} />
+            {COPY.insert}
+          </button>
+        ) : null}
+        {content.tone === "success" && content.can_replace ? (
+          <button
+            className="ev-copy ev-output ev-output-primary"
+            onClick={() => onOutput("replace")}
+            type="button"
+          >
+            <ReplaceIcon aria-hidden="true" size={15} />
+            {COPY.replace}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -463,6 +491,21 @@ function ExtensionViewApp() {
     }
   }, [session]);
 
+  const outputResult = useCallback(
+    async (action: "insert" | "replace") => {
+      if (!session || session.content.kind !== "result") return;
+      try {
+        await invoke("extension_view_output", {
+          sessionId: session.sessionId,
+          action,
+        });
+      } catch (reason) {
+        setError(errorMessage(reason));
+      }
+    },
+    [session],
+  );
+
   const currentView =
     session?.content.kind === "view" ? session.content.view : null;
   const destructive = useMemo(
@@ -546,6 +589,7 @@ function ExtensionViewApp() {
             content={session.content}
             copied={copied}
             onCopy={() => void copyResult()}
+            onOutput={(action) => void outputResult(action)}
           />
         )}
         {error ? (

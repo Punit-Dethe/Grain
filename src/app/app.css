@@ -6049,6 +6049,15 @@ html[data-theme="light"] .context-profile-mode {
   object-fit: cover;
 }
 
+[data-extension-icon="true"] img {
+  inset: 50%;
+  width: min(72%, 128px);
+  height: min(72%, 128px);
+  border-radius: 18%;
+  object-fit: contain;
+  transform: translate(-50%, -50%);
+}
+
 .installed-extension-copy {
   min-width: 0;
   display: grid;
@@ -6139,6 +6148,48 @@ html[data-theme="light"] .context-profile-mode {
 }
 
 html[data-theme="light"] .installed-extension-actions {
+  background: rgba(24, 29, 37, 0.045);
+}
+
+.extension-auto-send {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 13px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.extension-auto-send > div {
+  min-width: 0;
+}
+
+.extension-auto-send strong,
+.extension-auto-send p,
+.extension-auto-send span {
+  display: block;
+}
+
+.extension-auto-send strong {
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+.extension-auto-send p {
+  margin: 4px 0 0;
+  color: var(--text-3);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.extension-auto-send span {
+  margin-top: 5px;
+  color: var(--text-4);
+  font-size: 10.5px;
+}
+
+html[data-theme="light"] .extension-auto-send {
   background: rgba(24, 29, 37, 0.045);
 }
 

@@ -517,9 +517,25 @@ button {
   font-size: 12px;
   cursor: pointer;
 }
+
+.ev-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.ev-result-actions .ev-copy {
+  margin-top: 0;
+}
 .ev-copy:hover {
   background: var(--ev-hover);
   color: var(--ev-text);
+}
+.ev-output-primary,
+.ev-output-primary:hover {
+  color: var(--ev-accent-ink);
+  background: var(--ev-accent);
 }
 .ev-error {
   display: flex;
