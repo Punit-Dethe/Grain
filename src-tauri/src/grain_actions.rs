@@ -142,6 +142,30 @@ pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
     session_id
 }
 
+/// Start the native pill lifecycle for Extension Mode without arming dictation-
+/// only resources such as focused-field watching or prompt switching. The pill
+/// still receives the active app icon once, then grows into its recommendation
+/// chooser when ranking completes.
+pub(crate) fn extension_mode_started(app: &AppHandle) -> u64 {
+    let session_id = next_session_id();
+    crate::bridge::emit(
+        app,
+        DaemonEvent::OverlayConfig {
+            position: get_settings(app).overlay_position,
+        },
+    );
+    crate::pill_icon::emit_for_session(app);
+    crate::bridge::emit(
+        app,
+        DaemonEvent::RecordingStarted {
+            session_id,
+            mode: SessionMode::Batch,
+            owner: None,
+        },
+    );
+    session_id
+}
+
 /// Stop pressed: the pill switches to "processing" while the transcript is
 /// produced. Returns the session id to carry into the async tail so the matching
 /// [`emit_processing_complete`] reuses it.
@@ -212,6 +236,7 @@ pub(crate) fn mirror_stream_text(app: &AppHandle, committed: &str, tentative: &s
 /// transcript is intentionally dropped.
 pub(crate) fn cancel_session(app: &AppHandle) {
     crate::extension_session::cancel(app);
+    let extension_mode_cancelled = action_session::cancel(app);
     crate::master_key::unregister_chords(app);
     if let Some(rt) = app.try_state::<Arc<crate::rolling::RollingTranscriber>>() {
         rt.cancel_session();
@@ -219,12 +244,14 @@ pub(crate) fn cancel_session(app: &AppHandle) {
     if let Some(tm) = app.try_state::<Arc<TranscriptionManager>>() {
         tm.cancel_stream();
     }
-    crate::bridge::emit(
-        app,
-        DaemonEvent::SessionCancelled {
-            session_id: current_session_id(),
-        },
-    );
+    if !extension_mode_cancelled {
+        crate::bridge::emit(
+            app,
+            DaemonEvent::SessionCancelled {
+                session_id: current_session_id(),
+            },
+        );
+    }
 }
 
 // Prompt switcher — cycles the active post-processing prompt and shows
@@ -328,6 +355,49 @@ impl ShortcutAction for SummonAgentAction {
     }
 
     fn stop(&self, _app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {}
+}
+
+/// Extension Mode's dedicated capture key. Toggle mode uses one press to start
+/// and the next to stop; push-to-talk mirrors the normal capture preference and
+/// stops on release. The request session itself owns all recorder and pill
+/// cleanup so command and shortcut callers cannot drift apart.
+struct ExtensionModeAction;
+
+impl ShortcutAction for ExtensionModeAction {
+    fn start(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if !get_settings(app).push_to_talk && action_session::is_recording() {
+            action_session::stop(app);
+            return;
+        }
+        match action_session::start(app) {
+            Ok(()) => {}
+            Err(action_session::StartError::Busy) => {
+                log::debug!("[GRAIN] extension mode: shortcut ignored while busy");
+            }
+            Err(action_session::StartError::NothingInstalled) => {
+                log::info!(
+                    "[GRAIN] extension mode: shortcut ignored; no searchable extension is installed"
+                );
+                crate::bridge::emit(
+                    app,
+                    DaemonEvent::ModelError {
+                        error: "Install a searchable extension in Extensions to use Extension Mode."
+                            .into(),
+                    },
+                );
+            }
+            Err(action_session::StartError::Unavailable(reason)) => {
+                log::warn!("[GRAIN] extension mode: could not start: {reason}");
+                crate::bridge::emit(app, DaemonEvent::ModelError { error: reason });
+            }
+        }
+    }
+
+    fn stop(&self, app: &AppHandle, _binding_id: &str, _shortcut_str: &str) {
+        if get_settings(app).push_to_talk {
+            action_session::stop(app);
+        }
+    }
 }
 
 struct AgentSubmitAction;
@@ -1047,6 +1117,10 @@ pub(crate) fn register(map: &mut HashMap<String, Arc<dyn ShortcutAction>>) {
     map.insert(
         "summon_agent".to_string(),
         Arc::new(SummonAgentAction) as Arc<dyn ShortcutAction>,
+    );
+    map.insert(
+        "extension_mode".to_string(),
+        Arc::new(ExtensionModeAction) as Arc<dyn ShortcutAction>,
     );
     map.insert(
         "agent_submit".to_string(),

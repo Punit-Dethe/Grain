@@ -96,9 +96,9 @@ fn extension_name(app: &AppHandle, extension_id: &str) -> String {
 
 /// Pre-create the powerless host renderer hidden behind the active capture. A
 /// repeated call is free; a cancelled capture destroys it through [`destroy`].
-pub fn warm(app: &AppHandle) {
+pub fn warm(app: &AppHandle) -> Result<(), String> {
     if app.get_webview_window(LABEL).is_some() {
-        return;
+        return Ok(());
     }
     let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App(URL.into()))
         .title("Grain Extension")
@@ -115,43 +115,45 @@ pub fn warm(app: &AppHandle) {
         .visible(false)
         .center();
 
-    match builder.build() {
-        Ok(window) => {
-            window.on_window_event(move |event| {
-                if matches!(event, tauri::WindowEvent::Destroyed) {
-                    let removed = active().lock().unwrap().take();
-                    if let Some(removed) = removed.filter(|removed| {
-                        matches!(&removed.content, ExtensionViewContent::View { .. })
-                    }) {
-                        action_log::record(
-                            &removed.request,
-                            Some(removed.extension_id.clone()),
-                            None,
-                            None,
-                            ActionLogOutcome::Refused {
-                                reason: "user cancelled confirmation".into(),
-                            },
-                        );
-                        crate::extension_host::notify_surface_cancel(
-                            &removed.extension_id,
-                            removed.session_id,
-                        );
-                    }
-                }
-            });
-            log::debug!("[GRAIN] extension view: renderer warmed");
+    let window = builder.build().map_err(|error| error.to_string())?;
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::Destroyed) {
+            let removed = active().lock().unwrap().take();
+            if let Some(removed) = removed.filter(|removed| {
+                matches!(&removed.content, ExtensionViewContent::View { .. })
+            }) {
+                action_log::record(
+                    &removed.request,
+                    Some(removed.extension_id.clone()),
+                    None,
+                    None,
+                    ActionLogOutcome::Refused {
+                        reason: "user cancelled confirmation".into(),
+                    },
+                );
+                crate::extension_host::notify_surface_cancel(
+                    &removed.extension_id,
+                    removed.session_id,
+                );
+            }
         }
-        Err(error) => log::warn!("[GRAIN] extension view: warm failed: {error}"),
-    }
+    });
+    log::debug!("[GRAIN] extension view: renderer warmed");
+    Ok(())
 }
 
 fn store_and_emit(app: &AppHandle, active_view: ActiveView) -> Result<u64, String> {
     let init = ExtensionViewInit::from(&active_view);
     let session_id = active_view.session_id;
     *active().lock().unwrap() = Some(active_view);
-    warm(app);
-    app.emit_to(LABEL, PRESENT_EVENT, init)
-        .map_err(|error| error.to_string())?;
+    if let Err(error) = warm(app) {
+        active().lock().unwrap().take();
+        return Err(error);
+    }
+    if let Err(error) = app.emit_to(LABEL, PRESENT_EVENT, init) {
+        destroy(app);
+        return Err(error.to_string());
+    }
     Ok(session_id)
 }
 

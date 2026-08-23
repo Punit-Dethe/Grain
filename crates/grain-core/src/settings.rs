@@ -1520,6 +1520,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     // [GRAIN] Seed the prompt-switcher + agent bindings for installs that predate them.
     let defaults = get_default_settings();
     for id in [
+        "extension_mode",
         "prompt_next",
         "prompt_prev",
         "summon_agent",
@@ -1715,6 +1716,28 @@ pub fn get_default_settings() -> AppSettings {
             description: "Native real-time dictation with live streaming text.".to_string(),
             default_binding: default_native_asr_shortcut.to_string(),
             current_binding: default_native_asr_shortcut.to_string(),
+        },
+    );
+
+    // [GRAIN] Extension Mode: speak a request, choose a searchable extension,
+    // then let that extension own the verbatim request. It is deliberately a
+    // separate chord from dictation and AI because those paths paste or process
+    // text, while this one crosses an extension disclosure boundary. Shift+Enter
+    // keeps the relationship to the AI key without taking an ordinary app chord.
+    #[cfg(target_os = "macos")]
+    let default_extension_mode_shortcut = "option+shift+enter";
+    #[cfg(not(target_os = "macos"))]
+    let default_extension_mode_shortcut = "alt+shift+enter";
+    bindings.insert(
+        "extension_mode".to_string(),
+        ShortcutBinding {
+            id: "extension_mode".to_string(),
+            name: "Extension Mode".to_string(),
+            description:
+                "Speak a request, then choose which searchable extension should receive it."
+                    .to_string(),
+            default_binding: default_extension_mode_shortcut.to_string(),
+            current_binding: default_extension_mode_shortcut.to_string(),
         },
     );
 
@@ -2297,6 +2320,34 @@ mod binding_migration_tests {
         assert!(!settings
             .bindings
             .contains_key("transcribe_with_post_process"));
+    }
+
+    #[test]
+    fn extension_mode_has_a_platform_default() {
+        let settings = get_default_settings();
+        let binding = &settings.bindings["extension_mode"];
+
+        #[cfg(target_os = "macos")]
+        let expected = "option+shift+enter";
+        #[cfg(not(target_os = "macos"))]
+        let expected = "alt+shift+enter";
+
+        assert_eq!(binding.default_binding, expected);
+        assert_eq!(binding.current_binding, expected);
+    }
+
+    #[test]
+    fn extension_mode_is_seeded_for_existing_installs() {
+        let mut settings = get_default_settings();
+        settings.bindings.remove("extension_mode");
+
+        assert!(ensure_post_process_defaults(&mut settings));
+        let seeded = &settings.bindings["extension_mode"];
+        let defaults = get_default_settings();
+        let expected = &defaults.bindings["extension_mode"];
+        assert_eq!(seeded.id, expected.id);
+        assert_eq!(seeded.current_binding, expected.current_binding);
+        assert_eq!(seeded.default_binding, expected.default_binding);
     }
 
     #[test]

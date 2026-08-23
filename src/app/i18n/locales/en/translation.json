@@ -421,6 +421,10 @@
             "name": "Streaming",
             "description": "Native real-time dictation with live streaming text in the Studio Window."
           },
+          "extension_mode": {
+            "name": "Extension Mode",
+            "description": "Speak a request, then choose which searchable extension should receive it."
+          },
           "cancel": {
             "name": "Cancel",
             "description": "Stop and discard the current recording."
@@ -1336,6 +1340,10 @@
     },
     "capture": {
       "group": "Capture",
+      "extensionMode": {
+        "group": "Extension Mode",
+        "info": "A separate recording path for requests that Grain recommends to approved searchable extensions. The request is never pasted as dictation."
+      },
       "set": {
         "title": "Capture modes",
         "description": "Grain has three ways to capture. Keeping one means one shortcut to remember; the other modes stay available, they just stop holding a hotkey. Switch to all three whenever you want them back.",

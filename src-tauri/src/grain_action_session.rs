@@ -31,9 +31,10 @@
 //!
 //! # Invocation
 //!
-//! Started by [`start`], which is called from the extension surface's own
-//! trigger. **This module creates no shortcut binding** — what it needs is only
-//! that the user's intent was unambiguous by the time audio started.
+//! Started by [`start`], which is called by Grain's dedicated, persisted
+//! `extension_mode` shortcut (and remains callable through the Tauri command for
+//! trusted surfaces). The separate trigger makes the disclosure boundary
+//! unambiguous before audio starts.
 
 use crate::audio_toolkit::VadPolicy;
 use crate::grain_actions::action_log::{self, ActionLogOutcome};
@@ -55,6 +56,8 @@ enum Phase {
 struct ActiveSession {
     generation: u64,
     binding_id: String,
+    bias_generation: u64,
+    pill_session_id: u64,
     phase: Phase,
 }
 
@@ -89,27 +92,9 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     }
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     let transcription = Arc::clone(&app.state::<Arc<TranscriptionManager>>());
-    let mut slot = active().lock().unwrap();
-    if slot.is_some() || recording.is_recording() {
+    if is_active() || recording.is_recording() || crate::extension_session::is_active() {
         return Err(StartError::Busy);
     }
-
-    if !crate::stt_router::will_route_to_cloud(app) {
-        transcription.initiate_model_load();
-    }
-
-    // Warm the embedder on the keypress (§6): the recommendation will need it, and
-    // starting the load now hides it behind the recording. A no-op when the model
-    // is absent (name-only mode) or already resident. The TTL reclaims it if the
-    // session leads nowhere.
-    crate::grain_space::embed::touch_extension_mode(app);
-
-    // Bias the recogniser with what the installed extensions actually say,
-    // before a single sample is captured. Free, because the phrases are already
-    // in the index. Empty for a translator with no actions — nothing to bias,
-    // which is fine; the name is what the recogniser most needs to get right and
-    // that comes from the aliases the pool already carries.
-    crate::context_bias::arm_action_session(crate::extension_host::action_vocabulary());
 
     let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
     let binding_id = format!("grain-action:{generation}");
@@ -123,16 +108,41 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
             }
         })?;
 
-    // Grain's powerless standard renderer warms behind capture and is destroyed
-    // on every path that never presents extension UI.
-    crate::extension_view::warm(app);
+    // Only acquire model resources after the microphone reservation succeeds.
+    // Their startup still hides behind capture, without warming anything for a
+    // losing/failed start attempt.
+    if !crate::stt_router::will_route_to_cloud(app) {
+        transcription.initiate_model_load();
+    }
+    crate::grain_space::embed::touch_extension_mode(app);
 
+    // Bias the recogniser with what the installed extensions actually say.
+    // Publish only after the recorder is successfully reserved so a failed
+    // start cannot leak this vocabulary into the next unrelated dictation.
+    let bias_generation =
+        crate::context_bias::arm_action_session(crate::extension_host::action_vocabulary());
+
+    // Only retire an older chooser once this capture has successfully claimed
+    // the microphone. `try_start_recording` is the singleton reservation, so no
+    // second starter can enter between this point and publishing `active`.
+    supersede(app);
+    let pill_session_id = crate::grain_actions::extension_mode_started(app);
+
+    let mut slot = active().lock().unwrap();
     *slot = Some(ActiveSession {
         generation,
         binding_id,
+        bias_generation,
+        pill_session_id,
         phase: Phase::Recording,
     });
     drop(slot);
+    crate::shortcut::register_cancel_shortcut(app);
+    // Grain's powerless standard renderer warms behind capture and is destroyed
+    // on every path that never presents extension UI.
+    if let Err(error) = crate::extension_view::warm(app) {
+        log::warn!("[GRAIN] extension view: warm failed: {error}");
+    }
     // NOTE: master chords are deliberately NOT armed. The prompt switcher and
     // Prompt Record are mid-dictation tools; mid-request they are meaningless at
     // best.
@@ -157,6 +167,7 @@ pub fn stop(app: &AppHandle) {
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     let cancel_generation = recording.cancel_generation();
     recording.remove_mute();
+    crate::grain_actions::emit_recording_stopped(app);
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -166,13 +177,21 @@ pub fn stop(app: &AppHandle) {
 
 /// Abandon the session without handing anything over.
 pub fn cancel(app: &AppHandle) -> bool {
-    if active().lock().unwrap().take().is_none() {
+    let Some(session) = active().lock().unwrap().take() else {
         return false;
-    }
+    };
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     recording.cancel_recording();
     recording.remove_mute();
+    crate::context_bias::clear_action_session(session.bias_generation);
+    crate::shortcut::unregister_cancel_shortcut(app);
     crate::extension_view::destroy(app);
+    crate::bridge::emit(
+        app,
+        grain_core::DaemonEvent::SessionCancelled {
+            session_id: session.pill_session_id,
+        },
+    );
     log::info!("[GRAIN] action: cancelled");
     true
 }
@@ -181,9 +200,26 @@ pub fn cancel(app: &AppHandle) -> bool {
 ///
 /// Kept here because the busy rule belongs next to the thing that enforces it,
 /// not scattered across callers.
-#[allow(dead_code)]
 pub fn is_active() -> bool {
     active().lock().unwrap().is_some()
+}
+
+/// Whether the dedicated shortcut is currently capturing audio. Toggle mode
+/// uses this to distinguish its second press from a busy processing session.
+pub fn is_recording() -> bool {
+    active()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|session| session.phase == Phase::Recording)
+}
+
+fn owns_generation(generation: u64) -> bool {
+    active()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|session| session.generation == generation)
 }
 
 async fn finish(
@@ -193,13 +229,15 @@ async fn finish(
     cancel_generation: u64,
 ) {
     let Some(samples) = recording.stop_recording(&session.binding_id, cancel_generation) else {
+        crate::context_bias::clear_action_session(session.bias_generation);
         crate::extension_view::destroy(&app);
-        complete(session.generation);
+        complete(&app, &session);
         return;
     };
     if samples.is_empty() || recording.was_cancelled_since(cancel_generation) {
+        crate::context_bias::clear_action_session(session.bias_generation);
         crate::extension_view::destroy(&app);
-        complete(session.generation);
+        complete(&app, &session);
         return;
     }
 
@@ -207,6 +245,9 @@ async fn finish(
     // post-processing, no prompt stack, nothing that rewrites wording for a
     // text field.
     let (transcription, _) = crate::prompt_record::transcribe_split(&app, samples, None).await;
+    // Usually consumed by the transcription path itself; also covers an early
+    // decoder failure before that one-shot bias was read.
+    crate::context_bias::clear_action_session(session.bias_generation);
     let heard = match transcription {
         Ok(text) => text,
         Err(error) => {
@@ -221,18 +262,18 @@ async fn finish(
                 },
             );
             crate::extension_view::destroy(&app);
-            complete(session.generation);
+            complete(&app, &session);
             return;
         }
     };
-    if recording.was_cancelled_since(cancel_generation) {
+    if recording.was_cancelled_since(cancel_generation) || !owns_generation(session.generation) {
         crate::extension_view::destroy(&app);
-        complete(session.generation);
+        complete(&app, &session);
         return;
     }
 
     deliver(&app, &heard).await;
-    complete(session.generation);
+    complete(&app, &session);
 }
 
 /// The request currently on the recommendation surface, and which extensions
@@ -410,8 +451,22 @@ async fn present(
             ActionLogOutcome::Chose,
         );
         // Grain chose — no chooser is shown. Make sure any surface still up from
-        // an earlier presentation is torn down before the hand-off.
+        // an earlier presentation is torn down before the hand-off, then make
+        // the automatic routing immediately visible in the standard renderer.
         crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
+        let extension_name = candidates
+            .iter()
+            .find(|candidate| candidate.extension_id == extension_id)
+            .map(|candidate| candidate.name.as_str())
+            .unwrap_or(extension_id.as_str());
+        if let Err(error) = crate::extension_view::present_result(
+            app,
+            &extension_id,
+            format!("Sent to {extension_name} automatically."),
+            crate::extension_view::ResultTone::Success,
+        ) {
+            log::warn!("[GRAIN] extension mode: could not show auto-send notice: {error}");
+        }
         // No accept is coming — clear the pending request and hand off now.
         run_hand_off(app, request_id, extension_id, request, declined);
         return;
@@ -591,6 +646,13 @@ pub async fn decline(app: &AppHandle, presentation_id: u64, extension_id: &str) 
         p.allowed.clear();
         (p.id, p.request.clone(), p.declined.clone())
     };
+    action_log::record(
+        &request,
+        Some(extension_id.to_string()),
+        None,
+        None,
+        ActionLogOutcome::Cancelled,
+    );
     present(app, request_id, request, declined, false).await;
 }
 
@@ -674,6 +736,23 @@ pub fn dismiss(app: &AppHandle, presentation_id: u64) {
 pub fn supersede(app: &AppHandle) {
     let _gate = request_gate().lock().unwrap();
     REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
+    // A fresh capture can begin while Extension Mode is ranking after its audio
+    // recorder has already returned to idle. Retire that processing generation
+    // now; its async tail checks ownership before it can publish a chooser.
+    let retired_processing = {
+        let mut slot = active().lock().unwrap();
+        if slot
+            .as_ref()
+            .is_some_and(|session| session.phase == Phase::Processing)
+        {
+            slot.take().is_some()
+        } else {
+            false
+        }
+    };
+    if retired_processing {
+        crate::shortcut::unregister_cancel_shortcut(app);
+    }
     if pending().lock().unwrap().take().is_some() {
         crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
     }
@@ -763,9 +842,9 @@ fn run_hand_off(
                     Some(extension_id.clone()),
                     None,
                     None,
-                    ActionLogOutcome::Refused {
-                        reason: format!("extension declined: {reason}"),
-                    },
+                    // This is the G3 misroute signal: Grain offered/handed off
+                    // to this extension and it said it was the wrong owner.
+                    ActionLogOutcome::Cancelled,
                 );
                 if !declined.iter().any(|id| id == &extension_id) {
                     declined.push(extension_id.clone());
@@ -848,13 +927,19 @@ fn run_hand_off(
     });
 }
 
-fn complete(generation: u64) {
+fn complete(app: &AppHandle, session: &ActiveSession) {
     let mut slot = active().lock().unwrap();
     // A newer session already owns the slot; this one finished late and must not
     // clear it. Same generation guard as `extension_session`, and for the same
     // reason: without it a slow transcription can unlock a microphone that
     // something else has since claimed.
-    if slot.as_ref().is_some_and(|s| s.generation == generation) {
+    if slot
+        .as_ref()
+        .is_some_and(|active| active.generation == session.generation)
+    {
         *slot = None;
+        drop(slot);
+        crate::shortcut::unregister_cancel_shortcut(app);
+        crate::grain_actions::emit_processing_complete(app, session.pill_session_id);
     }
 }

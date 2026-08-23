@@ -133,11 +133,13 @@ function NodeRenderer(props: RendererProps): ReactNode {
       return <hr className="ev-divider" />;
     case "heading": {
       const level = node.level ?? "two";
+      // The trusted view title is the page's single h1. Author heading levels
+      // are relative to it so a tree cannot create competing top-level titles.
       if (level === "one")
-        return <h1 className="ev-heading ev-heading-1">{node.text}</h1>;
+        return <h2 className="ev-heading ev-heading-1">{node.text}</h2>;
       if (level === "three")
-        return <h3 className="ev-heading ev-heading-3">{node.text}</h3>;
-      return <h2 className="ev-heading ev-heading-2">{node.text}</h2>;
+        return <h4 className="ev-heading ev-heading-3">{node.text}</h4>;
+      return <h3 className="ev-heading ev-heading-2">{node.text}</h3>;
     }
     case "text":
       return (
@@ -285,10 +287,16 @@ function ExtensionViewApp() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const sessionRef = useRef<Session | null>(null);
   const readySession = useRef<number | null>(null);
   const copyTimer = useRef<number | null>(null);
+  const eventQueue = useRef<Promise<void>>(Promise.resolve());
+  const pendingEvents = useRef(0);
 
   const adopt = useCallback((next: Session) => {
+    if (sessionRef.current && next.sessionId < sessionRef.current.sessionId)
+      return;
+    sessionRef.current = next;
     setSession(next);
     setError(null);
     setBusy(false);
@@ -317,7 +325,18 @@ function ExtensionViewApp() {
       });
     void invoke<Session | null>("extension_view_init")
       .then((initial) => {
-        if (!disposed) initial ? adopt(initial) : setError(COPY.empty);
+        if (disposed) return;
+        if (!initial) {
+          if (!sessionRef.current) setError(COPY.empty);
+          return;
+        }
+        // A present event may win the race with this initial snapshot. Never
+        // let the older/same-session snapshot roll that newer content back.
+        if (
+          !sessionRef.current ||
+          initial.sessionId > sessionRef.current.sessionId
+        )
+          adopt(initial);
       })
       .catch((reason) => {
         if (!disposed) setError(errorMessage(reason));
@@ -370,29 +389,52 @@ function ExtensionViewApp() {
   const applyResult = useCallback((result: EventResult) => {
     if (!result.unchanged && result.content.kind === "view")
       setValues(collectValues(result.content.view.root));
-    setSession((current) =>
-      current ? { ...current, content: result.content } : current,
-    );
+    setSession((current) => {
+      const next = current ? { ...current, content: result.content } : current;
+      sessionRef.current = next;
+      return next;
+    });
   }, []);
 
   const send = useCallback(
-    async (event: ViewEvent) => {
-      if (!session || busy || session.content.kind !== "view") return;
-      setBusy(true);
+    (event: ViewEvent) => {
+      const queuedFor = sessionRef.current;
+      if (!queuedFor || queuedFor.content.kind !== "view")
+        return Promise.resolve();
+      pendingEvents.current += 1;
+      // A blur-generated change must not disable the button that is about to
+      // receive the same pointer click. It is still serialized ahead of submit;
+      // only the submit itself makes the surface visibly busy.
+      if (event.kind === "submit") setBusy(true);
       setError(null);
-      try {
-        const result = await invoke<EventResult>("extension_view_event", {
-          sessionId: session.sessionId,
-          event,
+      const task = eventQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          const current = sessionRef.current;
+          if (
+            !current ||
+            current.sessionId !== queuedFor.sessionId ||
+            current.content.kind !== "view"
+          )
+            return;
+          const result = await invoke<EventResult>("extension_view_event", {
+            sessionId: current.sessionId,
+            event,
+          });
+          applyResult(result);
+        })
+        .catch((reason) => {
+          if (sessionRef.current?.sessionId === queuedFor.sessionId)
+            setError(errorMessage(reason));
+        })
+        .finally(() => {
+          pendingEvents.current = Math.max(0, pendingEvents.current - 1);
+          if (pendingEvents.current === 0) setBusy(false);
         });
-        applyResult(result);
-      } catch (reason) {
-        setError(errorMessage(reason));
-      } finally {
-        setBusy(false);
-      }
+      eventQueue.current = task;
+      return task;
     },
-    [applyResult, busy, session],
+    [applyResult],
   );
 
   const setLocal = useCallback(
@@ -474,6 +516,7 @@ function ExtensionViewApp() {
                 session.content.kind === "view"
                   ? session.content.view.actions?.find(
                       (action) =>
+                        (action.intent ?? "primary") === "primary" &&
                         (action.kind ?? "submit") === "submit" &&
                         !action.disabled,
                     )

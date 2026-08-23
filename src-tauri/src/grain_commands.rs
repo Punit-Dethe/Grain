@@ -941,10 +941,9 @@ impl PromptLayerInfo {
 /// [GRAIN] Start or stop listening for a request
 /// (`docs/Extensions V1/PLAN.md` §3).
 ///
-/// The extension surface's own trigger calls this; **Grain registers no
-/// shortcut for it here**. What the design depends on is only that the user's
-/// intent was unambiguous by the time audio started, and the trigger mechanism
-/// is decided separately.
+/// Grain's persisted `extension_mode` binding is the normal trigger. This
+/// command remains the trusted-surface seam for the same start/stop/cancel
+/// lifecycle; it does not create a second recording implementation.
 ///
 /// One command for all three transitions rather than three, because the
 /// invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a

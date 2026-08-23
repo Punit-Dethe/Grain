@@ -36,6 +36,14 @@ pub fn handle_shortcut_event(
 
     // Transcribe bindings are handled by the coordinator.
     if is_transcribe_binding(binding_id) {
+        // [GRAIN] Extension Mode owns its raw-ASR request until ranking has
+        // published or been superseded. Its recorder is already idle during
+        // processing, so the audio singleton alone cannot stop a second capture
+        // from racing its late pill events and model use.
+        if crate::grain_actions::action_session::is_active() {
+            warn!("Ignoring dictation shortcut while Extension Mode is busy");
+            return;
+        }
         if let Some(coordinator) = app.try_state::<TranscriptionCoordinator>() {
             coordinator.send_input(binding_id, hotkey_string, is_pressed, settings.push_to_talk);
         } else {
@@ -69,7 +77,11 @@ pub fn handle_shortcut_event(
         let audio_manager = app.state::<Arc<AudioRecordingManager>>();
         // [GRAIN] An extension slow stage remains cancellable after capture has
         // stopped and the audio manager has returned to Idle.
-        if (audio_manager.is_recording() || crate::extension_session::is_active()) && is_pressed {
+        if (audio_manager.is_recording()
+            || crate::extension_session::is_active()
+            || crate::grain_actions::action_session::is_active())
+            && is_pressed
+        {
             action.start(app, binding_id, hotkey_string);
         }
         return;

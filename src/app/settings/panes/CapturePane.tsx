@@ -27,6 +27,13 @@ export function CapturePane() {
       <CaptureModes />
 
       <SettingsGroup
+        title={t("ui2.capture.extensionMode.group")}
+        info={t("ui2.capture.extensionMode.info")}
+      >
+        <ShortcutInput shortcutId="extension_mode" grouped />
+      </SettingsGroup>
+
+      <SettingsGroup
         title={t("ui2.settings.groups.recording")}
         info={t("ui2.settings.groups.recordingInfo")}
       >
