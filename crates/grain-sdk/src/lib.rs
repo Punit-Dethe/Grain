@@ -29,6 +29,7 @@ pub mod pill_skin;
 pub mod pill_theme;
 pub mod protocol;
 pub mod settings_schema;
+pub mod view;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use distribution::{
@@ -55,3 +56,10 @@ pub use protocol::{
     HostFrame, ServerResponse, ServerWelcome, GRAIN_API_VERSION,
 };
 pub use settings_schema::Accepted;
+pub use view::{
+    ExtensionView, ExtensionViewEvent, ViewAction, ViewActionIntent, ViewActionKind, ViewAlign,
+    ViewGap, ViewHeadingLevel, ViewNode, ViewOption, ViewTone, ViewValue, VIEW_MAX_ACTIONS,
+    VIEW_MAX_CHILDREN, VIEW_MAX_DEPTH, VIEW_MAX_EVENT_BYTES, VIEW_MAX_FIELDS, VIEW_MAX_NODES,
+    VIEW_MAX_OPTIONS_PER_SELECT, VIEW_MAX_PAYLOAD_BYTES, VIEW_MAX_TOTAL_OPTIONS,
+    VIEW_MAX_TOTAL_TEXT_BYTES, VIEW_SCHEMA_VERSION,
+};

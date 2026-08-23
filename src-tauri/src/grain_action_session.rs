@@ -123,6 +123,10 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
             }
         })?;
 
+    // Grain's powerless standard renderer warms behind capture and is destroyed
+    // on every path that never presents extension UI.
+    crate::extension_view::warm(app);
+
     *slot = Some(ActiveSession {
         generation,
         binding_id,
@@ -168,6 +172,7 @@ pub fn cancel(app: &AppHandle) -> bool {
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     recording.cancel_recording();
     recording.remove_mute();
+    crate::extension_view::destroy(app);
     log::info!("[GRAIN] action: cancelled");
     true
 }
@@ -188,10 +193,12 @@ async fn finish(
     cancel_generation: u64,
 ) {
     let Some(samples) = recording.stop_recording(&session.binding_id, cancel_generation) else {
+        crate::extension_view::destroy(&app);
         complete(session.generation);
         return;
     };
     if samples.is_empty() || recording.was_cancelled_since(cancel_generation) {
+        crate::extension_view::destroy(&app);
         complete(session.generation);
         return;
     }
@@ -213,11 +220,13 @@ async fn finish(
                     reason: error.to_string(),
                 },
             );
+            crate::extension_view::destroy(&app);
             complete(session.generation);
             return;
         }
     };
     if recording.was_cancelled_since(cancel_generation) {
+        crate::extension_view::destroy(&app);
         complete(session.generation);
         return;
     }
@@ -255,6 +264,13 @@ fn pending() -> &'static Mutex<Option<Pending>> {
 /// late ranking or a late extension decline from resurrecting a superseded
 /// chooser.
 static REQUEST_EPOCH: AtomicU64 = AtomicU64::new(0);
+/// Serialises request invalidation with standard-view presentation. Without
+/// this gate, a slow hand-off could pass an epoch check, lose a race to a new
+/// recording, then publish its stale view after `supersede` had destroyed it.
+fn request_gate() -> &'static Mutex<()> {
+    static GATE: OnceLock<Mutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(()))
+}
 /// A new nonce for every chooser presentation, including decline-and-reopen.
 /// Unlike `REQUEST_EPOCH`, this distinguishes two views of the same request.
 static PRESENTATION_EPOCH: AtomicU64 = AtomicU64::new(0);
@@ -268,14 +284,18 @@ static PRESENTATION_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// [`run_hand_off`] own the transcript-bearing hand-off, while [`decline`]
 /// re-enters this path without asking the user to record again.
 pub async fn deliver(app: &AppHandle, heard: &str) {
-    let id = REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
-    *pending().lock().unwrap() = Some(Pending {
-        id,
-        presentation_id: 0,
-        request: heard.to_string(),
-        declined: Vec::new(),
-        allowed: Vec::new(),
-    });
+    let id = {
+        let _gate = request_gate().lock().unwrap();
+        let id = REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
+        *pending().lock().unwrap() = Some(Pending {
+            id,
+            presentation_id: 0,
+            request: heard.to_string(),
+            declined: Vec::new(),
+            allowed: Vec::new(),
+        });
+        id
+    };
     // Auto-send may fire only on this first presentation (§5) — never on a
     // decline-and-reopen, where the user is already actively choosing.
     present(app, id, heard.to_string(), Vec::new(), true).await;
@@ -638,8 +658,12 @@ pub fn dismiss(app: &AppHandle, presentation_id: u64) {
     if !dismissed {
         return;
     }
-    REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
-    crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
+    {
+        let _gate = request_gate().lock().unwrap();
+        REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
+        crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
+        crate::extension_view::destroy(app);
+    }
     log::info!("[GRAIN] extension mode: surface dismissed");
 }
 
@@ -648,10 +672,12 @@ pub fn dismiss(app: &AppHandle, presentation_id: u64) {
 /// still advances every time so a handed-off extension cannot decline back over
 /// a newer recording.
 pub fn supersede(app: &AppHandle) {
+    let _gate = request_gate().lock().unwrap();
     REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
     if pending().lock().unwrap().take().is_some() {
         crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
     }
+    crate::extension_view::destroy(app);
 }
 
 /// Wake the chosen extension, deliver the request, and record the outcome. Shared
@@ -688,6 +714,45 @@ fn run_hand_off(
                     None,
                     ActionLogOutcome::Ran { confirmed: false },
                 );
+                let _gate = request_gate().lock().unwrap();
+                if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
+                    return;
+                }
+                if let Some(message) = message.filter(|message| !message.trim().is_empty()) {
+                    if let Err(error) = crate::extension_view::present_result(
+                        &app,
+                        &extension_id,
+                        message,
+                        crate::extension_view::ResultTone::Success,
+                    )
+                    {
+                        log::warn!("[GRAIN] extension mode: could not show result: {error}");
+                        crate::extension_view::destroy(&app);
+                    }
+                } else {
+                    crate::extension_view::destroy(&app);
+                }
+            }
+            HandOffOutcome::View(view) => {
+                let _gate = request_gate().lock().unwrap();
+                if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
+                    return;
+                }
+                if let Err(reason) =
+                    crate::extension_view::present(&app, &extension_id, &request, view)
+                {
+                    log::warn!("[GRAIN] extension mode: could not present view: {reason}");
+                    action_log::record(
+                        &request,
+                        Some(extension_id.clone()),
+                        None,
+                        None,
+                        ActionLogOutcome::Failed {
+                            reason: reason.clone(),
+                        },
+                    );
+                    crate::extension_view::destroy(&app);
+                }
             }
             HandOffOutcome::Declined(reason) => {
                 log::info!(
@@ -736,8 +801,23 @@ fn run_hand_off(
                     Some(extension_id.clone()),
                     None,
                     None,
-                    ActionLogOutcome::Failed { reason },
+                    ActionLogOutcome::Failed {
+                        reason: reason.clone(),
+                    },
                 );
+                let _gate = request_gate().lock().unwrap();
+                if REQUEST_EPOCH.load(Ordering::SeqCst) == request_id {
+                    if let Err(error) = crate::extension_view::present_result(
+                        &app,
+                        &extension_id,
+                        reason,
+                        crate::extension_view::ResultTone::Danger,
+                    )
+                    {
+                        log::warn!("[GRAIN] extension mode: could not show failure: {error}");
+                        crate::extension_view::destroy(&app);
+                    }
+                }
             }
             // Reported as its own thing, never as failure: for anything that
             // left the machine a timeout does not mean it did not happen.
@@ -749,6 +829,20 @@ fn run_hand_off(
                     None,
                     ActionLogOutcome::Unknown,
                 );
+                let _gate = request_gate().lock().unwrap();
+                if REQUEST_EPOCH.load(Ordering::SeqCst) == request_id {
+                    if let Err(error) = crate::extension_view::present_result(
+                        &app,
+                        &extension_id,
+                        "Grain stopped waiting, so the extension's final outcome is unknown."
+                            .into(),
+                        crate::extension_view::ResultTone::Warning,
+                    )
+                    {
+                        log::warn!("[GRAIN] extension mode: could not show unknown result: {error}");
+                        crate::extension_view::destroy(&app);
+                    }
+                }
             }
         }
     });

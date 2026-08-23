@@ -31,7 +31,9 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
-use grain_sdk::{daemon_event_capability, GrainPack, HostCall, HostFrame};
+use grain_sdk::{
+    daemon_event_capability, ExtensionView, ExtensionViewEvent, GrainPack, HostCall, HostFrame,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -1599,6 +1601,7 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
             }
         }
     }
+    crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
     let _ = host.app.emit_to(
         SUPERVISOR_LABEL,
@@ -1625,6 +1628,9 @@ fn kill_worker(ext_id: &str, reason: &str) {
 /// Public lifecycle hook for registry operations such as unloading a dev
 /// override. It is a no-op when the extension has no live worker.
 pub fn stop_extension(ext_id: &str, reason: &str) {
+    if let Some(host) = HOST.get() {
+        crate::extension_view::destroy_for_extension(&host.app, ext_id);
+    }
     kill_worker(ext_id, reason);
 }
 
@@ -1656,7 +1662,9 @@ fn reap_idle() {
         None => return,
     };
     for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
-        if crate::extension_session::is_owned_by(&id) {
+        if crate::extension_session::is_owned_by(&id)
+            || crate::extension_view::owns_extension(&id)
+        {
             continue;
         }
         kill_worker(&id, "idle timeout");
@@ -1934,12 +1942,18 @@ const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
 /// repeat, while the cost of waiting is a pill that says "working" for another
 /// moment.
 const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
+/// A UI interaction should return a replacement tree or finite outcome quickly;
+/// unlike the initial request it has no network-sized interpretation phase.
+const SURFACE_EVENT_DEADLINE: Duration = Duration::from_secs(10);
 
 /// What a handed-off request produced.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum HandOffOutcome {
     /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
+    /// The extension needs Grain's standard, host-rendered surface before it can
+    /// finish. The worker remains alive and receives stable-id `surface` events.
+    View(ExtensionView),
     /// The extension is healthy but is not the right owner for this request.
     /// Grain must reopen the chooser with this extension removed rather than
     /// treating a routing correction as an execution failure.
@@ -1955,7 +1969,38 @@ pub enum HandOffOutcome {
     Unknown,
 }
 
+fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or("extension request replies must be objects")?;
+    const ALLOWED: [&str; 4] = ["view", "message", "decline", "error"];
+    if let Some(key) = object.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(format!("unsupported extension request reply field '{key}'"));
+    }
+    if object.len() > 1 {
+        return Err("extension request reply contains multiple outcomes".into());
+    }
+    for key in ["message", "decline", "error"] {
+        if object.get(key).is_some_and(|value| !value.is_string()) {
+            return Err(format!("extension request reply '{key}' must be a string"));
+        }
+    }
+    Ok(())
+}
+
 fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
+    if let Err(reason) = validate_request_reply_shape(&value) {
+        return HandOffOutcome::Failed(reason);
+    }
+    if let Some(view) = value.get("view") {
+        return match serde_json::from_value::<ExtensionView>(view.clone()) {
+            Ok(view) => match view.validate() {
+                Ok(()) => HandOffOutcome::View(view),
+                Err(reason) => HandOffOutcome::Failed(format!("invalid extension view: {reason}")),
+            },
+            Err(error) => HandOffOutcome::Failed(format!("invalid extension view: {error}")),
+        };
+    }
     if let Some(reason) = value.get("decline").and_then(Value::as_str) {
         return HandOffOutcome::Declined(reason.to_string());
     }
@@ -1968,6 +2013,97 @@ fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
             .and_then(Value::as_str)
             .map(str::to_string),
     )
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SurfaceEventOutcome {
+    View(ExtensionView),
+    Unchanged,
+    Done(Option<String>),
+    Unknown,
+    Failed(String),
+}
+
+fn parse_surface_outcome(value: Value, finish_on_empty: bool) -> SurfaceEventOutcome {
+    if let Err(reason) = validate_request_reply_shape(&value) {
+        return SurfaceEventOutcome::Failed(reason);
+    }
+    if let Some(view) = value.get("view") {
+        return match serde_json::from_value::<ExtensionView>(view.clone()) {
+            Ok(view) => match view.validate() {
+                Ok(()) => SurfaceEventOutcome::View(view),
+                Err(reason) => {
+                    SurfaceEventOutcome::Failed(format!("invalid extension view: {reason}"))
+                }
+            },
+            Err(error) => {
+                SurfaceEventOutcome::Failed(format!("invalid extension view: {error}"))
+            }
+        };
+    }
+    if let Some(error) = value.get("error").and_then(Value::as_str) {
+        return SurfaceEventOutcome::Failed(error.to_string());
+    }
+    if let Some(reason) = value.get("decline").and_then(Value::as_str) {
+        return SurfaceEventOutcome::Failed(format!(
+            "extension declined after presenting its confirmation: {reason}"
+        ));
+    }
+    if !finish_on_empty && value.as_object().is_some_and(serde_json::Map::is_empty) {
+        return SurfaceEventOutcome::Unchanged;
+    }
+    SurfaceEventOutcome::Done(
+        value
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+/// Deliver one validated stable-id UI event to the worker that owns the active
+/// standard surface. The renderer itself holds no extension capability.
+pub async fn surface_event(
+    _app: &AppHandle,
+    ext_id: &str,
+    session_id: u64,
+    event: ExtensionViewEvent,
+) -> SurfaceEventOutcome {
+    let finish_on_empty = matches!(&event, ExtensionViewEvent::Submit { .. });
+    let Some(host) = HOST.get() else {
+        return SurfaceEventOutcome::Failed("extension host unavailable".into());
+    };
+    match host
+        .workers
+        .call(
+            ext_id,
+            "surface",
+            json!({ "sessionId": session_id, "event": event }),
+            SURFACE_EVENT_DEADLINE,
+        )
+        .await
+    {
+        Ok(value) => parse_surface_outcome(value, finish_on_empty),
+        Err(error) if error == "deadline exceeded" && finish_on_empty => {
+            SurfaceEventOutcome::Unknown
+        }
+        Err(error) => SurfaceEventOutcome::Failed(error),
+    }
+}
+
+/// Best-effort cancellation for a window closed through native chrome. It is a
+/// one-way lifecycle signal: closing never waits on extension code.
+pub fn notify_surface_cancel(ext_id: &str, session_id: u64) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let _ = host.workers.notify(
+        ext_id,
+        "surface",
+        json!({
+            "sessionId": session_id,
+            "event": { "kind": "cancel" }
+        }),
+    );
 }
 
 /// Wake the extension the request was handed to, if it is cold.
@@ -2157,6 +2293,7 @@ fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
         let _ = reg.set_enabled(ext_id, false);
     }
     refresh_index(app); // drop it from the hot-path index immediately
+    crate::extension_view::destroy_for_extension(app, ext_id);
     kill_worker(ext_id, "auto-disabled after repeated resource violations");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
@@ -2189,6 +2326,7 @@ pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
     {
         let _ = registry.set_enabled(ext_id, false);
     }
+    crate::extension_view::destroy_for_extension(&host.app, ext_id);
     refresh_index(&host.app);
     if let Some(ctx) = host.app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
@@ -2643,6 +2781,52 @@ mod tests {
             parse_handoff_outcome(json!({ "error": "no such site" })),
             HandOffOutcome::Failed("no such site".into())
         );
+    }
+
+    #[test]
+    fn standard_view_replies_validate_and_change_can_be_noop() {
+        let reply = json!({
+            "view": {
+                "version": 1,
+                "title": "Review issue",
+                "root": { "type": "text", "text": "Ready" },
+                "actions": []
+            }
+        });
+        assert!(matches!(
+            parse_handoff_outcome(reply.clone()),
+            HandOffOutcome::View(_)
+        ));
+        assert!(matches!(
+            parse_surface_outcome(reply, false),
+            SurfaceEventOutcome::View(_)
+        ));
+        assert_eq!(
+            parse_surface_outcome(json!({}), false),
+            SurfaceEventOutcome::Unchanged
+        );
+        assert_eq!(
+            parse_surface_outcome(json!({}), true),
+            SurfaceEventOutcome::Done(None)
+        );
+        assert!(matches!(
+            parse_handoff_outcome(json!({
+                "view": {
+                    "version": 1,
+                    "title": "Forged",
+                    "root": { "type": "html", "markup": "<script />" }
+                }
+            })),
+            HandOffOutcome::Failed(_)
+        ));
+        assert!(matches!(
+            parse_handoff_outcome(json!({ "message": "done", "error": "also failed" })),
+            HandOffOutcome::Failed(_)
+        ));
+        assert!(matches!(
+            parse_surface_outcome(json!({ "html": "<button>forged</button>" }), true),
+            SurfaceEventOutcome::Failed(_)
+        ));
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {

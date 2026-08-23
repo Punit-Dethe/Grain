@@ -28,6 +28,8 @@ export default defineConfig(async () => ({
         // The wrapper around an extension's workspace UI (SPEC §7.1) — its own
         // page so extension markup never shares Grain's main global.
         extensionSurface: resolve(__dirname, "extension-surface.html"),
+        // Grain-owned interpreter for the standard remote component tree.
+        extensionView: resolve(__dirname, "extension-view.html"),
       },
     },
   },

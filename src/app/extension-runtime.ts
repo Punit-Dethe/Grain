@@ -272,6 +272,17 @@ export const GRAIN_RUNTIME_JS = `(function () {
         return req("session.start", { mode: String(options && options.mode || "") });
       }
     },
+    // Standard Extension Surface: the worker owns workflow state, while Grain
+    // renders the allowlisted tree and sends only stable-id events back here.
+    ui: {
+      onEvent: function (fn) {
+        handlers.surface = function (p) {
+          return Promise.resolve(fn(p && p.event ? p.event : { kind: "cancel" })).then(function (out) {
+            return out == null ? {} : out;
+          });
+        };
+      }
+    },
     // Launch side effects (SPEC 1.3). The host enforces safety: open.url accepts
     // only http/https/mailto/tel; open.app launches ONLY a path the user picked
     // via open.pickApp (which returns the chosen path and records approval).
@@ -308,7 +319,8 @@ export const GRAIN_RUNTIME_JS = `(function () {
     // interpretation (reach for grain.match.* or call llm() with its own tool
     // schema), any clarification, and the result.
     //
-    // Three shapes may be returned:
+    // Four shapes may be returned:
+    //   { view }                  show Grain's standard remote component tree
     //   undefined / { message }   it was handled ({ message } is a short result)
     //   { decline }               wrong owner; reopen the chooser without it
     //   { error }                 right owner, but the request failed
