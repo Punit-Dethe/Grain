@@ -115,6 +115,14 @@ mod tray_i18n;
 mod utils;
 
 pub use cli::CliArgs;
+
+/// [GRAIN] Whether `--eval <golden.json>` was passed (Extensions V1 P3). Read by
+/// `main` *before* clap so the upstream `CliArgs` never has to know the flag —
+/// clap would reject it as unknown. When true, `main` skips `CliArgs::parse()`.
+pub fn eval_requested() -> bool {
+    grain_actions::eval::requested().is_some()
+}
+
 #[cfg(debug_assertions)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
@@ -1168,8 +1176,13 @@ pub fn run(cli_args: CliArgs) {
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
-    let headless_mode =
-        cli_args.transcribe_file.is_some() || cli_args.list_devices || cli_args.list_models;
+    // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
+    // too — read straight from the args so the upstream CliArgs never learns it.
+    let eval_request = crate::grain_actions::eval::requested();
+    let headless_mode = cli_args.transcribe_file.is_some()
+        || cli_args.list_devices
+        || cli_args.list_models
+        || eval_request.is_some();
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1288,6 +1301,24 @@ pub fn run(cli_args: CliArgs) {
                     let data_dir = crate::portable::app_data_dir(&app_handle)
                         .unwrap_or_else(|_| std::path::PathBuf::from("."));
                     app.manage(grain_core::AppContext::new(resource_dir, data_dir));
+                }
+                // [GRAIN] Extension eval (Extensions V1 P3) branches out here —
+                // it needs AppContext (for cache/env parity with the running app)
+                // and the embedder, but never the ASR stack below. Runs on its
+                // own thread and process::exits, same shape as transcription.
+                if let Some(golden) = eval_request.clone() {
+                    let handle = app_handle.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            crate::grain_actions::eval::run(&handle, &golden)
+                        });
+                        crate::grain_space::embed::shutdown_engine();
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
                 }
                 // Register transcribe-cpp compute backends (required for both
                 // --list-devices and any GGUF model load).

@@ -42,6 +42,13 @@ pub(crate) mod action_log;
 #[path = "grain_action_session.rs"]
 pub(crate) mod action_session;
 
+/// [GRAIN] The headless `grain-ext eval` subcommand (`docs/Extensions V1/PLAN.md`
+/// §10 P3). A submodule for the same divergence reason as [`action_log`]: it
+/// needs a line in `lib.rs` otherwise, and that module block is a live
+/// merge-conflict surface.
+#[path = "grain_eval.rs"]
+pub(crate) mod eval;
+
 /// Monotonic id for the current recording session (pill events).
 pub(crate) static SESSION_ID: AtomicU64 = AtomicU64::new(0);
 

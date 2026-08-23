@@ -12,7 +12,14 @@ fn main() {
         return grain_pill::run_pill();
     }
 
-    let cli_args = CliArgs::parse();
+    // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
+    // clap does not know about. Detect it before parsing so the upstream CliArgs
+    // stays byte-identical; `run` reads the flag again to branch into eval.
+    let cli_args = if handy_app_lib::eval_requested() {
+        CliArgs::default()
+    } else {
+        CliArgs::parse()
+    };
 
     #[cfg(target_os = "linux")]
     {
