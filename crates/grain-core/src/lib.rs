@@ -36,6 +36,10 @@ pub mod recommend;
 // (docs/Extensions V1/PLAN.md §4). Pure: lexical ranking + a confidence policy.
 // `match.semantic` needs the embedder and stays host-side.
 pub mod matching;
+// [GRAIN] The author-facing eval core (docs/Extensions V1/PLAN.md §10 P3).
+// Pure: accuracy, confusion matrix, and an operating-point sweep over a labelled
+// test set. The headless `grain-ext eval` subcommand feeds it the real embedder.
+pub mod eval;
 
 pub use context::{settings_file_exists, AppContext};
 pub use grain_sdk::{AgentInputKind, DaemonEvent, PillAction, SessionMode};
