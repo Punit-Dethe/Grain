@@ -210,6 +210,10 @@ export interface GrainApi {
         headers?: Record<string, string>;
         body?: string;
         secret?: { key: string; header: string; prefix?: string };
+        /** Manifest authentication id. Grain attaches its vaulted Bearer token;
+         * the token itself is never returned to extension code. Mutually
+         * exclusive with `secret`. */
+        auth?: string;
       },
     ): Promise<{
       status: number;
@@ -218,6 +222,11 @@ export interface GrainApi {
       body: string;
       url: string;
     }>;
+  };
+  readonly auth: {
+    status(id: string): Promise<GrainAuthConnection | null>;
+    connect(id: string): Promise<GrainAuthConnection>;
+    disconnect(id: string): Promise<unknown>;
   };
   embed(texts: string[]): Promise<number[][]>;
   /** Rank this extension's OWN commands against a request (Extensions V1 §4).
@@ -320,6 +329,25 @@ export interface GrainApi {
           | { error: string }
         >,
   ): void;
+}
+
+export interface GrainAuthConnection {
+  id: string;
+  provider_name: string;
+  authorization_host: string;
+  token_host: string;
+  scopes: string[];
+  api_hosts: string[];
+  /** `default` in API 1.x; retained so a later API can expose multiple accounts. */
+  connection_id: string;
+  state:
+    | "connected"
+    | "needs_reauthorization"
+    | "expired"
+    | "disconnected"
+    | "unavailable";
+  granted_scopes: string[];
+  expires_at: string | null;
 }
 
 declare global {

@@ -7,6 +7,10 @@ import {
   type MouseEvent,
 } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+// Generated bindings export only when the real debug Tauri app starts. Keep
+// this local mirror until that user-owned run regenerates the file.
+// eslint-disable-next-line no-restricted-imports
+import { invoke } from "@tauri-apps/api/core";
 import {
   BookOpen,
   ChevronLeft,
@@ -60,6 +64,24 @@ import {
 } from "../extensions/extensionRuntime";
 
 const CORE_DEFAULT = "grain.core";
+
+interface AuthConnection {
+  id: string;
+  provider_name: string;
+  authorization_host: string;
+  token_host: string;
+  scopes: string[];
+  api_hosts: string[];
+  connection_id: string;
+  state:
+    | "connected"
+    | "needs_reauthorization"
+    | "expired"
+    | "disconnected"
+    | "unavailable";
+  granted_scopes: string[];
+  expires_at: string | null;
+}
 
 const SETTING_KINDS = new Set<SettingRow["kind"]>([
   "bool",
@@ -283,6 +305,25 @@ function useInstalledExtensions(): InstalledController {
             <ul>
               {pending.permissions.map((permission) => (
                 <li key={permission}>{capabilityLabel(permission)}</li>
+              ))}
+            </ul>
+          </>
+        )}
+        {pending.authentication.length > 0 && (
+          <>
+            <p>
+              Grain will handle these sign-ins and keep their tokens in your
+              operating system credential vault. The extension can make
+              authenticated requests, but cannot read the tokens.
+            </p>
+            <ul>
+              {pending.authentication.map((connection) => (
+                <li key={connection.id}>
+                  {connection.provider_name}: scopes{" "}
+                  {connection.scopes.join(", ")}; API hosts{" "}
+                  {connection.api_hosts.join(", ")}; sign-in via{" "}
+                  {connection.authorization_host} and {connection.token_host}
+                </li>
               ))}
             </ul>
           </>
@@ -1363,17 +1404,23 @@ export function ExtensionSettingsPage({
 }) {
   const [sections, setSections] = useState<ExtensionSettingsSection[]>([]);
   const [cards, setCards] = useState<ExtensionCard[]>([]);
+  const [connections, setConnections] = useState<AuthConnection[]>([]);
+  const [connectionBusy, setConnectionBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [rows, nextCards] = await Promise.all([
+    const [rows, nextCards, nextConnections] = await Promise.all([
       commands.extensionSettingsSchema(extensionId).then(unwrapResult),
       commands.extensionsOverview().then(unwrapResult),
+      invoke<AuthConnection[]>("extension_auth_connections", {
+        id: extensionId,
+      }),
     ]);
     const cardName = nextCards.find((card) => card.id === extensionId)?.name;
     setSections([{ id: extensionId, name: cardName ?? extensionId, rows }]);
     setCards(nextCards);
+    setConnections(nextConnections);
   }, [extensionId]);
 
   useEffect(() => {
@@ -1401,6 +1448,50 @@ export function ExtensionSettingsPage({
       }
     : null;
   const adaptedOwnRows = ownRows.map(adaptSettingRow);
+
+  const connect = useCallback(
+    async (authId: string) => {
+      setConnectionBusy(authId);
+      setError(null);
+      try {
+        await invoke("extension_auth_connect", {
+          id: extensionId,
+          authId,
+        });
+        await refresh();
+      } catch (reason) {
+        setError(String(reason));
+      } finally {
+        setConnectionBusy(null);
+      }
+    },
+    [extensionId, refresh],
+  );
+
+  const disconnect = useCallback(
+    async (connection: AuthConnection) => {
+      if (
+        !window.confirm(
+          `Disconnect ${connection.provider_name} from this extension?`,
+        )
+      )
+        return;
+      setConnectionBusy(connection.id);
+      setError(null);
+      try {
+        await invoke("extension_auth_disconnect", {
+          id: extensionId,
+          authId: connection.id,
+        });
+        await refresh();
+      } catch (reason) {
+        setError(String(reason));
+      } finally {
+        setConnectionBusy(null);
+      }
+    },
+    [extensionId, refresh],
+  );
 
   return (
     <section
@@ -1436,18 +1527,84 @@ export function ExtensionSettingsPage({
             <div className="extension-state" role="status">
               Loading extension settings…
             </div>
-          ) : error ? (
-            <div className="extension-inline-error">{error}</div>
-          ) : adaptedSection && adaptedOwnRows.length ? (
-            <ExtensionSettings
-              section={adaptedSection}
-              rows={adaptedOwnRows}
-              onChanged={() => void refresh()}
-            />
           ) : (
-            <div className="extension-state">
-              This extension has no standalone settings.
-            </div>
+            <>
+              {error && <div className="extension-inline-error">{error}</div>}
+              {connections.length > 0 && (
+                <section className="extension-settings-section">
+                  <div className="eyebrow">Connections</div>
+                  {connections.map((connection) => {
+                    const connected = connection.state === "connected";
+                    const busy = connectionBusy === connection.id;
+                    return (
+                      <div
+                        className="extension-setting-row"
+                        key={connection.id}
+                      >
+                        <div>
+                          <strong>{connection.provider_name}</strong>
+                          <p>
+                            {connected
+                              ? `Connected · ${connection.granted_scopes.join(", ") || connection.scopes.join(", ")}`
+                              : connection.state === "unavailable"
+                                ? "Credential vault unavailable"
+                                : connection.state === "expired"
+                                  ? "Connection expired"
+                                  : connection.state === "needs_reauthorization"
+                                    ? "Reconnect to approve the updated scopes"
+                                    : `Not connected · ${connection.scopes.join(", ")}`}
+                          </p>
+                          <p>
+                            Allowed hosts: {connection.api_hosts.join(", ")}
+                          </p>
+                        </div>
+                        <div className="extension-row-actions">
+                          <button
+                            className="button secondary"
+                            type="button"
+                            disabled={
+                              busy ||
+                              connection.state === "unavailable" ||
+                              card?.enabled === false
+                            }
+                            onClick={() => void connect(connection.id)}
+                          >
+                            {busy
+                              ? "Working…"
+                              : connected
+                                ? "Reconnect"
+                                : "Connect"}
+                          </button>
+                          {(connected ||
+                            connection.state === "expired" ||
+                            connection.state === "needs_reauthorization") && (
+                            <button
+                              className="button ghost"
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void disconnect(connection)}
+                            >
+                              Disconnect
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </section>
+              )}
+              {adaptedSection && adaptedOwnRows.length ? (
+                <ExtensionSettings
+                  section={adaptedSection}
+                  rows={adaptedOwnRows}
+                  onChanged={() => void refresh()}
+                />
+              ) : connections.length === 0 ? (
+                <div className="extension-state">
+                  This extension has no standalone settings.
+                </div>
+              ) : null}
+            </>
           )}
           {card && <ExtensionShortcuts id={card.id} />}
         </div>

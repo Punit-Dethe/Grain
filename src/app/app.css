@@ -6784,6 +6784,49 @@ html[data-theme="light"] .extension-auto-send {
   line-height: 1.6;
 }
 
+.extension-settings-section {
+  margin-bottom: 24px;
+  padding: 18px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 14px;
+  background: var(--surface-1);
+}
+
+.extension-settings-section > .eyebrow {
+  margin-bottom: 10px;
+}
+
+.extension-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 0;
+}
+
+.extension-setting-row + .extension-setting-row {
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.extension-setting-row strong {
+  font-size: 13px;
+  font-weight: 620;
+}
+
+.extension-setting-row p {
+  margin-top: 4px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.extension-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 html[data-theme="light"] .tools-sidebar-pane {
   background: rgba(241, 241, 242, 0.72);
 }
@@ -6874,6 +6917,10 @@ html[data-theme="light"] .extension-readme {
   }
   .extension-settings-content {
     padding: 30px 22px 60px;
+  }
+  .extension-setting-row {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

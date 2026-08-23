@@ -47,6 +47,7 @@ mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ex
 mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
+mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
                   // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
@@ -1026,6 +1027,9 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_load_unpacked,
             grain_commands::extension_unload_dev,
             grain_commands::extension_grant,
+            grain_auth::extension_auth_connections,
+            grain_auth::extension_auth_connect,
+            grain_auth::extension_auth_disconnect,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,

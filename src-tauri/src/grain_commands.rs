@@ -1145,6 +1145,35 @@ pub struct ActionInfo {
     pub website: Vec<String>,
 }
 
+#[derive(serde::Serialize, Clone)]
+pub struct AuthenticationApprovalInfo {
+    pub id: String,
+    pub provider_name: String,
+    pub scopes: Vec<String>,
+    pub api_hosts: Vec<String>,
+    pub authorization_host: String,
+    pub token_host: String,
+}
+
+impl AuthenticationApprovalInfo {
+    fn from_decl(decl: &grain_sdk::AuthenticationDecl) -> Self {
+        let host = |value: &str| {
+            reqwest::Url::parse(value)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_default()
+        };
+        Self {
+            id: decl.id.clone(),
+            provider_name: decl.provider_name.clone(),
+            scopes: decl.scopes.clone(),
+            api_hosts: decl.api_hosts.clone(),
+            authorization_host: host(&decl.authorization_endpoint),
+            token_host: host(&decl.token_endpoint),
+        }
+    }
+}
+
 impl ActionInfo {
     fn from_decl(decl: &grain_sdk::manifest::ActionDecl) -> Self {
         Self {
@@ -1204,6 +1233,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     .collect();
                 let has_detail = !p.manifest.contributes.settings.is_empty()
                     || !p.manifest.contributes.shortcuts.is_empty()
+                    || !p.manifest.contributes.authentication.is_empty()
                     || !prompt_layers.is_empty()
                     || !actions.is_empty();
                 PackFacts {
@@ -1483,9 +1513,18 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         .unwrap_or_default();
                     approved != ext::recommendation_fingerprint(&pack.manifest)
                 };
+                let declared_authentication = &pack.manifest.contributes.authentication;
+                let authentication_unapproved = !declared_authentication.is_empty() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|record| record.authentication_approved)
+                        .unwrap_or_default();
+                    approved != ext::authentication_fingerprint(declared_authentication)
+                };
                 if !missing.is_empty()
                     || unapproved
                     || actions_unapproved
+                    || authentication_unapproved
                     || recommendation_unapproved
                 {
                     let layers: Vec<PromptLayerInfo> = if unapproved {
@@ -1498,12 +1537,22 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     } else {
                         Vec::new()
                     };
+                    let authentication: Vec<AuthenticationApprovalInfo> =
+                        if authentication_unapproved {
+                            declared_authentication
+                                .iter()
+                                .map(AuthenticationApprovalInfo::from_decl)
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
                     // One sheet carrying all three. Two sheets in a row is how a
                     // user learns to click through without reading.
                     return Err(serde_json::json!({
                         "needsPermissions": missing,
                         "needsPromptLayers": layers,
                         "needsActions": actions,
+                        "needsAuthentication": authentication,
                         "needsRecommendation": recommendation_unapproved,
                     })
                     .to_string());
@@ -1534,6 +1583,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             // credential — every surface is destroyed, not merely slept.
             if !enabled {
                 crate::extension_host::stop_extension(pack_id, "extension disabled");
+                crate::grain_auth::cancel_extension(pack_id);
                 crate::surfaces::extension::destroy(&app, pack_id);
                 crate::surfaces::overlay::dismiss(&app, pack_id);
             }
@@ -1561,7 +1611,7 @@ fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
     Ok(dir.join(format!("{id}.grainpack.json")))
 }
 
-fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
+pub(crate) fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
     crate::extension_host::load_manifest_result(app, id)
 }
 
@@ -1605,6 +1655,7 @@ pub fn extension_developer_status(app: AppHandle) -> Result<ExtensionDeveloperSt
 fn stop_extension_runtime(app: &AppHandle, id: &str, reason: &str) {
     use grain_core::extensions as ext;
     crate::extension_host::stop_extension(id, reason);
+    crate::grain_auth::cancel_extension(id);
     crate::surfaces::extension::destroy(app, id);
     crate::surfaces::overlay::dismiss(app, id);
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
@@ -1716,6 +1767,10 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         ),
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
+        authentication_approved: (!loaded.pack.manifest.contributes.authentication.is_empty())
+            .then(|| {
+                ext::authentication_fingerprint(&loaded.pack.manifest.contributes.authentication)
+            }),
         recommend_approved: loaded
             .pack
             .manifest
@@ -2180,6 +2235,9 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // declaration changed, this stops matching, the actions go inert, and
         // the enable path shows the user what is different.
         actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
+        authentication_approved: prior
+            .as_ref()
+            .and_then(|r| r.authentication_approved.clone()),
         // Carried for the same reason, and the stake is higher: what this one
         // gates is whether the extension is eligible to be handed the user's
         // words at all. `None` means never approved, so an import that has not
@@ -2352,6 +2410,8 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     // declaration the user never saw.
     rec.actions_approved = (!manifest.contributes.actions.is_empty())
         .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
+    rec.authentication_approved = (!manifest.contributes.authentication.is_empty())
+        .then(|| ext::authentication_fingerprint(&manifest.contributes.authentication));
     // Same act, same rule: recomputed from disk. Keyed off `kind` rather than a
     // list being non-empty, because what is being approved here is eligibility
     // to be handed the whole request — see `recommendation_fingerprint`.
@@ -2412,7 +2472,7 @@ pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result
 /// payloads are always removed.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
+pub async fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
     use grain_core::extensions as ext;
     // Grain's own features have no record to remove: they are turned off in
     // their own tab, never uninstalled. Everything else is a real installed pack
@@ -2424,6 +2484,10 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     {
         return Err("built-in features can be turned off, not uninstalled".into());
     }
+    crate::grain_auth::cancel_extension(&id);
+    // Credentials are never kept for an uninstalled identity, regardless of
+    // whether ordinary extension data is retained for a later reinstall.
+    crate::grain_auth::purge_extension(&app, &id).await?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;

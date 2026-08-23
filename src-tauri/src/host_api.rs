@@ -23,11 +23,14 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use grain_sdk::{HostError, HostErrorCode};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, LOCATION};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, LOCATION,
+};
 use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::events_auth::{CapabilitySet, ClientIdentity};
 
@@ -104,6 +107,7 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "llm.complete" => Some("llm"),
         // The real grant is derived from the parsed URL (`net:<exact-host>`).
         "net.fetch" => Some("__dynamic_net__"),
+        "auth.status" | "auth.connect" | "auth.disconnect" => Some("__dynamic_auth__"),
         "embed" => Some("embed"),
         // [GRAIN] The `match.*` primitives (docs/Extensions V1/PLAN.md §4, §12)
         // take NO capability. A capability governs *reach*, and these reach
@@ -610,6 +614,15 @@ fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostRes
         authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
         return Ok(());
     }
+    if matches!(method, "auth.status" | "auth.connect" | "auth.disconnect") {
+        let auth_id = param_nonempty_str(params, "id")?;
+        let capability = format!("auth:{auth_id}");
+        return if has_capability(identity, &capability) {
+            Ok(())
+        } else {
+            Err(HostError::capability_denied(&capability, method))
+        };
+    }
     match required_capability(method) {
         Some("__unknown__") => Err(unknown_method(method)),
         Some(capability) if !has_capability(identity, capability) => {
@@ -687,6 +700,19 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                     return Err(invalid_argument("'secret.prefix' must be a string"));
                 }
             }
+            if let Some(auth) = params.get("auth") {
+                if !auth.is_string() || auth.as_str().is_some_and(str::is_empty) {
+                    return Err(invalid_argument("'auth' must be a non-empty string"));
+                }
+                if params.get("secret").is_some() {
+                    return Err(invalid_argument(
+                        "'auth' and 'secret' are mutually exclusive",
+                    ));
+                }
+            }
+        }
+        "auth.status" | "auth.connect" | "auth.disconnect" => {
+            param_nonempty_str(params, "id")?;
         }
         "embed" => {
             let texts = param_strings(params, "texts")?;
@@ -849,11 +875,19 @@ async fn proxy_fetch(
     identity: &ClientIdentity,
     params: &Value,
     secret_header: Option<(HeaderName, HeaderValue)>,
+    auth_hosts: Option<&[String]>,
+    redact_response: Option<Zeroizing<String>>,
 ) -> HostResult<Value> {
     let mut url = authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
     let mut method = net_method(params)?;
     let mut headers = net_headers(params)?;
     if let Some((name, value)) = secret_header {
+        if headers.contains_key(&name) {
+            return Err(invalid_argument(format!(
+                "header '{}' is controlled by the selected credential",
+                name.as_str()
+            )));
+        }
         headers.insert(name, value);
     }
     let mut body = params
@@ -895,6 +929,14 @@ async fn proxy_fetch(
                 .join(location)
                 .map_err(|error| invalid_argument(format!("invalid redirect URL: {error}")))?;
             url = authorize_net_url(identity, next.as_str())?;
+            if let Some(allowed) = auth_hosts {
+                let next_host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+                if !allowed.iter().any(|host| host == &next_host) {
+                    return Err(invalid_argument(format!(
+                        "authenticated redirect to '{next_host}' is outside the declared apiHosts"
+                    )));
+                }
+            }
 
             // Match browser fetch semantics for the common method-changing
             // redirects. 307/308 retain the original method and body.
@@ -920,10 +962,15 @@ async fn proxy_fetch(
             .headers()
             .iter()
             .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.as_str().to_string(), value.to_string()))
+                value.to_str().ok().map(|value| {
+                    let value = match redact_response.as_deref() {
+                        Some(secret) if !secret.is_empty() && value.contains(secret) => {
+                            SECRET_REDACTED.to_string()
+                        }
+                        _ => value.to_string(),
+                    };
+                    (name.as_str().to_string(), value)
+                })
             })
             .collect::<BTreeMap<_, _>>();
         let mut bytes = Vec::new();
@@ -936,8 +983,15 @@ async fn proxy_fetch(
             }
             bytes.extend_from_slice(&chunk);
         }
-        let body = String::from_utf8(bytes)
+        let mut body = String::from_utf8(bytes)
             .map_err(|_| invalid_argument("network response body is not UTF-8 text"))?;
+        if let Some(secret) = redact_response.as_deref() {
+            if !secret.is_empty() && body.contains(secret) {
+                let redacted = body.replace(secret, SECRET_REDACTED);
+                body.zeroize();
+                body = redacted;
+            }
+        }
         return Ok(json!({
             "status": status.as_u16(),
             "ok": status.is_success(),
@@ -1136,8 +1190,70 @@ pub async fn dispatch(
             Ok(json!({ "text": text }))
         }
         "net.fetch" => {
-            let secret = resolve_net_secret(app, &ctx, identity, &params)?;
-            proxy_fetch(identity, &params, secret).await
+            if let Some(auth_id) = params.get("auth").and_then(Value::as_str) {
+                let raw_url = param_nonempty_str(&params, "url")?;
+                let (url, _) = net_url_and_capability(&raw_url)?;
+                let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+                let decl = crate::grain_commands::load_pack(app, &identity.id)
+                    .map_err(internal_error)?
+                    .manifest
+                    .contributes
+                    .authentication
+                    .into_iter()
+                    .find(|decl| decl.id == auth_id)
+                    .ok_or_else(|| {
+                        invalid_argument(format!("authentication '{auth_id}' is not declared"))
+                    })?;
+                let token = crate::grain_auth::access_token(app, &identity.id, auth_id, &host)
+                    .await
+                    .map_err(|error| {
+                        unavailable(
+                            error,
+                            "Connect the account in the extension's settings, then retry.",
+                        )
+                    })?;
+                let value =
+                    HeaderValue::from_str(&format!("Bearer {}", token.as_str())).map_err(|_| {
+                        internal_error("stored OAuth token is not a valid header value")
+                    })?;
+                proxy_fetch(
+                    identity,
+                    &params,
+                    Some((AUTHORIZATION, value)),
+                    Some(&decl.api_hosts),
+                    Some(token),
+                )
+                .await
+            } else {
+                let secret = resolve_net_secret(app, &ctx, identity, &params)?;
+                proxy_fetch(identity, &params, secret, None, None).await
+            }
+        }
+        "auth.status" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let rows =
+                crate::grain_auth::extension_auth_connections(app.clone(), identity.id.clone())
+                    .await
+                    .map_err(internal_error)?;
+            serde_json::to_value(rows.into_iter().find(|row| row.id == id))
+                .map_err(|error| internal_error(error.to_string()))
+        }
+        "auth.connect" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let row =
+                crate::grain_auth::connect_from_extension(app.clone(), identity.id.clone(), id)
+                    .await
+                    .map_err(|error| {
+                        unavailable(error, "Retry from the extension settings page.")
+                    })?;
+            serde_json::to_value(row).map_err(|error| internal_error(error.to_string()))
+        }
+        "auth.disconnect" => {
+            let id = param_nonempty_str(&params, "id")?;
+            crate::grain_auth::disconnect_from_extension(app.clone(), identity.id.clone(), id)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
         }
         "embed" => {
             // [GRAIN] SPEC §1.3 / Grain Space Test: the same on-device BGE
@@ -1673,6 +1789,10 @@ mod tests {
         assert_eq!(required_capability("storage.set"), Some("storage"));
         assert_eq!(required_capability("llm.complete"), Some("llm"));
         assert_eq!(required_capability("net.fetch"), Some("__dynamic_net__"));
+        assert_eq!(
+            required_capability("auth.connect"),
+            Some("__dynamic_auth__")
+        );
         assert_eq!(required_capability("session.start"), Some("session:start"));
         assert_eq!(
             required_capability("capture.selection"),
@@ -1734,6 +1854,26 @@ mod tests {
             },
             "__unknown__"
         ));
+    }
+
+    #[test]
+    fn auth_gate_is_declaration_specific_and_fetch_credentials_do_not_mix() {
+        let github = named(&["auth:github", "net:api.github.com"]);
+        assert!(preflight(&github, "auth.status", &json!({ "id": "github" })).is_ok());
+        let denied = preflight(&github, "auth.connect", &json!({ "id": "linear" })).unwrap_err();
+        assert_eq!(denied.code, HostErrorCode::CapabilityDenied);
+
+        let mixed = preflight(
+            &github,
+            "net.fetch",
+            &json!({
+                "url": "https://api.github.com/user",
+                "auth": "github",
+                "secret": { "key": "token", "header": "authorization" }
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(mixed.code, HostErrorCode::InvalidArgument);
     }
 
     fn assert_typed(error: &HostError) {
@@ -1864,7 +2004,7 @@ mod tests {
             body.len()
         ))
         .await;
-        let result = proxy_fetch(&identity, &json!({"url": url}), None)
+        let result = proxy_fetch(&identity, &json!({"url": url}), None, None, None)
             .await
             .unwrap();
         assert_eq!(result["status"], 200);
@@ -1875,7 +2015,7 @@ mod tests {
             NET_MAX_RESPONSE_BYTES + 1
         ))
         .await;
-        let error = proxy_fetch(&identity, &json!({"url": url}), None)
+        let error = proxy_fetch(&identity, &json!({"url": url}), None, None, None)
             .await
             .unwrap_err();
         assert_eq!(error.code, HostErrorCode::ResponseTooLarge);
@@ -1892,11 +2032,39 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/off-grant\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         ))
         .await;
-        let error = proxy_fetch(&identity, &json!({"url": url}), None)
+        let error = proxy_fetch(&identity, &json!({"url": url}), None, None, None)
             .await
             .unwrap_err();
         assert_eq!(error.code, HostErrorCode::CapabilityDenied);
         assert_eq!(error.capability.as_deref(), Some("net:localhost"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_proxy_redacts_an_echoed_token() {
+        let identity = named(&["net:127.0.0.1"]);
+        let token = "provider-secret-token";
+        let body = format!("echo={token}");
+        let url = serve_once(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Echo: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+            token
+        ))
+        .await;
+        let result = proxy_fetch(
+            &identity,
+            &json!({"url": url}),
+            Some((
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            )),
+            Some(&["127.0.0.1".to_string()]),
+            Some(Zeroizing::new(token.to_string())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["body"], format!("echo={SECRET_REDACTED}"));
+        assert_eq!(result["headers"]["x-echo"], SECRET_REDACTED);
+        assert!(!result.to_string().contains(token));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Grain extension authentication plan
 
-Status: proposed
+Status: implemented; real-provider and cross-platform acceptance pending
 Last updated: 2026-08-24
 Depends on: Extension Platform Phase 4 network/secrets and Phase 5 distribution
 
@@ -131,9 +131,9 @@ type AuthState =
   | { state: "connected"; scopes: string[]; expiresAt?: string }
   | { state: "needsReauthorization"; reason: string };
 
-grain.auth.status({ id: "github" }): Promise<AuthState>;
-grain.auth.connect({ id: "github" }): Promise<AuthState>;
-grain.auth.disconnect({ id: "github" }): Promise<{ state: "disconnected" }>;
+grain.auth.status("github"): Promise<AuthState>;
+grain.auth.connect("github"): Promise<AuthState>;
+grain.auth.disconnect("github"): Promise<void>;
 
 grain.net.fetch("https://api.github.com/user", {
   auth: "github",
@@ -511,10 +511,9 @@ v1 documentation matches implementation.
   method with a separate trust disclosure. It must not silently change existing
   local-only declarations.
 
-## 11. Decisions to confirm
+## 11. Confirmed defaults
 
-The plan can proceed with these recommended defaults, but they are product-level
-choices rather than implementation details:
+Confirmed on 2026-08-24:
 
 1. **Secure-store failure:** recommended — fail closed when the OS credential
    vault is unavailable, including Linux sessions without Secret Service. Do not

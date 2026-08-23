@@ -1,6 +1,6 @@
 # Extension authentication
 
-Status: planning
+Status: implemented (cross-platform/provider acceptance pending)
 Last updated: 2026-08-24
 
 This folder defines how Grain extensions connect to third-party accounts. It
@@ -34,5 +34,6 @@ described in `docs/Extension Platform/SPEC.md` section 7.1.
    that cannot support a public PKCE client use the existing manual secret/PAT
    path until a separately reviewed broker exists.
 
-The three product decisions still requiring confirmation are listed at the end
-of [PLAN.md](PLAN.md#decisions-to-confirm).
+The product defaults are confirmed in [PLAN.md](PLAN.md#confirmed-defaults).
+[IMPLEMENTATION.md](IMPLEMENTATION.md) is the shipped contract and verification
+handoff.

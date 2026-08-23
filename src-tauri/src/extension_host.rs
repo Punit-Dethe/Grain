@@ -2441,6 +2441,12 @@ pub fn reload_dev_extension(
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
             grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
         }),
+        authentication_approved: (!loaded.pack.manifest.contributes.authentication.is_empty())
+            .then(|| {
+                grain_core::extensions::authentication_fingerprint(
+                    &loaded.pack.manifest.contributes.authentication,
+                )
+            }),
         // And for what the extension is ranked by. Same shortcut, same limit.
         recommend_approved: loaded
             .pack
@@ -2642,6 +2648,7 @@ mod tests {
             actions_approved: Some(grain_core::extensions::actions_fingerprint(
                 &pack.manifest.contributes.actions,
             )),
+            authentication_approved: None,
             recommend_approved: pack
                 .manifest
                 .kind

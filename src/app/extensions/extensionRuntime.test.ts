@@ -196,6 +196,7 @@ describe("extension collection helpers", () => {
       permissions: ["storage", "open:url"],
       promptLayers: [],
       actions: [],
+      authentication: [],
       recommendation: false,
     });
     expect(
@@ -227,6 +228,7 @@ describe("extension collection helpers", () => {
         },
       ],
       actions: [],
+      authentication: [],
       recommendation: false,
     });
     expect(parseApprovalRequest('{"needsPermissions":[]}')).toBeNull();
@@ -249,8 +251,25 @@ describe("extension collection helpers", () => {
       permissions: [],
       promptLayers: [],
       actions: [],
+      authentication: [],
       recommendation: true,
     });
+  });
+
+  it("parses authentication review details independently of capabilities", () => {
+    const parsed = parseApprovalRequest(
+      '{"needsAuthentication":[{"id":"github","provider_name":"GitHub","scopes":["read:user"],"api_hosts":["api.github.com"],"authorization_host":"github.com","token_host":"github.com"}]}',
+    );
+    expect(parsed?.authentication).toEqual([
+      {
+        id: "github",
+        provider_name: "GitHub",
+        scopes: ["read:user"],
+        api_hosts: ["api.github.com"],
+        authorization_host: "github.com",
+        token_host: "github.com",
+      },
+    ]);
   });
 
   it("describes when a contributed layer applies", () => {

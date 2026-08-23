@@ -43,11 +43,12 @@ pub use event::{
 };
 pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use manifest::{
-    png_dimensions, validate_extension_id, validate_extension_version, CompanionDecl, Contributes,
+    authentication_capability_id, png_dimensions, validate_extension_id,
+    validate_extension_version, AuthenticationDecl, AuthenticationType, CompanionDecl, Contributes,
     ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry, PromptTarget,
-    SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
-    ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS, PROMPT_CONTEXT_SLOT,
-    PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
+    RedirectMethod, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier,
+    WorkspaceDecl, ANCHORS, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS,
+    PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
 };
 pub use pill_skin::PillSkin;
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};

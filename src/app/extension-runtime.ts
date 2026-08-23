@@ -217,8 +217,16 @@ export const GRAIN_RUNTIME_JS = `(function () {
         };
         if (options.body != null) request.body = String(options.body);
         if (options.secret != null) request.secret = options.secret;
+        if (options.auth != null) request.auth = String(options.auth);
         return req("net.fetch", request);
       }
+    },
+    // Grain owns the OAuth browser flow and credential vault. These methods
+    // return connection metadata only; raw tokens never enter this worker.
+    auth: {
+      status: function (id) { return req("auth.status", { id: String(id) }); },
+      connect: function (id) { return req("auth.connect", { id: String(id) }); },
+      disconnect: function (id) { return req("auth.disconnect", { id: String(id) }); }
     },
     // On-device embeddings (the same BGE model Grain Space uses). Resolves to an
     // array of vectors, one per input text.

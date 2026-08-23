@@ -62,9 +62,11 @@ export function unwrapResult<T, E>(result: Result<T, E>): T {
 }
 
 export function capabilityLabel(capability: string): string {
-  return capability.startsWith("net:")
-    ? `Send data to ${capability.slice("net:".length)}`
-    : (CAPABILITY_LABELS[capability] ?? capability);
+  if (capability.startsWith("net:"))
+    return `Send data to ${capability.slice("net:".length)}`;
+  if (capability.startsWith("auth:"))
+    return `Connect a ${capability.slice("auth:".length)} account through Grain`;
+  return CAPABILITY_LABELS[capability] ?? capability;
 }
 
 export function slotLabel(slot: string): string {
@@ -80,7 +82,17 @@ export interface ApprovalRequest {
   permissions: string[];
   promptLayers: PromptLayerInfo[];
   actions: ActionInfo[];
+  authentication: AuthenticationApprovalInfo[];
   recommendation: boolean;
+}
+
+export interface AuthenticationApprovalInfo {
+  id: string;
+  provider_name: string;
+  scopes: string[];
+  api_hosts: string[];
+  authorization_host: string;
+  token_host: string;
 }
 
 /**
@@ -96,6 +108,7 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       needsPermissions?: unknown;
       needsPromptLayers?: unknown;
       needsActions?: unknown;
+      needsAuthentication?: unknown;
       needsRecommendation?: unknown;
     };
     const permissions = Array.isArray(parsed.needsPermissions)
@@ -108,14 +121,24 @@ export function parseApprovalRequest(error: unknown): ApprovalRequest | null {
       ? (parsed.needsActions as ActionInfo[])
       : [];
     const recommendation = parsed.needsRecommendation === true;
+    const authentication = Array.isArray(parsed.needsAuthentication)
+      ? (parsed.needsAuthentication as AuthenticationApprovalInfo[])
+      : [];
     if (
       !permissions.length &&
       !promptLayers.length &&
       !actions.length &&
+      !authentication.length &&
       !recommendation
     )
       return null;
-    return { permissions, promptLayers, actions, recommendation };
+    return {
+      permissions,
+      promptLayers,
+      actions,
+      authentication,
+      recommendation,
+    };
   } catch {
     return null;
   }
