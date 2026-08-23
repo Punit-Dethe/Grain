@@ -902,23 +902,23 @@ fn reembed_recommendations(examples: Vec<(String, Vec<String>)>) {
 /// belong to the current pool; otherwise it hands `None` to the ranker, which is
 /// name-only mode. Blocking on the query embed, so it must not be called from a
 /// felt path — the Extension Mode session calls it off the microphone thread.
-pub fn recommend(spoken: &str, excluded: &[String]) -> Vec<grain_core::recommend::Recommendation> {
+pub fn recommend(
+    spoken: &str,
+    excluded: &[String],
+) -> (Vec<grain_core::recommend::Recommendation>, bool) {
     if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
-        return Vec::new();
+        return (Vec::new(), false);
     }
     let Some(host) = HOST.get() else {
-        return Vec::new();
+        return (Vec::new(), false);
     };
     let index = host.index.read().unwrap();
     let semantic = semantic_scores(spoken);
-    grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref(), excluded)
-}
-
-/// Whether the topical leg can run right now — the model is on disk. When false,
-/// [`recommend`] is name-only, and a surface may offer the download. Cheap: a
-/// filesystem existence check, no model load.
-pub fn semantic_available() -> bool {
-    crate::grain_space::embed::model_on_disk()
+    let semantic_available = semantic.is_some();
+    (
+        grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref(), excluded),
+        semantic_available,
+    )
 }
 
 /// The display name and one-line purpose for a pooled extension, for the
@@ -1940,6 +1940,10 @@ const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
 pub enum HandOffOutcome {
     /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
+    /// The extension is healthy but is not the right owner for this request.
+    /// Grain must reopen the chooser with this extension removed rather than
+    /// treating a routing correction as an execution failure.
+    Declined(String),
     /// It could not, with a reason worth showing.
     Failed(String),
     /// The deadline passed after the call was already in flight.
@@ -1952,6 +1956,9 @@ pub enum HandOffOutcome {
 }
 
 fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
+    if let Some(reason) = value.get("decline").and_then(Value::as_str) {
+        return HandOffOutcome::Declined(reason.to_string());
+    }
     if let Some(error) = value.get("error").and_then(Value::as_str) {
         return HandOffOutcome::Failed(error.to_string());
     }
@@ -2619,7 +2626,7 @@ mod tests {
     }
 
     #[test]
-    fn a_handoff_reply_reads_as_done_error_or_bare() {
+    fn a_handoff_reply_distinguishes_done_decline_error_and_bare() {
         // An extension's onRequest reply: `{message}` and a bare `{}` are both
         // "handled"; only an explicit `{error}` is a failure. A timeout is
         // Unknown and is decided by the caller, never parsed from a reply.
@@ -2628,6 +2635,10 @@ mod tests {
             HandOffOutcome::Done(Some("opened your dashboard".into()))
         );
         assert_eq!(parse_handoff_outcome(json!({})), HandOffOutcome::Done(None));
+        assert_eq!(
+            parse_handoff_outcome(json!({ "decline": "not a music request" })),
+            HandOffOutcome::Declined("not a music request".into())
+        );
         assert_eq!(
             parse_handoff_outcome(json!({ "error": "no such site" })),
             HandOffOutcome::Failed("no such site".into())

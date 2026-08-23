@@ -89,6 +89,10 @@ fn emit_session_started_with_owner(
     mode: SessionMode,
     owner: Option<String>,
 ) {
+    // A fresh capture supersedes a pending Extension Mode chooser (or a
+    // handed-off request that might still decline back into it). Invalidate the
+    // host-side request before RecordingStarted clears the pill's local surface.
+    action_session::supersede(app);
     crate::bridge::emit(
         app,
         DaemonEvent::OverlayConfig {

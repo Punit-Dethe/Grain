@@ -97,6 +97,10 @@ pub struct PasteError;
 /// accepted extension, so the surface must hold it, not reconstruct it.
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct ExtensionRecommendation {
+    /// Opaque presentation nonce. Accept/decline must echo it so delayed UI
+    /// input cannot act on a newer request with the same extension id or text.
+    /// Zero only for an Auto-send notice, which has no chooser actions.
+    pub presentation_id: u64,
     /// What the user said, verbatim. The payload a hand-off would carry.
     pub request: String,
     /// Best first. Empty is "nothing matched".

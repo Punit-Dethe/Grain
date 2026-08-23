@@ -1666,9 +1666,9 @@ async grainExtensionModeDownloadModel() : Promise<Result<null, string>> {
  * captured request and emits a fresh `extension-recommendation` — one keypress,
  * not one re-recording. No-op if the pending request has moved on.
  */
-async grainExtensionModeDecline(request: string, extensionId: string) : Promise<Result<null, string>> {
+async grainExtensionModeDecline(presentationId: number, extensionId: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_decline", { request, extensionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_decline", { presentationId, extensionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1680,9 +1680,9 @@ async grainExtensionModeDecline(request: string, extensionId: string) : Promise<
  * API lands in V1-P2; this closes out the pending request and records the
  * choice so it is not lost in the gap.
  */
-async grainExtensionModeAccept(extensionId: string) : Promise<Result<null, string>> {
+async grainExtensionModeAccept(presentationId: number, extensionId: string) : Promise<Result<null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_accept", { extensionId }) };
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_accept", { presentationId, extensionId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3642,6 +3642,8 @@ export type RecordingError = { error_type: string; detail: string | null }
  * accepted extension, so the surface must hold it, not reconstruct it.
  */
 export type ExtensionRecommendation = {
+/** Opaque presentation nonce used to reject delayed chooser actions. */
+presentation_id: number;
 /**
  * What the user said, verbatim. The payload a hand-off would carry.
  */

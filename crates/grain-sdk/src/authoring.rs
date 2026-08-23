@@ -190,16 +190,19 @@ export interface GrainApi {
   /** The user accepted this extension in Extension Mode (Extensions V1 §3): the
    * WHOLE request is handed over, verbatim. The extension owns what happens next
    * — interpret it with `match.*` or `llm.complete` and its own tool schema, ask
-   * or confirm as needed, and return an optional short result. Return `{ error }`
-   * if it could not be handled. */
+   * or confirm as needed, and return an optional short result. Return
+   * `{ decline }` when this extension is not the right owner so Grain can reopen
+   * the chooser without making the user repeat the request; reserve `{ error }`
+   * for a request this extension owned but failed to complete. */
   onRequest(
     handler: (
       request: string,
     ) =>
       | void
       | { message?: string }
+      | { decline: string }
       | { error: string }
-      | Promise<void | { message?: string } | { error: string }>,
+      | Promise<void | { message?: string } | { decline: string } | { error: string }>,
   ): void;
 }
 

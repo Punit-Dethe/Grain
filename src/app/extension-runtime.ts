@@ -308,9 +308,10 @@ export const GRAIN_RUNTIME_JS = `(function () {
     // interpretation (reach for grain.match.* or call llm() with its own tool
     // schema), any clarification, and the result.
     //
-    // Two shapes may be returned:
+    // Three shapes may be returned:
     //   undefined / { message }   it was handled ({ message } is a short result)
-    //   { error }                 it could not, with a reason to show
+    //   { decline }               wrong owner; reopen the chooser without it
+    //   { error }                 right owner, but the request failed
     onRequest: function (fn) {
       handlers.request = function (p) {
         return Promise.resolve(fn(String((p && p.request) || ""))).then(function (out) {

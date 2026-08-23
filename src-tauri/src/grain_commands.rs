@@ -1066,10 +1066,10 @@ pub fn change_auto_send_for_extension(
 #[specta::specta]
 pub async fn grain_extension_mode_decline(
     app: AppHandle,
-    request: String,
+    presentation_id: u64,
     extension_id: String,
 ) -> Result<(), String> {
-    crate::grain_actions::action_session::decline(&app, &request, &extension_id).await;
+    crate::grain_actions::action_session::decline(&app, presentation_id, &extension_id).await;
     Ok(())
 }
 
@@ -1078,8 +1078,12 @@ pub async fn grain_extension_mode_decline(
 /// transcript, and records the outcome; the extension owns what happens next.
 #[tauri::command]
 #[specta::specta]
-pub fn grain_extension_mode_accept(app: AppHandle, extension_id: String) -> Result<(), String> {
-    crate::grain_actions::action_session::accept(&app, &extension_id);
+pub fn grain_extension_mode_accept(
+    app: AppHandle,
+    presentation_id: u64,
+    extension_id: String,
+) -> Result<(), String> {
+    crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id);
     Ok(())
 }
 

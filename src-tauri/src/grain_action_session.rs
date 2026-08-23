@@ -236,8 +236,14 @@ async fn finish(
 /// capture.
 #[derive(Clone, Default)]
 struct Pending {
+    id: u64,
+    presentation_id: u64,
     request: String,
     declined: Vec<String>,
+    /// Extension ids on the currently presented chooser. The reverse channel is
+    /// authenticated, but it is still an input boundary: an old or malformed
+    /// client must not hand the transcript to an enabled non-searchable pack.
+    allowed: Vec<String>,
 }
 
 fn pending() -> &'static Mutex<Option<Pending>> {
@@ -245,57 +251,85 @@ fn pending() -> &'static Mutex<Option<Pending>> {
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
+/// Monotonic request epoch. Starting any new capture bumps it, which prevents a
+/// late ranking or a late extension decline from resurrecting a superseded
+/// chooser.
+static REQUEST_EPOCH: AtomicU64 = AtomicU64::new(0);
+/// A new nonce for every chooser presentation, including decline-and-reopen.
+/// Unlike `REQUEST_EPOCH`, this distinguishes two views of the same request.
+static PRESENTATION_EPOCH: AtomicU64 = AtomicU64::new(0);
+
 /// Rank the searchable extensions for one captured request and present it.
 ///
 /// Split from [`finish`] so it can be driven from a test or a replay of the
 /// action log without a microphone.
 ///
-/// **The V1-P1 seam.** Ranking, the recommendation event, and decline-and-reopen
-/// all run here and in [`decline`]. What does NOT run yet is the surface (behind
-/// the §6b design gate) and the accepted hand-off into the extension's request
-/// API (V1-P2, where the extension-facing side of the same wire contract is
-/// defined — see [`accept`]). So today this ranks, emits the event a surface
-/// will consume, and records — capture and ranking work end to end, and the
-/// request is carried in the event ready to be handed off.
+/// **The V1-P1/P2 seam.** Ranking and presentation begin here; [`accept`] and
+/// [`run_hand_off`] own the transcript-bearing hand-off, while [`decline`]
+/// re-enters this path without asking the user to record again.
 pub async fn deliver(app: &AppHandle, heard: &str) {
+    let id = REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
     *pending().lock().unwrap() = Some(Pending {
+        id,
+        presentation_id: 0,
         request: heard.to_string(),
         declined: Vec::new(),
+        allowed: Vec::new(),
     });
     // Auto-send may fire only on this first presentation (§5) — never on a
     // decline-and-reopen, where the user is already actively choosing.
-    present(app, heard.to_string(), Vec::new(), true).await;
+    present(app, id, heard.to_string(), Vec::new(), true).await;
 }
 
 /// Rank `request` (excluding `declined`), emit the recommendation event, and
 /// record the outcome. The one place ranking is turned into a surface event, so
 /// deliver and decline present identically.
-async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_auto_send: bool) {
+async fn present(
+    app: &AppHandle,
+    request_id: u64,
+    request: String,
+    declined: Vec<String>,
+    allow_auto_send: bool,
+) {
     // Each ranking is a semantic use — refresh the warmth so an accept or a
     // decline-and-reopen right after does not race the reaper (§6).
     crate::grain_space::embed::touch_extension_mode(app);
     // `recommend` embeds the query and is blocking; keep it off the async
     // runtime's poll threads.
     let ranked = {
+        let app = app.clone();
         let request = request.clone();
         let declined = declined.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            (
-                crate::extension_host::recommend(&request, &declined),
-                crate::extension_host::semantic_available(),
-            )
+            let (ranked, semantic_available) =
+                crate::extension_host::recommend(&request, &declined);
+            let pool = crate::extension_host::searchable_ids()
+                .into_iter()
+                .filter(|id| !declined.contains(id))
+                .map(|id| {
+                    let (name, purpose) = crate::extension_host::recommendation_display(&app, &id)
+                        .unwrap_or_else(|| (id.clone(), String::new()));
+                    (id, name, purpose)
+                })
+                .collect();
+            (ranked, semantic_available, pool)
         })
         .await
-        .unwrap_or_else(|_| (Vec::new(), false))
+        .unwrap_or_else(|_| (Vec::new(), false, Vec::new()))
     };
-    let (ranked, semantic_available) = ranked;
+    let (ranked, semantic_available, pool): (_, _, Vec<(String, String, String)>) = ranked;
+
+    let display = |id: &str| {
+        pool.iter()
+            .find(|(candidate_id, _, _)| candidate_id == id)
+            .map(|(_, name, purpose)| (name.clone(), purpose.clone()))
+            .unwrap_or_else(|| (id.to_string(), String::new()))
+    };
 
     let candidates: Vec<RecommendationCandidate> = ranked
         .iter()
         .map(|r| {
-            let (name, purpose) =
-                crate::extension_host::recommendation_display(app, &r.extension_id)
-                    .unwrap_or_else(|| (r.extension_id.clone(), String::new()));
+            let (name, purpose) = display(&r.extension_id);
             RecommendationCandidate {
                 extension_id: r.extension_id.clone(),
                 name,
@@ -320,19 +354,32 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_
         None
     };
 
-    // The surface consumes this; the backend draws nothing. Empty candidates is
-    // the "nothing matched" state, not a separate event.
-    let _ = app.emit(
-        ExtensionRecommendation::NAME,
-        ExtensionRecommendation {
-            request: request.clone(),
-            candidates: candidates.clone(),
-            name_only: !semantic_available,
-            auto_sent: auto_sent.clone(),
-        },
-    );
-
     if let Some(extension_id) = auto_sent {
+        // Atomically claim only the request this ranking belongs to. A fresh
+        // capture may have superseded it while the embedder was working.
+        let claimed = {
+            let mut slot = pending().lock().unwrap();
+            if slot.as_ref().is_some_and(|p| p.id == request_id) {
+                slot.take();
+                true
+            } else {
+                false
+            }
+        };
+        if !claimed {
+            return;
+        }
+        let _ = app.emit_to(
+            "main",
+            ExtensionRecommendation::NAME,
+            ExtensionRecommendation {
+                presentation_id: 0,
+                request: request.clone(),
+                candidates: candidates.clone(),
+                name_only: !semantic_available,
+                auto_sent: Some(extension_id.clone()),
+            },
+        );
         log::info!("[GRAIN] extension mode: auto-sent to {extension_id}");
         let score = ranked.first().map(|r| r.score);
         action_log::record(
@@ -346,8 +393,7 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_
         // an earlier presentation is torn down before the hand-off.
         crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
         // No accept is coming — clear the pending request and hand off now.
-        *pending().lock().unwrap() = None;
-        run_hand_off(app, extension_id, request);
+        run_hand_off(app, request_id, extension_id, request, declined);
         return;
     }
 
@@ -359,10 +405,6 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_
     let pill_candidates: Vec<grain_core::RecommendCandidate> = {
         let ranked_ids: std::collections::HashSet<&str> =
             ranked.iter().map(|r| r.extension_id.as_str()).collect();
-        let display = |id: &str| {
-            crate::extension_host::recommendation_display(app, id)
-                .unwrap_or_else(|| (id.to_string(), String::new()))
-        };
         let mut picks: Vec<grain_core::RecommendCandidate> = ranked
             .iter()
             .map(|r| {
@@ -381,12 +423,10 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_
                 }
             })
             .collect();
-        let mut rest: Vec<grain_core::RecommendCandidate> =
-            crate::extension_host::searchable_ids()
+        let mut rest: Vec<grain_core::RecommendCandidate> = pool
                 .into_iter()
-                .filter(|id| !ranked_ids.contains(id.as_str()) && !declined.contains(id))
-                .map(|id| {
-                    let (name, purpose) = display(&id);
+                .filter(|(id, _, _)| !ranked_ids.contains(id.as_str()))
+                .map(|(id, name, purpose)| {
                     grain_core::RecommendCandidate {
                         extension_id: id,
                         name,
@@ -406,10 +446,38 @@ async fn present(app: &AppHandle, request: String, declined: Vec<String>, allow_
         picks.append(&mut rest);
         picks
     };
+
+    // Publish only if this is still the live request, and bind accept to the
+    // exact ids this presentation contains before either UI can answer.
+    let presentation_id = PRESENTATION_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
+    {
+        let mut slot = pending().lock().unwrap();
+        let Some(p) = slot.as_mut().filter(|p| p.id == request_id) else {
+            return;
+        };
+        p.presentation_id = presentation_id;
+        p.allowed = pill_candidates
+            .iter()
+            .map(|candidate| candidate.extension_id.clone())
+            .collect();
+    }
+    // The Tauri event remains for the settings-side/headless consumer; the pill
+    // uses the native daemon event below. Empty candidates is "nothing matched".
+    let _ = app.emit_to(
+        "main",
+        ExtensionRecommendation::NAME,
+        ExtensionRecommendation {
+            presentation_id,
+            request: request.clone(),
+            candidates: candidates.clone(),
+            name_only: !semantic_available,
+            auto_sent: None,
+        },
+    );
     crate::bridge::emit(
         app,
         grain_core::DaemonEvent::ExtensionRecommend {
-            request: request.clone(),
+            presentation_id,
             candidates: pill_candidates,
             name_only: !semantic_available,
         },
@@ -483,21 +551,27 @@ fn auto_send_decision(
 /// Called by the surface (behind the §6b gate); no-op if there is no pending
 /// request or it does not match, so a stale click after a new capture does
 /// nothing.
-pub async fn decline(app: &AppHandle, request: &str, extension_id: &str) {
-    let declined = {
+pub async fn decline(app: &AppHandle, presentation_id: u64, extension_id: &str) {
+    let (request_id, request, declined) = {
         let mut slot = pending().lock().unwrap();
         let Some(p) = slot.as_mut() else {
             return;
         };
-        if p.request != request {
+        if p.presentation_id != presentation_id
+            || !p.allowed.iter().any(|id| id == extension_id)
+        {
             return;
         }
         if !p.declined.iter().any(|id| id == extension_id) {
             p.declined.push(extension_id.to_string());
         }
-        p.declined.clone()
+        // Freeze the old presentation while it is being re-ranked. A second
+        // click from that surface is stale even though the request text matches.
+        p.presentation_id = 0;
+        p.allowed.clear();
+        (p.id, p.request.clone(), p.declined.clone())
     };
-    present(app, request.to_string(), declined, false).await;
+    present(app, request_id, request, declined, false).await;
 }
 
 /// The user accepted an extension: hand it the full request
@@ -510,14 +584,28 @@ pub async fn decline(app: &AppHandle, request: &str, extension_id: &str) {
 /// Spawned rather than awaited because the caller is a Tauri command that must
 /// return at once — the extension may call a model or the network, which is
 /// exactly what [`crate::extension_host::hand_off`]'s generous deadline is for.
-pub fn accept(app: &AppHandle, extension_id: &str) {
-    let request = {
+pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) {
+    let accepted = {
         let mut slot = pending().lock().unwrap();
-        match slot.take() {
-            Some(p) => p.request,
-            None => return,
+        let Some(pending) = slot.as_ref() else {
+            return;
+        };
+        if pending.presentation_id != presentation_id
+            || !pending.allowed.iter().any(|id| id == extension_id)
+        {
+            log::warn!(
+                "[GRAIN] extension mode: ignored stale or invalid choice {extension_id}"
+            );
+            return;
         }
+        slot.take().unwrap()
     };
+    let Pending {
+        id,
+        request,
+        declined,
+        ..
+    } = accepted;
     log::info!("[GRAIN] extension mode: accepted {extension_id}");
     // The user chose from the surface — tear it down before the hand-off.
     crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
@@ -528,17 +616,41 @@ pub fn accept(app: &AppHandle, extension_id: &str) {
         None,
         ActionLogOutcome::Chose,
     );
-    run_hand_off(app, extension_id.to_string(), request);
+    run_hand_off(app, id, extension_id.to_string(), request, declined);
 }
 
 /// The user dismissed the recommendation surface without choosing (§8). Clears
 /// the pending request so a later stale click does nothing and hides the
 /// surface. No-op past the first dismissal.
-pub fn dismiss(app: &AppHandle) {
-    let had = pending().lock().unwrap().take().is_some();
+pub fn dismiss(app: &AppHandle, presentation_id: u64) {
+    let dismissed = {
+        let mut slot = pending().lock().unwrap();
+        if slot
+            .as_ref()
+            .is_some_and(|pending| pending.presentation_id == presentation_id)
+        {
+            slot.take();
+            true
+        } else {
+            false
+        }
+    };
+    if !dismissed {
+        return;
+    }
+    REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
     crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
-    if had {
-        log::info!("[GRAIN] extension mode: surface dismissed");
+    log::info!("[GRAIN] extension mode: surface dismissed");
+}
+
+/// Invalidate Extension Mode because another capture has begun. Unlike
+/// [`dismiss`], this emits only when there was a chooser to withdraw; the epoch
+/// still advances every time so a handed-off extension cannot decline back over
+/// a newer recording.
+pub fn supersede(app: &AppHandle) {
+    REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
+    if pending().lock().unwrap().take().is_some() {
+        crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
     }
 }
 
@@ -550,7 +662,13 @@ pub fn dismiss(app: &AppHandle) {
 /// Spawned rather than awaited because the callers must return at once — the
 /// extension may call a model or the network, which is what
 /// [`crate::extension_host::hand_off`]'s generous deadline is for.
-fn run_hand_off(app: &AppHandle, extension_id: String, request: String) {
+fn run_hand_off(
+    app: &AppHandle,
+    request_id: u64,
+    extension_id: String,
+    request: String,
+    mut declined: Vec<String>,
+) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         use crate::extension_host::HandOffOutcome;
@@ -570,6 +688,46 @@ fn run_hand_off(app: &AppHandle, extension_id: String, request: String) {
                     None,
                     ActionLogOutcome::Ran { confirmed: false },
                 );
+            }
+            HandOffOutcome::Declined(reason) => {
+                log::info!(
+                    "[GRAIN] extension mode: {extension_id} declined the request — {reason}"
+                );
+                action_log::record(
+                    &request,
+                    Some(extension_id.clone()),
+                    None,
+                    None,
+                    ActionLogOutcome::Refused {
+                        reason: format!("extension declined: {reason}"),
+                    },
+                );
+                if !declined.iter().any(|id| id == &extension_id) {
+                    declined.push(extension_id.clone());
+                }
+                // Reopen only if no newer capture/cancel has advanced the epoch.
+                // The compare happens again under the pending lock so a new
+                // delivery cannot slip between the check and the write.
+                let reopen = if REQUEST_EPOCH.load(Ordering::SeqCst) == request_id {
+                    let mut slot = pending().lock().unwrap();
+                    if REQUEST_EPOCH.load(Ordering::SeqCst) == request_id && slot.is_none() {
+                        *slot = Some(Pending {
+                            id: request_id,
+                            presentation_id: 0,
+                            request: request.clone(),
+                            declined: declined.clone(),
+                            allowed: Vec::new(),
+                        });
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                if reopen {
+                    present(&app, request_id, request, declined, false).await;
+                }
             }
             HandOffOutcome::Failed(reason) => {
                 log::warn!("[GRAIN] extension mode: {extension_id} failed — {reason}");

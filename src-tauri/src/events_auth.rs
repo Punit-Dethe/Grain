@@ -119,6 +119,15 @@ pub fn allows_event(identity: &ClientIdentity, ev: &DaemonEvent) -> bool {
     if identity.role == ClientRole::DevControl {
         return false;
     }
+    // Recommendation ranking and the searchable pool are host UI state before
+    // the user has selected an owner. They are pill-only regardless of ordinary
+    // event grants; workers must not observe or spoof chooser lifecycle.
+    if matches!(
+        ev,
+        DaemonEvent::ExtensionRecommend { .. } | DaemonEvent::ExtensionRecommendClear
+    ) {
+        return identity.role == ClientRole::Pill;
+    }
     match &identity.caps {
         CapabilitySet::All => true,
         CapabilitySet::Named(caps) => caps.contains(required_capability(ev)),
@@ -203,6 +212,29 @@ mod tests {
 
         assert!(!allows_reverse(&ext));
         assert!(allows_reverse(&pill));
+    }
+
+    #[test]
+    fn extension_recommendations_are_pill_only_even_with_transcript_access() {
+        let event = DaemonEvent::ExtensionRecommend {
+            presentation_id: 7,
+            candidates: vec![],
+            name_only: false,
+        };
+        let worker = ClientIdentity {
+            id: "com.example.transcriber".into(),
+            role: ClientRole::Worker,
+            caps: CapabilitySet::Named(
+                ["events:transcripts".to_string()].into_iter().collect(),
+            ),
+        };
+        let pill = ClientIdentity {
+            id: "pill".into(),
+            role: ClientRole::Pill,
+            caps: CapabilitySet::All,
+        };
+        assert!(!allows_event(&worker, &event));
+        assert!(allows_event(&pill, &event));
     }
 
     #[test]

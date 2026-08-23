@@ -82,11 +82,6 @@ pub fn daemon_event_capability(variant: &str) -> Option<&'static str> {
         | "AsrSegmentFinal"
         | "AsrSessionFinal" => Some("events:transcripts"),
         "AudioLevel" => Some("events:audio-levels"),
-        // The recommendation surface carries the captured request text (the
-        // whole point is to route what was said) — transcript-grade, so it takes
-        // the strongest existing grant. Its consumer is the pill, which holds
-        // `All`; no ordinary extension worker subscribes to it.
-        "ExtensionRecommend" | "ExtensionRecommendClear" => Some("events:transcripts"),
         known if DAEMON_EVENT_VARIANTS.contains(&known) => Some("events:sessions"),
         _ => None,
     }
@@ -341,14 +336,17 @@ pub enum DaemonEvent {
     /// embedding model is absent (ranking was lexical-only, §5) so the surface
     /// can say so and offer the download.
     ExtensionRecommend {
-        request: String,
+        /// Host-generated nonce binding every reverse action to this exact
+        /// presentation. The pill treats it as opaque.
+        presentation_id: u64,
         candidates: Vec<RecommendCandidate>,
         #[serde(default)]
         name_only: bool,
     },
     /// [GRAIN] Withdraw the Extension Mode selection surface: the user chose or
-    /// cancelled, Grain auto-sent (§5), or a new session superseded it. Emitted
-    /// exactly once per [`DaemonEvent::ExtensionRecommend`] that reached the pill.
+    /// cancelled, Grain auto-sent (§5), or a new session superseded it. Idempotent:
+    /// lifecycle races may clear an already-withdrawn surface and the pill treats
+    /// that as a no-op.
     ExtensionRecommendClear,
 
     // -- Misc UI signals --
@@ -561,6 +559,11 @@ mod variant_name_tests {
             },
             DaemonEvent::ModelUnloaded,
             DaemonEvent::AudioLevel { levels: vec![] },
+            DaemonEvent::ExtensionRecommend {
+                presentation_id: 7,
+                candidates: vec![],
+                name_only: true,
+            },
             DaemonEvent::ThemeConfig {
                 theme: ResolvedTheme::Dark,
             },
@@ -590,7 +593,27 @@ mod variant_name_tests {
             daemon_event_capability("AudioLevel"),
             Some("events:audio-levels")
         );
+        assert_eq!(
+            daemon_event_capability("ExtensionRecommend"),
+            Some("events:sessions")
+        );
         assert_eq!(daemon_event_capability("NotARealEvent"), None);
+    }
+
+    #[test]
+    fn extension_chooser_actions_keep_the_reverse_wire_shape() {
+        let choose = serde_json::to_value(PillAction::ExtensionChoose {
+            presentation_id: 7,
+            extension_id: "com.example.translate".into(),
+        })
+        .unwrap();
+        assert_eq!(choose["action"], "extension_choose");
+        assert_eq!(choose["presentation_id"], 7);
+        assert_eq!(choose["extension_id"], "com.example.translate");
+        assert_eq!(
+            serde_json::to_value(PillAction::ExtensionDownloadModel).unwrap()["action"],
+            "extension_download_model"
+        );
     }
 }
 
@@ -646,8 +669,14 @@ pub enum PillAction {
     /// hand this extension the whole captured request
     /// (`docs/Extensions V1/PLAN.md` §3). The core wakes it, delivers the
     /// request, and clears the surface.
-    ExtensionChoose { extension_id: String },
+    ExtensionChoose {
+        presentation_id: u64,
+        extension_id: String,
+    },
     /// [GRAIN] Extension Mode: the user dismissed the selection surface (Esc /
     /// clicked away) without choosing. The core drops the pending request.
-    ExtensionCancel,
+    ExtensionCancel { presentation_id: u64 },
+    /// [GRAIN] Extension Mode is running in name-only mode and the user accepted
+    /// the chooser's first-use offer to download the shared semantic model.
+    ExtensionDownloadModel,
 }
