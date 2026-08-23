@@ -183,8 +183,8 @@ pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
     if !report.is_clean() {
         return Err(format!("doctor found problems:\n{report}"));
     }
-    let raw = fs::read_to_string(root.join("manifest.json"))
-        .map_err(|error| format!("read manifest.json: {error}"))?;
+    let manifest_path = safe_project_file(&root, "manifest.json", "manifest")?;
+    let raw = read_bounded_utf8(&manifest_path, MAX_MANIFEST_BYTES, "manifest.json")?;
     let project: ExtensionProjectManifest =
         serde_json::from_str(&raw).map_err(|error| format!("parse manifest.json: {error}"))?;
     if project.manifest.tier == Tier::Native {
@@ -194,22 +194,12 @@ pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
     let mut manifest = project.manifest;
     if manifest.tier == Tier::Scripted {
         let entry = safe_project_file(&root, &project.entry, "entry")?;
-        let metadata = fs::metadata(&entry).map_err(|error| {
-            format!(
-                "read built entry '{}': {error}; run the project build first",
-                project.entry
-            )
-        })?;
-        if !metadata.is_file() || metadata.len() > MAX_ENTRY_BYTES {
-            return Err("built entry must be a file no larger than 5 MB".into());
-        }
-        manifest.entry_source = fs::read_to_string(&entry)
-            .map_err(|error| format!("read built entry '{}': {error}", project.entry))?;
+        manifest.entry_source = read_bounded_utf8(&entry, MAX_ENTRY_BYTES, &project.entry)
+            .map_err(|error| format!("{error}; run the project build first"))?;
     }
 
     let icon = safe_project_file(&root, &manifest.icon, "icon")?;
-    let icon_bytes =
-        fs::read(&icon).map_err(|error| format!("read icon '{}': {error}", manifest.icon))?;
+    let icon_bytes = read_bounded(&icon, grain_sdk::ICON_MAX_BYTES, &manifest.icon)?;
     let pack = GrainPack {
         manifest,
         payloads: PackPayloads {
@@ -219,6 +209,25 @@ pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
     };
     pack.validate()?;
     Ok(pack)
+}
+
+fn read_bounded(path: &Path, max: u64, label: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    let file = fs::File::open(path).map_err(|error| format!("read {label}: {error}"))?;
+    let mut bytes = Vec::new();
+    file.take(max + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("read {label}: {error}"))?;
+    if bytes.len() as u64 > max {
+        return Err(format!("{label} exceeds its {max}-byte limit"));
+    }
+    Ok(bytes)
+}
+
+fn read_bounded_utf8(path: &Path, max: u64, label: &str) -> Result<String, String> {
+    String::from_utf8(read_bounded(path, max, label)?)
+        .map_err(|_| format!("{label} is not valid UTF-8"))
 }
 
 fn safe_project_file(root: &Path, relative: &str, label: &str) -> Result<PathBuf, String> {

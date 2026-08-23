@@ -147,6 +147,8 @@ where
 }
 
 fn replace_artifact(output: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
     let parent = output.parent().context("artifact path has no parent")?;
     let sequence = NEXT_ARTIFACT_TEMP.fetch_add(1, Ordering::Relaxed);
     let name = output
@@ -158,7 +160,17 @@ fn replace_artifact(output: &Path, bytes: &[u8]) -> Result<()> {
         ".{name}.{}-{sequence}.previous",
         std::process::id()
     ));
-    fs::write(&temp, bytes).with_context(|| format!("write {}", temp.display()))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .with_context(|| format!("create {}", temp.display()))?;
+    if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(&temp);
+        return Err(error).with_context(|| format!("write {}", temp.display()));
+    }
+    drop(file);
 
     let had_output = output.exists();
     if had_output {

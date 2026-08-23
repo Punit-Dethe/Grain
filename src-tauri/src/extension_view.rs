@@ -36,7 +36,7 @@ struct ActiveView {
 
 #[derive(Clone, Copy, Default)]
 struct OutputTarget {
-    hwnd: Option<isize>,
+    window: Option<crate::agent::CapturedWindowTarget>,
     has_selection: bool,
 }
 
@@ -46,17 +46,17 @@ fn output_target() -> &'static Mutex<Option<OutputTarget>> {
 }
 
 /// Snapshot the destination before the recommendation UI takes focus. Windows
-/// can inspect selection length without reading it; other platforms reuse
-/// Grain's existing transient copy-and-restore probe so Insert/Replace remain
-/// honestly labelled without retaining the selected text.
+/// can inspect selection length without reading it. Other platforms fail
+/// closed for Insert/Replace until Grain can bind and revalidate an original
+/// native destination; Copy remains available everywhere.
 pub fn capture_output_target(_app: &AppHandle) {
     #[cfg(windows)]
     let has_selection = crate::context_detect::focused_has_selection();
     #[cfg(not(windows))]
-    let has_selection = crate::agent::capture_selection(_app).is_some();
+    let has_selection = false;
 
     *output_target().lock().unwrap() = Some(OutputTarget {
-        hwnd: crate::agent::foreground_hwnd(),
+        window: crate::agent::foreground_window_target(),
         has_selection,
     });
 }
@@ -103,15 +103,7 @@ fn result_content(message: String, tone: ResultTone, allow_output: bool) -> Exte
 }
 
 fn target_is_usable(target: OutputTarget) -> bool {
-    #[cfg(windows)]
-    {
-        target.hwnd.is_some()
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = target;
-        true
-    }
+    target.window.is_some()
 }
 
 #[derive(Clone, Debug, Serialize, Type)]
@@ -535,6 +527,10 @@ pub fn extension_view_output(
         "replace" => true,
         _ => return Err("unknown result output action".into()),
     };
+    #[cfg(not(windows))]
+    return Err("Insert and Replace require a securely captured native output target".into());
+
+    #[cfg(windows)]
     let (message, target, removed) = {
         let mut slot = active().lock().unwrap();
         let current = slot
@@ -562,16 +558,18 @@ pub fn extension_view_output(
         let removed = slot.take().ok_or("stale extension view session")?;
         (message, target, removed)
     };
+    #[cfg(windows)]
     if let Err(error) = window.destroy() {
         *active().lock().unwrap() = Some(removed);
         *output_target().lock().unwrap() = Some(target);
         return Err(error.to_string());
     }
 
+    #[cfg(windows)]
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(120));
         #[cfg(windows)]
-        if !target.hwnd.is_some_and(crate::agent::refocus_window) {
+        if !target.window.is_some_and(crate::agent::refocus_window) {
             crate::bridge::emit(
                 &app,
                 grain_core::DaemonEvent::PasteError {
@@ -582,18 +580,64 @@ pub fn extension_view_output(
         }
         std::thread::sleep(std::time::Duration::from_millis(120));
 
+        #[cfg(windows)]
+        if !target
+            .window
+            .is_some_and(crate::agent::captured_window_is_foreground)
+        {
+            crate::bridge::emit(
+                &app,
+                grain_core::DaemonEvent::PasteError {
+                    error: "The original app did not keep focus, so Grain cancelled the output."
+                        .into(),
+                },
+            );
+            return;
+        }
+
         if !replace && target.has_selection {
             use enigo::{Enigo, Key, Keyboard, Settings};
-            if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
-                crate::input::release_modifiers(&mut enigo);
-                let _ = enigo.key(Key::RightArrow, enigo::Direction::Click);
-                std::thread::sleep(std::time::Duration::from_millis(35));
+            let collapsed = match Enigo::new(&Settings::default()) {
+                Ok(mut enigo) => {
+                    crate::input::release_modifiers(&mut enigo);
+                    enigo
+                        .key(Key::RightArrow, enigo::Direction::Click)
+                        .map_err(|error| error.to_string())
+                }
+                Err(error) => Err(error.to_string()),
+            };
+            if let Err(error) = collapsed {
+                crate::bridge::emit(
+                    &app,
+                    grain_core::DaemonEvent::PasteError {
+                        error: format!(
+                            "Could not preserve the selected text before insert: {error}"
+                        ),
+                    },
+                );
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(35));
+            #[cfg(windows)]
+            if !target
+                .window
+                .is_some_and(crate::agent::captured_window_is_foreground)
+            {
+                crate::bridge::emit(
+                    &app,
+                    grain_core::DaemonEvent::PasteError {
+                        error: "The original app lost focus before Grain could insert the result."
+                            .into(),
+                    },
+                );
+                return;
             }
         }
         if let Err(error) = crate::clipboard::paste(message, app.clone()) {
             crate::bridge::emit(&app, grain_core::DaemonEvent::PasteError { error });
         }
     });
+    #[cfg(windows)]
     Ok(())
 }
 

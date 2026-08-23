@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "../../../contexts/ThemeContext";
+import { EXTENSION_FRAME_POLICY_TAG } from "@/extensions/extensionFramePolicy";
 import { serializeExtensionPalette } from "@/lib/extensionTheme";
 
 /** Mirror of the Rust `ExtensionSettingRow` (grain_commands.rs). Local type
@@ -194,6 +195,7 @@ export function alignColorScheme(src: string, dark: boolean): string {
  * then the author's markup. The theme is written into the document rather than
  * messaged in after load, so a card can never paint in the wrong one first. */
 const panelDocument = (uiSource: string, dark: boolean): string =>
+  EXTENSION_FRAME_POLICY_TAG +
   PANEL_BRIDGE +
   `<style>:root{color-scheme:${dark ? "dark" : "light"};${hostPalette()}}` +
   `html,body{margin:0;padding:0;}html{overflow:hidden;}</style>` +

@@ -1662,8 +1662,7 @@ fn reap_idle() {
         None => return,
     };
     for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
-        if crate::extension_session::is_owned_by(&id)
-            || crate::extension_view::owns_extension(&id)
+        if crate::extension_session::is_owned_by(&id) || crate::extension_view::owns_extension(&id)
         {
             continue;
         }
@@ -2036,9 +2035,7 @@ fn parse_surface_outcome(value: Value, finish_on_empty: bool) -> SurfaceEventOut
                     SurfaceEventOutcome::Failed(format!("invalid extension view: {reason}"))
                 }
             },
-            Err(error) => {
-                SurfaceEventOutcome::Failed(format!("invalid extension view: {error}"))
-            }
+            Err(error) => SurfaceEventOutcome::Failed(format!("invalid extension view: {error}")),
         };
     }
     if let Some(error) = value.get("error").and_then(Value::as_str) {
@@ -2338,6 +2335,55 @@ pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
 
 /// Load the effective extension source. A dev project is re-read from its
 /// canonical folder; otherwise this reads the installed `.grainpack.json`.
+fn read_pack_file(
+    path: &std::path::Path,
+    trusted: bool,
+    expected_sha256: Option<&str>,
+    expected_id: &str,
+    expected_version: Option<&str>,
+) -> Result<GrainPack, String> {
+    use std::io::Read;
+
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut bytes = Vec::new();
+    file.take(grain_sdk::PACK_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > grain_sdk::PACK_MAX_BYTES {
+        return Err(format!(
+            "extension pack exceeds the {} MiB limit",
+            grain_sdk::PACK_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+    if let Some(expected) = expected_sha256 {
+        grain_core::trust::verify_artifact(&bytes, expected).map_err(|error| {
+            format!("installed extension artifact failed verification: {error}")
+        })?;
+    }
+    let pack: GrainPack = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("invalid extension pack: {error}"))?;
+    if pack.manifest.id != expected_id {
+        return Err(format!(
+            "extension artifact id '{}' does not match installed id '{expected_id}'",
+            pack.manifest.id
+        ));
+    }
+    if let Some(version) = expected_version {
+        if pack.manifest.version != version {
+            return Err(format!(
+                "extension artifact version '{}' does not match installed version '{version}'",
+                pack.manifest.version
+            ));
+        }
+    }
+    if trusted {
+        pack.validate_trusted()?;
+    } else {
+        pack.validate()?;
+    }
+    Ok(pack)
+}
+
 pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, String> {
     grain_sdk::validate_extension_id(id)?;
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -2352,24 +2398,58 @@ pub fn load_manifest_result(app: &AppHandle, id: &str) -> Result<GrainPack, Stri
         .try_state::<Arc<AppContext>>()
         .ok_or("app context unavailable")?;
     let ext_dir = ctx.data_dir.join("extensions");
+    let installed_record = app
+        .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
+        .and_then(|registry| registry.record(id));
     // Legacy single-file location (manual import, seeded built-ins).
     let legacy = ext_dir.join(format!("{id}.grainpack.json"));
-    if legacy.exists() {
-        let raw = std::fs::read_to_string(&legacy).map_err(|error| error.to_string())?;
-        return serde_json::from_str(&raw).map_err(|error| error.to_string());
+    if legacy.exists()
+        && installed_record
+            .as_ref()
+            .is_none_or(|record| record.trust == grain_sdk::Trust::Dev)
+    {
+        let expected = installed_record
+            .as_ref()
+            .and_then(|record| record.artifact_sha256.as_deref());
+        if installed_record.is_some() && expected.is_none() {
+            return Err(format!(
+                "extension '{id}' has no artifact hash; reimport it before use"
+            ));
+        }
+        return read_pack_file(
+            &legacy,
+            false,
+            expected,
+            id,
+            installed_record
+                .as_ref()
+                .map(|record| record.installed_version.as_str()),
+        );
     }
     // [GRAIN] Phase 5B: a store-installed pack lives in its versioned directory
     // `<id>/<version>/pack.grainpack.json` (SPEC §5.2 — atomic, previous-version
     // retained). Resolve it from the record's installed version.
-    if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
-        if let Some(rec) = reg.record(id) {
-            grain_sdk::validate_extension_version(&rec.installed_version)?;
-            let versioned = grain_core::install::version_dir(&ext_dir, id, &rec.installed_version)
-                .join("pack.grainpack.json");
-            if versioned.exists() {
-                let raw = std::fs::read_to_string(&versioned).map_err(|e| e.to_string())?;
-                return serde_json::from_str(&raw).map_err(|e| e.to_string());
+    if let Some(rec) = installed_record {
+        if rec.trust == grain_sdk::Trust::Dev {
+            return Err(format!("no manually imported pack file for '{id}'"));
+        }
+        grain_sdk::validate_extension_version(&rec.installed_version)?;
+        let versioned = grain_core::install::version_dir(&ext_dir, id, &rec.installed_version)
+            .join("pack.grainpack.json");
+        if versioned.exists() {
+            let expected = rec.artifact_sha256.as_deref();
+            if expected.is_none() && rec.trust != grain_sdk::Trust::Dev {
+                return Err(format!(
+                    "verified extension '{id}' has no artifact hash; reinstall it before use"
+                ));
             }
+            return read_pack_file(
+                &versioned,
+                true,
+                expected,
+                id,
+                Some(rec.installed_version.as_str()),
+            );
         }
     }
     Err(format!("no pack file for '{id}'"))
@@ -2423,6 +2503,7 @@ pub fn reload_dev_extension(
         enabled,
         toggle_seq: prior.toggle_seq,
         installed_version: loaded.pack.manifest.version.clone(),
+        artifact_sha256: None,
         granted: granted.clone(),
         slots: loaded.pack.manifest.slots.clone(),
         variant_slots: prior.variant_slots,
@@ -2625,6 +2706,21 @@ mod tests {
         assert!(!HAS_ACTIVATIONS.load(Ordering::Relaxed));
     }
 
+    #[test]
+    fn installed_pack_hash_is_rechecked_before_runtime_load() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pack.grainpack.json");
+        let bytes = br#"{"manifest":{"id":"com.x.hash","name":"Hash","version":"1","tier":"scripted","entry_source":"x"}}"#;
+        std::fs::write(&path, bytes).unwrap();
+        let hash = grain_core::trust::sha256_hex(bytes);
+        assert!(read_pack_file(&path, false, Some(&hash), "com.x.hash", Some("1")).is_ok());
+
+        let mut tampered = bytes.to_vec();
+        tampered.push(b' ');
+        std::fs::write(&path, tampered).unwrap();
+        assert!(read_pack_file(&path, false, Some(&hash), "com.x.hash", Some("1")).is_err());
+    }
+
     // ── The Extension Mode pool (`docs/Extensions V1/PLAN.md` §2) ───────────
 
     fn pack_of(extra: &str) -> GrainPack {
@@ -2643,6 +2739,7 @@ mod tests {
             enabled: true,
             toggle_seq: 1,
             installed_version: "1.0".into(),
+            artifact_sha256: None,
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: Some(grain_core::extensions::actions_fingerprint(

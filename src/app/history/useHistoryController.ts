@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import { readFile } from "@tauri-apps/plugin-fs";
 import {
   commands,
@@ -7,7 +6,6 @@ import {
   type HistoryEntry,
   type HistoryUpdatePayload,
 } from "@/bindings";
-import { useOsType } from "@/hooks/useOsType";
 
 const INITIAL_PAGE_SIZE = 3;
 const HISTORY_PAGE_SIZE = 30;
@@ -65,7 +63,6 @@ export interface HistoryController {
 }
 
 export function useHistoryController(): HistoryController {
-  const osType = useOsType();
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -189,25 +186,17 @@ export function useHistoryController(): HistoryController {
     await navigator.clipboard.writeText(text);
   }, []);
 
-  const getAudioUrl = useCallback(
-    async (fileName: string) => {
-      try {
-        const result = await commands.getAudioFilePath(fileName);
-        if (result.status !== "ok") return null;
-        if (osType === "linux") {
-          const fileData = await readFile(result.data);
-          return URL.createObjectURL(
-            new Blob([fileData], { type: "audio/wav" }),
-          );
-        }
-        return convertFileSrc(result.data, "asset");
-      } catch (error) {
-        console.error("Failed to load history audio:", error);
-        return null;
-      }
-    },
-    [osType],
-  );
+  const getAudioUrl = useCallback(async (fileName: string) => {
+    try {
+      const result = await commands.getAudioFilePath(fileName);
+      if (result.status !== "ok") return null;
+      const fileData = await readFile(result.data);
+      return URL.createObjectURL(new Blob([fileData], { type: "audio/wav" }));
+    } catch (error) {
+      console.error("Failed to load history audio:", error);
+      return null;
+    }
+  }, []);
 
   return {
     entries,

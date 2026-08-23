@@ -49,18 +49,23 @@ fn path(app: &AppHandle) -> Option<PathBuf> {
 }
 
 fn load(app: &AppHandle) -> Misroutes {
+    use std::io::Read;
+
     let Some(path) = path(app) else {
         return Misroutes::default();
     };
-    if std::fs::metadata(&path)
-        .ok()
-        .is_some_and(|metadata| metadata.len() > MAX_FILE_BYTES)
+    let Ok(file) = std::fs::File::open(path) else {
+        return Misroutes::default();
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() as u64 > MAX_FILE_BYTES
     {
         return Misroutes::default();
     }
-    let Ok(bytes) = std::fs::read(path) else {
-        return Misroutes::default();
-    };
     let Ok(mut data) = serde_json::from_slice::<Misroutes>(&bytes) else {
         return Misroutes::default();
     };
@@ -82,6 +87,8 @@ fn load(app: &AppHandle) -> Misroutes {
 }
 
 fn save(app: &AppHandle, data: &Misroutes) -> Result<(), String> {
+    use std::io::Write;
+
     let path = path(app).ok_or("app context unavailable")?;
     let parent = path.parent().ok_or("misroute path has no parent")?;
     std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
@@ -89,8 +96,17 @@ fn save(app: &AppHandle, data: &Misroutes) -> Result<(), String> {
     if bytes.len() as u64 > MAX_FILE_BYTES {
         return Err("misroute counters exceeded their storage bound".into());
     }
-    let temp = parent.join(format!(".misroutes-{}.tmp", std::process::id()));
-    std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+    let temp = parent.join(format!(".misroutes-{}.tmp", uuid::Uuid::new_v4().simple()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|error| error.to_string())?;
+    if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(error.to_string());
+    }
+    drop(file);
     if path.exists() {
         std::fs::remove_file(&path).map_err(|error| {
             let _ = std::fs::remove_file(&temp);

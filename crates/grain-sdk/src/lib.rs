@@ -48,7 +48,7 @@ pub use manifest::{
     ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry, PromptTarget,
     RedirectMethod, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier,
     WorkspaceDecl, ANCHORS, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS,
-    PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
+    PACK_ENTRY_MAX_BYTES, PACK_MAX_BYTES, PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
 };
 pub use pill_skin::PillSkin;
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};

@@ -732,6 +732,17 @@ pub const ICON_MASTER_DIM: u32 = 512;
 /// 512×512 header from hiding megabytes of IDAT (a decompression bomb).
 pub const ICON_MAX_BYTES: u64 = 512 * 1024;
 
+/// Maximum UTF-8 source carried by a scripted single-file pack. Registry CI
+/// enforces the same limit before packaging; keeping it in the wire contract
+/// prevents a manually supplied pack from bypassing that boundary.
+pub const PACK_ENTRY_MAX_BYTES: usize = 5 * 1024 * 1024;
+
+/// Hard ceiling for one JSON `.grainpack` document. This covers the 5 MiB
+/// entry, the base64-encoded icon, and bounded manifest/payload metadata while
+/// preventing an import or startup load from allocating an attacker-sized
+/// document before validation can run.
+pub const PACK_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
 /// Read PNG dimensions from the mandatory IHDR header. This intentionally does
 /// not claim the image is decodable; authoring checks and the host perform a
 /// full decode before accepting/materialising artwork.
@@ -1786,14 +1797,29 @@ fn valid_authentication_id(id: &str) -> bool {
 }
 
 fn valid_https_endpoint(value: &str) -> bool {
-    if value.len() > 2048 || value.contains(['?', '#']) {
+    if value.len() > 2048
+        || value.contains(['?', '#', '\\'])
+        || value.chars().any(char::is_whitespace)
+    {
         return false;
     }
     let Some(rest) = value.strip_prefix("https://") else {
         return false;
     };
     let authority = rest.split('/').next().unwrap_or_default();
-    !authority.is_empty() && !authority.contains('@') && !authority.chars().any(char::is_whitespace)
+    if authority.is_empty() || authority.contains(['@', '%']) {
+        return false;
+    }
+    let (host, valid_port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (
+            host,
+            !port.is_empty()
+                && port.bytes().all(|byte| byte.is_ascii_digit())
+                && port.parse::<u16>().is_ok(),
+        ),
+        None => (authority, true),
+    };
+    valid_port && network_capability_host(&format!("net:{host}")) == Some(host)
 }
 
 fn validate_authentication(
@@ -1888,8 +1914,14 @@ fn validate_authentication(
             || decl.authorization_parameters.iter().any(|(key, value)| {
                 key.is_empty()
                     || key.len() > 64
+                    || !key.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+                    })
                     || value.len() > 1024
-                    || RESERVED.contains(&key.as_str())
+                    || value.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
+                    || RESERVED
+                        .iter()
+                        .any(|reserved| key.eq_ignore_ascii_case(reserved))
             })
         {
             return Err(format!(
@@ -2034,23 +2066,30 @@ impl GrainPack {
     /// Structural validation (Phase 2: tier-A packs and tier-B scripted;
     /// `native` still rejected — it arrives with the tier-C supervisor).
     pub fn validate(&self) -> Result<(), String> {
-        self.validate_inner(false)
+        self.validate_inner(false, false)
     }
 
     /// Load-unpacked validation is the only Phase-4 path allowed to admit a
     /// native companion. Installed/imported packs continue through `validate`.
     pub fn validate_dev(&self) -> Result<(), String> {
-        self.validate_inner(true)
+        self.validate_inner(true, false)
     }
 
-    fn validate_inner(&self, allow_native: bool) -> Result<(), String> {
+    /// Validation for artifacts whose bytes were authenticated by Grain's
+    /// signed catalogue. Only that trust path may claim the `grain.` namespace
+    /// or carry a native companion outside developer mode.
+    pub fn validate_trusted(&self) -> Result<(), String> {
+        self.validate_inner(true, true)
+    }
+
+    fn validate_inner(&self, allow_native: bool, allow_reserved_id: bool) -> Result<(), String> {
         let m = &self.manifest;
         validate_extension_id(&m.id)?;
         validate_extension_version(&m.version)?;
         // `grain.` is reserved: a USER-imported pack may not claim a first-party
         // identity. Packs Grain publishes are validated on the path that installs
         // them from the signed catalogue, not through this importer.
-        if m.id.starts_with("grain.") {
+        if m.id.starts_with("grain.") && !allow_reserved_id {
             return Err("the 'grain.' id prefix is reserved for built-ins".into());
         }
         if m.name.trim().is_empty() {
@@ -2096,6 +2135,12 @@ impl GrainPack {
             Tier::Scripted => {
                 if m.entry_source.trim().is_empty() {
                     return Err("scripted extensions require entry_source".into());
+                }
+                if m.entry_source.len() > PACK_ENTRY_MAX_BYTES {
+                    return Err(format!(
+                        "scripted extension entry is larger than {} MB",
+                        PACK_ENTRY_MAX_BYTES / (1024 * 1024)
+                    ));
                 }
                 if m.companion.is_some() {
                     return Err("scripted extensions must not declare a companion".into());
@@ -3125,6 +3170,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn only_trusted_catalogue_artifacts_may_claim_reserved_ids() {
+        let pack: GrainPack = serde_json::from_str(
+            r#"{"manifest":{"id":"grain.first-party","name":"First party","version":"1","tier":"pack"}}"#,
+        )
+        .unwrap();
+
+        assert!(pack.validate().is_err());
+        assert!(pack.validate_dev().is_err());
+        assert!(pack.validate_trusted().is_ok());
+    }
+
     /// A full Phase-3 scripted manifest parses and validates, and the settings
     /// schema keeps its internally-tagged shape.
     #[test]
@@ -3304,6 +3361,31 @@ mod tests {
             "\"clientId\":\"github-public\",\"clientSecret\":\"must-not-ship\"",
         );
         assert!(serde_json::from_str::<GrainPack>(&with_secret).is_err());
+    }
+
+    #[test]
+    fn authentication_rejects_ambiguous_endpoints_and_reserved_parameter_case() {
+        let raw = r#"{"manifest":{"id":"com.x.auth","name":"Auth","version":"1","tier":"scripted","entry_source":"x","permissions":["auth:service","net:api.example.com"],"contributes":{"authentication":[{"id":"service","type":"oauth2-pkce","providerName":"Service","clientId":"public","authorizationEndpoint":"https://login.example.com/oauth/authorize","tokenEndpoint":"https://login.example.com/oauth/token","scopes":["read"],"apiHosts":["api.example.com"]}]}}}"#;
+        let mut parsed: GrainPack = serde_json::from_str(raw).unwrap();
+        parsed.manifest.contributes.authentication[0]
+            .authorization_parameters
+            .insert("STATE".into(), "override".into());
+        assert!(parsed.validate().is_err());
+
+        let mut parsed: GrainPack = serde_json::from_str(raw).unwrap();
+        parsed.manifest.contributes.authentication[0].token_endpoint =
+            r"https://login.example.com\@evil.example/token".into();
+        assert!(parsed.validate().is_err());
+    }
+
+    #[test]
+    fn scripted_pack_entry_has_a_wire_size_ceiling() {
+        let mut parsed: GrainPack = serde_json::from_str(
+            r#"{"manifest":{"id":"com.x.large","name":"Large","version":"1","tier":"scripted","entry_source":"x"}}"#,
+        )
+        .unwrap();
+        parsed.manifest.entry_source = "x".repeat(PACK_ENTRY_MAX_BYTES + 1);
+        assert!(parsed.validate().is_err());
     }
 
     #[test]
