@@ -21,6 +21,10 @@ use tauri::AppHandle;
 
 /// The default operating-point sweep when the golden file names none.
 const DEFAULT_THRESHOLDS: &[f32] = &[0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.80];
+/// Headless eval is developer-controlled, but still must not allocate an
+/// unbounded file before JSON validation. Large corpora should be split into
+/// stable shards and compared independently.
+const MAX_GOLDEN_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Detect `--eval <file>` (or `--eval=<file>`) in the process args, without
 /// touching the upstream `CliArgs`. Returns the golden-file path when requested.
@@ -44,7 +48,7 @@ fn json_requested() -> bool {
 
 /// A golden test set: the extension under test and its labelled utterances.
 #[derive(Deserialize)]
-struct Golden {
+struct CommandGolden {
     /// Path to the extension's `manifest.json`, relative to this file (or
     /// absolute). Its `contributes.actions` are the commands eval ranks.
     manifest: String,
@@ -63,8 +67,39 @@ struct GoldenCase {
 
 /// Run the eval and return a process exit code (0 ok, 2 bad input).
 pub fn run(_app: &AppHandle, golden_path: &Path) -> i32 {
-    let golden = match load_golden(golden_path) {
-        Ok(g) => g,
+    let raw = match load_raw(golden_path) {
+        Ok(raw) => raw,
+        Err(error) => {
+            eprintln!("eval: {error}");
+            return 2;
+        }
+    };
+    let shape = match serde_json::from_str::<serde_json::Value>(&raw) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("eval: parse golden file {}: {error}", golden_path.display());
+            return 2;
+        }
+    };
+    if let Some(mode) = shape.get("mode") {
+        if mode.as_str() != Some("recommendation") {
+            eprintln!(
+                "eval: unsupported eval mode {}; expected 'recommendation'",
+                mode
+            );
+            return 2;
+        }
+        return match super::recommend_eval::run(golden_path, &raw, json_requested()) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("eval: {error}");
+                2
+            }
+        };
+    }
+
+    let golden = match load_command_golden(golden_path, &raw) {
+        Ok(golden) => golden,
         Err(error) => {
             eprintln!("eval: {error}");
             return 2;
@@ -109,10 +144,30 @@ pub fn run(_app: &AppHandle, golden_path: &Path) -> i32 {
     0
 }
 
-fn load_golden(path: &Path) -> Result<Golden, String> {
+fn load_raw(path: &Path) -> Result<String, String> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("inspect golden file {}: {error}", path.display()))?;
+    if metadata.len() > MAX_GOLDEN_BYTES {
+        return Err(format!(
+            "golden file {} is {} bytes; the limit is {MAX_GOLDEN_BYTES}",
+            path.display(),
+            metadata.len()
+        ));
+    }
     let raw = std::fs::read_to_string(path)
-        .map_err(|e| format!("read golden file {}: {e}", path.display()))?;
-    serde_json::from_str(&raw).map_err(|e| format!("parse golden file {}: {e}", path.display()))
+        .map_err(|error| format!("read golden file {}: {error}", path.display()))?;
+    if raw.len() as u64 > MAX_GOLDEN_BYTES {
+        return Err(format!(
+            "golden file {} changed while being read and exceeded {MAX_GOLDEN_BYTES} bytes",
+            path.display()
+        ));
+    }
+    Ok(raw)
+}
+
+fn load_command_golden(path: &Path, raw: &str) -> Result<CommandGolden, String> {
+    serde_json::from_str(raw)
+        .map_err(|error| format!("parse golden file {}: {error}", path.display()))
 }
 
 /// A relative `manifest` in the golden file is resolved against the golden file's
@@ -332,5 +387,26 @@ mod tests {
             "/elsewhere/manifest.json"
         };
         assert_eq!(resolve_manifest(golden, abs), PathBuf::from(abs));
+    }
+
+    #[test]
+    fn oversized_golden_is_rejected_before_allocation() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        file.as_file().set_len(MAX_GOLDEN_BYTES + 1).unwrap();
+
+        let error = load_raw(file.path()).unwrap_err();
+        assert!(error.contains("the limit is"));
+    }
+
+    #[test]
+    fn legacy_command_golden_remains_supported() {
+        let raw = r#"{
+            "manifest": "manifest.json",
+            "cases": [{"said": "pause", "expect": "pause"}]
+        }"#;
+        let golden = load_command_golden(Path::new("golden.json"), raw).unwrap();
+
+        assert_eq!(golden.manifest, "manifest.json");
+        assert_eq!(golden.cases.len(), 1);
     }
 }

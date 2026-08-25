@@ -236,6 +236,18 @@ These are product targets, to be revisited only with measured evidence:
 
 **Exit:** one command reproduces current cross-extension recommendation quality and exposes every current false positive/negative.
 
+**Implementation status (2026-08-25): RQ0 foundation complete.** The headless
+app now accepts a strict, bounded, versioned cross-extension corpus, invokes the
+same production name detector, embedder, max-example scoring, ranker, and
+Auto-send policy, and emits human or JSON metrics with per-slice/confusion and
+operating-point reports. Optional corpus-owned quality gates provide a direct CI
+exit code. The checked-in five-extension hard pool records the unchanged current
+baseline at 96% overall top-1, 100% in-scope top-1 and recall@3, 80% no-match
+recall, and zero wrong Auto-sends. The remaining RQ0 data work is to add the
+24/50/100-extension pools, independent calibration/test splits, and a model-
+provisioned CI runner; those are corpus/infrastructure additions rather than
+ranker changes.
+
 ### RQ1 — Same-model architecture bake-off
 
 Implement as interchangeable pure scoring strategies:

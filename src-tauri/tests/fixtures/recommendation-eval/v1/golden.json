@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "mode": "recommendation",
+  "corpus": "rq0-five-extension-hard-pool-v1",
+  "extensions": [
+    { "manifest": "github.json" },
+    { "manifest": "linear.json" },
+    { "manifest": "spotify.json" },
+    { "manifest": "youtube-music.json" },
+    { "manifest": "deepl.json" }
+  ],
+  "cases": [
+    { "said": "open GitHub and show my pull requests", "expect": "com.grain.github", "slices": ["clean", "named", "code"] },
+    { "said": "can you check whether CI passed on the branch", "expect": "com.grain.github", "slices": ["clean", "implicit", "code"] },
+    { "said": "merge the review once all checks are green", "expect": "com.grain.github", "slices": ["clean", "implicit", "code"] },
+    { "said": "get hub open the repository", "expect": "com.grain.github", "slices": ["asr", "named", "code"] },
+
+    { "said": "open Linear and show my assigned work", "expect": "com.grain.linear", "slices": ["clean", "named", "issues"] },
+    { "said": "move the authentication ticket into in progress", "expect": "com.grain.linear", "slices": ["clean", "implicit", "issues"] },
+    { "said": "what is still sitting in the engineering backlog", "expect": "com.grain.linear", "slices": ["clean", "implicit", "issues"] },
+    { "said": "add a bug for the broken login flow", "expect": ["com.grain.github", "com.grain.linear"], "slices": ["clean", "hard", "ambiguous", "issues"] },
+    { "said": "assign the new issue to Maya", "expect": ["com.grain.github", "com.grain.linear"], "slices": ["clean", "hard", "ambiguous", "issues"] },
+
+    { "said": "Spotify put on my discover weekly", "expect": "com.grain.spotify", "slices": ["clean", "named", "music"] },
+    { "said": "skip whatever is playing right now", "expect": ["com.grain.spotify", "com.grain.youtube-music"], "slices": ["clean", "hard", "ambiguous", "music"] },
+    { "said": "resume the album I was listening to", "expect": ["com.grain.spotify", "com.grain.youtube-music"], "slices": ["clean", "hard", "ambiguous", "music"] },
+    { "said": "spot if I pause the track", "expect": "com.grain.spotify", "slices": ["asr", "named", "music"] },
+
+    { "said": "open YouTube Music and play the video mix", "expect": "com.grain.youtube-music", "slices": ["clean", "named", "music"] },
+    { "said": "play the live performance playlist", "expect": "com.grain.youtube-music", "slices": ["clean", "hard", "music"] },
+    { "said": "thumbs down this music video", "expect": "com.grain.youtube-music", "slices": ["clean", "implicit", "music"] },
+
+    { "said": "DeepL translate this paragraph into German", "expect": "com.grain.deepl", "slices": ["clean", "named", "language"] },
+    { "said": "how would I say this politely in Japanese", "expect": "com.grain.deepl", "slices": ["clean", "implicit", "language"] },
+    { "said": "convert the selected sentence from French to English", "expect": "com.grain.deepl", "slices": ["clean", "implicit", "language"] },
+    { "said": "deep L translate the selection", "expect": "com.grain.deepl", "slices": ["asr", "named", "language"] },
+
+    { "said": "what will the weather be tomorrow morning", "expect": "none", "slices": ["clean", "none"] },
+    { "said": "remind me to call the dentist at four", "expect": "none", "slices": ["clean", "none"] },
+    { "said": "write an email thanking everyone for the launch", "expect": "none", "slices": ["clean", "none"] },
+    { "said": "calculate seventeen percent of two hundred", "expect": "none", "slices": ["clean", "none"] },
+    { "said": "turn the kitchen lights off downstairs", "expect": "none", "slices": ["clean", "none"] }
+  ],
+  "thresholds": [0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 0.9],
+  "semanticMode": "required",
+  "autoSendMinMargin": 0.15,
+  "qualityGates": {
+    "minTop1Accuracy": 0.95,
+    "minInScopeTop1Accuracy": 1.0,
+    "minRecallAt3": 1.0,
+    "minNoMatchPrecision": 1.0,
+    "minNoMatchRecall": 0.8,
+    "maxFalseRecommendationRate": 0.2,
+    "maxWrongAutoSends": 0
+  }
+}

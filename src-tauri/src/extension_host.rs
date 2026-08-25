@@ -810,8 +810,9 @@ fn collect_recommendation(
     let Some(decl) = &pack.manifest.recommend else {
         return;
     };
-    recommendations.push(grain_core::recommend::IndexedRecommendation::new(
+    recommendations.push(grain_core::recommend::IndexedRecommendation::with_name(
         &rec.id,
+        &pack.manifest.name,
         &decl.aliases,
     ));
     examples.push((rec.id.clone(), decl.examples.clone()));

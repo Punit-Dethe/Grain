@@ -32,6 +32,10 @@ pub mod action_router;
 // searchable extension should be offered a request. Pure and model-free: the
 // host injects semantic scores, so grain-core carries no embedder.
 pub mod recommend;
+// [GRAIN] Cross-extension recommendation evaluation. Separate from `eval`,
+// which measures one extension's private command matching; this drives the live
+// recommendation ranker over a whole installed pool, including no-match cases.
+pub mod recommend_eval;
 // [GRAIN] The `match.*` primitives an extension calls to rank its own commands
 // (docs/Extensions V1/PLAN.md §4). Pure: lexical ranking + a confidence policy.
 // `match.semantic` needs the embedder and stays host-side.

@@ -1,0 +1,21 @@
+{
+  "id": "com.grain.deepl",
+  "name": "DeepL",
+  "version": "1.0.0",
+  "grainApi": "1",
+  "tier": "scripted",
+  "kind": "searchable",
+  "description": "Translate selected or dictated text between languages.",
+  "recommend": {
+    "purpose": "Translate selected or dictated text between human languages with DeepL",
+    "examples": [
+      "translate this text into Spanish",
+      "convert the selection to English",
+      "tell me how to phrase this in Korean",
+      "translate the paragraph from German",
+      "rewrite this sentence in another language"
+    ],
+    "aliases": ["deep L"],
+    "entities": ["source language", "target language", "selection", "paragraph"]
+  }
+}
