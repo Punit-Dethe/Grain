@@ -9,6 +9,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use base64::Engine as _;
 use grain_sdk::{
     daemon_event_capability, ExtensionProjectManifest, GrainPack, PackPayloads, Tier,
     DAEMON_EVENT_VARIANTS, GRAIN_API_VERSION,
@@ -171,6 +172,78 @@ pub fn doctor(root: &Path) -> DoctorReport {
     report
 }
 
+/// Build the single-file artifact registry CI and local imports consume.
+/// Compilation is intentionally the caller's job; this function is the shared,
+/// deterministic packaging boundary used after a scripted entry has been built.
+pub fn build_pack(root: &Path) -> Result<GrainPack, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("open project root: {error}"))?;
+    let report = doctor(&root);
+    if !report.is_clean() {
+        return Err(format!("doctor found problems:\n{report}"));
+    }
+    let raw = fs::read_to_string(root.join("manifest.json"))
+        .map_err(|error| format!("read manifest.json: {error}"))?;
+    let project: ExtensionProjectManifest =
+        serde_json::from_str(&raw).map_err(|error| format!("parse manifest.json: {error}"))?;
+    if project.manifest.tier == Tier::Native {
+        return Err("native developer projects cannot be packaged in V1".into());
+    }
+
+    let mut manifest = project.manifest;
+    if manifest.tier == Tier::Scripted {
+        let entry = safe_project_file(&root, &project.entry, "entry")?;
+        let metadata = fs::metadata(&entry).map_err(|error| {
+            format!(
+                "read built entry '{}': {error}; run the project build first",
+                project.entry
+            )
+        })?;
+        if !metadata.is_file() || metadata.len() > MAX_ENTRY_BYTES {
+            return Err("built entry must be a file no larger than 5 MB".into());
+        }
+        manifest.entry_source = fs::read_to_string(&entry)
+            .map_err(|error| format!("read built entry '{}': {error}", project.entry))?;
+    }
+
+    let icon = safe_project_file(&root, &manifest.icon, "icon")?;
+    let icon_bytes =
+        fs::read(&icon).map_err(|error| format!("read icon '{}': {error}", manifest.icon))?;
+    let pack = GrainPack {
+        manifest,
+        payloads: PackPayloads {
+            icon_png: Some(base64::engine::general_purpose::STANDARD.encode(icon_bytes)),
+            ..PackPayloads::default()
+        },
+    };
+    pack.validate()?;
+    Ok(pack)
+}
+
+fn safe_project_file(root: &Path, relative: &str, label: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative);
+    if path.as_os_str().is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!("{label} must be a project-relative file"));
+    }
+    let joined = root.join(path);
+    if let Ok(canonical) = joined.canonicalize() {
+        if !canonical.starts_with(root) {
+            return Err(format!("{label} resolves outside the project"));
+        }
+        Ok(canonical)
+    } else {
+        Ok(joined)
+    }
+}
+
 fn check_manifest(root: &Path, report: &mut DoctorReport) {
     let manifest_path = root.join("manifest.json");
     let relative = PathBuf::from("manifest.json");
@@ -223,6 +296,95 @@ fn check_manifest(root: &Path, report: &mut DoctorReport) {
     check_activations(&project, report);
     check_surface_budgets(&project, report);
     check_recommendation(&project, report);
+    check_icon(root, &project, report);
+}
+
+/// [GRAIN] The icon is mandatory to submit and standardised to one shape
+/// (`docs/Extensions V1/PLAN.md` §13.3): a square PNG at exactly
+/// [`grain_sdk::ICON_MASTER_DIM`]², under [`grain_sdk::ICON_MAX_BYTES`]. Grain
+/// downscales that master everywhere it shows an icon, so the author supplies one
+/// file and consistency is Grain's.
+///
+/// Errors (blocks submission), never warns: an extension with no recognisable
+/// icon is exactly what the store must not list. The cheap header check rejects
+/// the wrong format or dimensions before a full decode proves the PNG is intact.
+fn check_icon(root: &Path, project: &ExtensionProjectManifest, report: &mut DoctorReport) {
+    use grain_sdk::{ICON_MASTER_DIM, ICON_MAX_BYTES};
+
+    let declared = project.manifest.icon.trim();
+    if declared.is_empty() {
+        report.findings.push(Finding::project(
+            "E_ICON",
+            "manifest.json",
+            format!(
+                "an icon is required to submit: declare \"icon\" and ship a {ICON_MASTER_DIM}×\
+                 {ICON_MASTER_DIM} square PNG"
+            ),
+        ));
+        return;
+    }
+
+    // Project-relative and path-safe, exactly like `entry`.
+    let path = Path::new(declared);
+    if path.as_os_str().is_empty()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        report.findings.push(Finding::project(
+            "E_ICON",
+            "manifest.json",
+            "icon must be a project-relative file",
+        ));
+        return;
+    }
+
+    let icon_path = root.join(path);
+    let bytes = match fs::read(&icon_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            report.findings.push(Finding::project(
+                "E_ICON",
+                PathBuf::from(declared),
+                "icon file not found",
+            ));
+            return;
+        }
+    };
+    if bytes.len() as u64 > ICON_MAX_BYTES {
+        report.findings.push(Finding::project(
+            "E_SIZE",
+            PathBuf::from(declared),
+            format!("icon is larger than {} KB", ICON_MAX_BYTES / 1024),
+        ));
+        return;
+    }
+    match grain_sdk::png_dimensions(&bytes) {
+        Some((width, height)) if width == ICON_MASTER_DIM && height == ICON_MASTER_DIM => {
+            if image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).is_err() {
+                report.findings.push(Finding::project(
+                    "E_ICON",
+                    PathBuf::from(declared),
+                    "icon PNG is corrupt or truncated",
+                ));
+            }
+        }
+        Some((width, height)) => report.findings.push(Finding::project(
+            "E_ICON",
+            PathBuf::from(declared),
+            format!(
+                "icon is {width}×{height}; it must be exactly {ICON_MASTER_DIM}×{ICON_MASTER_DIM}"
+            ),
+        )),
+        None => report.findings.push(Finding::project(
+            "E_ICON",
+            PathBuf::from(declared),
+            "icon is not a PNG",
+        )),
+    }
 }
 
 /// [GRAIN] Advice on the recommendation surface (`docs/Extensions V1/PLAN.md`
@@ -629,6 +791,13 @@ fn scan_submitted_files(root: &Path, report: &mut DoctorReport) {
             if !file_type.is_file() {
                 continue;
             }
+            // `grain-ext pack` writes its generated deliverable in the project
+            // root by default. It is not submitted source and can legitimately
+            // exceed the per-source-file ceiling once entry + base64 icon are
+            // combined; repeated doctor/pack runs must remain idempotent.
+            if path.extension().and_then(|value| value.to_str()) == Some("grainpack") {
+                continue;
+            }
 
             report.files_checked += 1;
             let relative = relative_path(root, &path);
@@ -775,6 +944,18 @@ fn sort_findings(findings: &mut [Finding]) {
 mod tests {
     use super::*;
 
+    fn fake_png(dim: u32) -> Vec<u8> {
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image::RgbaImage::new(dim, dim))
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .unwrap();
+        bytes.into_inner()
+    }
+
+    fn write_icon(dir: &Path) {
+        fs::write(dir.join("icon.png"), fake_png(grain_sdk::ICON_MASTER_DIM)).unwrap();
+    }
+
     fn scaffold() -> tempfile::TempDir {
         let directory = tempfile::tempdir().unwrap();
         fs::create_dir(directory.path().join("src")).unwrap();
@@ -782,7 +963,7 @@ mod tests {
             directory.path().join("manifest.json"),
             r#"{
               "id":"com.example.clean","name":"Clean","version":"0.1.0",
-              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
               "permissions":[],"activation":["onShortcut:open"],
               "contributes":{"shortcuts":[{"id":"open","label":"Open"}]}
             }"#,
@@ -793,6 +974,7 @@ mod tests {
             "grain.log.info('ok');\n",
         )
         .unwrap();
+        write_icon(directory.path());
         directory
     }
 
@@ -801,7 +983,7 @@ mod tests {
         let directory = scaffold();
         let report = doctor(directory.path());
         assert_eq!(report.findings, Vec::new());
-        assert_eq!(report.files_checked, 2);
+        assert_eq!(report.files_checked, 3);
         assert!(report.to_string().starts_with("doctor: 0 findings"));
     }
 
@@ -910,11 +1092,12 @@ mod tests {
             r#"{
               "id":"com.example.native","name":"Native","version":"0.1.0",
               "grainApi":"^1.0","tier":"native","permissions":["resident"],
-              "activation":["onStartup"],
+              "activation":["onStartup"],"icon":"icon.png",
               "companion":{"windows":"bin/native.exe","macos":"bin/native","linux":"bin/native"}
             }"#,
         )
         .unwrap();
+        write_icon(directory.path());
 
         assert!(doctor(directory.path()).is_clean());
     }
@@ -926,12 +1109,13 @@ mod tests {
             directory.path().join("manifest.json"),
             r#"{
               "id":"com.example.note","name":"Note","version":"0.1.0",
-              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+              "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
               "permissions":["session:start"],"activation":[],
               "contributes":{"sessionMode":{"id":"note","label":"Note"}}
             }"#,
         )
         .unwrap();
+        write_icon(directory.path());
 
         assert!(doctor(directory.path()).is_clean());
     }
@@ -945,15 +1129,17 @@ mod tests {
         // is pushed into declaring something they do not need.
         let directory = tempfile::tempdir().unwrap();
         fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        write_icon(directory.path());
 
         let report = doctor(directory.path());
         assert!(report.findings.is_empty(), "{report}");
     }
 
-    /// A well-formed searchable extension, as the checks below vary it.
+    /// A well-formed searchable extension, as the checks below vary it. Pair with
+    /// [`write_icon`] — every submittable extension needs one (§13.3).
     const SEARCHABLE: &str = r#"{
       "id":"com.example.open","name":"Open","version":"1.1.0",
-      "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js",
+      "grainApi":"^1.0","tier":"scripted","entry":"dist/main.js","icon":"icon.png",
       "permissions":["open:url","settings"],"activation":[],
       "kind":"searchable",
       "recommend":{
@@ -975,6 +1161,7 @@ mod tests {
         }
         let directory = tempfile::tempdir().unwrap();
         fs::write(directory.path().join("manifest.json"), manifest).unwrap();
+        write_icon(directory.path());
         directory
     }
 
@@ -1046,6 +1233,111 @@ mod tests {
     }
 
     #[test]
+    fn an_extension_cannot_be_submitted_without_an_icon() {
+        // Drop the icon field from the fixture. The file is still on disk, but
+        // nothing declares it — the store must not list an extension with no
+        // recognisable icon (§13.3).
+        let directory = variant(&[(r#""icon":"icon.png","#, "")]);
+        let report = doctor(directory.path());
+        assert!(codes(&report).contains(&"E_ICON"), "{report}");
+        assert!(!report.is_clean(), "a missing icon blocks submission");
+    }
+
+    #[test]
+    fn a_declared_icon_that_is_not_on_disk_is_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        // Deliberately do NOT write_icon.
+        let report = doctor(directory.path());
+        let icon = report
+            .findings
+            .iter()
+            .find(|f| f.code == "E_ICON")
+            .expect("missing file is E_ICON");
+        assert!(icon.message.contains("not found"), "{}", icon.message);
+    }
+
+    #[test]
+    fn an_icon_of_the_wrong_size_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(directory.path().join("icon.png"), fake_png(256)).unwrap();
+        let report = doctor(directory.path());
+        let icon = report
+            .findings
+            .iter()
+            .find(|f| f.code == "E_ICON")
+            .expect("256x256 is not the 512 master");
+        assert!(icon.message.contains("512"), "{}", icon.message);
+    }
+
+    #[test]
+    fn a_non_png_icon_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        fs::write(
+            directory.path().join("icon.png"),
+            b"GIF89a not really a png",
+        )
+        .unwrap();
+        let report = doctor(directory.path());
+        let icon = report
+            .findings
+            .iter()
+            .find(|f| f.code == "E_ICON")
+            .expect("a non-PNG is E_ICON");
+        assert!(icon.message.contains("not a PNG"), "{}", icon.message);
+    }
+
+    #[test]
+    fn a_valid_512_master_passes() {
+        // The happy path: the fixture ships a 512×512 PNG and the icon check is
+        // silent. (variant writes the icon; SEARCHABLE declares it.)
+        let report = doctor(variant(&[]).path());
+        assert!(!codes(&report).contains(&"E_ICON"), "{report}");
+    }
+
+    #[test]
+    fn a_truncated_png_with_a_valid_ihdr_is_rejected() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("manifest.json"), SEARCHABLE).unwrap();
+        let mut bytes = vec![0u8; 24];
+        bytes[..8].copy_from_slice(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+        bytes[12..16].copy_from_slice(b"IHDR");
+        bytes[16..20].copy_from_slice(&grain_sdk::ICON_MASTER_DIM.to_be_bytes());
+        bytes[20..24].copy_from_slice(&grain_sdk::ICON_MASTER_DIM.to_be_bytes());
+        fs::write(directory.path().join("icon.png"), bytes).unwrap();
+
+        let report = doctor(directory.path());
+        assert!(report
+            .findings
+            .iter()
+            .any(|finding| finding.code == "E_ICON" && finding.message.contains("corrupt")));
+    }
+
+    #[test]
+    fn build_pack_embeds_the_checked_icon_and_built_entry() {
+        let directory = scaffold();
+        fs::create_dir(directory.path().join("dist")).unwrap();
+        fs::write(
+            directory.path().join("dist/main.js"),
+            "globalThis.grainExtension = {};",
+        )
+        .unwrap();
+
+        let pack = build_pack(directory.path()).unwrap();
+        assert_eq!(
+            pack.manifest.entry_source,
+            "globalThis.grainExtension = {};"
+        );
+        let icon = pack.embedded_icon_png().unwrap().unwrap();
+        assert_eq!(
+            grain_sdk::png_dimensions(&icon),
+            Some((grain_sdk::ICON_MASTER_DIM, grain_sdk::ICON_MASTER_DIM))
+        );
+    }
+
+    #[test]
     fn a_blocking_finding_sorts_above_advice() {
         // The author has to read what stops the submission before advice about
         // phrasing, however the paths happen to sort.
@@ -1074,6 +1366,18 @@ mod tests {
             fs::create_dir(directory.path().join(ignored)).unwrap();
             fs::write(directory.path().join(ignored).join("hidden.js"), "\u{200b}").unwrap();
         }
+        assert!(doctor(directory.path()).is_clean());
+    }
+
+    #[test]
+    fn generated_grainpack_artifacts_are_not_rescanned_as_source() {
+        let directory = scaffold();
+        fs::write(
+            directory.path().join("com.example.clean-0.1.0.grainpack"),
+            vec![b'x'; MAX_PROJECT_FILE_BYTES as usize + 1],
+        )
+        .unwrap();
+
         assert!(doctor(directory.path()).is_clean());
     }
 }

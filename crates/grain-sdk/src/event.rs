@@ -41,6 +41,8 @@ pub const DAEMON_EVENT_VARIANTS: &[&str] = &[
     "AgentInputHide",
     "AgentInputSaved",
     "AgentInputSubmitRequest",
+    "ExtensionRecommend",
+    "ExtensionRecommendClear",
     "ShowOverlay",
     "HideOverlay",
     "PasteError",
@@ -148,6 +150,36 @@ pub enum SessionMode {
     /// only this mode has a stabilized live-text stream (`Asr*` events) worth
     /// displaying.
     NativeAsr,
+}
+
+/// [GRAIN] One row on the Extension Mode selection surface
+/// (`docs/Extensions V1/PLAN.md` §3, §6b): a candidate extension the user may
+/// hand the request to. Carried in [`DaemonEvent::ExtensionRecommend`] so the
+/// pill can draw the ranked list without reaching back into the host.
+///
+/// The list the pill receives is the WHOLE installed searchable pool, ordered by
+/// confidence — the recommended ones first (a real `signal`), then the rest so
+/// the user can scroll to any installed extension and pick it by hand. `signal`
+/// is `"named"`, `"topical"`, or `"none"` (an unranked pool member shown only so
+/// it is reachable); `score` is the recommendation score, `0.0` for `"none"`.
+#[derive(Clone, Debug, Serialize, Deserialize, specta::Type)]
+pub struct RecommendCandidate {
+    pub extension_id: String,
+    /// The extension's display name (already resolved from its manifest).
+    pub name: String,
+    /// The one-line purpose from its `recommend` block, or empty.
+    pub purpose: String,
+    /// `"named"` | `"topical"` | `"none"` — how (or whether) it was ranked.
+    pub signal: String,
+    /// The recommendation score, or `0.0` for an unranked (`"none"`) row.
+    pub score: f32,
+    /// Pre-downscaled icon (premultiplied RGBA, `PILL_ICON_PX`², base64), or
+    /// `None` — the pill draws an initial badge instead. The icon runtime that
+    /// populates this (embed the 512² master in the built pack, write it at
+    /// install, host-downscale) lands after the surface; the field flows through
+    /// now so no wire change is needed when it does (§13.3 deferral).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 /// One event broadcast by the daemon. `Clone` so every subscriber gets a copy;
@@ -294,6 +326,28 @@ pub enum DaemonEvent {
     /// up. The pill owns the typed text, so it answers with
     /// `AgentInputSubmitText` (typing) or `AgentInputSubmitVoice` (recording).
     AgentInputSubmitRequest,
+
+    /// [GRAIN] Extension Mode (`docs/Extensions V1/PLAN.md` §3, §6b): a captured
+    /// request has been ranked — bring up the native selection surface. The pill
+    /// presents the ranked list (`candidates`, whole searchable pool, best
+    /// first), a type bar to search it, and a clean border on the top pick; a
+    /// click hands that extension the request (`PillAction::ExtensionChoose`),
+    /// Esc cancels (`PillAction::ExtensionCancel`). `name_only` is true when the
+    /// embedding model is absent (ranking was lexical-only, §5) so the surface
+    /// can say so and offer the download.
+    ExtensionRecommend {
+        /// Host-generated nonce binding every reverse action to this exact
+        /// presentation. The pill treats it as opaque.
+        presentation_id: u64,
+        candidates: Vec<RecommendCandidate>,
+        #[serde(default)]
+        name_only: bool,
+    },
+    /// [GRAIN] Withdraw the Extension Mode selection surface: the user chose or
+    /// cancelled, Grain auto-sent (§5), or a new session superseded it. Idempotent:
+    /// lifecycle races may clear an already-withdrawn surface and the pill treats
+    /// that as a no-op.
+    ExtensionRecommendClear,
 
     // -- Misc UI signals --
     ShowOverlay,
@@ -463,6 +517,8 @@ impl DaemonEvent {
             AgentInputHide => "AgentInputHide",
             AgentInputSaved => "AgentInputSaved",
             AgentInputSubmitRequest => "AgentInputSubmitRequest",
+            ExtensionRecommend { .. } => "ExtensionRecommend",
+            ExtensionRecommendClear => "ExtensionRecommendClear",
             ShowOverlay => "ShowOverlay",
             HideOverlay => "HideOverlay",
             PasteError { .. } => "PasteError",
@@ -503,6 +559,11 @@ mod variant_name_tests {
             },
             DaemonEvent::ModelUnloaded,
             DaemonEvent::AudioLevel { levels: vec![] },
+            DaemonEvent::ExtensionRecommend {
+                presentation_id: 7,
+                candidates: vec![],
+                name_only: true,
+            },
             DaemonEvent::ThemeConfig {
                 theme: ResolvedTheme::Dark,
             },
@@ -532,7 +593,27 @@ mod variant_name_tests {
             daemon_event_capability("AudioLevel"),
             Some("events:audio-levels")
         );
+        assert_eq!(
+            daemon_event_capability("ExtensionRecommend"),
+            Some("events:sessions")
+        );
         assert_eq!(daemon_event_capability("NotARealEvent"), None);
+    }
+
+    #[test]
+    fn extension_chooser_actions_keep_the_reverse_wire_shape() {
+        let choose = serde_json::to_value(PillAction::ExtensionChoose {
+            presentation_id: 7,
+            extension_id: "com.example.translate".into(),
+        })
+        .unwrap();
+        assert_eq!(choose["action"], "extension_choose");
+        assert_eq!(choose["presentation_id"], 7);
+        assert_eq!(choose["extension_id"], "com.example.translate");
+        assert_eq!(
+            serde_json::to_value(PillAction::ExtensionDownloadModel).unwrap()["action"],
+            "extension_download_model"
+        );
     }
 }
 
@@ -553,9 +634,7 @@ pub enum PillAction {
     /// `delta` is the step through the prompt list (`-1` previous, `1` next) —
     /// the same cycle the switcher shortcut performs, so the core answers with
     /// `PromptChanged` exactly as it would for the keyboard.
-    PromptCycle {
-        delta: i32,
-    },
+    PromptCycle { delta: i32 },
     /// [GRAIN] User clicked the expanded (live transcription) card's cancel ×.
     /// Identical to pressing the Cancel shortcut: the core drops the recording,
     /// the transcript, and every session surface, then hides the pill.
@@ -585,4 +664,19 @@ pub enum PillAction {
     /// (core cancels the voice capture); `false` = the user tabbed back to voice
     /// (core restarts dictation).
     AgentInputTyping { active: bool },
+
+    /// [GRAIN] Extension Mode: the user picked a row on the selection surface —
+    /// hand this extension the whole captured request
+    /// (`docs/Extensions V1/PLAN.md` §3). The core wakes it, delivers the
+    /// request, and clears the surface.
+    ExtensionChoose {
+        presentation_id: u64,
+        extension_id: String,
+    },
+    /// [GRAIN] Extension Mode: the user dismissed the selection surface (Esc /
+    /// clicked away) without choosing. The core drops the pending request.
+    ExtensionCancel { presentation_id: u64 },
+    /// [GRAIN] Extension Mode is running in name-only mode and the user accepted
+    /// the chooser's first-use offer to download the shared semantic model.
+    ExtensionDownloadModel,
 }

@@ -128,6 +128,7 @@ pub fn stage_artifact(
 pub struct ApprovalDigests {
     pub prompt_layers: Option<String>,
     pub actions: Option<String>,
+    pub authentication: Option<String>,
     /// [GRAIN] The Extension Mode hand-off contract
     /// (`extensions::recommendation_fingerprint`). Always `Some` for a
     /// searchable extension, `None` otherwise.
@@ -161,6 +162,9 @@ pub fn plan_record(
     // that widened, a phrase that now captures a request it never used to.
     let approved_actions = prior.and_then(|r| r.actions_approved.clone());
     let changes_actions = digests.actions.is_some() && digests.actions != approved_actions;
+    let approved_authentication = prior.and_then(|r| r.authentication_approved.clone());
+    let changes_authentication =
+        digests.authentication.is_some() && digests.authentication != approved_authentication;
     // [GRAIN] And once more for the Extensions V1 hand-off contract, which is
     // the widest of the three: what a change here alters is not what the
     // extension can DO but what it gets to HEAR, since being recommended means
@@ -171,6 +175,7 @@ pub fn plan_record(
         && !adds_permissions
         && !changes_prompt_layers
         && !changes_actions
+        && !changes_authentication
         && !changes_recommend;
 
     ExtensionRecord {
@@ -190,6 +195,7 @@ pub fn plan_record(
         // the new wording.
         prompt_layers_approved: approved,
         actions_approved: approved_actions,
+        authentication_approved: approved_authentication,
         recommend_approved: approved_recommend,
         dev: None,
         // THE trust assignment. Sourced only from the verified entry, bound to
@@ -274,6 +280,8 @@ fn declared_digests(m: &grain_sdk::ExtensionManifest) -> ApprovalDigests {
             .then(|| ext::prompt_layers_fingerprint(&m.contributes.prompt_layers)),
         actions: (!m.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&m.contributes.actions)),
+        authentication: (!m.contributes.authentication.is_empty())
+            .then(|| ext::authentication_fingerprint(&m.contributes.authentication)),
         // [GRAIN] Unlike the other two this is keyed off `kind`, not off a list
         // being non-empty: what needs approving is being ELIGIBLE to receive the
         // user's words at all, and validation already guarantees a searchable
@@ -353,6 +361,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
+            authentication_approved: None,
             recommend_approved: None,
             slots: vec![],
             variant_slots: vec![],
@@ -481,6 +490,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: Some("fingerprint-of-1.0".into()),
             actions_approved: None,
+            authentication_approved: None,
             recommend_approved: None,
             slots: vec![],
             variant_slots: vec![],
@@ -540,6 +550,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: Some("actions-of-1.0".into()),
+            authentication_approved: None,
             recommend_approved: None,
             slots: vec![],
             variant_slots: vec![],
@@ -600,6 +611,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
+            authentication_approved: None,
             recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
             variant_slots: vec![],
@@ -659,6 +671,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: Some("layers-of-1.0".into()),
             actions_approved: Some("actions-of-1.0".into()),
+            authentication_approved: None,
             recommend_approved: Some("recommend-of-1.0".into()),
             slots: vec![],
             variant_slots: vec![],
@@ -676,6 +689,7 @@ mod tests {
             ApprovalDigests {
                 prompt_layers: Some("layers-of-1.1".into()),
                 actions: Some("actions-of-1.0".into()),
+                authentication: None,
                 recommend: Some("recommend-of-1.0".into()),
             },
         );

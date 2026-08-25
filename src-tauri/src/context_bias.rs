@@ -255,10 +255,24 @@ pub fn arm_session(app: &tauri::AppHandle) {
 /// would be a different question and is not built.
 ///
 /// Synchronous because there is nothing to fetch: the terms are already here.
-pub fn arm_action_session(terms: Vec<String>) {
-    SESSION_GEN.fetch_add(1, Ordering::SeqCst);
+pub fn arm_action_session(terms: Vec<String>) -> u64 {
+    let generation = SESSION_GEN.fetch_add(1, Ordering::SeqCst) + 1;
     if let Ok(mut guard) = SESSION_TERMS.lock() {
         *guard = terms;
+    }
+    generation
+}
+
+/// Discard action vocabulary when a capture ends before transcription consumes
+/// it. Otherwise a cancelled/failed Extension Mode capture can bias the next,
+/// unrelated dictation.
+pub fn clear_action_session(generation: u64) {
+    if let Ok(mut guard) = SESSION_TERMS.lock() {
+        // A newer dictation may already have published its own focused-field
+        // bias. A late Extension Mode cleanup must never erase that session.
+        if SESSION_GEN.load(Ordering::SeqCst) == generation {
+            guard.clear();
+        }
     }
 }
 

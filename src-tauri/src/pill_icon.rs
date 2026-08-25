@@ -653,7 +653,7 @@ fn emit(app: &AppHandle, rgba: Option<String>) {
 ///
 /// Non-square art is letterboxed, never stretched: a squashed logo reads as
 /// broken in a way a slightly smaller one never does.
-fn to_icon(src: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
+pub(crate) fn to_icon(src: &[u8], w: usize, h: usize) -> Option<Vec<u8>> {
     if w == 0 || h == 0 || src.len() < w * h * 4 {
         return None;
     }

@@ -263,21 +263,128 @@ pub fn uninstall_model() -> Result<()> {
     Ok(())
 }
 
-/// Drop the engine only if NEITHER surface that may use it is still alive — the
-/// Notes tab OR the Recall agent panel (RECALL-PLAN §3.4). A no-op when the engine
-/// isn't resident, so Assist-only agent sessions (which never spawn it) pay
-/// nothing.
+/// Drop the engine only if NO witness that may use it is still alive — the Notes
+/// tab, the Recall agent panel (RECALL-PLAN §3.4), or Extension Mode holding it
+/// warm ([`extension_mode_warm`]). A no-op when the engine isn't resident, so
+/// Assist-only agent sessions (which never spawn it) pay nothing.
 ///
 /// [GRAIN] The notes side used to be "is the workspace window visible". The
 /// workspace is a tab now, so it reports its own mount instead — see
 /// `grain_space::set_workspace_mounted`. Same invariant, different witness: the
-/// model lives only while something that can use it is on screen.
+/// model lives only while something that can use it is on screen — or, for
+/// Extension Mode, within its TTL.
 pub fn shutdown_engine_if_idle(app: &AppHandle) {
     use tauri::Manager;
     let panel_open = app.get_webview_window(crate::agent::PANEL_LABEL).is_some();
-    if !super::workspace_mounted() && !panel_open {
+    if !super::workspace_mounted() && !panel_open && !extension_mode_warm() {
         shutdown_engine();
     }
+}
+
+// ── Extension Mode witness (`docs/Extensions V1/PLAN.md` §6) ─────────────────
+//
+// [GRAIN] The embedder is a shared service: Grain Space (notes + recall) and
+// Extension Mode (recommendation ranking, and later `match.semantic`) draw on
+// ONE engine. Grain Space witnesses by "is a surface on screen"; Extension Mode
+// has no surface of its own to witness with, so it witnesses by a TTL — the
+// model lives for a short while after it was last used, then is reclaimed.
+//
+// This is the whole of §6's "Grain owns the embedder lifecycle": an extension
+// may declare `needs: ["semantic"]`, but it can never pin the model, set the
+// TTL, or keep it alive by polling. The one knob it gets is the honest
+// declaration; the arithmetic lives here.
+
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
+
+/// How long the embedder is held warm after Extension Mode last touched it.
+///
+/// Long enough that the recommendation, an immediate accept, and a first
+/// `match.semantic` from the chosen extension all reuse one load; short enough
+/// that an idle Extension-Mode session does not sit on ~130 MB. Not
+/// author-settable (§6).
+pub const EXTENSION_MODE_TTL: Duration = Duration::from_secs(30);
+
+/// Unix-millis deadline the Extension-Mode witness holds the engine to; `0` =
+/// not warm.
+static EXTENSION_MODE_WARM_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+/// One reaper at a time.
+static REAPER_RUNNING: AtomicBool = AtomicBool::new(false);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// True while Extension Mode is holding the embedder warm.
+pub fn extension_mode_warm() -> bool {
+    now_ms() < EXTENSION_MODE_WARM_UNTIL_MS.load(Ordering::Relaxed)
+}
+
+/// Extension Mode is using — or about to use — the embedder: hold it warm for
+/// [`EXTENSION_MODE_TTL`] and spawn it now if the model is present, so the query
+/// does not pay the load. Idempotent and cheap; call it on the Extension-Mode
+/// keypress (§6, "warm if any searchable installed") and on every semantic use
+/// to refresh the TTL.
+///
+/// A no-op when the model is absent — name-only mode has nothing to warm, and
+/// setting a deadline would only schedule a reaper with nothing to reclaim.
+pub fn touch_extension_mode(app: &AppHandle) {
+    if !model_on_disk() {
+        return;
+    }
+    EXTENSION_MODE_WARM_UNTIL_MS.store(
+        now_ms() + EXTENSION_MODE_TTL.as_millis() as u64,
+        Ordering::Relaxed,
+    );
+    ensure_spawned();
+    spawn_reaper(app.clone());
+}
+
+/// Spawn the engine now if the model is on disk and it is not already resident,
+/// WITHOUT embedding anything — the proactive-warm half of [`touch_extension_mode`].
+/// [`embed`] still spawns lazily on its own, so this is an optimisation, never a
+/// correctness requirement.
+fn ensure_spawned() {
+    if !model_on_disk() {
+        return;
+    }
+    let mut slot = ENGINE.lock().unwrap();
+    if slot.is_none() {
+        match spawn_engine() {
+            Ok(engine) => *slot = Some(engine),
+            Err(error) => log::warn!("[GRAIN] embed: proactive warm failed: {error:#}"),
+        }
+    }
+}
+
+/// Ensure a single background task is watching the TTL, and reclaims the engine
+/// when it lapses. Re-reads the deadline each wake, so a `touch` that extends the
+/// warmth mid-sleep is honoured rather than fought. The reclaim goes through
+/// [`shutdown_engine_if_idle`], so a Notes tab or agent panel still using the
+/// engine keeps it — Extension Mode only ever withdraws its own witness.
+fn spawn_reaper(app: AppHandle) {
+    if REAPER_RUNNING.swap(true, Ordering::SeqCst) {
+        return; // one reaper already watching
+    }
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let remaining = EXTENSION_MODE_WARM_UNTIL_MS
+                .load(Ordering::Relaxed)
+                .saturating_sub(now_ms());
+            if remaining == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(remaining)).await;
+        }
+        REAPER_RUNNING.store(false, Ordering::SeqCst);
+        // A `touch` that raced in after the loop broke but before the flag
+        // cleared is self-healing: `embed` re-spawns lazily, and the next touch
+        // starts a fresh reaper. So an early reclaim costs one reload at worst.
+        shutdown_engine_if_idle(&app);
+    });
 }
 
 /// BGE v1.5's retrieval instruction. ASYMMETRIC by design: the model card
@@ -532,6 +639,23 @@ impl<'a> DistilledDoc<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
+
+    /// The Extension-Mode witness `shutdown_engine_if_idle` consults (§6): a past
+    /// or zero deadline reads as not-warm, a future one as warm. This is the
+    /// arithmetic that keeps the shared engine alive for the TTL and no longer.
+    #[test]
+    fn extension_mode_witness_tracks_its_ttl() {
+        use super::{extension_mode_warm, now_ms, EXTENSION_MODE_WARM_UNTIL_MS};
+        EXTENSION_MODE_WARM_UNTIL_MS.store(0, Ordering::Relaxed);
+        assert!(!extension_mode_warm(), "the default is not-warm");
+        EXTENSION_MODE_WARM_UNTIL_MS.store(now_ms() + 10_000, Ordering::Relaxed);
+        assert!(extension_mode_warm(), "a future deadline holds the engine");
+        EXTENSION_MODE_WARM_UNTIL_MS.store(now_ms().saturating_sub(1), Ordering::Relaxed);
+        assert!(!extension_mode_warm(), "a lapsed TTL releases it");
+        EXTENSION_MODE_WARM_UNTIL_MS.store(0, Ordering::Relaxed);
+    }
+
     #[test]
     fn note_embed_text_omits_blank_fields() {
         assert_eq!(

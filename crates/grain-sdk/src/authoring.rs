@@ -49,6 +49,106 @@ export type GrainErrorCode =
   | "E_UNAVAILABLE"
   | "E_INTERNAL";
 
+/** Grain-rendered standard extension UI. Authors control structure and state;
+ * Grain owns every actual element, style, focus rule, and trusted action bar. */
+export type GrainViewGap = "xs" | "sm" | "md" | "lg";
+export type GrainViewTone =
+  | "neutral"
+  | "muted"
+  | "info"
+  | "success"
+  | "warning"
+  | "danger";
+export type GrainViewNode =
+  | { type: "stack"; gap?: GrainViewGap; children?: GrainViewNode[] }
+  | {
+      type: "inline";
+      gap?: GrainViewGap;
+      align?: "start" | "center" | "end" | "stretch" | "space_between";
+      wrap?: boolean;
+      children?: GrainViewNode[];
+    }
+  | { type: "grid"; columns: 1 | 2 | 3; gap?: GrainViewGap; children?: GrainViewNode[] }
+  | { type: "section"; title?: string; children?: GrainViewNode[] }
+  | { type: "divider" }
+  | { type: "heading"; text: string; level?: "one" | "two" | "three" }
+  | { type: "text"; text: string; tone?: GrainViewTone }
+  | { type: "badge"; text: string; tone?: GrainViewTone }
+  | { type: "metadata"; label: string; value: string }
+  | {
+      type: "text_field";
+      id: string;
+      label: string;
+      value?: string;
+      placeholder?: string;
+      required?: boolean;
+      disabled?: boolean;
+      maxLength?: number;
+    }
+  | {
+      type: "text_area";
+      id: string;
+      label: string;
+      value?: string;
+      placeholder?: string;
+      rows?: number;
+      required?: boolean;
+      disabled?: boolean;
+      maxLength?: number;
+    }
+  | {
+      type: "select";
+      id: string;
+      label: string;
+      value?: string;
+      options: readonly { value: string; label: string }[];
+      required?: boolean;
+      disabled?: boolean;
+    }
+  | {
+      type: "checkbox";
+      id: string;
+      label: string;
+      checked?: boolean;
+      required?: boolean;
+      disabled?: boolean;
+    };
+
+export interface GrainView {
+  version?: 1;
+  title: string;
+  description?: string;
+  root: GrainViewNode;
+  actions?: readonly {
+    id: string;
+    label: string;
+    intent?: "primary" | "secondary" | "danger" | "cancel";
+    kind?: "submit" | "cancel";
+    disabled?: boolean;
+  }[];
+}
+
+export type GrainViewValue = string | boolean;
+export type GrainViewEvent =
+  | {
+      kind: "change";
+      target: string;
+      value: GrainViewValue;
+      values: Readonly<Record<string, GrainViewValue>>;
+    }
+  | {
+      kind: "submit";
+      target: string;
+      values: Readonly<Record<string, GrainViewValue>>;
+    }
+  | { kind: "cancel" };
+
+export type GrainViewReply =
+  | { view: GrainView }
+  | { message?: string }
+  | { decline: string }
+  | { error: string };
+
 export interface GrainApi {
   readonly activation: GrainActivation | null;
   readonly caps: readonly GrainCapability[];
@@ -110,6 +210,10 @@ export interface GrainApi {
         headers?: Record<string, string>;
         body?: string;
         secret?: { key: string; header: string; prefix?: string };
+        /** Manifest authentication id. Grain attaches its vaulted Bearer token;
+         * the token itself is never returned to extension code. Mutually
+         * exclusive with `secret`. */
+        auth?: string;
       },
     ): Promise<{
       status: number;
@@ -119,7 +223,39 @@ export interface GrainApi {
       url: string;
     }>;
   };
+  readonly auth: {
+    status(id: string): Promise<GrainAuthConnection | null>;
+    connect(id: string): Promise<GrainAuthConnection>;
+    disconnect(id: string): Promise<unknown>;
+  };
   embed(texts: string[]): Promise<number[][]>;
+  /** Rank this extension's OWN commands against a request (Extensions V1 §4).
+   * Conveniences over the same machinery Grain uses to rank extensions — call
+   * them in any order, or none: an extension may instead pass the request
+   * straight to `llm.complete` with its own tool schema. `match.semantic` needs
+   * the on-device model (declare `needs: ["semantic"]`) but no capability. */
+  readonly match: {
+    /** Fast lexical rank over declared phrasings. Strong for names/verbs, weak
+     * for paraphrase — reach for `semantic` when wording varies. */
+    lexical(
+      text: string,
+      candidates: readonly { id: string; phrases: readonly string[] }[],
+    ): Promise<{ id: string; score: number }[]>;
+    /** Semantic rank over declared examples. Understands paraphrase; loads the
+     * embedding model on demand. `margin` is the gap to the next candidate. */
+    semantic(
+      text: string,
+      candidates: readonly { id: string; examples: readonly string[] }[],
+    ): Promise<{ id: string; score: number; margin: number }[]>;
+    /** Turn a ranking into a decision. `minConfidence` is the floor to act at
+     * all; `margin` is how far the best must lead to be picked outright — within
+     * it, the top candidates are `ambiguous`. There is no universal threshold;
+     * measure with `grain-ext eval` and set these. */
+    decide(
+      candidates: readonly { id: string; score: number }[],
+      policy?: { minConfidence?: number; margin?: number },
+    ): Promise<{ pick: string } | { ambiguous: string[] } | { none: true }>;
+  };
   readonly open: {
     /** Open a link in the user's browser. Host allows only http/https/mailto/tel. */
     url(url: string): Promise<unknown>;
@@ -139,6 +275,15 @@ export interface GrainApi {
   };
   readonly session: {
     start(options: { mode: string }): Promise<unknown>;
+  };
+  readonly ui: {
+    /** Handle stable-id events from Grain's standard Extension Surface. Return
+     * a replacement tree to update it, or a finite outcome to close it. */
+    onEvent(
+      handler: (
+        event: GrainViewEvent,
+      ) => GrainViewReply | void | Promise<GrainViewReply | void>,
+    ): void;
   };
 
   onTransform(handler: (text: string) => string | Promise<string>): void;
@@ -160,6 +305,49 @@ export interface GrainApi {
   ): void;
   onShortcut(handler: (id: string) => void | Promise<void>): void;
   onEvent(handler: (event: DaemonEvent) => void): void;
+  /** The user accepted this extension in Extension Mode (Extensions V1 §3): the
+   * WHOLE request is handed over, verbatim. The extension owns what happens next
+   * — interpret it with `match.*` or `llm.complete` and its own tool schema, ask
+   * or confirm as needed, and return an optional short result. Return
+   * `{ decline }` when this extension is not the right owner so Grain can reopen
+   * the chooser without making the user repeat the request; reserve `{ error }`
+   * for a request this extension owned but failed to complete. */
+  onRequest(
+    handler: (
+      request: string,
+    ) =>
+      | void
+      | { view: GrainView }
+      | { message?: string }
+      | { decline: string }
+      | { error: string }
+      | Promise<
+          | void
+          | { view: GrainView }
+          | { message?: string }
+          | { decline: string }
+          | { error: string }
+        >,
+  ): void;
+}
+
+export interface GrainAuthConnection {
+  id: string;
+  provider_name: string;
+  authorization_host: string;
+  token_host: string;
+  scopes: string[];
+  api_hosts: string[];
+  /** `default` in API 1.x; retained so a later API can expose multiple accounts. */
+  connection_id: string;
+  state:
+    | "connected"
+    | "needs_reauthorization"
+    | "expired"
+    | "disconnected"
+    | "unavailable";
+  granted_scopes: string[];
+  expires_at: string | null;
 }
 
 declare global {

@@ -40,10 +40,14 @@ mod events_auth; // [GRAIN] token identity + capability filter for the events WS
 mod events_server; // [GRAIN] local WebSocket event transport to the pill
 mod extension_companion; // [GRAIN] developer-only native companion process supervisor (Phase 4)
 mod extension_host; // [GRAIN] extension worker lifecycle (SPEC 3.1) — supervisor, activation, reaper
+mod extension_icons; // [GRAIN] verified master icon -> installed 64px recommendation asset
+mod extension_misroutes; // [GRAIN] bounded decline counters -> conservative topical rerank
 mod extension_session; // [GRAIN] host-owned extension recording modes + bounded slow stage (Phase 4)
 mod extension_shortcuts; // [GRAIN] contributed global shortcuts, namespaced `ext:<id>:<sid>` (SPEC 3.3)
+mod extension_view; // [GRAIN] host-rendered standard Extension Mode component tree
 mod grain_actions; // [GRAIN] Grain's shortcut actions (rolling, Native ASR, switcher, agent, Grain Space)
 mod grain_audio_journal; // [GRAIN] bounded-RAM PCM backing for rolling sessions
+mod grain_auth; // [GRAIN] host-owned extension OAuth + OS credential vault
 mod grain_commands; // [GRAIN] Grain-only Tauri settings commands (moved out of shortcut/mod.rs)
 mod grain_events; // [GRAIN] typed payloads for the webview event surface (see the module docs)
                   // [GRAIN] Multi-provider LLM client — Grain's rewrite of upstream's
@@ -115,6 +119,14 @@ mod tray_i18n;
 mod utils;
 
 pub use cli::CliArgs;
+
+/// [GRAIN] Whether `--eval <golden.json>` was passed (Extensions V1 P3). Read by
+/// `main` *before* clap so the upstream `CliArgs` never has to know the flag —
+/// clap would reject it as unknown. When true, `main` skips `CliArgs::parse()`.
+pub fn eval_requested() -> bool {
+    grain_actions::eval::requested().is_some()
+}
+
 #[cfg(debug_assertions)]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use tauri_specta::{collect_commands, collect_events, Builder};
@@ -1015,6 +1027,9 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_load_unpacked,
             grain_commands::extension_unload_dev,
             grain_commands::extension_grant,
+            grain_auth::extension_auth_connections,
+            grain_auth::extension_auth_connect,
+            grain_auth::extension_auth_disconnect,
             grain_commands::extension_take_slot,
             grain_commands::extension_settings_schema,
             grain_commands::extension_settings_sections,
@@ -1024,11 +1039,23 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_shortcuts_status,
             grain_commands::grain_action_listen,
             grain_commands::grain_action_log,
+            grain_commands::grain_extension_mode_status,
+            grain_commands::grain_extension_mode_download_model,
+            grain_commands::grain_extension_mode_decline,
+            grain_commands::grain_extension_mode_accept,
+            grain_commands::change_auto_send_setting,
+            grain_commands::change_auto_send_for_extension,
             grain_commands::extension_setting_set,
             grain_commands::extension_surface_init,
             grain_commands::extension_surface_ui_ready,
             grain_commands::extension_surface_sleep_ready,
             grain_commands::extension_surface_payload,
+            extension_view::extension_view_init,
+            extension_view::extension_view_ready,
+            extension_view::extension_view_event,
+            extension_view::extension_view_copy,
+            extension_view::extension_view_output,
+            extension_view::extension_view_close,
             grain_commands::extension_import_pack,
             grain_commands::extension_export_pack,
             grain_commands::extension_uninstall,
@@ -1147,6 +1174,7 @@ pub fn run(cli_args: CliArgs) {
             grain_events::ModelExtractionCompleted,
             grain_events::RecordingError,
             grain_events::PasteError,
+            grain_events::ExtensionRecommendation,
             grain_onboarding::OnboardingMicrophoneLevel,
             grain_theme::ThemeChanged,
         ]);
@@ -1163,8 +1191,13 @@ pub fn run(cli_args: CliArgs) {
 
     // The headless path must run as its own instance (see the single-instance
     // note below), not forward to an already-running app.
-    let headless_mode =
-        cli_args.transcribe_file.is_some() || cli_args.list_devices || cli_args.list_models;
+    // [GRAIN] `--eval <golden.json>` (Extensions V1 P3) is a headless subcommand
+    // too — read straight from the args so the upstream CliArgs never learns it.
+    let eval_request = crate::grain_actions::eval::requested();
+    let headless_mode = cli_args.transcribe_file.is_some()
+        || cli_args.list_devices
+        || cli_args.list_models
+        || eval_request.is_some();
 
     #[allow(unused_mut)]
     let mut builder = tauri::Builder::default()
@@ -1283,6 +1316,24 @@ pub fn run(cli_args: CliArgs) {
                     let data_dir = crate::portable::app_data_dir(&app_handle)
                         .unwrap_or_else(|_| std::path::PathBuf::from("."));
                     app.manage(grain_core::AppContext::new(resource_dir, data_dir));
+                }
+                // [GRAIN] Extension eval (Extensions V1 P3) branches out here —
+                // it needs AppContext (for cache/env parity with the running app)
+                // and the embedder, but never the ASR stack below. Runs on its
+                // own thread and process::exits, same shape as transcription.
+                if let Some(golden) = eval_request.clone() {
+                    let handle = app_handle.clone();
+                    std::thread::spawn(move || {
+                        let code = run_headless_guarded(|| {
+                            crate::grain_actions::eval::run(&handle, &golden)
+                        });
+                        crate::grain_space::embed::shutdown_engine();
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                        let _ = std::io::stderr().flush();
+                        std::process::exit(code);
+                    });
+                    return Ok(());
                 }
                 // Register transcribe-cpp compute backends (required for both
                 // --list-devices and any GGUF model load).

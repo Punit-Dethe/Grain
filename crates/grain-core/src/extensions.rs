@@ -106,6 +106,11 @@ pub struct ExtensionRecord {
     /// re-prompts rather than grandfathering actions nobody ever saw.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actions_approved: Option<String>,
+    /// Fingerprint of the complete host-owned authentication declaration.
+    /// An endpoint, scope, API host, or client-id change therefore disables an
+    /// update until the user approves the new connection contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authentication_approved: Option<String>,
     /// [GRAIN] Fingerprint of the Extension Mode hand-off contract the user
     /// approved, from [`recommendation_fingerprint`].
     ///
@@ -253,6 +258,50 @@ pub fn recommendation_fingerprint(manifest: &grain_sdk::manifest::ExtensionManif
         field(&mut hasher, need.trim());
     }
     format!("{:x}", hasher.finalize())
+}
+
+/// Fingerprint all authentication declarations in manifest order. The
+/// declarations use a BTreeMap for provider parameters, so their JSON encoding
+/// is deterministic across runs and platforms.
+pub fn authentication_fingerprint(
+    declarations: &[grain_sdk::manifest::AuthenticationDecl],
+) -> String {
+    use sha2::{Digest, Sha256};
+    let encoded = serde_json::to_vec(declarations)
+        .expect("authentication declarations are always JSON serializable");
+    format!("{:x}", Sha256::digest(encoded))
+}
+
+#[cfg(test)]
+mod authentication_fingerprint_tests {
+    use super::*;
+
+    fn declaration() -> grain_sdk::AuthenticationDecl {
+        grain_sdk::AuthenticationDecl {
+            id: "github".into(),
+            auth_type: grain_sdk::AuthenticationType::OAuth2Pkce,
+            provider_name: "GitHub".into(),
+            client_id: "public".into(),
+            authorization_endpoint: "https://github.com/login/oauth/authorize".into(),
+            token_endpoint: "https://github.com/login/oauth/access_token".into(),
+            scopes: vec!["read:user".into()],
+            redirect_methods: vec![grain_sdk::RedirectMethod::Loopback],
+            api_hosts: vec!["api.github.com".into()],
+            authorization_parameters: Default::default(),
+        }
+    }
+
+    #[test]
+    fn scope_or_host_changes_require_new_authentication_approval() {
+        let original = declaration();
+        let fingerprint = authentication_fingerprint(std::slice::from_ref(&original));
+        let mut changed = original.clone();
+        changed.scopes.push("repo".into());
+        assert_ne!(fingerprint, authentication_fingerprint(&[changed]));
+        let mut changed = original;
+        changed.api_hosts = vec!["uploads.github.com".into()];
+        assert_ne!(fingerprint, authentication_fingerprint(&[changed]));
+    }
 }
 
 /// Fingerprint the declared actions, for the approval check on
@@ -1152,6 +1201,7 @@ mod tests {
             granted: vec![],
             prompt_layers_approved: None,
             actions_approved: None,
+            authentication_approved: None,
             recommend_approved: None,
             slots: slots.iter().map(|s| s.to_string()).collect(),
             variant_slots: vec![],

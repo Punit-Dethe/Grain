@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "extension-view",
+  "description": "Capabilities for Grain's standard host-rendered extension confirmation window. Extension code never enters this webview; it renders only validated data. The page may receive host events and control only its own frameless window.",
+  "windows": ["extension-view"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
+}

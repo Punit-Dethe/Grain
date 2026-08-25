@@ -7,7 +7,7 @@
 export const commands = {
 /**
  * Is there a newer release?
- * 
+ *
  * `force` is the manual "Check now" button: it bypasses `update_checks_enabled`
  * because the user just asked, in person. The automatic check on launch passes
  * `false` and stays silent when the setting is off.
@@ -1637,6 +1637,86 @@ async grainActionLog(clear: boolean) : Promise<Result<ActionLogEntry[], string>>
 }
 },
 /**
+ * [GRAIN] Report Extension Mode readiness (`docs/Extensions V1/PLAN.md` §5).
+ */
+async grainExtensionModeStatus() : Promise<ExtensionModeStatus> {
+    return await TAURI_INVOKE("grain_extension_mode_status");
+},
+/**
+ * [GRAIN] Download the understanding model for Extension Mode
+ * (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
+ * user consents; progress and completion arrive on the shared model events.
+ *
+ * Deliberately NOT gated on Grain Space being enabled — the model belongs to
+ * neither feature, it is a shared resource, and either feature may be the one
+ * that first needs it. Reuses the same download so a second copy is never
+ * fetched.
+ */
+async grainExtensionModeDownloadModel() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_download_model") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] The user declined the recommended extension; reopen with it struck
+ * out (`docs/Extensions V1/PLAN.md` §8 G2). The chooser re-ranks the same
+ * captured request and emits a fresh `extension-recommendation` — one keypress,
+ * not one re-recording. No-op if the pending request has moved on.
+ */
+async grainExtensionModeDecline(presentationId: number, extensionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_decline", { presentationId, extensionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] The user accepted an extension; the full request is handed to it
+ * (`docs/Extensions V1/PLAN.md` §3). Wakes the extension, delivers the whole
+ * transcript, and records the outcome; the extension owns what happens next.
+ */
+async grainExtensionModeAccept(presentationId: number, extensionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("grain_extension_mode_accept", { presentationId, extensionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Flip the global Auto-send toggle (`docs/Extensions V1/PLAN.md` §5).
+ * Off by default and beta-gated — Auto-send only actually fires while
+ * `experimental_enabled` is also on. Turning it on authorises nothing by
+ * itself: a clear semantic match to an *author-eligible* extension the user has
+ * not individually disabled still has to happen.
+ */
+async changeAutoSendSetting(enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_send_setting", { enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * [GRAIN] Turn Auto-send off (or back on) for one extension (§5). The user may
+ * only make Auto-send *stricter* than the author allows: `enabled=false` adds
+ * the extension to the deny-list; `enabled=true` merely removes it, and has no
+ * effect on an extension the author never marked eligible.
+ */
+async changeAutoSendForExtension(id: string, enabled: boolean) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("change_auto_send_for_extension", { id, enabled }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Write one schema-declared setting from the host's own control.
  * 
  * Validated against the same schema as `host_api`'s `settings.set`, and
@@ -1679,6 +1759,41 @@ async extensionSurfaceSleepReady() : Promise<void> {
  */
 async extensionSurfacePayload() : Promise<JsonValue | null> {
     return await TAURI_INVOKE("extension_surface_payload");
+},
+async extensionViewInit() : Promise<ExtensionViewInit | null> {
+    return await TAURI_INVOKE("extension_view_init");
+},
+async extensionViewReady(sessionId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_ready", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionViewEvent(sessionId: number, event: ExtensionViewEvent) : Promise<Result<ExtensionViewEventResult, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_event", { sessionId, event }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionViewCopy(sessionId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_copy", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionViewClose(sessionId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_close", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Import a `.grainpack` file (SPEC §1.1 tier A-inert). Validates, copies into
@@ -2454,6 +2569,7 @@ async isLaptop() : Promise<Result<boolean, string>> {
 
 
 export const events = __makeEvents__<{
+extensionRecommendation: ExtensionRecommendation,
 historyUpdatePayload: HistoryUpdatePayload,
 modelDeleted: ModelDeleted,
 modelDownloadCancelled: ModelDownloadCancelled,
@@ -2473,6 +2589,7 @@ themeChanged: ThemeChanged,
 updateAvailable: UpdateAvailable,
 updateDownloadProgress: UpdateDownloadProgress
 }>({
+extensionRecommendation: "extension-recommendation",
 historyUpdatePayload: "history-update-payload",
 modelDeleted: "model-deleted",
 modelDownloadCancelled: "model-download-cancelled",
@@ -2732,7 +2849,22 @@ stt_api_keys?: SecretMap;
  * [GRAIN] Local date (YYYY-MM-DD) the STT daily quotas were last reset on.
  * When today differs, quotas roll back to 0 (checked lazily at routing time).
  */
-stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number; 
+stt_quota_reset_date?: string; post_process_models?: Partial<{ [key in string]: string }>; post_process_prompts?: LLMPrompt[]; post_process_selected_prompt_id?: string | null; mute_while_recording?: boolean; append_trailing_space?: boolean;
+/**
+ * [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
+ * global opt-in, **off by default** and beta-gated (only active while
+ * `experimental_enabled`). When on, a clear semantic recommendation to an
+ * author-eligible extension is handed over without a chooser — and a Notice
+ * says so afterwards. Never fires on a name match.
+ */
+auto_send_enabled?: boolean;
+/**
+ * [GRAIN] Extensions the user has switched Auto-send OFF for individually.
+ * The user may only make Auto-send *stricter* than the author allows —
+ * disabling one an author marked eligible — never enable one the author
+ * excluded, so this is a deny-list, not an allow-list.
+ */
+auto_send_disabled?: string[]; app_language?: string; experimental_enabled?: boolean; lazy_stream_close?: boolean; keyboard_implementation?: KeyboardImplementation; show_tray_icon?: boolean; paste_delay_ms?: number;
 /**
  * Debug-gated ("beta") receipt-sequenced paste: restore the clipboard only
  * after the target app actually reads the transcript, instead of after a
@@ -3063,7 +3195,7 @@ name: string;
 url_host: string | null }
 export type DeveloperExtension = { id: string; path: string }
 export type EmbedModelStatus = "ready" | "downloading" | "absent"
-export type EngineType = 
+export type EngineType =
 /**
  * Any GGML/GGUF model loaded through transcribe-cpp (Whisper, Parakeet,
  * Voxtral, Qwen3-ASR, Nemotron, …). The architecture is auto-detected from
@@ -3075,7 +3207,12 @@ export type EngineType =
  * state to core settings flags (manifest-first, PLAN.md D4); installed packs
  * read the registry.
  */
-export type ExtensionCard = { id: string; name: string; description: string; version: string; 
+export type ExtensionCard = { id: string; name: string; description: string;
+/**
+ * Grain-derived 128² PNG for settings. Never the resident 512² master.
+ */
+icon: string | null;
+version: string;
 /**
  * "pack" | "scripted" | "native"
  */
@@ -3153,19 +3290,75 @@ recommend: RecommendInfo | null;
  * a capability governs *reach* and this governs *cost*, and hiding the
  * second is how a lightweight-looking install turns out not to be.
  */
-needs: string[] }
+needs: string[];
 /**
- * [GRAIN] The recommendation surface an extension declares
- * (`docs/Extensions V1/PLAN.md` §3.1).
- * 
- * Carried whole rather than pre-formatted: `purpose` is a plain line anyone
- * can read, while `examples` are the greedy-declaration surface store review
- * has to see (G3). Whether the in-app card renders the examples is a UI
- * question still open in the plan (§11) — the backend answering it by omission
- * would settle it silently.
+ * The author permits Auto-send and explains why. The user's setting can
+ * only remove this eligibility, never grant it to another extension.
  */
-export type RecommendInfo = { purpose: string; examples: string[]; aliases: string[]; entities: string[] }
+auto_send_eligible: boolean; auto_send_note: string | null }
 export type ExtensionDeveloperStatus = { enabled: boolean; loaded: DeveloperExtension[] }
+/**
+ * [GRAIN] Whether Extension Mode can recommend, and how well
+ * (`docs/Extensions V1/PLAN.md` §5).
+ * 
+ * The one query a surface needs to decide what to offer: is there anything to
+ * rank (`searchable`), and can the topical leg run or is it name-only until the
+ * model is downloaded. The model is the same ~130 MB BGE weights Grain Space
+ * uses, so a copy downloaded for either serves both — this reports its presence
+ * without requiring Grain Space to be enabled.
+ */
+export type ExtensionModeStatus = {
+/**
+ * Searchable, approved extensions installed. Zero means Extension Mode has
+ * nothing to rank and the download is not worth offering.
+ */
+searchable_count: number;
+/**
+ * `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
+ * Extension Mode still works on names, and first use is where the download
+ * is offered — this is what tells the surface to offer it.
+ */
+model: string }
+/**
+ * [GRAIN] Extension Mode ranked a captured request
+ * (`docs/Extensions V1/PLAN.md` §3, §6b). The surface (behind the design gate)
+ * consumes this; the backend emits it and draws nothing.
+ *
+ * One event covers every outcome the surface must distinguish, because they are
+ * one state machine, not several: an EMPTY `candidates` is the "nothing matched"
+ * state — a real state, not an error — and `name_only` says the topical leg
+ * could not run, which is when the surface offers the model download. Carrying
+ * the verbatim `request` is deliberate: it is what would be handed to the
+ * accepted extension, so the surface must hold it, not reconstruct it.
+ */
+export type ExtensionRecommendation = {
+/**
+ * Opaque presentation nonce. Accept/decline must echo it so delayed UI
+ * input cannot act on a newer request with the same extension id or text.
+ * Zero only for an Auto-send notice, which has no chooser actions.
+ */
+presentation_id: number;
+/**
+ * What the user said, verbatim. The payload a hand-off would carry.
+ */
+request: string;
+/**
+ * Best first. Empty is "nothing matched".
+ */
+candidates: RecommendationCandidate[];
+/**
+ * The topical leg did not run (model absent): only names could match, and
+ * the surface may offer the download. Named candidates still populate the
+ * list.
+ */
+name_only: boolean;
+/**
+ * [GRAIN] Set to the extension id when Auto-send fired (§5): Grain already
+ * handed the request over, so the surface shows a **Notice** naming it
+ * rather than a chooser — frictionless, but afterwards obvious. `None` is the
+ * normal chooser flow. Never set on a named hit, or when the model is absent.
+ */
+auto_sent: string | null }
 /**
  * [GRAIN] Phase 5C: the SCHEMA of one field (no value), crossed to the host
  * renderer so it can draw a `list` row's inputs, or an `app_path`/`url` field.
@@ -3229,6 +3422,16 @@ ui_source: string | null }
  * One enabled extension's settings, ready to render.
  */
 export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
+export type ExtensionView = { version?: number; title: string; description?: string | null; root: ViewNode; actions?: ViewAction[] }
+export type ExtensionViewContent = { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone; can_insert: boolean; can_replace: boolean }
+export type ExtensionViewEvent = { kind: "change"; target: string; value: ViewValue; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "submit"; target: string; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "cancel" }
+export type ExtensionViewEventResult = {
+/**
+ * A `change` handler that returns nothing keeps the user's local field
+ * state instead of rehydrating the author tree's original defaults.
+ */
+unchanged: boolean; content: ExtensionViewContent }
+export type ExtensionViewInit = { sessionId: number; extensionId: string; extensionName: string; content: ExtensionViewContent }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 /**
  * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).
@@ -3514,7 +3717,11 @@ export type PpPoolView = { smart_rotation: boolean; providers: PostProcessProvid
  * drifting apart would mean the user approved one wording and can later only
  * review another.
  */
-export type PromptLayerInfo = { id: string; target: string;
+export type PromptLayerInfo = { id: string;
+/**
+ * `additive` | `main` | `context`.
+ */
+target: string;
 /**
  * The instruction, verbatim. Never summarised anywhere it is displayed.
  */
@@ -3523,6 +3730,32 @@ text: string;
  * No conditions at all — it applies to every dictation.
  */
 everywhere: boolean; app: string[]; website: string[]; category: string[] }
+/**
+ * [GRAIN] The recommendation surface an extension declares
+ * (`docs/Extensions V1/PLAN.md` §3.1).
+ *
+ * Carried whole rather than pre-formatted: `purpose` is a plain line anyone
+ * can read, while `examples` are the greedy-declaration surface store review
+ * has to see (G3). Whether the in-app card renders the examples is a UI
+ * question still open in the plan (§11) — the backend answering it by omission
+ * would settle it silently.
+ */
+export type RecommendInfo = { purpose: string; examples: string[]; aliases: string[]; entities: string[] }
+/**
+ * One extension Extension Mode would offer, enriched for display.
+ */
+export type RecommendationCandidate = { extension_id: string;
+/**
+ * The display name and the one-line purpose, so the surface reads without a
+ * second round-trip for each row.
+ */
+name: string; purpose: string;
+/**
+ * `"named" | "topical"`. The surface may present a named hit differently
+ * (the user said it outright), and Auto-send later reads this to refuse
+ * firing on a name.
+ */
+signal: string; score: number }
 /**
  * A recording could not start or could not finish. Mirrors
  * `actions::RecordingErrorEvent`.
@@ -3567,6 +3800,7 @@ export type ReminderStatus =
  * getting that wrong.
  */
 export type ResolvedTheme = "light" | "dark"
+export type ResultTone = "success" | "warning" | "danger"
 /**
  * A banner for an installed extension that has been revoked or deprecated.
  */
@@ -3847,6 +4081,16 @@ notes: string | null;
  * RFC 3339 publication date as `latest.json` reported it.
  */
 date: string | null }
+export type ViewAction = { id: string; label: string; intent?: ViewActionIntent; kind?: ViewActionKind; disabled?: boolean }
+export type ViewActionIntent = "primary" | "secondary" | "danger" | "cancel"
+export type ViewActionKind = "submit" | "cancel"
+export type ViewAlign = "start" | "center" | "end" | "stretch" | "space_between"
+export type ViewGap = "xs" | "sm" | "md" | "lg"
+export type ViewHeadingLevel = "one" | "two" | "three"
+export type ViewNode = { type: "stack"; gap?: ViewGap; children?: ViewNode[] } | { type: "inline"; gap?: ViewGap; align?: ViewAlign; wrap?: boolean; children?: ViewNode[] } | { type: "grid"; columns: number; gap?: ViewGap; children?: ViewNode[] } | { type: "section"; title?: string | null; children?: ViewNode[] } | { type: "divider" } | { type: "heading"; text: string; level?: ViewHeadingLevel } | { type: "text"; text: string; tone?: ViewTone } | { type: "badge"; text: string; tone?: ViewTone } | { type: "metadata"; label: string; value: string } | { type: "text_field"; id: string; label: string; value?: string; placeholder?: string | null; required?: boolean; disabled?: boolean; maxLength?: number | null } | { type: "text_area"; id: string; label: string; value?: string; placeholder?: string | null; rows?: number; required?: boolean; disabled?: boolean; maxLength?: number | null } | { type: "select"; id: string; label: string; value?: string; options: ViewOption[]; required?: boolean; disabled?: boolean } | { type: "checkbox"; id: string; label: string; checked?: boolean; required?: boolean; disabled?: boolean }
+export type ViewOption = { value: string; label: string }
+export type ViewTone = "neutral" | "muted" | "info" | "success" | "warning" | "danger"
+export type ViewValue = string | boolean
 export type WindowsMicrophonePermissionStatus = { supported: boolean; overall_access: PermissionAccess; device_access: PermissionAccess; app_access: PermissionAccess; desktop_app_access: PermissionAccess }
 
 /** tauri-specta globals **/

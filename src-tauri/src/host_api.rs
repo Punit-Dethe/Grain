@@ -23,11 +23,14 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use grain_sdk::{HostError, HostErrorCode};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_LENGTH, LOCATION};
+use reqwest::header::{
+    HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_LENGTH, LOCATION,
+};
 use reqwest::{Method, StatusCode, Url};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::events_auth::{CapabilitySet, ClientIdentity};
 
@@ -104,7 +107,15 @@ pub fn required_capability(method: &str) -> Option<&'static str> {
         "llm.complete" => Some("llm"),
         // The real grant is derived from the parsed URL (`net:<exact-host>`).
         "net.fetch" => Some("__dynamic_net__"),
+        "auth.status" | "auth.connect" | "auth.disconnect" => Some("__dynamic_auth__"),
         "embed" => Some("embed"),
+        // [GRAIN] The `match.*` primitives (docs/Extensions V1/PLAN.md §4, §12)
+        // take NO capability. A capability governs *reach*, and these reach
+        // nothing beyond the extension's own supplied phrases — unlike `embed`,
+        // which returns raw vectors over arbitrary text and stays gated.
+        // `match.semantic`'s ~130 MB resource is governed by the card-visible
+        // `needs: ["semantic"]` declaration and the §6 lifecycle, not a grant.
+        "match.lexical" | "match.semantic" | "match.decide" => None,
         "session.start" => Some("session:start"),
         "capture.selection" => Some("capture:selection"),
         "capture.app" => Some("capture:app"),
@@ -476,10 +487,141 @@ fn param_strings(params: &Value, key: &str) -> HostResult<Vec<String>> {
         .collect()
 }
 
+/// Parse `candidates: [{ id, <phrase_key>: [string] }]` for the match
+/// primitives. `phrase_key` is `"phrases"` for lexical, `"examples"` for
+/// semantic — one shape under two honest names. Empty phrase strings are dropped
+/// rather than embedded/scored.
+fn param_named_phrase_lists(
+    params: &Value,
+    phrase_key: &str,
+) -> HostResult<Vec<(String, Vec<String>)>> {
+    let array = params
+        .get("candidates")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
+    array
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
+                invalid_argument(format!("'candidates[{index}].id' must be a string"))
+            })?;
+            let phrases = candidate
+                .get(phrase_key)
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    invalid_argument(format!(
+                        "'candidates[{index}].{phrase_key}' must be an array of strings"
+                    ))
+                })?
+                .iter()
+                .filter_map(|p| p.as_str().map(str::to_string))
+                .filter(|p| !p.trim().is_empty())
+                .collect();
+            Ok((id.to_string(), phrases))
+        })
+        .collect()
+}
+
+/// Parse `candidates: [{ id, score }]` for `match.decide`.
+fn param_scored_candidates(params: &Value) -> HostResult<Vec<(String, f32)>> {
+    let array = params
+        .get("candidates")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_argument("'candidates' must be an array"))?;
+    array
+        .iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let id = candidate.get("id").and_then(Value::as_str).ok_or_else(|| {
+                invalid_argument(format!("'candidates[{index}].id' must be a string"))
+            })?;
+            let score = candidate
+                .get("score")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| {
+                    invalid_argument(format!("'candidates[{index}].score' must be a number"))
+                })?;
+            Ok((id.to_string(), score as f32))
+        })
+        .collect()
+}
+
+/// Parse `policy: { minConfidence, margin }`, with defaults for an omitted
+/// policy. There is no universal threshold (§8 G4), so these defaults are a
+/// starting point an author overrides after measuring with `grain-ext eval`.
+fn param_decide_policy(params: &Value) -> grain_core::matching::DecidePolicy {
+    let policy = params.get("policy");
+    let field = |key: &str, default: f32| {
+        policy
+            .and_then(|p| p.get(key))
+            .and_then(Value::as_f64)
+            .map(|v| v as f32)
+            .unwrap_or(default)
+    };
+    grain_core::matching::DecidePolicy {
+        min_confidence: field("minConfidence", 0.5),
+        margin: field("margin", 0.1),
+    }
+}
+
+/// Cosine of two vectors the embedder already L2-normalised — a dot product.
+/// Length-guarded so a mismatched pair scores 0 instead of panicking.
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
+}
+
+/// Score each candidate's best example against the query, best-first, with each
+/// entry's margin to the next. Blocking (model inference) — runs on the blocking
+/// pool. The pure counterpart of `grain_core::matching::lexical_rank`, kept host
+/// -side because it needs the embedder.
+fn semantic_match(text: &str, candidates: &[(String, Vec<String>)]) -> anyhow::Result<Vec<Value>> {
+    let query = crate::grain_space::embed::embed_query(text.to_string())?;
+    let mut scored: Vec<(String, f32)> = Vec::new();
+    for (id, examples) in candidates {
+        if examples.is_empty() {
+            continue;
+        }
+        let vectors = crate::grain_space::embed::embed(examples.clone())?;
+        let best = vectors
+            .iter()
+            .map(|v| cosine(&query, v))
+            .fold(f32::MIN, f32::max);
+        scored.push((id.clone(), best));
+    }
+    scored.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    Ok(scored
+        .iter()
+        .enumerate()
+        .map(|(index, (id, score))| {
+            let margin = scored
+                .get(index + 1)
+                .map_or(*score, |(_, next)| score - next);
+            json!({ "id": id, "score": score, "margin": margin })
+        })
+        .collect())
+}
+
 fn authorize(identity: &ClientIdentity, method: &str, params: &Value) -> HostResult<()> {
     if method == "net.fetch" {
         authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
         return Ok(());
+    }
+    if matches!(method, "auth.status" | "auth.connect" | "auth.disconnect") {
+        let auth_id = param_nonempty_str(params, "id")?;
+        let capability = format!("auth:{auth_id}");
+        return if has_capability(identity, &capability) {
+            Ok(())
+        } else {
+            Err(HostError::capability_denied(&capability, method))
+        };
     }
     match required_capability(method) {
         Some("__unknown__") => Err(unknown_method(method)),
@@ -558,6 +700,19 @@ fn validate_request(method: &str, params: &Value) -> HostResult<()> {
                     return Err(invalid_argument("'secret.prefix' must be a string"));
                 }
             }
+            if let Some(auth) = params.get("auth") {
+                if !auth.is_string() || auth.as_str().is_some_and(str::is_empty) {
+                    return Err(invalid_argument("'auth' must be a non-empty string"));
+                }
+                if params.get("secret").is_some() {
+                    return Err(invalid_argument(
+                        "'auth' and 'secret' are mutually exclusive",
+                    ));
+                }
+            }
+        }
+        "auth.status" | "auth.connect" | "auth.disconnect" => {
+            param_nonempty_str(params, "id")?;
         }
         "embed" => {
             let texts = param_strings(params, "texts")?;
@@ -720,11 +875,19 @@ async fn proxy_fetch(
     identity: &ClientIdentity,
     params: &Value,
     secret_header: Option<(HeaderName, HeaderValue)>,
+    auth_hosts: Option<&[String]>,
+    redact_response: Option<Zeroizing<String>>,
 ) -> HostResult<Value> {
     let mut url = authorize_net_url(identity, &param_nonempty_str(params, "url")?)?;
     let mut method = net_method(params)?;
     let mut headers = net_headers(params)?;
     if let Some((name, value)) = secret_header {
+        if headers.contains_key(&name) {
+            return Err(invalid_argument(format!(
+                "header '{}' is controlled by the selected credential",
+                name.as_str()
+            )));
+        }
         headers.insert(name, value);
     }
     let mut body = params
@@ -766,6 +929,14 @@ async fn proxy_fetch(
                 .join(location)
                 .map_err(|error| invalid_argument(format!("invalid redirect URL: {error}")))?;
             url = authorize_net_url(identity, next.as_str())?;
+            if let Some(allowed) = auth_hosts {
+                let next_host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+                if !allowed.iter().any(|host| host == &next_host) {
+                    return Err(invalid_argument(format!(
+                        "authenticated redirect to '{next_host}' is outside the declared apiHosts"
+                    )));
+                }
+            }
 
             // Match browser fetch semantics for the common method-changing
             // redirects. 307/308 retain the original method and body.
@@ -791,10 +962,15 @@ async fn proxy_fetch(
             .headers()
             .iter()
             .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|value| (name.as_str().to_string(), value.to_string()))
+                value.to_str().ok().map(|value| {
+                    let value = match redact_response.as_deref() {
+                        Some(secret) if !secret.is_empty() && value.contains(secret) => {
+                            SECRET_REDACTED.to_string()
+                        }
+                        _ => value.to_string(),
+                    };
+                    (name.as_str().to_string(), value)
+                })
             })
             .collect::<BTreeMap<_, _>>();
         let mut bytes = Vec::new();
@@ -807,8 +983,15 @@ async fn proxy_fetch(
             }
             bytes.extend_from_slice(&chunk);
         }
-        let body = String::from_utf8(bytes)
+        let mut body = String::from_utf8(bytes)
             .map_err(|_| invalid_argument("network response body is not UTF-8 text"))?;
+        if let Some(secret) = redact_response.as_deref() {
+            if !secret.is_empty() && body.contains(secret) {
+                let redacted = body.replace(secret, SECRET_REDACTED);
+                body.zeroize();
+                body = redacted;
+            }
+        }
         return Ok(json!({
             "status": status.as_u16(),
             "ok": status.is_success(),
@@ -1007,8 +1190,70 @@ pub async fn dispatch(
             Ok(json!({ "text": text }))
         }
         "net.fetch" => {
-            let secret = resolve_net_secret(app, &ctx, identity, &params)?;
-            proxy_fetch(identity, &params, secret).await
+            if let Some(auth_id) = params.get("auth").and_then(Value::as_str) {
+                let raw_url = param_nonempty_str(&params, "url")?;
+                let (url, _) = net_url_and_capability(&raw_url)?;
+                let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
+                let decl = crate::grain_commands::load_pack(app, &identity.id)
+                    .map_err(internal_error)?
+                    .manifest
+                    .contributes
+                    .authentication
+                    .into_iter()
+                    .find(|decl| decl.id == auth_id)
+                    .ok_or_else(|| {
+                        invalid_argument(format!("authentication '{auth_id}' is not declared"))
+                    })?;
+                let token = crate::grain_auth::access_token(app, &identity.id, auth_id, &host)
+                    .await
+                    .map_err(|error| {
+                        unavailable(
+                            error,
+                            "Connect the account in the extension's settings, then retry.",
+                        )
+                    })?;
+                let value =
+                    HeaderValue::from_str(&format!("Bearer {}", token.as_str())).map_err(|_| {
+                        internal_error("stored OAuth token is not a valid header value")
+                    })?;
+                proxy_fetch(
+                    identity,
+                    &params,
+                    Some((AUTHORIZATION, value)),
+                    Some(&decl.api_hosts),
+                    Some(token),
+                )
+                .await
+            } else {
+                let secret = resolve_net_secret(app, &ctx, identity, &params)?;
+                proxy_fetch(identity, &params, secret, None, None).await
+            }
+        }
+        "auth.status" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let rows =
+                crate::grain_auth::extension_auth_connections(app.clone(), identity.id.clone())
+                    .await
+                    .map_err(internal_error)?;
+            serde_json::to_value(rows.into_iter().find(|row| row.id == id))
+                .map_err(|error| internal_error(error.to_string()))
+        }
+        "auth.connect" => {
+            let id = param_nonempty_str(&params, "id")?;
+            let row =
+                crate::grain_auth::connect_from_extension(app.clone(), identity.id.clone(), id)
+                    .await
+                    .map_err(|error| {
+                        unavailable(error, "Retry from the extension settings page.")
+                    })?;
+            serde_json::to_value(row).map_err(|error| internal_error(error.to_string()))
+        }
+        "auth.disconnect" => {
+            let id = param_nonempty_str(&params, "id")?;
+            crate::grain_auth::disconnect_from_extension(app.clone(), identity.id.clone(), id)
+                .await
+                .map_err(internal_error)?;
+            Ok(Value::Null)
         }
         "embed" => {
             // [GRAIN] SPEC §1.3 / Grain Space Test: the same on-device BGE
@@ -1024,6 +1269,50 @@ pub async fn dispatch(
                     .map_err(|error| internal_error(format!("embed task failed: {error}")))?
                     .map_err(|error| service_error("embedding model", error.to_string()))?;
             Ok(json!({ "vectors": vectors }))
+        }
+        // ── match.* — the extension ranks its own commands (§4) ─────────────
+        "match.lexical" => {
+            // Lexical rank over the extension's own phrases. Pure, no model, no
+            // capability. Same scorer Grain uses for its own lexical leg.
+            let text = param_str(&params, "text")?;
+            let candidates = param_named_phrase_lists(&params, "phrases")?;
+            let ranked = grain_core::matching::lexical_rank(&text, &candidates);
+            Ok(json!({
+                "matches": ranked
+                    .iter()
+                    .map(|m| json!({ "id": m.id, "score": m.score }))
+                    .collect::<Vec<_>>(),
+            }))
+        }
+        "match.decide" => {
+            // A confidence policy over any scored candidates — pure. The
+            // primitive that turns a ranking into pick / ask / decline, so an
+            // author never hand-writes a threshold check.
+            let candidates = param_scored_candidates(&params)?;
+            let policy = param_decide_policy(&params);
+            Ok(match grain_core::matching::decide(&candidates, &policy) {
+                grain_core::matching::Decision::Pick(id) => json!({ "pick": id }),
+                grain_core::matching::Decision::Ambiguous(ids) => json!({ "ambiguous": ids }),
+                grain_core::matching::Decision::None => json!({ "none": true }),
+            })
+        }
+        "match.semantic" => {
+            // Semantic rank over the extension's own examples. Needs the
+            // embedder, so it lives here rather than in grain-core — but it
+            // reaches nothing beyond the supplied examples, which is why it takes
+            // no capability. Loads the model on demand and refreshes the TTL
+            // (§6): calling it while cold is never the extension's problem.
+            let text = param_str(&params, "text")?;
+            let candidates = param_named_phrase_lists(&params, "examples")?;
+            if candidates.is_empty() {
+                return Ok(json!({ "matches": [] }));
+            }
+            crate::grain_space::embed::touch_extension_mode(app);
+            let matches = tokio::task::spawn_blocking(move || semantic_match(&text, &candidates))
+                .await
+                .map_err(|error| internal_error(format!("semantic match task failed: {error}")))?
+                .map_err(|error| service_error("embedding model", error.to_string()))?;
+            Ok(json!({ "matches": matches }))
         }
         "capture.selection" => {
             // [GRAIN] Grain Space Test: the selection quick-add path. Simulates
@@ -1500,6 +1789,10 @@ mod tests {
         assert_eq!(required_capability("storage.set"), Some("storage"));
         assert_eq!(required_capability("llm.complete"), Some("llm"));
         assert_eq!(required_capability("net.fetch"), Some("__dynamic_net__"));
+        assert_eq!(
+            required_capability("auth.connect"),
+            Some("__dynamic_auth__")
+        );
         assert_eq!(required_capability("session.start"), Some("session:start"));
         assert_eq!(
             required_capability("capture.selection"),
@@ -1510,6 +1803,16 @@ mod tests {
         assert_eq!(required_capability("doc.put"), Some("storage"));
         assert_eq!(required_capability("doc.list"), Some("storage"));
         assert_eq!(required_capability("log.info"), None);
+
+        // [GRAIN] The match.* primitives (Extensions V1 §4, §12) take NO
+        // capability: they reach nothing beyond the extension's own supplied
+        // phrases. `match.semantic` uses the ~130 MB model but that is a
+        // `needs`-declared resource, not a granted reach — gating it would put a
+        // permission on every searchable extension's sheet and teach people to
+        // click through the ones that matter.
+        assert_eq!(required_capability("match.lexical"), None);
+        assert_eq!(required_capability("match.semantic"), None);
+        assert_eq!(required_capability("match.decide"), None);
 
         // [GRAIN] The notebook has TWO capabilities and they must not collapse
         // into one. `space` is minted by Grain for its own MCP proxy and is
@@ -1551,6 +1854,26 @@ mod tests {
             },
             "__unknown__"
         ));
+    }
+
+    #[test]
+    fn auth_gate_is_declaration_specific_and_fetch_credentials_do_not_mix() {
+        let github = named(&["auth:github", "net:api.github.com"]);
+        assert!(preflight(&github, "auth.status", &json!({ "id": "github" })).is_ok());
+        let denied = preflight(&github, "auth.connect", &json!({ "id": "linear" })).unwrap_err();
+        assert_eq!(denied.code, HostErrorCode::CapabilityDenied);
+
+        let mixed = preflight(
+            &github,
+            "net.fetch",
+            &json!({
+                "url": "https://api.github.com/user",
+                "auth": "github",
+                "secret": { "key": "token", "header": "authorization" }
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(mixed.code, HostErrorCode::InvalidArgument);
     }
 
     fn assert_typed(error: &HostError) {
@@ -1681,7 +2004,7 @@ mod tests {
             body.len()
         ))
         .await;
-        let result = proxy_fetch(&identity, &json!({"url": url}), None)
+        let result = proxy_fetch(&identity, &json!({"url": url}), None, None, None)
             .await
             .unwrap();
         assert_eq!(result["status"], 200);
@@ -1692,7 +2015,7 @@ mod tests {
             NET_MAX_RESPONSE_BYTES + 1
         ))
         .await;
-        let error = proxy_fetch(&identity, &json!({"url": url}), None)
+        let error = proxy_fetch(&identity, &json!({"url": url}), None, None, None)
             .await
             .unwrap_err();
         assert_eq!(error.code, HostErrorCode::ResponseTooLarge);
@@ -1709,11 +2032,39 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/off-grant\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         ))
         .await;
-        let error = proxy_fetch(&identity, &json!({"url": url}), None)
+        let error = proxy_fetch(&identity, &json!({"url": url}), None, None, None)
             .await
             .unwrap_err();
         assert_eq!(error.code, HostErrorCode::CapabilityDenied);
         assert_eq!(error.capability.as_deref(), Some("net:localhost"));
+    }
+
+    #[tokio::test]
+    async fn authenticated_proxy_redacts_an_echoed_token() {
+        let identity = named(&["net:127.0.0.1"]);
+        let token = "provider-secret-token";
+        let body = format!("echo={token}");
+        let url = serve_once(format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Echo: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+            token
+        ))
+        .await;
+        let result = proxy_fetch(
+            &identity,
+            &json!({"url": url}),
+            Some((
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+            )),
+            Some(&["127.0.0.1".to_string()]),
+            Some(Zeroizing::new(token.to_string())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["body"], format!("echo={SECRET_REDACTED}"));
+        assert_eq!(result["headers"]["x-echo"], SECRET_REDACTED);
+        assert!(!result.to_string().contains(token));
     }
 
     #[test]

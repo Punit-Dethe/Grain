@@ -31,7 +31,9 @@ use std::sync::{Arc, Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use grain_core::{AppContext, DaemonEvent};
-use grain_sdk::{daemon_event_capability, GrainPack, HostCall, HostFrame};
+use grain_sdk::{
+    daemon_event_capability, ExtensionView, ExtensionViewEvent, GrainPack, HostCall, HostFrame,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -188,9 +190,6 @@ impl Workers {
     /// stricter than "spawned", because a spawned webview takes a moment to
     /// connect back.
     ///
-    /// Unreferenced until V1-P1 re-attaches the hand-off; see the note above
-    /// [`ACTION_DEADLINE`].
-    #[allow(dead_code)]
     fn is_connected(&self, ext_id: &str) -> bool {
         self.map
             .lock()
@@ -211,7 +210,6 @@ impl Workers {
     /// interval is short enough to be invisible next to the spawn it is waiting
     /// on, and a condvar threaded through the connection path would be more
     /// machinery than the problem deserves.
-    #[allow(dead_code)]
     async fn wait_connected(&self, ext_id: &str, deadline: Duration) -> bool {
         const POLL: Duration = Duration::from_millis(20);
         let started = Instant::now();
@@ -444,6 +442,17 @@ struct Index {
     /// manifest, and gated by the approval digest on every rebuild rather than
     /// once at import.
     actions: grain_core::action_router::ActionIndex,
+    /// [GRAIN] The Extension Mode pool (`docs/Extensions V1/PLAN.md` §3.1): the
+    /// searchable, recommendation-approved extensions and the aliases the lexical
+    /// leg matches. The examples that feed the semantic leg are embedded off this
+    /// path — see [`RECOMMEND_VECTORS`] — so what lives here is only what ranking
+    /// needs synchronously.
+    recommendations: Vec<grain_core::recommend::IndexedRecommendation>,
+    /// [GRAIN] Pooled extensions whose author marked them Auto-send eligible
+    /// (`autoSend.eligible`, §5). Only the *author* half — the global toggle and
+    /// the user's per-extension deny-list are applied at decision time, because
+    /// those change without an index rebuild.
+    auto_send_eligible: std::collections::HashSet<String>,
 }
 
 /// An enabled extension's prompt layer, compiled for matching.
@@ -470,6 +479,36 @@ static HAS_CONTEXT_SLOT: AtomicBool = AtomicBool::new(false);
 static HAS_MAIN_SLOT: AtomicBool = AtomicBool::new(false);
 /// And for declared actions, so a user with none pays one relaxed load.
 static HAS_ACTIONS: AtomicBool = AtomicBool::new(false);
+/// And for the Extension Mode pool: with nothing searchable installed, the
+/// recommendation path is one relaxed load and never touches the index.
+static HAS_RECOMMENDATIONS: AtomicBool = AtomicBool::new(false);
+
+/// [GRAIN] Cached example embeddings for the semantic leg of recommendation
+/// (`docs/Extensions V1/PLAN.md` §3.1). Held outside [`Index`] and behind its
+/// own lock for the same reason the retired calibration was: embedding a pool of
+/// examples is seconds of model work, and `refresh_index` runs when the user
+/// flips a switch. So the index rebuilds synchronously, this stays empty, and a
+/// background task fills it once the vectors are ready — until then
+/// recommendation runs in name-only mode, which is honest rather than blocked.
+///
+/// Keyed by extension id → one vector per declared example. The query is scored
+/// against the best of an extension's example vectors at request time.
+static RECOMMEND_VECTORS: OnceLock<RwLock<RecommendVectors>> = OnceLock::new();
+
+/// Generation guard so a slow embed for an old pool cannot land on top of a
+/// newer one — the same guard the retired calibration used, and for the same
+/// race.
+static RECOMMEND_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct RecommendVectors {
+    generation: u64,
+    vectors: HashMap<String, Vec<Vec<f32>>>,
+}
+
+fn recommend_vectors() -> &'static RwLock<RecommendVectors> {
+    RECOMMEND_VECTORS.get_or_init(|| RwLock::new(RecommendVectors::default()))
+}
 
 struct HostState {
     app: AppHandle,
@@ -492,6 +531,10 @@ pub fn refresh_index(app: &AppHandle) {
     let mut transforms: Vec<(String, u64)> = Vec::new();
     let mut prompt_layers: Vec<(CompiledPromptLayer, u64)> = Vec::new();
     let mut actions: Vec<grain_core::action_router::IndexedAction> = Vec::new();
+    let mut recommendations: Vec<grain_core::recommend::IndexedRecommendation> = Vec::new();
+    let mut recommend_examples: Vec<(String, Vec<String>)> = Vec::new();
+    let mut auto_send_eligible: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
     let mut startup_workers: Vec<(String, GrainPack, Vec<String>)> = Vec::new();
 
     if let Some(reg) = app.try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>() {
@@ -513,6 +556,16 @@ pub fn refresh_index(app: &AppHandle) {
             // Actions ARE gated on a runtime, unlike prompt layers: a pack with
             // nothing to call would win a route and then dead-end.
             collect_actions(&rec, &pack, &mut actions);
+            // The Extension Mode pool. Gated on searchable + recommendation
+            // approval, NOT on declaring any action — a translator is a real
+            // searchable extension with no command catalogue at all (§3.1).
+            collect_recommendation(
+                &rec,
+                &pack,
+                &mut recommendations,
+                &mut recommend_examples,
+                &mut auto_send_eligible,
+            );
             let mut granted_variants = Vec::new();
             for variant in declared_event_variants(&pack.manifest.activation) {
                 let Some(capability) = daemon_event_capability(&variant) else {
@@ -543,9 +596,7 @@ pub fn refresh_index(app: &AppHandle) {
             for variant in granted_variants {
                 by_event.entry(variant).or_default().push(rec.id.clone());
             }
-            if has_resident_grant(&pack.manifest.activation, &rec.granted)
-                && !is_running(&rec.id)
-            {
+            if has_resident_grant(&pack.manifest.activation, &rec.granted) && !is_running(&rec.id) {
                 startup_workers.push((rec.id.clone(), pack, rec.granted.clone()));
             } else if declares_startup(&pack.manifest.activation)
                 && !has_grant(&rec.granted, "resident")
@@ -568,6 +619,7 @@ pub fn refresh_index(app: &AppHandle) {
     let action_count = actions.len();
     let action_index = grain_core::action_router::ActionIndex::build(actions);
     HAS_ACTIONS.store(action_count > 0, Ordering::Relaxed);
+    HAS_RECOMMENDATIONS.store(!recommendations.is_empty(), Ordering::Relaxed);
 
     HAS_ACTIVATIONS.store(!by_event.is_empty(), Ordering::Relaxed);
     HAS_TRANSFORMS.store(!transforms.is_empty(), Ordering::Relaxed);
@@ -595,7 +647,13 @@ pub fn refresh_index(app: &AppHandle) {
         transforms,
         prompt_layers,
         actions: action_index,
+        recommendations,
+        auto_send_eligible,
     };
+    // Embed the pool's examples off this path, generation-guarded, so a slow
+    // rebuild never blocks a switch and a stale embed never lands on a newer
+    // pool. Until it completes the pool ranks name-only, which is honest.
+    reembed_recommendations(recommend_examples);
     // "The extension set changed" is exactly the trigger for reconciling
     // contributed shortcuts, so every caller of `refresh_index` gets it for
     // free rather than having to remember a second call. `sync` defers onto
@@ -652,7 +710,11 @@ fn collect_prompt_layers(
     for layer in declared {
         let text = layer.text.trim();
         if let Err(why) = crate::context_detect::prompt_stack::screen_contributed_text(text) {
-            log::warn!("[ext:{}] prompt layer '{}' refused: {why}", rec.id, layer.id);
+            log::warn!(
+                "[ext:{}] prompt layer '{}' refused: {why}",
+                rec.id,
+                layer.id
+            );
             continue;
         }
         out.push((
@@ -719,6 +781,239 @@ fn collect_actions(
             &rec.id, decl,
         ));
     }
+}
+
+/// Add one enabled extension to the Extension Mode pool, if it belongs there.
+///
+/// Two gates, the first two from [`collect_actions`] and for the same reasons —
+/// classification (§2) and the recommendation digest (disclosure). It does
+/// **not** gate on declaring an action: a translator is a legitimate searchable
+/// extension with no command catalogue at all (§3.1), and gating it out here
+/// would make the one example the plan uses for "recommend exists even with zero
+/// commands" unrankable.
+fn collect_recommendation(
+    rec: &grain_core::extensions::ExtensionRecord,
+    pack: &GrainPack,
+    recommendations: &mut Vec<grain_core::recommend::IndexedRecommendation>,
+    examples: &mut Vec<(String, Vec<String>)>,
+    auto_send_eligible: &mut std::collections::HashSet<String>,
+) {
+    if !pack.manifest.kind.is_searchable() {
+        return;
+    }
+    let fingerprint = grain_core::extensions::recommendation_fingerprint(&pack.manifest);
+    if rec.recommend_approved.as_deref() != Some(fingerprint.as_str()) {
+        // collect_actions already logged the mismatch for a pack that also
+        // declares actions; a recommend-only pack would otherwise be silent.
+        return;
+    }
+    let Some(decl) = &pack.manifest.recommend else {
+        return;
+    };
+    recommendations.push(grain_core::recommend::IndexedRecommendation::new(
+        &rec.id,
+        &decl.aliases,
+    ));
+    examples.push((rec.id.clone(), decl.examples.clone()));
+    // Author-declared Auto-send eligibility (§5). The user's deny-list and the
+    // global toggle are applied at decision time, not here.
+    if pack.manifest.auto_send.as_ref().is_some_and(|a| a.eligible) {
+        auto_send_eligible.insert(rec.id.clone());
+    }
+}
+
+/// The pooled extensions whose author marked them Auto-send eligible (§5). The
+/// caller intersects this with the user's deny-list and the global toggle.
+pub fn auto_send_eligible() -> std::collections::HashSet<String> {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return std::collections::HashSet::new();
+    }
+    HOST.get()
+        .map(|host| host.index.read().unwrap().auto_send_eligible.clone())
+        .unwrap_or_default()
+}
+
+/// Embed the pool's example phrases and cache the vectors, off the rebuild path.
+///
+/// Fire-and-forget and generation-guarded, the shape the retired calibration
+/// used. Skips entirely when the model is not on disk — that is **name-only
+/// mode** (§5), not a failure: the pool still ranks on names, and first use of
+/// Extension Mode is where the download is offered. An extension whose examples
+/// fail to embed simply has no topical vectors and is reachable by name only.
+fn reembed_recommendations(examples: Vec<(String, Vec<String>)>) {
+    let generation = RECOMMEND_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    if examples.is_empty() || !crate::grain_space::embed::model_on_disk() {
+        // Clear any vectors from a previous pool so a now-absent model or empty
+        // pool cannot leave stale topical scores behind.
+        let mut cache = recommend_vectors().write().unwrap();
+        if cache.generation < generation {
+            *cache = RecommendVectors {
+                generation,
+                vectors: HashMap::new(),
+            };
+        }
+        return;
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut vectors: HashMap<String, Vec<Vec<f32>>> = HashMap::new();
+        for (id, phrases) in examples {
+            let phrases: Vec<String> = phrases
+                .into_iter()
+                .filter(|p| !p.trim().is_empty())
+                .collect();
+            if phrases.is_empty() {
+                continue;
+            }
+            match crate::grain_space::embed::embed(phrases) {
+                Ok(embedded) => {
+                    vectors.insert(id, embedded);
+                }
+                Err(error) => {
+                    log::warn!("[GRAIN] ext-host: embedding examples for '{id}' failed: {error:#}");
+                }
+            }
+        }
+        // A rebuild that started after this one owns the answer.
+        if RECOMMEND_GENERATION.load(Ordering::SeqCst) != generation {
+            log::debug!(
+                "[GRAIN] ext-host: discarding stale recommendation vectors (gen {generation})"
+            );
+            return;
+        }
+        log::debug!(
+            "[GRAIN] ext-host: recommendation vectors ready — {} extension(s) embedded",
+            vectors.len()
+        );
+        *recommend_vectors().write().unwrap() = RecommendVectors {
+            generation,
+            vectors,
+        };
+    });
+}
+
+/// Rank the installed searchable extensions for one spoken request
+/// (`docs/Extensions V1/PLAN.md` §3.1). The whole recommendation, minus the
+/// hand-off: which extensions, in what order, by name or by topic. With nothing
+/// searchable installed this is one relaxed atomic load.
+///
+/// `excluded` is the decline-and-reopen set (G2): extensions the user already
+/// turned down for this request, dropped from the ballot so the reopened chooser
+/// cannot offer the same wrong pick again.
+///
+/// Runs the semantic leg only when the model is on disk *and* the cached vectors
+/// belong to the current pool; otherwise it hands `None` to the ranker, which is
+/// name-only mode. Blocking on the query embed, so it must not be called from a
+/// felt path — the Extension Mode session calls it off the microphone thread.
+pub fn recommend(
+    spoken: &str,
+    excluded: &[String],
+) -> (Vec<grain_core::recommend::Recommendation>, bool) {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return (Vec::new(), false);
+    }
+    let Some(host) = HOST.get() else {
+        return (Vec::new(), false);
+    };
+    let index = host.index.read().unwrap();
+    let semantic = semantic_scores(spoken);
+    let semantic_available = semantic.is_some();
+    (
+        grain_core::recommend::rank(&index.recommendations, spoken, semantic.as_ref(), excluded),
+        semantic_available,
+    )
+}
+
+/// The display name and one-line purpose for a pooled extension, for the
+/// recommendation event. Reads the manifest off disk, so it is called from the
+/// session's off-thread `deliver`, never a felt path.
+pub fn recommendation_display(app: &AppHandle, id: &str) -> Option<(String, String)> {
+    let pack = load_manifest(app, id)?;
+    let purpose = pack
+        .manifest
+        .recommend
+        .as_ref()
+        .map(|r| r.purpose.clone())
+        .unwrap_or_default();
+    Some((pack.manifest.name, purpose))
+}
+
+/// How many searchable, approved extensions are in the Extension Mode pool.
+///
+/// The one fact a surface needs to decide whether Extension Mode is worth
+/// offering at all, and whether the embedding-model download is worth its ~130 MB
+/// — a pool of zero has nothing to rank, semantic or not. One relaxed atomic
+/// load when nothing searchable is installed.
+pub fn searchable_count() -> usize {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return 0;
+    }
+    HOST.get()
+        .map(|host| host.index.read().unwrap().recommendations.len())
+        .unwrap_or(0)
+}
+
+/// Every searchable extension id in the pool, in index order.
+///
+/// The chooser surface lists **all** installed searchable extensions, not only
+/// the ranked picks: the recommendations sit highlighted at the top, and the
+/// rest are there so the user can always find and choose the right one by hand
+/// (or by typing to filter) when ranking withheld it. One relaxed atomic load
+/// when nothing searchable is installed.
+pub fn searchable_ids() -> Vec<String> {
+    if !HAS_RECOMMENDATIONS.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
+    HOST.get()
+        .map(|host| {
+            host.index
+                .read()
+                .unwrap()
+                .recommendations
+                .iter()
+                .map(|r| r.extension_id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The semantic leg: embed the query and score it against each pooled
+/// extension's cached example vectors, best example wins.
+///
+/// `None` — name-only mode — when the model is absent, the cache belongs to an
+/// older pool, or the query cannot be embedded. Every one of those degrades to
+/// names rather than to a wrong topical guess, which is the safe direction: a
+/// missing topical score withholds a recommendation, it never invents one.
+///
+/// Scores are read straight off the cache rather than off the index, because the
+/// generation guard already guarantees the cache belongs to the current pool —
+/// an extension that has embedded is in the map, one that has not simply has no
+/// topical score, and the ranker treats that as "reachable by name only".
+fn semantic_scores(spoken: &str) -> Option<HashMap<String, f32>> {
+    if !crate::grain_space::embed::model_on_disk() {
+        return None;
+    }
+    let cache = recommend_vectors().read().unwrap();
+    if cache.generation != RECOMMEND_GENERATION.load(Ordering::SeqCst) || cache.vectors.is_empty() {
+        return None;
+    }
+    let query = crate::grain_space::embed::embed_query(spoken.to_string()).ok()?;
+    let mut scores = HashMap::new();
+    for (id, vectors) in &cache.vectors {
+        if let Some(best) = vectors.iter().map(|v| cosine(&query, v)).reduce(f32::max) {
+            scores.insert(id.clone(), best);
+        }
+    }
+    (!scores.is_empty()).then_some(scores)
+}
+
+/// Cosine similarity of two vectors the embedder already L2-normalised, so this
+/// is a dot product. Length-guarded rather than trusting both came from the same
+/// model — a mismatch scores 0 instead of panicking on a bad index.
+fn cosine(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
 /// Every literal word the installed actions declare, for ASR biasing.
@@ -1306,6 +1601,7 @@ fn kill_worker_inner(ext_id: &str, reason: &str, token: Option<&str>, preserve_s
             }
         }
     }
+    crate::extension_view::fail_interactive_for_extension(&host.app, ext_id, reason);
     crate::events_server::revoke_token(&worker.token);
     let _ = host.app.emit_to(
         SUPERVISOR_LABEL,
@@ -1332,6 +1628,9 @@ fn kill_worker(ext_id: &str, reason: &str) {
 /// Public lifecycle hook for registry operations such as unloading a dev
 /// override. It is a no-op when the extension has no live worker.
 pub fn stop_extension(ext_id: &str, reason: &str) {
+    if let Some(host) = HOST.get() {
+        crate::extension_view::destroy_for_extension(&host.app, ext_id);
+    }
     kill_worker(ext_id, reason);
 }
 
@@ -1363,7 +1662,9 @@ fn reap_idle() {
         None => return,
     };
     for id in host.workers.idle_victims(now_secs(), IDLE_REAP_SECS) {
-        if crate::extension_session::is_owned_by(&id) {
+        if crate::extension_session::is_owned_by(&id)
+            || crate::extension_view::owns_extension(&id)
+        {
             continue;
         }
         kill_worker(&id, "idle timeout");
@@ -1620,71 +1921,93 @@ pub async fn run_session_stage(
 
 // ── Hand-off (`docs/Extensions V1/PLAN.md` §3) ──────────────────────────────
 //
-// [GRAIN] V1-P0 retired the decision layer that used to call into this half, so
-// everything below is unreferenced until V1-P1 wires the recommendation and the
-// hand-off back onto it. It is `allow(dead_code)` rather than deleted because
-// the plan keeps it verbatim (§9 "Kept"): waking a cold worker, the deadline
-// pair, and the outcome parse are unchanged by the pivot — what changed is only
-// *who decides* which extension gets called.
+// [GRAIN] V1-P0 kept this machinery `allow(dead_code)` through the recommendation
+// work; V1-P2 wires it back on. The pivot changed only *who decides* which
+// extension is called (the user accepting a recommendation, not a router), and
+// *what* it is handed (the full transcript, not extracted spans). Waking a cold
+// worker, the deadline pair, and the call/outcome shape are unchanged.
 
-/// How long an action may take before the host gives up.
+/// How long a handed-off request may take before the host gives up.
 ///
-/// Generous compared with the transform budget, and deliberately so: an action
-/// is expected to leave the machine (a Spotify call, a Slack post), where the
-/// network grant already allows 15 s. The felt path is not this — the ranking
-/// decides in milliseconds and the pill says what is happening.
-#[allow(dead_code)]
-const ACTION_DEADLINE: Duration = Duration::from_secs(20);
+/// Generous compared with the transform budget, and deliberately so: the
+/// extension is expected to leave the machine (a Spotify call, a Slack post) and
+/// may call a model — the network grant already allows 15 s. The felt path is
+/// not this; the pill says what is happening while the extension works.
+const HANDOFF_DEADLINE: Duration = Duration::from_secs(20);
 
 /// How long to wait for a cold worker to connect before giving up.
 ///
 /// The plan budgets ~300 ms for a cold wake; this is deliberately several times
-/// that, because the cost of being wrong is a failed action the user has to
+/// that, because the cost of being wrong is a failed request the user has to
 /// repeat, while the cost of waiting is a pill that says "working" for another
 /// moment.
-#[allow(dead_code)]
-const ACTION_WAKE_DEADLINE: Duration = Duration::from_secs(3);
+const HANDOFF_WAKE_DEADLINE: Duration = Duration::from_secs(3);
+/// A UI interaction should return a replacement tree or finite outcome quickly;
+/// unlike the initial request it has no network-sized interpretation phase.
+const SURFACE_EVENT_DEADLINE: Duration = Duration::from_secs(10);
 
-/// What performing an action produced.
-#[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum ActionOutcome {
-    /// It ran. The optional line is what the pill says instead of the title.
+/// What a handed-off request produced.
+#[derive(Debug, PartialEq)]
+pub enum HandOffOutcome {
+    /// The extension handled it. The optional line is a short result to show.
     Done(Option<String>),
-    /// The extension resolved a span to several candidates and wants the user
-    /// to pick. Not a failure.
-    Ambiguous { param: String, options: Vec<String> },
-    /// It could not run, with a reason worth showing.
+    /// The extension needs Grain's standard, host-rendered surface before it can
+    /// finish. The worker remains alive and receives stable-id `surface` events.
+    View(ExtensionView),
+    /// The extension is healthy but is not the right owner for this request.
+    /// Grain must reopen the chooser with this extension removed rather than
+    /// treating a routing correction as an execution failure.
+    Declined(String),
+    /// It could not, with a reason worth showing.
     Failed(String),
     /// The deadline passed after the call was already in flight.
     ///
     /// **Distinct from `Failed` on purpose.** For anything that leaves the
-    /// machine, a timeout does not mean it did not happen — the message may
-    /// well have been sent. Reporting that as failure is a lie, and the one a
+    /// machine, a timeout does not mean it did not happen — the request may well
+    /// have been carried out. Reporting that as failure is a lie, and the one a
     /// user is least able to recover from.
     Unknown,
 }
 
-#[allow(dead_code)]
-fn parse_action_outcome(value: Value) -> ActionOutcome {
-    if let Some(options) = value.get("options").and_then(Value::as_array) {
-        let param = value
-            .get("param")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        let options: Vec<String> = options
-            .iter()
-            .filter_map(|o| o.as_str().map(str::to_string))
-            .collect();
-        if !param.is_empty() && !options.is_empty() {
-            return ActionOutcome::Ambiguous { param, options };
+fn validate_request_reply_shape(value: &Value) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or("extension request replies must be objects")?;
+    const ALLOWED: [&str; 4] = ["view", "message", "decline", "error"];
+    if let Some(key) = object.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(format!("unsupported extension request reply field '{key}'"));
+    }
+    if object.len() > 1 {
+        return Err("extension request reply contains multiple outcomes".into());
+    }
+    for key in ["message", "decline", "error"] {
+        if object.get(key).is_some_and(|value| !value.is_string()) {
+            return Err(format!("extension request reply '{key}' must be a string"));
         }
     }
-    if let Some(error) = value.get("error").and_then(Value::as_str) {
-        return ActionOutcome::Failed(error.to_string());
+    Ok(())
+}
+
+fn parse_handoff_outcome(value: Value) -> HandOffOutcome {
+    if let Err(reason) = validate_request_reply_shape(&value) {
+        return HandOffOutcome::Failed(reason);
     }
-    ActionOutcome::Done(
+    if let Some(view) = value.get("view") {
+        return match serde_json::from_value::<ExtensionView>(view.clone()) {
+            Ok(view) => match view.validate() {
+                Ok(()) => HandOffOutcome::View(view),
+                Err(reason) => HandOffOutcome::Failed(format!("invalid extension view: {reason}")),
+            },
+            Err(error) => HandOffOutcome::Failed(format!("invalid extension view: {error}")),
+        };
+    }
+    if let Some(reason) = value.get("decline").and_then(Value::as_str) {
+        return HandOffOutcome::Declined(reason.to_string());
+    }
+    if let Some(error) = value.get("error").and_then(Value::as_str) {
+        return HandOffOutcome::Failed(error.to_string());
+    }
+    HandOffOutcome::Done(
         value
             .get("message")
             .and_then(Value::as_str)
@@ -1692,14 +2015,105 @@ fn parse_action_outcome(value: Value) -> ActionOutcome {
     )
 }
 
+#[derive(Debug, PartialEq)]
+pub enum SurfaceEventOutcome {
+    View(ExtensionView),
+    Unchanged,
+    Done(Option<String>),
+    Unknown,
+    Failed(String),
+}
+
+fn parse_surface_outcome(value: Value, finish_on_empty: bool) -> SurfaceEventOutcome {
+    if let Err(reason) = validate_request_reply_shape(&value) {
+        return SurfaceEventOutcome::Failed(reason);
+    }
+    if let Some(view) = value.get("view") {
+        return match serde_json::from_value::<ExtensionView>(view.clone()) {
+            Ok(view) => match view.validate() {
+                Ok(()) => SurfaceEventOutcome::View(view),
+                Err(reason) => {
+                    SurfaceEventOutcome::Failed(format!("invalid extension view: {reason}"))
+                }
+            },
+            Err(error) => {
+                SurfaceEventOutcome::Failed(format!("invalid extension view: {error}"))
+            }
+        };
+    }
+    if let Some(error) = value.get("error").and_then(Value::as_str) {
+        return SurfaceEventOutcome::Failed(error.to_string());
+    }
+    if let Some(reason) = value.get("decline").and_then(Value::as_str) {
+        return SurfaceEventOutcome::Failed(format!(
+            "extension declined after presenting its confirmation: {reason}"
+        ));
+    }
+    if !finish_on_empty && value.as_object().is_some_and(serde_json::Map::is_empty) {
+        return SurfaceEventOutcome::Unchanged;
+    }
+    SurfaceEventOutcome::Done(
+        value
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+/// Deliver one validated stable-id UI event to the worker that owns the active
+/// standard surface. The renderer itself holds no extension capability.
+pub async fn surface_event(
+    _app: &AppHandle,
+    ext_id: &str,
+    session_id: u64,
+    event: ExtensionViewEvent,
+) -> SurfaceEventOutcome {
+    let finish_on_empty = matches!(&event, ExtensionViewEvent::Submit { .. });
+    let Some(host) = HOST.get() else {
+        return SurfaceEventOutcome::Failed("extension host unavailable".into());
+    };
+    match host
+        .workers
+        .call(
+            ext_id,
+            "surface",
+            json!({ "sessionId": session_id, "event": event }),
+            SURFACE_EVENT_DEADLINE,
+        )
+        .await
+    {
+        Ok(value) => parse_surface_outcome(value, finish_on_empty),
+        Err(error) if error == "deadline exceeded" && finish_on_empty => {
+            SurfaceEventOutcome::Unknown
+        }
+        Err(error) => SurfaceEventOutcome::Failed(error),
+    }
+}
+
+/// Best-effort cancellation for a window closed through native chrome. It is a
+/// one-way lifecycle signal: closing never waits on extension code.
+pub fn notify_surface_cancel(ext_id: &str, session_id: u64) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let _ = host.workers.notify(
+        ext_id,
+        "surface",
+        json!({
+            "sessionId": session_id,
+            "event": { "kind": "cancel" }
+        }),
+    );
+}
+
 /// Wake the extension the request was handed to, if it is cold.
 ///
-/// Only that one. Warming every action-bearing extension when the key goes down
-/// is the tempting alternative and it violates destroy-if-not-in-use at exactly
-/// the scale this feature is built for — twenty installed extensions would mean
-/// twenty worker spawns per press.
-#[allow(dead_code)]
-pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
+/// Only that one. Warming every searchable extension when the key goes down is
+/// the tempting alternative and it violates destroy-if-not-in-use at exactly the
+/// scale this feature is built for — twenty installed extensions would mean
+/// twenty worker spawns per press. Spawned with no activation payload: the
+/// request arrives as an explicit host call, not as a wake event.
+fn wake_for_request(app: &AppHandle, ext_id: &str) {
     if is_running(ext_id) {
         return;
     }
@@ -1711,67 +2125,63 @@ pub fn wake_for_action(app: &AppHandle, ext_id: &str, action_id: &str) {
         .and_then(|registry| registry.record(ext_id))
         .map(|record| record.granted)
         .unwrap_or_default();
-    spawn_worker(
-        app,
-        ext_id,
-        &pack,
-        granted,
-        Some(json!({ "Action": { "action": action_id } })),
-    );
+    spawn_worker(app, ext_id, &pack, granted, None);
 }
 
-/// Perform one action on the extension the request was handed to.
+/// Hand the full request to the extension the user accepted (§3).
 ///
-/// An extension that was not handed the request learns nothing at all.
-#[allow(dead_code)]
-pub async fn perform_action(
-    app: &AppHandle,
-    ext_id: &str,
-    action_id: &str,
-    spans: &std::collections::BTreeMap<String, String>,
-) -> ActionOutcome {
+/// The extension receives the whole transcript, verbatim, and owns what happens
+/// next — interpretation, any `match.*` ranking, clarification, the result. Grain
+/// does not resolve anything first; that was the old routing model. What it does
+/// guarantee is that the extension is still enabled and awake.
+pub async fn hand_off(app: &AppHandle, ext_id: &str, request: &str) -> HandOffOutcome {
     let Some(host) = HOST.get() else {
-        return ActionOutcome::Failed("extension host unavailable".into());
+        return HandOffOutcome::Failed("extension host unavailable".into());
     };
-    // Re-check enablement at execute, not only at route. A user can disable an
-    // extension while the confirmation sheet is open, and the read-back they
-    // agreed to would then run against something they just turned off.
+    // Re-check enablement at hand-off, not only at ranking. A user can disable an
+    // extension between speaking and accepting, and the request would then run
+    // against something they just turned off.
     let enabled = app
         .try_state::<Arc<grain_core::extensions::ExtensionsRegistry>>()
         .and_then(|registry| registry.record(ext_id))
         .is_some_and(|record| record.enabled);
     if !enabled {
-        return ActionOutcome::Failed("that extension is no longer enabled".into());
+        return HandOffOutcome::Failed("that extension is no longer enabled".into());
     }
-    // The winner was almost certainly cold — a routed action is usually the only
-    // reason to wake it. Give the spawn a bounded moment to connect rather than
-    // failing instantly.
-    if !host.workers.wait_connected(ext_id, ACTION_WAKE_DEADLINE).await {
-        log::warn!("[ext:{ext_id}] action '{action_id}' — worker did not start in time");
-        return ActionOutcome::Failed("that extension did not start in time".into());
+    // The chosen extension was almost certainly cold — being handed a request is
+    // usually the only reason to wake it. Give the spawn a bounded moment to
+    // connect rather than failing instantly.
+    wake_for_request(app, ext_id);
+    if !host
+        .workers
+        .wait_connected(ext_id, HANDOFF_WAKE_DEADLINE)
+        .await
+    {
+        log::warn!("[ext:{ext_id}] request — worker did not start in time");
+        return HandOffOutcome::Failed("that extension did not start in time".into());
     }
     match host
         .workers
         .call(
             ext_id,
-            "action",
-            json!({ "action": action_id, "params": spans }),
-            ACTION_DEADLINE,
+            "request",
+            json!({ "request": request }),
+            HANDOFF_DEADLINE,
         )
         .await
     {
         Ok(value) => {
             clear_strikes(ext_id);
-            parse_action_outcome(value)
+            parse_handoff_outcome(value)
         }
         Err(error) if error == "deadline exceeded" => {
             record_strike(app, ext_id);
-            log::warn!("[ext:{ext_id}] action '{action_id}' timed out after {ACTION_DEADLINE:?}");
-            ActionOutcome::Unknown
+            log::warn!("[ext:{ext_id}] request timed out after {HANDOFF_DEADLINE:?}");
+            HandOffOutcome::Unknown
         }
         Err(error) => {
             record_strike(app, ext_id);
-            ActionOutcome::Failed(error)
+            HandOffOutcome::Failed(error)
         }
     }
 }
@@ -1883,6 +2293,7 @@ fn auto_disable(app: &AppHandle, ext_id: &str, reason: String) {
         let _ = reg.set_enabled(ext_id, false);
     }
     refresh_index(app); // drop it from the hot-path index immediately
+    crate::extension_view::destroy_for_extension(app, ext_id);
     kill_worker(ext_id, "auto-disabled after repeated resource violations");
     if let Some(ctx) = app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
@@ -1915,6 +2326,7 @@ pub fn companion_gave_up(ext_id: &str, token: &str, reason: String) {
     {
         let _ = registry.set_enabled(ext_id, false);
     }
+    crate::extension_view::destroy_for_extension(&host.app, ext_id);
     refresh_index(&host.app);
     if let Some(ctx) = host.app.try_state::<Arc<AppContext>>() {
         ctx.emit(DaemonEvent::ExtensionDisabled {
@@ -2029,6 +2441,12 @@ pub fn reload_dev_extension(
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty()).then(|| {
             grain_core::extensions::actions_fingerprint(&loaded.pack.manifest.contributes.actions)
         }),
+        authentication_approved: (!loaded.pack.manifest.contributes.authentication.is_empty())
+            .then(|| {
+                grain_core::extensions::authentication_fingerprint(
+                    &loaded.pack.manifest.contributes.authentication,
+                )
+            }),
         // And for what the extension is ranked by. Same shortcut, same limit.
         recommend_approved: loaded
             .pack
@@ -2196,10 +2614,7 @@ mod tests {
         assert!(!has_grant(&granted, "transform:transcript"));
         let startup = vec!["onStartup".to_string()];
         assert!(!has_resident_grant(&startup, &granted));
-        assert!(has_resident_grant(
-            &startup,
-            &["resident".to_string()]
-        ));
+        assert!(has_resident_grant(&startup, &["resident".to_string()]));
     }
 
     /// The whole point of the index: with nothing enabled, the paste path and
@@ -2233,6 +2648,7 @@ mod tests {
             actions_approved: Some(grain_core::extensions::actions_fingerprint(
                 &pack.manifest.contributes.actions,
             )),
+            authentication_approved: None,
             recommend_approved: pack
                 .manifest
                 .kind
@@ -2280,6 +2696,144 @@ mod tests {
         let mut out = Vec::new();
         collect_actions(&stale, &pack, &mut out);
         assert!(out.is_empty());
+    }
+
+    fn pool_of(pack: &GrainPack, rec: &grain_core::extensions::ExtensionRecord) -> Vec<String> {
+        let mut recommendations = Vec::new();
+        let mut examples = Vec::new();
+        let mut eligible = std::collections::HashSet::new();
+        collect_recommendation(
+            rec,
+            pack,
+            &mut recommendations,
+            &mut examples,
+            &mut eligible,
+        );
+        recommendations
+            .into_iter()
+            .map(|r| r.extension_id)
+            .collect()
+    }
+
+    #[test]
+    fn an_extending_extension_is_not_in_the_recommendation_pool() {
+        let pack = pack_of("");
+        assert!(pool_of(&pack, &record_for(&pack)).is_empty());
+    }
+
+    #[test]
+    fn a_searchable_extension_is_in_the_recommendation_pool() {
+        let pack = pack_of(SEARCHABLE);
+        assert_eq!(pool_of(&pack, &record_for(&pack)), vec!["com.x.p"]);
+    }
+
+    /// The translator case (§3.1): a searchable extension with no command
+    /// catalogue at all is still rankable — `recommend` exists even with zero
+    /// actions, and gating the pool on actions would make it unreachable.
+    #[test]
+    fn a_searchable_extension_with_no_actions_is_still_pooled() {
+        let json = r#"{"manifest":{"id":"com.x.t","name":"T","version":"1.0",
+            "tier":"scripted","entry_source":"export default {}",
+            "kind":"searchable","recommend":{"purpose":"Translate text",
+              "examples":["translate this to french","how do you say hello in spanish"]}}}"#;
+        let pack: GrainPack = serde_json::from_str(json).expect("fixture parses");
+        assert!(pack.manifest.contributes.actions.is_empty());
+        let mut rec = record_for(&pack);
+        rec.id = "com.x.t".into();
+        let mut recommendations = Vec::new();
+        let mut examples = Vec::new();
+        let mut eligible = std::collections::HashSet::new();
+        collect_recommendation(
+            &rec,
+            &pack,
+            &mut recommendations,
+            &mut examples,
+            &mut eligible,
+        );
+        assert_eq!(
+            recommendations.len(),
+            1,
+            "a translator is a real searchable extension"
+        );
+        assert_eq!(
+            examples[0].1.len(),
+            2,
+            "its examples are carried for embedding"
+        );
+    }
+
+    #[test]
+    fn a_rewritten_recommendation_drops_out_of_the_recommendation_pool() {
+        let pack = pack_of(SEARCHABLE);
+        let mut stale = record_for(&pack);
+        stale.recommend_approved = Some("a-version-the-user-never-read".into());
+        assert!(pool_of(&pack, &stale).is_empty());
+    }
+
+    #[test]
+    fn a_handoff_reply_distinguishes_done_decline_error_and_bare() {
+        // An extension's onRequest reply: `{message}` and a bare `{}` are both
+        // "handled"; only an explicit `{error}` is a failure. A timeout is
+        // Unknown and is decided by the caller, never parsed from a reply.
+        assert_eq!(
+            parse_handoff_outcome(json!({ "message": "opened your dashboard" })),
+            HandOffOutcome::Done(Some("opened your dashboard".into()))
+        );
+        assert_eq!(parse_handoff_outcome(json!({})), HandOffOutcome::Done(None));
+        assert_eq!(
+            parse_handoff_outcome(json!({ "decline": "not a music request" })),
+            HandOffOutcome::Declined("not a music request".into())
+        );
+        assert_eq!(
+            parse_handoff_outcome(json!({ "error": "no such site" })),
+            HandOffOutcome::Failed("no such site".into())
+        );
+    }
+
+    #[test]
+    fn standard_view_replies_validate_and_change_can_be_noop() {
+        let reply = json!({
+            "view": {
+                "version": 1,
+                "title": "Review issue",
+                "root": { "type": "text", "text": "Ready" },
+                "actions": []
+            }
+        });
+        assert!(matches!(
+            parse_handoff_outcome(reply.clone()),
+            HandOffOutcome::View(_)
+        ));
+        assert!(matches!(
+            parse_surface_outcome(reply, false),
+            SurfaceEventOutcome::View(_)
+        ));
+        assert_eq!(
+            parse_surface_outcome(json!({}), false),
+            SurfaceEventOutcome::Unchanged
+        );
+        assert_eq!(
+            parse_surface_outcome(json!({}), true),
+            SurfaceEventOutcome::Done(None)
+        );
+        assert!(matches!(
+            parse_handoff_outcome(json!({
+                "view": {
+                    "version": 1,
+                    "title": "Forged",
+                    "root": { "type": "html", "markup": "<script />" }
+                }
+            })),
+            HandOffOutcome::Failed(_)
+        ));
+        assert!(matches!(
+            parse_handoff_outcome(json!({ "message": "done", "error": "also failed" })),
+            HandOffOutcome::Failed(_)
+        ));
+        assert!(matches!(
+            parse_surface_outcome(json!({ "html": "<button>forged</button>" }), true),
+            SurfaceEventOutcome::Failed(_)
+        ));
     }
 
     fn worker(last_activity: u64, resident: bool) -> Worker {

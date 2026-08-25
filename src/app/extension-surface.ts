@@ -103,8 +103,14 @@ const BRIDGE = `<script>(function(){
         var request = { url: String(url), method: options.method == null ? "GET" : String(options.method), headers: options.headers == null ? {} : options.headers };
         if (options.body != null) request.body = String(options.body);
         if (options.secret != null) request.secret = options.secret;
+        if (options.auth != null) request.auth = String(options.auth);
         return call("net.fetch", request);
       }
+    },
+    auth: {
+      status: function(id){ return call("auth.status", { id: String(id) }); },
+      connect: function(id){ return call("auth.connect", { id: String(id) }); },
+      disconnect: function(id){ return call("auth.disconnect", { id: String(id) }); }
     },
     // [GRAIN] The notes capability (NOTE-UI-EXTENSION-PLAN.md). Typed rather
     // than left to grain.call so the surface API is discoverable, and so the

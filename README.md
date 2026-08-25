@@ -22,20 +22,22 @@ Track Handy upstream changes and Grain's integration status in the [live tracker
 
 ## Flow: the headline feature
 
-Every local dictation tool forces a trade-off: **batch** transcription (accurate, but you wait until you stop talking) or **live ASR** (instant, but noticeably less accurate). Grain adds a third option.
+Most local dictation tools force a trade-off: **batch** transcription gives you the best final result, but only after you stop talking; **live ASR** is instant, but less accurate. Grain adds a third option.
 
-**Flow** transcribes in small overlapping chunks _while you're still speaking_, so a session finishes within about a second of you stopping — whether you spoke for 10 seconds or 10 minutes.
+**Flow** transcribes in bounded rolling chunks *while you're still speaking*, so a session finishes within about a second of you stopping — whether you spoke for 10 seconds or 10 minutes. With supported **Parakeet TDT v2/v3** models, Grain uses a dedicated stateful Flow path that preserves the model's native punctuation and capitalization across chunks. That removes Flow's previous punctuation/casing trade-off without giving up its fast finalization.
 
 > You ramble through a 10-minute brain dump about a project instead of typing it out. With Batch you'd wait minutes for the transcript. With Flow, it's sitting in the text field about a second after you stop talking — the same wait as if you'd only spoken for 10 seconds.
 
 |                                  | Batch                                                                  | Flow                                                                    | ASR                                                                          |
 | -------------------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Accuracy**                     | Highest                                                                | High                                                                    | Lower                                                                        |
+| **Accuracy**                     | Highest                                                                | Near-batch                                                              | Lower                                                                        |
 | **Delay after you stop talking** | Seconds to minutes, scales with length                                 | Sub-second, regardless of length                                        | None — instant                                                               |
+| **Punctuation & casing**         | Native                                                                 | Native with supported Parakeet TDT v2/v3 models                         | Model-dependent                                                              |
 | **Live preview while speaking**  | No                                                                     | Optional                                                                | Yes                                                                          |
 | **Best for**                     | A short message you want perfect on the first try, like a client email | Everyday dictation — journaling, notes, drafts. The recommended default | Forms or live captions, where you need to watch every word land as you speak |
 
-All three modes get their own configurable shortcut, so switching is a keypress, not a trip to Settings. Pick your favorite and ignore the rest, or assign all three and switch by task. Grain transcribes with a local Whisper or Parakeet model, or with any OpenAI-compatible speech-to-text provider.
+All three modes get their own configurable shortcut, so switching is a keypress, not a trip to Settings. Pick your favorite and ignore the rest, or assign all three and switch by task. Grain transcribes with a local Whisper or Parakeet model, or with any OpenAI-compatible speech-to-text provider. Supported Parakeet TDT v2/v3 models automatically use the optimized TDT Flow path; other models continue through the generic Flow backend.
+
 
 ## Feature overview
 

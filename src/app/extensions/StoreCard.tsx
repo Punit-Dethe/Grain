@@ -13,33 +13,38 @@ import { unwrapResult } from "./extensionRuntime";
 
 export function MediaArtwork({
   media,
+  icon,
   name,
   className,
 }: {
   media?: StoreMedia;
+  icon?: string | null;
   name: string;
   className: string;
 }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [url, setUrl] = useState<string | null>(icon ?? null);
   useEffect(() => {
     let alive = true;
-    setUrl(null);
+    setUrl(icon ?? null);
     if (media) {
       void commands
         .storeMedia(media.sha256, media.kind)
         .then(unwrapResult)
         .then((value) => alive && setUrl(value))
-        .catch(() => alive && setUrl(null));
+        .catch(() => alive && setUrl(icon ?? null));
     }
     return () => {
       alive = false;
       setUrl(null);
     };
-  }, [media?.kind, media?.sha256]);
+  }, [icon, media?.kind, media?.sha256]);
 
   return (
-    <div className={className}>
-      {url && <img src={url} alt={`${name} preview`} />}
+    <div
+      className={className}
+      data-extension-icon={!media && Boolean(icon) ? "true" : "false"}
+    >
+      {url && <img src={url} alt={`${name} ${media ? "preview" : "icon"}`} />}
     </div>
   );
 }

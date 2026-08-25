@@ -217,8 +217,16 @@ export const GRAIN_RUNTIME_JS = `(function () {
         };
         if (options.body != null) request.body = String(options.body);
         if (options.secret != null) request.secret = options.secret;
+        if (options.auth != null) request.auth = String(options.auth);
         return req("net.fetch", request);
       }
+    },
+    // Grain owns the OAuth browser flow and credential vault. These methods
+    // return connection metadata only; raw tokens never enter this worker.
+    auth: {
+      status: function (id) { return req("auth.status", { id: String(id) }); },
+      connect: function (id) { return req("auth.connect", { id: String(id) }); },
+      disconnect: function (id) { return req("auth.disconnect", { id: String(id) }); }
     },
     // On-device embeddings (the same BGE model Grain Space uses). Resolves to an
     // array of vectors, one per input text.
@@ -226,6 +234,32 @@ export const GRAIN_RUNTIME_JS = `(function () {
       return req("embed", { texts: texts }).then(function (r) {
         return r && r.vectors != null ? r.vectors : r;
       });
+    },
+    // Rank the extension's OWN commands against a request (Extensions V1, sec 4).
+    // Three composable pieces, callable in any order and none required: lexical
+    // is a fast name/verb match, semantic understands paraphrase (loads the
+    // on-device model on demand, no capability needed), decide turns a ranking
+    // into pick / ask / decline. These are conveniences over the same machinery
+    // Grain uses to rank extensions; an extension may skip them entirely and
+    // call llm() with its own tool schema instead.
+    match: {
+      // candidates: [{ id, phrases: [string] }] -> [{ id, score }] best-first.
+      lexical: function (text, candidates) {
+        return req("match.lexical", { text: String(text), candidates: candidates || [] }).then(function (r) {
+          return r && r.matches != null ? r.matches : r;
+        });
+      },
+      // candidates: [{ id, examples: [string] }] -> [{ id, score, margin }].
+      semantic: function (text, candidates) {
+        return req("match.semantic", { text: String(text), candidates: candidates || [] }).then(function (r) {
+          return r && r.matches != null ? r.matches : r;
+        });
+      },
+      // candidates: [{ id, score }], policy: { minConfidence, margin } ->
+      // { pick } | { ambiguous } | { none }.
+      decide: function (candidates, policy) {
+        return req("match.decide", { candidates: candidates || [], policy: policy || {} });
+      }
     },
     // The extension asks for ITS OWN workspace surface (SPEC §1.2) — there is
     // no id to pass, because the host derives which extension is calling from
@@ -244,6 +278,17 @@ export const GRAIN_RUNTIME_JS = `(function () {
     session: {
       start: function (options) {
         return req("session.start", { mode: String(options && options.mode || "") });
+      }
+    },
+    // Standard Extension Surface: the worker owns workflow state, while Grain
+    // renders the allowlisted tree and sends only stable-id events back here.
+    ui: {
+      onEvent: function (fn) {
+        handlers.surface = function (p) {
+          return Promise.resolve(fn(p && p.event ? p.event : { kind: "cancel" })).then(function (out) {
+            return out == null ? {} : out;
+          });
+        };
       }
     },
     // Launch side effects (SPEC 1.3). The host enforces safety: open.url accepts
@@ -276,24 +321,20 @@ export const GRAIN_RUNTIME_JS = `(function () {
     onSessionResult: function (fn) {
       grain.onSessionStage(function (text) { return fn(text); });
     },
-    // A routed action (docs/Action Routing/PLAN.md). The handler receives the
-    // action id and the extracted spans — never the raw utterance, and never
-    // anything about requests that went to somebody else.
+    // The user accepted this extension in Extension Mode (Extensions V1, sec 3),
+    // and the WHOLE request is handed over — the full transcript, verbatim, not
+    // extracted parameters. The extension owns everything from here:
+    // interpretation (reach for grain.match.* or call llm() with its own tool
+    // schema), any clarification, and the result.
     //
-    // Three shapes may be returned, and the second is the interesting one:
-    //   undefined / { message }         it ran
-    //   { param, options: [...] }       the span resolved to several candidates
-    //                                   and the user should pick
-    //   { error }                       it could not run, with a reason
-    //
-    // Resolution belongs here rather than in the host because the extension is
-    // the only party that knows its own catalogue. Grain hands over the words
-    // it heard; what "gym" means is Spotify's question, not Grain's.
-    onAction: function (fn) {
-      handlers.action = function (p) {
-        return Promise.resolve(
-          fn(String((p && p.action) || ""), (p && p.params) || {}),
-        ).then(function (out) {
+    // Four shapes may be returned:
+    //   { view }                  show Grain's standard remote component tree
+    //   undefined / { message }   it was handled ({ message } is a short result)
+    //   { decline }               wrong owner; reopen the chooser without it
+    //   { error }                 right owner, but the request failed
+    onRequest: function (fn) {
+      handlers.request = function (p) {
+        return Promise.resolve(fn(String((p && p.request) || ""))).then(function (out) {
           return out == null ? {} : out;
         });
       };

@@ -663,18 +663,6 @@ export function AgentPanel() {
     };
   }, [appearNonce]);
 
-  // Esc closes — global so it works even when no field is focused.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        void win.close();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [win]);
-
   // Backend bridges: the transient global Enter (compact → confirm) and the
   // follow-up shortcut / pill click (→ expand).
   useEffect(() => {

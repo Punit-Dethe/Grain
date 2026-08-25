@@ -39,7 +39,7 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
   const [isRecording, setIsRecording] = useState(false);
   const [currentKeys, setCurrentKeys] = useState<string>("");
   const [originalBinding, setOriginalBinding] = useState<string>("");
-  const shortcutRef = useRef<HTMLDivElement | null>(null);
+  const shortcutRef = useRef<HTMLButtonElement | null>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
   // Use a ref to track currentKeys for the event handler (avoids stale closure)
   const currentKeysRef = useRef<string>("");
@@ -266,26 +266,32 @@ export const HandyKeysShortcutInput: React.FC<HandyKeysShortcutInputProps> = ({
       {isRecording ? (
         // Recording: a keycap lit in the accent tint, pulsing to show it's
         // listening for the next keypress. Mirrors GlobalShortcutInput.
-        <div
+        <button
+          type="button"
           ref={shortcutRef}
           className="px-2.5 py-1 text-sm font-mono font-semibold border border-accent bg-[var(--accent-tint)] text-accent rounded-[5.5px] animate-pulse tabular-nums"
+          aria-label={`${translatedName}: ${formatCurrentKeys()}`}
+          aria-live="polite"
         >
           {formatCurrentKeys()}
-        </div>
+        </button>
       ) : (
         // Idle: a physical keycap — raised paper surface, mono type, crisp
         // border, a hairline shadow under it. Reads as a thing you press.
-        <div
-          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent"
+        <button
+          type="button"
+          className="px-2.5 py-1 text-sm font-mono font-semibold text-ink bg-paper-raised border border-line rounded-[5.5px] cursor-pointer tabular-nums transition-[background-color,border-color,box-shadow] duration-150 hover:bg-[var(--accent-tint)] hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
           style={{ boxShadow: "var(--shadow-hair)" }}
           onClick={startRecording}
+          disabled={disabled || isUpdating(`binding_${shortcutId}`)}
+          aria-label={translatedName}
         >
           {formatKeyCombination(binding.current_binding, osType)}
-        </div>
+        </button>
       )}
       <ResetButton
         onClick={() => resetBinding(shortcutId)}
-        disabled={isUpdating(`binding_${shortcutId}`)}
+        disabled={disabled || isUpdating(`binding_${shortcutId}`)}
       />
     </div>
   );

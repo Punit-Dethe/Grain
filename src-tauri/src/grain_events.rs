@@ -85,6 +85,52 @@ pub struct RecordingError {
 #[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
 pub struct PasteError;
 
+/// [GRAIN] Extension Mode ranked a captured request
+/// (`docs/Extensions V1/PLAN.md` §3, §6b). The surface (behind the design gate)
+/// consumes this; the backend emits it and draws nothing.
+///
+/// One event covers every outcome the surface must distinguish, because they are
+/// one state machine, not several: an EMPTY `candidates` is the "nothing matched"
+/// state — a real state, not an error — and `name_only` says the topical leg
+/// could not run, which is when the surface offers the model download. Carrying
+/// the verbatim `request` is deliberate: it is what would be handed to the
+/// accepted extension, so the surface must hold it, not reconstruct it.
+#[derive(Clone, Debug, Serialize, Deserialize, Type, tauri_specta::Event)]
+pub struct ExtensionRecommendation {
+    /// Opaque presentation nonce. Accept/decline must echo it so delayed UI
+    /// input cannot act on a newer request with the same extension id or text.
+    /// Zero only for an Auto-send notice, which has no chooser actions.
+    pub presentation_id: u64,
+    /// What the user said, verbatim. The payload a hand-off would carry.
+    pub request: String,
+    /// Best first. Empty is "nothing matched".
+    pub candidates: Vec<RecommendationCandidate>,
+    /// The topical leg did not run (model absent): only names could match, and
+    /// the surface may offer the download. Named candidates still populate the
+    /// list.
+    pub name_only: bool,
+    /// [GRAIN] Set to the extension id when Auto-send fired (§5): Grain already
+    /// handed the request over, so the surface shows a **Notice** naming it
+    /// rather than a chooser — frictionless, but afterwards obvious. `None` is the
+    /// normal chooser flow. Never set on a named hit, or when the model is absent.
+    pub auto_sent: Option<String>,
+}
+
+/// One extension Extension Mode would offer, enriched for display.
+#[derive(Clone, Debug, Serialize, Deserialize, Type)]
+pub struct RecommendationCandidate {
+    pub extension_id: String,
+    /// The display name and the one-line purpose, so the surface reads without a
+    /// second round-trip for each row.
+    pub name: String,
+    pub purpose: String,
+    /// `"named" | "topical"`. The surface may present a named hit differently
+    /// (the user said it outright), and Auto-send later reads this to refuse
+    /// firing on a name.
+    pub signal: String,
+    pub score: f32,
+}
+
 /// Model-lifecycle events whose entire payload is the model id.
 macro_rules! model_id_event {
     ($(#[$doc:meta] $name:ident),* $(,)?) => {
@@ -137,6 +183,11 @@ mod tests {
         assert_eq!(ModelExtractionCompleted::NAME, "model-extraction-completed");
         assert_eq!(RecordingError::NAME, "recording-error");
         assert_eq!(PasteError::NAME, "paste-error");
+        assert_eq!(
+            ExtensionRecommendation::NAME,
+            "extension-recommendation",
+            "the emit site uses this literal — a rename here silently breaks it"
+        );
     }
 
     /// Each mirror must still match the upstream struct actually emitted. Round

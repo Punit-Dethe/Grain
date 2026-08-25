@@ -797,6 +797,19 @@ pub struct AppSettings {
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
+    /// [GRAIN] Extension Mode Auto-send (`docs/Extensions V1/PLAN.md` §5). The
+    /// global opt-in, **off by default** and beta-gated (only active while
+    /// `experimental_enabled`). When on, a clear semantic recommendation to an
+    /// author-eligible extension is handed over without a chooser — and a Notice
+    /// says so afterwards. Never fires on a name match.
+    #[serde(default)]
+    pub auto_send_enabled: bool,
+    /// [GRAIN] Extensions the user has switched Auto-send OFF for individually.
+    /// The user may only make Auto-send *stricter* than the author allows —
+    /// disabling one an author marked eligible — never enable one the author
+    /// excluded, so this is a deny-list, not an allow-list.
+    #[serde(default)]
+    pub auto_send_disabled: Vec<String>,
     #[serde(default = "default_app_language")]
     pub app_language: String,
     #[serde(default)]
@@ -1507,6 +1520,7 @@ pub fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
     // [GRAIN] Seed the prompt-switcher + agent bindings for installs that predate them.
     let defaults = get_default_settings();
     for id in [
+        "extension_mode",
         "prompt_next",
         "prompt_prev",
         "summon_agent",
@@ -1705,6 +1719,28 @@ pub fn get_default_settings() -> AppSettings {
         },
     );
 
+    // [GRAIN] Extension Mode: speak a request, choose a searchable extension,
+    // then let that extension own the verbatim request. It is deliberately a
+    // separate chord from dictation and AI because those paths paste or process
+    // text, while this one crosses an extension disclosure boundary. Shift+Enter
+    // keeps the relationship to the AI key without taking an ordinary app chord.
+    #[cfg(target_os = "macos")]
+    let default_extension_mode_shortcut = "option+shift+enter";
+    #[cfg(not(target_os = "macos"))]
+    let default_extension_mode_shortcut = "alt+shift+enter";
+    bindings.insert(
+        "extension_mode".to_string(),
+        ShortcutBinding {
+            id: "extension_mode".to_string(),
+            name: "Extension Mode".to_string(),
+            description:
+                "Speak a request, then choose which searchable extension should receive it."
+                    .to_string(),
+            default_binding: default_extension_mode_shortcut.to_string(),
+            current_binding: default_extension_mode_shortcut.to_string(),
+        },
+    );
+
     // [GRAIN] Summon the Agent: a voice-first AI scratchpad in its own destroyable
     // window. Tap shortcut (fires on press). Captures the current selection, then
     // dictate/type an instruction; uses the configured post-process provider.
@@ -1897,6 +1933,8 @@ pub fn get_default_settings() -> AppSettings {
         post_process_selected_prompt_id: Some(DEFAULT_POST_PROCESS_PROMPT_ID.to_string()),
         mute_while_recording: false,
         append_trailing_space: false,
+        auto_send_enabled: false,
+        auto_send_disabled: Vec::new(),
         app_language: default_app_language(),
         experimental_enabled: false,
         lazy_stream_close: false,
@@ -2282,6 +2320,34 @@ mod binding_migration_tests {
         assert!(!settings
             .bindings
             .contains_key("transcribe_with_post_process"));
+    }
+
+    #[test]
+    fn extension_mode_has_a_platform_default() {
+        let settings = get_default_settings();
+        let binding = &settings.bindings["extension_mode"];
+
+        #[cfg(target_os = "macos")]
+        let expected = "option+shift+enter";
+        #[cfg(not(target_os = "macos"))]
+        let expected = "alt+shift+enter";
+
+        assert_eq!(binding.default_binding, expected);
+        assert_eq!(binding.current_binding, expected);
+    }
+
+    #[test]
+    fn extension_mode_is_seeded_for_existing_installs() {
+        let mut settings = get_default_settings();
+        settings.bindings.remove("extension_mode");
+
+        assert!(ensure_post_process_defaults(&mut settings));
+        let seeded = &settings.bindings["extension_mode"];
+        let defaults = get_default_settings();
+        let expected = &defaults.bindings["extension_mode"];
+        assert_eq!(seeded.id, expected.id);
+        assert_eq!(seeded.current_binding, expected.current_binding);
+        assert_eq!(seeded.default_binding, expected.default_binding);
     }
 
     #[test]

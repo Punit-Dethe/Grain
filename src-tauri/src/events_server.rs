@@ -715,6 +715,27 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
         grain_core::PillAction::AgentInputTyping { active } => {
             crate::agent::input_typing(app, active);
         }
+        // [GRAIN] Extension Mode chooser: the user picked an extension on the
+        // pill surface. Hand it the full request through the same accept path the
+        // headless tests drive (§3).
+        grain_core::PillAction::ExtensionChoose {
+            presentation_id,
+            extension_id,
+        } => {
+            crate::grain_actions::action_session::accept(app, presentation_id, &extension_id);
+        }
+        // [GRAIN] Extension Mode chooser dismissed without a choice.
+        grain_core::PillAction::ExtensionCancel { presentation_id } => {
+            crate::grain_actions::action_session::dismiss(app, presentation_id);
+        }
+        grain_core::PillAction::ExtensionDownloadModel => {
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(error) = crate::grain_space::embed::download_model(app).await {
+                    log::warn!("[GRAIN] extension mode model download failed: {error}");
+                }
+            });
+        }
     }
 }
 

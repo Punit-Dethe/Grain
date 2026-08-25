@@ -578,7 +578,7 @@ fn force_foreground(win: &tauri::WebviewWindow) {
 /// The current foreground window, as a raw HWND — the paste target snapshot
 /// taken at summon. `None` off Windows (macOS restores focus to the previous
 /// app by itself when our window closes).
-fn foreground_hwnd() -> Option<isize> {
+pub(crate) fn foreground_hwnd() -> Option<isize> {
     #[cfg(windows)]
     unsafe {
         let h = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
@@ -597,7 +597,7 @@ fn foreground_hwnd() -> Option<isize> {
 /// Bring an arbitrary window (by raw HWND) back to the foreground so a
 /// synthesised paste lands in it. Same input-queue bridge as `force_foreground`.
 #[cfg(windows)]
-fn force_foreground_raw(raw: isize) {
+pub(crate) fn force_foreground_raw(raw: isize) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
@@ -625,6 +625,21 @@ fn force_foreground_raw(raw: isize) {
             let _ = AttachThreadInput(fg_tid, our_tid, false);
         }
     }
+}
+
+/// Restore a captured window only while it is still a real OS target. Finite
+/// extension results use the boolean to avoid pasting into whichever unrelated
+/// app happened to become foreground after the original target closed.
+#[cfg(windows)]
+pub(crate) fn refocus_window(raw: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::IsWindow;
+
+    let valid = unsafe { IsWindow(Some(HWND(raw as _))).as_bool() };
+    if valid {
+        force_foreground_raw(raw);
+    }
+    valid
 }
 
 /// Build a frameless, transparent, always-on-top Agent surface (hidden until
@@ -1610,6 +1625,17 @@ pub fn unregister_transient_shortcuts_deferred(app: &AppHandle) {
             return;
         }
         unregister_transient_shortcuts(&app);
+        // [GRAIN] A normal dictation may have started while the Agent panel owned
+        // Escape. Its cancel registration is deliberately skipped in that case
+        // (one accelerator can have only one owner). If the panel was closed by
+        // its X while recording continues, hand Escape back to the ordinary
+        // dictation pipeline now that the Agent no longer owns it.
+        if app
+            .try_state::<Arc<AudioRecordingManager>>()
+            .is_some_and(|audio| audio.is_recording())
+        {
+            crate::shortcut::register_cancel_shortcut(&app);
+        }
         // The follow-up shortcut outlives the windows ONLY while a Quick-Agent
         // pill offer is live; otherwise release it (and restore suppressed keys).
         let offer_live = app
@@ -1901,27 +1927,70 @@ fn clear_followup_offer(app: &AppHandle) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscapeTarget {
+    AgentInput,
+    Dictation,
+    AgentPanel,
+}
+
+fn escape_target(input_live: bool, dictation_live: bool) -> EscapeTarget {
+    if input_live {
+        EscapeTarget::AgentInput
+    } else if dictation_live {
+        EscapeTarget::Dictation
+    } else {
+        EscapeTarget::AgentPanel
+    }
+}
+
+/// Whether the Agent currently owns `binding` as its transient close shortcut.
+/// The normal dictation cancel registration uses this to share Escape by state
+/// instead of racing a second global registration for the same accelerator.
+pub(crate) fn owns_close_binding(app: &AppHandle, binding: &str) -> bool {
+    if !binding.eq_ignore_ascii_case(&close_binding().current_binding) {
+        return false;
+    }
+    if app.get_webview_window(PANEL_LABEL).is_some() {
+        return true;
+    }
+    app.try_state::<AgentState>().is_some_and(|state| {
+        state.input_active.load(Ordering::SeqCst)
+            || state.followup_offer_active.load(Ordering::SeqCst)
+    })
+}
+
 /// Called by the transient global Escape shortcut. This is backend-owned so a
 /// wedged webview can still be dismissed without quitting the whole app. During
 /// the INPUT phase it cancels the whole summon (input + dictation + warm
-/// panel); afterwards it closes the panel and dismisses a live follow-up offer
-/// (the pill fades out).
+/// panel). During ordinary dictation it delegates to the existing cancel
+/// pipeline and keeps Agent open; only an idle Agent consumes Escape itself.
 pub fn global_close(app: &AppHandle) {
     let input_live = app
         .try_state::<AgentState>()
         .map(|s| s.input_active.load(Ordering::SeqCst))
         .unwrap_or(false);
-    if input_live {
-        input_cancel(app);
-        return;
+    let dictation_live = app
+        .try_state::<Arc<AudioRecordingManager>>()
+        .is_some_and(|audio| audio.is_recording());
+    match escape_target(input_live, dictation_live) {
+        EscapeTarget::AgentInput => {
+            input_cancel(app);
+            return;
+        }
+        EscapeTarget::Dictation => {
+            // Reuse the normal CancelAction teardown verbatim: recorder,
+            // coordinator, rolling/stream workers, model policy, tray and pill.
+            // Returning keeps the Agent panel alive for another dictation.
+            crate::utils::cancel_current_operation(app);
+            crate::grain_actions::cancel_session(app);
+            return;
+        }
+        EscapeTarget::AgentPanel => {}
     }
 
     let app_for_main = app.clone();
     let _ = app.run_on_main_thread(move || {
-        app_for_main
-            .state::<Arc<AudioRecordingManager>>()
-            .cancel_recording();
-
         // Withdrawing the offer FIRST means the window teardown below sees it
         // inactive and releases the transient follow-up shortcut too.
         clear_followup_offer(&app_for_main);
@@ -1934,6 +2003,22 @@ pub fn global_close(app: &AppHandle) {
             unregister_transient_shortcuts_deferred(&app_for_main);
         }
     });
+}
+
+#[cfg(test)]
+mod escape_priority_tests {
+    use super::{escape_target, EscapeTarget};
+
+    #[test]
+    fn agent_input_has_first_escape_priority() {
+        assert_eq!(escape_target(true, true), EscapeTarget::AgentInput);
+    }
+
+    #[test]
+    fn normal_dictation_precedes_agent_panel_close() {
+        assert_eq!(escape_target(false, true), EscapeTarget::Dictation);
+        assert_eq!(escape_target(false, false), EscapeTarget::AgentPanel);
+    }
 }
 
 /// Copy text to the clipboard (used for the auto-copy of the first reply and the

@@ -812,6 +812,8 @@ pub struct ExtensionCard {
     pub id: String,
     pub name: String,
     pub description: String,
+    /// Grain-derived 128² PNG for settings. Never the resident 512² master.
+    pub icon: Option<String>,
     pub version: String,
     /// "pack" | "scripted" | "native"
     pub tier: String,
@@ -870,6 +872,10 @@ pub struct ExtensionCard {
     /// a capability governs *reach* and this governs *cost*, and hiding the
     /// second is how a lightweight-looking install turns out not to be.
     pub needs: Vec<String>,
+    /// The author permits Auto-send and explains why. The user's setting can
+    /// only remove this eligibility, never grant it to another extension.
+    pub auto_send_eligible: bool,
+    pub auto_send_note: Option<String>,
 }
 
 /// [GRAIN] The recommendation surface an extension declares
@@ -941,10 +947,9 @@ impl PromptLayerInfo {
 /// [GRAIN] Start or stop listening for a request
 /// (`docs/Extensions V1/PLAN.md` §3).
 ///
-/// The extension surface's own trigger calls this; **Grain registers no
-/// shortcut for it here**. What the design depends on is only that the user's
-/// intent was unambiguous by the time audio started, and the trigger mechanism
-/// is decided separately.
+/// Grain's persisted `extension_mode` binding is the normal trigger. This
+/// command remains the trusted-surface seam for the same start/stop/cancel
+/// lifecycle; it does not create a second recording implementation.
 ///
 /// One command for all three transitions rather than three, because the
 /// invoke-handler list lives in the Handy-derived `lib.rs` and every entry is a
@@ -969,6 +974,134 @@ pub fn grain_action_listen(app: AppHandle, phase: String) -> Result<bool, String
         "cancel" => Ok(action_session::cancel(&app)),
         other => Err(format!("unknown action phase '{other}'")),
     }
+}
+
+/// [GRAIN] Whether Extension Mode can recommend, and how well
+/// (`docs/Extensions V1/PLAN.md` §5).
+///
+/// The one query a surface needs to decide what to offer: is there anything to
+/// rank (`searchable`), and can the topical leg run or is it name-only until the
+/// model is downloaded. The model is the same ~130 MB BGE weights Grain Space
+/// uses, so a copy downloaded for either serves both — this reports its presence
+/// without requiring Grain Space to be enabled.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, specta::Type)]
+pub struct ExtensionModeStatus {
+    /// Searchable, approved extensions installed. Zero means Extension Mode has
+    /// nothing to rank and the download is not worth offering.
+    pub searchable_count: u32,
+    /// `"ready" | "downloading" | "absent"`. `absent` is name-only mode (§5):
+    /// Extension Mode still works on names, and first use is where the download
+    /// is offered — this is what tells the surface to offer it.
+    pub model: String,
+}
+
+/// [GRAIN] Report Extension Mode readiness (`docs/Extensions V1/PLAN.md` §5).
+#[tauri::command]
+#[specta::specta]
+pub fn grain_extension_mode_status() -> ExtensionModeStatus {
+    use crate::grain_space::embed;
+    let model = if embed::is_downloading() {
+        "downloading"
+    } else if embed::model_on_disk() {
+        "ready"
+    } else {
+        "absent"
+    };
+    ExtensionModeStatus {
+        searchable_count: crate::extension_host::searchable_count() as u32,
+        model: model.to_string(),
+    }
+}
+
+/// [GRAIN] Download the understanding model for Extension Mode
+/// (`docs/Extensions V1/PLAN.md` §5). The first-use offer calls this after the
+/// user consents; progress and completion arrive on the shared model events.
+///
+/// Deliberately NOT gated on Grain Space being enabled — the model belongs to
+/// neither feature, it is a shared resource, and either feature may be the one
+/// that first needs it. Reuses the same download so a second copy is never
+/// fetched.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_extension_mode_download_model(app: AppHandle) -> Result<(), String> {
+    crate::grain_space::embed::download_model(app).await
+}
+
+/// [GRAIN] Flip the global Auto-send toggle (`docs/Extensions V1/PLAN.md` §5).
+/// Off by default and beta-gated — Auto-send only actually fires while
+/// `experimental_enabled` is also on. Turning it on authorises nothing by
+/// itself: a clear semantic match to an *author-eligible* extension the user has
+/// not individually disabled still has to happen.
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_send_setting(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.auto_send_enabled = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] Turn Auto-send off (or back on) for one extension (§5). The user may
+/// only make Auto-send *stricter* than the author allows: `enabled=false` adds
+/// the extension to the deny-list; `enabled=true` merely removes it, and has no
+/// effect on an extension the author never marked eligible.
+#[tauri::command]
+#[specta::specta]
+pub fn change_auto_send_for_extension(
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    grain_sdk::validate_extension_id(&id)?;
+    let pack = load_pack(&app, &id)?;
+    if !pack
+        .manifest
+        .auto_send
+        .as_ref()
+        .is_some_and(|declaration| declaration.eligible)
+    {
+        return Err("this extension does not declare Auto-send eligibility".into());
+    }
+    let mut settings = settings::get_settings(&app);
+    settings
+        .auto_send_disabled
+        .retain(|existing| existing != &id);
+    if !enabled {
+        settings.auto_send_disabled.push(id);
+    }
+    settings.auto_send_disabled.sort();
+    settings.auto_send_disabled.dedup();
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+/// [GRAIN] The user declined the recommended extension; reopen with it struck
+/// out (`docs/Extensions V1/PLAN.md` §8 G2). The chooser re-ranks the same
+/// captured request and emits a fresh `extension-recommendation` — one keypress,
+/// not one re-recording. No-op if the pending request has moved on.
+#[tauri::command]
+#[specta::specta]
+pub async fn grain_extension_mode_decline(
+    app: AppHandle,
+    presentation_id: u64,
+    extension_id: String,
+) -> Result<(), String> {
+    crate::grain_actions::action_session::decline(&app, presentation_id, &extension_id).await;
+    Ok(())
+}
+
+/// [GRAIN] The user accepted an extension; the full request is handed to it
+/// (`docs/Extensions V1/PLAN.md` §3). Wakes the extension, delivers the whole
+/// transcript, and records the outcome; the extension owns what happens next.
+#[tauri::command]
+#[specta::specta]
+pub fn grain_extension_mode_accept(
+    app: AppHandle,
+    presentation_id: u64,
+    extension_id: String,
+) -> Result<(), String> {
+    crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id);
+    Ok(())
 }
 
 /// [GRAIN] Read the action log, optionally clearing it first
@@ -1010,6 +1143,35 @@ pub struct ActionInfo {
     pub everywhere: bool,
     pub app: Vec<String>,
     pub website: Vec<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct AuthenticationApprovalInfo {
+    pub id: String,
+    pub provider_name: String,
+    pub scopes: Vec<String>,
+    pub api_hosts: Vec<String>,
+    pub authorization_host: String,
+    pub token_host: String,
+}
+
+impl AuthenticationApprovalInfo {
+    fn from_decl(decl: &grain_sdk::AuthenticationDecl) -> Self {
+        let host = |value: &str| {
+            reqwest::Url::parse(value)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned))
+                .unwrap_or_default()
+        };
+        Self {
+            id: decl.id.clone(),
+            provider_name: decl.provider_name.clone(),
+            scopes: decl.scopes.clone(),
+            api_hosts: decl.api_hosts.clone(),
+            authorization_host: host(&decl.authorization_endpoint),
+            token_host: host(&decl.token_endpoint),
+        }
+    }
 }
 
 impl ActionInfo {
@@ -1071,6 +1233,7 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     .collect();
                 let has_detail = !p.manifest.contributes.settings.is_empty()
                     || !p.manifest.contributes.shortcuts.is_empty()
+                    || !p.manifest.contributes.authentication.is_empty()
                     || !prompt_layers.is_empty()
                     || !actions.is_empty();
                 PackFacts {
@@ -1089,6 +1252,16 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
                     kind: p.manifest.kind.as_str(),
                     recommend: p.manifest.recommend.as_ref().map(RecommendInfo::from_decl),
                     needs: p.manifest.needs,
+                    auto_send_eligible: p
+                        .manifest
+                        .auto_send
+                        .as_ref()
+                        .is_some_and(|declaration| declaration.eligible),
+                    auto_send_note: p
+                        .manifest
+                        .auto_send
+                        .as_ref()
+                        .and_then(|declaration| declaration.note.clone()),
                 }
             }
             // SPEC §6 last row: a broken/missing pack file renders an error
@@ -1111,11 +1284,14 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind,
             recommend,
             needs,
+            auto_send_eligible,
+            auto_send_note,
         } = facts;
         cards.push(ExtensionCard {
             id: rec.id.clone(),
             name,
             description,
+            icon: crate::extension_icons::ui_icon(&app, &rec.id),
             version: rec.installed_version.clone(),
             tier: tier.to_string(),
             // Load-unpacked is always shown as `dev`; otherwise the rung comes
@@ -1148,6 +1324,8 @@ pub fn extensions_overview(app: AppHandle) -> Result<Vec<ExtensionCard>, String>
             kind: kind.to_string(),
             recommend,
             needs,
+            auto_send_eligible,
+            auto_send_note,
             has_detail,
             slots: rec
                 .slots
@@ -1176,6 +1354,8 @@ struct PackFacts {
     kind: &'static str,
     recommend: Option<RecommendInfo>,
     needs: Vec<String>,
+    auto_send_eligible: bool,
+    auto_send_note: Option<String>,
 }
 
 impl Default for PackFacts {
@@ -1195,6 +1375,8 @@ impl Default for PackFacts {
             kind: grain_sdk::manifest::ExtensionKind::Extending.as_str(),
             recommend: None,
             needs: Vec::new(),
+            auto_send_eligible: false,
+            auto_send_note: None,
         }
     }
 }
@@ -1331,9 +1513,18 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                         .unwrap_or_default();
                     approved != ext::recommendation_fingerprint(&pack.manifest)
                 };
+                let declared_authentication = &pack.manifest.contributes.authentication;
+                let authentication_unapproved = !declared_authentication.is_empty() && {
+                    let approved = reg
+                        .record(pack_id)
+                        .and_then(|record| record.authentication_approved)
+                        .unwrap_or_default();
+                    approved != ext::authentication_fingerprint(declared_authentication)
+                };
                 if !missing.is_empty()
                     || unapproved
                     || actions_unapproved
+                    || authentication_unapproved
                     || recommendation_unapproved
                 {
                     let layers: Vec<PromptLayerInfo> = if unapproved {
@@ -1346,12 +1537,22 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
                     } else {
                         Vec::new()
                     };
+                    let authentication: Vec<AuthenticationApprovalInfo> =
+                        if authentication_unapproved {
+                            declared_authentication
+                                .iter()
+                                .map(AuthenticationApprovalInfo::from_decl)
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
                     // One sheet carrying all three. Two sheets in a row is how a
                     // user learns to click through without reading.
                     return Err(serde_json::json!({
                         "needsPermissions": missing,
                         "needsPromptLayers": layers,
                         "needsActions": actions,
+                        "needsAuthentication": authentication,
                         "needsRecommendation": recommendation_unapproved,
                     })
                     .to_string());
@@ -1382,6 +1583,7 @@ pub fn extension_set_enabled(app: AppHandle, id: String, enabled: bool) -> Resul
             // credential — every surface is destroyed, not merely slept.
             if !enabled {
                 crate::extension_host::stop_extension(pack_id, "extension disabled");
+                crate::grain_auth::cancel_extension(pack_id);
                 crate::surfaces::extension::destroy(&app, pack_id);
                 crate::surfaces::overlay::dismiss(&app, pack_id);
             }
@@ -1409,7 +1611,7 @@ fn pack_path(app: &AppHandle, id: &str) -> Result<std::path::PathBuf, String> {
     Ok(dir.join(format!("{id}.grainpack.json")))
 }
 
-fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
+pub(crate) fn load_pack(app: &AppHandle, id: &str) -> Result<grain_sdk::GrainPack, String> {
     crate::extension_host::load_manifest_result(app, id)
 }
 
@@ -1453,6 +1655,7 @@ pub fn extension_developer_status(app: AppHandle) -> Result<ExtensionDeveloperSt
 fn stop_extension_runtime(app: &AppHandle, id: &str, reason: &str) {
     use grain_core::extensions as ext;
     crate::extension_host::stop_extension(id, reason);
+    crate::grain_auth::cancel_extension(id);
     crate::surfaces::extension::destroy(app, id);
     crate::surfaces::overlay::dismiss(app, id);
     if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
@@ -1559,12 +1762,15 @@ fn load_unpacked_project(app: &AppHandle, root: &std::path::Path) -> Result<Stri
         // and the alternative is a permission sheet on every iteration of a
         // sentence the author is actively writing. Store and manual-import
         // packs get no such shortcut — see `extension_import_pack`.
-        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty())
-            .then(|| {
-                ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers)
-            }),
+        prompt_layers_approved: (!loaded.pack.manifest.contributes.prompt_layers.is_empty()).then(
+            || ext::prompt_layers_fingerprint(&loaded.pack.manifest.contributes.prompt_layers),
+        ),
         actions_approved: (!loaded.pack.manifest.contributes.actions.is_empty())
             .then(|| ext::actions_fingerprint(&loaded.pack.manifest.contributes.actions)),
+        authentication_approved: (!loaded.pack.manifest.contributes.authentication.is_empty())
+            .then(|| {
+                ext::authentication_fingerprint(&loaded.pack.manifest.contributes.authentication)
+            }),
         recommend_approved: loaded
             .pack
             .manifest
@@ -1988,6 +2194,9 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
     let pack: grain_sdk::GrainPack =
         serde_json::from_str(&raw).map_err(|e| format!("not a valid .grainpack: {e}"))?;
     pack.validate()?;
+    // A declared embedded icon must fully decode before the import mutates the
+    // registry. This also writes the one fixed-size recommendation derivative.
+    crate::extension_icons::materialize_pack(&app, &pack)?;
 
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
@@ -2019,11 +2228,16 @@ pub fn extension_import_pack(app: AppHandle, path: String) -> Result<String, Str
         // and a re-import with changed wording therefore stops matching, holds
         // the enable, and shows the user what changed. This is the update path
         // the rug-pull incidents of 2025 walked through.
-        prompt_layers_approved: prior.as_ref().and_then(|r| r.prompt_layers_approved.clone()),
+        prompt_layers_approved: prior
+            .as_ref()
+            .and_then(|r| r.prompt_layers_approved.clone()),
         // Carried, never recomputed. Importing is not approving: if the
         // declaration changed, this stops matching, the actions go inert, and
         // the enable path shows the user what is different.
         actions_approved: prior.as_ref().and_then(|r| r.actions_approved.clone()),
+        authentication_approved: prior
+            .as_ref()
+            .and_then(|r| r.authentication_approved.clone()),
         // Carried for the same reason, and the stake is higher: what this one
         // gates is whether the extension is eligible to be handed the user's
         // words at all. `None` means never approved, so an import that has not
@@ -2196,6 +2410,8 @@ pub fn extension_grant(app: AppHandle, id: String, permissions: Vec<String>) -> 
     // declaration the user never saw.
     rec.actions_approved = (!manifest.contributes.actions.is_empty())
         .then(|| ext::actions_fingerprint(&manifest.contributes.actions));
+    rec.authentication_approved = (!manifest.contributes.authentication.is_empty())
+        .then(|| ext::authentication_fingerprint(&manifest.contributes.authentication));
     // Same act, same rule: recomputed from disk. Keyed off `kind` rather than a
     // list being non-empty, because what is being approved here is eligibility
     // to be handed the whole request — see `recommendation_fingerprint`.
@@ -2256,7 +2472,7 @@ pub fn extension_export_pack(app: AppHandle, id: String, dest: String) -> Result
 /// payloads are always removed.
 #[tauri::command]
 #[specta::specta]
-pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
+pub async fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<(), String> {
     use grain_core::extensions as ext;
     // Grain's own features have no record to remove: they are turned off in
     // their own tab, never uninstalled. Everything else is a real installed pack
@@ -2268,6 +2484,10 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     {
         return Err("built-in features can be turned off, not uninstalled".into());
     }
+    crate::grain_auth::cancel_extension(&id);
+    // Credentials are never kept for an uninstalled identity, regardless of
+    // whether ordinary extension data is retained for a later reinstall.
+    crate::grain_auth::purge_extension(&app, &id).await?;
     let reg = app
         .try_state::<std::sync::Arc<ext::ExtensionsRegistry>>()
         .ok_or("extensions registry unavailable")?;
@@ -2276,9 +2496,20 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
         return Err("not installed".into());
     }
     crate::extension_host::refresh_index(&app);
+    if purge {
+        if let Some(ctx) = app.try_state::<std::sync::Arc<grain_core::AppContext>>() {
+            let _ = ctx.update_settings(|settings| {
+                settings
+                    .auto_send_disabled
+                    .retain(|disabled| disabled != &id);
+            });
+        }
+    }
     if dev_active {
         if purge {
             let _ = std::fs::remove_file(pack_path(&app, &id)?);
+            crate::extension_icons::purge(&app, &id)?;
+            crate::extension_misroutes::purge(&app, &id);
         }
         return Ok(());
     }
@@ -2305,6 +2536,8 @@ pub fn extension_uninstall(app: AppHandle, id: String, purge: bool) -> Result<()
     crate::surfaces::overlay::dismiss(&app, &id);
     if purge {
         let _ = std::fs::remove_file(pack_path(&app, &id)?);
+        crate::extension_icons::purge(&app, &id)?;
+        crate::extension_misroutes::purge(&app, &id);
     }
     crate::extension_host::refresh_index(&app);
     Ok(())

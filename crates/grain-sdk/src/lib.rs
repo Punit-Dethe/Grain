@@ -29,6 +29,7 @@ pub mod pill_skin;
 pub mod pill_theme;
 pub mod protocol;
 pub mod settings_schema;
+pub mod view;
 
 pub use authoring::{ExtensionProjectManifest, GRAIN_API_TYPESCRIPT};
 pub use distribution::{
@@ -38,14 +39,16 @@ pub use distribution::{
 pub use error::{HostError, HostErrorCode};
 pub use event::{
     daemon_event_capability, AgentInputKind, DaemonEvent, OverlayPosition, PillAction,
-    ResolvedTheme, SessionMode, DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
+    RecommendCandidate, ResolvedTheme, SessionMode, DAEMON_EVENT_VARIANTS, PILL_ICON_PX,
 };
 pub use flagged::{flagged_combinations, FlaggedCombination};
 pub use manifest::{
-    validate_extension_id, validate_extension_version, CompanionDecl, Contributes,
+    authentication_capability_id, png_dimensions, validate_extension_id,
+    validate_extension_version, AuthenticationDecl, AuthenticationType, CompanionDecl, Contributes,
     ExtensionManifest, GrainPack, OverlayDecl, PackPayloads, PromptPackEntry, PromptTarget,
-    SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier, WorkspaceDecl, ANCHORS,
-    KNOWN_CAPABILITIES, KNOWN_SLOTS, PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
+    RedirectMethod, SelectOption, SettingDecl, SettingKind, ShortcutDecl, Surfaces, Tier,
+    WorkspaceDecl, ANCHORS, ICON_MASTER_DIM, ICON_MAX_BYTES, KNOWN_CAPABILITIES, KNOWN_SLOTS,
+    PROMPT_CONTEXT_SLOT, PROMPT_MAIN_SLOT, SURFACE_PROMPTS,
 };
 pub use pill_skin::PillSkin;
 pub use pill_theme::{PillPattern, PillStateTheme, PillTheme};
@@ -54,3 +57,10 @@ pub use protocol::{
     HostFrame, ServerResponse, ServerWelcome, GRAIN_API_VERSION,
 };
 pub use settings_schema::Accepted;
+pub use view::{
+    ExtensionView, ExtensionViewEvent, ViewAction, ViewActionIntent, ViewActionKind, ViewAlign,
+    ViewGap, ViewHeadingLevel, ViewNode, ViewOption, ViewTone, ViewValue, VIEW_MAX_ACTIONS,
+    VIEW_MAX_CHILDREN, VIEW_MAX_DEPTH, VIEW_MAX_EVENT_BYTES, VIEW_MAX_FIELDS, VIEW_MAX_NODES,
+    VIEW_MAX_OPTIONS_PER_SELECT, VIEW_MAX_PAYLOAD_BYTES, VIEW_MAX_TOTAL_OPTIONS,
+    VIEW_MAX_TOTAL_TEXT_BYTES, VIEW_SCHEMA_VERSION,
+};

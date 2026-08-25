@@ -12,6 +12,7 @@
 //! is trivially shareable. Multi-file bundles (tier B/C) arrive with their
 //! tiers.
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,6 +67,17 @@ pub struct ExtensionManifest {
     /// One line, shown in Overview; full text on hover.
     #[serde(default)]
     pub description: String,
+    /// [GRAIN] Pack-relative path to the extension's icon — a square PNG at
+    /// exactly [`ICON_MASTER_DIM`]² (`docs/Extensions V1/PLAN.md` §13.3). One
+    /// master the author supplies; Grain downscales to every size it shows
+    /// (pill row, card, store), so consistency is Grain's, not the author's.
+    ///
+    /// **Required to submit to the store**, enforced by `doctor` / the registry
+    /// checks — not by [`validate`], so a pack built before this contract still
+    /// installs. Empty means "declares none", which only the submission path
+    /// rejects.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icon: String,
     #[serde(default)]
     pub repository: Option<String>,
     /// Capability names (SPEC §1.3). Tier-A-inert packs must have none — the
@@ -194,6 +206,10 @@ pub struct OverlayDecl {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Contributes {
+    /// Host-owned OAuth connections. An extension receives status and may ask
+    /// Grain to perform authenticated requests, but never receives tokens.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub authentication: Vec<AuthenticationDecl>,
     /// Level 1–2 settings schema — the host renders the controls; the values
     /// live in the extension's own namespace (never `AppSettings`).
     #[serde(default)]
@@ -233,6 +249,59 @@ pub struct Contributes {
     /// without one of them owning the word "play".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActionDecl>,
+}
+
+/// A public-client OAuth 2.0 Authorization Code + PKCE connection.
+///
+/// Unknown fields are rejected deliberately: in particular, a `clientSecret`
+/// must never be smuggled into a distributable extension manifest.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AuthenticationDecl {
+    /// Extension-local service id, e.g. `github` or `linear`.
+    pub id: String,
+    #[serde(rename = "type")]
+    pub auth_type: AuthenticationType,
+    #[serde(rename = "providerName", alias = "provider_name")]
+    pub provider_name: String,
+    #[serde(rename = "clientId", alias = "client_id")]
+    pub client_id: String,
+    #[serde(rename = "authorizationEndpoint", alias = "authorization_endpoint")]
+    pub authorization_endpoint: String,
+    #[serde(rename = "tokenEndpoint", alias = "token_endpoint")]
+    pub token_endpoint: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(
+        default = "default_redirect_methods",
+        rename = "redirectMethods",
+        alias = "redirect_methods"
+    )]
+    pub redirect_methods: Vec<RedirectMethod>,
+    #[serde(default, rename = "apiHosts", alias = "api_hosts")]
+    pub api_hosts: Vec<String>,
+    #[serde(
+        default,
+        rename = "authorizationParameters",
+        alias = "authorization_parameters"
+    )]
+    pub authorization_parameters: std::collections::BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AuthenticationType {
+    #[serde(rename = "oauth2-pkce")]
+    OAuth2Pkce,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RedirectMethod {
+    Loopback,
+}
+
+fn default_redirect_methods() -> Vec<RedirectMethod> {
+    vec![RedirectMethod::Loopback]
 }
 
 /// One contributed prompt layer (SPEC §4, STRESS-TEST GAP-4).
@@ -653,6 +722,30 @@ pub struct AutoSendDecl {
 /// extension's card in those terms.
 pub const KNOWN_NEEDS: &[&str] = &["semantic"];
 
+/// The edge of the icon master an extension submits (`ExtensionManifest::icon`,
+/// §13.3): a square PNG at exactly this many pixels each side. One high-res
+/// master; Grain downscales to the sizes it shows and never upscales, so 512 is
+/// comfortably above every surface (a pill row is tens of px, a card ~100).
+pub const ICON_MASTER_DIM: u32 = 512;
+
+/// Hard cap on the icon PNG's byte length. Bounds the pack and stops a tiny
+/// 512×512 header from hiding megabytes of IDAT (a decompression bomb).
+pub const ICON_MAX_BYTES: u64 = 512 * 1024;
+
+/// Read PNG dimensions from the mandatory IHDR header. This intentionally does
+/// not claim the image is decodable; authoring checks and the host perform a
+/// full decode before accepting/materialising artwork.
+pub fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
+    const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    if bytes.len() < 24 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some((
+        u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+        u32::from_be_bytes([bytes[20], bytes[21], bytes[22], bytes[23]]),
+    ))
+}
+
 /// Hard ceiling on the one-line purpose.
 pub const RECOMMEND_PURPOSE_MAX_BYTES: usize = 120;
 
@@ -757,8 +850,9 @@ fn validate_classification(m: &ExtensionManifest) -> Result<(), String> {
 fn validate_recommend(r: &RecommendDecl) -> Result<(), String> {
     let purpose = r.purpose.trim();
     if purpose.is_empty() {
-        return Err("recommend.purpose is required — one line saying what this extension is for"
-            .into());
+        return Err(
+            "recommend.purpose is required — one line saying what this extension is for".into(),
+        );
     }
     if purpose.len() > RECOMMEND_PURPOSE_MAX_BYTES {
         return Err(format!(
@@ -1675,6 +1769,147 @@ pub fn network_capability_host(capability: &str) -> Option<&str> {
     valid.then_some(host)
 }
 
+/// Parameterised authentication grants name exactly one manifest declaration.
+pub fn authentication_capability_id(capability: &str) -> Option<&str> {
+    let id = capability.strip_prefix("auth:")?;
+    valid_authentication_id(id).then_some(id)
+}
+
+fn valid_authentication_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        && id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && id.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+}
+
+fn valid_https_endpoint(value: &str) -> bool {
+    if value.len() > 2048 || value.contains(['?', '#']) {
+        return false;
+    }
+    let Some(rest) = value.strip_prefix("https://") else {
+        return false;
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    !authority.is_empty() && !authority.contains('@') && !authority.chars().any(char::is_whitespace)
+}
+
+fn validate_authentication(
+    decls: &[AuthenticationDecl],
+    permissions: &[String],
+) -> Result<(), String> {
+    if decls.len() > 8 {
+        return Err("at most 8 authentication declarations are allowed".into());
+    }
+    let mut ids = std::collections::HashSet::new();
+    const RESERVED: &[&str] = &[
+        "client_id",
+        "redirect_uri",
+        "response_type",
+        "state",
+        "code_challenge",
+        "code_challenge_method",
+        "scope",
+    ];
+    for decl in decls {
+        if !valid_authentication_id(&decl.id) || !ids.insert(decl.id.as_str()) {
+            return Err(format!(
+                "authentication id '{}' is invalid or duplicated",
+                decl.id
+            ));
+        }
+        if decl.provider_name.trim().is_empty() || decl.provider_name.len() > 80 {
+            return Err(format!(
+                "authentication '{}' requires a providerName",
+                decl.id
+            ));
+        }
+        if decl.client_id.trim().is_empty() || decl.client_id.len() > 512 {
+            return Err(format!(
+                "authentication '{}' requires a bounded clientId",
+                decl.id
+            ));
+        }
+        if !valid_https_endpoint(&decl.authorization_endpoint)
+            || !valid_https_endpoint(&decl.token_endpoint)
+        {
+            return Err(format!(
+                "authentication '{}' endpoints must be HTTPS URLs without query or fragment",
+                decl.id
+            ));
+        }
+        if decl.scopes.is_empty()
+            || decl.scopes.len() > 32
+            || decl.scopes.iter().any(|scope| {
+                scope.is_empty()
+                    || scope.len() > 256
+                    || scope.bytes().any(|b| b <= 0x20 || b == 0x7f)
+            })
+        {
+            return Err(format!(
+                "authentication '{}' requires 1-32 valid OAuth scopes",
+                decl.id
+            ));
+        }
+        if decl.redirect_methods != [RedirectMethod::Loopback] {
+            return Err(format!(
+                "authentication '{}' redirectMethods must be ['loopback'] in API 1.x",
+                decl.id
+            ));
+        }
+        if decl.api_hosts.is_empty() || decl.api_hosts.len() > 16 {
+            return Err(format!(
+                "authentication '{}' requires 1-16 apiHosts",
+                decl.id
+            ));
+        }
+        for host in &decl.api_hosts {
+            if network_capability_host(&format!("net:{host}")) != Some(host.as_str())
+                || !permissions
+                    .iter()
+                    .any(|permission| permission == &format!("net:{host}"))
+            {
+                return Err(format!(
+                    "authentication '{}' apiHost '{}' requires the matching net permission",
+                    decl.id, host
+                ));
+            }
+        }
+        let cap = format!("auth:{}", decl.id);
+        if !permissions.contains(&cap) {
+            return Err(format!(
+                "authentication '{}' requires the '{}' permission",
+                decl.id, cap
+            ));
+        }
+        if decl.authorization_parameters.len() > 16
+            || decl.authorization_parameters.iter().any(|(key, value)| {
+                key.is_empty()
+                    || key.len() > 64
+                    || value.len() > 1024
+                    || RESERVED.contains(&key.as_str())
+            })
+        {
+            return Err(format!(
+                "authentication '{}' has invalid authorizationParameters",
+                decl.id
+            ));
+        }
+    }
+    for permission in permissions {
+        if let Some(id) = authentication_capability_id(permission) {
+            if !decls.iter().any(|decl| decl.id == id) {
+                return Err(format!(
+                    "permission '{permission}' has no authentication declaration"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// One prompt in a prompt pack. Applied to the user's prompt list under the
 /// namespaced id `ext:<extension-id>:<id>` (SPEC chokepoint #15 — collisions
 /// unrepresentable), and removed by that prefix on disable.
@@ -1695,6 +1930,16 @@ pub struct PackPayloads {
     /// schema can evolve without an sdk release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pill_theme: Option<serde_json::Value>,
+    /// The submission-validated 512² PNG master, embedded in the single-file
+    /// pack. The manifest path remains the authoring/source identity; installed
+    /// packs cannot safely depend on that source tree still existing.
+    #[serde(
+        default,
+        rename = "iconPng",
+        alias = "icon_png",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub icon_png: Option<String>,
 }
 
 impl ExtensionManifest {
@@ -1735,6 +1980,44 @@ pub struct GrainPack {
 }
 
 impl GrainPack {
+    /// Decode the optional icon master with a strict allocation bound. Full PNG
+    /// decoding belongs to the host/checker; the SDK cheaply enforces the wire
+    /// shape and advertised dimensions at every pack-validation boundary.
+    pub fn embedded_icon_png(&self) -> Result<Option<Vec<u8>>, String> {
+        let Some(encoded) = self.payloads.icon_png.as_deref() else {
+            return Ok(None);
+        };
+        if self.manifest.icon.trim().is_empty() {
+            return Err("payloads.iconPng requires manifest.icon".into());
+        }
+        let max_encoded = (ICON_MAX_BYTES as usize).div_ceil(3) * 4;
+        if encoded.len() > max_encoded {
+            return Err(format!(
+                "payloads.iconPng is larger than {} KB",
+                ICON_MAX_BYTES / 1024
+            ));
+        }
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| "payloads.iconPng is not valid base64".to_string())?;
+        if bytes.len() as u64 > ICON_MAX_BYTES {
+            return Err(format!(
+                "payloads.iconPng is larger than {} KB",
+                ICON_MAX_BYTES / 1024
+            ));
+        }
+        match png_dimensions(&bytes) {
+            Some((width, height)) if width == ICON_MASTER_DIM && height == ICON_MASTER_DIM => {
+                Ok(Some(bytes))
+            }
+            Some((width, height)) => Err(format!(
+                "payloads.iconPng is {width}×{height}; it must be exactly \
+                 {ICON_MASTER_DIM}×{ICON_MASTER_DIM}"
+            )),
+            None => Err("payloads.iconPng is not a PNG".into()),
+        }
+    }
+
     /// [`ExtensionManifest::extends`] plus the surfaces this pack's payloads
     /// feed — a tier-A pack contributes by shipping data, not by declaring.
     pub fn extends(&self) -> Vec<String> {
@@ -1787,6 +2070,7 @@ impl GrainPack {
                 for cap in &m.permissions {
                     if !KNOWN_CAPABILITIES.contains(&cap.as_str())
                         && network_capability_host(cap).is_none()
+                        && authentication_capability_id(cap).is_none()
                     {
                         return Err(format!("unknown capability '{cap}'"));
                     }
@@ -1819,6 +2103,7 @@ impl GrainPack {
                 for cap in &m.permissions {
                     if !KNOWN_CAPABILITIES.contains(&cap.as_str())
                         && network_capability_host(cap).is_none()
+                        && authentication_capability_id(cap).is_none()
                     {
                         return Err(format!("unknown capability '{cap}'"));
                     }
@@ -1830,6 +2115,7 @@ impl GrainPack {
                 return Err(format!("prompt entry '{}' is incomplete", p.id));
             }
         }
+        self.embedded_icon_png()?;
         self.validate_phase3()?;
         Ok(())
     }
@@ -1858,6 +2144,11 @@ impl GrainPack {
         validate_classification(m)?;
         validate_prompt_layers(&m.contributes.prompt_layers, &m.slots)?;
         validate_actions(&m.contributes.actions, &m.permissions)?;
+        validate_authentication(&m.contributes.authentication, &m.permissions)?;
+
+        if !m.contributes.authentication.is_empty() && m.tier != Tier::Scripted {
+            return Err("authentication declarations require a scripted extension".into());
+        }
 
         if m.activation
             .iter()
@@ -1880,6 +2171,7 @@ impl GrainPack {
         let declares_surface = m.surfaces.workspace.is_some() || m.surfaces.overlay.is_some();
         let contributes_code = !m.contributes.settings.is_empty()
             || !m.contributes.shortcuts.is_empty()
+            || !m.contributes.authentication.is_empty()
             || m.contributes.session_mode.is_some()
             // Unlike a prompt layer, an action has to be PERFORMED. A pack with
             // no runtime that declares one would route, win, and then have
@@ -2075,10 +2367,9 @@ mod tests {
         // The default is the load-bearing part: every pack that exists today
         // predates `kind`, and every one of them would otherwise compete with a
         // music extension for "next song".
-        let m: ExtensionManifest = serde_json::from_str(
-            r#"{"id":"com.x.p","name":"P","version":"1.0","tier":"pack"}"#,
-        )
-        .unwrap();
+        let m: ExtensionManifest =
+            serde_json::from_str(r#"{"id":"com.x.p","name":"P","version":"1.0","tier":"pack"}"#)
+                .unwrap();
         assert_eq!(m.kind, ExtensionKind::Extending);
         assert!(!m.kind.is_searchable());
     }
@@ -2128,9 +2419,10 @@ mod tests {
         .is_err());
 
         let fat = "x".repeat(RECOMMEND_PURPOSE_MAX_BYTES + 1);
-        assert!(
-            searchable(&format!(r#""recommend":{{"purpose":"{fat}","examples":["a"]}}"#)).is_err()
-        );
+        assert!(searchable(&format!(
+            r#""recommend":{{"purpose":"{fat}","examples":["a"]}}"#
+        ))
+        .is_err());
 
         let aliases: Vec<String> = (0..RECOMMEND_ALIASES_MAX + 1)
             .map(|i| format!(r#""name{i}""#))
@@ -2147,10 +2439,10 @@ mod tests {
         // Examples are embedded and scored, so a duplicate silently doubles one
         // phrasing's weight. Fixing it quietly would hide an authoring mistake
         // that changes ranking.
-        assert!(searchable(
-            r#""recommend":{"purpose":"P","examples":["next song","Next Song"]}"#
-        )
-        .is_err());
+        assert!(
+            searchable(r#""recommend":{"purpose":"P","examples":["next song","Next Song"]}"#)
+                .is_err()
+        );
     }
 
     #[test]
@@ -2167,10 +2459,7 @@ mod tests {
 
     #[test]
     fn auto_send_requires_a_reason_the_user_can_evaluate() {
-        assert!(searchable(&format!(
-            r#"{RECOMMEND},"autoSend":{{"eligible":true}}"#
-        ))
-        .is_err());
+        assert!(searchable(&format!(r#"{RECOMMEND},"autoSend":{{"eligible":true}}"#)).is_err());
         assert_eq!(
             searchable(&format!(
                 r#"{RECOMMEND},"autoSend":{{"eligible":true,
@@ -2573,22 +2862,10 @@ mod tests {
     #[test]
     fn action_ids_and_match_values_are_checked() {
         let with = |body: &str| pack_with_actions("[]", body);
-        assert!(with(
-            r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#
-        )
-        .is_err());
-        assert!(with(
-            r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#
-        )
-        .is_err());
-        assert!(with(
-            r#"[{"id":"n","title":"","risk":"safe","utterances":["next"]}]"#
-        )
-        .is_err());
-        assert!(
-            with(r#"[{"id":"n","title":"N","risk":"safe","utterances":[]}]"#)
-                .is_err()
-        );
+        assert!(with(r#"[{"id":"","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
+        assert!(with(r#"[{"id":"a:b","title":"N","risk":"safe","utterances":["next"]}]"#).is_err());
+        assert!(with(r#"[{"id":"n","title":"","risk":"safe","utterances":["next"]}]"#).is_err());
+        assert!(with(r#"[{"id":"n","title":"N","risk":"safe","utterances":[]}]"#).is_err());
         // Duplicate ids, and a repeated utterance within one action.
         assert!(with(
             r#"[{"id":"n","title":"N","risk":"safe","utterances":["next"]},
@@ -3012,6 +3289,21 @@ mod tests {
             r#"{"manifest":{"id":"com.x.net","name":"n","version":"1","tier":"scripted","entry_source":"x","permissions":["net:*.example.com"]}}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn authentication_is_public_client_pkce_and_supports_multiple_services() {
+        let two_services = r#"{"manifest":{"id":"com.x.bridge","name":"Bridge","version":"1","tier":"scripted","entry_source":"x","permissions":["auth:linear","net:api.linear.app","auth:github","net:api.github.com"],"contributes":{"authentication":[{"id":"linear","type":"oauth2-pkce","providerName":"Linear","clientId":"linear-public","authorizationEndpoint":"https://linear.app/oauth/authorize","tokenEndpoint":"https://api.linear.app/oauth/token","scopes":["read"],"apiHosts":["api.linear.app"]},{"id":"github","type":"oauth2-pkce","providerName":"GitHub","clientId":"github-public","authorizationEndpoint":"https://github.com/login/oauth/authorize","tokenEndpoint":"https://github.com/login/oauth/access_token","scopes":["read:user"],"apiHosts":["api.github.com"]}]}}}"#;
+        assert_eq!(pack(two_services), Ok(()));
+
+        let missing_host_grant = two_services.replace(",\"net:api.github.com\"", "");
+        assert!(pack(&missing_host_grant).is_err());
+
+        let with_secret = two_services.replace(
+            "\"clientId\":\"github-public\"",
+            "\"clientId\":\"github-public\",\"clientSecret\":\"must-not-ship\"",
+        );
+        assert!(serde_json::from_str::<GrainPack>(&with_secret).is_err());
     }
 
     #[test]
