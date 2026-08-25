@@ -1771,6 +1771,22 @@ async extensionViewReady(sessionId: number) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+async extensionViewChoose(sessionId: number, presentationId: number, extensionId: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_choose", { sessionId, presentationId, extensionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async extensionViewDownloadModel(sessionId: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("extension_view_download_model", { sessionId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async extensionViewEvent(sessionId: number, event: ExtensionViewEvent) : Promise<Result<ExtensionViewEventResult, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("extension_view_event", { sessionId, event }) };
@@ -3423,7 +3439,8 @@ ui_source: string | null }
  */
 export type ExtensionSettingsSection = { id: string; name: string; rows: ExtensionSettingRow[] }
 export type ExtensionView = { version?: number; title: string; description?: string | null; root: ViewNode; actions?: ViewAction[] }
-export type ExtensionViewContent = { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone; can_insert: boolean; can_replace: boolean }
+export type ExtensionChoiceCandidate = { extensionId: string; name: string; purpose: string; signal: string; icon: string | null }
+export type ExtensionViewContent = { kind: "routing"; request_preview: string | null } | { kind: "choose"; presentation_id: number; request_preview: string; candidates: ExtensionChoiceCandidate[]; name_only: boolean } | { kind: "running"; automatic: boolean } | { kind: "view"; view: ExtensionView } | { kind: "result"; message: string; tone: ResultTone; can_copy: boolean; can_insert: boolean; can_replace: boolean; dismiss_after_ms: number | null }
 export type ExtensionViewEvent = { kind: "change"; target: string; value: ViewValue; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "submit"; target: string; values?: Partial<{ [key in string]: ViewValue }> } | { kind: "cancel" }
 export type ExtensionViewEventResult = {
 /**
@@ -3431,7 +3448,7 @@ export type ExtensionViewEventResult = {
  * state instead of rehydrating the author tree's original defaults.
  */
 unchanged: boolean; content: ExtensionViewContent }
-export type ExtensionViewInit = { sessionId: number; extensionId: string; extensionName: string; content: ExtensionViewContent }
+export type ExtensionViewInit = { sessionId: number; extensionId: string | null; extensionName: string | null; content: ExtensionViewContent }
 export type GpuDeviceOption = { id: string; name: string; total_vram_mb: number }
 /**
  * [GRAIN] Grain Space storage backend (OBSIDIAN-PLAN.md §1).

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "extension-view",
-  "description": "Capabilities for Grain's standard host-rendered extension confirmation window. Extension code never enters this webview; it renders only validated data. The page may receive host events and control only its own frameless window.",
+  "description": "Capabilities for Grain's session-scoped host-rendered Extension Mode window. Extension code never enters this webview; it renders only trusted routing state and validated component data. The page may receive host events and control only its own frameless window.",
   "windows": ["extension-view"],
   "permissions": [
     "core:event:default",

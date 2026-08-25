@@ -1,9 +1,10 @@
-//! Grain-rendered standard UI for Extension Mode.
+//! Grain-rendered session UI for Extension Mode.
 //!
-//! The selected extension supplies only a validated [`grain_sdk::ExtensionView`]
-//! tree. Grain owns the webview, DOM, components, styling, focus, trusted action
-//! bar, and lifecycle; no extension HTML, CSS, script, token, or Tauri authority
-//! enters this window.
+//! The same prewarmed Tauri window owns routing, choice, execution progress,
+//! confirmation, and finite results. A selected extension may supply only a
+//! validated [`grain_sdk::ExtensionView`] tree. Grain owns the webview, DOM,
+//! components, styling, focus, trusted action bar, and lifecycle; no extension
+//! HTML, CSS, script, token, or Tauri authority enters this window.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -21,17 +22,24 @@ const URL: &str = "extension-view.html";
 const PRESENT_EVENT: &str = "extension-view://present";
 const WINDOW_SIZE: (f64, f64) = (640.0, 720.0);
 const WINDOW_MIN: (f64, f64) = (440.0, 360.0);
+const REQUEST_PREVIEW_MAX_CHARS: usize = 2_048;
+const COMPLETION_DISMISS_MS: u32 = 1_600;
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 struct ActiveView {
     session_id: u64,
-    extension_id: String,
-    extension_name: String,
+    request_id: Option<u64>,
+    extension_id: Option<String>,
+    extension_name: Option<String>,
     request: String,
     content: ExtensionViewContent,
     busy: bool,
+    /// The native capture pill stays visible until this webview has painted and
+    /// shown. Reusing the value through every post-capture state makes the
+    /// native-to-webview hand-off atomic instead of timing it with a delay.
+    pill_session_id: Option<u64>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -70,17 +78,49 @@ fn bounded_message(message: &str) -> String {
     message.trim().chars().take(8192).collect()
 }
 
+fn bounded_request_preview(request: &str) -> String {
+    request
+        .trim()
+        .chars()
+        .take(REQUEST_PREVIEW_MAX_CHARS)
+        .collect()
+}
+
+#[derive(Clone, Debug, Serialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionChoiceCandidate {
+    pub extension_id: String,
+    pub name: String,
+    pub purpose: String,
+    pub signal: String,
+    pub icon: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionViewContent {
+    Routing {
+        request_preview: Option<String>,
+    },
+    Choose {
+        presentation_id: u64,
+        request_preview: String,
+        candidates: Vec<ExtensionChoiceCandidate>,
+        name_only: bool,
+    },
+    Running {
+        automatic: bool,
+    },
     View {
         view: ExtensionView,
     },
     Result {
         message: String,
         tone: ResultTone,
+        can_copy: bool,
         can_insert: bool,
         can_replace: bool,
+        dismiss_after_ms: Option<u32>,
     },
 }
 
@@ -92,13 +132,20 @@ pub enum ResultTone {
     Danger,
 }
 
-fn result_content(message: String, tone: ResultTone, allow_output: bool) -> ExtensionViewContent {
+fn result_content(
+    message: String,
+    tone: ResultTone,
+    allow_output: bool,
+    dismiss_after_ms: Option<u32>,
+) -> ExtensionViewContent {
     let target = *output_target().lock().unwrap();
     ExtensionViewContent::Result {
         message,
         tone,
+        can_copy: dismiss_after_ms.is_none(),
         can_insert: allow_output && target.is_some_and(target_is_usable),
         can_replace: allow_output && target.is_some_and(|target| target.has_selection),
+        dismiss_after_ms,
     }
 }
 
@@ -110,8 +157,8 @@ fn target_is_usable(target: OutputTarget) -> bool {
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionViewInit {
     pub session_id: u64,
-    pub extension_id: String,
-    pub extension_name: String,
+    pub extension_id: Option<String>,
+    pub extension_name: Option<String>,
     pub content: ExtensionViewContent,
 }
 
@@ -142,6 +189,46 @@ fn extension_name(app: &AppHandle, extension_id: &str) -> String {
         .unwrap_or_else(|| extension_id.to_string())
 }
 
+fn notify_closed(app: &AppHandle, removed: &ActiveView) {
+    match &removed.content {
+        ExtensionViewContent::Routing { .. } => {
+            if let Some(request_id) = removed.request_id {
+                crate::grain_actions::action_session::dismiss_request_from_view(request_id);
+            } else {
+                crate::grain_actions::action_session::cancel(app);
+            }
+        }
+        ExtensionViewContent::Choose {
+            presentation_id, ..
+        } => {
+            crate::grain_actions::action_session::dismiss_from_view(*presentation_id);
+        }
+        ExtensionViewContent::Running { .. } => {
+            if let Some(request_id) = removed.request_id {
+                crate::grain_actions::action_session::dismiss_request_from_view(request_id);
+            }
+        }
+        ExtensionViewContent::View { .. } => {
+            let (Some(extension_id), Some(_extension_name)) =
+                (&removed.extension_id, &removed.extension_name)
+            else {
+                return;
+            };
+            action_log::record(
+                &removed.request,
+                Some(extension_id.clone()),
+                None,
+                None,
+                ActionLogOutcome::Refused {
+                    reason: "user cancelled confirmation".into(),
+                },
+            );
+            crate::extension_host::notify_surface_cancel(extension_id, removed.session_id);
+        }
+        ExtensionViewContent::Result { .. } => {}
+    }
+}
+
 /// Pre-create the powerless host renderer hidden behind the active capture. A
 /// repeated call is free; a cancelled capture destroys it through [`destroy`].
 pub fn warm(app: &AppHandle) -> Result<(), String> {
@@ -164,28 +251,15 @@ pub fn warm(app: &AppHandle) -> Result<(), String> {
         .center();
 
     let window = builder.build().map_err(|error| error.to_string())?;
+    let app_for_close = app.clone();
     window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::Destroyed) {
             let removed = active().lock().unwrap().take();
             if removed.is_some() {
                 output_target().lock().unwrap().take();
             }
-            if let Some(removed) = removed
-                .filter(|removed| matches!(&removed.content, ExtensionViewContent::View { .. }))
-            {
-                action_log::record(
-                    &removed.request,
-                    Some(removed.extension_id.clone()),
-                    None,
-                    None,
-                    ActionLogOutcome::Refused {
-                        reason: "user cancelled confirmation".into(),
-                    },
-                );
-                crate::extension_host::notify_surface_cancel(
-                    &removed.extension_id,
-                    removed.session_id,
-                );
+            if let Some(removed) = removed {
+                notify_closed(&app_for_close, &removed);
             }
         }
     });
@@ -193,12 +267,30 @@ pub fn warm(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn store_and_emit(app: &AppHandle, active_view: ActiveView) -> Result<u64, String> {
-    let init = ExtensionViewInit::from(&active_view);
-    let session_id = active_view.session_id;
-    *active().lock().unwrap() = Some(active_view);
+fn store_and_emit(
+    app: &AppHandle,
+    mut next: ActiveView,
+    reuse_session: bool,
+) -> Result<u64, String> {
+    let init = {
+        let mut slot = active().lock().unwrap();
+        if reuse_session {
+            if let Some(current) = slot.as_ref() {
+                next.session_id = current.session_id;
+                next.pill_session_id = current.pill_session_id;
+                if next.request_id.is_none() {
+                    next.request_id = current.request_id;
+                }
+            }
+        }
+        let init = ExtensionViewInit::from(&next);
+        *slot = Some(next);
+        init
+    };
+    let session_id = init.session_id;
     if let Err(error) = warm(app) {
         active().lock().unwrap().take();
+        output_target().lock().unwrap().take();
         return Err(error);
     }
     if let Err(error) = app.emit_to(LABEL, PRESENT_EVENT, init) {
@@ -206,6 +298,103 @@ fn store_and_emit(app: &AppHandle, active_view: ActiveView) -> Result<u64, Strin
         return Err(error.to_string());
     }
     Ok(session_id)
+}
+
+/// Begin the post-capture interaction while ASR is still finalising. The
+/// renderer was prewarmed during recording; it becomes visible only after its
+/// first frame calls [`extension_view_ready`].
+pub fn present_routing(app: &AppHandle, pill_session_id: u64) -> Result<u64, String> {
+    store_and_emit(
+        app,
+        ActiveView {
+            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            request_id: None,
+            extension_id: None,
+            extension_name: None,
+            request: String::new(),
+            content: ExtensionViewContent::Routing {
+                request_preview: None,
+            },
+            busy: false,
+            pill_session_id: Some(pill_session_id),
+        },
+        false,
+    )
+}
+
+/// Keep the routing surface informative while the blocking recommendation pass
+/// runs. Only a bounded preview enters the renderer; the verbatim request stays
+/// in the host-owned pending session for the eventual hand-off.
+pub fn present_ranking(app: &AppHandle, request_id: u64, request: &str) -> Result<u64, String> {
+    store_and_emit(
+        app,
+        ActiveView {
+            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            request_id: Some(request_id),
+            extension_id: None,
+            extension_name: None,
+            request: request.to_string(),
+            content: ExtensionViewContent::Routing {
+                request_preview: Some(bounded_request_preview(request)),
+            },
+            busy: false,
+            pill_session_id: None,
+        },
+        true,
+    )
+}
+
+pub fn present_choice(
+    app: &AppHandle,
+    request_id: u64,
+    presentation_id: u64,
+    request: &str,
+    candidates: Vec<ExtensionChoiceCandidate>,
+    name_only: bool,
+) -> Result<u64, String> {
+    store_and_emit(
+        app,
+        ActiveView {
+            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            request_id: Some(request_id),
+            extension_id: None,
+            extension_name: None,
+            request: request.to_string(),
+            content: ExtensionViewContent::Choose {
+                presentation_id,
+                request_preview: bounded_request_preview(request),
+                candidates,
+                name_only,
+            },
+            busy: false,
+            pill_session_id: None,
+        },
+        true,
+    )
+}
+
+pub fn present_running(
+    app: &AppHandle,
+    request_id: u64,
+    extension_id: &str,
+    request: &str,
+    automatic: bool,
+) -> Result<u64, String> {
+    let name = extension_name(app, extension_id);
+    store_and_emit(
+        app,
+        ActiveView {
+            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            request_id: Some(request_id),
+            extension_id: Some(extension_id.to_string()),
+            extension_name: Some(name),
+            request: request.to_string(),
+            content: ExtensionViewContent::Running { automatic },
+            busy: true,
+            pill_session_id: None,
+        },
+        true,
+    )
 }
 
 /// Present an extension-authored, Grain-rendered component tree.
@@ -221,12 +410,15 @@ pub fn present(
         app,
         ActiveView {
             session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
-            extension_id: extension_id.to_string(),
-            extension_name: name,
+            request_id: None,
+            extension_id: Some(extension_id.to_string()),
+            extension_name: Some(name),
             request: request.to_string(),
             content: ExtensionViewContent::View { view },
             busy: false,
+            pill_session_id: None,
         },
+        true,
     )
 }
 
@@ -247,34 +439,42 @@ pub fn present_result(
         app,
         ActiveView {
             session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
-            extension_id: extension_id.to_string(),
-            extension_name: name,
+            request_id: None,
+            extension_id: Some(extension_id.to_string()),
+            extension_name: Some(name),
             // The hand-off path has already logged the request and outcome.
             request: String::new(),
-            content: result_content(message, tone, tone == ResultTone::Success),
+            content: result_content(message, tone, tone == ResultTone::Success, None),
             busy: false,
+            pill_session_id: None,
         },
+        true,
     )
 }
 
-/// Show a host-owned success notice that is not extension output and therefore
-/// must never expose Insert/Replace (the Auto-send disclosure uses this).
-pub fn present_notice(app: &AppHandle, extension_id: &str, message: String) -> Result<u64, String> {
-    let message = bounded_message(&message);
-    if message.is_empty() {
-        return Err("notice message must not be empty".into());
-    }
+/// Show a brief completion state for an extension that returned no copyable
+/// result. This keeps the direct-send transition legible without turning a
+/// no-output task into a modal the user must dismiss.
+pub fn present_completion(app: &AppHandle, extension_id: &str) -> Result<u64, String> {
     let name = extension_name(app, extension_id);
     store_and_emit(
         app,
         ActiveView {
             session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
-            extension_id: extension_id.to_string(),
-            extension_name: name,
+            request_id: None,
+            extension_id: Some(extension_id.to_string()),
+            extension_name: Some(name.clone()),
             request: String::new(),
-            content: result_content(message, ResultTone::Success, false),
+            content: result_content(
+                format!("Completed in {name}."),
+                ResultTone::Success,
+                false,
+                Some(COMPLETION_DISMISS_MS),
+            ),
             busy: false,
+            pill_session_id: None,
         },
+        true,
     )
 }
 
@@ -292,9 +492,20 @@ pub fn destroy(app: &AppHandle) {
 /// visible. Closing the finite view restores the normal idle policy.
 pub fn owns_extension(extension_id: &str) -> bool {
     active().lock().unwrap().as_ref().is_some_and(|active| {
-        active.extension_id == extension_id
+        active.extension_id.as_deref() == Some(extension_id)
             && matches!(&active.content, ExtensionViewContent::View { .. })
     })
+}
+
+/// Whether a painted-but-not-yet-ready renderer is responsible for retiring
+/// this native pill. Used by the recorder tail so a fast ranking pass cannot
+/// hide the pill before a cold webview becomes visible.
+pub fn owns_pill_handoff(pill_session_id: u64) -> bool {
+    active()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|active| active.pill_session_id == Some(pill_session_id))
 }
 
 /// Drop a standard view whose worker is being disabled, removed, or reloaded.
@@ -303,7 +514,7 @@ pub fn destroy_for_extension(app: &AppHandle, extension_id: &str) {
         .lock()
         .unwrap()
         .as_ref()
-        .is_some_and(|active| active.extension_id == extension_id);
+        .is_some_and(|active| active.extension_id.as_deref() == Some(extension_id));
     if belongs_to_extension {
         destroy(app);
     }
@@ -316,7 +527,7 @@ pub fn fail_interactive_for_extension(app: &AppHandle, extension_id: &str, reaso
     let init = {
         let mut slot = active().lock().unwrap();
         let Some(active) = slot.as_mut().filter(|active| {
-            active.extension_id == extension_id
+            active.extension_id.as_deref() == Some(extension_id)
                 && matches!(&active.content, ExtensionViewContent::View { .. })
         }) else {
             return;
@@ -328,11 +539,12 @@ pub fn fail_interactive_for_extension(app: &AppHandle, extension_id: &str, reaso
             )),
             ResultTone::Danger,
             false,
+            None,
         );
         active.busy = false;
         action_log::record(
             &active.request,
-            Some(active.extension_id.clone()),
+            active.extension_id.clone(),
             None,
             None,
             ActionLogOutcome::Failed {
@@ -378,7 +590,101 @@ pub fn extension_view_ready(window: WebviewWindow, session_id: u64) -> Result<()
     }
     let _ = window.center();
     window.show().map_err(|error| error.to_string())?;
+    {
+        // Claim the hand-off while holding the renderer slot. `complete` checks
+        // this same slot before it retires the native pill, so keeping the lock
+        // through `surface_ready` closes both duplicate-ready and pill-gap races.
+        let mut slot = active().lock().unwrap();
+        let current = slot
+            .as_mut()
+            .filter(|active| active.session_id == session_id)
+            .ok_or("stale extension view session")?;
+        if let Some(pill_session_id) = current.pill_session_id.take() {
+            crate::grain_actions::action_session::surface_ready(
+                &window.app_handle(),
+                pill_session_id,
+            );
+        }
+    }
     window.set_focus().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn extension_view_choose(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: u64,
+    presentation_id: u64,
+    extension_id: String,
+) -> Result<(), String> {
+    if !caller_is_view(&window) {
+        return Err("extension view command called from the wrong window".into());
+    }
+    let allowed = active().lock().unwrap().as_ref().is_some_and(|active| {
+        active.session_id == session_id
+            && matches!(
+                &active.content,
+                ExtensionViewContent::Choose {
+                    presentation_id: current,
+                    candidates,
+                    ..
+                } if *current == presentation_id
+                    && candidates.iter().any(|candidate| candidate.extension_id == extension_id)
+            )
+    });
+    if !allowed {
+        return Err("stale or invalid extension choice".into());
+    }
+    crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn extension_view_download_model(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: u64,
+) -> Result<(), String> {
+    if !caller_is_view(&window) {
+        return Err("extension view command called from the wrong window".into());
+    }
+    let request_id = {
+        let mut slot = active().lock().unwrap();
+        let current = slot
+            .as_mut()
+            .filter(|active| active.session_id == session_id)
+            .ok_or("stale extension view session")?;
+        if current.busy {
+            return Err("a language model download is already in progress".into());
+        }
+        let request_id = match &current.content {
+            ExtensionViewContent::Choose {
+                name_only: true, ..
+            } => current.request_id,
+            _ => None,
+        }
+        .ok_or("this chooser is not waiting for the language model")?;
+        current.busy = true;
+        request_id
+    };
+    if let Err(error) = crate::grain_space::embed::download_model(app.clone()).await {
+        if let Some(current) = active().lock().unwrap().as_mut().filter(|active| {
+            active.session_id == session_id
+                && matches!(&active.content, ExtensionViewContent::Choose { .. })
+        }) {
+            current.busy = false;
+        }
+        return Err(error);
+    }
+    crate::grain_actions::action_session::rerank(&app, request_id).await;
+    if let Some(current) = active().lock().unwrap().as_mut().filter(|active| {
+        active.session_id == session_id
+            && matches!(&active.content, ExtensionViewContent::Choose { .. })
+    }) {
+        current.busy = false;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -406,7 +712,10 @@ pub async fn extension_view_event(
         };
         view.validate_event(&event)?;
         active.busy = true;
-        active.extension_id.clone()
+        active
+            .extension_id
+            .clone()
+            .ok_or("this extension view has no owning extension")?
     };
 
     let outcome =
@@ -439,10 +748,10 @@ pub async fn extension_view_event(
                 .filter(|message| !message.trim().is_empty())
                 .map(|message| bounded_message(&message))
                 .unwrap_or_else(|| "Done".into());
-            active.content = result_content(message, ResultTone::Success, true);
+            active.content = result_content(message, ResultTone::Success, true, None);
             action_log::record(
                 &active.request,
-                Some(active.extension_id.clone()),
+                active.extension_id.clone(),
                 None,
                 None,
                 ActionLogOutcome::Ran { confirmed: true },
@@ -451,10 +760,10 @@ pub async fn extension_view_event(
         }
         crate::extension_host::SurfaceEventOutcome::Failed(reason) => {
             let reason = bounded_message(&reason);
-            active.content = result_content(reason.clone(), ResultTone::Danger, false);
+            active.content = result_content(reason.clone(), ResultTone::Danger, false, None);
             action_log::record(
                 &active.request,
-                Some(active.extension_id.clone()),
+                active.extension_id.clone(),
                 None,
                 None,
                 ActionLogOutcome::Failed { reason },
@@ -466,10 +775,11 @@ pub async fn extension_view_event(
                 "Grain stopped waiting, so the extension's final outcome is unknown.".into(),
                 ResultTone::Warning,
                 false,
+                None,
             );
             action_log::record(
                 &active.request,
-                Some(active.extension_id.clone()),
+                active.extension_id.clone(),
                 None,
                 None,
                 ActionLogOutcome::Unknown,
@@ -499,8 +809,12 @@ pub fn extension_view_copy(
         .as_ref()
         .filter(|active| active.session_id == session_id)
         .and_then(|active| match &active.content {
-            ExtensionViewContent::Result { message, .. } => Some(message.clone()),
-            ExtensionViewContent::View { .. } => None,
+            ExtensionViewContent::Result {
+                message,
+                can_copy: true,
+                ..
+            } => Some(message.clone()),
+            _ => None,
         })
         .ok_or("there is no result to copy")?;
     app.clipboard()
@@ -542,6 +856,7 @@ pub fn extension_view_output(
             tone: ResultTone::Success,
             can_insert: true,
             can_replace,
+            ..
         } = &current.content
         else {
             return Err("this result cannot be inserted".into());
@@ -643,7 +958,11 @@ pub fn extension_view_output(
 
 #[tauri::command]
 #[specta::specta]
-pub fn extension_view_close(window: WebviewWindow, session_id: u64) -> Result<(), String> {
+pub fn extension_view_close(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: u64,
+) -> Result<(), String> {
     if !caller_is_view(&window) {
         return Err("extension view command called from the wrong window".into());
     }
@@ -661,19 +980,14 @@ pub fn extension_view_close(window: WebviewWindow, session_id: u64) -> Result<()
     let Some(removed) = removed else {
         return Err("stale extension view session".into());
     };
-    if matches!(&removed.content, ExtensionViewContent::View { .. }) {
-        action_log::record(
-            &removed.request,
-            Some(removed.extension_id.clone()),
-            None,
-            None,
-            ActionLogOutcome::Refused {
-                reason: "user cancelled confirmation".into(),
-            },
-        );
-        crate::extension_host::notify_surface_cancel(&removed.extension_id, session_id);
+    if let Err(error) = window.destroy() {
+        // A failed destroy leaves the live renderer able to retry. Do not turn
+        // it into an orphaned, unauthenticated window by dropping its session.
+        *active().lock().unwrap() = Some(removed);
+        return Err(error.to_string());
     }
-    window.destroy().map_err(|error| error.to_string())?;
+    output_target().lock().unwrap().take();
+    notify_closed(&app, &removed);
     Ok(())
 }
 
@@ -687,5 +1001,14 @@ mod tests {
         let bounded = bounded_message(&long);
         assert_eq!(bounded.chars().count(), 8192);
         assert!(bounded.is_char_boundary(bounded.len()));
+    }
+
+    #[test]
+    fn request_previews_are_trimmed_and_bounded() {
+        let request = format!("  {}  ", "é".repeat(REQUEST_PREVIEW_MAX_CHARS + 100));
+        let preview = bounded_request_preview(&request);
+        assert_eq!(preview.chars().count(), REQUEST_PREVIEW_MAX_CHARS);
+        assert!(!preview.starts_with(char::is_whitespace));
+        assert!(!preview.ends_with(char::is_whitespace));
     }
 }

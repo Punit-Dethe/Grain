@@ -58,6 +58,7 @@ struct ActiveSession {
     binding_id: String,
     bias_generation: u64,
     pill_session_id: u64,
+    pill_completed: bool,
     phase: Phase,
 }
 
@@ -135,6 +136,7 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
         binding_id,
         bias_generation,
         pill_session_id,
+        pill_completed: false,
         phase: Phase::Recording,
     });
     drop(slot);
@@ -169,6 +171,9 @@ pub fn stop(app: &AppHandle) {
     let cancel_generation = recording.cancel_generation();
     recording.remove_mute();
     crate::grain_actions::emit_recording_stopped(app);
+    if let Err(error) = crate::extension_view::present_routing(app, snapshot.pill_session_id) {
+        log::warn!("[GRAIN] extension mode: could not show routing surface: {error}");
+    }
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -338,6 +343,9 @@ pub async fn deliver(app: &AppHandle, heard: &str) {
         });
         id
     };
+    if let Err(error) = crate::extension_view::present_ranking(app, id, heard) {
+        log::warn!("[GRAIN] extension mode: could not update routing surface: {error}");
+    }
     // Auto-send may fire only on this first presentation (§5) — never on a
     // decline-and-reopen, where the user is already actively choosing.
     present(app, id, heard.to_string(), Vec::new(), true).await;
@@ -372,7 +380,7 @@ async fn present(
                 .map(|id| {
                     let (name, purpose) = crate::extension_host::recommendation_display(&app, &id)
                         .unwrap_or_else(|| (id.clone(), String::new()));
-                    let icon = crate::extension_icons::recommendation_icon(&app, &id);
+                    let icon = crate::extension_icons::ui_icon(&app, &id);
                     (id, name, purpose, icon)
                 })
                 .collect();
@@ -420,31 +428,53 @@ async fn present(
     };
 
     if let Some(extension_id) = auto_sent {
-        // Atomically claim only the request this ranking belongs to. A fresh
-        // capture may have superseded it while the embedder was working.
+        // Claim and present under the request gate. Without the gate, a new
+        // capture could supersede this request after the claim and the old
+        // ranking could then resurrect its Running surface over the new one.
         let claimed = {
-            let mut slot = pending().lock().unwrap();
-            if slot.as_ref().is_some_and(|p| p.id == request_id) {
-                slot.take();
-                true
-            } else {
+            let _gate = request_gate().lock().unwrap();
+            if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
                 false
+            } else {
+                let claimed = {
+                    let mut slot = pending().lock().unwrap();
+                    if slot.as_ref().is_some_and(|p| p.id == request_id) {
+                        slot.take();
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if claimed {
+                    let _ = app.emit_to(
+                        "main",
+                        ExtensionRecommendation::NAME,
+                        ExtensionRecommendation {
+                            presentation_id: 0,
+                            request: request.clone(),
+                            candidates: candidates.clone(),
+                            name_only: !semantic_available,
+                            auto_sent: Some(extension_id.clone()),
+                        },
+                    );
+                    if let Err(error) = crate::extension_view::present_running(
+                        app,
+                        request_id,
+                        &extension_id,
+                        &request,
+                        true,
+                    ) {
+                        log::warn!(
+                            "[GRAIN] extension mode: could not show auto-send progress: {error}"
+                        );
+                    }
+                }
+                claimed
             }
         };
         if !claimed {
             return;
         }
-        let _ = app.emit_to(
-            "main",
-            ExtensionRecommendation::NAME,
-            ExtensionRecommendation {
-                presentation_id: 0,
-                request: request.clone(),
-                candidates: candidates.clone(),
-                name_only: !semantic_available,
-                auto_sent: Some(extension_id.clone()),
-            },
-        );
         log::info!("[GRAIN] extension mode: auto-sent to {extension_id}");
         let score = ranked.first().map(|r| r.score);
         action_log::record(
@@ -454,40 +484,22 @@ async fn present(
             score,
             ActionLogOutcome::Chose,
         );
-        // Grain chose — no chooser is shown. Make sure any surface still up from
-        // an earlier presentation is torn down before the hand-off, then make
-        // the automatic routing immediately visible in the standard renderer.
-        crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
-        let extension_name = candidates
-            .iter()
-            .find(|candidate| candidate.extension_id == extension_id)
-            .map(|candidate| candidate.name.as_str())
-            .unwrap_or(extension_id.as_str());
-        if let Err(error) = crate::extension_view::present_notice(
-            app,
-            &extension_id,
-            format!("Sent to {extension_name} automatically."),
-        ) {
-            log::warn!("[GRAIN] extension mode: could not show auto-send notice: {error}");
-        }
         // No accept is coming — clear the pending request and hand off now.
         run_hand_off(app, request_id, extension_id, request, declined);
         return;
     }
 
-    // Not auto-sending: raise the chooser on the native pill (§6b). It lists
-    // every searchable extension — the ranked picks first and highlighted, then
-    // the remainder by display name so the user can always find the right one by
-    // hand or by typing to filter. Icons are wired through the contract but not
-    // yet populated (deferred with the pill icon pipeline).
-    let pill_candidates: Vec<grain_core::RecommendCandidate> = {
+    // Not auto-sending: transition the prewarmed host window into the chooser.
+    // It lists every searchable extension — ranked picks first, followed by the
+    // alphabetical remainder so search always has the complete approved pool.
+    let choice_candidates: Vec<crate::extension_view::ExtensionChoiceCandidate> = {
         let ranked_ids: std::collections::HashSet<&str> =
             ranked.iter().map(|r| r.extension_id.as_str()).collect();
-        let mut picks: Vec<grain_core::RecommendCandidate> = ranked
+        let mut picks: Vec<crate::extension_view::ExtensionChoiceCandidate> = ranked
             .iter()
             .map(|r| {
                 let (name, purpose, icon) = display(&r.extension_id);
-                grain_core::RecommendCandidate {
+                crate::extension_view::ExtensionChoiceCandidate {
                     extension_id: r.extension_id.clone(),
                     name,
                     purpose,
@@ -496,22 +508,22 @@ async fn present(
                         grain_core::recommend::Signal::Topical => "topical",
                     }
                     .to_string(),
-                    score: r.score,
                     icon,
                 }
             })
             .collect();
-        let mut rest: Vec<grain_core::RecommendCandidate> = pool
+        let mut rest: Vec<crate::extension_view::ExtensionChoiceCandidate> = pool
             .into_iter()
             .filter(|(id, _, _, _)| !ranked_ids.contains(id.as_str()))
-            .map(|(id, name, purpose, icon)| grain_core::RecommendCandidate {
-                extension_id: id,
-                name,
-                purpose,
-                signal: "none".to_string(),
-                score: 0.0,
-                icon,
-            })
+            .map(
+                |(id, name, purpose, icon)| crate::extension_view::ExtensionChoiceCandidate {
+                    extension_id: id,
+                    name,
+                    purpose,
+                    signal: "none".to_string(),
+                    icon,
+                },
+            )
             .collect();
         rest.sort_by(|a, b| {
             a.name
@@ -526,38 +538,50 @@ async fn present(
     // Publish only if this is still the live request, and bind accept to the
     // exact ids this presentation contains before either UI can answer.
     let presentation_id = PRESENTATION_EPOCH.fetch_add(1, Ordering::SeqCst) + 1;
-    {
-        let mut slot = pending().lock().unwrap();
-        let Some(p) = slot.as_mut().filter(|p| p.id == request_id) else {
+    // Bind and publish under the same gate used by supersede. A cancelled or
+    // newly captured request must not publish a chooser after its renderer was
+    // destroyed.
+    let presentation = {
+        let _gate = request_gate().lock().unwrap();
+        if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
             return;
-        };
-        p.presentation_id = presentation_id;
-        p.allowed = pill_candidates
-            .iter()
-            .map(|candidate| candidate.extension_id.clone())
-            .collect();
+        }
+        {
+            let mut slot = pending().lock().unwrap();
+            let Some(p) = slot.as_mut().filter(|p| p.id == request_id) else {
+                return;
+            };
+            p.presentation_id = presentation_id;
+            p.allowed = choice_candidates
+                .iter()
+                .map(|candidate| candidate.extension_id.clone())
+                .collect();
+        }
+        // The Tauri event remains for the settings-side/headless consumer.
+        // Empty candidates is "nothing matched".
+        let _ = app.emit_to(
+            "main",
+            ExtensionRecommendation::NAME,
+            ExtensionRecommendation {
+                presentation_id,
+                request: request.clone(),
+                candidates: candidates.clone(),
+                name_only: !semantic_available,
+                auto_sent: None,
+            },
+        );
+        crate::extension_view::present_choice(
+            app,
+            request_id,
+            presentation_id,
+            &request,
+            choice_candidates,
+            !semantic_available,
+        )
+    };
+    if let Err(error) = presentation {
+        log::warn!("[GRAIN] extension mode: could not show chooser: {error}");
     }
-    // The Tauri event remains for the settings-side/headless consumer; the pill
-    // uses the native daemon event below. Empty candidates is "nothing matched".
-    let _ = app.emit_to(
-        "main",
-        ExtensionRecommendation::NAME,
-        ExtensionRecommendation {
-            presentation_id,
-            request: request.clone(),
-            candidates: candidates.clone(),
-            name_only: !semantic_available,
-            auto_sent: None,
-        },
-    );
-    crate::bridge::emit(
-        app,
-        grain_core::DaemonEvent::ExtensionRecommend {
-            presentation_id,
-            candidates: pill_candidates,
-            name_only: !semantic_available,
-        },
-    );
 
     match ranked.first() {
         None => {
@@ -656,6 +680,22 @@ pub async fn decline(app: &AppHandle, presentation_id: u64, extension_id: &str) 
     present(app, request_id, request, declined, false).await;
 }
 
+/// Re-run recommendation after the user installs the optional semantic model.
+/// The old nonce is invalidated before the blocking pass so a delayed click
+/// cannot race the refreshed chooser.
+pub async fn rerank(app: &AppHandle, request_id: u64) {
+    let snapshot = {
+        let mut slot = pending().lock().unwrap();
+        let Some(pending) = slot.as_mut().filter(|pending| pending.id == request_id) else {
+            return;
+        };
+        pending.presentation_id = 0;
+        pending.allowed.clear();
+        (pending.request.clone(), pending.declined.clone())
+    };
+    present(app, request_id, snapshot.0, snapshot.1, false).await;
+}
+
 /// The user accepted an extension: hand it the full request
 /// (`docs/Extensions V1/PLAN.md` §3).
 ///
@@ -666,17 +706,17 @@ pub async fn decline(app: &AppHandle, presentation_id: u64, extension_id: &str) 
 /// Spawned rather than awaited because the caller is a Tauri command that must
 /// return at once — the extension may call a model or the network, which is
 /// exactly what [`crate::extension_host::hand_off`]'s generous deadline is for.
-pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) {
+pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) -> Result<(), String> {
     let accepted = {
         let mut slot = pending().lock().unwrap();
         let Some(pending) = slot.as_ref() else {
-            return;
+            return Err("there is no pending extension request".into());
         };
         if pending.presentation_id != presentation_id
             || !pending.allowed.iter().any(|id| id == extension_id)
         {
             log::warn!("[GRAIN] extension mode: ignored stale or invalid choice {extension_id}");
-            return;
+            return Err("stale or invalid extension choice".into());
         }
         slot.take().unwrap()
     };
@@ -687,8 +727,11 @@ pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) {
         ..
     } = accepted;
     log::info!("[GRAIN] extension mode: accepted {extension_id}");
-    // The user chose from the surface — tear it down before the hand-off.
-    crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
+    if let Err(error) =
+        crate::extension_view::present_running(app, id, extension_id, &request, false)
+    {
+        log::warn!("[GRAIN] extension mode: could not show hand-off progress: {error}");
+    }
     action_log::record(
         &request,
         Some(extension_id.to_string()),
@@ -697,12 +740,24 @@ pub fn accept(app: &AppHandle, presentation_id: u64, extension_id: &str) {
         ActionLogOutcome::Chose,
     );
     run_hand_off(app, id, extension_id.to_string(), request, declined);
+    Ok(())
 }
 
 /// The user dismissed the recommendation surface without choosing (§8). Clears
 /// the pending request so a later stale click does nothing and hides the
 /// surface. No-op past the first dismissal.
 pub fn dismiss(app: &AppHandle, presentation_id: u64) {
+    if !dismiss_from_view(presentation_id) {
+        return;
+    }
+    crate::extension_view::destroy(app);
+    log::info!("[GRAIN] extension mode: surface dismissed");
+}
+
+/// Retire a chooser whose own host window is already closing. This is separate
+/// from [`dismiss`] to avoid recursively destroying the same native window.
+pub fn dismiss_from_view(presentation_id: u64) -> bool {
+    let _gate = request_gate().lock().unwrap();
     let dismissed = {
         let mut slot = pending().lock().unwrap();
         if slot
@@ -716,15 +771,29 @@ pub fn dismiss(app: &AppHandle, presentation_id: u64) {
         }
     };
     if !dismissed {
-        return;
+        return false;
     }
+    REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
+    true
+}
+
+/// Suppress a late hand-off outcome after the user closes routing/progress.
+/// The extension may already have observed the request, so this only retires
+/// Grain's UI epoch; it deliberately does not pretend to cancel remote work.
+pub fn dismiss_request_from_view(request_id: u64) -> bool {
+    let _gate = request_gate().lock().unwrap();
+    if REQUEST_EPOCH.load(Ordering::SeqCst) != request_id {
+        return false;
+    }
+    REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
+    let mut slot = pending().lock().unwrap();
+    if slot
+        .as_ref()
+        .is_some_and(|pending| pending.id == request_id)
     {
-        let _gate = request_gate().lock().unwrap();
-        REQUEST_EPOCH.fetch_add(1, Ordering::SeqCst);
-        crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
-        crate::extension_view::destroy(app);
+        slot.take();
     }
-    log::info!("[GRAIN] extension mode: surface dismissed");
+    true
 }
 
 /// Invalidate Extension Mode because another capture has begun. Unlike
@@ -751,9 +820,7 @@ pub fn supersede(app: &AppHandle) {
     if retired_processing {
         crate::shortcut::unregister_cancel_shortcut(app);
     }
-    if pending().lock().unwrap().take().is_some() {
-        crate::bridge::emit(app, grain_core::DaemonEvent::ExtensionRecommendClear);
-    }
+    pending().lock().unwrap().take();
     crate::extension_view::destroy(app);
 }
 
@@ -806,7 +873,10 @@ fn run_hand_off(
                         log::warn!("[GRAIN] extension mode: could not show result: {error}");
                         crate::extension_view::destroy(&app);
                     }
-                } else {
+                } else if let Err(error) =
+                    crate::extension_view::present_completion(&app, &extension_id)
+                {
+                    log::warn!("[GRAIN] extension mode: could not show completion: {error}");
                     crate::extension_view::destroy(&app);
                 }
             }
@@ -929,7 +999,34 @@ fn run_hand_off(
     });
 }
 
+/// Complete the native-pill side only after the prewarmed Tauri surface is
+/// visible. The flag prevents [`complete`] from emitting the same terminal
+/// event again when transcription/ranking finishes a moment later.
+pub fn surface_ready(app: &AppHandle, pill_session_id: u64) {
+    let should_complete = {
+        let mut slot = active().lock().unwrap();
+        match slot
+            .as_mut()
+            .filter(|session| session.pill_session_id == pill_session_id)
+        {
+            Some(session) if session.pill_completed => false,
+            Some(session) => {
+                session.pill_completed = true;
+                true
+            }
+            // A very fast ranking pass can release the recorder session before
+            // a cold webview paints. The renderer still owns the hand-off and
+            // must complete it when it finally becomes visible.
+            None => true,
+        }
+    };
+    if should_complete {
+        crate::grain_actions::emit_processing_complete(app, pill_session_id);
+    }
+}
+
 fn complete(app: &AppHandle, session: &ActiveSession) {
+    let renderer_owns_pill = crate::extension_view::owns_pill_handoff(session.pill_session_id);
     let mut slot = active().lock().unwrap();
     // A newer session already owns the slot; this one finished late and must not
     // clear it. Same generation guard as `extension_session`, and for the same
@@ -939,9 +1036,12 @@ fn complete(app: &AppHandle, session: &ActiveSession) {
         .as_ref()
         .is_some_and(|active| active.generation == session.generation)
     {
+        let pill_completed = slot.as_ref().is_some_and(|active| active.pill_completed);
         *slot = None;
         drop(slot);
         crate::shortcut::unregister_cancel_shortcut(app);
-        crate::grain_actions::emit_processing_complete(app, session.pill_session_id);
+        if !pill_completed && !renderer_owns_pill {
+            crate::grain_actions::emit_processing_complete(app, session.pill_session_id);
+        }
     }
 }

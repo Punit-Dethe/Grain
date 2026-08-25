@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use grain_sdk::{
     AgentInputKind, DaemonEvent, OverlayPosition, PillAction, PillPattern, PillSkin,
-    PillStateTheme, PillTheme, RecommendCandidate, SessionMode, PILL_ICON_PX,
+    PillStateTheme, PillTheme, SessionMode, PILL_ICON_PX,
 };
 
 use tiny_skia::{
@@ -33,7 +33,7 @@ use tiny_skia::{
 };
 use winit::application::ApplicationHandler;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
-use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId, WindowLevel};
@@ -395,17 +395,12 @@ enum PillState {
 /// Rolling); `Studio` is the larger streaming-text window, driven by
 /// `SessionMode::NativeAsr`; `AgentInput` is the native Agent summon card
 /// (recording → type-to-expand). The window is resized + repositioned on the
-/// rare transitions between the surfaces (never per-frame). `ExtensionSelect`
-/// is the same pill grown into its three-row recommendation chooser.
+/// rare transitions between the surfaces (never per-frame).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PillMode {
     Collapsed,
     Studio,
     AgentInput,
-    /// The Extension Mode chooser: studio-sized card listing ranked
-    /// recommendations (icon + name + purpose, scrollable) over a
-    /// type/search bar. Driven by `DaemonEvent::ExtensionRecommend`.
-    ExtensionSelect,
 }
 
 type HitRect = (f32, f32, f32, f32);
@@ -472,24 +467,6 @@ const AIN_WAVE_COLS: usize = 12;
 const AIN_WAVE_ROWS: usize = 4;
 const AIN_WAVE_DOT: f32 = 3.5;
 const AIN_WAVE_GAP: f32 = 3.0;
-
-// ── Extension Mode chooser ──────────────────────────────────────────────────
-// The recommendation surface is the live-ASR pill grown into one fixed native
-// card. Its list viewport is exactly three rows; larger pools scroll without
-// growing either the OS window or the retained UI state.
-const EXT_WIN_W: u32 = STUDIO_W as u32;
-const EXT_ROW_H: f32 = 48.0;
-const EXT_VISIBLE_ROWS: usize = 3;
-const EXT_SEARCH_H: f32 = 42.0;
-const EXT_NOTICE_H: f32 = 30.0;
-const EXT_CARD_PAD: f32 = 10.0;
-const EXT_CARD_R: f32 = STUDIO_CORNER_R;
-const EXT_ICON_PX: u32 = 28;
-const EXT_ICON_GAP: f32 = 11.0;
-const EXT_NAME_PX: f32 = 14.0;
-const EXT_META_PX: f32 = 11.5;
-const EXT_WIN_H: u32 =
-    (EXT_CARD_PAD * 2.0 + EXT_ROW_H * EXT_VISIBLE_ROWS as f32 + EXT_SEARCH_H + EXT_NOTICE_H) as u32;
 
 // [GRAIN] Grain Space note card (Capture): a two-field title + body layout that
 // grows with the body up to a max, matching the prototype. The body caps at
@@ -3269,13 +3246,6 @@ struct Remote {
     /// Bumped on every `PillIcon`, so `App` knows to rebuild its scaled copy
     /// (comparing the pixels themselves every frame would be silly).
     icon_seq: u64,
-    /// [GRAIN] Extension Mode chooser: ranked recommendations followed by the
-    /// remaining searchable pool, plus whether matching is name-only. The
-    /// transcript deliberately stays host-side; this process needs only display
-    /// metadata and answers with an id. Overrides every surface except Agent.
-    ext_select: Option<(u64, Vec<RecommendCandidate>, bool)>,
-    /// Bumped on every show/hide so the App detects the transition.
-    ext_select_seq: u64,
 }
 
 impl Default for Remote {
@@ -3306,8 +3276,6 @@ impl Default for Remote {
             skin: PillSkin::default(),
             icon: None,
             icon_seq: 0,
-            ext_select: None,
-            ext_select_seq: 0,
         }
     }
 }
@@ -3366,10 +3334,6 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             if r.session_owner != owner {
                 r.session_owner = owner;
                 r.session_owner_seq = r.session_owner_seq.wrapping_add(1);
-            }
-            // A fresh recording supersedes a lingering Extension Mode chooser.
-            if r.ext_select.take().is_some() {
-                r.ext_select_seq = r.ext_select_seq.wrapping_add(1);
             }
             r.asr = AsrDisplay::default();
             eprintln!("event: RecordingStarted -> show (recording, mode {mode:?})");
@@ -3481,21 +3445,10 @@ fn apply_event(remote: &Mutex<Remote>, ev: DaemonEvent) {
             r.agent_submit_req_seq = r.agent_submit_req_seq.wrapping_add(1);
             eprintln!("event: AgentInputSubmitRequest");
         }
-        DaemonEvent::ExtensionRecommend {
-            presentation_id,
-            candidates,
-            name_only,
-        } => {
-            r.ext_select = Some((presentation_id, candidates, name_only));
-            r.ext_select_seq = r.ext_select_seq.wrapping_add(1);
-            eprintln!("event: ExtensionRecommend -> chooser");
-        }
-        DaemonEvent::ExtensionRecommendClear => {
-            if r.ext_select.take().is_some() {
-                r.ext_select_seq = r.ext_select_seq.wrapping_add(1);
-            }
-            eprintln!("event: ExtensionRecommendClear");
-        }
+        // Extension recommendation now belongs to the session-scoped Tauri
+        // interaction surface. Ignore legacy daemon messages so an older core
+        // cannot resurrect the retired native chooser.
+        DaemonEvent::ExtensionRecommend { .. } | DaemonEvent::ExtensionRecommendClear => {}
         // [GRAIN] transcribe-cpp streaming: both parts are cumulative snapshots
         // (the full flicker-free prefix + the volatile tail), so set them
         // directly. The tail is what keeps the preview moving while the engine's
@@ -3815,151 +3768,6 @@ impl AgentInputUi {
     }
 }
 
-// ── Extension Mode chooser state ────────────────────────────────────────────
-
-struct ExtCandidateUi {
-    extension_id: String,
-    name: String,
-    purpose: String,
-    signal: String,
-    icon: Option<Pixmap>,
-}
-
-impl ExtCandidateUi {
-    fn from_wire(candidate: RecommendCandidate) -> Self {
-        let icon = candidate.icon.and_then(|encoded| {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .ok()
-                .filter(|rgba| rgba.len() == PILL_ICON_PX * PILL_ICON_PX * 4)
-                .and_then(|rgba| scale_icon_to(&rgba, EXT_ICON_PX))
-        });
-        Self {
-            extension_id: candidate.extension_id,
-            name: candidate.name,
-            purpose: candidate.purpose,
-            signal: candidate.signal,
-            icon,
-        }
-    }
-
-    fn is_recommended(&self) -> bool {
-        matches!(self.signal.as_str(), "named" | "topical")
-    }
-}
-
-struct ExtensionSelectUi {
-    presentation_id: u64,
-    candidates: Vec<ExtCandidateUi>,
-    /// Indices into `candidates`, rebuilt only when the query changes.
-    filtered: Vec<usize>,
-    query: String,
-    selected: usize,
-    /// False for a genuine "nothing matched" presentation until the user moves
-    /// or filters; prevents the first alphabetical fallback from masquerading
-    /// as Grain's recommendation.
-    selection_visible: bool,
-    scroll: usize,
-    name_only: bool,
-    download_requested: bool,
-    submitted: bool,
-    row_rects: [Option<(usize, HitRect)>; EXT_VISIBLE_ROWS],
-    download_rect: Option<HitRect>,
-    card_rect: HitRect,
-}
-
-impl ExtensionSelectUi {
-    fn new(presentation_id: u64, candidates: Vec<RecommendCandidate>, name_only: bool) -> Self {
-        let candidates: Vec<_> = candidates
-            .into_iter()
-            .map(ExtCandidateUi::from_wire)
-            .collect();
-        let filtered = (0..candidates.len()).collect();
-        let selection_visible = candidates
-            .first()
-            .is_some_and(ExtCandidateUi::is_recommended);
-        Self {
-            presentation_id,
-            candidates,
-            filtered,
-            query: String::new(),
-            selected: 0,
-            selection_visible,
-            scroll: 0,
-            name_only,
-            download_requested: false,
-            submitted: false,
-            row_rects: [None; EXT_VISIBLE_ROWS],
-            download_rect: None,
-            card_rect: (0.0, 0.0, 0.0, 0.0),
-        }
-    }
-
-    fn refilter(&mut self) {
-        let needle = self.query.trim().to_lowercase();
-        self.filtered.clear();
-        self.filtered.extend(
-            self.candidates
-                .iter()
-                .enumerate()
-                .filter(|(_, candidate)| {
-                    needle.is_empty()
-                        || candidate.name.to_lowercase().contains(&needle)
-                        || candidate.purpose.to_lowercase().contains(&needle)
-                })
-                .map(|(index, _)| index),
-        );
-        self.selected = 0;
-        self.scroll = 0;
-        self.selection_visible = !needle.is_empty();
-    }
-
-    fn move_selection(&mut self, delta: i32) {
-        if self.filtered.is_empty() {
-            return;
-        }
-        self.selected = (self.selected as i32 + delta)
-            .clamp(0, self.filtered.len().saturating_sub(1) as i32)
-            as usize;
-        self.selection_visible = true;
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        } else if self.selected >= self.scroll + EXT_VISIBLE_ROWS {
-            self.scroll = self.selected + 1 - EXT_VISIBLE_ROWS;
-        }
-    }
-
-    fn scroll_rows(&mut self, delta: i32) {
-        if self.filtered.len() <= EXT_VISIBLE_ROWS {
-            return;
-        }
-        let max = self.filtered.len() - EXT_VISIBLE_ROWS;
-        self.scroll = (self.scroll as i32 + delta).clamp(0, max as i32) as usize;
-        self.selected = self
-            .selected
-            .clamp(self.scroll, self.scroll + EXT_VISIBLE_ROWS - 1);
-        self.selection_visible = true;
-    }
-
-    fn selected_candidate(&self) -> Option<&ExtCandidateUi> {
-        self.filtered
-            .get(self.selected)
-            .and_then(|index| self.candidates.get(*index))
-    }
-
-    fn row_at(&self, point: (f32, f32)) -> Option<usize> {
-        self.row_rects
-            .iter()
-            .flatten()
-            .find_map(|(filtered, rect)| point_in_rect(point, *rect).then_some(*filtered))
-    }
-
-    fn has_recommendation(&self) -> bool {
-        self.candidates.iter().any(ExtCandidateUi::is_recommended)
-    }
-}
-
 // ── App ─────────────────────────────────────────────────────────────────────
 
 struct App {
@@ -4029,10 +3837,6 @@ struct App {
     last_agent_input_seq: u64,
     last_agent_submit_req_seq: u64,
     last_agent_input_saved_seq: u64,
-    /// Native Extension Mode chooser. Like Agent input it is focusable only for
-    /// its short lifetime, then every candidate/icon allocation is dropped.
-    ext_select: Option<ExtensionSelectUi>,
-    last_ext_select_seq: u64,
     /// Last cursor position (physical px) for card/button hit-testing.
     cursor_pos: (f32, f32),
     /// Prompt Record is never attached to a click on the pill body. Hovering the
@@ -4172,8 +3976,6 @@ impl App {
             last_agent_input_seq: 0,
             last_agent_submit_req_seq: 0,
             last_agent_input_saved_seq: 0,
-            ext_select: None,
-            last_ext_select_seq: 0,
             cursor_pos: (0.0, 0.0),
             prompt_record_hover: false,
             prompt_record_requested: false,
@@ -4239,7 +4041,6 @@ impl App {
             PillMode::Collapsed => Self::win_size(skin),
             PillMode::Studio => studio_pixel_size(),
             PillMode::AgentInput => (AIN_WIN_W, AIN_WIN_H),
-            PillMode::ExtensionSelect => (EXT_WIN_W, EXT_WIN_H),
         }
     }
 
@@ -4315,7 +4116,6 @@ impl App {
                         .is_some_and(|rect| self.cursor_in_rect(rect))
             }
             PillMode::AgentInput => false,
-            PillMode::ExtensionSelect => false,
         };
 
         let attached = self
@@ -4333,7 +4133,6 @@ impl App {
                     self.cursor_in_rect((0.0, rect.1, w as f32, h as f32))
                 }
                 PillMode::AgentInput => false,
-                PillMode::ExtensionSelect => false,
             });
         self.set_prompt_record_hover(primary || attached || bridge);
     }
@@ -4552,80 +4351,6 @@ impl App {
         }
     }
 
-    fn extension_select_key(&mut self, ev: KeyEvent) {
-        let Some(ui) = &mut self.ext_select else {
-            return;
-        };
-        match ev.logical_key.as_ref() {
-            Key::Named(NamedKey::Escape) => {
-                if !ui.submitted {
-                    ui.submitted = true;
-                    let _ = self.action_tx.send(PillAction::ExtensionCancel {
-                        presentation_id: ui.presentation_id,
-                    });
-                }
-            }
-            Key::Named(NamedKey::Enter) => {
-                if !ui.submitted {
-                    if let Some(extension_id) = ui
-                        .selected_candidate()
-                        .map(|candidate| candidate.extension_id.clone())
-                    {
-                        ui.submitted = true;
-                        let _ = self.action_tx.send(PillAction::ExtensionChoose {
-                            presentation_id: ui.presentation_id,
-                            extension_id,
-                        });
-                    }
-                }
-            }
-            Key::Named(NamedKey::ArrowUp) => ui.move_selection(-1),
-            Key::Named(NamedKey::ArrowDown) => ui.move_selection(1),
-            Key::Named(NamedKey::PageUp) => ui.move_selection(-(EXT_VISIBLE_ROWS as i32)),
-            Key::Named(NamedKey::PageDown) => ui.move_selection(EXT_VISIBLE_ROWS as i32),
-            Key::Named(NamedKey::Home) => ui.move_selection(-(ui.filtered.len() as i32)),
-            Key::Named(NamedKey::End) => ui.move_selection(ui.filtered.len() as i32),
-            Key::Named(NamedKey::F2) if ui.name_only && !ui.download_requested => {
-                ui.download_requested = true;
-                let _ = self.action_tx.send(PillAction::ExtensionDownloadModel);
-            }
-            Key::Named(NamedKey::Backspace) => {
-                if self.ctrl_down {
-                    let trimmed = ui.query.trim_end();
-                    let cut = trimmed
-                        .rfind(char::is_whitespace)
-                        .map(|index| index + 1)
-                        .unwrap_or(0);
-                    ui.query.truncate(cut);
-                } else {
-                    ui.query.pop();
-                }
-                ui.refilter();
-            }
-            _ => {
-                if self.ctrl_down {
-                    return;
-                }
-                let Some(text) = ev.text.as_ref() else {
-                    return;
-                };
-                let remaining = 80usize.saturating_sub(ui.query.chars().count());
-                if remaining == 0 {
-                    return;
-                }
-                let printable: String = text
-                    .chars()
-                    .filter(|character| !character.is_control())
-                    .take(remaining)
-                    .collect();
-                if !printable.is_empty() {
-                    ui.query.push_str(&printable);
-                    ui.refilter();
-                }
-            }
-        }
-    }
-
     fn update_cached_label(&mut self) {
         // Runs (from `about_to_wait`) BEFORE the frame's `render`, so make sure
         // the shared font is resident — it may have been dropped by the idle-free.
@@ -4685,7 +4410,6 @@ impl App {
             PillMode::Collapsed => self.render_collapsed(),
             PillMode::Studio => self.render_studio(),
             PillMode::AgentInput => self.render_agent_input(),
-            PillMode::ExtensionSelect => self.render_extension_select(),
         }
         if self.cancel_rect.is_none() {
             self.cancel_hover = false;
@@ -4723,379 +4447,6 @@ impl App {
             self.fallback_tried = true;
             self.fallback_font = load_fallback_font();
         }
-    }
-
-    /// [GRAIN] Extension Mode recommendation chooser: the live-ASR pill grown
-    /// into a three-row native card. No webview, retained image decoder, or
-    /// per-frame filtering allocation; the whole surface is freed on clear.
-    fn render_extension_select(&mut self) {
-        if self.window.is_none() {
-            return;
-        }
-        let probe = self
-            .ext_select
-            .as_ref()
-            .map(|ui| {
-                let mut text = ui.query.clone();
-                for candidate in &ui.candidates {
-                    text.push_str(&candidate.name);
-                }
-                text
-            })
-            .unwrap_or_default();
-        self.ensure_fallback_for(&probe);
-
-        let (w, h) = (EXT_WIN_W, EXT_WIN_H);
-        let mut pixmap = self
-            .pixmap
-            .take()
-            .unwrap_or_else(|| Pixmap::new(w, h).unwrap());
-        pixmap.fill(Color::TRANSPARENT);
-
-        let Some(ui) = &mut self.ext_select else {
-            self.pixmap = Some(pixmap);
-            return;
-        };
-        ui.row_rects.fill(None);
-        ui.download_rect = None;
-
-        let open = ease_out_cubic(self.open_t);
-        let fade = self.studio_alpha.clamp(0.0, 1.0);
-        let show_notice = ui.name_only || !ui.has_recommendation();
-        let notice_h = if show_notice { EXT_NOTICE_H } else { 0.0 };
-        let full_h =
-            EXT_CARD_PAD * 2.0 + EXT_ROW_H * EXT_VISIBLE_ROWS as f32 + notice_h + EXT_SEARCH_H;
-        let seed = PillGeom::for_skin(self.skin);
-        let card_w = seed.core_w + (w as f32 - seed.core_w) * open;
-        let card_h = seed.body_h + (full_h - seed.body_h) * open;
-        let card_x = (w as f32 - card_w) / 2.0;
-        let card_y = h as f32 - card_h;
-        ui.card_rect = (card_x, card_y, card_x + card_w, card_y + card_h);
-
-        let mut paint = Paint {
-            anti_alias: true,
-            ..Default::default()
-        };
-        if let Some(path) = rounded_rect_path(card_x, card_y, card_w, card_h, EXT_CARD_R) {
-            paint.set_color(Color::from_rgba8(
-                GRAIN_SURFACE[0],
-                GRAIN_SURFACE[1],
-                GRAIN_SURFACE[2],
-                (GRAIN_CARD_A * fade) as u8,
-            ));
-            pixmap.fill_path(
-                &path,
-                &paint,
-                FillRule::Winding,
-                Transform::identity(),
-                None,
-            );
-        }
-        stroke_grain_rim(
-            &mut pixmap,
-            card_x,
-            card_y,
-            card_w,
-            card_h,
-            EXT_CARD_R,
-            fade,
-        );
-
-        // Hold detailed content until the body is mostly open. The surface is
-        // already visibly present; this keeps names from clipping through the
-        // expanding rounded ends.
-        let content_a = ((open - 0.56) / 0.44).clamp(0.0, 1.0) * fade;
-        let list_x = EXT_CARD_PAD;
-        let list_w = w as f32 - EXT_CARD_PAD * 2.0;
-        let list_top = h as f32 - full_h + EXT_CARD_PAD;
-        let fallback = self.fallback_font.as_ref();
-        let primary = self.font.as_ref();
-
-        if content_a > 0.01 {
-            if ui.filtered.is_empty() {
-                if let Some(font) = primary {
-                    let message = "No extensions found";
-                    let x = (w as f32 - text_width(font, message, EXT_NAME_PX)) / 2.0;
-                    draw_text_left(
-                        &mut pixmap,
-                        font,
-                        message,
-                        x,
-                        list_top + EXT_ROW_H * 1.5,
-                        EXT_NAME_PX,
-                        [0x98, 0x98, 0x9d],
-                        content_a,
-                    );
-                }
-            } else {
-                for row in 0..EXT_VISIBLE_ROWS {
-                    let filtered_index = ui.scroll + row;
-                    let Some(&candidate_index) = ui.filtered.get(filtered_index) else {
-                        continue;
-                    };
-                    let top = list_top + row as f32 * EXT_ROW_H;
-                    let rect = (list_x, top, list_x + list_w, top + EXT_ROW_H);
-                    if content_a > 0.8 {
-                        ui.row_rects[row] = Some((filtered_index, rect));
-                    }
-                    let candidate = &ui.candidates[candidate_index];
-                    let selected = ui.selection_visible && filtered_index == ui.selected;
-                    let hovered = self.cursor_inside && point_in_rect(self.cursor_pos, rect);
-
-                    if selected || hovered {
-                        if let Some(path) = rounded_rect_path(
-                            rect.0 + 2.0,
-                            rect.1 + 3.0,
-                            list_w - 4.0,
-                            EXT_ROW_H - 6.0,
-                            11.0,
-                        ) {
-                            let alpha = if selected { 38 } else { 22 };
-                            paint.set_color(Color::from_rgba8(255, 255, 255, alpha));
-                            pixmap.fill_path(
-                                &path,
-                                &paint,
-                                FillRule::Winding,
-                                Transform::identity(),
-                                None,
-                            );
-                        }
-                    }
-                    if candidate.is_recommended() {
-                        stroke_grain_rim(
-                            &mut pixmap,
-                            rect.0 + 2.0,
-                            rect.1 + 3.0,
-                            list_w - 4.0,
-                            EXT_ROW_H - 6.0,
-                            11.0,
-                            content_a,
-                        );
-                    }
-
-                    let icon_x = rect.0 + 10.0;
-                    let icon_y = top + (EXT_ROW_H - EXT_ICON_PX as f32) / 2.0;
-                    if let Some(icon) = &candidate.icon {
-                        pixmap.draw_pixmap(
-                            icon_x.round() as i32,
-                            icon_y.round() as i32,
-                            icon.as_ref(),
-                            &PixmapPaint {
-                                opacity: content_a,
-                                quality: FilterQuality::Nearest,
-                                ..Default::default()
-                            },
-                            Transform::identity(),
-                            None,
-                        );
-                    } else {
-                        if let Some(path) = rounded_rect_path(
-                            icon_x,
-                            icon_y,
-                            EXT_ICON_PX as f32,
-                            EXT_ICON_PX as f32,
-                            8.0,
-                        ) {
-                            paint.set_color(Color::from_rgba8(0x36, 0x36, 0x39, 255));
-                            pixmap.fill_path(
-                                &path,
-                                &paint,
-                                FillRule::Winding,
-                                Transform::identity(),
-                                None,
-                            );
-                        }
-                        if let (Some(font), Some(initial)) =
-                            (primary, candidate.name.chars().next())
-                        {
-                            let initial = initial.to_uppercase().to_string();
-                            let font = font_for(font, fallback, &initial);
-                            let x = icon_x
-                                + (EXT_ICON_PX as f32 - text_width(font, &initial, EXT_META_PX))
-                                    / 2.0;
-                            draw_text_left(
-                                &mut pixmap,
-                                font,
-                                &initial,
-                                x,
-                                icon_y + EXT_ICON_PX as f32 / 2.0,
-                                EXT_META_PX,
-                                [0xe8, 0xe8, 0xeb],
-                                content_a,
-                            );
-                        }
-                    }
-
-                    if let Some(font) = primary {
-                        let font = font_for(font, fallback, &candidate.name);
-                        let text_x = icon_x + EXT_ICON_PX as f32 + EXT_ICON_GAP;
-                        let max_w = rect.2 - 14.0 - text_x;
-                        let name =
-                            truncate_to_width(font, candidate.name.trim(), EXT_NAME_PX, max_w);
-                        draw_text_left(
-                            &mut pixmap,
-                            font,
-                            &name,
-                            text_x,
-                            top + EXT_ROW_H / 2.0,
-                            EXT_NAME_PX,
-                            [0xf0, 0xf0, 0xf2],
-                            content_a,
-                        );
-                    }
-                }
-
-                if ui.filtered.len() > EXT_VISIBLE_ROWS {
-                    let track_h = EXT_ROW_H * EXT_VISIBLE_ROWS as f32 - 16.0;
-                    let thumb_h =
-                        (track_h * EXT_VISIBLE_ROWS as f32 / ui.filtered.len() as f32).max(18.0);
-                    let max_scroll = ui.filtered.len() - EXT_VISIBLE_ROWS;
-                    let thumb_y =
-                        list_top + 8.0 + (track_h - thumb_h) * ui.scroll as f32 / max_scroll as f32;
-                    if let Some(track) =
-                        rounded_rect_path(list_x + list_w - 3.0, thumb_y, 2.0, thumb_h, 1.0)
-                    {
-                        paint.set_color(Color::from_rgba8(0x88, 0x88, 0x8d, 130));
-                        pixmap.fill_path(
-                            &track,
-                            &paint,
-                            FillRule::Winding,
-                            Transform::identity(),
-                            None,
-                        );
-                    }
-                }
-            }
-
-            let mut search_top = list_top + EXT_ROW_H * EXT_VISIBLE_ROWS as f32;
-            if show_notice {
-                let notice_rect = (
-                    list_x,
-                    search_top,
-                    list_x + list_w,
-                    search_top + EXT_NOTICE_H,
-                );
-                if let Some(font) = primary {
-                    draw_text_left(
-                        &mut pixmap,
-                        font,
-                        if ui.download_requested {
-                            "Downloading language matching..."
-                        } else if !ui.has_recommendation() {
-                            "No confident match"
-                        } else {
-                            "Name-only matching"
-                        },
-                        list_x + 10.0,
-                        search_top + EXT_NOTICE_H / 2.0,
-                        EXT_META_PX,
-                        [0xa9, 0xa9, 0xae],
-                        content_a,
-                    );
-                    if ui.name_only && !ui.download_requested {
-                        let action = "F2  Download model";
-                        let action_w = text_width(font, action, EXT_META_PX);
-                        let action_x = notice_rect.2 - action_w - 10.0;
-                        draw_text_left(
-                            &mut pixmap,
-                            font,
-                            action,
-                            action_x,
-                            search_top + EXT_NOTICE_H / 2.0,
-                            EXT_META_PX,
-                            [0xe2, 0xe2, 0xe5],
-                            content_a,
-                        );
-                        if content_a > 0.8 {
-                            ui.download_rect =
-                                Some((action_x - 5.0, notice_rect.1, notice_rect.2, notice_rect.3));
-                        }
-                    }
-                }
-                search_top += EXT_NOTICE_H;
-            }
-
-            if let Some(line) = Rect::from_xywh(list_x, search_top, list_w, 1.0) {
-                paint.set_color(Color::from_rgba8(
-                    GRAIN_BORDER[0],
-                    GRAIN_BORDER[1],
-                    GRAIN_BORDER[2],
-                    190,
-                ));
-                pixmap.fill_rect(line, &paint, Transform::identity(), None);
-            }
-            // Magnifier: authored geometry, not a font glyph.
-            let search_cy = search_top + EXT_SEARCH_H / 2.0;
-            if let Some(circle) = PathBuilder::from_circle(list_x + 17.0, search_cy - 1.0, 5.0) {
-                paint.set_color(Color::from_rgba8(0x9a, 0x9a, 0x9f, 220));
-                pixmap.stroke_path(
-                    &circle,
-                    &paint,
-                    &Stroke {
-                        width: 1.4,
-                        ..Default::default()
-                    },
-                    Transform::identity(),
-                    None,
-                );
-            }
-            let mut handle = PathBuilder::new();
-            handle.move_to(list_x + 20.5, search_cy + 2.5);
-            handle.line_to(list_x + 24.0, search_cy + 6.0);
-            if let Some(path) = handle.finish() {
-                pixmap.stroke_path(
-                    &path,
-                    &paint,
-                    &Stroke {
-                        width: 1.4,
-                        line_cap: tiny_skia::LineCap::Round,
-                        ..Default::default()
-                    },
-                    Transform::identity(),
-                    None,
-                );
-            }
-            if let Some(font) = primary {
-                let value = if ui.query.is_empty() {
-                    "Type to filter extensions"
-                } else {
-                    &ui.query
-                };
-                let font = font_for(font, fallback, value);
-                let color = if ui.query.is_empty() {
-                    [0x7e, 0x7e, 0x83]
-                } else {
-                    [0xee, 0xee, 0xf0]
-                };
-                let value = truncate_to_width(font, value, EXT_NAME_PX, list_w - 52.0);
-                let text_x = list_x + 34.0;
-                let width = draw_text_left(
-                    &mut pixmap,
-                    font,
-                    &value,
-                    text_x,
-                    search_cy,
-                    EXT_NAME_PX,
-                    color,
-                    content_a,
-                );
-                if !ui.query.is_empty() && (self.studio_phase as u32 / 30) % 2 == 0 {
-                    draw_caret(
-                        &mut pixmap,
-                        &mut paint,
-                        text_x + width + 1.0,
-                        search_cy,
-                        content_a,
-                    );
-                }
-            }
-        }
-
-        self.studio_phase += 1.0;
-        if let Some(presenter) = &self.presenter {
-            presenter.blit(&pixmap);
-        }
-        self.pixmap = Some(pixmap);
     }
 
     /// [GRAIN] The native agent summon card, pixel-matched to the reference:
@@ -6663,32 +6014,6 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                     return;
                 }
-                if let Some(ui) = &mut self.ext_select {
-                    if let Some(filtered_index) = ui.row_at(self.cursor_pos) {
-                        ui.selected = filtered_index;
-                        ui.selection_visible = true;
-                        if !ui.submitted {
-                            if let Some(extension_id) = ui
-                                .selected_candidate()
-                                .map(|candidate| candidate.extension_id.clone())
-                            {
-                                ui.submitted = true;
-                                let _ = self.action_tx.send(PillAction::ExtensionChoose {
-                                    presentation_id: ui.presentation_id,
-                                    extension_id,
-                                });
-                            }
-                        }
-                    } else if ui
-                        .download_rect
-                        .is_some_and(|rect| point_in_rect(self.cursor_pos, rect))
-                        && !ui.download_requested
-                    {
-                        ui.download_requested = true;
-                        let _ = self.action_tx.send(PillAction::ExtensionDownloadModel);
-                    }
-                    return;
-                }
                 // [GRAIN] Cancel × on the Studio card — the mouse equivalent of
                 // the Cancel shortcut (Esc). The core owns the teardown; the pill
                 // just reports the click and waits to be hidden like any other
@@ -6741,23 +6066,6 @@ impl ApplicationHandler<UserEvent> for App {
                     let _ = self.action_tx.send(PillAction::AgentFollowup);
                 }
             }
-            WindowEvent::MouseWheel { delta, .. } if self.ext_select.is_some() => {
-                let rows = match delta {
-                    MouseScrollDelta::LineDelta(_, y) => -y.signum() as i32,
-                    MouseScrollDelta::PixelDelta(position) => {
-                        if position.y.abs() < 1.0 {
-                            0
-                        } else {
-                            -position.y.signum() as i32
-                        }
-                    }
-                };
-                if rows != 0 {
-                    if let Some(ui) = &mut self.ext_select {
-                        ui.scroll_rows(rows);
-                    }
-                }
-            }
             // [GRAIN] Agent input keyboard: the window has real focus while the
             // input is up, so keystrokes land here as ordinary window events.
             // (Enter/Escape usually arrive via the core's transient GLOBAL
@@ -6772,16 +6080,6 @@ impl ApplicationHandler<UserEvent> for App {
                 ..
             } if self.agent_input.is_some() => {
                 self.agent_input_key(key_event.clone());
-            }
-            WindowEvent::KeyboardInput {
-                event:
-                    ref key_event @ KeyEvent {
-                        state: ElementState::Pressed,
-                        ..
-                    },
-                ..
-            } if self.ext_select.is_some() => {
-                self.extension_select_key(key_event.clone());
             }
             WindowEvent::KeyboardInput {
                 event:
@@ -6933,30 +6231,8 @@ impl ApplicationHandler<UserEvent> for App {
                     None => {
                         self.agent_input = None;
                         if let Some(window) = &self.window {
-                            present::set_focusable(window, self.ext_select.is_some());
-                            if self.ext_select.is_some() {
-                                present::force_foreground(window);
-                            }
+                            present::set_focusable(window, false);
                         }
-                    }
-                }
-            }
-
-            // Extension chooser shown/cleared by the core. Adopt the bounded
-            // candidate list once per event; icon decode/downscale happens in
-            // `new`, never during paint. Agent input remains higher priority.
-            if r.ext_select_seq != self.last_ext_select_seq {
-                self.last_ext_select_seq = r.ext_select_seq;
-                self.ext_select = r
-                    .ext_select
-                    .map(|(presentation_id, candidates, name_only)| {
-                        ExtensionSelectUi::new(presentation_id, candidates, name_only)
-                    });
-                if let Some(window) = &self.window {
-                    let focusable = self.agent_input.is_some() || self.ext_select.is_some();
-                    present::set_focusable(window, focusable);
-                    if self.agent_input.is_none() && self.ext_select.is_some() {
-                        present::force_foreground(window);
                     }
                 }
             }
@@ -6993,8 +6269,6 @@ impl ApplicationHandler<UserEvent> for App {
             // The agent input overrides every other surface while it is up.
             let desired_mode = if self.agent_input.is_some() {
                 PillMode::AgentInput
-            } else if self.ext_select.is_some() {
-                PillMode::ExtensionSelect
             } else if self.clipboard_notice {
                 // Keep a fresh session compact until the short acknowledgement
                 // is gone, so it remains the same right-side sibling instead of
@@ -7207,7 +6481,6 @@ impl ApplicationHandler<UserEvent> for App {
             let offer_live = self.agent_offer.is_some();
             let owner_live = self.session_owner.is_some();
             let input_live = self.agent_input.is_some();
-            let extension_live = self.ext_select.is_some();
             let preview_visible = self.prompt_preview_until.is_some_and(|t| now < t);
             let clipboard_notice_visible = r.anchor != OverlayPosition::None
                 && self.clipboard_notice_until.is_some_and(|t| now < t);
@@ -7226,8 +6499,7 @@ impl ApplicationHandler<UserEvent> for App {
                 || preview_visible
                 || clipboard_notice_visible
                 || offer_live
-                || input_live
-                || extension_live;
+                || input_live;
             // [GRAIN] The Studio Window fades out instead of vanishing: while
             // `closing` is true we keep `self.visible` true (so rendering/mic
             // gating below behave as if still showing) and just ease
@@ -7250,9 +6522,7 @@ impl ApplicationHandler<UserEvent> for App {
             } else if starting_close {
                 // Studio always fades; the collapsed capsule fades only when the
                 // hide is an offer withdrawal — session ends keep the instant hide.
-                if matches!(self.mode, PillMode::Studio | PillMode::ExtensionSelect)
-                    || self.offer_fade_close
-                {
+                if self.mode == PillMode::Studio || self.offer_fade_close {
                     self.closing = true;
                 } else {
                     self.visible = false;
@@ -7424,12 +6694,6 @@ impl ApplicationHandler<UserEvent> for App {
                             eprintln!("window: show agent input (focused)");
                             present::show_window(window);
                             present::force_foreground(window);
-                        } else if self.mode == PillMode::ExtensionSelect {
-                            let (w, h) = Self::win_size_for(self.mode, self.skin);
-                            Self::position_window(window, r.anchor, h, w as f32);
-                            eprintln!("window: show extension chooser (focused)");
-                            present::show_window(window);
-                            present::force_foreground(window);
                         } else {
                             let (w, h) = Self::win_size_for(self.mode, self.skin);
                             // [GRAIN] A centered overlay (idle prompt-switch
@@ -7479,12 +6743,7 @@ impl ApplicationHandler<UserEvent> for App {
             // deadline (then forever), woken early by UserEvent::Wake.
             if self.visible {
                 self.free_idle_at = None; // shown → cancel any pending free
-                self.next_tick = now
-                    + if self.mode == PillMode::ExtensionSelect && self.open_at.is_none() {
-                        Duration::from_millis(100)
-                    } else {
-                        TICK
-                    };
+                self.next_tick = now + TICK;
                 event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
             } else {
                 // [GRAIN] Idle-free: the first hidden tick arms the deadline; a
@@ -7547,74 +6806,27 @@ pub fn run_pill() {
 mod tests {
     use super::*;
 
-    fn recommendation(id: &str, name: &str, purpose: &str, signal: &str) -> RecommendCandidate {
-        RecommendCandidate {
-            extension_id: id.into(),
-            name: name.into(),
-            purpose: purpose.into(),
-            signal: signal.into(),
-            score: if signal == "none" { 0.0 } else { 0.9 },
-            icon: None,
-        }
-    }
-
     #[test]
-    fn extension_recommendation_adopts_and_clears_bounded_display_state() {
+    fn extension_recommendations_never_promote_the_capture_pill() {
         let remote = Mutex::new(Remote::default());
         apply_event(
             &remote,
             DaemonEvent::ExtensionRecommend {
                 presentation_id: 7,
-                candidates: vec![recommendation(
-                    "translate",
-                    "Translate",
-                    "Translate selected text",
-                    "topical",
-                )],
+                candidates: vec![grain_sdk::RecommendCandidate {
+                    extension_id: "grain.linear".into(),
+                    name: "Linear".into(),
+                    purpose: "Issue tracking".into(),
+                    signal: "topical".into(),
+                    score: 0.9,
+                    icon: None,
+                }],
                 name_only: false,
             },
         );
-        let sequence = {
-            let state = remote.lock().unwrap();
-            let (presentation_id, candidates, name_only) = state.ext_select.as_ref().unwrap();
-            assert_eq!(*presentation_id, 7);
-            assert_eq!(candidates.len(), 1);
-            assert!(!name_only);
-            state.ext_select_seq
-        };
-        apply_event(&remote, DaemonEvent::ExtensionRecommendClear);
         let state = remote.lock().unwrap();
-        assert!(state.ext_select.is_none());
-        assert_eq!(state.ext_select_seq, sequence + 1);
-    }
-
-    #[test]
-    fn extension_filter_and_scroll_keep_only_three_rows_visible() {
-        let mut ui = ExtensionSelectUi::new(
-            7,
-            vec![
-                recommendation("spotify", "Spotify", "Music playback", "none"),
-                recommendation("linear", "Linear", "Issue tracking", "none"),
-                recommendation("translate", "Translate", "Language tools", "none"),
-                recommendation("slack", "Slack", "Team messages", "none"),
-            ],
-            false,
-        );
-        assert!(
-            !ui.selection_visible,
-            "an alphabetical fallback is not a match"
-        );
-        ui.query = "message".into();
-        ui.refilter();
-        assert_eq!(ui.filtered.len(), 1);
-        assert_eq!(ui.selected_candidate().unwrap().extension_id, "slack");
-        assert!(ui.selection_visible);
-
-        ui.query.clear();
-        ui.refilter();
-        ui.scroll_rows(1);
-        assert_eq!(ui.scroll, 1);
-        assert!((ui.scroll..ui.scroll + EXT_VISIBLE_ROWS).contains(&ui.selected));
+        assert!(state.state == PillState::Idle);
+        assert!(!state.visible);
     }
 
     #[test]

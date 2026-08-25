@@ -1115,8 +1115,7 @@ pub fn grain_extension_mode_accept(
     extension_id: String,
 ) -> Result<(), String> {
     require_main_window(&window)?;
-    crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id);
-    Ok(())
+    crate::grain_actions::action_session::accept(&app, presentation_id, &extension_id)
 }
 
 /// [GRAIN] Read the action log, optionally clearing it first

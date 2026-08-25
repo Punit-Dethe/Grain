@@ -1052,6 +1052,8 @@ pub fn run(cli_args: CliArgs) {
             grain_commands::extension_surface_payload,
             extension_view::extension_view_init,
             extension_view::extension_view_ready,
+            extension_view::extension_view_choose,
+            extension_view::extension_view_download_model,
             extension_view::extension_view_event,
             extension_view::extension_view_copy,
             extension_view::extension_view_output,

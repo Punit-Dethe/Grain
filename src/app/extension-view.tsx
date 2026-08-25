@@ -5,11 +5,16 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   ChevronDown,
   Clipboard,
+  Download,
   LoaderCircle,
+  Route,
+  Search,
+  Send,
   ShieldCheck,
   TextCursorInput,
   X,
@@ -19,12 +24,17 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   ExtensionViewContent,
+  ExtensionChoiceCandidate,
   ExtensionViewEvent,
   ExtensionViewEventResult,
   ExtensionViewInit,
   ViewNode,
   ViewValue,
 } from "@/bindings";
+import {
+  filterChoiceCandidates,
+  resolveChoiceSelection,
+} from "./extension-view-model";
 import "./extension-view.css";
 
 type Values = Record<string, ViewValue>;
@@ -36,7 +46,7 @@ type ViewEvent = Exclude<ExtensionViewEvent, { kind: "cancel" }>;
 const PRESENT_EVENT = "extension-view://present";
 const THEME_EVENT = "theme-changed";
 const COPY = {
-  app: "Grain extension",
+  mode: "Grain Extension Mode",
   close: "Close",
   copied: "Copied",
   copy: "Copy result",
@@ -49,6 +59,27 @@ const COPY = {
   select: "Select an option",
   sendsTo: "Grain sends this action to",
   destructive: "This action can make a destructive change through",
+  finishing: "Finishing your request",
+  finding: "Finding the right extension",
+  routingHint:
+    "Grain is matching your words locally against the extensions you approved.",
+  choose: "Choose an extension",
+  chooseHint: "The request stays with Grain until you choose where it goes.",
+  search: "Search extensions",
+  continue: "Continue",
+  chooserKeys: "↑↓ to choose · Enter to continue",
+  recommended: "Recommended",
+  noMatch:
+    "No confident match. Search or choose from your installed extensions.",
+  noResults: "No extensions match that search.",
+  noCandidates: "No searchable extensions are available for this request.",
+  languageModel:
+    "On-device language matching is not installed, so Grain matched names only.",
+  downloadModel: "Download language model",
+  opening: "Opening",
+  autoSending: "Sent automatically to",
+  runningHint:
+    "The extension is working on your request. Grain will keep the result in this window.",
 } as const;
 
 function collectValues(node: ViewNode, values: Values = {}): Values {
@@ -252,6 +283,262 @@ function NodeRenderer(props: RendererProps): ReactNode {
   }
 }
 
+function CandidateIcon({ candidate }: { candidate: ExtensionChoiceCandidate }) {
+  const initial = candidate.name.trim().charAt(0).toLocaleUpperCase() || "·";
+  const icon = candidate.icon?.startsWith("data:image/png;base64,")
+    ? candidate.icon
+    : null;
+  return (
+    <span className="ev-candidate-icon" aria-hidden="true">
+      <span>{initial}</span>
+      {icon ? (
+        <img
+          alt=""
+          onError={(event) => {
+            event.currentTarget.hidden = true;
+          }}
+          src={icon}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function RoutingView({
+  content,
+}: {
+  content: Extract<ExtensionViewContent, { kind: "routing" }>;
+}) {
+  return (
+    <section className="ev-routing ev-stage" aria-live="polite">
+      <div className="ev-routing-orbit" aria-hidden="true">
+        <Route size={22} strokeWidth={1.8} />
+        <span />
+      </div>
+      <h1>{content.request_preview ? COPY.finding : COPY.finishing}</h1>
+      <p>{COPY.routingHint}</p>
+      {content.request_preview ? (
+        <blockquote>{content.request_preview}</blockquote>
+      ) : null}
+      <div className="ev-routing-progress" aria-hidden="true">
+        <span />
+      </div>
+    </section>
+  );
+}
+
+function ChoiceView({
+  busy,
+  content,
+  modelBusy,
+  onChoose,
+  onDownloadModel,
+}: {
+  busy: boolean;
+  content: Extract<ExtensionViewContent, { kind: "choose" }>;
+  modelBusy: boolean;
+  onChoose: (extensionId: string) => void;
+  onDownloadModel: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const filtered = useMemo(
+    () => filterChoiceCandidates(content.candidates, query),
+    [content.candidates, query],
+  );
+  const hasRecommendation = content.candidates.some(
+    (candidate) => candidate.signal !== "none",
+  );
+
+  useEffect(() => {
+    setQuery("");
+    setSelectedId(resolveChoiceSelection(content.candidates, "", null));
+  }, [content.presentation_id, content.candidates]);
+
+  useEffect(() => {
+    setSelectedId((current) =>
+      resolveChoiceSelection(filtered, query, current),
+    );
+  }, [filtered, query]);
+
+  const move = (delta: number) => {
+    if (filtered.length === 0) return;
+    const current = filtered.findIndex(
+      (candidate) => candidate.extensionId === selectedId,
+    );
+    const next =
+      current < 0
+        ? delta > 0
+          ? 0
+          : filtered.length - 1
+        : (current + delta + filtered.length) % filtered.length;
+    setSelectedId(filtered[next].extensionId);
+    document
+      .getElementById(`ev-choice-${filtered[next].extensionId}`)
+      ?.scrollIntoView({ block: "nearest" });
+  };
+
+  const chooseSelected = () => {
+    if (!busy && selectedId) onChoose(selectedId);
+  };
+
+  return (
+    <section
+      className="ev-chooser ev-stage"
+      onKeyDown={(event) => {
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          move(1);
+        } else if (event.key === "ArrowUp") {
+          event.preventDefault();
+          move(-1);
+        } else if (
+          event.key === "Enter" &&
+          event.target instanceof HTMLInputElement
+        ) {
+          event.preventDefault();
+          chooseSelected();
+        }
+      }}
+    >
+      <div className="ev-choice-heading">
+        <div>
+          <h1>{COPY.choose}</h1>
+          <p>{COPY.chooseHint}</p>
+        </div>
+        <span className="ev-choice-count">{content.candidates.length}</span>
+      </div>
+
+      <p className="ev-request-preview">{content.request_preview}</p>
+
+      <label className="ev-choice-search">
+        <Search aria-hidden="true" size={16} strokeWidth={1.8} />
+        <span className="sr-only">{COPY.search}</span>
+        <input
+          aria-activedescendant={
+            selectedId ? `ev-choice-${selectedId}` : undefined
+          }
+          aria-autocomplete="list"
+          aria-controls="ev-choice-list"
+          aria-expanded="true"
+          aria-label={COPY.search}
+          autoComplete="off"
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder={COPY.search}
+          role="combobox"
+          spellCheck={false}
+          value={query}
+        />
+      </label>
+
+      {!hasRecommendation && !query ? (
+        <p className="ev-choice-notice" role="status">
+          <AlertTriangle aria-hidden="true" size={15} />
+          {COPY.noMatch}
+        </p>
+      ) : null}
+
+      <div
+        aria-label={COPY.choose}
+        className="ev-choice-list"
+        id="ev-choice-list"
+        role="listbox"
+      >
+        {filtered.map((candidate) => {
+          const recommended = candidate.signal !== "none";
+          const selected = candidate.extensionId === selectedId;
+          return (
+            <button
+              aria-selected={selected}
+              className="ev-choice-row"
+              data-recommended={recommended ? "true" : "false"}
+              id={`ev-choice-${candidate.extensionId}`}
+              key={candidate.extensionId}
+              onClick={() => setSelectedId(candidate.extensionId)}
+              onDoubleClick={() => {
+                if (!busy) onChoose(candidate.extensionId);
+              }}
+              role="option"
+              type="button"
+            >
+              <CandidateIcon candidate={candidate} />
+              <span className="ev-choice-copy">
+                <span className="ev-choice-name">
+                  {candidate.name}
+                  {recommended ? <small>{COPY.recommended}</small> : null}
+                </span>
+                <span>{candidate.purpose || candidate.extensionId}</span>
+              </span>
+              <ArrowRight aria-hidden="true" size={16} strokeWidth={1.8} />
+            </button>
+          );
+        })}
+        {filtered.length === 0 ? (
+          <div className="ev-choice-empty" role="status">
+            {content.candidates.length === 0
+              ? COPY.noCandidates
+              : COPY.noResults}
+          </div>
+        ) : null}
+      </div>
+
+      {content.name_only ? (
+        <div className="ev-model-notice">
+          <span>{COPY.languageModel}</span>
+          <button disabled={modelBusy} onClick={onDownloadModel} type="button">
+            {modelBusy ? (
+              <LoaderCircle
+                aria-hidden="true"
+                className="ev-spinner"
+                size={14}
+              />
+            ) : (
+              <Download aria-hidden="true" size={14} />
+            )}
+            {COPY.downloadModel}
+          </button>
+        </div>
+      ) : null}
+
+      <div className="ev-choice-submit">
+        <span>{COPY.chooserKeys}</span>
+        <button
+          disabled={!selectedId || busy}
+          onClick={chooseSelected}
+          type="button"
+        >
+          {busy ? (
+            <LoaderCircle aria-hidden="true" className="ev-spinner" size={15} />
+          ) : null}
+          {COPY.continue}
+          {!busy ? <ArrowRight aria-hidden="true" size={15} /> : null}
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function RunningView({
+  automatic,
+  extensionName,
+}: {
+  automatic: boolean;
+  extensionName: string;
+}) {
+  return (
+    <section className="ev-running ev-stage" aria-live="polite">
+      <div className="ev-running-mark" aria-hidden="true">
+        <Send size={22} strokeWidth={1.8} />
+        <LoaderCircle className="ev-running-ring" size={52} strokeWidth={1.2} />
+      </div>
+      <h1>
+        {automatic ? COPY.autoSending : COPY.opening} {extensionName}
+      </h1>
+      <p>{COPY.runningHint}</p>
+    </section>
+  );
+}
+
 function ResultView({
   content,
   onCopy,
@@ -275,36 +562,40 @@ function ResultView({
         <Icon aria-hidden="true" size={23} strokeWidth={1.8} />
       </div>
       <p>{content.message}</p>
-      <div className="ev-result-actions">
-        <button className="ev-copy" onClick={onCopy} type="button">
-          {copied ? (
-            <Check aria-hidden="true" size={15} />
-          ) : (
-            <Clipboard aria-hidden="true" size={15} />
-          )}
-          {copied ? COPY.copied : COPY.copy}
-        </button>
-        {content.tone === "success" && content.can_insert ? (
-          <button
-            className="ev-copy ev-output"
-            onClick={() => onOutput("insert")}
-            type="button"
-          >
-            <TextCursorInput aria-hidden="true" size={15} />
-            {COPY.insert}
-          </button>
-        ) : null}
-        {content.tone === "success" && content.can_replace ? (
-          <button
-            className="ev-copy ev-output ev-output-primary"
-            onClick={() => onOutput("replace")}
-            type="button"
-          >
-            <ReplaceIcon aria-hidden="true" size={15} />
-            {COPY.replace}
-          </button>
-        ) : null}
-      </div>
+      {content.can_copy || content.can_insert || content.can_replace ? (
+        <div className="ev-result-actions">
+          {content.can_copy ? (
+            <button className="ev-copy" onClick={onCopy} type="button">
+              {copied ? (
+                <Check aria-hidden="true" size={15} />
+              ) : (
+                <Clipboard aria-hidden="true" size={15} />
+              )}
+              {copied ? COPY.copied : COPY.copy}
+            </button>
+          ) : null}
+          {content.tone === "success" && content.can_insert ? (
+            <button
+              className="ev-copy ev-output"
+              onClick={() => onOutput("insert")}
+              type="button"
+            >
+              <TextCursorInput aria-hidden="true" size={15} />
+              {COPY.insert}
+            </button>
+          ) : null}
+          {content.tone === "success" && content.can_replace ? (
+            <button
+              className="ev-copy ev-output ev-output-primary"
+              onClick={() => onOutput("replace")}
+              type="button"
+            >
+              <ReplaceIcon aria-hidden="true" size={15} />
+              {COPY.replace}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -313,11 +604,13 @@ function ExtensionViewApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [values, setValues] = useState<Values>({});
   const [busy, setBusy] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const sessionRef = useRef<Session | null>(null);
   const readySession = useRef<number | null>(null);
   const copyTimer = useRef<number | null>(null);
+  const autoCloseTimer = useRef<number | null>(null);
   const eventQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingEvents = useRef(0);
 
@@ -328,6 +621,7 @@ function ExtensionViewApp() {
     setSession(next);
     setError(null);
     setBusy(false);
+    setModelBusy(false);
     setCopied(false);
     if (next.content.kind === "view")
       setValues(collectValues(next.content.view.root));
@@ -374,6 +668,8 @@ function ExtensionViewApp() {
       void unlistenPresent.then((unlisten) => unlisten());
       void unlistenTheme.then((unlisten) => unlisten());
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
+      if (autoCloseTimer.current !== null)
+        window.clearTimeout(autoCloseTimer.current);
     };
   }, [adopt]);
 
@@ -405,6 +701,25 @@ function ExtensionViewApp() {
       await getCurrentWindow().close();
     }
   }, [session]);
+
+  useEffect(() => {
+    if (autoCloseTimer.current !== null) {
+      window.clearTimeout(autoCloseTimer.current);
+      autoCloseTimer.current = null;
+    }
+    const delay =
+      session?.content.kind === "result"
+        ? session.content.dismiss_after_ms
+        : null;
+    if (!delay) return;
+    autoCloseTimer.current = window.setTimeout(() => void close(), delay);
+    return () => {
+      if (autoCloseTimer.current !== null) {
+        window.clearTimeout(autoCloseTimer.current);
+        autoCloseTimer.current = null;
+      }
+    };
+  }, [close, session]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -506,6 +821,40 @@ function ExtensionViewApp() {
     [session],
   );
 
+  const chooseExtension = useCallback(
+    async (extensionId: string) => {
+      if (!session || session.content.kind !== "choose" || busy) return;
+      setBusy(true);
+      setError(null);
+      try {
+        await invoke("extension_view_choose", {
+          sessionId: session.sessionId,
+          presentationId: session.content.presentation_id,
+          extensionId,
+        });
+      } catch (reason) {
+        setBusy(false);
+        setError(errorMessage(reason));
+      }
+    },
+    [busy, session],
+  );
+
+  const downloadModel = useCallback(async () => {
+    if (!session || session.content.kind !== "choose" || modelBusy) return;
+    setModelBusy(true);
+    setError(null);
+    try {
+      await invoke("extension_view_download_model", {
+        sessionId: session.sessionId,
+      });
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setModelBusy(false);
+    }
+  }, [modelBusy, session]);
+
   const currentView =
     session?.content.kind === "view" ? session.content.view : null;
   const destructive = useMemo(
@@ -515,6 +864,7 @@ function ExtensionViewApp() {
       ) ?? false,
     [currentView],
   );
+  const ownerName = session?.extensionName ?? COPY.mode;
 
   if (!session) {
     return (
@@ -527,16 +877,23 @@ function ExtensionViewApp() {
   }
 
   return (
-    <main className="ev-shell">
+    <main className="ev-shell" data-stage={session.content.kind}>
       <header className="ev-titlebar" data-tauri-drag-region>
         <div className="ev-identity" data-tauri-drag-region>
           <span className="ev-mark" aria-hidden="true">
-            <ShieldCheck size={14} strokeWidth={2} />
+            {session.content.kind === "routing" ||
+            session.content.kind === "choose" ? (
+              <Route size={14} strokeWidth={2} />
+            ) : (
+              <ShieldCheck size={14} strokeWidth={2} />
+            )}
           </span>
-          <span data-tauri-drag-region>{session.extensionName}</span>
-          <span className="ev-id" data-tauri-drag-region>
-            {session.extensionId}
-          </span>
+          <span data-tauri-drag-region>{ownerName}</span>
+          {session.extensionId ? (
+            <span className="ev-id" data-tauri-drag-region>
+              {session.extensionId}
+            </span>
+          ) : null}
         </div>
         <button
           aria-label={COPY.close}
@@ -550,8 +907,24 @@ function ExtensionViewApp() {
       </header>
 
       <div className="ev-scroll">
-        {session.content.kind === "view" ? (
+        {session.content.kind === "routing" ? (
+          <RoutingView content={session.content} />
+        ) : session.content.kind === "choose" ? (
+          <ChoiceView
+            busy={busy}
+            content={session.content}
+            modelBusy={modelBusy}
+            onChoose={(extensionId) => void chooseExtension(extensionId)}
+            onDownloadModel={() => void downloadModel()}
+          />
+        ) : session.content.kind === "running" ? (
+          <RunningView
+            automatic={session.content.automatic}
+            extensionName={ownerName}
+          />
+        ) : session.content.kind === "view" ? (
           <form
+            className="ev-stage"
             id="extension-view-form"
             onSubmit={(event) => {
               event.preventDefault();
@@ -569,7 +942,6 @@ function ExtensionViewApp() {
             }}
           >
             <div className="ev-intro">
-              <span className="ev-eyebrow">{COPY.app}</span>
               <h1>{session.content.view.title}</h1>
               {session.content.view.description ? (
                 <p>{session.content.view.description}</p>
@@ -585,12 +957,14 @@ function ExtensionViewApp() {
             />
           </form>
         ) : (
-          <ResultView
-            content={session.content}
-            copied={copied}
-            onCopy={() => void copyResult()}
-            onOutput={(action) => void outputResult(action)}
-          />
+          <div className="ev-stage">
+            <ResultView
+              content={session.content}
+              copied={copied}
+              onCopy={() => void copyResult()}
+              onOutput={(action) => void outputResult(action)}
+            />
+          </div>
         )}
         {error ? (
           <div className="ev-error" role="alert">
@@ -613,7 +987,7 @@ function ExtensionViewApp() {
             )}
             <span>
               {destructive ? COPY.destructive : COPY.sendsTo}{" "}
-              <strong>{session.extensionName}</strong>.
+              <strong>{ownerName}</strong>.
             </span>
           </div>
           <div className="ev-actions">
@@ -645,7 +1019,7 @@ function ExtensionViewApp() {
             })}
           </div>
         </footer>
-      ) : (
+      ) : session.content.kind === "result" ? (
         <footer className="ev-footer ev-footer-result">
           <div className="ev-trust">
             <ShieldCheck aria-hidden="true" size={14} />
@@ -660,7 +1034,7 @@ function ExtensionViewApp() {
             {COPY.close}
           </button>
         </footer>
-      )}
+      ) : null}
     </main>
   );
 }

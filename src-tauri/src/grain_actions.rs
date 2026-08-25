@@ -142,10 +142,10 @@ pub(crate) fn extension_session_started(app: &AppHandle, owner: &str) -> u64 {
     session_id
 }
 
-/// Start the native pill lifecycle for Extension Mode without arming dictation-
-/// only resources such as focused-field watching or prompt switching. The pill
-/// still receives the active app icon once, then grows into its recommendation
-/// chooser when ranking completes.
+/// Start the native capture-pill lifecycle for Extension Mode without arming
+/// dictation-only resources such as focused-field watching or prompt switching.
+/// Recommendation and everything after capture live in the prewarmed Tauri
+/// interaction window; this native surface never becomes a chooser.
 pub(crate) fn extension_mode_started(app: &AppHandle) -> u64 {
     let session_id = next_session_id();
     crate::bridge::emit(

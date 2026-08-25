@@ -86,6 +86,7 @@ fn derive_pill_rgba_from(image: &image::DynamicImage) -> Result<Vec<u8>, String>
         .ok_or_else(|| "could not derive extension icon".to_string())
 }
 
+#[cfg(test)]
 fn derive_pill_rgba(png: &[u8]) -> Result<Vec<u8>, String> {
     derive_pill_rgba_from(&decode_master(png)?)
 }
@@ -146,41 +147,6 @@ fn safe_dev_icon(root: &Path, declared: &str) -> Option<PathBuf> {
     let path = root.join(relative).canonicalize().ok()?;
     let root = root.canonicalize().ok()?;
     path.starts_with(&root).then_some(path)
-}
-
-fn dev_icon(app: &AppHandle, id: &str, root: &Path) -> Option<Vec<u8>> {
-    let pack = crate::extension_host::load_manifest(app, id)?;
-    let path = safe_dev_icon(root, &pack.manifest.icon)?;
-    let bytes = std::fs::read(path).ok()?;
-    derive_pill_rgba(&bytes).ok()
-}
-
-/// Base64 fixed-size RGBA for the recommendation wire. Installed extensions
-/// hit only the 16 KiB derived cache; developer projects are decoded from their
-/// live source so hot reloads never show stale artwork.
-pub fn recommendation_icon(app: &AppHandle, id: &str) -> Option<String> {
-    grain_sdk::validate_extension_id(id).ok()?;
-    if let Some(registry) =
-        app.try_state::<std::sync::Arc<grain_core::extensions::ExtensionsRegistry>>()
-    {
-        if let Some(root) = registry.dev_path(id) {
-            return dev_icon(app, id, &root)
-                .map(|rgba| base64::engine::general_purpose::STANDARD.encode(rgba));
-        }
-    }
-
-    let pack = crate::extension_host::load_manifest(app, id)?;
-    let dir = version_dir(app, id, &pack.manifest.version).ok()?;
-    let rgba = std::fs::read(dir.join(PILL_FILE))
-        .ok()
-        .filter(|bytes| bytes.len() == crate::pill_icon::ICON_BYTES)
-        .or_else(|| {
-            materialize_pack(app, &pack).ok()?;
-            std::fs::read(dir.join(PILL_FILE))
-                .ok()
-                .filter(|bytes| bytes.len() == crate::pill_icon::ICON_BYTES)
-        })?;
-    Some(base64::engine::general_purpose::STANDARD.encode(rgba))
 }
 
 /// Small PNG data URL for installed cards/settings. The 512² master remains on

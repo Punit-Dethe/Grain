@@ -722,7 +722,8 @@ fn handle_pill_action(ctx: &Arc<AppContext>, app: &AppHandle, action: grain_core
             presentation_id,
             extension_id,
         } => {
-            crate::grain_actions::action_session::accept(app, presentation_id, &extension_id);
+            let _ =
+                crate::grain_actions::action_session::accept(app, presentation_id, &extension_id);
         }
         // [GRAIN] Extension Mode chooser dismissed without a choice.
         grain_core::PillAction::ExtensionCancel { presentation_id } => {
