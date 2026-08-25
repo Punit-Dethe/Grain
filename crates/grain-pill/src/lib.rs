@@ -15,7 +15,7 @@
 //!   while processing. Click ✓ to confirm, ✗ to cancel.
 //!
 //! Keys (standalone preview): R recording · P processing · I idle · B prompt-record
-//! (blue tint, press after R) · A agent-input card · Esc quit.
+//! (blue tint, press after R) · A agent-input card.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -6792,7 +6792,13 @@ impl ApplicationHandler<UserEvent> for App {
                     },
                 ..
             } => match logical_key.as_ref() {
-                Key::Named(NamedKey::Escape) => event_loop.exit(),
+                // A focused connected pill must never treat Escape as process
+                // shutdown: that only hides the renderer and strands the core's
+                // recorder/rolling session. Delegate to the same full cancel
+                // pipeline as the global Cancel shortcut and the pill's X.
+                Key::Named(NamedKey::Escape) => {
+                    let _ = self.action_tx.send(PillAction::CancelSession);
+                }
                 // Dev preview overrides (write through the same remote the WS drives).
                 Key::Character("r") => {
                     let mut r = self.remote.lock().unwrap();

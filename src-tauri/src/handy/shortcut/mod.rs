@@ -62,6 +62,15 @@ pub fn register_cancel_shortcut(app: &AppHandle) {
     crate::secure_input::register_cancel_fallback(app);
 
     let settings = get_settings(app);
+    // [GRAIN] Agent and normal dictation intentionally share Escape while the
+    // Agent panel is open. Keep one OS registration (Agent Close); its action
+    // delegates to the normal cancel pipeline whenever recording is live.
+    if settings.bindings.get("cancel").is_some_and(|binding| {
+        crate::agent::owns_close_binding(app, &binding.current_binding)
+    }) {
+        debug!("Agent owns the cancel accelerator; sharing its Escape registration");
+        return;
+    }
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::register_cancel_shortcut(app),
         KeyboardImplementation::HandyKeys => handy_keys::register_cancel_shortcut(app),
@@ -73,6 +82,15 @@ pub fn unregister_cancel_shortcut(app: &AppHandle) {
     crate::secure_input::unregister_cancel_fallback(app);
 
     let settings = get_settings(app);
+    // [GRAIN] On Tauri, unregistering is accelerator-based rather than id-based.
+    // Do not accidentally remove Agent Close when dictation shared the same key;
+    // the next Escape must still close the idle Agent panel.
+    if settings.bindings.get("cancel").is_some_and(|binding| {
+        crate::agent::owns_close_binding(app, &binding.current_binding)
+    }) {
+        debug!("Agent still owns the cancel accelerator; preserving its registration");
+        return;
+    }
     match settings.keyboard_implementation {
         KeyboardImplementation::Tauri => tauri_impl::unregister_cancel_shortcut(app),
         KeyboardImplementation::HandyKeys => handy_keys::unregister_cancel_shortcut(app),
