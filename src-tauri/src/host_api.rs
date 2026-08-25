@@ -2100,6 +2100,155 @@ mod tests {
     }
 
     #[test]
+    fn semantic_music_commands_rank_natural_utterances() {
+        if !crate::grain_space::embed::model_on_disk() {
+            println!("model not on disk; skipped");
+            return;
+        }
+
+        let candidates = vec![
+            (
+                "play-track".to_string(),
+                vec![
+                    "put on Midnight City".to_string(),
+                    "play me a song on Spotify".to_string(),
+                    "start playing the specific track I named".to_string(),
+                    "can you play this song for me".to_string(),
+                    "put on the track I asked for".to_string(),
+                    "play some music from the streaming service".to_string(),
+                ],
+            ),
+            (
+                "pause-playback".to_string(),
+                vec![
+                    "pause the song that is playing right now".to_string(),
+                    "can you pause the music for a minute".to_string(),
+                    "temporarily stop playback without changing tracks".to_string(),
+                    "hold this song until I resume it".to_string(),
+                    "pause Spotify without losing my place".to_string(),
+                    "take a short break from the current track".to_string(),
+                ],
+            ),
+            (
+                "play-playlist".to_string(),
+                vec![
+                    "put on my focus mix".to_string(),
+                    "start the road trip collection".to_string(),
+                    "play the list I made for dinner".to_string(),
+                    "play one of my Spotify playlists".to_string(),
+                    "start playing my saved workout playlist".to_string(),
+                ],
+            ),
+            (
+                "queue-track".to_string(),
+                vec![
+                    "make Midnight City come on after this".to_string(),
+                    "line up that song without interrupting the current one".to_string(),
+                    "add this track as the next thing to hear".to_string(),
+                    "add the song I named to the queue for later".to_string(),
+                    "keep this playing and queue the other track".to_string(),
+                    "do not switch songs yet, put this in the queue".to_string(),
+                ],
+            ),
+            (
+                "start-artist-radio".to_string(),
+                vec![
+                    "keep playing things that sound like Daft Punk".to_string(),
+                    "make me a station based on this artist".to_string(),
+                    "continue with similar musicians".to_string(),
+                    "start an artist radio station on Spotify".to_string(),
+                    "play an endless mix based on this band".to_string(),
+                ],
+            ),
+            (
+                "resume-playback".to_string(),
+                vec![
+                    "resume the song that I paused".to_string(),
+                    "continue playing after the pause".to_string(),
+                    "start the music again from where it stopped".to_string(),
+                    "can you resume Spotify playback".to_string(),
+                    "unpause the current track".to_string(),
+                    "carry on with the same song without changing tracks".to_string(),
+                ],
+            ),
+            (
+                "next-track".to_string(),
+                vec![
+                    "skip to the next song".to_string(),
+                    "play the next track instead of this one".to_string(),
+                    "could you move on to the following song".to_string(),
+                    "I am done with this one, play whatever comes next".to_string(),
+                    "advance playback by one track".to_string(),
+                    "skip whatever is currently playing".to_string(),
+                    "go to the next song on Spotify".to_string(),
+                ],
+            ),
+            (
+                "previous-track".to_string(),
+                vec![
+                    "go back to the song that played before this".to_string(),
+                    "return to the last track".to_string(),
+                    "I want to hear the previous song again".to_string(),
+                    "play the track before this one on Spotify".to_string(),
+                    "move playback back by one song".to_string(),
+                    "go to what was playing just before this".to_string(),
+                ],
+            ),
+            (
+                "search-catalog".to_string(),
+                vec![
+                    "see whether the service has this recording".to_string(),
+                    "look for songs by this musician without playing them".to_string(),
+                    "find the album but do not start it".to_string(),
+                    "search Spotify for this artist without playing anything".to_string(),
+                    "show me matching tracks in the catalogue".to_string(),
+                ],
+            ),
+        ];
+        let cases = [
+            ("can you play the next song from Spotify?", "next-track"),
+            ("hey man, could you skip whatever is playing?", "next-track"),
+            ("can you resume the song from Spotify?", "resume-playback"),
+            ("please pause this for a minute", "pause-playback"),
+            ("go back to the track we just heard", "previous-track"),
+            ("put Midnight City on Spotify", "play-track"),
+            ("can you play some song on Spotify?", "play-track"),
+        ];
+
+        let mut failures = Vec::new();
+        for (utterance, expected) in cases {
+            let ranked = semantic_match(utterance, &candidates).expect("semantic match");
+            let scores = ranked
+                .iter()
+                .take(3)
+                .map(|entry| {
+                    format!(
+                        "{}={:.4}",
+                        entry["id"].as_str().unwrap_or("?"),
+                        entry["score"].as_f64().unwrap_or_default()
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("{utterance:?}: {scores}");
+            if ranked.first().and_then(|entry| entry["id"].as_str()) != Some(expected) {
+                failures.push(format!("{utterance:?} expected {expected}, got {scores}"));
+                continue;
+            }
+            let margin = ranked
+                .first()
+                .and_then(|entry| entry["margin"].as_f64())
+                .unwrap_or_default();
+            if margin < 0.05 {
+                failures.push(format!(
+                    "{utterance:?} ranked {expected} first but margin {margin:.4} is below 0.05: {scores}"
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
     fn capability_free_match_methods_are_strictly_bounded() {
         let identity = named(&[]);
         let too_many: Vec<Value> = (0..=MATCH_MAX_CANDIDATES)

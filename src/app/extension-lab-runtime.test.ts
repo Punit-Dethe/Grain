@@ -207,6 +207,36 @@ describe("Recommendation Lab internal command diagnostic", () => {
     }
   });
 
+  it("supplies realistic full utterances for the streaming playback controls", async () => {
+    const lab = runtime({ semantic: new Error("model unavailable") });
+
+    await lab.onRequest("can you play the next song from Spotify?");
+    const candidates = lab.grain.match.semantic.mock.calls[0][1] as {
+      id: string;
+      examples: string[];
+    }[];
+
+    for (const id of [
+      "play-track",
+      "pause-playback",
+      "resume-playback",
+      "next-track",
+      "previous-track",
+    ]) {
+      expect(
+        candidates.find((candidate) => candidate.id === id)!.examples.length,
+      ).toBeGreaterThanOrEqual(6);
+    }
+    expect(
+      candidates.find((candidate) => candidate.id === "next-track")!.examples,
+    ).toEqual(
+      expect.arrayContaining([
+        "could you move on to the following song",
+        "go to the next song on Spotify",
+      ]),
+    );
+  });
+
   it("marks a safe, semantically clear command as Executed and Auto-send", async () => {
     const lab = runtime({
       lexical: [{ id: "search-catalog", score: 0.9 }],
@@ -250,6 +280,31 @@ describe("Recommendation Lab internal command diagnostic", () => {
     expect(badges(resolved as Reply)).toEqual(["Executed", "User selected"]);
   });
 
+  it("never lets lexical evidence reorder a clear semantic command", async () => {
+    const lab = runtime({
+      lexical: [{ id: "play-track", score: 1 }],
+      semantic: [
+        { id: "next-track", score: 0.82 },
+        { id: "play-track", score: 0.75 },
+      ],
+    });
+
+    const reply = await lab.onRequest(
+      "can you play the next song from Spotify?",
+    );
+
+    expect(badges(reply)).toEqual(["Executed"]);
+    expect(metadata(reply)[0]).toContain("1. Next song");
+    expect(lab.grain.match.decide).toHaveBeenNthCalledWith(
+      1,
+      [
+        { id: "next-track", score: 0.82 },
+        { id: "play-track", score: 0.75 },
+      ],
+      { minConfidence: 0.5, margin: 0.05 },
+    );
+  });
+
   it("rejects a command choice that the validated view did not offer", async () => {
     const lab = runtime({
       semantic: [
@@ -291,7 +346,9 @@ describe("Recommendation Lab internal command diagnostic", () => {
     );
 
     expect(badges(reply)).toEqual(["Executed"]);
-    expect(metadata(reply)[0]).toContain("semantic 79.0% · lexical —");
+    expect(metadata(reply)[0]).toContain(
+      "Semantic 79.0% · lexical diagnostic —",
+    );
   });
 
   it("never executes from lexical evidence when semantic matching is unavailable", async () => {
@@ -304,7 +361,9 @@ describe("Recommendation Lab internal command diagnostic", () => {
 
     expect(badges(reply)).toEqual(["Semantic unavailable"]);
     expect(reply.view!.actions[0].id).toBe("finish-diagnostic");
-    expect(metadata(reply)[0]).toContain("semantic — · lexical 100.0%");
+    expect(metadata(reply)[0]).toContain(
+      "Semantic — · lexical diagnostic 100.0%",
+    );
   });
 
   it("makes a host rejection of both matching APIs explicit", async () => {

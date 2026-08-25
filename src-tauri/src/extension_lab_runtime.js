@@ -14,8 +14,11 @@
           phrases: ["play", "play song", "play track", "start song"],
           examples: [
             "put on Midnight City",
-            "I want to hear one specific song",
-            "start the track I just named",
+            "play me a song on Spotify",
+            "start playing the specific track I named",
+            "can you play this song for me",
+            "put on the track I asked for",
+            "play some music from the streaming service",
           ],
         },
         {
@@ -23,9 +26,12 @@
           title: "Pause song",
           phrases: ["pause", "pause song", "pause music", "stop playback"],
           examples: [
-            "stop the music for a moment",
-            "hold the current song where it is",
-            "quiet the player without losing my place",
+            "pause the song that is playing right now",
+            "can you pause the music for a minute",
+            "temporarily stop playback without changing tracks",
+            "hold this song until I resume it",
+            "pause Spotify without losing my place",
+            "take a short break from the current track",
           ],
         },
         {
@@ -36,6 +42,8 @@
             "put on my focus mix",
             "start the road trip collection",
             "play the list I made for dinner",
+            "play one of my Spotify playlists",
+            "start playing my saved workout playlist",
           ],
         },
         {
@@ -46,6 +54,9 @@
             "make Midnight City come on after this",
             "line up that song without interrupting the current one",
             "add this track as the next thing to hear",
+            "add the song I named to the queue for later",
+            "keep this playing and queue the other track",
+            "do not switch songs yet, put this in the queue",
           ],
         },
         {
@@ -56,6 +67,8 @@
             "keep playing things that sound like Daft Punk",
             "make me a station based on this artist",
             "continue with similar musicians",
+            "start an artist radio station on Spotify",
+            "play an endless mix based on this band",
           ],
         },
         {
@@ -68,9 +81,12 @@
             "continue playback",
           ],
           examples: [
-            "carry on from where the music stopped",
-            "continue the song that was paused",
-            "let the current track keep going",
+            "resume the song that I paused",
+            "continue playing after the pause",
+            "start the music again from where it stopped",
+            "can you resume Spotify playback",
+            "unpause the current track",
+            "carry on with the same song without changing tracks",
           ],
         },
         {
@@ -84,9 +100,13 @@
             "skip track",
           ],
           examples: [
-            "get this song out of here",
-            "move on to whatever follows this",
-            "I do not want to hear the rest of this track",
+            "skip to the next song",
+            "play the next track instead of this one",
+            "could you move on to the following song",
+            "I am done with this one, play whatever comes next",
+            "advance playback by one track",
+            "skip whatever is currently playing",
+            "go to the next song on Spotify",
           ],
         },
         {
@@ -102,6 +122,9 @@
             "go back to the song that played before this",
             "return to the last track",
             "I want to hear the previous song again",
+            "play the track before this one on Spotify",
+            "move playback back by one song",
+            "go to what was playing just before this",
           ],
         },
         {
@@ -112,6 +135,8 @@
             "see whether the service has this recording",
             "look for songs by this musician without playing them",
             "find the album but do not start it",
+            "search Spotify for this artist without playing anything",
+            "show me matching tracks in the catalogue",
           ],
           autoSend: true,
         },
@@ -136,6 +161,9 @@
             "use the copy already saved on this computer",
             "play the downloaded version instead of streaming it",
             "start this song from my own collection",
+            "play me a song from my local music library",
+            "put on the downloaded track I asked for",
+            "can you play this saved song for me",
           ],
         },
         {
@@ -143,9 +171,12 @@
           title: "Pause song",
           phrases: ["pause", "pause song", "pause music", "stop playback"],
           examples: [
-            "stop the local song for a moment",
-            "hold playback where it is",
-            "quiet my library without losing my place",
+            "pause the local song that is playing right now",
+            "can you pause my music for a minute",
+            "temporarily stop playback without changing tracks",
+            "hold this song until I resume it",
+            "pause the music library without losing my place",
+            "take a short break from the current track",
           ],
         },
         {
@@ -158,9 +189,12 @@
             "continue playback",
           ],
           examples: [
-            "continue the local song that was paused",
-            "carry on from where my library stopped",
-            "let the current track keep playing",
+            "resume the local song that I paused",
+            "continue playing after the pause",
+            "start my music again from where it stopped",
+            "can you resume playback from my library",
+            "unpause the current track",
+            "carry on with the same song without changing tracks",
           ],
         },
         {
@@ -174,9 +208,13 @@
             "skip track",
           ],
           examples: [
-            "move to the next song in my library",
-            "skip this local track",
-            "play whatever follows this recording",
+            "skip to the next song in my library",
+            "play the next local track instead of this one",
+            "could you move on to the following song",
+            "I am done with this one, play whatever comes next",
+            "advance library playback by one track",
+            "skip whatever is currently playing",
+            "go to the next downloaded song",
           ],
         },
         {
@@ -192,6 +230,9 @@
             "return to the last song in my library",
             "play the track before this one again",
             "go back one recording",
+            "move library playback back by one song",
+            "go to what was playing just before this",
+            "play the previous downloaded track",
           ],
         },
         {
@@ -812,7 +853,10 @@
   configs = null;
   var active = null;
   var COMMAND_FLOOR = 0.5;
-  var COMMAND_ASK_MARGIN = 0.08;
+  // Calibrated against the lab's natural-utterance corpus. Five points keeps
+  // genuinely close commands in Suggested while allowing clear transport
+  // controls through; Auto-send retains its substantially stricter margin.
+  var COMMAND_ASK_MARGIN = 0.05;
   var COMMAND_AUTO_SEND_MARGIN = 0.15;
 
   function phrases(id) {
@@ -869,28 +913,24 @@
         semanticScores !== null && hasScore(semanticScores, id)
           ? semanticScores[id]
           : null;
-      // Semantic is the confidence baseline. A lexical hit contributes only a
-      // bounded corroboration bonus; it cannot lift a below-floor semantic
-      // candidate onto the decision ballot or make anything Auto-sendable.
-      var combinedScore =
-        semanticScore === null
-          ? lexicalScore || 0
-          : clampScore(
-              semanticScore + (1 - semanticScore) * 0.2 * (lexicalScore || 0),
-            );
+      // Spoken requests are decided semantically. Lexical matching stays on
+      // screen as diagnostic evidence, but never changes rank or execution.
+      // This avoids phrases such as "play the next song" boosting both Play
+      // and Next and corrupting an otherwise correct semantic result.
+      var rankScore =
+        semanticScore === null ? lexicalScore || 0 : semanticScore;
       return {
         id: id,
         title: commandTitle(command),
         command: command,
         lexicalScore: lexicalScore,
         semanticScore: semanticScore,
-        combinedScore: combinedScore,
+        rankScore: rankScore,
       };
     });
     rows.sort(function (left, right) {
       return (
-        right.combinedScore - left.combinedScore ||
-        left.id.localeCompare(right.id)
+        right.rankScore - left.rankScore || left.id.localeCompare(right.id)
       );
     });
     return rows;
@@ -944,7 +984,7 @@
         return row.semanticScore !== null && row.semanticScore >= COMMAND_FLOOR;
       })
       .map(function (row) {
-        return { id: row.id, score: row.combinedScore };
+        return { id: row.id, score: row.semanticScore };
       });
     var decision = await grain.match.decide(decisionCandidates, {
       minConfidence: COMMAND_FLOOR,
@@ -1022,7 +1062,7 @@
         : "The extension found one command above the semantic floor and clear of the runner-up.";
     }
     if (analysis.state === "suggested") {
-      return "The leading commands are within the 8-point decision margin. Choose one to test the clarification transition.";
+      return "The leading commands are within the 5-point decision margin. Choose one to test the clarification transition.";
     }
     if (analysis.state === "unavailable") {
       if (!analysis.lexicalAvailable) {
@@ -1065,11 +1105,9 @@
         type: "metadata",
         label: String(index + 1) + ". " + row.title,
         value:
-          "Combined " +
-          percent(row.combinedScore) +
-          " · semantic " +
+          "Semantic " +
           percent(row.semanticScore) +
-          " · lexical " +
+          " · lexical diagnostic " +
           percent(row.lexicalScore),
       };
     });
