@@ -53,7 +53,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["stream music", "music streaming"],
             entities: &["artist", "album", "playlist", "track"],
-            command_count: 16,
+            command_count: 7,
             auto_send: false,
         },
         Profile {
@@ -69,7 +69,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["local music", "my music library"],
             entities: &["artist", "album", "playlist", "track"],
-            command_count: 12,
+            command_count: 7,
             auto_send: false,
         },
         Profile {
@@ -85,7 +85,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["tickets", "project issues"],
             entities: &["issue", "project", "assignee", "priority"],
-            command_count: 20,
+            command_count: 8,
             auto_send: false,
         },
         Profile {
@@ -101,7 +101,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["git host", "repositories"],
             entities: &["repository", "branch", "pull request", "review"],
-            command_count: 20,
+            command_count: 8,
             auto_send: false,
         },
         Profile {
@@ -117,7 +117,7 @@ fn profiles() -> &'static [Profile] {
             ],
             aliases: &["translate", "translation"],
             entities: &["language", "text"],
-            command_count: 4,
+            command_count: 6,
             auto_send: true,
         },
         Profile {
@@ -438,6 +438,7 @@ fn project(profile: Profile) -> Result<ExtensionProjectManifest, String> {
             "aliases": profile.aliases,
             "entities": profile.entities
         },
+        "needs": if command_diagnostic(profile.slug) { vec!["semantic"] } else { Vec::<&str>::new() },
         "autoSend": auto_send,
         "description": format!("Recommendation Lab fixture with {} internal commands. No network or external service is used.", profile.command_count),
         "icon": "icon.png",
@@ -455,6 +456,13 @@ fn project(profile: Profile) -> Result<ExtensionProjectManifest, String> {
     }
     .validate_dev()?;
     Ok(project)
+}
+
+fn command_diagnostic(slug: &str) -> bool {
+    matches!(
+        slug,
+        "stream-music" | "music-library" | "issue-tracker" | "code-host" | "translator"
+    )
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
@@ -621,6 +629,15 @@ mod tests {
             assert_eq!(loaded.pack.manifest.id, project.id);
             assert!(loaded.pack.manifest.kind.is_searchable());
             assert!(loaded.pack.manifest.permissions.is_empty());
+            let has_diagnostic = project
+                .id
+                .strip_prefix(LAB_PREFIX)
+                .is_some_and(command_diagnostic);
+            assert_eq!(
+                loaded.pack.manifest.needs == ["semantic"],
+                has_diagnostic,
+                "only command-diagnostic fixtures should retain semantic mode"
+            );
             assert!(loaded
                 .pack
                 .manifest
@@ -648,11 +665,18 @@ mod tests {
                 .count()
                 >= 6
         );
-        assert!(profiles().iter().any(|profile| profile.command_count >= 20));
+        assert!(profiles().iter().any(|profile| profile.command_count >= 18));
+        assert_eq!(LAB_RUNTIME.matches("commandDiagnostic: true").count(), 5);
         for required in [
             "grain.match.lexical",
+            "grain.match.semantic",
+            "grain.match.decide",
             "grain.ui.onEvent",
             "grain.onRequest",
+            "text: \"Suggested\"",
+            "text: \"Executed\"",
+            "text: \"Auto-send\"",
+            "semanticAutoDecision.pick === decision.pick",
             "decline:",
             "error:",
             "kind: \"submit\"",

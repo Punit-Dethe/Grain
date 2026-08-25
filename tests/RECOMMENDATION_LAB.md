@@ -19,14 +19,48 @@ permissions, and calls no external service.
 
 ## Core matrix
 
-| Goal                  | Example request                                   | Expected fixture/path                                                  |
-| --------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
-| Close topical overlap | “Play my downloaded jazz album”                   | Stream Music and Music Library compete; chooser remains usable         |
-| Close work overlap    | “Create a repository issue for the login crash”   | Code Host and Issue Tracker compete                                    |
-| Named match           | “Use Calendar Planner to schedule lunch tomorrow” | Calendar Planner is a named recommendation; editable confirmation form |
-| Direct finite result  | “Translator, translate this into Spanish”         | Translator returns a result without a confirmation form                |
-| Editable confirmation | “Create an urgent issue for the broken login”     | Issue Tracker shows fields, select, checkbox, submit, and cancel       |
-| Standard confirmation | “Stream Music, play my focus playlist”            | Stream Music shows a confirm/cancel surface                            |
+| Goal                   | Example request                                   | Expected fixture/path                                                  |
+| ---------------------- | ------------------------------------------------- | ---------------------------------------------------------------------- |
+| Close topical overlap  | “Play my downloaded jazz album”                   | Stream Music and Music Library compete; chooser remains usable         |
+| Close work overlap     | “Create a repository issue for the login crash”   | Code Host and Issue Tracker compete                                    |
+| Named match            | “Use Calendar Planner to schedule lunch tomorrow” | Calendar Planner is a named recommendation; editable confirmation form |
+| Internal translation   | “Translator, identify this language”              | Translator opens its same-window internal command diagnostic           |
+| Internal issue command | “Create an urgent issue for the broken login”     | Issue Tracker ranks its own eight commands after hand-off              |
+| Internal music command | “Stream Music, play my focus playlist”            | Stream Music ranks its own seven commands after hand-off               |
+
+## Internal command matrix
+
+The first five Core fixtures rank deliberately overlapping internal commands
+with both `grain.match.lexical` and `grain.match.semantic`. The same extension
+window then reports the top five scores and one of these outcomes:
+
+- **Suggested**: multiple commands cleared the semantic floor but remain within
+  the 8-point decision margin. Up to three Grain-owned actions resolve the
+  ambiguity in-place.
+- **Executed**: one command is a clear winner. Execution is simulated; the lab
+  never touches an external service.
+- **Auto-send**: added only when the winning command is explicitly safe and is
+  independently a semantic winner by at least 15 points. Lexical evidence can
+  never enable this badge.
+- **Unresolved / Semantic unavailable**: no command executes. The score table
+  remains available for diagnosis.
+
+Use these as adversarial starting points; the displayed score and margin are
+the result to inspect, not a hard-coded expected value:
+
+| Goal                     | Extension     | Example request                                                          |
+| ------------------------ | ------------- | ------------------------------------------------------------------------ |
+| Play versus queue        | Stream Music  | “Play this one, but maybe make it the next thing after the current song” |
+| Playlist versus library  | Music Library | “Save this track with my focus music”                                    |
+| Create versus find issue | Issue Tracker | “Check whether there is a login bug, and open one if there is not”       |
+| Review versus merge      | Code Host     | “Go through these approved changes before they land on main”             |
+| Translate versus define  | Translator    | “Tell me what this French phrase means in context”                       |
+| Semantic-only paraphrase | Stream Music  | “Put on the collection I made for dinner”                                |
+| Safe Auto-send candidate | Translator    | “Identify the language without translating the paragraph”                |
+
+To verify honest degradation, temporarily remove the semantic model and repeat
+a named command such as “Stream Music, skip track”. The view must report
+**Semantic unavailable**, retain the lexical score, and execute nothing.
 
 ## Stress paths
 
