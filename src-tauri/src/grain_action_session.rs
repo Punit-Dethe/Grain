@@ -143,8 +143,12 @@ pub fn start(app: &AppHandle) -> Result<(), StartError> {
     crate::shortcut::register_cancel_shortcut(app);
     // Grain's powerless standard renderer warms behind capture and is destroyed
     // on every path that never presents extension UI.
-    if let Err(error) = crate::extension_view::warm(app) {
+    if let Err(error) = crate::extension_view::warm(app, pill_session_id) {
         log::warn!("[GRAIN] extension view: warm failed: {error}");
+        cancel_if_pill_session(app, pill_session_id);
+        return Err(StartError::Unavailable(format!(
+            "Could not prepare Extension Mode: {error}"
+        )));
     }
     // NOTE: master chords are deliberately NOT armed. The prompt switcher and
     // Prompt Record are mid-dictation tools; mid-request they are meaningless at
@@ -186,6 +190,10 @@ pub fn cancel(app: &AppHandle) -> bool {
     let Some(session) = active().lock().unwrap().take() else {
         return false;
     };
+    cancel_owned(app, session)
+}
+
+fn cancel_owned(app: &AppHandle, session: ActiveSession) -> bool {
     let recording = Arc::clone(&app.state::<Arc<AudioRecordingManager>>());
     recording.cancel_recording();
     recording.remove_mute();
@@ -200,6 +208,32 @@ pub fn cancel(app: &AppHandle) -> bool {
     );
     log::info!("[GRAIN] action: cancelled");
     true
+}
+
+/// Cancel only the action session that owns this native pill. Renderer jobs are
+/// queued on Tauri's UI thread, so their failure can arrive after cancellation
+/// or even after another capture starts; it must never cancel the newer owner.
+pub fn cancel_if_pill_session(app: &AppHandle, pill_session_id: u64) -> bool {
+    let session = {
+        let mut slot = active().lock().unwrap();
+        if slot
+            .as_ref()
+            .is_some_and(|session| session.pill_session_id == pill_session_id)
+        {
+            slot.take()
+        } else {
+            None
+        }
+    };
+    session.is_some_and(|session| cancel_owned(app, session))
+}
+
+pub fn owns_pill_session(pill_session_id: u64) -> bool {
+    active()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|session| session.pill_session_id == pill_session_id)
 }
 
 /// Whether an Extension Mode session owns the microphone right now.

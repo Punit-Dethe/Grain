@@ -78,6 +78,7 @@ const entry = (overrides: Partial<StoreEntry> = {}): StoreEntry => ({
   author: "Grain Labs",
   reviewed_at: "",
   reviewed_commit: "",
+  stars: 0,
   installs: 0,
   readme: "",
   media: [],

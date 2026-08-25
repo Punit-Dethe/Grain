@@ -50,6 +50,7 @@ const COPY = {
   close: "Close",
   copied: "Copied",
   copy: "Copy result",
+  openExtensions: "Open Extensions",
   insert: "Insert",
   replace: "Replace selection",
   empty: "This extension did not provide anything to review.",
@@ -542,11 +543,13 @@ function RunningView({
 function ResultView({
   content,
   onCopy,
+  onOpenExtensions,
   onOutput,
   copied,
 }: {
   content: Extract<ExtensionViewContent, { kind: "result" }>;
   onCopy: () => void;
+  onOpenExtensions: () => void;
   onOutput: (action: "insert" | "replace") => void;
   copied: boolean;
 }) {
@@ -562,8 +565,21 @@ function ResultView({
         <Icon aria-hidden="true" size={23} strokeWidth={1.8} />
       </div>
       <p>{content.message}</p>
-      {content.can_copy || content.can_insert || content.can_replace ? (
+      {content.can_copy ||
+      content.can_insert ||
+      content.can_replace ||
+      content.can_open_extensions ? (
         <div className="ev-result-actions">
+          {content.can_open_extensions ? (
+            <button
+              className="ev-copy ev-output ev-output-primary"
+              onClick={onOpenExtensions}
+              type="button"
+            >
+              {COPY.openExtensions}
+              <ArrowRight aria-hidden="true" size={15} />
+            </button>
+          ) : null}
           {content.can_copy ? (
             <button className="ev-copy" onClick={onCopy} type="button">
               {copied ? (
@@ -821,6 +837,22 @@ function ExtensionViewApp() {
     [session],
   );
 
+  const openExtensions = useCallback(async () => {
+    if (
+      !session ||
+      session.content.kind !== "result" ||
+      !session.content.can_open_extensions
+    )
+      return;
+    try {
+      await invoke("extension_view_open_extensions", {
+        sessionId: session.sessionId,
+      });
+    } catch (reason) {
+      setError(errorMessage(reason));
+    }
+  }, [session]);
+
   const chooseExtension = useCallback(
     async (extensionId: string) => {
       if (!session || session.content.kind !== "choose" || busy) return;
@@ -962,6 +994,7 @@ function ExtensionViewApp() {
               content={session.content}
               copied={copied}
               onCopy={() => void copyResult()}
+              onOpenExtensions={() => void openExtensions()}
               onOutput={(action) => void outputResult(action)}
             />
           </div>

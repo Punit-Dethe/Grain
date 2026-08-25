@@ -378,17 +378,18 @@ impl ShortcutAction for ExtensionModeAction {
                 log::info!(
                     "[GRAIN] extension mode: shortcut ignored; no searchable extension is installed"
                 );
-                crate::bridge::emit(
+                if let Err(error) = crate::extension_view::present_unavailable(
                     app,
-                    DaemonEvent::ModelError {
-                        error: "Install a searchable extension in Extensions to use Extension Mode."
-                            .into(),
-                    },
-                );
+                    "No searchable extension is installed. Install or enable one from Extensions to use Extension Mode.",
+                ) {
+                    log::error!("[GRAIN] extension mode: could not show first-run guidance: {error}");
+                }
             }
             Err(action_session::StartError::Unavailable(reason)) => {
                 log::warn!("[GRAIN] extension mode: could not start: {reason}");
-                crate::bridge::emit(app, DaemonEvent::ModelError { error: reason });
+                if let Err(error) = crate::extension_view::present_unavailable(app, &reason) {
+                    log::error!("[GRAIN] extension mode: could not show start failure: {error}");
+                }
             }
         }
     }

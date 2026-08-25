@@ -24,6 +24,7 @@ const WINDOW_SIZE: (f64, f64) = (640.0, 720.0);
 const WINDOW_MIN: (f64, f64) = (440.0, 360.0);
 const REQUEST_PREVIEW_MAX_CHARS: usize = 2_048;
 const COMPLETION_DISMISS_MS: u32 = 1_600;
+const UNAVAILABLE_DISMISS_MS: u32 = 10_000;
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
@@ -120,6 +121,7 @@ pub enum ExtensionViewContent {
         can_copy: bool,
         can_insert: bool,
         can_replace: bool,
+        can_open_extensions: bool,
         dismiss_after_ms: Option<u32>,
     },
 }
@@ -145,6 +147,7 @@ fn result_content(
         can_copy: dismiss_after_ms.is_none(),
         can_insert: allow_output && target.is_some_and(target_is_usable),
         can_replace: allow_output && target.is_some_and(|target| target.has_selection),
+        can_open_extensions: false,
         dismiss_after_ms,
     }
 }
@@ -194,6 +197,8 @@ fn notify_closed(app: &AppHandle, removed: &ActiveView) {
         ExtensionViewContent::Routing { .. } => {
             if let Some(request_id) = removed.request_id {
                 crate::grain_actions::action_session::dismiss_request_from_view(request_id);
+            } else if let Some(pill_session_id) = removed.pill_session_id {
+                crate::grain_actions::action_session::cancel_if_pill_session(app, pill_session_id);
             } else {
                 crate::grain_actions::action_session::cancel(app);
             }
@@ -229,9 +234,11 @@ fn notify_closed(app: &AppHandle, removed: &ActiveView) {
     }
 }
 
-/// Pre-create the powerless host renderer hidden behind the active capture. A
-/// repeated call is free; a cancelled capture destroys it through [`destroy`].
-pub fn warm(app: &AppHandle) -> Result<(), String> {
+/// Create the renderer on Tauri's UI thread. Window construction must never run
+/// inline in a global-shortcut callback: on Windows that re-enters the event
+/// loop which is waiting for the callback to return, freezing audio, Escape,
+/// and every later shortcut event.
+fn build_renderer_on_main(app: &AppHandle) -> Result<(), String> {
     if app.get_webview_window(LABEL).is_some() {
         return Ok(());
     }
@@ -267,6 +274,93 @@ pub fn warm(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn current_session_is(session_id: u64) -> bool {
+    active()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|active| active.session_id == session_id)
+}
+
+fn take_session(session_id: u64) -> Option<ActiveView> {
+    let mut slot = active().lock().unwrap();
+    if slot
+        .as_ref()
+        .is_some_and(|active| active.session_id == session_id)
+    {
+        slot.take()
+    } else {
+        None
+    }
+}
+
+fn destroy_window_on_main(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(LABEL) {
+        let _ = window.destroy();
+    }
+}
+
+fn schedule_window_destroy(app: &AppHandle) {
+    let app_for_ui = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || destroy_window_on_main(&app_for_ui)) {
+        log::warn!("[GRAIN] extension view: could not schedule renderer teardown: {error}");
+    }
+}
+
+/// Fail closed when the host renderer cannot be created or reached. The
+/// recorder/session cleanup is as important as the window cleanup: otherwise a
+/// failed webview leaves the microphone and dynamic Escape binding owned until
+/// process exit.
+fn fail_renderer(
+    app: &AppHandle,
+    session_id: Option<u64>,
+    pill_session_id: Option<u64>,
+    error: impl std::fmt::Display,
+    already_on_main: bool,
+) {
+    let removed = session_id.and_then(take_session);
+    if session_id.is_some() && removed.is_none() {
+        // A newer presentation superseded this queued job. It owns the renderer
+        // now, so an old failure must not tear it down or surface an error.
+        return;
+    }
+    if removed.is_some() {
+        output_target().lock().unwrap().take();
+    }
+    if already_on_main {
+        destroy_window_on_main(app);
+    } else {
+        schedule_window_destroy(app);
+    }
+    if let Some(removed) = removed.as_ref() {
+        notify_closed(app, removed);
+    } else if let Some(pill_session_id) = pill_session_id {
+        crate::grain_actions::action_session::cancel_if_pill_session(app, pill_session_id);
+    }
+    let message = format!("Extension Mode could not open its interaction window: {error}");
+    log::error!("[GRAIN] extension view: {message}");
+}
+
+/// Queue creation of the powerless host renderer hidden behind active capture.
+/// A repeated call is free; a cancelled capture destroys it through [`destroy`].
+pub fn warm(app: &AppHandle, pill_session_id: u64) -> Result<(), String> {
+    if app.get_webview_window(LABEL).is_some() {
+        return Ok(());
+    }
+    let app_for_ui = app.clone();
+    app.run_on_main_thread(move || {
+        // Capture may have been cancelled before this queued job reached the UI
+        // thread. Do not create a resident hidden webview for a dead session.
+        if !crate::grain_actions::action_session::owns_pill_session(pill_session_id) {
+            return;
+        }
+        if let Err(error) = build_renderer_on_main(&app_for_ui) {
+            fail_renderer(&app_for_ui, None, Some(pill_session_id), error, true);
+        }
+    })
+    .map_err(|error| error.to_string())
+}
+
 fn store_and_emit(
     app: &AppHandle,
     mut next: ActiveView,
@@ -288,14 +382,27 @@ fn store_and_emit(
         init
     };
     let session_id = init.session_id;
-    if let Err(error) = warm(app) {
-        active().lock().unwrap().take();
-        output_target().lock().unwrap().take();
-        return Err(error);
-    }
-    if let Err(error) = app.emit_to(LABEL, PRESENT_EVENT, init) {
-        destroy(app);
-        return Err(error.to_string());
+    let app_for_ui = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || {
+        if !current_session_is(session_id) {
+            return;
+        }
+        if let Err(error) = build_renderer_on_main(&app_for_ui) {
+            fail_renderer(&app_for_ui, Some(session_id), None, error, true);
+            return;
+        }
+        // Cancellation/supersession can run while WebView2 is being created.
+        // Revalidate before publishing into the newly created renderer.
+        if !current_session_is(session_id) {
+            destroy_window_on_main(&app_for_ui);
+            return;
+        }
+        if let Err(error) = app_for_ui.emit_to(LABEL, PRESENT_EVENT, init) {
+            fail_renderer(&app_for_ui, Some(session_id), None, error, true);
+        }
+    }) {
+        fail_renderer(app, Some(session_id), None, error, false);
+        return Err("could not schedule the Extension Mode interaction window".into());
     }
     Ok(session_id)
 }
@@ -478,14 +585,50 @@ pub fn present_completion(app: &AppHandle, extension_id: &str) -> Result<u64, St
     )
 }
 
+fn unavailable_content(message: &str) -> Result<ExtensionViewContent, String> {
+    let message = bounded_message(message);
+    if message.is_empty() {
+        return Err("unavailable message must not be empty".into());
+    }
+    Ok(ExtensionViewContent::Result {
+        message,
+        tone: ResultTone::Warning,
+        can_copy: false,
+        can_insert: false,
+        can_replace: false,
+        can_open_extensions: true,
+        dismiss_after_ms: Some(UNAVAILABLE_DISMISS_MS),
+    })
+}
+
+/// Explain a pre-capture refusal in the same bounded, keyboard-dismissible host
+/// window instead of putting the native recording pill into its generic,
+/// persistent error fallback. This is also the actionable first-run path when
+/// the catalogue has not supplied any searchable extension yet.
+pub fn present_unavailable(app: &AppHandle, message: &str) -> Result<u64, String> {
+    let content = unavailable_content(message)?;
+    store_and_emit(
+        app,
+        ActiveView {
+            session_id: NEXT_SESSION.fetch_add(1, Ordering::Relaxed),
+            request_id: None,
+            extension_id: None,
+            extension_name: None,
+            request: String::new(),
+            content,
+            busy: false,
+            pill_session_id: None,
+        },
+        false,
+    )
+}
+
 /// Tear down the webview and all retained extension display state. Safe on every
 /// capture/cancel path; the hidden warm renderer must never become residency.
 pub fn destroy(app: &AppHandle) {
     active().lock().unwrap().take();
     output_target().lock().unwrap().take();
-    if let Some(window) = app.get_webview_window(LABEL) {
-        let _ = window.destroy();
-    }
+    schedule_window_destroy(app);
 }
 
 /// Keep the owning worker out of the idle reaper while its standard view is
@@ -822,6 +965,39 @@ pub fn extension_view_copy(
         .map_err(|error| format!("failed to copy result: {error}"))
 }
 
+#[tauri::command]
+#[specta::specta]
+pub fn extension_view_open_extensions(
+    app: AppHandle,
+    window: WebviewWindow,
+    session_id: u64,
+) -> Result<(), String> {
+    if !caller_is_view(&window) {
+        return Err("extension view command called from the wrong window".into());
+    }
+    let allowed = active().lock().unwrap().as_ref().is_some_and(|active| {
+        active.session_id == session_id
+            && matches!(
+                &active.content,
+                ExtensionViewContent::Result {
+                    can_open_extensions: true,
+                    ..
+                }
+            )
+    });
+    if !allowed {
+        return Err("this session cannot open Extension settings".into());
+    }
+
+    extension_view_close(app.clone(), window, session_id)?;
+    crate::show_main_window(&app);
+    let main = app
+        .get_webview_window("main")
+        .ok_or("Grain's main window is unavailable")?;
+    main.eval("window.location.hash = '#/extensions/store';")
+        .map_err(|error| format!("could not open the Extensions store: {error}"))
+}
+
 /// Insert a successful finite result back into the app Extension Mode was
 /// started from. Replace is exposed only when Grain observed a non-empty text
 /// selection at capture; Insert collapses that selection to its trailing edge.
@@ -1010,5 +1186,27 @@ mod tests {
         assert_eq!(preview.chars().count(), REQUEST_PREVIEW_MAX_CHARS);
         assert!(!preview.starts_with(char::is_whitespace));
         assert!(!preview.ends_with(char::is_whitespace));
+    }
+
+    #[test]
+    fn unavailable_state_is_actionable_bounded_and_self_releasing() {
+        let content = unavailable_content(&"x".repeat(9000)).unwrap();
+        let ExtensionViewContent::Result {
+            message,
+            tone,
+            can_copy,
+            can_insert,
+            can_replace,
+            can_open_extensions,
+            dismiss_after_ms,
+        } = content
+        else {
+            panic!("unavailable guidance must be a finite result")
+        };
+        assert_eq!(message.chars().count(), 8192);
+        assert_eq!(tone, ResultTone::Warning);
+        assert!(!can_copy && !can_insert && !can_replace);
+        assert!(can_open_extensions);
+        assert_eq!(dismiss_after_ms, Some(UNAVAILABLE_DISMISS_MS));
     }
 }
